@@ -91,7 +91,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
         enableCharts={false}
 
         // Grouping/pivot flags are fine; without a license they’re ignored, not crashed
-        pivotMode={true}
+        pivotMode={false}
         rowGroupPanelShow="always"
 
         // Cache settings

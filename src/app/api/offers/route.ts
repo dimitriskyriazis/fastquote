@@ -111,14 +111,35 @@ export async function POST(req: NextRequest) {
 
     // Base table & safe projection. Adjust fields to your schema (Offer table).
     // We alias datetime to ISO 8601 string for the grid.
+
+    /*
     const select = `
       SELECT
-        ID,
-        OfferID,
-        CustomerID,
-        StatusID,
         Description,
-        CreatedOn
+        Title,
+        Customer,
+        pricing Policy,
+        Market,
+        Sales Divition,
+        Sales Creation Person,
+        Status,
+        ProjectID,
+        OfferID,
+        Customer Ref,
+        Protovol No,
+        Contact,
+        Offer Version,
+        Enabled
+        
+      FROM [dbo].[Offer]
+    `;
+    */
+
+    const select = `
+      SELECT
+        Description,
+        Title,
+        OfferID
 
       FROM [dbo].[Offer]
     `;
