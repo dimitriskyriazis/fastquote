@@ -114,41 +114,54 @@ export async function POST(req: NextRequest) {
 
     /*
     const select = `
-      SELECT
-        Description,
-        Title,
-        Customer,
-        pricing Policy,
-        Market,
-        Sales Divition,
-        Sales Creation Person,
-        Status,
-        ProjectID,
-        OfferID,
-        Customer Ref,
-        Protovol No,
-        Contact,
-        Offer Version,
-        Enabled
-        
-      FROM [dbo].[Offer]
+      SELECT     
+        dbo.Offer.Description, 
+        dbo.Offer.Title, 
+        dbo.Customers.Name AS CustomerName, 
+        dbo.PricingPolicies.Name AS PricingPolicyName, 
+        dbo.Markets.Name AS SalesMarket, 
+        dbo.SalesDivision.Name AS SalesDivision,
+        dbo.AspNetUsers.FullName AS Salesperson, 
+        dbo.OfferStatus.Name AS OfferStatus, 
+        dbo.Offer.ProjectID,
+        dbo.Offer.OfferID,
+        dbo.Offer.CustomerRef, 
+        dbo.Offer.ProtocolNo, 
+        dbo.Offer.Contact,
+        dbo.Offer.OfferVersion,
+        dbo.Offer.Enabled
+
+      FROM        
+        dbo.Offer INNER JOIN
+        dbo.Customers ON dbo.Offer.CustomerID = dbo.Customers.ID INNER JOIN
+        dbo.SalesDivision ON dbo.Offer.SalesDivitionID = dbo.SalesDivision.ID INNER JOIN
+        dbo.Markets ON dbo.Offer.MarketID = dbo.Markets.ID INNER JOIN
+        dbo.OfferStatus ON dbo.Offer.StatusID = dbo.OfferStatus.ID INNER JOIN
+        dbo.PricingPolicies ON dbo.Offer.PricingPolicyID = dbo.PricingPolicies.ID INNER JOIN
+        dbo.AspNetUsers ON dbo.Offer.SalesPersonId = dbo.AspNetUsers.Id
     `;
     */
 
     const select = `
-      SELECT
-        Description,
-        Title,
-        OfferID
+      SELECT     
+        dbo.Offer.Description,
+        dbo.Offer.Title,
+        dbo.Offer.ProjectID,
+        dbo.Offer.OfferID,
+        dbo.Offer.CustomerRef,
+        dbo.Offer.ProtocolNo,
+        dbo.Offer.OfferVersion,
+        dbo.Offer.Enabled
 
-      FROM [dbo].[Offer]
+      FROM        
+        dbo.Offer
     `;
 
     const { where, params } = buildWhereAndParams(request.filterModel);
     const order = buildOrder(request.sortModel) || 'ORDER BY ID DESC'; // default sort
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
-    const countSql = `SELECT COUNT(1) AS cnt FROM [dbo].[Offer] ${where}`;
+    const countSql = `SELECT COUNT(1) AS cnt FROM dbo.Offer ${where}`;
     const dataSql = `${select} ${where} ${order} ${paging}`;
 
     const pool = await sql.connect(config);

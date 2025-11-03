@@ -37,7 +37,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
     resizable: true,
     filter: true,
     floatingFilter: true,
-    flex: 1,
+    minWidth: 150,
     ...defaultColDef,
   }), [defaultColDef]);
 
