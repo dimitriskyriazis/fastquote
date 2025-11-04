@@ -2,15 +2,79 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 
+type SqlConfig = {
+  server: string;
+  port?: number;
+  database: string;
+  user: string;
+  password: string;
+  options?: {
+    encrypt?: boolean;
+  };
+  pool?: {
+    max?: number;
+    min?: number;
+    idleTimeoutMillis?: number;
+  };
+};
+
+type TextFilterModel = {
+  filterType: 'text';
+  type?: 'contains' | 'equals' | 'notEqual' | 'startsWith' | 'endsWith';
+  filter?: string;
+};
+
+type NumberFilterModel = {
+  filterType: 'number';
+  type?:
+    | 'equals'
+    | 'notEqual'
+    | 'lessThan'
+    | 'greaterThan'
+    | 'lessThanOrEqual'
+    | 'greaterThanOrEqual'
+    | 'inRange';
+  filter?: number;
+  filterTo?: number;
+};
+
+type SetFilterModel = {
+  filterType: 'set';
+  values?: Array<string | number | boolean>;
+};
+
+type DateFilterModel = {
+  filterType: 'date';
+  type?: 'equals' | 'notEqual' | 'lessThan' | 'greaterThan' | 'inRange';
+  dateFrom?: string;
+  dateTo?: string;
+  filter?: string;
+};
+
+type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel | DateFilterModel;
+
 type GridRequest = {
   startRow: number;
   endRow: number;
-  filterModel?: Record<string, any>;
+  filterModel?: Record<string, KnownFilterModel> | null;
   sortModel?: Array<{ colId: string; sort: 'asc' | 'desc' }>;
   // rowGroupCols, pivotCols, etc. available if you enable them later
 };
 
-const config: sql.config = {
+type QueryParam = { key: string; value: string | number | boolean };
+
+type OfferRow = {
+  Description: string | null;
+  Title: string | null;
+  ProjectID: number | null;
+  OfferID: number | null;
+  CustomerRef: string | null;
+  ProtocolNo: number | null;
+  OfferVersion: number | null;
+  Enabled: boolean | number | null;
+};
+
+const config: SqlConfig = {
   server: process.env.SQLSERVER_HOST!,
   port: Number(process.env.SQLSERVER_PORT || 1433),
   database: process.env.SQLSERVER_DB!,
@@ -22,12 +86,13 @@ const config: sql.config = {
 
 // Map a basic AG Grid filter model to SQL WHERE snippets (parameterized)
 function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
-  if (!filterModel || Object.keys(filterModel).length === 0) return { where: '', params: [] as { key: string; value: any }[] };
+  if (!filterModel || Object.keys(filterModel).length === 0) return { where: '', params: [] as QueryParam[] };
 
   const parts: string[] = [];
-  const params: { key: string; value: any }[] = [];
+  const params: QueryParam[] = [];
+  const typedFilterModel = filterModel as Record<string, KnownFilterModel>;
 
-  Object.entries(filterModel).forEach(([col, fm], idx) => {
+  Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
     // Handle Text, Number, Date basic ops. Extend as you need (startsWith, endsWith, inRange, etc.)
     switch (fm.filterType) {
@@ -52,7 +117,7 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
       }
       case 'number': {
         const type = fm.type; // equals, notEqual, lessThan, greaterThan, inRange, etc.
-        const val = Number(fm.filter);
+        const val = fm.filter !== undefined ? Number(fm.filter) : Number.NaN;
         const valTo = fm.filterTo !== undefined ? Number(fm.filterTo) : undefined;
         if (Number.isNaN(val)) break;
         if (type === 'equals') parts.push(`[${col}] = @${pBase}`);
@@ -69,10 +134,10 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
         break;
       }
       case 'set': {
-        const rawValues = Array.isArray(fm.values) ? fm.values : [];
-        if (!rawValues.length) break;
+        const rawValues = fm.values ?? [];
+        if (rawValues.length === 0) break;
 
-        const normalize = (value: any) => {
+        const normalize = (value: string | number | boolean) => {
           if (value === true || value === 'true') return 1;
           if (value === false || value === 'false') return 0;
           return value;
@@ -105,7 +170,7 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
         break;
       }
       default:
-        // Set/boolean filters etc. can be added here
+        // Additional filter types can be handled here
         break;
     }
   });
@@ -176,7 +241,7 @@ export async function POST(req: NextRequest) {
         dbo.Offer
     `;
 
-    const { where, params } = buildWhereAndParams(request.filterModel);
+    const { where, params: whereParams } = buildWhereAndParams(request.filterModel);
     const order = buildOrder(request.sortModel) || 'ORDER BY ID DESC'; // default sort
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
@@ -187,22 +252,23 @@ export async function POST(req: NextRequest) {
 
     // Count
     const countReq = pool.request();
-    params.forEach(p => countReq.input(p.key, p.value));
+    whereParams.forEach(p => countReq.input(p.key, p.value));
     const countRes = await countReq.query<{ cnt: number }>(countSql);
     const rowCount = countRes.recordset[0]?.cnt ?? 0;
 
     // Data
     const dataReq = pool.request();
-    params.forEach(p => dataReq.input(p.key, p.value));
+    whereParams.forEach(p => dataReq.input(p.key, p.value));
     dataReq.input('__offset', sql.Int, offset);
     dataReq.input('__limit', sql.Int, pageSize);
-    const dataRes = await dataReq.query(dataSql);
+    const dataRes = await dataReq.query<OfferRow>(dataSql);
 
     return NextResponse.json({ ok: true, rows: dataRes.recordset, rowCount });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error(err);
+    const message = err instanceof Error ? err.message : 'Server error';
     return NextResponse.json(
-      { ok: false, error: err?.message || 'Server error' },
+      { ok: false, error: message },
       { status: 500 }
     );
   }
