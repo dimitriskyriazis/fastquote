@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo, useRef, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
   ModuleRegistry,
   ColDef,
   IServerSideDatasource,
   GridReadyEvent,
+  FilterChangedEvent,
 } from 'ag-grid-community';
 import { AllEnterpriseModule, LicenseManager } from 'ag-grid-enterprise';
 
@@ -28,6 +29,8 @@ type Props = {
   columnDefs: ColDef[];
   defaultColDef?: ColDef;
 };
+
+const GUARDED_SET_FILTERS = new Set(['Enabled']);
 
 export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props) {
   const gridRef = useRef<AgGridReact<any>>(null);
@@ -70,6 +73,26 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
     e.api.setGridOption('serverSideDatasource', datasource);
   };
 
+  const handleFilterChanged = useCallback((event: FilterChangedEvent) => {
+    const model = event.api.getFilterModel();
+    const nextModel = { ...model } as Record<string, any>;
+    let mutated = false;
+
+    Object.entries(model).forEach(([colId, descriptor]) => {
+      if (!GUARDED_SET_FILTERS.has(colId)) return;
+      if (descriptor?.filterType !== 'set') return;
+      const values = Array.isArray(descriptor.values) ? descriptor.values : [];
+      if (values.length > 0) return;
+
+      delete nextModel[colId];
+      mutated = true;
+    });
+
+    if (mutated) {
+      event.api.setFilterModel(nextModel);
+    }
+  }, []);
+
   return (
     <div className="ag-theme-quartz" data-ag-grid-size="compact" style={{ height: 700 }}>
       <AgGridReact
@@ -99,6 +122,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
         maxBlocksInCache={10}
 
         onGridReady={onGridReady}
+        onFilterChanged={handleFilterChanged}
       />
     </div>
   );

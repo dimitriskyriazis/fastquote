@@ -20,7 +20,21 @@ export default function OffersClient() {
     { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agTextColumnFilter' },
     { field: 'Contact', headerName: 'Contact', filter: 'agTextColumnFilter' },
     { field: 'OfferVersion', headerName: 'Offer Version', filter: 'agNumberColumnFilter', enableValue: true },
-    { field: 'Enabled', headerName: 'Enabled', filter: 'agSetColumnFilter' }
+    {
+      field: 'Enabled',
+      headerName: 'Enabled',
+      filter: 'agSetColumnFilter',
+      filterParams: {
+        values: ['true', 'false'],
+        valueFormatter: ({value}) => (value === 'true' ? 'True' : 'False'),
+        comparator: (a, b) => {
+          if (a === b) return 0;
+          return a === 'true' ? -1 : 1;
+        },
+      },
+      enableRowGroup: true,
+      enableValue: true,
+    },
   ];
 
   return (

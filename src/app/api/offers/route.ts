@@ -68,6 +68,25 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
         params.push({ key: pBase, value: val });
         break;
       }
+      case 'set': {
+        const rawValues = Array.isArray(fm.values) ? fm.values : [];
+        if (!rawValues.length) break;
+
+        const normalize = (value: any) => {
+          if (value === true || value === 'true') return 1;
+          if (value === false || value === 'false') return 0;
+          return value;
+        };
+
+        const placeholders = rawValues.map((value, valueIdx) => {
+          const key = `${pBase}_${valueIdx}`;
+          params.push({ key, value: normalize(value) });
+          return `@${key}`;
+        });
+
+        parts.push(`[${col}] IN (${placeholders.join(', ')})`);
+        break;
+      }
       case 'date': {
         // Expecting YYYY-MM-DD from AG Grid date filter
         const type = fm.type;
