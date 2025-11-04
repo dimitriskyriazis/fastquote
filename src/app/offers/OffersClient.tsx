@@ -18,7 +18,7 @@ export default function OffersClient() {
     { field: 'OfferID', headerName: 'Offer ID', filter: 'agNumberColumnFilter'},
     { field: 'CustomerRef', headerName: 'Customer Ref', filter: 'agTextColumnFilter' },
     { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter'},
-    { field: 'Contact', headerName: 'Contact', filter: 'agTextColumnFilter' },
+    { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
     { field: 'OfferVersion', headerName: 'Offer Version', filter: 'agNumberColumnFilter' },
     { field: 'Enabled', headerName: 'Enabled', filter: 'agSetColumnFilter', filterParams: {values: ['true', 'false'],
       comparator: (valueA: string, valueB: string) => (valueA === valueB ? 0 : valueA === 'true' ? -1 : 1),}, enableRowGroup: true}

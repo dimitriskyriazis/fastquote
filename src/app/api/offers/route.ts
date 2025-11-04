@@ -1,4 +1,3 @@
-// app/api/offers/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 
@@ -43,6 +42,8 @@ type SetFilterModel = {
   values?: Array<string | number | boolean>;
 };
 
+/*
+Not using dates yet
 type DateFilterModel = {
   filterType: 'date';
   type?: 'equals' | 'notEqual' | 'lessThan' | 'greaterThan' | 'inRange';
@@ -50,15 +51,17 @@ type DateFilterModel = {
   dateTo?: string;
   filter?: string;
 };
+*/
 
-type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel | DateFilterModel;
+type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel; 
+// | DateFilterModel;
 
 type GridRequest = {
   startRow: number;
   endRow: number;
   filterModel?: Record<string, KnownFilterModel> | null;
   sortModel?: Array<{ colId: string; sort: 'asc' | 'desc' }>;
-  // rowGroupCols, pivotCols, etc. available if you enable them later
+  // rowGroupCols, pivotCols, etc. available if enabling them later
 };
 
 type QueryParam = { key: string; value: string | number | boolean };
@@ -76,6 +79,7 @@ type OfferRow = {
   OfferID: number | null;
   CustomerRef: string | null;
   ProtocolNo: number | null;
+  OfferContact: string | null;
   OfferVersion: number | null;
   Enabled: boolean | number | null;
 };
@@ -93,6 +97,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferID: 'dbo.Offer.OfferID',
   CustomerRef: 'dbo.Offer.CustomerRef',
   ProtocolNo: 'dbo.Offer.ProtocolNo',
+  OfferContact: 'dbo.Offer.OfferContact',
   OfferVersion: 'dbo.Offer.OfferVersion',
   Enabled: 'dbo.Offer.Enabled',
 };
@@ -103,7 +108,7 @@ const config: SqlConfig = {
   database: process.env.SQLSERVER_DB!,
   user: process.env.SQLSERVER_USER!,
   password: process.env.SQLSERVER_PASSWORD!,
-  options: { encrypt: false }, // set true if using Azure/SSL
+  options: { encrypt: false },
   pool: { max: 10, min: 1, idleTimeoutMillis: 30000 },
 };
 
@@ -118,7 +123,7 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
     const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
-    // Handle Text, Number, Date basic ops. Extend as you need (startsWith, endsWith, inRange, etc.)
+    // Handle Text, Number, Date basic ops
     switch (fm.filterType) {
       case 'text': {
         const type = fm.type; // contains, equals, notEqual, startsWith, endsWith
@@ -176,6 +181,9 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
         parts.push(`${columnExpression} IN (${placeholders.join(', ')})`);
         break;
       }
+
+      /*
+      Not using dates yet
       case 'date': {
         // Expecting YYYY-MM-DD from AG Grid date filter
         const type = fm.type;
@@ -196,6 +204,7 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
       default:
         // Additional filter types can be handled here
         break;
+      */
     }
   });
 
@@ -235,6 +244,7 @@ export async function POST(req: NextRequest) {
         dbo.Offer.OfferID,
         dbo.Offer.CustomerRef,
         dbo.Offer.ProtocolNo,
+        dbo.Offer.OfferContact,
         dbo.Offer.OfferVersion,
         dbo.Offer.Enabled
     `;

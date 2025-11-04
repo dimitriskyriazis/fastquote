@@ -21,7 +21,6 @@ if (!globalThis.__AG_ALL_REGISTERED__) {
   globalThis.__AG_ALL_REGISTERED__ = true;
 }
 
-// Empty string => Community mode; no “invalid key” banner
 LicenseManager.setLicenseKey(process.env.NEXT_PUBLIC_AG_GRID_LICENSE || '');
 
 type Props = {
@@ -93,7 +92,6 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
   }), []);
 
   const onGridReady = (e: GridReadyEvent) => {
-    // Works in v34 with SSRM available
     e.api.setGridOption('serverSideDatasource', datasource);
     e.api.setSideBarVisible(true);
     e.api.closeToolPanel();
