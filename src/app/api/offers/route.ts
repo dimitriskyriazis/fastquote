@@ -66,12 +66,35 @@ type QueryParam = { key: string; value: string | number | boolean };
 type OfferRow = {
   Description: string | null;
   Title: string | null;
+  CustomerName: string | null;
+  PricingPolicyName: string | null;
+  SalesMarket: string | null;
+  SalesDivision: string | null;
+  AspNetUsers: string | null;
+  OfferStatus: string | null;
   ProjectID: number | null;
   OfferID: number | null;
   CustomerRef: string | null;
   ProtocolNo: number | null;
   OfferVersion: number | null;
   Enabled: boolean | number | null;
+};
+
+const COLUMN_EXPRESSIONS: Record<string, string> = {
+  Description: 'dbo.Offer.Description',
+  Title: 'dbo.Offer.Title',
+  CustomerName: 'dbo.Customers.Name',
+  PricingPolicyName: 'dbo.PricingPolicies.Name',
+  SalesMarket: 'dbo.Markets.Name',
+  SalesDivision: 'dbo.SalesDivision.Name',
+  AspNetUsers: 'dbo.AspNetUsers.FullName',
+  OfferStatus: 'dbo.OfferStatus.Name',
+  ProjectID: 'dbo.Offer.ProjectID',
+  OfferID: 'dbo.Offer.OfferID',
+  CustomerRef: 'dbo.Offer.CustomerRef',
+  ProtocolNo: 'dbo.Offer.ProtocolNo',
+  OfferVersion: 'dbo.Offer.OfferVersion',
+  Enabled: 'dbo.Offer.Enabled',
 };
 
 const config: SqlConfig = {
@@ -94,6 +117,7 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
 
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
+    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
     // Handle Text, Number, Date basic ops. Extend as you need (startsWith, endsWith, inRange, etc.)
     switch (fm.filterType) {
       case 'text': {
@@ -101,16 +125,16 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
         const val = String(fm.filter ?? '');
         if (!val) break;
         if (type === 'contains') {
-          parts.push(`[${col}] LIKE @${pBase}`);
+          parts.push(`${columnExpression} LIKE @${pBase}`);
           params.push({ key: pBase, value: `%${val}%` });
         } else if (type === 'equals') {
-          parts.push(`[${col}] = @${pBase}`);
+          parts.push(`${columnExpression} = @${pBase}`);
           params.push({ key: pBase, value: val });
         } else if (type === 'startsWith') {
-          parts.push(`[${col}] LIKE @${pBase}`);
+          parts.push(`${columnExpression} LIKE @${pBase}`);
           params.push({ key: pBase, value: `${val}%` });
         } else if (type === 'endsWith') {
-          parts.push(`[${col}] LIKE @${pBase}`);
+          parts.push(`${columnExpression} LIKE @${pBase}`);
           params.push({ key: pBase, value: `%${val}` });
         }
         break;
@@ -120,14 +144,14 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
         const val = fm.filter !== undefined ? Number(fm.filter) : Number.NaN;
         const valTo = fm.filterTo !== undefined ? Number(fm.filterTo) : undefined;
         if (Number.isNaN(val)) break;
-        if (type === 'equals') parts.push(`[${col}] = @${pBase}`);
-        if (type === 'notEqual') parts.push(`[${col}] <> @${pBase}`);
-        if (type === 'lessThan') parts.push(`[${col}] < @${pBase}`);
-        if (type === 'greaterThan') parts.push(`[${col}] > @${pBase}`);
-        if (type === 'lessThanOrEqual') parts.push(`[${col}] <= @${pBase}`);
-        if (type === 'greaterThanOrEqual') parts.push(`[${col}] >= @${pBase}`);
+        if (type === 'equals') parts.push(`${columnExpression} = @${pBase}`);
+        if (type === 'notEqual') parts.push(`${columnExpression} <> @${pBase}`);
+        if (type === 'lessThan') parts.push(`${columnExpression} < @${pBase}`);
+        if (type === 'greaterThan') parts.push(`${columnExpression} > @${pBase}`);
+        if (type === 'lessThanOrEqual') parts.push(`${columnExpression} <= @${pBase}`);
+        if (type === 'greaterThanOrEqual') parts.push(`${columnExpression} >= @${pBase}`);
         if (type === 'inRange' && valTo !== undefined) {
-          parts.push(`([${col}] BETWEEN @${pBase} AND @${pBase}_to)`);
+          parts.push(`(${columnExpression} BETWEEN @${pBase} AND @${pBase}_to)`);
           params.push({ key: `${pBase}_to`, value: valTo });
         }
         params.push({ key: pBase, value: val });
@@ -149,7 +173,7 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
           return `@${key}`;
         });
 
-        parts.push(`[${col}] IN (${placeholders.join(', ')})`);
+        parts.push(`${columnExpression} IN (${placeholders.join(', ')})`);
         break;
       }
       case 'date': {
@@ -158,12 +182,12 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
         const val = fm.dateFrom || fm.filter;
         const valTo = fm.dateTo;
         if (!val) break;
-        if (type === 'equals') parts.push(`CAST([${col}] AS date) = @${pBase}`);
-        if (type === 'notEqual') parts.push(`CAST([${col}] AS date) <> @${pBase}`);
-        if (type === 'lessThan') parts.push(`CAST([${col}] AS date) < @${pBase}`);
-        if (type === 'greaterThan') parts.push(`CAST([${col}] AS date) > @${pBase}`);
+        if (type === 'equals') parts.push(`CAST(${columnExpression} AS date) = @${pBase}`);
+        if (type === 'notEqual') parts.push(`CAST(${columnExpression} AS date) <> @${pBase}`);
+        if (type === 'lessThan') parts.push(`CAST(${columnExpression} AS date) < @${pBase}`);
+        if (type === 'greaterThan') parts.push(`CAST(${columnExpression} AS date) > @${pBase}`);
         if (type === 'inRange' && valTo) {
-          parts.push(`(CAST([${col}] AS date) BETWEEN @${pBase} AND @${pBase}_to)`);
+          parts.push(`(CAST(${columnExpression} AS date) BETWEEN @${pBase} AND @${pBase}_to)`);
           params.push({ key: `${pBase}_to`, value: valTo });
         }
         params.push({ key: pBase, value: val });
@@ -181,7 +205,10 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
 
 function buildOrder(sortModel: GridRequest['sortModel']) {
   if (!sortModel || sortModel.length === 0) return '';
-  const parts = sortModel.map(s => `[${s.colId}] ${s.sort.toUpperCase()}`);
+  const parts = sortModel.map(s => {
+    const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
+    return `${expression} ${s.sort.toUpperCase()}`;
+  });
   return `ORDER BY ${parts.join(', ')}`;
 }
 
@@ -193,60 +220,42 @@ export async function POST(req: NextRequest) {
     const pageSize = Math.max(1, Math.min(1000, endRow - startRow));
     const offset = startRow;
 
-    // Base table & safe projection. Adjust fields to your schema (Offer table).
-    // We alias datetime to ISO 8601 string for the grid.
-
-    /*
-    const select = `
-      SELECT     
-        dbo.Offer.Description, 
-        dbo.Offer.Title, 
-        dbo.Customers.Name AS CustomerName, 
-        dbo.PricingPolicies.Name AS PricingPolicyName, 
-        dbo.Markets.Name AS SalesMarket, 
-        dbo.SalesDivision.Name AS SalesDivision,
-        dbo.AspNetUsers.FullName AS Salesperson, 
-        dbo.OfferStatus.Name AS OfferStatus, 
-        dbo.Offer.ProjectID,
-        dbo.Offer.OfferID,
-        dbo.Offer.CustomerRef, 
-        dbo.Offer.ProtocolNo, 
-        dbo.Offer.Contact,
-        dbo.Offer.OfferVersion,
-        dbo.Offer.Enabled
-
-      FROM        
-        dbo.Offer INNER JOIN
-        dbo.Customers ON dbo.Offer.CustomerID = dbo.Customers.ID INNER JOIN
-        dbo.SalesDivision ON dbo.Offer.SalesDivitionID = dbo.SalesDivision.ID INNER JOIN
-        dbo.Markets ON dbo.Offer.MarketID = dbo.Markets.ID INNER JOIN
-        dbo.OfferStatus ON dbo.Offer.StatusID = dbo.OfferStatus.ID INNER JOIN
-        dbo.PricingPolicies ON dbo.Offer.PricingPolicyID = dbo.PricingPolicies.ID INNER JOIN
-        dbo.AspNetUsers ON dbo.Offer.SalesPersonId = dbo.AspNetUsers.Id
-    `;
-    */
 
     const select = `
-      SELECT     
+      SELECT
         dbo.Offer.Description,
         dbo.Offer.Title,
+        dbo.Customers.Name AS CustomerName,
+        dbo.PricingPolicies.Name AS PricingPolicyName,
+        dbo.Markets.Name AS SalesMarket,
+        dbo.SalesDivision.Name AS SalesDivision,
+        dbo.AspNetUsers.FullName AS Salesperson,
+        dbo.OfferStatus.Name AS OfferStatus,
         dbo.Offer.ProjectID,
         dbo.Offer.OfferID,
         dbo.Offer.CustomerRef,
         dbo.Offer.ProtocolNo,
         dbo.Offer.OfferVersion,
         dbo.Offer.Enabled
+    `;
 
-      FROM        
+    const from = `
+      FROM
         dbo.Offer
+        INNER JOIN dbo.Customers ON dbo.Offer.CustomerID = dbo.Customers.ID
+        INNER JOIN dbo.PricingPolicies ON dbo.Offer.PricingPolicyID = dbo.PricingPolicies.ID
+        INNER JOIN dbo.Markets ON dbo.Offer.MarketID = dbo.Markets.ID
+        INNER JOIN dbo.SalesDivision ON dbo.Offer.SalesDivitionID = dbo.SalesDivision.ID
+        INNER JOIN dbo.AspNetUsers ON dbo.Offer.SalesPersonId = dbo.AspNetUsers.Id
+        INNER JOIN dbo.OfferStatus ON dbo.Offer.StatusID = dbo.OfferStatus.ID
     `;
 
     const { where, params: whereParams } = buildWhereAndParams(request.filterModel);
-    const order = buildOrder(request.sortModel) || 'ORDER BY ID DESC'; // default sort
+    const order = buildOrder(request.sortModel) || 'ORDER BY dbo.Offer.OfferID DESC'; // default sort
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
-    const countSql = `SELECT COUNT(1) AS cnt FROM dbo.Offer ${where}`;
-    const dataSql = `${select} ${where} ${order} ${paging}`;
+    const countSql = `SELECT COUNT(1) AS cnt ${from} ${where}`;
+    const dataSql = `${select} ${from} ${where} ${order} ${paging}`;
 
     const pool = await sql.connect(config);
 
