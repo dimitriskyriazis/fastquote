@@ -28,7 +28,7 @@ export default function OffersClient() {
     { field: 'PricingPolicyName', headerName: 'Pricing Policy', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'SalesMarket', headerName: 'Market', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'SalesDivision', headerName: 'Sales Division', filter: 'agTextColumnFilter', enableRowGroup: true },
-    { field: 'Salesperson', headerName: 'Sales Creation Person', filter: 'agTextColumnFilter', enableRowGroup: true },
+    { field: 'SalesPerson', headerName: 'Sales Creation Person', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'OfferStatus', headerName: 'Status', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'ProjectID', headerName: 'Project ID', filter: 'agNumberColumnFilter' },
     { field: 'OfferID', headerName: 'Offer ID', filter: 'agNumberColumnFilter'},
