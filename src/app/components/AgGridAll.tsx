@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useRef, useCallback } from 'react';
+import React, { useMemo, useRef, useCallback, type CSSProperties } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
   ModuleRegistry,
@@ -44,6 +44,19 @@ type FilterDescriptor = {
 };
 
 const GUARDED_SET_FILTERS = new Set(['Enabled']);
+const containerStyle: CSSProperties = {
+  display: 'flex',
+  flex: 1,
+  minHeight: 0,
+  width: '100%',
+};
+
+const gridShellStyle: CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  width: '100%',
+  height: '100%',
+};
 
 export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props) {
   const gridRef = useRef<AgGridReact<RowData> | null>(null);
@@ -121,8 +134,8 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
   }, []);
 
   return (
-    <div>
-      <div className="ag-theme-quartz" data-ag-grid-size="compact" style={{ height: 700 }}>
+    <div style={containerStyle}>
+      <div className="ag-theme-quartz" data-ag-grid-size="compact" style={gridShellStyle}>
         <AgGridReact
           ref={gridRef}
           columnDefs={columnDefs}

@@ -1,8 +1,24 @@
 'use client';
 
-import React from 'react';
+import React, { type CSSProperties } from 'react';
 import AgGridAll from '../components/AgGridAll';
 import type { ColDef } from 'ag-grid-community';
+
+const mainStyle: CSSProperties = {
+  padding: '16px',
+  boxSizing: 'border-box',
+  height: '100vh',
+  width: '100%',
+  maxWidth: '100vw',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '12px',
+  overflow: 'hidden',
+};
+
+const headingStyle: CSSProperties = {
+  margin: 0,
+};
 
 export default function OffersClient() {
   const columnDefs: ColDef[] = [
@@ -25,8 +41,8 @@ export default function OffersClient() {
   ];
 
   return (
-    <main style={{ padding: 16 }}>
-      <h1 style={{ marginBottom: 12 }}>Offers</h1>
+    <main style={mainStyle}>
+      <h1 style={headingStyle}>Offers</h1>
       <AgGridAll endpoint="/api/offers" columnDefs={columnDefs} />
     </main>
   );
