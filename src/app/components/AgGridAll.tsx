@@ -56,6 +56,7 @@ const gridShellStyle: CSSProperties = {
   minHeight: 0,
   width: '100%',
   height: '100%',
+  overflow: 'hidden',
 };
 
 export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props) {
@@ -143,13 +144,11 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
 
           // Server-Side model
           rowModelType="serverSide"
-          getRowId={(p) => String(p.data?.ID ?? p.data?.id ?? Math.random())}
 
           // Enterprise UX
           sideBar={sideBarDef}
           statusBar={{ statusPanels: [{ statusPanel: 'agAggregationComponent' }] }}
-          rowSelection={{ mode: 'multiRow' }}
-          cellSelection={true}
+          suppressCellFocus={true}
 
           // Charts OFF for now (to avoid the AgCharts module requirement)
           enableCharts={false}
