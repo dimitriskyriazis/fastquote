@@ -42,8 +42,16 @@ type GridRequestEnvelope = {
 
 type QueryParam = { key: string; value: string | number | boolean };
 
+const TREE_ORDERING_RAW_EXPRESSION = 'NULLIF(LTRIM(RTRIM(od.TreeOrdering)), \'\')';
+const TREE_ORDERING_HIERARCHY_EXPRESSION = `
+  CASE
+    WHEN ${TREE_ORDERING_RAW_EXPRESSION} IS NULL THEN NULL
+    ELSE TRY_CONVERT(hierarchyid, CONCAT('/', REPLACE(${TREE_ORDERING_RAW_EXPRESSION}, '.', '/'), '/'))
+  END
+`;
+
 type ProductRow = {
-  TreeOrdering: number | null;
+  TreeOrdering: string | null;
   BrandName: string | null;
   PartNumber: string | null;
   ModelNumber: string | null;
@@ -82,6 +90,10 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Margin: 'od.Margin',
   GrossProfit: 'od.GrossProfit',
   TotalCost: 'od.TotalCost',
+};
+
+const ORDER_EXPRESSION_OVERRIDES: Record<string, string> = {
+  TreeOrdering: 'TreeOrderingHierarchy',
 };
 
 function buildFilterClauses(filterModel: GridRequest['filterModel']) {
@@ -171,7 +183,9 @@ function buildOrder(sortModel: GridRequest['sortModel']) {
   const parts = sortModel
     .filter((entry): entry is { colId: string; sort: 'asc' | 'desc' } => Boolean(entry?.colId && entry?.sort))
     .map(entry => {
-      const expression = COLUMN_EXPRESSIONS[entry.colId] ?? `[${entry.colId}]`;
+      const expression = ORDER_EXPRESSION_OVERRIDES[entry.colId]
+        ?? COLUMN_EXPRESSIONS[entry.colId]
+        ?? `[${entry.colId}]`;
       const direction = entry.sort === 'desc' ? 'DESC' : 'ASC';
       return `${expression} ${direction}`;
     });
@@ -199,54 +213,38 @@ export async function POST(
     const offset = Math.max(0, startRow);
 
     const { offerId } = await params;
-    const normalizedOfferId = decodeURIComponent(String(offerId ?? '')).trim();
+    const normalizedId = decodeURIComponent(String(offerId ?? '')).trim();
 
-    if (!normalizedOfferId) {
+    if (!normalizedId) {
       return NextResponse.json(
-        { ok: false, error: 'Missing offerId', rows: [], rowCount: 0 },
+        { ok: false, error: 'Missing id', rows: [], rowCount: 0 },
+        { status: 400 },
+      );
+    }
+
+    const idValue = Number(normalizedId);
+    if (!Number.isFinite(idValue) || !Number.isInteger(idValue)) {
+      return NextResponse.json(
+        { ok: false, error: 'Invalid id', rows: [], rowCount: 0 },
         { status: 400 },
       );
     }
 
     const pool = await getPool();
-    const lookupRequest = pool.request();
-    lookupRequest.input('offerPublicId', normalizedOfferId);
-    const numericOfferPk = Number(normalizedOfferId);
-    const hasNumericOfferPk = Number.isFinite(numericOfferPk);
-    lookupRequest.input('offerPkCandidate', sql.Int, hasNumericOfferPk ? numericOfferPk : null);
-    const lookupResult = await lookupRequest.query<{ OfferPk: number | null }>(`
-      SELECT TOP 1 o.ID AS OfferPk
-      FROM dbo.Offer o
-      WHERE
-        (@offerPkCandidate IS NOT NULL AND o.ID = @offerPkCandidate)
-        OR CAST(o.OfferID AS NVARCHAR(64)) = @offerPublicId
-    `);
-
-    if (!lookupResult.recordset || lookupResult.recordset.length === 0) {
-      return NextResponse.json(
-        { ok: false, error: 'Offer not found', rows: [], rowCount: 0 },
-        { status: 404 },
-      );
-    }
-
-    const offerPkValue = lookupResult.recordset[0]?.OfferPk;
-    if (offerPkValue === null || offerPkValue === undefined) {
-      return NextResponse.json(
-        { ok: false, error: 'Offer not found', rows: [], rowCount: 0 },
-        { status: 404 },
-      );
-    }
 
     const { clauses, params: filterParams } = buildFilterClauses(gridRequest.filterModel);
-    const whereClauses = [`od.OfferID = @__offerPk`, ...clauses];
+    const whereClauses = [`od.OfferID = @__id`, ...clauses];
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-    const orderSql = buildOrder(gridRequest.sortModel) || 'ORDER BY od.TreeOrdering ASC';
+    const orderSql =
+      buildOrder(gridRequest.sortModel) ||
+      'ORDER BY TreeOrderingHierarchy, od.TreeOrdering';
     const pagingSql = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
     const query = `
       SELECT
         COUNT_BIG(1) OVER () AS __totalCount,
-        od.TreeOrdering,
+        od.TreeOrdering AS TreeOrdering,
+        ${TREE_ORDERING_HIERARCHY_EXPRESSION} AS TreeOrderingHierarchy,
         b.Name AS BrandName,
         p.PartNumber,
         p.ModelNumber,
@@ -272,7 +270,7 @@ export async function POST(
     `;
 
     const sqlRequest = pool.request();
-    sqlRequest.input('__offerPk', sql.Int, offerPkValue);
+    sqlRequest.input('__id', sql.Int, idValue);
     filterParams.forEach(param => sqlRequest.input(param.key, param.value));
     sqlRequest.input('__offset', sql.Int, offset);
     sqlRequest.input('__limit', sql.Int, pageSize);
@@ -281,8 +279,9 @@ export async function POST(
     const recordset = result.recordset ?? [];
     const rowCount = recordset.length > 0 ? Number(recordset[0].__totalCount ?? 0) : 0;
     const rows: ProductRow[] = recordset.map(row => {
-      const { __totalCount, ...rest } = row;
+      const { __totalCount, TreeOrderingHierarchy, ...rest } = row;
       void __totalCount;
+      void TreeOrderingHierarchy;
       return rest;
     });
 

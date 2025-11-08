@@ -61,7 +61,7 @@ type OfferRow = {
   SalesPerson: string | null;
   OfferStatus: string | null;
   ProjectID: number | null;
-  OfferID: number | null;
+  ID: number | null;
   CustomerRef: string | null;
   ProtocolNo: number | null;
   OfferContact: string | null;
@@ -81,7 +81,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   SalesPerson: 'dbo.AspNetUsers.FullName',
   OfferStatus: 'dbo.OfferStatus.Name',
   ProjectID: 'dbo.Offer.ProjectID',
-  OfferID: 'dbo.Offer.OfferID',
+  OfferID: 'dbo.Offer.ID',
   CustomerRef: 'dbo.Offer.CustomerRef',
   ProtocolNo: 'dbo.Offer.ProtocolNo',
   OfferContact: 'dbo.Offer.OfferContact',
@@ -220,7 +220,7 @@ export async function POST(req: NextRequest) {
         dbo.AspNetUsers.FullName AS SalesPerson,
         dbo.OfferStatus.Name AS OfferStatus,
         dbo.Offer.ProjectID,
-        dbo.Offer.OfferID,
+        dbo.Offer.ID,
         dbo.Offer.CustomerRef,
         dbo.Offer.ProtocolNo,
         dbo.Offer.OfferContact,
@@ -240,7 +240,7 @@ export async function POST(req: NextRequest) {
     `;
 
     const { where, params: whereParams } = buildWhereAndParams(request.filterModel);
-    const order = buildOrder(request.sortModel) || 'ORDER BY dbo.Offer.OfferID DESC'; // default sort
+    const order = buildOrder(request.sortModel) || 'ORDER BY dbo.Offer.Description'; // default sort
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
     const dataSql = `${select} ${from} ${where} ${order} ${paging}`;
