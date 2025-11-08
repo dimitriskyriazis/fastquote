@@ -18,19 +18,31 @@
   --tab-active-bg: #ffffff;
   --panel-shadow: rgba(15, 23, 42, 0.08);
   --layout-max-width: 1160px;
+  --detail-panel-bg: #ffffff;
+  --detail-panel-muted-bg: #f8fafc;
+  --detail-panel-border: rgba(15, 23, 42, 0.08);
+  --detail-chip-active-bg: #171717;
+  --detail-chip-active-fg: #ffffff;
+  --detail-chip-inactive-fg: #475569;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
-    --surface-muted: #0f172a;
-    --surface-raised: #111827;
+    --surface-muted: #1e1e1e;
+    --surface-raised: #1e1e1e;
     --border-subtle: rgba(148, 163, 184, 0.32);
     --text-muted: #94a3b8;
     --tab-hover-bg: rgba(148, 163, 184, 0.12);
     --tab-active-bg: rgba(148, 163, 184, 0.18);
     --panel-shadow: rgba(2, 6, 23, 0.6);
+    --detail-panel-bg: #ffffff;
+    --detail-panel-muted-bg: #f8fafc;
+    --detail-panel-border: rgba(15, 23, 42, 0.16);
+    --detail-chip-active-bg: #171717;
+    --detail-chip-active-fg: #ffffff;
+    --detail-chip-inactive-fg: #475569;
   }
 }
 

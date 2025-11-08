@@ -19,6 +19,7 @@ const mainStyle: CSSProperties = {
 
 const headingStyle: CSSProperties = {
   margin: 0,
+  fontSize: '24px',
 };
 
 export default function OffersClient() {
@@ -32,6 +33,10 @@ export default function OffersClient() {
 
     const rowData = (data ?? node?.data ?? {}) as Record<string, unknown>;
     const candidateOfferId =
+      rowData?.OfferPK ??
+      rowData?.OfferPk ??
+      rowData?.offerPK ??
+      rowData?.offerPk ??
       rowData?.OfferID ??
       rowData?.OfferId ??
       rowData?.offerID ??
@@ -82,14 +87,8 @@ export default function OffersClient() {
   }, [router]);
 
   const columnDefs: ColDef[] = useMemo(() => [
-    {
-      field: 'Description',
-      headerName: 'Description',
-      filter: 'agTextColumnFilter',
-      editable: false,
-      cellClass: 'description-cell',
-      onCellClicked: handleDescriptionClick,
-    },
+    { field: 'Description', headerName: 'Description', filter: 'agTextColumnFilter',
+      cellClass: 'description-cell', onCellClicked: handleDescriptionClick },
     { field: 'Title', headerName: 'Title', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'CustomerName', headerName: 'Customer Name', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'PricingPolicyName', headerName: 'Pricing Policy', filter: 'agTextColumnFilter', enableRowGroup: true },

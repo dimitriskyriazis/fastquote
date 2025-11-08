@@ -1,10 +1,11 @@
 import OfferDetailClient from './OfferDetailClient';
 
 type PageProps = {
-  params: { offerId: string };
+  params: Promise<{ offerId: string }>;
 };
 
-export default function OfferDetailPage({ params }: PageProps) {
-  const decodedId = decodeURIComponent(params.offerId);
+export default async function OfferDetailPage({ params }: PageProps) {
+  const { offerId } = await params;
+  const decodedId = decodeURIComponent(offerId);
   return <OfferDetailClient offerId={decodedId} />;
 }

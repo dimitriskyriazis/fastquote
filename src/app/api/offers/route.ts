@@ -1,21 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
-
-type SqlConfig = {
-  server: string;
-  port?: number;
-  database: string;
-  user: string;
-  password: string;
-  options?: {
-    encrypt?: boolean;
-  };
-  pool?: {
-    max?: number;
-    min?: number;
-    idleTimeoutMillis?: number;
-  };
-};
+import { getPool } from '../../../lib/sql';
 
 type TextFilterModel = {
   filterType: 'text';
@@ -84,6 +69,8 @@ type OfferRow = {
   Enabled: boolean | number | null;
 };
 
+type OfferRowWithCount = OfferRow & { __totalCount: number | bigint | null };
+
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   Description: 'dbo.Offer.Description',
   Title: 'dbo.Offer.Title',
@@ -100,16 +87,6 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferContact: 'dbo.Offer.OfferContact',
   OfferVersion: 'dbo.Offer.OfferVersion',
   Enabled: 'dbo.Offer.Enabled',
-};
-
-const config: SqlConfig = {
-  server: process.env.SQLSERVER_HOST!,
-  port: Number(process.env.SQLSERVER_PORT || 1433),
-  database: process.env.SQLSERVER_DB!,
-  user: process.env.SQLSERVER_USER!,
-  password: process.env.SQLSERVER_PASSWORD!,
-  options: { encrypt: false },
-  pool: { max: 10, min: 1, idleTimeoutMillis: 30000 },
 };
 
 // Map a basic AG Grid filter model to SQL WHERE snippets (parameterized)
@@ -232,6 +209,8 @@ export async function POST(req: NextRequest) {
 
     const select = `
       SELECT
+        COUNT_BIG(1) OVER () AS __totalCount,
+        dbo.Offer.ID AS OfferPK,
         dbo.Offer.Description,
         dbo.Offer.Title,
         dbo.Customers.Name AS CustomerName,
@@ -264,25 +243,26 @@ export async function POST(req: NextRequest) {
     const order = buildOrder(request.sortModel) || 'ORDER BY dbo.Offer.OfferID DESC'; // default sort
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
-    const countSql = `SELECT COUNT(1) AS cnt ${from} ${where}`;
     const dataSql = `${select} ${from} ${where} ${order} ${paging}`;
 
-    const pool = await sql.connect(config);
-
-    // Count
-    const countReq = pool.request();
-    whereParams.forEach(p => countReq.input(p.key, p.value));
-    const countRes = await countReq.query<{ cnt: number }>(countSql);
-    const rowCount = countRes.recordset[0]?.cnt ?? 0;
-
-    // Data
+    const pool = await getPool();
     const dataReq = pool.request();
     whereParams.forEach(p => dataReq.input(p.key, p.value));
     dataReq.input('__offset', sql.Int, offset);
     dataReq.input('__limit', sql.Int, pageSize);
-    const dataRes = await dataReq.query<OfferRow>(dataSql);
+    const dataRes = await dataReq.query<OfferRowWithCount>(dataSql);
 
-    return NextResponse.json({ ok: true, rows: dataRes.recordset, rowCount });
+    const rowsWithCount = dataRes.recordset ?? [];
+    const rowCount = rowsWithCount.length > 0
+      ? Number(rowsWithCount[0].__totalCount ?? 0)
+      : 0;
+    const rows = rowsWithCount.map((row: OfferRowWithCount) => {
+      const { __totalCount, ...rest } = row;
+      void __totalCount;
+      return rest;
+    });
+
+    return NextResponse.json({ ok: true, rows, rowCount });
   } catch (err: unknown) {
     console.error(err);
     const message = err instanceof Error ? err.message : 'Server error';

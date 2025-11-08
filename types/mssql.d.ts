@@ -21,6 +21,7 @@ declare module 'mssql' {
 
   export class ConnectionPool {
     constructor(config: config);
+    connected: boolean;
     connect(): Promise<ConnectionPool>;
     request(): Request;
   }

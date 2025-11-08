@@ -2,6 +2,8 @@
 
 import React, { useState, type CSSProperties } from 'react';
 import Link from 'next/link';
+import OfferBasicDataPanel from './OfferBasicDataPanel';
+import OfferProductsPanel from './OfferProductsPanel';
 
 type TabKey = 'basic' | 'products';
 
@@ -9,75 +11,65 @@ type Props = {
   offerId: string;
 };
 
-const containerStyle: CSSProperties = {
-  padding: '32px 24px',
+const pageShellStyle: CSSProperties = {
+  padding: '16px',
   boxSizing: 'border-box',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '24px',
+  height: '100vh',
   width: '100%',
-  maxWidth: 'var(--layout-max-width)',
-  margin: '0 auto',
-};
-
-const headerGroupStyle: CSSProperties = {
+  maxWidth: '100vw',
   display: 'flex',
   flexDirection: 'column',
   gap: '12px',
-};
-
-const headingRowStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  flexWrap: 'wrap',
-  gap: '12px',
+  overflow: 'hidden',
 };
 
 const headingStyle: CSSProperties = {
   margin: 0,
-  fontSize: '32px',
-  fontWeight: 600,
-  letterSpacing: '-0.01em',
+  fontSize: '24px',
 };
 
-const subHeadingStyle: CSSProperties = {
-  margin: 0,
-  color: 'var(--text-muted)',
-  fontSize: '16px',
-  lineHeight: 1.6,
-  maxWidth: '720px',
+const backLinkStyle: CSSProperties = {
+  alignSelf: 'flex-start',
 };
 
-const tabContainerStyle: CSSProperties = {
-  border: `1px solid var(--border-subtle)`,
+const tabShellStyle: CSSProperties = {
+  border: `1px solid var(--detail-panel-border)`,
   borderRadius: '16px',
-  backgroundColor: 'var(--surface-raised)',
-  boxShadow: `0 18px 36px var(--panel-shadow)`,
+  backgroundColor: 'var(--detail-panel-bg)',
+  boxShadow: '0 24px 60px rgba(15, 23, 42, 0.08)',
+  display: 'flex',
+  flexDirection: 'column',
+  flex: 1,
+  minHeight: 0,
   overflow: 'hidden',
 };
 
 const tabHeaderRowStyle: CSSProperties = {
   display: 'flex',
-  gap: '6px',
-  padding: '12px 16px 0',
-  backgroundColor: 'var(--surface-raised)',
-  borderBottom: `1px solid var(--border-subtle)`,
+  gap: '8px',
+  padding: '12px 16px',
+  borderBottom: `1px solid var(--detail-panel-border)`,
+  backgroundColor: 'var(--detail-panel-muted-bg)',
 };
 
 const tabPanelStyle: CSSProperties = {
-  padding: '24px 24px 28px',
-  backgroundColor: 'var(--surface-raised)',
-  color: 'var(--foreground)',
-  minHeight: '220px',
+  padding: '16px',
+  flex: 1,
+  display: 'flex',
+  flexDirection: 'column',
+  minHeight: 0,
+  overflow: 'hidden',
+  backgroundColor: 'var(--detail-panel-bg)',
 };
 
 const tabButtonBase: CSSProperties = {
-  padding: '10px 16px',
-  borderRadius: '10px 10px 0 0',
-  border: '1px solid transparent',
-  borderBottom: 'none',
+  padding: '8px 16px',
+  borderRadius: '999px',
+  borderWidth: '1px',
+  borderStyle: 'solid',
+  borderColor: 'transparent',
   background: 'transparent',
-  color: 'var(--text-muted)',
+  color: 'var(--detail-chip-inactive-fg)',
   fontWeight: 500,
   fontSize: '14px',
   cursor: 'pointer',
@@ -85,65 +77,13 @@ const tabButtonBase: CSSProperties = {
 };
 
 const activeTabStyles: CSSProperties = {
-  backgroundColor: 'var(--tab-active-bg)',
-  color: 'var(--foreground)',
-  borderColor: 'var(--border-subtle)',
-  borderBottom: 'none',
+  backgroundColor: 'var(--detail-chip-active-bg)',
+  color: 'var(--detail-chip-active-fg)',
+  borderColor: 'var(--detail-panel-border)',
 };
 
 const inactiveTabStyles: CSSProperties = {
   backgroundColor: 'transparent',
-};
-
-const sectionTitleStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '20px',
-  fontWeight: 600,
-  letterSpacing: '-0.01em',
-};
-
-const sectionDescriptionStyle: CSSProperties = {
-  margin: '8px 0 20px',
-  color: 'var(--text-muted)',
-  maxWidth: '720px',
-};
-
-const infoGridStyle: CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-  gap: '16px',
-  margin: 0,
-};
-
-const infoItemStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '4px',
-};
-
-const infoLabelStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '12px',
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
-  color: 'var(--text-muted)',
-};
-
-const infoValueStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '15px',
-  fontWeight: 600,
-};
-
-const placeholderTextStyle: CSSProperties = {
-  color: 'var(--text-muted)',
-  fontStyle: 'italic',
-};
-
-const secondaryParagraphStyle: CSSProperties = {
-  margin: '12px 0 0',
-  color: 'var(--text-muted)',
-  maxWidth: '720px',
 };
 
 const buildHeading = (offerId: string) =>
@@ -163,23 +103,14 @@ export default function OfferDetailClient({ offerId }: Props) {
   const activeTabId = activeTab === 'basic' ? 'offer-tab-basic' : 'offer-tab-products';
 
   return (
-    <main style={containerStyle}>
-      <Link href="/offers" className="link-quiet">
+    <main style={pageShellStyle}>
+      <Link href="/offers" className="link-quiet" style={backLinkStyle}>
         <span aria-hidden="true">←</span>
         Back to offers
       </Link>
+      <h1 style={headingStyle}>{headingText}</h1>
 
-      <header style={headerGroupStyle}>
-        <div style={headingRowStyle}>
-          <h1 style={headingStyle}>{headingText}</h1>
-        </div>
-        <p style={subHeadingStyle}>
-          Review the basic information and product breakdown for this offer. We’ll hydrate this view
-          with live data shortly.
-        </p>
-      </header>
-
-      <div style={tabContainerStyle}>
+      <div style={tabShellStyle}>
         <nav style={tabHeaderRowStyle} aria-label="Offer detail tabs" role="tablist">
           <button
             type="button"
@@ -212,48 +143,9 @@ export default function OfferDetailClient({ offerId }: Props) {
           aria-labelledby={activeTabId}
         >
           {activeTab === 'basic' ? (
-            <div>
-              <h2 style={sectionTitleStyle}>Basic Data</h2>
-              <p style={sectionDescriptionStyle}>
-                This section will surface metadata such as customer contacts, opportunity status, and
-                commercial terms when the API is wired in.
-              </p>
-              <dl style={infoGridStyle}>
-                <div style={infoItemStyle}>
-                  <dt style={infoLabelStyle}>Offer Identifier</dt>
-                  <dd style={infoValueStyle}>{offerId || <span style={placeholderTextStyle}>Unknown</span>}</dd>
-                </div>
-                <div style={infoItemStyle}>
-                  <dt style={infoLabelStyle}>Status</dt>
-                  <dd style={infoValueStyle}>
-                    <span style={placeholderTextStyle}>(coming soon)</span>
-                  </dd>
-                </div>
-                <div style={infoItemStyle}>
-                  <dt style={infoLabelStyle}>Customer</dt>
-                  <dd style={infoValueStyle}>
-                    <span style={placeholderTextStyle}>(coming soon)</span>
-                  </dd>
-                </div>
-                <div style={infoItemStyle}>
-                  <dt style={infoLabelStyle}>Pricing Policy</dt>
-                  <dd style={infoValueStyle}>
-                    <span style={placeholderTextStyle}>(coming soon)</span>
-                  </dd>
-                </div>
-              </dl>
-            </div>
+            <OfferBasicDataPanel offerId={offerId} />
           ) : (
-            <div>
-              <h2 style={sectionTitleStyle}>Products</h2>
-              <p style={sectionDescriptionStyle}>
-                Product-level details will surface here once the product feed is wired in.
-              </p>
-              <p style={secondaryParagraphStyle}>
-                Use this space to show line items, pricing breakdowns, or attach supporting documents
-                when the data becomes available.
-              </p>
-            </div>
+            <OfferProductsPanel offerId={offerId} />
           )}
         </section>
       </div>
