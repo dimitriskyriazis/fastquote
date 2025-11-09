@@ -88,3 +88,14 @@ body {
   color: #0f172a;
   outline: none;
 }
+
+/* Prefer per-cell hover, not whole-row hover */
+.ag-theme-quartz {
+  --ag-row-hover-color: transparent; /* disable row hover color */
+}
+.ag-theme-quartz .ag-row-hover .ag-cell {
+  background: transparent !important; /* ensure no row-wide hover */
+}
+.ag-theme-quartz .ag-cell:hover {
+  background: var(--tab-hover-bg) !important; /* lighter, not black */
+}

@@ -61,7 +61,7 @@ type OfferRow = {
   SalesPerson: string | null;
   OfferStatus: string | null;
   ProjectID: number | null;
-  ID: number | null;
+  oID: number | null;
   CustomerRef: string | null;
   ProtocolNo: number | null;
   OfferContact: string | null;
@@ -81,7 +81,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   SalesPerson: 'dbo.AspNetUsers.FullName',
   OfferStatus: 'dbo.OfferStatus.Name',
   ProjectID: 'dbo.Offer.ProjectID',
-  OfferID: 'dbo.Offer.ID',
+  oID: 'dbo.Offer.ID',
   CustomerRef: 'dbo.Offer.CustomerRef',
   ProtocolNo: 'dbo.Offer.ProtocolNo',
   OfferContact: 'dbo.Offer.OfferContact',
@@ -220,7 +220,7 @@ export async function POST(req: NextRequest) {
         dbo.AspNetUsers.FullName AS SalesPerson,
         dbo.OfferStatus.Name AS OfferStatus,
         dbo.Offer.ProjectID,
-        dbo.Offer.ID,
+        dbo.Offer.ID AS oID,
         dbo.Offer.CustomerRef,
         dbo.Offer.ProtocolNo,
         dbo.Offer.OfferContact,

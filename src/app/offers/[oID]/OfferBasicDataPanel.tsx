@@ -3,7 +3,7 @@
 import React, { type CSSProperties } from 'react';
 
 type Props = {
-  offerId: string;
+  oID: string;
 };
 
 const sectionTitleStyle: CSSProperties = {

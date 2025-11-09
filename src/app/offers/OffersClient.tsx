@@ -2,7 +2,15 @@
 
 import React, { useMemo, useCallback, useState, useEffect, useRef, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
-import AgGridAll from '../components/AgGridAll';
+import dynamic from 'next/dynamic';
+const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
+  ssr: false,
+  loading: () => (
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569' }}>
+      Loading grid…
+    </div>
+  ),
+});
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
 import { createPortal } from 'react-dom';
 
@@ -32,7 +40,7 @@ export default function OffersClient() {
       const [open, setOpen] = useState(false);
       const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
       const btnRef = useRef<HTMLButtonElement | null>(null);
-      const id = params?.data?.ID as string | number | undefined;
+      const id = params?.data?.oID as string | number | undefined;
       const encodedId = id != null ? encodeURIComponent(String(id)) : '';
 
       const go = (suffix: 'products' | 'basic') => {
@@ -109,6 +117,8 @@ export default function OffersClient() {
         </svg>
       );
 
+      // No native listeners needed; React capture handler on the button is sufficient
+
       return (
         <div style={wrapperStyle}>
           <button
@@ -118,18 +128,31 @@ export default function OffersClient() {
             style={buttonStyle}
             className="offers-action-btn"
             onClick={() => setOpen(v => !v)}
+            onContextMenuCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
             disabled={!encodedId}
-            title={encodedId ? 'Open menu' : 'Missing ID'}
+            title={encodedId ? 'Open menu' : 'Missing oID'}
             ref={btnRef}
           >
             {lines}
           </button>
           {open && menuPos && createPortal(
-            <div role="menu" style={menuStyle} className="offers-action-menu">
-              <button type="button" role="menuitem" style={itemStyle} className="offers-action-item" onClick={() => go('products')}>
+            <div role="menu" style={menuStyle} className="offers-action-menu" onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+              <button
+                type="button"
+                role="menuitem"
+                style={itemStyle}
+                className="offers-action-item"
+                onClick={() => go('products')}
+              >
                 View Products
               </button>
-              <button type="button" role="menuitem" style={itemStyle} className="offers-action-item" onClick={() => go('basic')}>
+              <button
+                type="button"
+                role="menuitem"
+                style={itemStyle}
+                className="offers-action-item"
+                onClick={() => go('basic')}
+              >
                 View Basic Data
               </button>
             </div>,
@@ -153,7 +176,6 @@ export default function OffersClient() {
       resizable: false,
       sortable: false,
       filter: false,
-      suppressMenu: true,
       suppressMovable: true,
       suppressSizeToFit: true,
       suppressColumnsToolPanel: true,
@@ -172,7 +194,7 @@ export default function OffersClient() {
     { field: 'SalesPerson', headerName: 'Sales Creation Person', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'OfferStatus', headerName: 'Status', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'ProjectID', headerName: 'Project ID', filter: 'agNumberColumnFilter' },
-    { field: 'ID', headerName: 'ID', filter: 'agNumberColumnFilter' },
+    { field: 'oID', headerName: 'Offer ID', filter: 'agNumberColumnFilter' },
     { field: 'CustomerRef', headerName: 'Customer Ref', filter: 'agTextColumnFilter' },
     { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter' },
     { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },

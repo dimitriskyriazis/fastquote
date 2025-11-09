@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import OfferProductsPanel from '../OfferProductsPanel';
+import OfferBasicDataPanel from '../OfferBasicDataPanel';
 
 const pageShellStyle = {
   padding: '16px',
@@ -22,13 +22,13 @@ const backLinkStyle = {
   alignSelf: 'flex-start' as const,
 };
 
-const buildHeading = (offerId: string) =>
-  /^[0-9]+$/.test(offerId) ? `Offer ${offerId}` : offerId;
+const buildHeading = (oID: string) =>
+  /^[0-9]+$/.test(oID) ? `Offer ${oID}` : oID;
 
-export default async function Page({ params }: { params: Promise<{ offerId: string }> }) {
-  const { offerId } = await params;
-  const decodedId = decodeURIComponent(offerId);
-  const headingText = `${buildHeading(decodedId)} - Products`;
+export default async function Page({ params }: { params: Promise<{ oID: string }> }) {
+  const { oID } = await params;
+  const decodedId = decodeURIComponent(oID);
+  const headingText = `${buildHeading(decodedId)} - Basic Data`;
 
   return (
     <main style={pageShellStyle}>
@@ -37,8 +37,9 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
         Back to offers
       </Link>
       <h1 style={headingStyle}>{headingText}</h1>
-      <OfferProductsPanel offerId={decodedId} />
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <OfferBasicDataPanel oID={decodedId} />
+      </div>
     </main>
   );
 }
-

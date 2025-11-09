@@ -2,7 +2,15 @@
 
 import React, { useMemo, type CSSProperties } from 'react';
 import type { ColDef } from 'ag-grid-community';
-import AgGridAll from '../../components/AgGridAll';
+import dynamic from 'next/dynamic';
+const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
+  ssr: false,
+  loading: () => (
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569' }}>
+      Loading products…
+    </div>
+  ),
+});
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
@@ -16,7 +24,7 @@ const compareTreeOrderingValues = (a: unknown, b: unknown) => {
 };
 
 type Props = {
-  offerId: string;
+  oID: string;
   endpoint?: string;
 };
 
@@ -43,15 +51,15 @@ const emptyStateStyle: CSSProperties = {
   fontSize: '14px',
 };
 
-const buildEndpointForOffer = (offerId: string) =>
-  `/api/offers/${encodeURIComponent(offerId)}/products`;
+const buildEndpointForOffer = (oID: string) =>
+  `/api/offers/${encodeURIComponent(oID)}/products`;
 
-export default function OfferProductsPanel({ offerId, endpoint }: Props) {
+export default function OfferProductsPanel({ oID, endpoint }: Props) {
   const resolvedEndpoint = useMemo(() => {
     if (endpoint) return endpoint;
-    if (!offerId) return null;
-    return buildEndpointForOffer(offerId);
-  }, [endpoint, offerId]);
+    if (!oID) return null;
+    return buildEndpointForOffer(oID);
+  }, [endpoint, oID]);
 
   const productColumnDefs: ColDef[] = useMemo(() => [
     {

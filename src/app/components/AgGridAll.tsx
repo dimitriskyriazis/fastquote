@@ -67,6 +67,9 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
     resizable: true,
     filter: true,
     floatingFilter: true,
+    // Hide header menu icon and disable header menu on right-click
+    suppressHeaderMenuButton: true,
+    suppressHeaderContextMenu: true,
     minWidth: 150,
     ...defaultColDef,
   }), [defaultColDef]);
@@ -134,9 +137,15 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
     }
   }, []);
 
+  // No wrapper-level context menu handling needed; handled via ColDef and per-button handlers
+
   return (
     <div style={containerStyle}>
-      <div className="ag-theme-quartz" data-ag-grid-size="compact" style={gridShellStyle}>
+      <div
+        className="ag-theme-quartz"
+        data-ag-grid-size="compact"
+        style={gridShellStyle}
+      >
         <AgGridReact
           ref={gridRef}
           columnDefs={columnDefs}

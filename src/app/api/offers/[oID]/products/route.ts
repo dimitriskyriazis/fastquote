@@ -195,7 +195,7 @@ function buildOrder(sortModel: GridRequest['sortModel']) {
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ offerId: string }> },
+  { params }: { params: Promise<{ oID: string }> },
 ) {
   try {
     let body: GridRequestEnvelope | null = null;
@@ -212,8 +212,8 @@ export async function POST(
     const pageSize = Math.max(1, Math.min(1000, windowSize));
     const offset = Math.max(0, startRow);
 
-    const { offerId } = await params;
-    const normalizedId = decodeURIComponent(String(offerId ?? '')).trim();
+    const { oID } = await params;
+    const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
 
     if (!normalizedId) {
       return NextResponse.json(
