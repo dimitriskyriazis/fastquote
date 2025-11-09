@@ -58,69 +58,33 @@ body {
   height: 100%;
 }
 
-.link-quiet {
-  color: var(--foreground);
-  text-decoration: none;
-  font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  opacity: 0.85;
-  transition: opacity 0.2s ease;
+.ag-theme-quartz .ag-cell { cursor: default; }
+
+/* Offers action button/menu */
+.offers-action-btn {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: inherit;
+}
+.offers-action-btn:hover,
+.offers-action-btn:focus {
+  background: var(--surface-muted);
 }
 
-.link-quiet:hover,
-.link-quiet:focus {
-  opacity: 1;
-  text-decoration: underline;
+.offers-action-menu {
+  background: #ffffff !important;
+  border: 1px solid rgba(15, 23, 42, 0.12) !important;
+  color: #0f172a;
 }
-
-.ag-theme-quartz {
-  --ag-range-selection-border-color: transparent;
-  --ag-range-selection-background-color: transparent;
-  --ag-range-selection-background-color-2: transparent;
-  --ag-range-selection-background-color-3: transparent;
-  --ag-range-selection-background-color-4: transparent;
+.offers-action-item {
+  background: transparent;
+  color: #0f172a; /* force dark text */
+  transition: background-color 120ms ease, color 120ms ease;
 }
-
-.ag-theme-quartz .description-cell,
-.ag-theme-quartz .description-cell .ag-cell-value {
-  cursor: pointer;
-  color: #000000;
-  font-weight: 600;
-}
-
-.ag-theme-quartz .description-cell:hover,
-.ag-theme-quartz .description-cell:hover .ag-cell-value {
-  color: #000000;
-  background-color: rgba(0, 195, 255, 0.15);
-}
-
-.ag-theme-quartz .description-cell:focus,
-.ag-theme-quartz .description-cell:focus-within {
-  color: rgba(0, 0, 0, 0.7);
-  background-color: rgba(0, 85, 255, 0.15);
-}
-
-.ag-theme-quartz .ag-cell:focus,
-.ag-theme-quartz .ag-cell:focus-within,
-.ag-theme-quartz .ag-cell-focus,
-.ag-theme-quartz .ag-cell-focus:focus,
-.ag-theme-quartz .ag-cell-focus:focus-within,
-.ag-theme-quartz .ag-cell.ag-cell-focus,
-.ag-theme-quartz .ag-cell.ag-cell-focus:focus,
-.ag-theme-quartz .ag-cell.ag-cell-focus:focus-within {
-  outline: none !important;
-  box-shadow: none !important;
-  border-color: transparent !important;
-}
-
-.ag-theme-quartz .ag-cell-focus:not(.ag-cell-range-selected),
-.ag-theme-quartz .ag-cell-focus:not(.ag-cell-range-selected):focus,
-.ag-theme-quartz .ag-cell-focus:not(.ag-cell-range-selected):focus-within {
-  border-color: transparent !important;
-}
-
-.ag-theme-quartz .ag-cell:not(.description-cell) {
-  cursor: default;
+.offers-action-item:hover,
+.offers-action-item:focus {
+  background: #e2e8f0; /* stronger hover */
+  color: #0f172a;
+  outline: none;
 }

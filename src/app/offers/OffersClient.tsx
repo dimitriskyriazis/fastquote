@@ -1,9 +1,10 @@
-'use client';
+"use client";
 
-import React, { useMemo, useCallback, type CSSProperties } from 'react';
+import React, { useMemo, useCallback, useState, useEffect, useRef, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import AgGridAll from '../components/AgGridAll';
-import type { ColDef, CellClickedEvent } from 'ag-grid-community';
+import type { ColDef, ICellRendererParams } from 'ag-grid-community';
+import { createPortal } from 'react-dom';
 
 const mainStyle: CSSProperties = {
   padding: '16px',
@@ -25,70 +26,144 @@ const headingStyle: CSSProperties = {
 export default function OffersClient() {
   const router = useRouter();
 
-  const handleDescriptionClick = useCallback((event: CellClickedEvent) => {
-    const { value, data, node } = event;
-    if (value === null || value === undefined || value === '') {
-      return;
-    }
+  const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
+    // A small React component for the action menu
+    const ActionMenu: React.FC = () => {
+      const [open, setOpen] = useState(false);
+      const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+      const btnRef = useRef<HTMLButtonElement | null>(null);
+      const id = params?.data?.ID as string | number | undefined;
+      const encodedId = id != null ? encodeURIComponent(String(id)) : '';
 
-    const rowData = (data ?? node?.data ?? {}) as Record<string, unknown>;
-    const candidateOfferId =
-      rowData?.OfferPK ??
-      rowData?.OfferPk ??
-      rowData?.offerPK ??
-      rowData?.offerPk ??
-      rowData?.OfferID ??
-      rowData?.OfferId ??
-      rowData?.offerID ??
-      rowData?.offerId ??
-      rowData?.ID ??
-      rowData?.id ??
-      null;
+      const go = (suffix: 'products' | 'basic') => {
+        if (!encodedId) return;
+        router.push(`/offers/${encodedId}/${suffix}`);
+      };
 
-    const hasValue = (val: unknown): val is string | number =>
-      val !== null && val !== undefined && val !== '';
+      const wrapperStyle: CSSProperties = {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '100%',
+        height: '100%',
+        position: 'relative',
+      };
 
-    if (hasValue(candidateOfferId)) {
-      const encodedId = encodeURIComponent(String(candidateOfferId));
-      router.push(`/offers/${encodedId}`);
-      return;
-    }
+      const buttonStyle: CSSProperties = {
+        border: '1px solid var(--border-subtle)',
+        background: 'transparent',
+        borderRadius: '6px',
+        padding: '4px',
+        cursor: encodedId ? 'pointer' : 'not-allowed',
+        color: 'inherit',
+        fontSize: '14px',
+        width: 28,
+        height: 28,
+        appearance: 'none',
+      };
 
-    const fallbackCandidates: Array<unknown> = [
-      rowData?.ProjectID,
-      rowData?.ProtocolNo,
-    ];
+      const menuStyle: CSSProperties = {
+        position: 'fixed',
+        top: menuPos?.top ?? 0,
+        left: menuPos?.left ?? 0,
+        background: '#ffffff',
+        color: '#0f172a',
+        border: '1px solid rgba(15, 23, 42, 0.12)',
+        borderRadius: '8px',
+        boxShadow: '0 12px 32px rgba(15, 23, 42, 0.12)',
+        zIndex: 9999,
+        minWidth: '160px',
+        overflow: 'hidden',
+      };
 
-    let fallbackKey: string | number | null = null;
+      const itemStyle: CSSProperties = {
+        display: 'block',
+        width: '100%',
+        textAlign: 'left',
+        border: 'none',
+        padding: '8px 12px',
+        cursor: 'pointer',
+        fontSize: '14px',
+      };
 
-    for (const candidate of fallbackCandidates) {
-      if (hasValue(candidate)) {
-        fallbackKey = candidate as string | number;
-        break;
-      }
-    }
+      useEffect(() => {
+        if (!open) return;
+        const rect = btnRef.current?.getBoundingClientRect();
+        if (rect) {
+          setMenuPos({ top: rect.bottom + 6, left: rect.left });
+        }
+        const onDocClick = (e: MouseEvent) => {
+          if (!btnRef.current) return setOpen(false);
+          if (e.target instanceof Node && btnRef.current.contains(e.target)) return;
+          setOpen(false);
+        };
+        window.addEventListener('click', onDocClick);
+        return () => window.removeEventListener('click', onDocClick);
+      }, [open]);
 
-    if (!hasValue(fallbackKey) && hasValue(rowData?.Description)) {
-      const rowMarker = node?.id ? `--row-${node.id}` : '';
-      fallbackKey = `${rowData.Description}${rowMarker}`;
-    }
+      const lines = (
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="3" y="4" width="10" height="1.5" rx="0.75" fill="currentColor"/>
+          <rect x="3" y="7.25" width="10" height="1.5" rx="0.75" fill="currentColor"/>
+          <rect x="3" y="10.5" width="10" height="1.5" rx="0.75" fill="currentColor"/>
+        </svg>
+      );
 
-    if (!hasValue(fallbackKey) && hasValue(node?.id)) {
-      fallbackKey = node?.id as string;
-    }
+      return (
+        <div style={wrapperStyle}>
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            style={buttonStyle}
+            className="offers-action-btn"
+            onClick={() => setOpen(v => !v)}
+            disabled={!encodedId}
+            title={encodedId ? 'Open menu' : 'Missing ID'}
+            ref={btnRef}
+          >
+            {lines}
+          </button>
+          {open && menuPos && createPortal(
+            <div role="menu" style={menuStyle} className="offers-action-menu">
+              <button type="button" role="menuitem" style={itemStyle} className="offers-action-item" onClick={() => go('products')}>
+                View Products
+              </button>
+              <button type="button" role="menuitem" style={itemStyle} className="offers-action-item" onClick={() => go('basic')}>
+                View Basic Data
+              </button>
+            </div>,
+            document.body
+          )}
+        </div>
+      );
+    };
 
-    if (!hasValue(fallbackKey)) {
-      console.warn('Missing Offer ID and fallback identifier for clicked row', rowData);
-      return;
-    }
-
-    const encodedFallback = encodeURIComponent(String(fallbackKey));
-    router.push(`/offers/${encodedFallback}`);
+    return <ActionMenu />;
   }, [router]);
 
   const columnDefs: ColDef[] = useMemo(() => [
-    { field: 'Description', headerName: 'Description', filter: 'agTextColumnFilter',
-      cellClass: 'description-cell', onCellClicked: handleDescriptionClick },
+    {
+      headerName: '',
+      field: '__actions__',
+      pinned: 'left',
+      lockPinned: true,
+      lockPosition: true,
+      suppressNavigable: true,
+      resizable: false,
+      sortable: false,
+      filter: false,
+      suppressMenu: true,
+      suppressMovable: true,
+      suppressSizeToFit: true,
+      suppressColumnsToolPanel: true,
+      maxWidth: 52,
+      minWidth: 44,
+      width: 48,
+      cellStyle: { padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' },
+      cellRenderer: ActionCell,
+    },
+    { field: 'Description', headerName: 'Description', filter: 'agTextColumnFilter' },
     { field: 'Title', headerName: 'Title', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'CustomerName', headerName: 'Customer Name', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'PricingPolicyName', headerName: 'Pricing Policy', filter: 'agTextColumnFilter', enableRowGroup: true },
@@ -97,16 +172,22 @@ export default function OffersClient() {
     { field: 'SalesPerson', headerName: 'Sales Creation Person', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'OfferStatus', headerName: 'Status', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'ProjectID', headerName: 'Project ID', filter: 'agNumberColumnFilter' },
-    { field: 'ID', headerName: 'ID', filter: 'agNumberColumnFilter'},
+    { field: 'ID', headerName: 'ID', filter: 'agNumberColumnFilter' },
     { field: 'CustomerRef', headerName: 'Customer Ref', filter: 'agTextColumnFilter' },
-    { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter'},
+    { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter' },
     { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
     { field: 'OfferVersion', headerName: 'Offer Version', filter: 'agNumberColumnFilter' },
-    { field: 'Enabled', headerName: 'Enabled', filter: 'agSetColumnFilter', filterParams: {
-      values: ['true', 'false'],
-      comparator: (valueA: string, valueB: string) => (valueA === valueB ? 0 : valueA === 'true' ? -1 : 1),
-    }, enableRowGroup: true},
-  ], [handleDescriptionClick]);
+    {
+      field: 'Enabled',
+      headerName: 'Enabled',
+      filter: 'agSetColumnFilter',
+      filterParams: {
+        values: ['true', 'false'],
+        comparator: (valueA: string, valueB: string) => (valueA === valueB ? 0 : valueA === 'true' ? -1 : 1),
+      },
+      enableRowGroup: true,
+    },
+  ], [ActionCell]);
 
   return (
     <main style={mainStyle}>

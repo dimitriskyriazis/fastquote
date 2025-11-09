@@ -4,75 +4,15 @@ import React, { useMemo, type CSSProperties } from 'react';
 import type { ColDef } from 'ag-grid-community';
 import AgGridAll from '../../components/AgGridAll';
 
-type TreeOrderingParseResult = {
-  rawValue: string;
-  isNumeric: boolean;
-  segments: number[];
-};
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
-const parseTreeOrderingValue = (value: unknown): TreeOrderingParseResult => {
-  if (value === null || value === undefined) {
-    return { rawValue: '', isNumeric: false, segments: [] };
-  }
-
-  const raw = String(value).trim();
-  if (!raw) {
-    return { rawValue: '', isNumeric: false, segments: [] };
-  }
-
-  const segments = raw.split('.').map(segment => {
-    const parsed = Number(segment);
-    return Number.isFinite(parsed) ? parsed : Number.NaN;
-  });
-
-  const isNumeric = segments.every(Number.isFinite);
-  return {
-    rawValue: raw,
-    isNumeric,
-    segments: isNumeric ? segments : [],
-  };
-};
-
-const compareTreeOrderingValues = (valueA: unknown, valueB: unknown) => {
-  if (valueA == null && valueB == null) {
-    return 0;
-  }
-  if (valueA == null) {
-    return -1;
-  }
-  if (valueB == null) {
-    return 1;
-  }
-
-  const parsedA = parseTreeOrderingValue(valueA);
-  const parsedB = parseTreeOrderingValue(valueB);
-
-  if (!parsedA.rawValue && !parsedB.rawValue) {
-    return 0;
-  }
-  if (!parsedA.rawValue) {
-    return -1;
-  }
-  if (!parsedB.rawValue) {
-    return 1;
-  }
-
-  if (parsedA.isNumeric && parsedB.isNumeric) {
-    const maxLength = Math.max(parsedA.segments.length, parsedB.segments.length);
-    for (let i = 0; i < maxLength; i += 1) {
-      const segmentA = parsedA.segments[i] ?? 0;
-      const segmentB = parsedB.segments[i] ?? 0;
-      if (segmentA !== segmentB) {
-        return segmentA - segmentB;
-      }
-    }
-    return 0;
-  }
-
-  return parsedA.rawValue.localeCompare(parsedB.rawValue, undefined, {
-    numeric: true,
-    sensitivity: 'base',
-  });
+const compareTreeOrderingValues = (a: unknown, b: unknown) => {
+  const sa = String(a ?? '').trim();
+  const sb = String(b ?? '').trim();
+  if (!sa && !sb) return 0;  // both empty/null
+  if (!sa) return -1;        // empty/null first
+  if (!sb) return 1;
+  return collator.compare(sa, sb);
 };
 
 type Props = {
