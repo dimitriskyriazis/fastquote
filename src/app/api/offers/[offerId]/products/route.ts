@@ -279,9 +279,8 @@ export async function POST(
     const recordset = result.recordset ?? [];
     const rowCount = recordset.length > 0 ? Number(recordset[0].__totalCount ?? 0) : 0;
     const rows: ProductRow[] = recordset.map(row => {
-      const { __totalCount, TreeOrderingHierarchy, ...rest } = row;
+      const { __totalCount, ...rest } = row;
       void __totalCount;
-      void TreeOrderingHierarchy;
       return rest;
     });
 
