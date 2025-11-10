@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, type CSSProperties, useCallback, useState } from 'react';
+import React, { useMemo, type CSSProperties, useCallback } from 'react';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
 const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
@@ -26,7 +26,7 @@ const compareTreeOrderingValues = (a: unknown, b: unknown) => {
 type Props = {
   oID: string;
   endpoint?: string;
-  headerInset?: boolean;
+  manualMode?: boolean;
 };
 
 const panelContainerStyle: CSSProperties = {
@@ -46,8 +46,7 @@ const productsGridWrapperStyle: CSSProperties = {
 const buildEndpointForOffer = (oID: string) =>
   `/api/offers/${encodeURIComponent(oID)}/products`;
 
-export default function OfferProductsPanel({ oID, endpoint, headerInset }: Props) {
-  const [manualMode, setManualMode] = useState(false);
+export default function OfferProductsPanel({ oID, endpoint, manualMode = false }: Props) {
   const resolvedEndpoint = useMemo(() => {
     if (endpoint) return endpoint;
     return buildEndpointForOffer(oID);
