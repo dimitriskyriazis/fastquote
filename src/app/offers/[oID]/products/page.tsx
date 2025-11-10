@@ -18,8 +18,17 @@ const headingStyle = {
   fontSize: '24px',
 };
 
-const backLinkStyle = {
-  alignSelf: 'flex-start' as const,
+const headerRowStyle = {
+  display: 'flex',
+  alignItems: 'baseline',
+  justifyContent: 'center' as const,
+  position: 'relative' as const,
+  padding: '4px 0',
+};
+
+const backLinkAbsoluteStyle = {
+  position: 'absolute' as const,
+  left: 0,
 };
 
 const buildHeading = (oID: string) =>
@@ -32,11 +41,13 @@ export default async function Page({ params }: { params: Promise<{ oID: string }
 
   return (
     <main style={pageShellStyle}>
-      <Link href="/offers" className="link-quiet" style={backLinkStyle}>
-        <span aria-hidden="true">←</span>
-        Back to offers
-      </Link>
-      <h1 style={headingStyle}>{headingText}</h1>
+      <div style={headerRowStyle}>
+        <Link href="/offers" className="link-quiet" style={backLinkAbsoluteStyle}>
+          <span aria-hidden="true">←</span>
+          Back to offers
+        </Link>
+        <h1 style={headingStyle}>{headingText}</h1>
+      </div>
       <OfferProductsPanel oID={decodedId} />
     </main>
   );

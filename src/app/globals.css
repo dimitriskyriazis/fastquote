@@ -24,6 +24,8 @@
   --detail-chip-active-bg: #171717;
   --detail-chip-active-fg: #ffffff;
   --detail-chip-inactive-fg: #475569;
+  --gap-hover-color: rgba(59, 130, 246, 0.7); /* blue-500 @ 70% */
+  --row-hover-bg: rgba(59, 130, 246, 0.25);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -43,6 +45,8 @@
     --detail-chip-active-bg: #171717;
     --detail-chip-active-fg: #ffffff;
     --detail-chip-inactive-fg: #475569;
+    --gap-hover-color: rgba(96, 165, 250, 0.8); /* blue-400 @ 80% */
+    --row-hover-bg: rgba(96, 165, 250, 0.3);
   }
 }
 
@@ -89,13 +93,26 @@ body {
   outline: none;
 }
 
-/* Prefer per-cell hover, not whole-row hover */
-.ag-theme-quartz {
-  --ag-row-hover-color: transparent; /* disable row hover color */
+/* Prefer per-cell hover only; overlays drive the richer effect */
+.ag-theme-quartz { --ag-row-hover-color: transparent; }
+.ag-theme-quartz .ag-row-hover .ag-cell { background: transparent !important; }
+.ag-theme-quartz .ag-cell { color: #0f172a; }
+.ag-theme-quartz .ag-cell:hover { background: var(--tab-hover-bg) !important; }
+
+/* Gap hover line appearance (positioned inline in React) */
+.gap-hover-line { height: 3px; background: var(--gap-hover-color); border-radius: 2px; pointer-events: none; }
+.row-hover-overlay { background: var(--row-hover-bg); pointer-events: none; }
+
+/* Generic drag handle visuals */
+.drag-handle { cursor: grab; outline: none; border: none; background: transparent; }
+.drag-handle:active { cursor: grabbing; }
+.drag-handle:focus, .drag-handle:focus-visible { outline: none; box-shadow: none; }
+
+/* Hide row selection visuals so dragging doesn't highlight */
+.ag-theme-quartz .ag-row-selected,
+.ag-theme-quartz .ag-row-selected .ag-cell {
+  background: transparent !important;
 }
-.ag-theme-quartz .ag-row-hover .ag-cell {
-  background: transparent !important; /* ensure no row-wide hover */
-}
-.ag-theme-quartz .ag-cell:hover {
-  background: var(--tab-hover-bg) !important; /* lighter, not black */
-}
+
+/* While dragging, keep a consistent cursor */
+.dragging, .dragging * { cursor: grabbing !important; }

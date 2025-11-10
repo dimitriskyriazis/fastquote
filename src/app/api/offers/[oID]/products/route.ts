@@ -78,7 +78,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   PartNumber: 'p.PartNumber',
   ModelNumber: 'p.ModelNumber',
   Quantity: 'od.Quantity',
-  Description: 'p.Description',
+  Description: 'od.ProductDescription',
   CustomerDiscount: 'od.CustomerDiscount',
   NetUnitPrice: 'od.NetUnitPrice',
   TotalPrice: 'od.TotalPrice',
@@ -189,7 +189,6 @@ function buildOrder(sortModel: GridRequest['sortModel']) {
       const direction = entry.sort === 'desc' ? 'DESC' : 'ASC';
       return `${expression} ${direction}`;
     });
-
   return parts.length ? `ORDER BY ${parts.join(', ')}` : '';
 }
 
@@ -231,7 +230,6 @@ export async function POST(
     }
 
     const pool = await getPool();
-
     const { clauses, params: filterParams } = buildFilterClauses(gridRequest.filterModel);
     const whereClauses = [`od.OfferID = @__id`, ...clauses];
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
@@ -249,7 +247,7 @@ export async function POST(
         p.PartNumber,
         p.ModelNumber,
         od.Quantity,
-        p.Description,
+        od.ProductDescription AS Description,
         od.CustomerDiscount,
         od.NetUnitPrice,
         od.TotalPrice,
@@ -262,11 +260,11 @@ export async function POST(
         od.GrossProfit,
         od.TotalCost
       FROM dbo.OfferDetails od
-        INNER JOIN dbo.Products p ON od.ProductID = p.ID
-        INNER JOIN dbo.Brands b ON p.BrandID = b.ID
+        LEFT OUTER JOIN dbo.Products p ON od.ProductID = p.ID
+        LEFT OUTER JOIN dbo.Brands b ON p.BrandID = b.ID
       ${whereSql}
-      ${orderSql}
-      ${pagingSql}
+        ${orderSql}
+        ${pagingSql}
     `;
 
     const sqlRequest = pool.request();
