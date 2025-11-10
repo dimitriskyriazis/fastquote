@@ -1,3 +1,6 @@
+'use client';
+
+import React, { useState } from 'react';
 import Link from 'next/link';
 import OfferProductsPanel from '../OfferProductsPanel';
 
@@ -34,10 +37,10 @@ const backLinkAbsoluteStyle = {
 const buildHeading = (oID: string) =>
   /^[0-9]+$/.test(oID) ? `Offer ${oID}` : oID;
 
-export default async function Page({ params }: { params: Promise<{ oID: string }> }) {
-  const { oID } = await params;
-  const decodedId = decodeURIComponent(oID);
+export default function Page({ params }: { params: { oID: string } }) {
+  const decodedId = decodeURIComponent(params.oID);
   const headingText = `${buildHeading(decodedId)} - Products`;
+  const [manualMode, setManualMode] = useState(false);
 
   return (
     <main style={pageShellStyle}>
@@ -47,8 +50,16 @@ export default async function Page({ params }: { params: Promise<{ oID: string }
           Back to offers
         </Link>
         <h1 style={headingStyle}>{headingText}</h1>
+        <button
+          type="button"
+          className={`manual-mode-toggle${manualMode ? ' active' : ''}`}
+          style={{ position: 'absolute', right: 0 }}
+          onClick={() => setManualMode((prev) => !prev)}
+        >
+          Manual Mode
+        </button>
       </div>
-      <OfferProductsPanel oID={decodedId} />
+      <OfferProductsPanel oID={decodedId} manualMode={manualMode} />
     </main>
   );
 }

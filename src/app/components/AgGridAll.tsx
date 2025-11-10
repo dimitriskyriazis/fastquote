@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useRef, useCallback, useState, type CSSProperties } from 'react';
+import React, { useMemo, useRef, useCallback, useState, useEffect, type CSSProperties } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
   ModuleRegistry,
@@ -12,6 +12,7 @@ import {
   GridApi,
   RowNode,
   GetRowIdParams,
+  CellValueChangedEvent,
 } from 'ag-grid-community';
 import { AllEnterpriseModule, LicenseManager } from 'ag-grid-enterprise';
 
@@ -30,6 +31,7 @@ type Props = {
   endpoint: string;
   columnDefs: ColDef[];
   defaultColDef?: ColDef;
+  manualMode?: boolean;
 };
 
 type RowData = Record<string, unknown>;
@@ -347,7 +349,7 @@ const gridShellStyle: CSSProperties = {
   position: 'relative',
 };
 
-export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props) {
+export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualMode = false }: Props) {
   const gridRef = useRef<AgGridReact<RowData> | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const [gapHover, setGapHover] = useState<GapHoverState | null>(null);
@@ -435,6 +437,19 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
       event.api.setFilterModel(nextModel);
     }
   }, []);
+
+  useEffect(() => {
+    const api = gridRef.current?.api;
+    if (!api) return;
+    api.applyColumnState({
+      state: [{ colId: 'TreeOrdering', sort: 'asc', sortIndex: 0 }],
+      defaultState: { sort: null },
+      applyOrder: true,
+    });
+    if (!manualMode) {
+      reorderRowsByTreeOrdering(api);
+    }
+  }, [manualMode]);
 
   const updateHoverFromPoint = useCallback((_clientX: number, clientY: number, fromDrag = false) => {
     if (!fromDrag) return;
@@ -624,6 +639,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
     if (!api) return;
 
     const gap = gapHover;
+    const hoveredRowTarget = rowHover;
     setGapHover(null);
     setRowHover(null);
     setIsDragging(false);
@@ -636,8 +652,8 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
       }
     }
 
-    if (!gap) {
-      return; // Row-level drops will be considered later
+    if (!gap && !hoveredRowTarget) {
+      return;
     }
 
     const rawPayload = ev.dataTransfer?.getData('application/x-telquote-row+json')
@@ -667,26 +683,68 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
     const sourceNode = resolveNode(payload.rowId, payload.rowIndex);
     if (!sourceNode) return;
 
-    const parentPath = Array.isArray(gap.parentPath) ? gap.parentPath.slice() : [];
     const sourcePath = parseTreeOrderingPath((sourceNode.data as RowData | undefined)?.TreeOrdering ?? null);
     const sourceParentPath = sourcePath.slice(0, -1);
-    const parentIsAncestor = parentPath.length < sourceParentPath.length
-      && arraysEqual(parentPath, sourceParentPath.slice(0, parentPath.length));
-    if (parentIsAncestor) {
-      return;
+
+    const findNodeForPath = (path: number[]): RowNode<RowData> | null => {
+      let match: RowNode<RowData> | null = null;
+      if (path.length === 0) return null;
+      api.forEachNode((node) => {
+        if (match || !node) return;
+        const rowData = node.data as RowData | undefined;
+        const nodePath = parseTreeOrderingPath(
+          (rowData as { TreeOrdering?: string | null } | undefined)?.TreeOrdering ?? null,
+        );
+        if (arraysEqual(nodePath, path)) {
+          match = node as RowNode<RowData>;
+        }
+      });
+      return match;
+    };
+
+    const executeMove = (targetParentPath: number[], beforeRowId: string | null, beforeRowIndex: number | null, afterRowId: string | null, afterRowIndex: number | null, position: 'before' | 'after') => {
+      const parentIsAncestor = targetParentPath.length < sourceParentPath.length
+        && arraysEqual(targetParentPath, sourceParentPath.slice(0, targetParentPath.length));
+      const targetIsDescendant = targetParentPath.length >= sourcePath.length
+        && arraysEqual(targetParentPath.slice(0, sourcePath.length), sourcePath);
+      if (parentIsAncestor || targetIsDescendant || arraysEqual(targetParentPath, sourcePath)) {
+        return false;
+      }
+      if (targetParentPath.length > 0) {
+        const parentNode = findNodeForPath(targetParentPath);
+        const parentData = parentNode?.data as RowData | undefined;
+        const parentBrand = (parentData as { BrandName?: string | null } | undefined)?.BrandName;
+        const parentIsProduct = Boolean(parentBrand && parentBrand.trim().length > 0);
+        if (parentIsProduct) return false;
+      }
+      return applyOrderingMove(
+        api,
+        sourceNode,
+        targetParentPath,
+        beforeRowId,
+        beforeRowIndex,
+        afterRowId,
+        afterRowIndex,
+        position,
+      );
+    };
+
+    let moved = false;
+    if (hoveredRowTarget) {
+      const targetBrand = (hoveredRowTarget.data as RowData | undefined)?.BrandName;
+      const targetIsProduct = Boolean(targetBrand && String(targetBrand).trim().length > 0);
+      if (!targetIsProduct) {
+        const parentPath = hoveredRowTarget.path.slice();
+        moved = executeMove(parentPath, null, null, null, null, 'after');
+      }
     }
-    const moved = applyOrderingMove(
-      api,
-      sourceNode,
-      parentPath,
-      gap.beforeRowId,
-      gap.beforeRowIndex,
-      gap.afterRowId,
-      gap.afterRowIndex,
-      gap.position,
-    );
+    if (!moved && gap) {
+      const parentPath = Array.isArray(gap.parentPath) ? gap.parentPath.slice() : [];
+      moved = executeMove(parentPath, gap.beforeRowId, gap.beforeRowIndex, gap.afterRowId, gap.afterRowIndex, gap.position);
+    }
+
     if (!moved) {
-      console.warn('Drop detected but TreeOrdering could not be updated', { payload, gap });
+      console.warn('Drop detected but TreeOrdering could not be updated', { payload, gap, hoveredRowTarget });
       return;
     }
 
@@ -695,9 +753,23 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
       defaultState: { sort: null },
       applyOrder: true,
     });
-    api.refreshCells({ columns: ['TreeOrdering'], force: true });
-    reorderRowsByTreeOrdering(api);
-  }, [gapHover]);
+    if (!manualMode) {
+      reorderRowsByTreeOrdering(api);
+    } else {
+      api.refreshCells({ columns: ['TreeOrdering', 'BrandName'], force: true });
+    }
+  }, [gapHover, rowHover, manualMode]);
+
+  const handleCellValueChanged = useCallback((event: CellValueChangedEvent<RowData>) => {
+    if (!manualMode) return;
+    if (event.colDef.field !== 'TreeOrdering') return;
+    event.api.applyColumnState({
+      state: [{ colId: 'TreeOrdering', sort: 'asc', sortIndex: 0 }],
+      defaultState: { sort: null },
+      applyOrder: true,
+    });
+    reorderRowsByTreeOrdering(event.api);
+  }, [manualMode]);
 
   const rowOverlayStyle = {
     position: 'absolute' as const,
@@ -773,6 +845,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef }: Props
 
           onGridReady={onGridReady}
           onFilterChanged={handleFilterChanged}
+          onCellValueChanged={handleCellValueChanged}
         />
         {/* Row hover overlay */}
         <div className="row-hover-overlay" style={rowOverlayStyle} />

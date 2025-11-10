@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, type CSSProperties, useCallback } from 'react';
+import React, { useMemo, type CSSProperties, useCallback, useState } from 'react';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
 const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
@@ -26,6 +26,7 @@ const compareTreeOrderingValues = (a: unknown, b: unknown) => {
 type Props = {
   oID: string;
   endpoint?: string;
+  headerInset?: boolean;
 };
 
 const panelContainerStyle: CSSProperties = {
@@ -45,7 +46,8 @@ const productsGridWrapperStyle: CSSProperties = {
 const buildEndpointForOffer = (oID: string) =>
   `/api/offers/${encodeURIComponent(oID)}/products`;
 
-export default function OfferProductsPanel({ oID, endpoint }: Props) {
+export default function OfferProductsPanel({ oID, endpoint, headerInset }: Props) {
+  const [manualMode, setManualMode] = useState(false);
   const resolvedEndpoint = useMemo(() => {
     if (endpoint) return endpoint;
     return buildEndpointForOffer(oID);
@@ -250,8 +252,17 @@ export default function OfferProductsPanel({ oID, endpoint }: Props) {
       sort: 'asc',
       sortingOrder: ['asc', 'desc', null],
       sortIndex: 0,
+      editable: manualMode,
+      singleClickEdit: manualMode,
     },
-    { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter' },
+    {
+      field: 'BrandName',
+      headerName: 'Brand',
+      filter: 'agTextColumnFilter',
+      cellClassRules: {
+        'brand-product-cell': (params) => Boolean((params.data as { BrandName?: string | null })?.BrandName),
+      },
+    },
     { field: 'PartNumber', headerName: 'Part Number', filter: 'agTextColumnFilter' },
     { field: 'ModelNumber', headerName: 'Model', filter: 'agTextColumnFilter' },
     { field: 'Quantity', headerName: 'Qty', filter: 'agNumberColumnFilter' },
@@ -267,12 +278,16 @@ export default function OfferProductsPanel({ oID, endpoint }: Props) {
     { field: 'Margin', headerName: 'Margin', filter: 'agNumberColumnFilter' },
     { field: 'GrossProfit', headerName: 'Gross Profit', filter: 'agNumberColumnFilter' },
     { field: 'TotalCost', headerName: 'Total Cost', filter: 'agNumberColumnFilter' },
-  ], [RowDragHandle]);
+  ], [RowDragHandle, manualMode]);
 
   return (
     <div style={panelContainerStyle}>
-      <div style={productsGridWrapperStyle}>
-        <AgGridAll endpoint={resolvedEndpoint} columnDefs={productColumnDefs} />
+      <div style={productsGridWrapperStyle} className="offer-products-grid">
+        <AgGridAll
+          endpoint={resolvedEndpoint}
+          columnDefs={productColumnDefs}
+          manualMode={manualMode}
+        />
       </div>
     </div>
   );
