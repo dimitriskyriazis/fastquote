@@ -94,11 +94,38 @@ export default function OfferProductsPanel({ oID, endpoint }: Props) {
     let cleanupListeners: (() => void) | null = null;
     let dx = 0; // cursor offset within row at drag start
     let dy = 0;
+    let dropCleanupHandler: (() => void) | null = null;
+
+    const cleanupDragArtifacts = () => {
+      if (cleanupListeners) {
+        cleanupListeners();
+        cleanupListeners = null;
+      }
+      document.documentElement.classList.remove('dragging');
+      if (previewEl && previewEl.parentNode) {
+        previewEl.parentNode.removeChild(previewEl);
+      }
+      previewEl = null;
+      if (overlayEl && overlayEl.parentNode) {
+        overlayEl.parentNode.removeChild(overlayEl);
+      }
+      overlayEl = null;
+      if (dropCleanupHandler && typeof window !== 'undefined') {
+        window.removeEventListener('telquote-row-drop', dropCleanupHandler);
+      }
+      dropCleanupHandler = null;
+    };
 
     const onDragStart = (e: React.DragEvent) => {
-      // Provide row data for drop targets; drop logic to be defined later
+      // Provide row identity/data for drop targets so TreeOrdering can be recomputed client-side
+      const resolvedRowIndex = typeof params.node?.rowIndex === 'number'
+        ? params.node.rowIndex
+        : null;
+
       const payload = {
         type: 'offer-product-row',
+        rowId: params.node?.id ?? null,
+        rowIndex: resolvedRowIndex,
         data: params.data ?? null,
       };
       try {
@@ -164,6 +191,13 @@ export default function OfferProductsPanel({ oID, endpoint }: Props) {
         document.body.removeEventListener('dragover', handler, opts);
       };
       document.documentElement.classList.add('dragging');
+
+      if (typeof window !== 'undefined') {
+        dropCleanupHandler = () => {
+          cleanupDragArtifacts();
+        };
+        window.addEventListener('telquote-row-drop', dropCleanupHandler);
+      }
     };
 
     return (
@@ -178,12 +212,7 @@ export default function OfferProductsPanel({ oID, endpoint }: Props) {
           onDragStart={onDragStart}
           onDragEnd={(e) => {
             e.stopPropagation();
-            if (cleanupListeners) { cleanupListeners(); cleanupListeners = null; }
-            document.documentElement.classList.remove('dragging');
-            if (previewEl && previewEl.parentNode) previewEl.parentNode.removeChild(previewEl);
-            previewEl = null;
-            if (overlayEl && overlayEl.parentNode) overlayEl.parentNode.removeChild(overlayEl);
-            overlayEl = null;
+            cleanupDragArtifacts();
           }}
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
           onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
@@ -218,6 +247,9 @@ export default function OfferProductsPanel({ oID, endpoint }: Props) {
       maxWidth: 90,
       filter: 'agTextColumnFilter',
       comparator: compareTreeOrderingValues,
+      sort: 'asc',
+      sortingOrder: ['asc', 'desc', null],
+      sortIndex: 0,
     },
     { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter' },
     { field: 'PartNumber', headerName: 'Part Number', filter: 'agTextColumnFilter' },

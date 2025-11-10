@@ -51,6 +51,7 @@ const TREE_ORDERING_HIERARCHY_EXPRESSION = `
 `;
 
 type ProductRow = {
+  OfferDetailID: number | null;
   TreeOrdering: string | null;
   BrandName: string | null;
   PartNumber: string | null;
@@ -73,6 +74,7 @@ type ProductRow = {
 type ProductRowWithCount = ProductRow & { __totalCount: number | bigint | null };
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
+  OfferDetailID: 'od.ID',
   TreeOrdering: 'od.TreeOrdering',
   BrandName: 'b.Name',
   PartNumber: 'p.PartNumber',
@@ -241,6 +243,7 @@ export async function POST(
     const query = `
       SELECT
         COUNT_BIG(1) OVER () AS __totalCount,
+        od.ID AS OfferDetailID,
         od.TreeOrdering AS TreeOrdering,
         ${TREE_ORDERING_HIERARCHY_EXPRESSION} AS TreeOrderingHierarchy,
         b.Name AS BrandName,
