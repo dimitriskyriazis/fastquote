@@ -54,6 +54,8 @@ type ProductRow = {
   OfferDetailID: number | null;
   ParentOfferDetailID: number | null;
   TreeOrdering: string | null;
+  IsPrintable: boolean | null;
+  IsComment: boolean | null;
   BrandName: string | null;
   PartNumber: string | null;
   ModelNumber: string | null;
@@ -88,6 +90,8 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferDetailID: 'od.ID',
   ParentOfferDetailID: 'od.ParentOfferDetailID',
   TreeOrdering: 'od.TreeOrdering',
+  IsPrintable: 'od.IsPrintable',
+  IsComment: 'od.IsComment',
   BrandName: 'b.Name',
   PartNumber: 'p.PartNumber',
   WebLink: 'p.WebLink',
@@ -275,6 +279,8 @@ export async function POST(
         od.ID AS OfferDetailID,
         od.ParentOfferDetailID,
         od.TreeOrdering AS TreeOrdering,
+        od.IsPrintable,
+        od.IsComment,
         ${TREE_ORDERING_HIERARCHY_EXPRESSION} AS TreeOrderingHierarchy,
         b.Name AS BrandName,
         p.PartNumber,

@@ -1,7 +1,13 @@
 'use client';
 
 import React, { useMemo, type CSSProperties, useCallback } from 'react';
-import type { ColDef, ICellRendererParams, ValueFormatterParams } from 'ag-grid-community';
+import type {
+  ColDef,
+  ICellRendererParams,
+  ValueFormatterParams,
+  ValueGetterParams,
+  RowClassParams,
+} from 'ag-grid-community';
 import dynamic from 'next/dynamic';
 const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
   ssr: false,
@@ -11,10 +17,16 @@ const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
     </div>
   ),
 });
+import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory } from '../../../lib/offerProductRows';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const decimalFormatter = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const plainNumberFormatter = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 });
 
@@ -31,19 +43,28 @@ const coerceNumber = (value: unknown) => {
 
 const formatPercentageValue = (value: unknown) => {
   const num = coerceNumber(value);
-  if (num == null) return '';
+  if (num == null || Object.is(num, 0)) return '';
   return `${decimalFormatter.format(num)} %`;
 };
 
 const formatEuroValue = (value: unknown) => {
   const num = coerceNumber(value);
-  if (num == null) return '';
+  if (num == null || Object.is(num, 0)) return '';
   return `${decimalFormatter.format(num)} €`;
 };
 
 type FormatterParams = ValueFormatterParams<Record<string, unknown>, unknown>;
 const percentageFormatter = ({ value }: FormatterParams) => formatPercentageValue(value);
 const euroFormatter = ({ value }: FormatterParams) => formatEuroValue(value);
+const zeroBlankNumberFormatter = ({ value }: FormatterParams) => {
+  const num = coerceNumber(value);
+  if (num == null) {
+    if (value == null) return '';
+    return typeof value === 'string' ? value : String(value);
+  }
+  if (Object.is(num, 0)) return '';
+  return plainNumberFormatter.format(num);
+};
 
 const compareTreeOrderingValues = (a: unknown, b: unknown) => {
   const sa = String(a ?? '').trim();
@@ -52,6 +73,57 @@ const compareTreeOrderingValues = (a: unknown, b: unknown) => {
   if (!sa) return -1;        // empty/null first
   if (!sb) return 1;
   return collator.compare(sa, sb);
+};
+
+const parseTreeOrderingPath = (value: unknown): number[] => {
+  if (value == null) return [];
+  const trimmed = String(value).trim();
+  if (!trimmed) return [];
+  return trimmed
+    .split('.')
+    .map((segment) => Number.parseInt(segment, 10))
+    .filter((segment) => Number.isFinite(segment));
+};
+
+const buildCategoryAggregateGetter = (field: 'TotalPrice' | 'TotalNet' | 'TotalCost') => (
+  params: ValueGetterParams<Record<string, unknown>, unknown>,
+) => {
+  const rowData = params.data ?? null;
+  if (!isOfferProductCategory(rowData)) {
+    return (rowData as Record<string, unknown> | undefined)?.[field] ?? null;
+  }
+  const path = parseTreeOrderingPath((rowData as { TreeOrdering?: string | null })?.TreeOrdering);
+  if (path.length === 0 || !params.api) {
+    return (rowData as Record<string, unknown> | undefined)?.[field] ?? null;
+  }
+  let sum = 0;
+  let count = 0;
+  params.api.forEachNode((node) => {
+    if (!node?.data || node === params.node) return;
+    const candidateData = node.data as Record<string, unknown>;
+    if (!isOfferProductProduct(candidateData)) return;
+    const candidatePath = parseTreeOrderingPath((candidateData as { TreeOrdering?: string | null }).TreeOrdering);
+    if (candidatePath.length <= path.length) return;
+    const isDescendant = path.every((segment, idx) => candidatePath[idx] === segment);
+    if (!isDescendant) return;
+    const value = coerceNumber((candidateData as Record<string, unknown>)[field]);
+    if (value == null) return;
+    sum += value;
+    count += 1;
+  });
+  if (count === 0) {
+    return (rowData as Record<string, unknown> | undefined)?.[field] ?? null;
+  }
+  return sum;
+};
+
+const categoryTotalPriceGetter = buildCategoryAggregateGetter('TotalPrice');
+const categoryTotalNetGetter = buildCategoryAggregateGetter('TotalNet');
+const categoryTotalCostGetter = buildCategoryAggregateGetter('TotalCost');
+
+const productAccentCellClassRules = {
+  'offer-products-grid__cell--product-accent': (params: { data?: Record<string, unknown> | null }) =>
+    isOfferProductProduct(params.data),
 };
 
 type Props = {
@@ -82,6 +154,22 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
     if (endpoint) return endpoint;
     return buildEndpointForOffer(oID);
   }, [endpoint, oID]);
+
+  const getRowClass = useCallback((params: RowClassParams<Record<string, unknown>>) => {
+    const rowType = resolveOfferProductRowType(params.data);
+    switch (rowType) {
+      case 'category':
+        return 'offer-row offer-row--category';
+      case 'product':
+        return 'offer-row offer-row--product';
+      case 'printable-comment':
+        return 'offer-row offer-row--printable-comment';
+      case 'non-printable-comment':
+        return 'offer-row offer-row--nonprintable-comment';
+      default:
+        return undefined;
+    }
+  }, []);
 
   // Row drag handle: starts native drag with row data (no visible selection)
   const RowDragHandle = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
@@ -331,9 +419,7 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
       field: 'BrandName',
       headerName: 'Brand',
       filter: 'agTextColumnFilter',
-      cellClassRules: {
-        'brand-product-cell': (params) => Boolean((params.data as { BrandName?: string | null })?.BrandName),
-      },
+      cellClassRules: productAccentCellClassRules,
     },
     {
       field: 'PartNumber',
@@ -342,7 +428,13 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
       cellRenderer: PartNumberCell,
     },
     { field: 'ModelNumber', headerName: 'Model Number', filter: 'agTextColumnFilter' },
-    { field: 'Quantity', headerName: 'Qty', filter: 'agNumberColumnFilter', type: 'numericColumn' },
+    {
+      field: 'Quantity',
+      headerName: 'Qty',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      valueFormatter: zeroBlankNumberFormatter,
+    },
     { field: 'Description', headerName: 'Description', minWidth: 220, filter: 'agTextColumnFilter' },
     {
       field: 'CustomerDiscount',
@@ -363,20 +455,25 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
       headerName: 'Total List Price',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      valueGetter: categoryTotalPriceGetter,
       valueFormatter: euroFormatter,
+      cellClassRules: productAccentCellClassRules,
     },
     {
       field: 'TotalNet',
       headerName: 'Total Net',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      valueGetter: categoryTotalNetGetter,
       valueFormatter: euroFormatter,
+      cellClassRules: productAccentCellClassRules,
     },
     {
       field: 'Warranty',
       headerName: 'Warranty',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      valueFormatter: zeroBlankNumberFormatter,
     },
     {
       field: 'ListPrice',
@@ -412,6 +509,7 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: euroFormatter,
+      cellClassRules: productAccentCellClassRules,
     },
     {
       field: 'TotalCost',
@@ -419,6 +517,8 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: euroFormatter,
+      valueGetter: categoryTotalCostGetter,
+      cellClassRules: productAccentCellClassRules,
     },
   ], [RowDragHandle, PartNumberCell, manualMode]);
 
@@ -429,6 +529,7 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
           endpoint={resolvedEndpoint}
           columnDefs={productColumnDefs}
           manualMode={manualMode}
+          getRowClass={getRowClass}
         />
       </div>
     </div>

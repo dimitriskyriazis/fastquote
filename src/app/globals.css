@@ -159,8 +159,28 @@ body {
   transform: translateY(0);
 }
 
-.offer-products-grid .brand-product-cell {
-  background-color: rgba(191, 219, 254, 0.5);
+.offer-products-grid .offer-row--category .ag-cell,
+.offer-products-grid .offer-row--category .ag-cell:hover {
+  background-color: #e5e7eb !important;
+}
+
+.offer-products-grid .offer-row--printable-comment .ag-cell,
+.offer-products-grid .offer-row--printable-comment .ag-cell:hover {
+  background-color: #e0f2fe !important;
+}
+
+.offer-products-grid .offer-row--nonprintable-comment .ag-cell,
+.offer-products-grid .offer-row--nonprintable-comment .ag-cell:hover {
+  background-color: #fee2e2 !important;
+}
+
+.offer-products-grid .offer-row--product .ag-cell {
+  background-color: #ffffff;
+}
+
+.offer-products-grid .offer-products-grid__cell--product-accent,
+.offer-products-grid .offer-products-grid__cell--product-accent:hover {
+  background-color: #f6eddc !important;
 }
 
 .manual-mode-toggle {

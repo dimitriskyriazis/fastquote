@@ -13,8 +13,10 @@ import {
   RowNode,
   GetRowIdParams,
   CellValueChangedEvent,
+  RowClassParams,
 } from 'ag-grid-community';
 import { AllEnterpriseModule, LicenseManager } from 'ag-grid-enterprise';
+import { resolveOfferProductRowType } from '../../lib/offerProductRows';
 
 // Prevent double registration during HMR/StrictMode
 declare global {
@@ -32,6 +34,7 @@ type Props = {
   columnDefs: ColDef[];
   defaultColDef?: ColDef;
   manualMode?: boolean;
+  getRowClass?: (params: RowClassParams<RowData>) => string | string[] | undefined | null;
 };
 
 type RowData = Record<string, unknown>;
@@ -84,7 +87,7 @@ type NodeOrderingInfo = {
   children: NodeOrderingInfo[];
 };
 
-type MoveFailureReason = 'target-product' | 'descendant' | 'invalid-target';
+type MoveFailureReason = 'target-non-category' | 'descendant' | 'invalid-target';
 
 const ROOT_PARENT_KEY = '__root__';
 const PERSISTED_TREE_KEY = '__persistedTreeOrdering';
@@ -254,7 +257,7 @@ const isDescendantOf = (candidateParent: NodeOrderingInfo | null, potentialAnces
 
 const showInvalidDropMessage = (reason: MoveFailureReason | null) => {
   const messages: Record<MoveFailureReason, string> = {
-    'target-product': 'Products cannot contain rows inside them. Drop into a category row or gap.',
+    'target-non-category': 'Only categories can contain rows. Drop into a category row or a gap between rows.',
     descendant: 'You cannot drop a row into itself or its descendants.',
     'invalid-target': 'That drop location is not allowed. Try a highlighted gap or category row.',
   };
@@ -305,9 +308,10 @@ const applyOrderingMove = (
 
   if (targetParentNode) {
     const parentData = targetParentNode.node.data as RowData | undefined;
-    const parentBrand = (parentData as { BrandName?: string | null } | undefined)?.BrandName;
-    const parentIsProduct = Boolean(parentBrand && parentBrand.trim().length > 0);
-    if (parentIsProduct) return { success: false, reason: 'target-product' };
+    const parentType = resolveOfferProductRowType(parentData);
+    if (parentType !== 'unknown' && parentType !== 'category') {
+      return { success: false, reason: 'target-non-category' };
+    }
   }
 
   if (isDescendantOf(targetParentNode, sourceInfo)) {
@@ -471,7 +475,9 @@ const gridShellStyle: CSSProperties = {
   position: 'relative',
 };
 
-export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualMode = false }: Props) {
+const TREE_DEPENDENT_COLUMNS = ['TreeOrdering', 'BrandName', 'TotalPrice', 'TotalNet', 'TotalCost'];
+
+export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualMode = false, getRowClass }: Props) {
   const gridRef = useRef<AgGridReact<RowData> | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const [gapHover, setGapHover] = useState<GapHoverState | null>(null);
@@ -723,7 +729,10 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     }
 
     if (hoveredRow) {
-      return { row: hoveredRow, gap: null, dragging: true };
+      const rowType = resolveOfferProductRowType(hoveredRow.data);
+      if (rowType === 'unknown' || rowType === 'category') {
+        return { row: hoveredRow, gap: null, dragging: true };
+      }
     }
 
     if (gapCandidate) {
@@ -906,9 +915,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
       applyOrder: true,
     });
     reorderRowsByTreeOrdering(api);
-    if (manualMode) {
-      api.refreshCells({ columns: ['TreeOrdering', 'BrandName'], force: true });
-    }
+    api.refreshCells({ columns: TREE_DEPENDENT_COLUMNS, force: true });
     void persistTreeOrderingChanges();
   }, [gapHover, rowHover, manualMode, computeHoverState, persistTreeOrderingChanges]);
 
@@ -921,6 +928,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
       applyOrder: true,
     });
     reorderRowsByTreeOrdering(event.api);
+    event.api.refreshCells({ columns: TREE_DEPENDENT_COLUMNS, force: true });
     void persistTreeOrderingChanges();
   }, [manualMode, persistTreeOrderingChanges]);
 
@@ -972,6 +980,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
           columnDefs={columnDefs}
           defaultColDef={dcd}
           getRowId={getRowId}
+          getRowClass={getRowClass}
 
           // Server-Side model
           rowModelType="serverSide"
