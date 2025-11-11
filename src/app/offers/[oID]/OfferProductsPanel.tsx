@@ -119,6 +119,9 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
         <circle cx="10" cy="11" r="1.5" fill="currentColor" />
       </svg>
     );
+    const preventRangeSelection = (event: React.SyntheticEvent) => {
+      event.stopPropagation();
+    };
 
     // Temporary elements/listeners used only during drag
     let previewEl: HTMLElement | null = null; // 1x1 px canvas to hide native ghost
@@ -233,7 +236,11 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
     };
 
     return (
-      <div style={wrapperStyle}>
+      <div
+        style={wrapperStyle}
+        onMouseDownCapture={preventRangeSelection}
+        onPointerDownCapture={preventRangeSelection}
+      >
         <button
           type="button"
           aria-label="Drag row"
@@ -242,6 +249,8 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
           className="drag-handle"
           draggable
           onDragStart={onDragStart}
+          onMouseDownCapture={preventRangeSelection}
+          onPointerDownCapture={preventRangeSelection}
           onDragEnd={(e) => {
             e.stopPropagation();
             cleanupDragArtifacts();
@@ -253,6 +262,38 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
           {sixDots}
         </button>
       </div>
+    );
+  }, []);
+
+  const PartNumberCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
+    const rawValue = params.value;
+    if (rawValue == null) return '';
+    const partNumber = String(rawValue).trim();
+    if (!partNumber) return '';
+
+    const rawLink = (params.data as { WebLink?: string | null } | undefined)?.WebLink;
+    const normalizedLink = typeof rawLink === 'string' ? rawLink.trim() : '';
+    if (!normalizedLink) return partNumber;
+
+    const stop = (event: React.SyntheticEvent) => {
+      event.stopPropagation();
+    };
+
+    return (
+      <a
+        href={normalizedLink}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="part-number-link"
+        style={{ color: '#1d4ed8', textDecoration: 'underline' }}
+        onClick={stop}
+        onMouseDown={stop}
+        onDoubleClick={stop}
+        onContextMenu={stop}
+        title="Open product link"
+      >
+        {partNumber}
+      </a>
     );
   }, []);
 
@@ -278,6 +319,7 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
       headerName: '#',
       maxWidth: 90,
       filter: 'agTextColumnFilter',
+      type: 'numericColumn',
       comparator: compareTreeOrderingValues,
       sort: 'asc',
       sortingOrder: ['asc', 'desc', null],
@@ -293,72 +335,92 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
         'brand-product-cell': (params) => Boolean((params.data as { BrandName?: string | null })?.BrandName),
       },
     },
-    { field: 'PartNumber', headerName: 'Part Number', filter: 'agTextColumnFilter' },
-    { field: 'ModelNumber', headerName: 'Model', filter: 'agTextColumnFilter' },
-    { field: 'Quantity', headerName: 'Qty', filter: 'agNumberColumnFilter' },
+    {
+      field: 'PartNumber',
+      headerName: 'Part Number',
+      filter: 'agTextColumnFilter',
+      cellRenderer: PartNumberCell,
+    },
+    { field: 'ModelNumber', headerName: 'Model Number', filter: 'agTextColumnFilter' },
+    { field: 'Quantity', headerName: 'Qty', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'Description', headerName: 'Description', minWidth: 220, filter: 'agTextColumnFilter' },
     {
       field: 'CustomerDiscount',
       headerName: 'Customer Discount',
       filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
       valueFormatter: percentageFormatter,
     },
     {
       field: 'NetUnitPrice',
       headerName: 'Net Unit Price',
       filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
       valueFormatter: euroFormatter,
     },
     {
       field: 'TotalPrice',
       headerName: 'Total List Price',
       filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
       valueFormatter: euroFormatter,
     },
     {
       field: 'TotalNet',
       headerName: 'Total Net',
       filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
       valueFormatter: euroFormatter,
     },
-    { field: 'Warranty', headerName: 'Warranty', filter: 'agTextColumnFilter' },
+    {
+      field: 'Warranty',
+      headerName: 'Warranty',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+    },
     {
       field: 'ListPrice',
       headerName: 'List Price',
       filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
       valueFormatter: euroFormatter,
     },
     {
       field: 'TelmacoDiscount',
       headerName: 'Telmaco Discount',
       filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
       valueFormatter: percentageFormatter,
     },
     {
       field: 'NetCost',
       headerName: 'Net Cost',
       filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
       valueFormatter: euroFormatter,
     },
     {
       field: 'Margin',
       headerName: 'Margin',
       filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
       valueFormatter: percentageFormatter,
     },
     {
       field: 'GrossProfit',
       headerName: 'Gross Profit',
       filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
       valueFormatter: euroFormatter,
     },
     {
       field: 'TotalCost',
       headerName: 'Total Cost',
       filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
       valueFormatter: euroFormatter,
     },
-  ], [RowDragHandle, manualMode]);
+  ], [RowDragHandle, PartNumberCell, manualMode]);
 
   return (
     <div style={panelContainerStyle}>

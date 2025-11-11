@@ -57,6 +57,7 @@ type ProductRow = {
   BrandName: string | null;
   PartNumber: string | null;
   ModelNumber: string | null;
+  WebLink: string | null;
   Quantity: number | null;
   Description: string | null;
   CustomerDiscount: number | null;
@@ -89,6 +90,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   TreeOrdering: 'od.TreeOrdering',
   BrandName: 'b.Name',
   PartNumber: 'p.PartNumber',
+  WebLink: 'p.WebLink',
   ModelNumber: 'p.ModelNumber',
   Quantity: 'od.Quantity',
   Description: 'od.ProductDescription',
@@ -276,6 +278,7 @@ export async function POST(
         ${TREE_ORDERING_HIERARCHY_EXPRESSION} AS TreeOrderingHierarchy,
         b.Name AS BrandName,
         p.PartNumber,
+        p.WebLink,
         p.ModelNumber,
         od.Quantity,
         od.ProductDescription AS Description,

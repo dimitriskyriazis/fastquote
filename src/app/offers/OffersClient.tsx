@@ -93,6 +93,9 @@ export default function OffersClient() {
         cursor: 'pointer',
         fontSize: '14px',
       };
+      const preventRangeSelection = (event: React.SyntheticEvent) => {
+        event.stopPropagation();
+      };
 
       useEffect(() => {
         if (!open) return;
@@ -120,7 +123,11 @@ export default function OffersClient() {
       // No native listeners needed; React capture handler on the button is sufficient
 
       return (
-        <div style={wrapperStyle}>
+        <div
+          style={wrapperStyle}
+          onMouseDownCapture={preventRangeSelection}
+          onPointerDownCapture={preventRangeSelection}
+        >
           <button
             type="button"
             aria-haspopup="menu"
@@ -128,6 +135,8 @@ export default function OffersClient() {
             style={buttonStyle}
             className="offers-action-btn"
             onClick={() => setOpen(v => !v)}
+            onMouseDownCapture={preventRangeSelection}
+            onPointerDownCapture={preventRangeSelection}
             onContextMenuCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
             disabled={!encodedId}
             title={encodedId ? 'Open menu' : 'Missing oID'}
@@ -193,12 +202,12 @@ export default function OffersClient() {
     { field: 'SalesDivision', headerName: 'Sales Division', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'SalesPerson', headerName: 'Sales Creation Person', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'OfferStatus', headerName: 'Status', filter: 'agTextColumnFilter', enableRowGroup: true },
-    { field: 'ProjectID', headerName: 'Project ID', filter: 'agNumberColumnFilter' },
-    { field: 'oID', headerName: 'Offer ID', filter: 'agNumberColumnFilter' },
+    { field: 'ProjectID', headerName: 'Project ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
+    { field: 'oID', headerName: 'Offer ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'CustomerRef', headerName: 'Customer Ref', filter: 'agTextColumnFilter' },
-    { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter' },
+    { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
-    { field: 'OfferVersion', headerName: 'Offer Version', filter: 'agNumberColumnFilter' },
+    { field: 'OfferVersion', headerName: 'Offer Version', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     {
       field: 'Enabled',
       headerName: 'Enabled',

@@ -984,6 +984,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
           sideBar={sideBarDef}
           statusBar={{ statusPanels: [{ statusPanel: 'agAggregationComponent' }] }}
           suppressCellFocus={true}
+          enableRangeSelection={true}
 
           // Charts OFF for now (to avoid the AgCharts module requirement)
           enableCharts={false}
