@@ -16,7 +16,7 @@ import {
   RowClassParams,
 } from 'ag-grid-community';
 import { AllEnterpriseModule, LicenseManager } from 'ag-grid-enterprise';
-import { resolveOfferProductRowType } from '../../lib/offerProductRows';
+import { resolveOfferProductRowType, type OfferProductRowType, describeOfferProductRowType } from '../../lib/offerProductRows';
 
 // Prevent double registration during HMR/StrictMode
 declare global {
@@ -255,19 +255,22 @@ const isDescendantOf = (candidateParent: NodeOrderingInfo | null, potentialAnces
   return false;
 };
 
-const showInvalidDropMessage = (reason: MoveFailureReason | null) => {
-  const messages: Record<MoveFailureReason, string> = {
-    'target-non-category': 'Only categories can contain rows. Drop into a category row or a gap between rows.',
-    descendant: 'You cannot drop a row into itself or its descendants.',
-    'invalid-target': 'That drop location is not allowed. Try a highlighted gap or category row.',
-  };
-  const message = reason ? messages[reason] : messages['invalid-target'];
+const showInvalidDropMessage = (reason: MoveFailureReason | null, targetType?: OfferProductRowType | null) => {
+  let message: string;
+  if (reason === 'target-non-category') {
+    const friendly = describeOfferProductRowType(targetType);
+    message = `${friendly} cannot contain rows. Drop into a category row or a highlighted gap instead.`;
+  } else if (reason === 'descendant') {
+    message = 'You cannot drop a row into itself or its descendants.';
+  } else {
+    message = 'That drop location is not allowed. Try a highlighted gap or category row.';
+  }
   showToastMessage(message, 'error');
 };
 
 type MoveResult =
   | { success: true }
-  | { success: false; reason: MoveFailureReason };
+  | { success: false; reason: MoveFailureReason; targetType?: OfferProductRowType | null };
 
 const applyOrderingMove = (
   api: GridApi<RowData>,
@@ -310,7 +313,7 @@ const applyOrderingMove = (
     const parentData = targetParentNode.node.data as RowData | undefined;
     const parentType = resolveOfferProductRowType(parentData);
     if (parentType !== 'unknown' && parentType !== 'category') {
-      return { success: false, reason: 'target-non-category' };
+      return { success: false, reason: 'target-non-category', targetType: parentType };
     }
   }
 
@@ -729,10 +732,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     }
 
     if (hoveredRow) {
-      const rowType = resolveOfferProductRowType(hoveredRow.data);
-      if (rowType === 'unknown' || rowType === 'category') {
-        return { row: hoveredRow, gap: null, dragging: true };
-      }
+      return { row: hoveredRow, gap: null, dragging: true };
     }
 
     if (gapCandidate) {
@@ -870,6 +870,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     if (!sourceNode) return;
 
     let failureReason: MoveFailureReason | null = null;
+    let failureTargetType: OfferProductRowType | null | undefined;
     const attemptMove = (
       targetParentPath: number[],
       beforeRowId: string | null,
@@ -890,6 +891,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
       );
       if (result.success) return true;
       failureReason = result.reason ?? failureReason;
+      failureTargetType = result.targetType ?? failureTargetType;
       return false;
     };
 
@@ -905,7 +907,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
 
     if (!moved) {
       console.warn('Drop detected but TreeOrdering could not be updated', { payload, gap, hoveredRowTarget });
-      showInvalidDropMessage(failureReason);
+      showInvalidDropMessage(failureReason, failureTargetType);
       return;
     }
 
@@ -932,17 +934,66 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     void persistTreeOrderingChanges();
   }, [manualMode, persistTreeOrderingChanges]);
 
+  const clearGridSelection = useCallback(() => {
+    const api = gridRef.current?.api;
+    if (!api) return;
+    let cleared = false;
+    try {
+      if (typeof api.getCellRanges === 'function' && typeof api.clearRangeSelection === 'function') {
+        const ranges = api.getCellRanges?.() ?? [];
+        if (ranges.length > 0) {
+          api.clearRangeSelection();
+          cleared = true;
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to clear range selection', err);
+    }
+    const maybeCellSelectionApi = api as GridApi<RowData> & { clearCellSelection?: () => void };
+    if (typeof maybeCellSelectionApi.clearCellSelection === 'function') {
+      try {
+        maybeCellSelectionApi.clearCellSelection();
+        cleared = true;
+      } catch (err) {
+        console.warn('Failed to clear cell selection', err);
+      }
+    }
+    if (!cleared && typeof api.deselectAll === 'function') {
+      try { api.deselectAll(); } catch { /* noop */ }
+    }
+  }, []);
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const shell = shellRef.current;
+      if (!shell) return;
+      const target = event.target as Node | null;
+      if (target && shell.contains(target)) return;
+      clearGridSelection();
+    };
+    document.addEventListener('mousedown', handlePointerDown, true);
+    document.addEventListener('touchstart', handlePointerDown, true);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown, true);
+      document.removeEventListener('touchstart', handlePointerDown, true);
+    };
+  }, [clearGridSelection]);
+
   const rowOverlayStyle = {
     position: 'absolute' as const,
     left: 0,
     right: 0,
     top: rowHover ? rowHover.top : -9999,
     height: rowHover ? rowHover.height : 0,
-    background: 'var(--row-hover-bg, rgba(59, 130, 246, 0.08))',
+    background: 'transparent',
+    border: rowHover ? '2px solid var(--row-hover-outline, rgba(59, 130, 246, 0.85))' : '2px solid transparent',
+    borderRadius: 8,
+    boxSizing: 'border-box' as const,
     pointerEvents: 'none' as const,
     zIndex: 1000,
     opacity: isDragging && rowHover ? 1 : 0,
     transition: 'opacity 140ms ease',
+    boxShadow: rowHover ? '0 0 0 1px rgba(15, 23, 42, 0.08), 0 4px 10px rgba(15, 23, 42, 0.12)' : 'none',
   };
 
   const gapOverlayStyle = {
@@ -994,6 +1045,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
           statusBar={{ statusPanels: [{ statusPanel: 'agAggregationComponent' }] }}
           suppressCellFocus={true}
           enableRangeSelection={true}
+          cellSelection="multiple"
 
           // Charts OFF for now (to avoid the AgCharts module requirement)
           enableCharts={false}

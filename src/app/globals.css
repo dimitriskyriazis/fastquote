@@ -26,6 +26,7 @@
   --detail-chip-inactive-fg: #475569;
   --gap-hover-color: rgba(59, 130, 246, 0.7); /* blue-500 @ 70% */
   --row-hover-bg: rgba(59, 130, 246, 0.25);
+  --row-hover-outline: rgba(59, 130, 246, 0.85);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -47,6 +48,7 @@
     --detail-chip-inactive-fg: #475569;
     --gap-hover-color: rgba(96, 165, 250, 0.8); /* blue-400 @ 80% */
     --row-hover-bg: rgba(96, 165, 250, 0.3);
+    --row-hover-outline: rgba(147, 197, 253, 0.9);
   }
 }
 
@@ -159,28 +161,58 @@ body {
   transform: translateY(0);
 }
 
-.offer-products-grid .offer-row--category .ag-cell,
-.offer-products-grid .offer-row--category .ag-cell:hover {
+.offer-products-grid .offer-row--category .ag-cell {
   background-color: #e5e7eb !important;
 }
-
-.offer-products-grid .offer-row--printable-comment .ag-cell,
-.offer-products-grid .offer-row--printable-comment .ag-cell:hover {
-  background-color: #e0f2fe !important;
+.offer-products-grid .offer-row--category.ag-row-hover .ag-cell {
+  background-color: #d9dde3 !important;
 }
 
-.offer-products-grid .offer-row--nonprintable-comment .ag-cell,
-.offer-products-grid .offer-row--nonprintable-comment .ag-cell:hover {
+.offer-products-grid .offer-row--printable-comment .ag-cell {
+  background-color: #e0f2fe !important;
+}
+.offer-products-grid .offer-row--printable-comment.ag-row-hover .ag-cell {
+  background-color: #cbeafb !important;
+}
+
+.offer-products-grid .offer-row--nonprintable-comment .ag-cell {
   background-color: #fee2e2 !important;
+}
+.offer-products-grid .offer-row--nonprintable-comment.ag-row-hover .ag-cell {
+  background-color: #ffcfcf !important;
 }
 
 .offer-products-grid .offer-row--product .ag-cell {
-  background-color: #ffffff;
+  background-color: #ffffff !important;
 }
-
-.offer-products-grid .offer-products-grid__cell--product-accent,
-.offer-products-grid .offer-products-grid__cell--product-accent:hover {
+.offer-products-grid .offer-row--product.ag-row-hover .ag-cell {
+  background-color: #f3f4f6 !important; /* match main table hover tone */
+}
+.offer-products-grid .offer-row--product .offer-products-grid__cell--product-accent {
   background-color: #f6eddc !important;
+}
+.offer-products-grid .offer-row--product.ag-row-hover .offer-products-grid__cell--product-accent {
+  background-color: #f6eddc !important;
+}
+.offer-products-grid .ag-theme-quartz {
+  --tab-hover-bg: transparent;
+}
+.offer-products-grid .ag-theme-quartz .ag-cell:hover,
+.offer-products-grid .ag-theme-quartz .ag-cell.ag-cell-focus {
+  background: none !important;
+  background-color: transparent !important;
+}
+.offer-products-grid .offer-row--category.ag-row-hover {
+  background-color: #d9dde3;
+}
+.offer-products-grid .offer-row--product.ag-row-hover {
+  background-color: #f2f2f2;
+}
+.offer-products-grid .offer-row--printable-comment.ag-row-hover {
+  background-color: #cbeafb;
+}
+.offer-products-grid .offer-row--nonprintable-comment.ag-row-hover {
+  background-color: #ffcfcf;
 }
 
 .manual-mode-toggle {

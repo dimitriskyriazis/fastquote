@@ -60,3 +60,18 @@ export const isOfferProductComment = (row: OfferProductRow) => {
   const type = resolveOfferProductRowType(row);
   return type === 'printable-comment' || type === 'non-printable-comment';
 };
+
+export const describeOfferProductRowType = (type: OfferProductRowType | null | undefined) => {
+  switch (type) {
+    case 'category':
+      return 'Categories';
+    case 'product':
+      return 'Products';
+    case 'printable-comment':
+      return 'Printable comments';
+    case 'non-printable-comment':
+      return 'Non printable comments';
+    default:
+      return 'This row type';
+  }
+};
