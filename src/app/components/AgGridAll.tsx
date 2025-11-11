@@ -80,7 +80,8 @@ type NodeOrderingInfo = {
   path: number[];
   parentPath: number[];
   leaf: number;
-  initialPath: number[];
+  parent: NodeOrderingInfo | null;
+  children: NodeOrderingInfo[];
 };
 
 const ROOT_PARENT_KEY = '__root__';
@@ -125,58 +126,19 @@ const formatTreeOrderingPath = (path: number[]): string => path.join('.');
 
 const parentKeyFromPath = (path: number[]): string => (path.length > 0 ? path.join('.') : ROOT_PARENT_KEY);
 
-const parentPathFromKey = (key: string): number[] => (key === ROOT_PARENT_KEY ? [] : key
-  .split('.')
-  .map((segment) => Number.parseInt(segment, 10))
-  .filter((segment) => Number.isFinite(segment)));
-
 const buildOrderingInfo = (node: RowNode<RowData>): NodeOrderingInfo | null => {
   const path = parseTreeOrderingPath((node.data as RowData | undefined)?.TreeOrdering);
   if (path.length === 0) return null;
   const parentPath = path.slice(0, -1);
   const leaf = path[path.length - 1];
-  return { node, path, parentPath, leaf, initialPath: path.slice() };
-};
-
-const updateNodePathWithDescendants = (
-  target: NodeOrderingInfo,
-  newPath: number[],
-  orderingInfos: NodeOrderingInfo[],
-) => {
-  const oldPath = target.path.slice();
-  const newPathCopy = newPath.slice();
-  target.path = newPathCopy;
-  target.parentPath = newPathCopy.slice(0, -1);
-  target.leaf = newPathCopy[newPathCopy.length - 1] ?? 0;
-  target.node.setDataValue('TreeOrdering', formatTreeOrderingPath(newPathCopy));
-
-  if (oldPath.length === 0) return;
-  orderingInfos.forEach((info) => {
-    if (info === target) return;
-    if (info.initialPath.length <= oldPath.length) return;
-    for (let idx = 0; idx < oldPath.length; idx += 1) {
-      if (info.initialPath[idx] !== oldPath[idx]) return;
-    }
-    const suffix = info.initialPath.slice(oldPath.length);
-    const updatedPath = [...newPathCopy, ...suffix];
-    info.path = updatedPath;
-    info.parentPath = updatedPath.slice(0, -1);
-    info.leaf = updatedPath[updatedPath.length - 1] ?? 0;
-    info.node.setDataValue('TreeOrdering', formatTreeOrderingPath(updatedPath));
-  });
-};
-
-const resequenceSiblings = (
-  siblings: NodeOrderingInfo[],
-  parentPath: number[],
-  orderingInfos: NodeOrderingInfo[],
-) => {
-  const parentCopy = parentPath.slice();
-  siblings.forEach((info, idx) => {
-    const newLeaf = idx + 1;
-    const newPath = parentCopy.length > 0 ? [...parentCopy, newLeaf] : [newLeaf];
-    updateNodePathWithDescendants(info, newPath, orderingInfos);
-  });
+  return {
+    node,
+    path,
+    parentPath,
+    leaf,
+    parent: null,
+    children: [],
+  };
 };
 
 const longestCommonPrefix = (a: number[], b: number[]) => {
@@ -203,6 +165,68 @@ const collectOrderingInfos = (api: GridApi<RowData>) => {
   return { orderingInfos, infoByNodeId };
 };
 
+const buildTreeStructure = (orderingInfos: NodeOrderingInfo[]) => {
+  const infoByPathKey = new Map<string, NodeOrderingInfo>();
+  orderingInfos.forEach((info) => {
+    info.parent = null;
+    info.children = [];
+    infoByPathKey.set(parentKeyFromPath(info.path), info);
+  });
+
+  const rootChildren: NodeOrderingInfo[] = [];
+  orderingInfos.forEach((info) => {
+    const parentKey = parentKeyFromPath(info.parentPath);
+    if (parentKey === ROOT_PARENT_KEY) {
+      rootChildren.push(info);
+      return;
+    }
+    const parent = infoByPathKey.get(parentKey);
+    if (parent) {
+      info.parent = parent;
+      parent.children.push(info);
+    } else {
+      rootChildren.push(info);
+    }
+  });
+
+  const sortChildren = (nodes: NodeOrderingInfo[]) => {
+    nodes.sort((a, b) => a.leaf - b.leaf);
+    nodes.forEach((child) => {
+      if (child.children.length > 0) sortChildren(child.children);
+    });
+  };
+  sortChildren(rootChildren);
+
+  return { rootChildren, infoByPathKey };
+};
+
+const applyPathToNode = (info: NodeOrderingInfo, newPath: number[]) => {
+  const pathCopy = newPath.slice();
+  info.path = pathCopy;
+  info.parentPath = pathCopy.slice(0, -1);
+  info.leaf = pathCopy[pathCopy.length - 1] ?? 0;
+  info.node.setDataValue('TreeOrdering', formatTreeOrderingPath(pathCopy));
+};
+
+const assignPathsFrom = (nodes: NodeOrderingInfo[], parentPath: number[]) => {
+  nodes.forEach((info, idx) => {
+    const newPath = [...parentPath, idx + 1];
+    applyPathToNode(info, newPath);
+    if (info.children.length > 0) {
+      assignPathsFrom(info.children, newPath);
+    }
+  });
+};
+
+const isDescendantOf = (candidateParent: NodeOrderingInfo | null, potentialAncestor: NodeOrderingInfo) => {
+  let current: NodeOrderingInfo | null = candidateParent;
+  while (current) {
+    if (current === potentialAncestor) return true;
+    current = current.parent;
+  }
+  return false;
+};
+
 const applyOrderingMove = (
   api: GridApi<RowData>,
   sourceNode: RowNode<RowData>,
@@ -215,22 +239,11 @@ const applyOrderingMove = (
 ): boolean => {
   const { orderingInfos, infoByNodeId } = collectOrderingInfos(api);
   if (orderingInfos.length === 0) return false;
+  const { rootChildren, infoByPathKey } = buildTreeStructure(orderingInfos);
 
   const sourceInfo = infoByNodeId.get(sourceNode.id ?? '')
     ?? orderingInfos.find((info) => info.node === sourceNode);
   if (!sourceInfo) return false;
-
-  const siblingsByParent = new Map<string, NodeOrderingInfo[]>();
-  orderingInfos.forEach((info) => {
-    const key = parentKeyFromPath(info.parentPath);
-    const collection = siblingsByParent.get(key);
-    if (collection) collection.push(info);
-    else siblingsByParent.set(key, [info]);
-  });
-
-  siblingsByParent.forEach((collection) => {
-    collection.sort((a, b) => a.leaf - b.leaf);
-  });
 
   const resolveInfo = (rowId: string | null, rowIndex: number | null) => {
     if (rowId) {
@@ -246,68 +259,69 @@ const applyOrderingMove = (
     return null;
   };
 
-  const sourceParentKey = parentKeyFromPath(sourceInfo.parentPath);
-  const targetParentKey = parentKeyFromPath(insertParentPath);
-  const sourceSiblings = siblingsByParent.get(sourceParentKey);
-  if (!sourceSiblings) return false;
+  const parentKey = parentKeyFromPath(insertParentPath);
+  const targetParentNode = parentKey === ROOT_PARENT_KEY
+    ? null
+    : infoByPathKey.get(parentKey) ?? null;
 
-  const removalIndex = sourceSiblings.findIndex((info) => info === sourceInfo);
-  if (removalIndex < 0) return false;
-  sourceSiblings.splice(removalIndex, 1);
+  if (targetParentNode) {
+    const parentData = targetParentNode.node.data as RowData | undefined;
+    const parentBrand = (parentData as { BrandName?: string | null } | undefined)?.BrandName;
+    const parentIsProduct = Boolean(parentBrand && parentBrand.trim().length > 0);
+    if (parentIsProduct) return false;
+  }
 
-  let targetSiblings = siblingsByParent.get(targetParentKey);
-  if (!targetSiblings) {
-    targetSiblings = [];
-    siblingsByParent.set(targetParentKey, targetSiblings);
+  if (isDescendantOf(targetParentNode, sourceInfo)) {
+    return false;
   }
 
   const beforeInfo = resolveInfo(beforeRowId, beforeRowIndex);
   const afterInfo = resolveInfo(afterRowId, afterRowIndex);
-  const beforeIdx = beforeInfo ? targetSiblings.findIndex((info) => info === beforeInfo) : -1;
-  const afterIdx = afterInfo ? targetSiblings.findIndex((info) => info === afterInfo) : -1;
-  const beforeMatches = Boolean(
-    beforeInfo
-    && beforeInfo !== sourceInfo
-    && beforeIdx >= 0
-    && arraysEqual(beforeInfo.parentPath, insertParentPath),
-  );
-  const afterMatches = Boolean(
-    afterInfo
-    && afterInfo !== sourceInfo
-    && afterIdx >= 0
-    && arraysEqual(afterInfo.parentPath, insertParentPath),
-  );
+
+  const getChildCollection = (parent: NodeOrderingInfo | null) => (parent ? parent.children : rootChildren);
+
+  const removeFromParent = (info: NodeOrderingInfo) => {
+    const collection = getChildCollection(info.parent);
+    const idx = collection.findIndex((entry) => entry === info);
+    if (idx >= 0) collection.splice(idx, 1);
+    info.parent = null;
+  };
+
+  removeFromParent(sourceInfo);
+  const targetSiblings = getChildCollection(targetParentNode);
+
+  const indexOfSibling = (candidate: NodeOrderingInfo | null) => {
+    if (!candidate) return -1;
+    if (candidate === sourceInfo) return -1;
+    if (candidate.parent !== targetParentNode) return -1;
+    return targetSiblings.findIndex((entry) => entry === candidate);
+  };
 
   let insertIndex = targetSiblings.length;
   if (position === 'before') {
-    if (afterMatches) {
+    const afterIdx = indexOfSibling(afterInfo);
+    if (afterIdx >= 0) {
       insertIndex = afterIdx;
-    } else if (beforeMatches) {
-      insertIndex = beforeIdx + 1;
+    } else {
+      const beforeIdx = indexOfSibling(beforeInfo);
+      if (beforeIdx >= 0) insertIndex = beforeIdx + 1;
     }
   } else {
-    if (beforeMatches) {
+    const beforeIdx = indexOfSibling(beforeInfo);
+    if (beforeIdx >= 0) {
       insertIndex = beforeIdx + 1;
-    } else if (afterMatches) {
-      insertIndex = afterIdx;
+    } else {
+      const afterIdx = indexOfSibling(afterInfo);
+      if (afterIdx >= 0) insertIndex = afterIdx;
     }
   }
 
   if (!Number.isFinite(insertIndex)) insertIndex = targetSiblings.length;
-
-  if (sourceParentKey === targetParentKey && removalIndex < insertIndex) {
-    insertIndex -= 1;
-  }
-
   const boundedIndex = Math.max(0, Math.min(insertIndex, targetSiblings.length));
-  sourceInfo.parentPath = insertParentPath.slice();
   targetSiblings.splice(boundedIndex, 0, sourceInfo);
+  sourceInfo.parent = targetParentNode;
 
-  siblingsByParent.forEach((siblings, key) => {
-    if (!siblings || siblings.length === 0) return;
-    const parentPath = siblings[0]?.parentPath?.slice?.() ?? parentPathFromKey(key);
-    resequenceSiblings(siblings, parentPath, orderingInfos);
-  });
+  assignPathsFrom(rootChildren, []);
 
   return true;
 };
@@ -451,23 +465,18 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     }
   }, [manualMode]);
 
-  const updateHoverFromPoint = useCallback((_clientX: number, clientY: number, fromDrag = false) => {
-    if (!fromDrag) return;
+  const computeHoverState = useCallback((
+    clientY: number,
+  ): { row: RowHoverState | null; gap: GapHoverState | null; dragging: boolean } => {
     const shell = shellRef.current;
     const api = gridRef.current?.api;
     if (!shell || !api) {
-      setGapHover(null);
-      setRowHover(null);
-      setIsDragging(false);
-      return;
+      return { row: null, gap: null, dragging: false };
     }
 
     const rowElements = Array.from(shell.querySelectorAll<HTMLElement>('.ag-center-cols-container .ag-row'));
     if (rowElements.length === 0) {
-      setGapHover(null);
-      setRowHover(null);
-      setIsDragging(false);
-      return;
+      return { row: null, gap: null, dragging: false };
     }
 
     const shellRect = shell.getBoundingClientRect();
@@ -498,10 +507,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
       .sort((a, b) => a.top - b.top);
 
     if (rows.length === 0) {
-      setGapHover(null);
-      setRowHover(null);
-      setIsDragging(false);
-      return;
+      return { row: null, gap: null, dragging: false };
     }
 
     const gapThreshold = 18;
@@ -564,10 +570,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     }
 
     if (hoveredRow) {
-      setRowHover(hoveredRow);
-      setGapHover(null);
-      setIsDragging(true);
-      return;
+      return { row: hoveredRow, gap: null, dragging: true };
     }
 
     if (gapCandidate) {
@@ -594,24 +597,31 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
         }
         return [];
       };
-      setGapHover({
-        pos: gapCandidate.pos,
-        position: gapCandidate.position,
-        beforeRowId: gapCandidate.before?.rowId ?? null,
-        beforeRowIndex: gapCandidate.before?.rowIndex ?? null,
-        afterRowId: gapCandidate.after?.rowId ?? null,
-        afterRowIndex: gapCandidate.after?.rowIndex ?? null,
-        parentPath: deriveParentPath(),
-      });
-      setRowHover(null);
-      setIsDragging(true);
-      return;
+      return {
+        row: null,
+        gap: {
+          pos: gapCandidate.pos,
+          position: gapCandidate.position,
+          beforeRowId: gapCandidate.before?.rowId ?? null,
+          beforeRowIndex: gapCandidate.before?.rowIndex ?? null,
+          afterRowId: gapCandidate.after?.rowId ?? null,
+          afterRowIndex: gapCandidate.after?.rowIndex ?? null,
+          parentPath: deriveParentPath(),
+        },
+        dragging: true,
+      };
     }
 
-    setGapHover(null);
-    setRowHover(null);
-    setIsDragging(false);
+    return { row: null, gap: null, dragging: false };
   }, []);
+
+  const updateHoverFromPoint = useCallback((_clientX: number, clientY: number, fromDrag = false) => {
+    if (!fromDrag) return;
+    const { row, gap, dragging } = computeHoverState(clientY);
+    setRowHover(row);
+    setGapHover(gap);
+    setIsDragging(dragging);
+  }, [computeHoverState]);
 
   const handleMouseLeave = useCallback(() => {
     setGapHover(null);
@@ -626,7 +636,20 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     ev.preventDefault();
     updateHoverFromPoint(ev.clientX, ev.clientY, true);
   }, [updateHoverFromPoint]);
-  const handleDragLeave = useCallback(() => {
+  const handleDragLeave = useCallback((ev: React.DragEvent) => {
+    const shell = shellRef.current;
+    const nextTarget = ev.relatedTarget as Node | null;
+    if (shell) {
+      if (nextTarget && shell.contains(nextTarget)) {
+        return;
+      }
+      const rect = shell.getBoundingClientRect();
+      const insideX = ev.clientX >= rect.left && ev.clientX <= rect.right;
+      const insideY = ev.clientY >= rect.top && ev.clientY <= rect.bottom;
+      if (insideX && insideY) {
+        return;
+      }
+    }
     setGapHover(null);
     setRowHover(null);
     setIsDragging(false);
@@ -638,8 +661,9 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     const api = gridRef.current?.api;
     if (!api) return;
 
-    const gap = gapHover;
-    const hoveredRowTarget = rowHover;
+    const liveHover = computeHoverState(ev.clientY);
+    const gap = liveHover.gap ?? gapHover;
+    const hoveredRowTarget = liveHover.row ?? rowHover;
     setGapHover(null);
     setRowHover(null);
     setIsDragging(false);
@@ -684,7 +708,6 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     if (!sourceNode) return;
 
     const sourcePath = parseTreeOrderingPath((sourceNode.data as RowData | undefined)?.TreeOrdering ?? null);
-    const sourceParentPath = sourcePath.slice(0, -1);
 
     const findNodeForPath = (path: number[]): RowNode<RowData> | null => {
       let match: RowNode<RowData> | null = null;
@@ -703,11 +726,10 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     };
 
     const executeMove = (targetParentPath: number[], beforeRowId: string | null, beforeRowIndex: number | null, afterRowId: string | null, afterRowIndex: number | null, position: 'before' | 'after') => {
-      const parentIsAncestor = targetParentPath.length < sourceParentPath.length
-        && arraysEqual(targetParentPath, sourceParentPath.slice(0, targetParentPath.length));
       const targetIsDescendant = targetParentPath.length >= sourcePath.length
         && arraysEqual(targetParentPath.slice(0, sourcePath.length), sourcePath);
-      if (parentIsAncestor || targetIsDescendant || arraysEqual(targetParentPath, sourcePath)) {
+      const sameAsSource = arraysEqual(targetParentPath, sourcePath);
+      if (targetIsDescendant || sameAsSource) {
         return false;
       }
       if (targetParentPath.length > 0) {
@@ -753,12 +775,11 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
       defaultState: { sort: null },
       applyOrder: true,
     });
-    if (!manualMode) {
-      reorderRowsByTreeOrdering(api);
-    } else {
+    reorderRowsByTreeOrdering(api);
+    if (manualMode) {
       api.refreshCells({ columns: ['TreeOrdering', 'BrandName'], force: true });
     }
-  }, [gapHover, rowHover, manualMode]);
+  }, [gapHover, rowHover, manualMode, computeHoverState]);
 
   const handleCellValueChanged = useCallback((event: CellValueChangedEvent<RowData>) => {
     if (!manualMode) return;
