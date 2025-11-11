@@ -117,6 +117,36 @@ body {
 /* While dragging, keep a consistent cursor */
 .dragging, .dragging * { cursor: grabbing !important; }
 
+.drop-toast-container {
+  position: fixed;
+  left: 50%;
+  bottom: 32px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 2147483647;
+  pointer-events: none;
+}
+
+.drop-toast {
+  background: rgba(15, 23, 42, 0.96);
+  color: #f8fafc;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.45);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: auto;
+}
+
+.drop-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .offer-products-grid .brand-product-cell {
   background-color: rgba(191, 219, 254, 0.5);
 }

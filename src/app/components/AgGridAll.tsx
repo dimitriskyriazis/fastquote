@@ -84,6 +84,8 @@ type NodeOrderingInfo = {
   children: NodeOrderingInfo[];
 };
 
+type MoveFailureReason = 'target-product' | 'descendant' | 'invalid-target';
+
 const ROOT_PARENT_KEY = '__root__';
 
 const comparePaths = (a: number[], b: number[]) => {
@@ -102,14 +104,6 @@ const comparePaths = (a: number[], b: number[]) => {
     if (va !== vb) return va - vb;
   }
   return 0;
-};
-
-const arraysEqual = (a: number[], b: number[]) => {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
 };
 
 const parseTreeOrderingPath = (value: unknown): number[] => {
@@ -227,6 +221,45 @@ const isDescendantOf = (candidateParent: NodeOrderingInfo | null, potentialAnces
   return false;
 };
 
+const showInvalidDropMessage = (reason: MoveFailureReason | null) => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  const messages: Record<MoveFailureReason, string> = {
+    'target-product': 'Products cannot contain rows inside them. Drop into a category row or gap.',
+    descendant: 'You cannot drop a row into itself or its descendants.',
+    'invalid-target': 'That drop location is not allowed. Try a highlighted gap or category row.',
+  };
+  const message = reason ? messages[reason] : messages['invalid-target'];
+  const containerId = 'telquote-drop-toast-container';
+  let container = document.getElementById(containerId);
+  if (!container) {
+    container = document.createElement('div');
+    container.id = containerId;
+    container.className = 'drop-toast-container';
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement('div');
+  toast.className = 'drop-toast';
+  toast.textContent = message;
+  container.appendChild(toast);
+  requestAnimationFrame(() => {
+    toast.classList.add('visible');
+  });
+  const removeToast = () => {
+    toast.classList.remove('visible');
+    window.setTimeout(() => {
+      toast.remove();
+      if (container && container.childElementCount === 0) {
+        container.remove();
+      }
+    }, 220);
+  };
+  window.setTimeout(removeToast, 3200);
+};
+
+type MoveResult =
+  | { success: true }
+  | { success: false; reason: MoveFailureReason };
+
 const applyOrderingMove = (
   api: GridApi<RowData>,
   sourceNode: RowNode<RowData>,
@@ -236,14 +269,14 @@ const applyOrderingMove = (
   afterRowId: string | null,
   afterRowIndex: number | null,
   position: 'before' | 'after',
-): boolean => {
+): MoveResult => {
   const { orderingInfos, infoByNodeId } = collectOrderingInfos(api);
-  if (orderingInfos.length === 0) return false;
+  if (orderingInfos.length === 0) return { success: false, reason: 'invalid-target' };
   const { rootChildren, infoByPathKey } = buildTreeStructure(orderingInfos);
 
   const sourceInfo = infoByNodeId.get(sourceNode.id ?? '')
     ?? orderingInfos.find((info) => info.node === sourceNode);
-  if (!sourceInfo) return false;
+  if (!sourceInfo) return { success: false, reason: 'invalid-target' };
 
   const resolveInfo = (rowId: string | null, rowIndex: number | null) => {
     if (rowId) {
@@ -268,11 +301,11 @@ const applyOrderingMove = (
     const parentData = targetParentNode.node.data as RowData | undefined;
     const parentBrand = (parentData as { BrandName?: string | null } | undefined)?.BrandName;
     const parentIsProduct = Boolean(parentBrand && parentBrand.trim().length > 0);
-    if (parentIsProduct) return false;
+    if (parentIsProduct) return { success: false, reason: 'target-product' };
   }
 
   if (isDescendantOf(targetParentNode, sourceInfo)) {
-    return false;
+    return { success: false, reason: 'descendant' };
   }
 
   const beforeInfo = resolveInfo(beforeRowId, beforeRowIndex);
@@ -323,7 +356,7 @@ const applyOrderingMove = (
 
   assignPathsFrom(rootChildren, []);
 
-  return true;
+  return { success: true };
 };
 
 const GUARDED_SET_FILTERS = new Set(['Enabled']);
@@ -707,39 +740,16 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     const sourceNode = resolveNode(payload.rowId, payload.rowIndex);
     if (!sourceNode) return;
 
-    const sourcePath = parseTreeOrderingPath((sourceNode.data as RowData | undefined)?.TreeOrdering ?? null);
-
-    const findNodeForPath = (path: number[]): RowNode<RowData> | null => {
-      let match: RowNode<RowData> | null = null;
-      if (path.length === 0) return null;
-      api.forEachNode((node) => {
-        if (match || !node) return;
-        const rowData = node.data as RowData | undefined;
-        const nodePath = parseTreeOrderingPath(
-          (rowData as { TreeOrdering?: string | null } | undefined)?.TreeOrdering ?? null,
-        );
-        if (arraysEqual(nodePath, path)) {
-          match = node as RowNode<RowData>;
-        }
-      });
-      return match;
-    };
-
-    const executeMove = (targetParentPath: number[], beforeRowId: string | null, beforeRowIndex: number | null, afterRowId: string | null, afterRowIndex: number | null, position: 'before' | 'after') => {
-      const targetIsDescendant = targetParentPath.length >= sourcePath.length
-        && arraysEqual(targetParentPath.slice(0, sourcePath.length), sourcePath);
-      const sameAsSource = arraysEqual(targetParentPath, sourcePath);
-      if (targetIsDescendant || sameAsSource) {
-        return false;
-      }
-      if (targetParentPath.length > 0) {
-        const parentNode = findNodeForPath(targetParentPath);
-        const parentData = parentNode?.data as RowData | undefined;
-        const parentBrand = (parentData as { BrandName?: string | null } | undefined)?.BrandName;
-        const parentIsProduct = Boolean(parentBrand && parentBrand.trim().length > 0);
-        if (parentIsProduct) return false;
-      }
-      return applyOrderingMove(
+    let failureReason: MoveFailureReason | null = null;
+    const attemptMove = (
+      targetParentPath: number[],
+      beforeRowId: string | null,
+      beforeRowIndex: number | null,
+      afterRowId: string | null,
+      afterRowIndex: number | null,
+      position: 'before' | 'after',
+    ) => {
+      const result = applyOrderingMove(
         api,
         sourceNode,
         targetParentPath,
@@ -749,24 +759,24 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
         afterRowIndex,
         position,
       );
+      if (result.success) return true;
+      failureReason = result.reason ?? failureReason;
+      return false;
     };
 
     let moved = false;
     if (hoveredRowTarget) {
-      const targetBrand = (hoveredRowTarget.data as RowData | undefined)?.BrandName;
-      const targetIsProduct = Boolean(targetBrand && String(targetBrand).trim().length > 0);
-      if (!targetIsProduct) {
-        const parentPath = hoveredRowTarget.path.slice();
-        moved = executeMove(parentPath, null, null, null, null, 'after');
-      }
+      const parentPath = hoveredRowTarget.path.slice();
+      moved = attemptMove(parentPath, null, null, null, null, 'after');
     }
     if (!moved && gap) {
       const parentPath = Array.isArray(gap.parentPath) ? gap.parentPath.slice() : [];
-      moved = executeMove(parentPath, gap.beforeRowId, gap.beforeRowIndex, gap.afterRowId, gap.afterRowIndex, gap.position);
+      moved = attemptMove(parentPath, gap.beforeRowId, gap.beforeRowIndex, gap.afterRowId, gap.afterRowIndex, gap.position);
     }
 
     if (!moved) {
       console.warn('Drop detected but TreeOrdering could not be updated', { payload, gap, hoveredRowTarget });
+      showInvalidDropMessage(failureReason);
       return;
     }
 

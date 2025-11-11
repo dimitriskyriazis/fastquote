@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo, type CSSProperties, useCallback } from 'react';
-import type { ColDef, ICellRendererParams } from 'ag-grid-community';
+import type { ColDef, ICellRendererParams, ValueFormatterParams } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
 const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
   ssr: false,
@@ -13,6 +13,37 @@ const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
 });
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const decimalFormatter = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const coerceNumber = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number.parseFloat(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const formatPercentageValue = (value: unknown) => {
+  const num = coerceNumber(value);
+  if (num == null) return '';
+  return `${decimalFormatter.format(num)} %`;
+};
+
+const formatEuroValue = (value: unknown) => {
+  const num = coerceNumber(value);
+  if (num == null) return '';
+  return `${decimalFormatter.format(num)} €`;
+};
+
+type FormatterParams = ValueFormatterParams<Record<string, unknown>, unknown>;
+const percentageFormatter = ({ value }: FormatterParams) => formatPercentageValue(value);
+const euroFormatter = ({ value }: FormatterParams) => formatEuroValue(value);
 
 const compareTreeOrderingValues = (a: unknown, b: unknown) => {
   const sa = String(a ?? '').trim();
@@ -266,17 +297,67 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
     { field: 'ModelNumber', headerName: 'Model', filter: 'agTextColumnFilter' },
     { field: 'Quantity', headerName: 'Qty', filter: 'agNumberColumnFilter' },
     { field: 'Description', headerName: 'Description', minWidth: 220, filter: 'agTextColumnFilter' },
-    { field: 'CustomerDiscount', headerName: 'Customer Discount', filter: 'agNumberColumnFilter' },
-    { field: 'NetUnitPrice', headerName: 'Net Unit', filter: 'agNumberColumnFilter' },
-    { field: 'TotalPrice', headerName: 'Total Price', filter: 'agNumberColumnFilter' },
-    { field: 'TotalNet', headerName: 'Total Net', filter: 'agNumberColumnFilter' },
+    {
+      field: 'CustomerDiscount',
+      headerName: 'Customer Discount',
+      filter: 'agNumberColumnFilter',
+      valueFormatter: percentageFormatter,
+    },
+    {
+      field: 'NetUnitPrice',
+      headerName: 'Net Unit Price',
+      filter: 'agNumberColumnFilter',
+      valueFormatter: euroFormatter,
+    },
+    {
+      field: 'TotalPrice',
+      headerName: 'Total List Price',
+      filter: 'agNumberColumnFilter',
+      valueFormatter: euroFormatter,
+    },
+    {
+      field: 'TotalNet',
+      headerName: 'Total Net',
+      filter: 'agNumberColumnFilter',
+      valueFormatter: euroFormatter,
+    },
     { field: 'Warranty', headerName: 'Warranty', filter: 'agTextColumnFilter' },
-    { field: 'ListPrice', headerName: 'List Price', filter: 'agNumberColumnFilter' },
-    { field: 'TelmacoDiscount', headerName: 'Telmaco Discount', filter: 'agNumberColumnFilter' },
-    { field: 'NetCost', headerName: 'Net Cost', filter: 'agNumberColumnFilter' },
-    { field: 'Margin', headerName: 'Margin', filter: 'agNumberColumnFilter' },
-    { field: 'GrossProfit', headerName: 'Gross Profit', filter: 'agNumberColumnFilter' },
-    { field: 'TotalCost', headerName: 'Total Cost', filter: 'agNumberColumnFilter' },
+    {
+      field: 'ListPrice',
+      headerName: 'List Price',
+      filter: 'agNumberColumnFilter',
+      valueFormatter: euroFormatter,
+    },
+    {
+      field: 'TelmacoDiscount',
+      headerName: 'Telmaco Discount',
+      filter: 'agNumberColumnFilter',
+      valueFormatter: percentageFormatter,
+    },
+    {
+      field: 'NetCost',
+      headerName: 'Net Cost',
+      filter: 'agNumberColumnFilter',
+      valueFormatter: euroFormatter,
+    },
+    {
+      field: 'Margin',
+      headerName: 'Margin',
+      filter: 'agNumberColumnFilter',
+      valueFormatter: percentageFormatter,
+    },
+    {
+      field: 'GrossProfit',
+      headerName: 'Gross Profit',
+      filter: 'agNumberColumnFilter',
+      valueFormatter: euroFormatter,
+    },
+    {
+      field: 'TotalCost',
+      headerName: 'Total Cost',
+      filter: 'agNumberColumnFilter',
+      valueFormatter: euroFormatter,
+    },
   ], [RowDragHandle, manualMode]);
 
   return (
