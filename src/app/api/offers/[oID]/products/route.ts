@@ -74,6 +74,15 @@ type ProductRow = {
 
 type ProductRowWithCount = ProductRow & { __totalCount: number | bigint | null };
 
+type TreeOrderingUpdateInput = {
+  OfferDetailID: number | string | null;
+  TreeOrdering?: string | null;
+};
+
+type TreeOrderingUpdateRequest = {
+  updates?: TreeOrderingUpdateInput[];
+};
+
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferDetailID: 'od.ID',
   ParentOfferDetailID: 'od.ParentOfferDetailID',
@@ -98,6 +107,22 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
 
 const ORDER_EXPRESSION_OVERRIDES: Record<string, string> = {
   TreeOrdering: 'TreeOrderingHierarchy',
+};
+
+const normalizeTreeOrderingValue = (value: unknown): string | null => {
+  if (value == null) return null;
+  const str = typeof value === 'string' ? value : String(value);
+  const trimmed = str.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const normalizeOfferDetailId = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
 };
 
 function buildFilterClauses(filterModel: GridRequest['filterModel']) {
@@ -293,5 +318,86 @@ export async function POST(
     console.error(err);
     const message = err instanceof Error ? err.message : 'Server error';
     return NextResponse.json({ ok: false, error: message, rows: [], rowCount: 0 }, { status: 500 });
+  }
+}
+
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ oID: string }> },
+) {
+  try {
+    const { oID } = await params;
+    const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
+    if (!normalizedId) {
+      return NextResponse.json({ ok: false, error: 'Missing id' }, { status: 400 });
+    }
+    const offerId = Number(normalizedId);
+    if (!Number.isInteger(offerId)) {
+      return NextResponse.json({ ok: false, error: 'Invalid id' }, { status: 400 });
+    }
+
+    let body: TreeOrderingUpdateRequest | null = null;
+    try {
+      body = (await req.json()) as TreeOrderingUpdateRequest;
+    } catch {
+      body = null;
+    }
+    const updates = Array.isArray(body?.updates) ? body?.updates : [];
+    const normalizedUpdates = updates
+      .map((update) => {
+        const id = normalizeOfferDetailId(update?.OfferDetailID ?? null);
+        if (id == null) return null;
+        const ordering = normalizeTreeOrderingValue(update?.TreeOrdering ?? null);
+        return { OfferDetailID: id, TreeOrdering: ordering };
+      })
+      .filter((entry): entry is { OfferDetailID: number; TreeOrdering: string | null } => Boolean(entry));
+
+    if (normalizedUpdates.length === 0) {
+      return NextResponse.json({ ok: false, error: 'No valid updates provided' }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    const chunkSize = 400;
+    let affected = 0;
+
+    for (let idx = 0; idx < normalizedUpdates.length; idx += chunkSize) {
+      const chunk = normalizedUpdates.slice(idx, idx + chunkSize);
+      if (chunk.length === 0) continue;
+      const request = pool.request();
+      request.input('__offerId', sql.Int, offerId);
+
+      const valueClauses: string[] = [];
+      chunk.forEach((entry, chunkIdx) => {
+        const idParam = `odid_${chunkIdx}`;
+        const orderingParam = `ordering_${chunkIdx}`;
+        request.input(idParam, sql.Int, entry.OfferDetailID);
+        request.input(orderingParam, sql.NVarChar(255), entry.TreeOrdering);
+        valueClauses.push(`(@${idParam}, @${orderingParam})`);
+      });
+
+      const query = `
+        WITH PendingUpdates (OfferDetailID, TreeOrdering) AS (
+          SELECT v.OfferDetailID, v.TreeOrdering
+          FROM (VALUES ${valueClauses.join(', ')}) AS v (OfferDetailID, TreeOrdering)
+        )
+        UPDATE od
+        SET od.TreeOrdering = PendingUpdates.TreeOrdering
+        FROM dbo.OfferDetails od
+          INNER JOIN PendingUpdates ON od.ID = PendingUpdates.OfferDetailID
+        WHERE od.OfferID = @__offerId;
+      `;
+      const result = await request.query(query);
+      affected += result.rowsAffected?.[0] ?? 0;
+    }
+
+    return NextResponse.json({
+      ok: true,
+      updated: normalizedUpdates.length,
+      rowsAffected: affected,
+    });
+  } catch (err: unknown) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

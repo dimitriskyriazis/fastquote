@@ -87,6 +87,37 @@ type NodeOrderingInfo = {
 type MoveFailureReason = 'target-product' | 'descendant' | 'invalid-target';
 
 const ROOT_PARENT_KEY = '__root__';
+const PERSISTED_TREE_KEY = '__persistedTreeOrdering';
+
+type ToastTone = 'info' | 'error' | 'success';
+
+const normalizeTreeOrderingValue = (value: unknown): string | null => {
+  if (value == null) return null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  const str = String(value).trim();
+  return str.length > 0 ? str : null;
+};
+
+const normalizeOfferDetailId = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
+};
+
+type TreeOrderingUpdate = {
+  OfferDetailID: number;
+  TreeOrdering: string | null;
+};
+
+type RowWithPersistedTree = RowData & {
+  [PERSISTED_TREE_KEY]?: string | null;
+};
 
 const comparePaths = (a: number[], b: number[]) => {
   if (a.length === 0 && b.length === 0) return 0;
@@ -222,38 +253,13 @@ const isDescendantOf = (candidateParent: NodeOrderingInfo | null, potentialAnces
 };
 
 const showInvalidDropMessage = (reason: MoveFailureReason | null) => {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return;
   const messages: Record<MoveFailureReason, string> = {
     'target-product': 'Products cannot contain rows inside them. Drop into a category row or gap.',
     descendant: 'You cannot drop a row into itself or its descendants.',
     'invalid-target': 'That drop location is not allowed. Try a highlighted gap or category row.',
   };
   const message = reason ? messages[reason] : messages['invalid-target'];
-  const containerId = 'telquote-drop-toast-container';
-  let container = document.getElementById(containerId);
-  if (!container) {
-    container = document.createElement('div');
-    container.id = containerId;
-    container.className = 'drop-toast-container';
-    document.body.appendChild(container);
-  }
-  const toast = document.createElement('div');
-  toast.className = 'drop-toast';
-  toast.textContent = message;
-  container.appendChild(toast);
-  requestAnimationFrame(() => {
-    toast.classList.add('visible');
-  });
-  const removeToast = () => {
-    toast.classList.remove('visible');
-    window.setTimeout(() => {
-      toast.remove();
-      if (container && container.childElementCount === 0) {
-        container.remove();
-      }
-    }, 220);
-  };
-  window.setTimeout(removeToast, 3200);
+  showToastMessage(message, 'error');
 };
 
 type MoveResult =
@@ -359,6 +365,75 @@ const applyOrderingMove = (
   return { success: true };
 };
 
+const collectTreeOrderingUpdates = (api: GridApi<RowData>): TreeOrderingUpdate[] => {
+  const updates: TreeOrderingUpdate[] = [];
+  api.forEachNode((node) => {
+    if (!node.data) return;
+    const data = node.data as RowWithPersistedTree;
+    const offerDetailId = normalizeOfferDetailId((data as { OfferDetailID?: unknown }).OfferDetailID);
+    if (offerDetailId == null) return;
+    const currentOrdering = normalizeTreeOrderingValue((data as { TreeOrdering?: unknown }).TreeOrdering ?? null);
+    const persistedOrdering = normalizeTreeOrderingValue(data[PERSISTED_TREE_KEY] ?? null);
+    if (currentOrdering === persistedOrdering) return;
+    updates.push({ OfferDetailID: offerDetailId, TreeOrdering: currentOrdering });
+  });
+  return updates;
+};
+
+const markOrderingPersisted = (api: GridApi<RowData>, updates: TreeOrderingUpdate[]) => {
+  if (updates.length === 0) return;
+  const map = new Map<number, string | null>();
+  updates.forEach((entry) => {
+    map.set(entry.OfferDetailID, normalizeTreeOrderingValue(entry.TreeOrdering));
+  });
+  api.forEachNode((node) => {
+    if (!node.data) return;
+    const data = node.data as RowWithPersistedTree;
+    const offerDetailId = normalizeOfferDetailId((data as { OfferDetailID?: unknown }).OfferDetailID);
+    if (offerDetailId == null) return;
+    if (!map.has(offerDetailId)) return;
+    data[PERSISTED_TREE_KEY] = map.get(offerDetailId) ?? null;
+  });
+};
+
+const refreshServerSideData = (api?: GridApi<RowData>) => {
+  if (!api || typeof api.refreshServerSide !== 'function') return;
+  try {
+    api.refreshServerSide({ purge: true });
+  } catch (err) {
+    console.error('Failed to refresh server-side rows', err);
+  }
+};
+
+const showToastMessage = (message: string, tone: ToastTone = 'info') => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  const containerId = 'telquote-drop-toast-container';
+  let container = document.getElementById(containerId);
+  if (!container) {
+    container = document.createElement('div');
+    container.id = containerId;
+    container.className = 'drop-toast-container';
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement('div');
+  toast.className = `drop-toast drop-toast--${tone}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  requestAnimationFrame(() => {
+    toast.classList.add('visible');
+  });
+  const removeToast = () => {
+    toast.classList.remove('visible');
+    window.setTimeout(() => {
+      toast.remove();
+      if (container && container.childElementCount === 0) {
+        container.remove();
+      }
+    }, 220);
+  };
+  window.setTimeout(removeToast, 3200);
+};
+
 const GUARDED_SET_FILTERS = new Set(['Enabled']);
 
 const reorderRowsByTreeOrdering = (api: GridApi<RowData>) => {
@@ -402,6 +477,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
   const [gapHover, setGapHover] = useState<GapHoverState | null>(null);
   const [rowHover, setRowHover] = useState<RowHoverState | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const dcd: ColDef = useMemo(() => ({
     sortable: true,
@@ -437,7 +513,17 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
           params.fail();
           return;
         }
-        params.success({ rowData: data.rows, rowCount: data.rowCount });
+        const rawRows = Array.isArray(data.rows) ? data.rows : [];
+        const normalizedRows: RowData[] = rawRows.map((row) => {
+          const normalizedOrdering = normalizeTreeOrderingValue((row as { TreeOrdering?: unknown }).TreeOrdering ?? null);
+          return {
+            ...row,
+            TreeOrdering: normalizedOrdering,
+            [PERSISTED_TREE_KEY]: normalizedOrdering,
+          };
+        });
+        const resolvedRowCount = typeof data.rowCount === 'number' ? data.rowCount : normalizedRows.length;
+        params.success({ rowData: normalizedRows, rowCount: resolvedRowCount });
       } catch (e) {
         console.error('Datasource fetch exception', e);
         params.fail();
@@ -497,6 +583,40 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
       reorderRowsByTreeOrdering(api);
     }
   }, [manualMode]);
+
+  const persistTreeOrderingChanges = useCallback(() => {
+    const runSave = async () => {
+      const api = gridRef.current?.api;
+      if (!api) return;
+      const updates = collectTreeOrderingUpdates(api);
+      if (updates.length === 0) return;
+      try {
+        const res = await fetch(endpoint, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates }),
+        });
+        let payload: { ok?: boolean; error?: string } | null = null;
+        try {
+          payload = (await res.json()) as { ok?: boolean; error?: string } | null;
+        } catch {
+          payload = null;
+        }
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to save tree ordering (status ${res.status})`);
+        }
+        markOrderingPersisted(api, updates);
+      } catch (err) {
+        console.error('Failed to persist tree ordering', err);
+        showToastMessage('Unable to save tree ordering. Reloading data…', 'error');
+        refreshServerSideData(api);
+        throw err;
+      }
+    };
+    const chained = saveQueueRef.current.then(() => runSave());
+    saveQueueRef.current = chained.catch(() => {});
+    return chained;
+  }, [endpoint]);
 
   const computeHoverState = useCallback((
     clientY: number,
@@ -789,7 +909,8 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     if (manualMode) {
       api.refreshCells({ columns: ['TreeOrdering', 'BrandName'], force: true });
     }
-  }, [gapHover, rowHover, manualMode, computeHoverState]);
+    void persistTreeOrderingChanges();
+  }, [gapHover, rowHover, manualMode, computeHoverState, persistTreeOrderingChanges]);
 
   const handleCellValueChanged = useCallback((event: CellValueChangedEvent<RowData>) => {
     if (!manualMode) return;
@@ -800,7 +921,8 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
       applyOrder: true,
     });
     reorderRowsByTreeOrdering(event.api);
-  }, [manualMode]);
+    void persistTreeOrderingChanges();
+  }, [manualMode, persistTreeOrderingChanges]);
 
   const rowOverlayStyle = {
     position: 'absolute' as const,
