@@ -34,7 +34,7 @@ type Props = {
   columnDefs: ColDef[];
   defaultColDef?: ColDef;
   manualMode?: boolean;
-  getRowClass?: (params: RowClassParams<RowData>) => string | string[] | undefined | null;
+  getRowClass?: (params: RowClassParams<RowData>) => string | string[] | undefined;
 };
 
 type RowData = Record<string, unknown>;
@@ -919,7 +919,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     reorderRowsByTreeOrdering(api);
     api.refreshCells({ columns: TREE_DEPENDENT_COLUMNS, force: true });
     void persistTreeOrderingChanges();
-  }, [gapHover, rowHover, manualMode, computeHoverState, persistTreeOrderingChanges]);
+  }, [gapHover, rowHover, computeHoverState, persistTreeOrderingChanges]);
 
   const handleCellValueChanged = useCallback((event: CellValueChangedEvent<RowData>) => {
     if (!manualMode) return;
@@ -1045,7 +1045,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
           statusBar={{ statusPanels: [{ statusPanel: 'agAggregationComponent' }] }}
           suppressCellFocus={true}
           enableRangeSelection={true}
-          cellSelection="multiple"
+          cellSelection={true}
 
           // Charts OFF for now (to avoid the AgCharts module requirement)
           enableCharts={false}
