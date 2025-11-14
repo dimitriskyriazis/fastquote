@@ -7,6 +7,10 @@ import type {
   ValueFormatterParams,
   ValueGetterParams,
   RowClassParams,
+  GetContextMenuItemsParams,
+  MenuItemDef,
+  GridApi,
+  CellValueChangedEvent,
 } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
 const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
@@ -17,7 +21,9 @@ const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
     </div>
   ),
 });
-import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory } from '../../../lib/offerProductRows';
+import { showToastMessage } from '../../../lib/toast';
+import { showConfirmDialog } from '../../../lib/confirm';
+import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const decimalFormatter = new Intl.NumberFormat('en-US', {
@@ -85,6 +91,37 @@ const parseTreeOrderingPath = (value: unknown): number[] => {
     .filter((segment) => Number.isFinite(segment));
 };
 
+const normalizeOfferDetailId = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
+};
+
+const resolveRowLabel = (row: Record<string, unknown> | null | undefined, fallback: string) => {
+  if (!row) return fallback;
+  const partNumberRaw = (row as { PartNumber?: unknown }).PartNumber;
+  const descriptionRaw = (row as { Description?: unknown }).Description;
+  const brandRaw = (row as { BrandName?: unknown }).BrandName;
+  const normalize = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+  const partNumber = normalize(partNumberRaw);
+  const description = normalize(descriptionRaw);
+  if (partNumber && description) return `${partNumber} – ${description}`;
+  if (partNumber) return partNumber;
+  if (description) return description;
+  const brand = normalize(brandRaw);
+  return brand || fallback;
+};
+
+const normalizeDescriptionValue = (value: unknown): string | null => {
+  if (value == null) return null;
+  const str = typeof value === 'string' ? value : String(value);
+  const trimmed = str.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
 const buildCategoryAggregateGetter = (field: 'TotalPrice' | 'TotalNet' | 'TotalCost') => (
   params: ValueGetterParams<Record<string, unknown>, unknown>,
 ) => {
@@ -126,10 +163,23 @@ const productAccentCellClassRules = {
     isOfferProductProduct(params.data),
 };
 
+const deleteRecordMenuIcon = `
+  <span class="telquote-menu-icon telquote-menu-icon--danger" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 7L18.2 19.2C18.1 20.8 16.8 22 15.2 22H8.8C7.2 22 5.9 20.8 5.8 19.2L5 7" />
+      <path d="M10 11V17" />
+      <path d="M14 11V17" />
+      <path d="M4 7H20" />
+      <path d="M9 7V4.8C9 3.8 9.8 3 10.8 3H13.2C14.2 3 15 3.8 15 4.8V7" />
+    </svg>
+  </span>
+`;
+
 type Props = {
   oID: string;
   endpoint?: string;
   manualMode?: boolean;
+  refreshToken?: number;
 };
 
 const panelContainerStyle: CSSProperties = {
@@ -149,11 +199,14 @@ const productsGridWrapperStyle: CSSProperties = {
 const buildEndpointForOffer = (oID: string) =>
   `/api/offers/${encodeURIComponent(oID)}/products`;
 
-export default function OfferProductsPanel({ oID, endpoint, manualMode = false }: Props) {
+export default function OfferProductsPanel({ oID, endpoint, manualMode = false, refreshToken = 0 }: Props) {
   const resolvedEndpoint = useMemo(() => {
     if (endpoint) return endpoint;
     return buildEndpointForOffer(oID);
   }, [endpoint, oID]);
+  const defaultColDef = useMemo<ColDef>(() => ({
+    editable: (params) => isOfferProductComment(params?.data ?? null),
+  }), []);
 
   const getRowClass = useCallback((params: RowClassParams<Record<string, unknown>>) => {
     const rowType = resolveOfferProductRowType(params.data);
@@ -435,7 +488,15 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
       type: 'numericColumn',
       valueFormatter: zeroBlankNumberFormatter,
     },
-    { field: 'Description', headerName: 'Description', minWidth: 220, filter: 'agTextColumnFilter' },
+    {
+      field: 'Description',
+      headerName: 'Description',
+      minWidth: 280,
+      width: 320,
+      filter: 'agTextColumnFilter',
+      editable: true,
+      singleClickEdit: true,
+    },
     {
       field: 'CustomerDiscount',
       headerName: 'Customer Discount',
@@ -522,14 +583,144 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false }
     },
   ], [RowDragHandle, PartNumberCell, manualMode]);
 
+  const deleteRow = useCallback(async (
+    offerDetailId: number,
+    rowData: Record<string, unknown> | null,
+    api: GridApi<Record<string, unknown>> | null,
+  ) => {
+    const fallbackLabel = `record #${offerDetailId}`;
+    const rowLabel = resolveRowLabel(rowData, fallbackLabel);
+    const rowType = resolveOfferProductRowType(rowData);
+    const typeLabel = rowType === 'category'
+      ? 'category'
+      : rowType === 'product'
+        ? 'product'
+        : rowType === 'printable-comment' || rowType === 'non-printable-comment'
+          ? 'comment'
+          : 'record';
+    const confirmed = await showConfirmDialog({
+      title: 'Delete record',
+      message: `Delete ${typeLabel} ${rowLabel}? This action cannot be undone.`,
+      confirmLabel: 'Delete record',
+      cancelLabel: 'Keep record',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+    try {
+      const res = await fetch(resolvedEndpoint, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ OfferDetailIDs: [offerDetailId] }),
+      });
+      let payload: { ok?: boolean; error?: string } | null = null;
+      try {
+        payload = (await res.json()) as { ok?: boolean; error?: string } | null;
+      } catch {
+        payload = null;
+      }
+      if (!res.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? `Failed to delete record (status ${res.status})`);
+      }
+      showToastMessage('Record deleted', 'success');
+      try {
+        api?.refreshServerSide?.({ purge: true });
+      } catch (err) {
+        console.warn('Failed to refresh products after deletion', err);
+      }
+    } catch (err) {
+      console.error('Failed to delete record', err);
+      showToastMessage('Unable to delete record. Please try again.', 'error');
+    }
+  }, [resolvedEndpoint]);
+
+  const productContextMenuItems = useCallback((
+    params: GetContextMenuItemsParams<Record<string, unknown>>,
+  ) => {
+    const baseItems = Array.isArray(params.defaultItems) ? [...params.defaultItems] : [];
+    const rowData = params.node?.data as Record<string, unknown> | null | undefined;
+    const rawId = (rowData as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null;
+    const offerDetailId = normalizeOfferDetailId(rawId);
+    if (offerDetailId == null) {
+      return baseItems;
+    }
+    const nextItems: Array<MenuItemDef | string> = [...baseItems];
+    if (nextItems.length > 0 && nextItems[nextItems.length - 1] !== 'separator') {
+      nextItems.push('separator');
+    }
+    const deleteItem: MenuItemDef = {
+      name: 'Delete record',
+      icon: deleteRecordMenuIcon,
+      action: () => {
+        void deleteRow(offerDetailId, rowData ?? null, params.api ?? null);
+      },
+    };
+    nextItems.push(deleteItem);
+    return nextItems;
+  }, [deleteRow]);
+
+  const handleDescriptionEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    if (event.colDef.field !== 'Description') return;
+    const source = (event as { source?: string }).source;
+    if (source === 'api') return;
+    const normalizedOldValue = normalizeDescriptionValue(event.oldValue);
+    const normalizedNewValue = normalizeDescriptionValue(event.newValue);
+    if (normalizedOldValue === normalizedNewValue) {
+      return;
+    }
+    const offerDetailId = normalizeOfferDetailId((event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null);
+    if (offerDetailId == null) {
+      showToastMessage('Unable to update description. Missing record identifier.', 'error');
+      event.node?.setDataValue?.('Description', normalizedOldValue ?? '');
+      return;
+    }
+    const revertValue = () => {
+      try {
+        event.node?.setDataValue?.('Description', normalizedOldValue ?? '');
+      } catch {
+        /* noop */
+      }
+    };
+    const runUpdate = async () => {
+      try {
+        const res = await fetch(resolvedEndpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: [{ OfferDetailID: offerDetailId, Description: normalizedNewValue }],
+          }),
+        });
+        let payload: { ok?: boolean; error?: string } | null = null;
+        try {
+          payload = (await res.json()) as { ok?: boolean; error?: string } | null;
+        } catch {
+          payload = null;
+        }
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update description (status ${res.status})`);
+        }
+        showToastMessage('Description updated', 'success');
+      } catch (err) {
+        console.error('Failed to update description', err);
+        showToastMessage('Unable to update description. Please try again.', 'error');
+        revertValue();
+      }
+    };
+    void runUpdate();
+  }, [resolvedEndpoint]);
+
   return (
     <div style={panelContainerStyle}>
       <div style={productsGridWrapperStyle} className="offer-products-grid">
         <AgGridAll
           endpoint={resolvedEndpoint}
           columnDefs={productColumnDefs}
+          defaultColDef={defaultColDef}
           manualMode={manualMode}
           getRowClass={getRowClass}
+          getContextMenuItems={productContextMenuItems}
+          onCellValueChanged={handleDescriptionEdit}
+          refreshToken={refreshToken}
+          autoSizeExclusions={['Description']}
         />
       </div>
     </div>

@@ -86,6 +86,33 @@ type TreeOrderingUpdateRequest = {
   updates?: TreeOrderingUpdateInput[];
 };
 
+type DeleteRowRequest = {
+  OfferDetailIDs?: Array<number | string | null | undefined>;
+};
+
+type DescriptionUpdateInput = {
+  OfferDetailID?: number | string | null;
+  Description?: string | null;
+};
+
+type DescriptionUpdateRequest = {
+  updates?: DescriptionUpdateInput[];
+};
+
+type CreateRowType = 'category' | 'printable-comment' | 'non-printable-comment';
+
+type CreateRowRequest = {
+  action?: 'create';
+  type?: CreateRowType | null;
+  description?: string | null;
+};
+
+const CREATE_TYPE_LABELS: Record<CreateRowType, string> = {
+  category: 'New Category',
+  'printable-comment': 'New Printable Comment',
+  'non-printable-comment': 'New Non Printable Comment',
+};
+
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferDetailID: 'od.ID',
   ParentOfferDetailID: 'od.ParentOfferDetailID',
@@ -130,6 +157,118 @@ const normalizeOfferDetailId = (value: unknown): number | null => {
   }
   return null;
 };
+
+const normalizeDescriptionValue = (value: unknown): string | null => {
+  if (value == null) return null;
+  const str = typeof value === 'string' ? value : String(value);
+  const trimmed = str.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const normalizeCreateRowType = (value: unknown): CreateRowType | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'category') return 'category';
+  if (normalized === 'printable-comment') return 'printable-comment';
+  if (normalized === 'non-printable-comment') return 'non-printable-comment';
+  return null;
+};
+
+async function handleCreateRow(
+  offerId: number,
+  payload: CreateRowRequest | null,
+) {
+  const type = normalizeCreateRowType(payload?.type ?? null);
+  if (!type) {
+    return NextResponse.json({ ok: false, error: 'Invalid row type' }, { status: 400 });
+  }
+  const fallbackLabel = CREATE_TYPE_LABELS[type] ?? 'New Entry';
+  const description = normalizeDescriptionValue(payload?.description ?? null) ?? fallbackLabel;
+  const isComment = type === 'category' ? 0 : 1;
+  const isPrintable = type === 'category'
+    ? null
+    : type === 'printable-comment'
+      ? 1
+      : 0;
+  const quantity = 0;
+  const createdBy = 0;
+
+  const pool = await getPool();
+  const request = pool.request();
+  request.input('__offerId', sql.Int, offerId);
+  request.input('__isComment', isComment);
+  request.input('__isPrintable', isPrintable);
+  request.input('__description', description);
+  request.input('__quantity', quantity);
+  request.input('__createdBy', createdBy);
+  request.input('__modifiedBy', createdBy);
+
+  const query = `
+    DECLARE @lastRootValue INT =
+      (
+        SELECT MAX(
+          TRY_CONVERT(INT,
+            CASE
+              WHEN CHARINDEX('.', LTRIM(RTRIM(ISNULL(od.TreeOrdering, '')))) > 0 THEN
+                LEFT(LTRIM(RTRIM(ISNULL(od.TreeOrdering, ''))), CHARINDEX('.', LTRIM(RTRIM(ISNULL(od.TreeOrdering, '')))) - 1)
+              ELSE NULLIF(LTRIM(RTRIM(ISNULL(od.TreeOrdering, ''))), '')
+            END
+          )
+        )
+        FROM dbo.OfferDetails od
+        WHERE od.OfferID = @__offerId
+      );
+    DECLARE @treeOrdering NVARCHAR(255) = CONVERT(NVARCHAR(255), ISNULL(@lastRootValue, 0) + 1);
+    DECLARE @nextOrdering INT =
+      (
+        SELECT ISNULL(MAX(ISNULL(od.Ordering, 0)), 0) + 1
+        FROM dbo.OfferDetails od
+        WHERE od.OfferID = @__offerId
+      );
+
+    INSERT INTO dbo.OfferDetails (
+      OfferID,
+      ParentOfferDetailID,
+      TreeOrdering,
+      Ordering,
+      IsPrintable,
+      IsComment,
+      ProductDescription,
+      Quantity,
+      CreatedOn,
+      CreatedBy,
+      ModifiedOn,
+      ModifiedBy
+    )
+    OUTPUT
+      INSERTED.ID AS OfferDetailID,
+      INSERTED.TreeOrdering,
+      INSERTED.IsComment,
+      INSERTED.IsPrintable,
+      INSERTED.ProductDescription
+    VALUES (
+      @__offerId,
+      NULL,
+      @treeOrdering,
+      @nextOrdering,
+      @__isPrintable,
+      @__isComment,
+      @__description,
+      @__quantity,
+      SYSUTCDATETIME(),
+      @__createdBy,
+      SYSUTCDATETIME(),
+      @__modifiedBy
+    );
+  `;
+
+  const result = await request.query(query);
+  const inserted = Array.isArray(result.recordset) ? result.recordset[0] ?? null : null;
+  return NextResponse.json({
+    ok: true,
+    created: inserted ?? null,
+  });
+}
 
 function buildFilterClauses(filterModel: GridRequest['filterModel']) {
   if (!filterModel || Object.keys(filterModel).length === 0) {
@@ -232,19 +371,12 @@ export async function POST(
   { params }: { params: Promise<{ oID: string }> },
 ) {
   try {
-    let body: GridRequestEnvelope | null = null;
+    let body: (GridRequestEnvelope & CreateRowRequest) | null = null;
     try {
-      body = (await req.json()) as GridRequestEnvelope;
+      body = (await req.json()) as (GridRequestEnvelope & CreateRowRequest);
     } catch {
       body = null;
     }
-
-    const gridRequest = body?.request ?? {};
-    const startRow = gridRequest.startRow ?? 0;
-    const endRow = gridRequest.endRow ?? startRow + 100;
-    const windowSize = endRow > startRow ? endRow - startRow : 100;
-    const pageSize = Math.max(1, Math.min(1000, windowSize));
-    const offset = Math.max(0, startRow);
 
     const { oID } = await params;
     const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
@@ -264,7 +396,17 @@ export async function POST(
       );
     }
 
+    if ((body as CreateRowRequest | null)?.action === 'create') {
+      return handleCreateRow(idValue, body as CreateRowRequest);
+    }
+
     const pool = await getPool();
+    const gridRequest = body?.request ?? {};
+    const startRow = gridRequest.startRow ?? 0;
+    const endRow = gridRequest.endRow ?? startRow + 100;
+    const windowSize = endRow > startRow ? endRow - startRow : 100;
+    const pageSize = Math.max(1, Math.min(1000, windowSize));
+    const offset = Math.max(0, startRow);
     const { clauses, params: filterParams } = buildFilterClauses(gridRequest.filterModel);
     const whereClauses = [`od.OfferID = @__id`, ...clauses];
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
@@ -404,6 +546,154 @@ export async function PUT(
       updated: normalizedUpdates.length,
       rowsAffected: affected,
     });
+  } catch (err: unknown) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ oID: string }> },
+) {
+  try {
+    const { oID } = await params;
+    const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
+    if (!normalizedId) {
+      return NextResponse.json({ ok: false, error: 'Missing id' }, { status: 400 });
+    }
+    const offerId = Number(normalizedId);
+    if (!Number.isInteger(offerId)) {
+      return NextResponse.json({ ok: false, error: 'Invalid id' }, { status: 400 });
+    }
+
+    let body: DescriptionUpdateRequest | null = null;
+    try {
+      body = (await req.json()) as DescriptionUpdateRequest;
+    } catch {
+      body = null;
+    }
+
+    const updates = Array.isArray(body?.updates) ? body?.updates : [];
+    const normalizedUpdates = updates
+      .map((entry) => {
+        const id = normalizeOfferDetailId(entry?.OfferDetailID ?? null);
+        if (id == null) return null;
+        const hasDescription = entry ? Object.prototype.hasOwnProperty.call(entry, 'Description') : false;
+        if (!hasDescription) return null;
+        const description = normalizeDescriptionValue(entry?.Description ?? null);
+        return { OfferDetailID: id, Description: description };
+      })
+      .filter((entry): entry is { OfferDetailID: number; Description: string | null } => Boolean(entry));
+
+    if (normalizedUpdates.length === 0) {
+      return NextResponse.json({ ok: false, error: 'No valid updates provided' }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    const chunkSize = 400;
+    let affected = 0;
+
+    for (let idx = 0; idx < normalizedUpdates.length; idx += chunkSize) {
+      const chunk = normalizedUpdates.slice(idx, idx + chunkSize);
+      if (chunk.length === 0) continue;
+      const request = pool.request();
+      request.input('__offerId', sql.Int, offerId);
+      const valueClauses: string[] = [];
+      chunk.forEach((entry, chunkIdx) => {
+        const idParam = `odid_${chunkIdx}`;
+        const descriptionParam = `description_${chunkIdx}`;
+        request.input(idParam, sql.Int, entry.OfferDetailID);
+        request.input(descriptionParam, sql.NVarChar(4000), entry.Description);
+        valueClauses.push(`(@${idParam}, @${descriptionParam})`);
+      });
+      const query = `
+        WITH PendingDescriptionUpdates (OfferDetailID, Description) AS (
+          SELECT v.OfferDetailID, v.Description
+          FROM (VALUES ${valueClauses.join(', ')}) AS v (OfferDetailID, Description)
+        )
+        UPDATE od
+        SET od.ProductDescription = PendingDescriptionUpdates.Description
+        FROM dbo.OfferDetails od
+          INNER JOIN PendingDescriptionUpdates ON od.ID = PendingDescriptionUpdates.OfferDetailID
+        WHERE od.OfferID = @__offerId;
+      `;
+      const result = await request.query(query);
+      affected += result.rowsAffected?.[0] ?? 0;
+    }
+
+    return NextResponse.json({
+      ok: true,
+      updated: normalizedUpdates.length,
+      rowsAffected: affected,
+    });
+  } catch (err) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ oID: string }> },
+) {
+  try {
+    const { oID } = await params;
+    const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
+    if (!normalizedId) {
+      return NextResponse.json({ ok: false, error: 'Missing id' }, { status: 400 });
+    }
+    const offerId = Number(normalizedId);
+    if (!Number.isInteger(offerId)) {
+      return NextResponse.json({ ok: false, error: 'Invalid id' }, { status: 400 });
+    }
+
+    let body: DeleteRowRequest | null = null;
+    try {
+      body = (await req.json()) as DeleteRowRequest;
+    } catch {
+      body = null;
+    }
+
+    const rawIds = Array.isArray(body?.OfferDetailIDs) ? body?.OfferDetailIDs : [];
+    const normalizedIds = Array.from(new Set(
+      rawIds
+        .map((value) => normalizeOfferDetailId(value ?? null))
+        .filter((value): value is number => value != null)
+    ));
+
+    if (normalizedIds.length === 0) {
+      return NextResponse.json({ ok: false, error: 'No rows selected for deletion' }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    const chunkSize = 200;
+    let deleted = 0;
+
+    for (let idx = 0; idx < normalizedIds.length; idx += chunkSize) {
+      const chunk = normalizedIds.slice(idx, idx + chunkSize);
+      if (chunk.length === 0) continue;
+      const request = pool.request();
+      request.input('__offerId', sql.Int, offerId);
+      const paramNames: string[] = [];
+      chunk.forEach((id, chunkIdx) => {
+        const paramName = `odid_${chunkIdx}`;
+        request.input(paramName, sql.Int, id);
+        paramNames.push(`@${paramName}`);
+      });
+      const query = `
+        DELETE od
+        FROM dbo.OfferDetails od
+        WHERE od.OfferID = @__offerId
+          AND od.ID IN (${paramNames.join(', ')})
+      `;
+      const result = await request.query(query);
+      deleted += result.rowsAffected?.[0] ?? 0;
+    }
+
+    return NextResponse.json({ ok: true, deleted });
   } catch (err: unknown) {
     console.error(err);
     const message = err instanceof Error ? err.message : 'Server error';

@@ -61,12 +61,12 @@ export default function OffersClient() {
         border: '1px solid var(--border-subtle)',
         background: 'transparent',
         borderRadius: '6px',
-        padding: '4px',
+        padding: '2px',
         cursor: encodedId ? 'pointer' : 'not-allowed',
         color: 'inherit',
-        fontSize: '14px',
-        width: 28,
-        height: 28,
+        fontSize: '12px',
+        width: 24,
+        height: 24,
         appearance: 'none',
       };
 
@@ -89,9 +89,10 @@ export default function OffersClient() {
         width: '100%',
         textAlign: 'left',
         border: 'none',
-        padding: '8px 12px',
+        padding: '5px 9px',
         cursor: 'pointer',
-        fontSize: '14px',
+        fontSize: '12px',
+        lineHeight: 1.2,
       };
       const preventRangeSelection = (event: React.SyntheticEvent) => {
         event.stopPropagation();

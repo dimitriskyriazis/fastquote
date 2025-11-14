@@ -14,9 +14,15 @@ import {
   GetRowIdParams,
   CellValueChangedEvent,
   RowClassParams,
+  FirstDataRenderedEvent,
+  ModelUpdatedEvent,
+  GetContextMenuItems,
+  GetContextMenuItemsParams,
+  MenuItemDef,
 } from 'ag-grid-community';
 import { AllEnterpriseModule, LicenseManager } from 'ag-grid-enterprise';
 import { resolveOfferProductRowType, type OfferProductRowType, describeOfferProductRowType } from '../../lib/offerProductRows';
+import { showToastMessage } from '../../lib/toast';
 
 // Prevent double registration during HMR/StrictMode
 declare global {
@@ -35,6 +41,10 @@ type Props = {
   defaultColDef?: ColDef;
   manualMode?: boolean;
   getRowClass?: (params: RowClassParams<RowData>) => string | string[] | undefined;
+  getContextMenuItems?: (params: GetContextMenuItemsParams<RowData>) => (MenuItemDef | string)[] | undefined;
+  onCellValueChanged?: (event: CellValueChangedEvent<RowData>) => void;
+  refreshToken?: number;
+  autoSizeExclusions?: string[];
 };
 
 type RowData = Record<string, unknown>;
@@ -91,8 +101,6 @@ type MoveFailureReason = 'target-non-category' | 'descendant' | 'invalid-target'
 
 const ROOT_PARENT_KEY = '__root__';
 const PERSISTED_TREE_KEY = '__persistedTreeOrdering';
-
-type ToastTone = 'info' | 'error' | 'success';
 
 const normalizeTreeOrderingValue = (value: unknown): string | null => {
   if (value == null) return null;
@@ -412,35 +420,6 @@ const refreshServerSideData = (api?: GridApi<RowData>) => {
   }
 };
 
-const showToastMessage = (message: string, tone: ToastTone = 'info') => {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return;
-  const containerId = 'telquote-drop-toast-container';
-  let container = document.getElementById(containerId);
-  if (!container) {
-    container = document.createElement('div');
-    container.id = containerId;
-    container.className = 'drop-toast-container';
-    document.body.appendChild(container);
-  }
-  const toast = document.createElement('div');
-  toast.className = `drop-toast drop-toast--${tone}`;
-  toast.textContent = message;
-  container.appendChild(toast);
-  requestAnimationFrame(() => {
-    toast.classList.add('visible');
-  });
-  const removeToast = () => {
-    toast.classList.remove('visible');
-    window.setTimeout(() => {
-      toast.remove();
-      if (container && container.childElementCount === 0) {
-        container.remove();
-      }
-    }, 220);
-  };
-  window.setTimeout(removeToast, 3200);
-};
-
 const GUARDED_SET_FILTERS = new Set(['Enabled']);
 
 const reorderRowsByTreeOrdering = (api: GridApi<RowData>) => {
@@ -480,13 +459,69 @@ const gridShellStyle: CSSProperties = {
 
 const TREE_DEPENDENT_COLUMNS = ['TreeOrdering', 'BrandName', 'TotalPrice', 'TotalNet', 'TotalCost'];
 
-export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualMode = false, getRowClass }: Props) {
+export default function AgGridAll({
+  endpoint,
+  columnDefs,
+  defaultColDef,
+  manualMode = false,
+  getRowClass,
+  getContextMenuItems,
+  onCellValueChanged: externalCellValueChangeHandler,
+  refreshToken = 0,
+  autoSizeExclusions = [],
+}: Props) {
   const gridRef = useRef<AgGridReact<RowData> | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const [gapHover, setGapHover] = useState<GapHoverState | null>(null);
   const [rowHover, setRowHover] = useState<RowHoverState | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingExternalRefreshRef = useRef<number | null>(null);
+
+  const autoSizeColumns = useCallback((api?: GridApi<RowData> | null) => {
+    const gridApi = api ?? gridRef.current?.api ?? null;
+    if (!gridApi) return;
+    const resize = () => {
+      const displayed = typeof gridApi.getAllDisplayedColumns === 'function' ? gridApi.getAllDisplayedColumns() : null;
+      if (!displayed || displayed.length === 0) return;
+      const exclusions = new Set(autoSizeExclusions ?? []);
+      const columnsToSize = displayed.filter((col) => {
+        const colId = typeof col.getColId === 'function'
+          ? col.getColId()
+          : (typeof (col as { getId?: () => string }).getId === 'function'
+            ? (col as { getId?: () => string }).getId?.()
+            : null);
+        if (!colId) return true;
+        return !exclusions.has(colId);
+      });
+      if (columnsToSize.length === 0) return;
+      const columnIds = columnsToSize
+        .map((col) => {
+          if (typeof col.getColId === 'function') return col.getColId();
+          if (typeof (col as { getId?: () => string }).getId === 'function') return (col as { getId?: () => string }).getId?.();
+          return null;
+        })
+        .filter((id): id is string => typeof id === 'string' && id.length > 0);
+      if (columnIds.length === 0) return;
+      gridApi.autoSizeColumns(columnIds, false);
+    };
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(resize);
+    } else {
+      setTimeout(resize, 0);
+    }
+  }, [autoSizeExclusions]);
+
+  const handleFirstDataRendered = useCallback((event: FirstDataRenderedEvent) => {
+    autoSizeColumns(event.api);
+  }, [autoSizeColumns]);
+
+  const handleModelUpdated = useCallback((event: ModelUpdatedEvent) => {
+    autoSizeColumns(event.api);
+  }, [autoSizeColumns]);
+  useEffect(() => {
+    autoSizeColumns();
+  }, [manualMode, autoSizeColumns]);
 
   const dcd: ColDef = useMemo(() => ({
     sortable: true,
@@ -496,7 +531,7 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     // Hide header menu icon and disable header menu on right-click
     suppressHeaderMenuButton: true,
     suppressHeaderContextMenu: true,
-    minWidth: 150,
+    width: 100,
     ...defaultColDef,
   }), [defaultColDef]);
 
@@ -555,7 +590,21 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
     e.api.setGridOption('serverSideDatasource', datasource);
     e.api.setSideBarVisible(true);
     e.api.closeToolPanel();
+    if (pendingExternalRefreshRef.current != null) {
+      pendingExternalRefreshRef.current = null;
+      refreshServerSideData(e.api);
+    }
   };
+  const contextMenuItemsHandler = useCallback<GetContextMenuItems<RowData>>((params) => {
+    if (typeof getContextMenuItems !== 'function') {
+      return params.defaultItems ?? [];
+    }
+    const result = getContextMenuItems(params);
+    if (!result || (Array.isArray(result) && result.length === 0 && params.defaultItems)) {
+      return params.defaultItems ?? [];
+    }
+    return result as MenuItemDef[];
+  }, [getContextMenuItems]);
 
   const handleFilterChanged = useCallback((event: FilterChangedEvent) => {
     const model = event.api.getFilterModel() as Record<string, FilterDescriptor> | null;
@@ -592,6 +641,17 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
       reorderRowsByTreeOrdering(api);
     }
   }, [manualMode]);
+
+  useEffect(() => {
+    if (refreshToken === 0) return;
+    const api = gridRef.current?.api;
+    if (!api) {
+      pendingExternalRefreshRef.current = refreshToken;
+      return;
+    }
+    pendingExternalRefreshRef.current = null;
+    refreshServerSideData(api);
+  }, [refreshToken]);
 
   const persistTreeOrderingChanges = useCallback(() => {
     const runSave = async () => {
@@ -922,17 +982,20 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
   }, [gapHover, rowHover, computeHoverState, persistTreeOrderingChanges]);
 
   const handleCellValueChanged = useCallback((event: CellValueChangedEvent<RowData>) => {
-    if (!manualMode) return;
-    if (event.colDef.field !== 'TreeOrdering') return;
-    event.api.applyColumnState({
-      state: [{ colId: 'TreeOrdering', sort: 'asc', sortIndex: 0 }],
-      defaultState: { sort: null },
-      applyOrder: true,
-    });
-    reorderRowsByTreeOrdering(event.api);
-    event.api.refreshCells({ columns: TREE_DEPENDENT_COLUMNS, force: true });
-    void persistTreeOrderingChanges();
-  }, [manualMode, persistTreeOrderingChanges]);
+    if (manualMode && event.colDef.field === 'TreeOrdering') {
+      event.api.applyColumnState({
+        state: [{ colId: 'TreeOrdering', sort: 'asc', sortIndex: 0 }],
+        defaultState: { sort: null },
+        applyOrder: true,
+      });
+      reorderRowsByTreeOrdering(event.api);
+      event.api.refreshCells({ columns: TREE_DEPENDENT_COLUMNS, force: true });
+      void persistTreeOrderingChanges();
+    }
+    if (typeof externalCellValueChangeHandler === 'function') {
+      externalCellValueChangeHandler(event);
+    }
+  }, [manualMode, persistTreeOrderingChanges, externalCellValueChangeHandler]);
 
   const clearGridSelection = useCallback(() => {
     const api = gridRef.current?.api;
@@ -1032,6 +1095,11 @@ export default function AgGridAll({ endpoint, columnDefs, defaultColDef, manualM
           defaultColDef={dcd}
           getRowId={getRowId}
           getRowClass={getRowClass}
+          getContextMenuItems={getContextMenuItems ? contextMenuItemsHandler : undefined}
+          onFirstDataRendered={handleFirstDataRendered}
+          onModelUpdated={handleModelUpdated}
+          rowHeight={32}
+          headerHeight={38}
 
           // Server-Side model
           rowModelType="serverSide"
