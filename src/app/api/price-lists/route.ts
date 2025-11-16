@@ -170,11 +170,24 @@ function buildOrder(sortModel: GridRequest["sortModel"]) {
   return `ORDER BY ${parts.join(", ")}`;
 }
 
+async function readGridRequest(req: NextRequest): Promise<GridRequest> {
+  try {
+    const payload = await req.json();
+    if (payload && typeof payload === "object" && "request" in payload) {
+      const inner = (payload as { request?: GridRequest }).request;
+      if (inner && typeof inner === "object") return inner;
+    }
+  } catch {
+    /* swallow, use defaults */
+  }
+  return { startRow: 0, endRow: 100 };
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { request } = (await req.json()) as { request: GridRequest };
-    const startRow = request.startRow ?? 0;
-    const endRow = request.endRow ?? startRow + 100;
+    const requestPayload = await readGridRequest(req);
+    const startRow = requestPayload.startRow ?? 0;
+    const endRow = requestPayload.endRow ?? startRow + 100;
     const pageSize = Math.max(1, Math.min(1000, endRow - startRow));
     const offset = startRow;
 
@@ -194,8 +207,8 @@ export async function POST(req: NextRequest) {
       INNER JOIN dbo.Suppliers ON dbo.PriceLists.SupplierID = dbo.Suppliers.ID
     `;
 
-    const { where, params: whereParams } = buildWhereAndParams(request.filterModel);
-    const order = buildOrder(request.sortModel) || "ORDER BY dbo.PriceLists.Name";
+    const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);
+    const order = buildOrder(requestPayload.sortModel) || "ORDER BY dbo.PriceLists.Name";
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
     const dataSql = `${select} ${from} ${where} ${order} ${paging}`;
