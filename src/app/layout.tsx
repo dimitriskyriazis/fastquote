@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import 'ag-grid-community/styles/ag-theme-quartz.css';
+import "ag-grid-community/styles/ag-theme-quartz.css";
+import SideNav from "./components/SideNav";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -23,7 +24,12 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>{children}</body>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        <div className="app-shell">
+          <SideNav />
+          <div className="app-content">{children}</div>
+        </div>
+      </body>
     </html>
   );
 }
