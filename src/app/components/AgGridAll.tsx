@@ -23,6 +23,7 @@ import {
 import { AllEnterpriseModule, LicenseManager } from 'ag-grid-enterprise';
 import { resolveOfferProductRowType, type OfferProductRowType, describeOfferProductRowType } from '../../lib/offerProductRows';
 import { showToastMessage } from '../../lib/toast';
+import styles from './AgGridAll.module.css';
 
 // Prevent double registration during HMR/StrictMode
 declare global {
@@ -441,22 +442,6 @@ const reorderRowsByTreeOrdering = (api: GridApi<RowData>) => {
     console.warn('Failed to reorder rows using server-side transaction', err);
   }
 };
-const containerStyle: CSSProperties = {
-  display: 'flex',
-  flex: 1,
-  minHeight: 0,
-  width: '100%',
-};
-
-const gridShellStyle: CSSProperties = {
-  flex: 1,
-  minHeight: 0,
-  width: '100%',
-  height: '100%',
-  overflow: 'hidden',
-  position: 'relative',
-};
-
 const TREE_DEPENDENT_COLUMNS = ['TreeOrdering', 'BrandName', 'TotalPrice', 'TotalNet', 'TotalCost'];
 
 export default function AgGridAll({
@@ -1042,44 +1027,22 @@ export default function AgGridAll({
     };
   }, [clearGridSelection]);
 
-  const rowOverlayStyle = {
-    position: 'absolute' as const,
-    left: 0,
-    right: 0,
+  const rowOverlayStyle: CSSProperties = {
     top: rowHover ? rowHover.top : -9999,
     height: rowHover ? rowHover.height : 0,
-    background: 'transparent',
-    border: rowHover ? '2px solid var(--row-hover-outline, rgba(59, 130, 246, 0.85))' : '2px solid transparent',
-    borderRadius: 8,
-    boxSizing: 'border-box' as const,
-    pointerEvents: 'none' as const,
-    zIndex: 1000,
     opacity: isDragging && rowHover ? 1 : 0,
-    transition: 'opacity 140ms ease',
-    boxShadow: rowHover ? '0 0 0 1px rgba(15, 23, 42, 0.08), 0 4px 10px rgba(15, 23, 42, 0.12)' : 'none',
   };
 
-  const gapOverlayStyle = {
-    position: 'absolute' as const,
-    left: 0,
-    right: 0,
-    height: 4,
-    borderRadius: 2,
-    background: 'var(--gap-hover-color, rgba(59, 130, 246, 0.7))',
-    boxShadow: '0 1px 3px rgba(15, 23, 42, 0.2)',
+  const gapOverlayStyle: CSSProperties = {
     top: gapHover?.pos ?? -9999,
-    pointerEvents: 'none' as const,
-    zIndex: 1001,
     opacity: isDragging && gapHover ? 1 : 0,
-    transition: 'opacity 140ms ease',
   };
 
   return (
-    <div style={containerStyle}>
+    <div className={styles.container}>
       <div
-        className="ag-theme-quartz"
+        className={`ag-theme-quartz ${styles.gridShell}`}
         data-ag-grid-size="compact"
-        style={gridShellStyle}
         ref={shellRef}
         onMouseLeave={handleMouseLeave}
         onDragOverCapture={allowDragOver}
@@ -1131,9 +1094,13 @@ export default function AgGridAll({
           onCellValueChanged={handleCellValueChanged}
         />
         {/* Row hover overlay */}
-        <div className="row-hover-overlay" style={rowOverlayStyle} />
+        <div
+          className={styles.rowHoverOverlay}
+          data-active={rowHover ? 'true' : 'false'}
+          style={rowOverlayStyle}
+        />
         {/* Gap hover overlay */}
-        <div className="gap-hover-line" style={gapOverlayStyle} />
+        <div className={styles.gapHoverLine} style={gapOverlayStyle} />
       </div>
     </div>
   );

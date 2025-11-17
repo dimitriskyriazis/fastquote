@@ -1,0 +1,173 @@
+.ag-theme-quartz .ag-cell {
+  cursor: default;
+}
+
+.ag-theme-quartz .ag-cell,
+.ag-theme-quartz .ag-header-cell,
+.ag-theme-quartz .ag-header-group-cell {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.ag-theme-quartz {
+  --ag-row-hover-color: transparent;
+  --ag-row-height: 26px;
+  --ag-header-height: 40px;
+}
+
+.ag-theme-quartz .ag-row-hover .ag-cell {
+  background: transparent !important;
+}
+
+.ag-theme-quartz .ag-cell:hover {
+  background: var(--tab-hover-bg) !important;
+}
+
+.ag-theme-quartz .ag-row-selected,
+.ag-theme-quartz .ag-row-selected .ag-cell {
+  background: transparent !important;
+}
+
+.drop-toast-container {
+  position: fixed;
+  left: 50%;
+  bottom: 32px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 2147483647;
+  pointer-events: none;
+}
+
+.drop-toast {
+  background: rgba(15, 23, 42, 0.96);
+  color: #f8fafc;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.45);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: auto;
+}
+
+.drop-toast.drop-toast--info {
+  background: rgba(15, 23, 42, 0.96);
+}
+
+.drop-toast.drop-toast--error {
+  background: #b91c1c;
+}
+
+.drop-toast.drop-toast--success {
+  background: #15803d;
+}
+
+.drop-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.telquote-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2147483646;
+  opacity: 0;
+  transition: opacity 180ms ease;
+  padding: 16px;
+}
+
+.telquote-confirm-overlay.visible {
+  opacity: 1;
+}
+
+.telquote-confirm-dialog {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 20px 24px;
+  width: min(420px, calc(100% - 32px));
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.35);
+  color: #0f172a;
+}
+
+.telquote-confirm-title {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.telquote-confirm-message {
+  margin: 0 0 20px;
+  font-size: 0.95rem;
+  color: #374151;
+  line-height: 1.4;
+}
+
+.telquote-confirm-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.telquote-confirm-btn {
+  border-radius: 9999px;
+  border: none;
+  padding: 8px 18px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.telquote-confirm-btn--cancel {
+  background: #e5e7eb;
+  color: #1f2937;
+}
+
+.telquote-confirm-btn--cancel:hover {
+  background: #d1d5db;
+}
+
+.telquote-confirm-btn--confirm {
+  background: #2563eb;
+  color: #ffffff;
+  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35);
+}
+
+.telquote-confirm-btn--confirm:hover {
+  background: #1d4ed8;
+}
+
+.telquote-confirm-btn--danger {
+  background: #b91c1c;
+  box-shadow: 0 6px 18px rgba(185, 28, 28, 0.35);
+}
+
+.telquote-confirm-btn--danger:hover {
+  background: #991b1b;
+}
+
+.telquote-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.telquote-menu-icon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.telquote-menu-icon--danger {
+  color: #b91c1c;
+}

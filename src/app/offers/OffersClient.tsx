@@ -1,35 +1,19 @@
 "use client";
 
-import React, { useMemo, useCallback, useState, useEffect, useRef, type CSSProperties } from 'react';
+import React, { useMemo, useCallback, useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import styles from './OffersClient.module.css';
 const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
   ssr: false,
   loading: () => (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569' }}>
+    <div className={styles.loading}>
       Loading grid…
     </div>
   ),
 });
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
 import { createPortal } from 'react-dom';
-
-const mainStyle: CSSProperties = {
-  padding: '16px',
-  boxSizing: 'border-box',
-  height: '100vh',
-  width: '100%',
-  maxWidth: '100vw',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '12px',
-  overflow: 'hidden',
-};
-
-const headingStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '24px',
-};
 
 const formatEnabledValue = (value: unknown) => {
   if (value === 1 || value === true || value === 'true') return 'Yes';
@@ -54,52 +38,6 @@ export default function OffersClient() {
         router.push(`/offers/${encodedId}/${suffix}`);
       };
 
-      const wrapperStyle: CSSProperties = {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: '100%',
-        height: '100%',
-        position: 'relative',
-      };
-
-      const buttonStyle: CSSProperties = {
-        border: '1px solid var(--border-subtle)',
-        background: 'transparent',
-        borderRadius: '6px',
-        padding: '2px',
-        cursor: encodedId ? 'pointer' : 'not-allowed',
-        color: 'inherit',
-        fontSize: '12px',
-        width: 24,
-        height: 24,
-        appearance: 'none',
-      };
-
-      const menuStyle: CSSProperties = {
-        position: 'fixed',
-        top: menuPos?.top ?? 0,
-        left: menuPos?.left ?? 0,
-        background: '#ffffff',
-        color: '#0f172a',
-        border: '1px solid rgba(15, 23, 42, 0.12)',
-        borderRadius: '8px',
-        boxShadow: '0 12px 32px rgba(15, 23, 42, 0.12)',
-        zIndex: 9999,
-        minWidth: '160px',
-        overflow: 'hidden',
-      };
-
-      const itemStyle: CSSProperties = {
-        display: 'block',
-        width: '100%',
-        textAlign: 'left',
-        border: 'none',
-        padding: '5px 9px',
-        cursor: 'pointer',
-        fontSize: '12px',
-        lineHeight: 1.2,
-      };
       const preventRangeSelection = (event: React.SyntheticEvent) => {
         event.stopPropagation();
       };
@@ -131,7 +69,7 @@ export default function OffersClient() {
 
       return (
         <div
-          style={wrapperStyle}
+          className={styles.actionCell}
           onMouseDownCapture={preventRangeSelection}
           onPointerDownCapture={preventRangeSelection}
         >
@@ -139,8 +77,7 @@ export default function OffersClient() {
             type="button"
             aria-haspopup="menu"
             aria-expanded={open}
-            style={buttonStyle}
-            className="offers-action-btn"
+            className={styles.actionButton}
             onClick={() => setOpen(v => !v)}
             onMouseDownCapture={preventRangeSelection}
             onPointerDownCapture={preventRangeSelection}
@@ -152,12 +89,16 @@ export default function OffersClient() {
             {lines}
           </button>
           {open && menuPos && createPortal(
-            <div role="menu" style={menuStyle} className="offers-action-menu" onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+            <div
+              role="menu"
+              className={styles.actionMenu}
+              style={{ top: menuPos.top, left: menuPos.left }}
+              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            >
               <button
                 type="button"
                 role="menuitem"
-                style={itemStyle}
-                className="offers-action-item"
+                className={styles.actionMenuItem}
                 onClick={() => go('products')}
               >
                 View Products
@@ -165,8 +106,7 @@ export default function OffersClient() {
               <button
                 type="button"
                 role="menuitem"
-                style={itemStyle}
-                className="offers-action-item"
+                className={styles.actionMenuItem}
                 onClick={() => go('basic')}
               >
                 View Basic Data
@@ -198,7 +138,7 @@ export default function OffersClient() {
       maxWidth: 52,
       minWidth: 44,
       width: 48,
-      cellStyle: { padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' },
+      cellClass: styles.actionCellContainer,
       cellRenderer: ActionCell,
     },
     { field: 'Description', headerName: 'Description', filter: 'agTextColumnFilter' },
@@ -230,8 +170,8 @@ export default function OffersClient() {
   ], [ActionCell]);
 
   return (
-    <main style={mainStyle}>
-      <h1 style={headingStyle}>Offers</h1>
+    <main className={styles.page}>
+      <h1 className={styles.heading}>Offers</h1>
       <AgGridAll endpoint="/api/offers" columnDefs={columnDefs} />
     </main>
   );

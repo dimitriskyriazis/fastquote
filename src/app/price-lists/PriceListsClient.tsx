@@ -1,43 +1,18 @@
 "use client";
 
-import React, { useMemo, type CSSProperties } from "react";
+import React, { useMemo } from "react";
 import dynamic from "next/dynamic";
 import type { ColDef, ValueFormatterParams } from "ag-grid-community";
+import styles from "./PriceListsClient.module.css";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
   loading: () => (
-    <div
-      style={{
-        flex: 1,
-        minHeight: 0,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: "#475569",
-      }}
-    >
+    <div className={styles.loading}>
       Loading grid…
     </div>
   ),
 });
-
-const mainStyle: CSSProperties = {
-  padding: "16px",
-  boxSizing: "border-box",
-  height: "100vh",
-  width: "100%",
-  maxWidth: "100vw",
-  display: "flex",
-  flexDirection: "column",
-  gap: "12px",
-  overflow: "hidden",
-};
-
-const headingStyle: CSSProperties = {
-  margin: 0,
-  fontSize: "24px",
-};
 
 const formatDateValue = (params: ValueFormatterParams) => {
   const raw = params.value;
@@ -102,8 +77,8 @@ export default function PriceListsClient() {
   );
 
   return (
-    <main style={mainStyle}>
-      <h1 style={headingStyle}>Price Lists</h1>
+    <main className={styles.page}>
+      <h1 className={styles.heading}>Price Lists</h1>
       <AgGridAll
         endpoint="/api/price-lists"
         columnDefs={columnDefs}

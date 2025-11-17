@@ -1,0 +1,48 @@
+.container {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.gridShell {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.rowHoverOverlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-radius: 8px;
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 1000;
+  background: transparent;
+  border: 2px solid transparent;
+  transition: opacity 140ms ease;
+  box-shadow: none;
+}
+
+.rowHoverOverlay[data-active="true"] {
+  border-color: var(--row-hover-outline, rgba(59, 130, 246, 0.85));
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08), 0 4px 10px rgba(15, 23, 42, 0.12);
+}
+
+.gapHoverLine {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--gap-hover-color, rgba(59, 130, 246, 0.7));
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.2);
+  pointer-events: none;
+  z-index: 1001;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}

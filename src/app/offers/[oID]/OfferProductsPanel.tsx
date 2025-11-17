@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, type CSSProperties, useCallback } from 'react';
+import React, { useMemo, useCallback } from 'react';
 import type {
   ColDef,
   ICellRendererParams,
@@ -13,10 +13,11 @@ import type {
   CellValueChangedEvent,
 } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
+import styles from './OfferProductsPanel.module.css';
 const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
   ssr: false,
   loading: () => (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569' }}>
+    <div className={styles.loading}>
       Loading products…
     </div>
   ),
@@ -182,20 +183,6 @@ type Props = {
   refreshToken?: number;
 };
 
-const panelContainerStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  flex: 1,
-  minHeight: 0,
-};
-
-const productsGridWrapperStyle: CSSProperties = {
-  flex: 1,
-  minHeight: 0,
-  width: '100%',
-  display: 'flex',
-};
-
 const buildEndpointForOffer = (oID: string) =>
   `/api/offers/${encodeURIComponent(oID)}/products`;
 
@@ -226,30 +213,6 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
 
   // Row drag handle: starts native drag with row data (no visible selection)
   const RowDragHandle = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
-    const wrapperStyle: CSSProperties = {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: '100%',
-      height: '100%',
-      userSelect: 'none',
-    };
-
-    const buttonStyle: CSSProperties = {
-      background: 'transparent',
-      border: 'none',
-      outline: 'none',
-      width: 28,
-      height: 28,
-      padding: 0,
-      display: 'inline-flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      cursor: 'grab',
-      color: '#9ca3af', // neutral gray similar to the mock
-      appearance: 'none',
-    };
-
     const sixDots = (
       <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
         <circle cx="4" cy="3" r="1.5" fill="currentColor" />
@@ -377,17 +340,12 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
     };
 
     return (
-      <div
-        style={wrapperStyle}
-        onMouseDownCapture={preventRangeSelection}
-        onPointerDownCapture={preventRangeSelection}
-      >
+      <div className={styles.dragCellWrapper} onMouseDownCapture={preventRangeSelection} onPointerDownCapture={preventRangeSelection}>
         <button
           type="button"
           aria-label="Drag row"
           title="Drag row"
-          style={buttonStyle}
-          className="drag-handle"
+          className={styles.dragButton}
           draggable
           onDragStart={onDragStart}
           onMouseDownCapture={preventRangeSelection}
@@ -425,8 +383,7 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
         href={normalizedLink}
         target="_blank"
         rel="noreferrer noopener"
-        className="part-number-link"
-        style={{ color: '#1d4ed8', textDecoration: 'underline' }}
+        className={styles.partNumberLink}
         onClick={stop}
         onMouseDown={stop}
         onDoubleClick={stop}
@@ -709,8 +666,8 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
   }, [resolvedEndpoint]);
 
   return (
-    <div style={panelContainerStyle}>
-      <div style={productsGridWrapperStyle} className="offer-products-grid">
+    <div className={styles.panel}>
+      <div className={`${styles.gridWrapper} offer-products-grid`}>
         <AgGridAll
           endpoint={resolvedEndpoint}
           columnDefs={productColumnDefs}

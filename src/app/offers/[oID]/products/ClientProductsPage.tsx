@@ -1,64 +1,15 @@
 'use client';
 
-import React, { useState, useCallback, useRef, type CSSProperties } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import OfferProductsPanel from '../OfferProductsPanel';
 import { showToastMessage } from '../../../../lib/toast';
+import layoutStyles from '../../offersDetail.module.css';
+import toolbarStyles from './ClientProductsPage.module.css';
 
 type Props = {
   oID: string;
   headingText: string;
-};
-
-const pageShellStyle: CSSProperties = {
-  padding: '16px',
-  boxSizing: 'border-box',
-  height: '100vh',
-  width: '100%',
-  maxWidth: '100vw',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '12px',
-  overflow: 'hidden',
-};
-
-const headingStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '24px',
-  textAlign: 'center',
-  flexShrink: 0,
-};
-
-const headerRowStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '12px',
-  padding: '4px 0',
-};
-
-const headerSideCommonStyle: CSSProperties = {
-  flex: 1,
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  minWidth: 0,
-};
-
-const backLinkWrapperStyle: CSSProperties = {
-  ...headerSideCommonStyle,
-  justifyContent: 'flex-start',
-};
-
-const controlsWrapperStyle: CSSProperties = {
-  ...headerSideCommonStyle,
-  justifyContent: 'flex-end',
-};
-
-const backLinkStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '4px',
-  whiteSpace: 'nowrap',
 };
 
 type AddActionType = 'product' | 'category' | 'printable-comment' | 'non-printable-comment';
@@ -83,6 +34,13 @@ const addActionButtons: Array<{ key: AddActionType; label: string }> = [
   { key: 'printable-comment', label: addActionLabels['printable-comment'] },
   { key: 'non-printable-comment', label: addActionLabels['non-printable-comment'] },
 ];
+
+const buttonVariantClass: Record<AddActionType, string> = {
+  product: toolbarStyles.buttonProduct,
+  category: toolbarStyles.buttonCategory,
+  'printable-comment': toolbarStyles.buttonPrintableComment,
+  'non-printable-comment': toolbarStyles.buttonNonPrintableComment,
+};
 
 export default function ClientProductsPage({ oID, headingText }: Props) {
   const [manualMode, setManualMode] = useState(false);
@@ -138,25 +96,30 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
     }
   }, [oID, pendingAction]);
 
+  const manualToggleClass = manualMode
+    ? `${toolbarStyles.manualToggle} ${toolbarStyles.manualToggleActive}`
+    : toolbarStyles.manualToggle;
+
   return (
-    <main style={pageShellStyle}>
-      <div style={headerRowStyle}>
-        <div style={backLinkWrapperStyle}>
-          <Link href="/offers" className="link-quiet" style={backLinkStyle}>
+    <main className={layoutStyles.page}>
+      <div className={layoutStyles.headerRow}>
+        <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideStart}`}>
+          <Link href="/offers" className={layoutStyles.backLink}>
             <span aria-hidden="true">←</span>
             Back to offers
           </Link>
         </div>
-        <h1 style={headingStyle}>{headingText}</h1>
-        <div style={controlsWrapperStyle}>
-          <div className="offer-products-toolbar">
+        <h1 className={`${layoutStyles.heading} ${layoutStyles.headingCentered}`}>{headingText}</h1>
+        <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>
+          <div className={toolbarStyles.toolbar}>
             {addActionButtons.map((action) => {
               const disabled = pendingAction != null;
+              const variantClass = buttonVariantClass[action.key];
               return (
                 <button
                   type="button"
                   key={action.key}
-                  className={`offer-products-toolbar__button offer-products-toolbar__button--${action.key}`}
+                  className={`${toolbarStyles.button} ${variantClass}`}
                   onClick={() => handleAddAction(action.key)}
                   disabled={disabled}
                 >
@@ -166,7 +129,7 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
             })}
             <button
               type="button"
-              className={`manual-mode-toggle${manualMode ? ' active' : ''}`}
+              className={manualToggleClass}
               onClick={() => setManualMode((prev) => !prev)}
             >
               Manual Mode
