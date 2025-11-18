@@ -12,6 +12,38 @@
   display: flex;
 }
 
+.totalsBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 32px;
+  padding: 16px 20px;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+  font-weight: 600;
+  justify-content: center;
+  text-align: center;
+}
+
+.totalItem {
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  gap: 4px;
+  align-items: center;
+}
+
+.totalLabel {
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  color: #475569;
+  text-transform: uppercase;
+}
+
+.totalValue {
+  font-size: 1rem;
+  color: #0f172a;
+}
+
 .loading {
   flex: 1;
   min-height: 0;

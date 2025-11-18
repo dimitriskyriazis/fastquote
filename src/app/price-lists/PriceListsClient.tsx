@@ -20,7 +20,9 @@ const formatDateValue = (params: ValueFormatterParams) => {
   const raw = params.value;
   if (!raw) return "";
   const date = new Date(raw as string);
-  return Number.isNaN(date.getTime()) ? String(raw) : date.toLocaleDateString();
+  return Number.isNaN(date.getTime())
+    ? String(raw)
+    : date.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
 };
 
 const formatEnabledValue = (value: unknown) => {
@@ -31,6 +33,9 @@ const formatEnabledValue = (value: unknown) => {
 
 export default function PriceListsClient() {
   const router = useRouter();
+  const handleImportClick = useCallback(() => {
+    router.push("/price-lists/import");
+  }, [router]);
 
   const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     const ActionMenu: React.FC = () => {
@@ -112,17 +117,17 @@ export default function PriceListsClient() {
                   type="button"
                   role="menuitem"
                   className={styles.actionMenuItem}
-                  onClick={() => go("products")}
+                  onClick={() => go("basic")}
                 >
-                  View Products
+                  View Basic Data
                 </button>
                 <button
                   type="button"
                   role="menuitem"
                   className={styles.actionMenuItem}
-                  onClick={() => go("basic")}
+                  onClick={() => go("products")}
                 >
-                  View Basic Data
+                  View Products
                 </button>
               </div>,
               document.body
@@ -203,7 +208,16 @@ export default function PriceListsClient() {
 
   return (
     <main className={styles.page}>
-      <h1 className={styles.heading}>Price Lists</h1>
+      <div className={styles.headerRow}>
+        <h1 className={styles.heading}>Price Lists</h1>
+        <button
+          type="button"
+          className={styles.importButton}
+          onClick={handleImportClick}
+        >
+          Import Price List
+        </button>
+      </div>
       <AgGridAll
         endpoint="/api/price-lists"
         columnDefs={columnDefs}

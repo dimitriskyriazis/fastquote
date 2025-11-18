@@ -59,7 +59,7 @@ const navItems: NavItem[] = [
 
 export default function SideNav() {
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
 
   return (
     <aside className="side-nav" data-collapsed={collapsed}>

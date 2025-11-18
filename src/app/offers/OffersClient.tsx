@@ -23,6 +23,9 @@ const formatEnabledValue = (value: unknown) => {
 
 export default function OffersClient() {
   const router = useRouter();
+  const handleCreateOfferClick = useCallback(() => {
+    router.push('/offers/create');
+  }, [router]);
 
   const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     // A small React component for the action menu
@@ -99,17 +102,17 @@ export default function OffersClient() {
                 type="button"
                 role="menuitem"
                 className={styles.actionMenuItem}
-                onClick={() => go('products')}
+                onClick={() => go('basic')}
               >
-                View Products
+                View Basic Data
               </button>
               <button
                 type="button"
                 role="menuitem"
                 className={styles.actionMenuItem}
-                onClick={() => go('basic')}
+                onClick={() => go('products')}
               >
-                View Basic Data
+                View Products
               </button>
             </div>,
             document.body
@@ -171,7 +174,16 @@ export default function OffersClient() {
 
   return (
     <main className={styles.page}>
-      <h1 className={styles.heading}>Offers</h1>
+      <div className={styles.headerRow}>
+        <h1 className={styles.heading}>Offers</h1>
+        <button
+          type="button"
+          className={styles.primaryButton}
+          onClick={handleCreateOfferClick}
+        >
+          Create Offer
+        </button>
+      </div>
       <AgGridAll endpoint="/api/offers" columnDefs={columnDefs} />
     </main>
   );

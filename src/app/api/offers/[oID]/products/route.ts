@@ -75,7 +75,18 @@ type ProductRow = {
   TotalCost: number | null;
 };
 
-type ProductRowWithCount = ProductRow & { __totalCount: number | bigint | null };
+type ProductRowWithCount = ProductRow & {
+  __totalCount: number | bigint | null;
+  __sumTotalPrice?: number | bigint | string | null;
+  __sumTotalNet?: number | bigint | string | null;
+  __sumTotalCost?: number | bigint | string | null;
+};
+
+type OfferProductTotals = {
+  totalListPrice: number;
+  totalNetPrice: number;
+  totalCost: number;
+};
 
 type TreeOrderingUpdateInput = {
   OfferDetailID: number | string | null;
@@ -172,6 +183,16 @@ const normalizeCreateRowType = (value: unknown): CreateRowType | null => {
   if (normalized === 'printable-comment') return 'printable-comment';
   if (normalized === 'non-printable-comment') return 'non-printable-comment';
   return null;
+};
+
+const normalizeAggregateValue = (value: unknown): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'bigint') return Number(value);
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
 };
 
 async function handleCreateRow(
@@ -418,6 +439,9 @@ export async function POST(
     const query = `
       SELECT
         COUNT_BIG(1) OVER () AS __totalCount,
+        SUM(CASE WHEN od.ProductID IS NOT NULL THEN COALESCE(od.TotalPrice, 0) ELSE 0 END) OVER () AS __sumTotalPrice,
+        SUM(CASE WHEN od.ProductID IS NOT NULL THEN COALESCE(od.TotalNet, 0) ELSE 0 END) OVER () AS __sumTotalNet,
+        SUM(CASE WHEN od.ProductID IS NOT NULL THEN COALESCE(od.TotalCost, 0) ELSE 0 END) OVER () AS __sumTotalCost,
         od.ID AS OfferDetailID,
         od.ParentOfferDetailID,
         od.TreeOrdering AS TreeOrdering,
@@ -458,13 +482,24 @@ export async function POST(
     const result = await sqlRequest.query<ProductRowWithCount>(query);
     const recordset = result.recordset ?? [];
     const rowCount = recordset.length > 0 ? Number(recordset[0].__totalCount ?? 0) : 0;
+    const totals: OfferProductTotals = recordset.length > 0
+      ? {
+        totalListPrice: normalizeAggregateValue(recordset[0].__sumTotalPrice ?? 0),
+        totalNetPrice: normalizeAggregateValue(recordset[0].__sumTotalNet ?? 0),
+        totalCost: normalizeAggregateValue(recordset[0].__sumTotalCost ?? 0),
+      }
+      : { totalListPrice: 0, totalNetPrice: 0, totalCost: 0 };
+
     const rows: ProductRow[] = recordset.map(row => {
-      const { __totalCount, ...rest } = row;
+      const { __totalCount, __sumTotalPrice, __sumTotalNet, __sumTotalCost, ...rest } = row;
       void __totalCount;
+      void __sumTotalPrice;
+      void __sumTotalNet;
+      void __sumTotalCost;
       return rest;
     });
 
-    return NextResponse.json({ ok: true, rows, rowCount });
+    return NextResponse.json({ ok: true, rows, rowCount, totals });
   } catch (err: unknown) {
     console.error(err);
     const message = err instanceof Error ? err.message : 'Server error';

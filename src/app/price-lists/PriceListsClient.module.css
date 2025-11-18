@@ -15,6 +15,35 @@
   font-size: 24px;
 }
 
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.importButton {
+  border: 1px solid var(--border-subtle, #cbd5f5);
+  background: #0f172a;
+  color: #fff;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  min-width: 140px;
+  transition: background-color 120ms ease, transform 80ms ease;
+}
+
+.importButton:hover,
+.importButton:focus-visible {
+  background: #1e293b;
+}
+
+.importButton:active {
+  transform: translateY(1px);
+}
+
 .loading {
   flex: 1;
   min-height: 0;

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback, useState } from 'react';
 import type {
   ColDef,
   ICellRendererParams,
@@ -14,6 +14,8 @@ import type {
 } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
 import styles from './OfferProductsPanel.module.css';
+import type { GridTotals } from '../../components/AgGridAll';
+
 const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
   ssr: false,
   loading: () => (
@@ -191,9 +193,35 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
     if (endpoint) return endpoint;
     return buildEndpointForOffer(oID);
   }, [endpoint, oID]);
+  const [totals, setTotals] = useState<{ totalListPrice: number; totalNetPrice: number; totalCost: number; totalMargin: number } | null>(null);
+
   const defaultColDef = useMemo<ColDef>(() => ({
     editable: (params) => isOfferProductComment(params?.data ?? null),
   }), []);
+
+  const handleTotalsChange = useCallback((payload: GridTotals | null) => {
+    if (!payload) {
+      setTotals(null);
+      return;
+    }
+    const totalNetPrice = payload.totalNetPrice ?? 0;
+    const totalListPrice = payload.totalListPrice ?? 0;
+    const totalCost = payload.totalCost ?? 0;
+    const marginBasis = Object.is(totalNetPrice, 0) ? 0 : totalNetPrice;
+    const totalMargin = marginBasis === 0 ? 0 : ((totalNetPrice - totalCost) / marginBasis) * 100;
+    setTotals((prev) => {
+      if (
+        prev
+        && Object.is(prev.totalNetPrice, totalNetPrice)
+        && Object.is(prev.totalListPrice, totalListPrice)
+        && Object.is(prev.totalCost, totalCost)
+        && Object.is(prev.totalMargin, totalMargin)
+      ) {
+        return prev;
+      }
+      return { totalNetPrice, totalListPrice, totalCost, totalMargin };
+    });
+  }, []);
 
   const getRowClass = useCallback((params: RowClassParams<Record<string, unknown>>) => {
     const rowType = resolveOfferProductRowType(params.data);
@@ -665,6 +693,15 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
     void runUpdate();
   }, [resolvedEndpoint]);
 
+  const formatEuroTotal = (value: number | null | undefined) => {
+    if (value == null || !Number.isFinite(value)) return '—';
+    return `${decimalFormatter.format(value)} €`;
+  };
+  const formatPercentTotal = (value: number | null | undefined) => {
+    if (value == null || !Number.isFinite(value)) return '—';
+    return `${decimalFormatter.format(value)} %`;
+  };
+
   return (
     <div className={styles.panel}>
       <div className={`${styles.gridWrapper} offer-products-grid`}>
@@ -678,7 +715,26 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
           onCellValueChanged={handleDescriptionEdit}
           refreshToken={refreshToken}
           autoSizeExclusions={['Description']}
+          onTotalsChange={handleTotalsChange}
         />
+      </div>
+      <div className={styles.totalsBar}>
+        <div className={styles.totalItem}>
+          <span className={styles.totalLabel}>Total Net Price</span>
+          <span className={styles.totalValue}>{formatEuroTotal(totals?.totalNetPrice)}</span>
+        </div>
+        <div className={styles.totalItem}>
+          <span className={styles.totalLabel}>Total List Price</span>
+          <span className={styles.totalValue}>{formatEuroTotal(totals?.totalListPrice)}</span>
+        </div>
+        <div className={styles.totalItem}>
+          <span className={styles.totalLabel}>Total Cost</span>
+          <span className={styles.totalValue}>{formatEuroTotal(totals?.totalCost)}</span>
+        </div>
+        <div className={styles.totalItem}>
+          <span className={styles.totalLabel}>Total Margin</span>
+          <span className={styles.totalValue}>{formatPercentTotal(totals?.totalMargin)}</span>
+        </div>
       </div>
     </div>
   );

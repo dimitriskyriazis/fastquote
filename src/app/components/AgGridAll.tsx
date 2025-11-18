@@ -36,6 +36,12 @@ if (!globalThis.__AG_ALL_REGISTERED__) {
 
 LicenseManager.setLicenseKey(process.env.NEXT_PUBLIC_AG_GRID_LICENSE || '');
 
+export type GridTotals = {
+  totalListPrice: number;
+  totalNetPrice: number;
+  totalCost: number;
+};
+
 type Props = {
   endpoint: string;
   columnDefs: ColDef[];
@@ -46,6 +52,7 @@ type Props = {
   onCellValueChanged?: (event: CellValueChangedEvent<RowData>) => void;
   refreshToken?: number;
   autoSizeExclusions?: string[];
+  onTotalsChange?: (totals: GridTotals | null) => void;
 };
 
 type RowData = Record<string, unknown>;
@@ -54,6 +61,7 @@ type GridResponse = {
   ok: boolean;
   rows: RowData[];
   rowCount: number;
+  totals?: GridTotals | null;
   error?: string;
 };
 
@@ -120,6 +128,26 @@ const normalizeOfferDetailId = (value: unknown): number | null => {
     if (Number.isInteger(parsed)) return parsed;
   }
   return null;
+};
+
+const normalizeAggregateValue = (value: unknown): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'bigint') return Number(value);
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
+const parseTotalsPayload = (payload: unknown): GridTotals | null => {
+  if (!payload || typeof payload !== 'object') return null;
+  const data = payload as { totalListPrice?: unknown; totalNetPrice?: unknown; totalCost?: unknown };
+  return {
+    totalListPrice: normalizeAggregateValue(data.totalListPrice ?? 0),
+    totalNetPrice: normalizeAggregateValue(data.totalNetPrice ?? 0),
+    totalCost: normalizeAggregateValue(data.totalCost ?? 0),
+  };
 };
 
 type TreeOrderingUpdate = {
@@ -454,6 +482,7 @@ export default function AgGridAll({
   onCellValueChanged: externalCellValueChangeHandler,
   refreshToken = 0,
   autoSizeExclusions = [],
+  onTotalsChange,
 }: Props) {
   const gridRef = useRef<AgGridReact<RowData> | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -552,13 +581,17 @@ export default function AgGridAll({
           };
         });
         const resolvedRowCount = typeof data.rowCount === 'number' ? data.rowCount : normalizedRows.length;
+        if (typeof onTotalsChange === 'function') {
+          const parsedTotals = parseTotalsPayload(data.totals ?? null);
+          onTotalsChange(parsedTotals);
+        }
         params.success({ rowData: normalizedRows, rowCount: resolvedRowCount });
       } catch (e) {
         console.error('Datasource fetch exception', e);
         params.fail();
       }
     },
-  }), [endpoint]);
+  }), [endpoint, onTotalsChange]);
 
   const sideBarDef = useMemo(() => ({
     toolPanels: ['columns', 'filters'],
