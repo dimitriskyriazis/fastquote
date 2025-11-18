@@ -29,7 +29,14 @@ type SetFilterModel = {
 
 type DateFilterModel = {
   filterType: "date";
-  type?: "equals" | "notEqual" | "lessThan" | "greaterThan" | "inRange";
+  type?:
+    | "equals"
+    | "notEqual"
+    | "lessThan"
+    | "greaterThan"
+    | "lessThanOrEqual"
+    | "greaterThanOrEqual"
+    | "inRange";
   dateFrom?: string;
   dateTo?: string;
   filter?: string;
