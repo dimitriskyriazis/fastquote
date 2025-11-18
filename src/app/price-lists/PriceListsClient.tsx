@@ -1,8 +1,10 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import type { ColDef, ValueFormatterParams } from "ag-grid-community";
+import { useRouter } from "next/navigation";
+import type { ColDef, ICellRendererParams, ValueFormatterParams } from "ag-grid-community";
+import { createPortal } from "react-dom";
 import styles from "./PriceListsClient.module.css";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
@@ -28,8 +30,131 @@ const formatEnabledValue = (value: unknown) => {
 };
 
 export default function PriceListsClient() {
+  const router = useRouter();
+
+  const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
+    const ActionMenu: React.FC = () => {
+      const [open, setOpen] = useState(false);
+      const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+      const btnRef = useRef<HTMLButtonElement | null>(null);
+      const priceListId = params?.data?.PriceListID as string | number | undefined;
+      const encodedId = priceListId != null ? encodeURIComponent(String(priceListId)) : "";
+
+      const go = (suffix: "products" | "basic") => {
+        if (!encodedId) return;
+        router.push(`/price-lists/${encodedId}/${suffix}`);
+      };
+
+      const preventRangeSelection = (event: React.SyntheticEvent) => {
+        event.stopPropagation();
+      };
+
+      useEffect(() => {
+        if (!open) return;
+        const rect = btnRef.current?.getBoundingClientRect();
+        if (rect) {
+          setMenuPos({ top: rect.bottom + 6, left: rect.left });
+        }
+        const onDocClick = (e: MouseEvent) => {
+          if (!btnRef.current) return setOpen(false);
+          if (e.target instanceof Node && btnRef.current.contains(e.target)) return;
+          setOpen(false);
+        };
+        window.addEventListener("click", onDocClick);
+        return () => window.removeEventListener("click", onDocClick);
+      }, [open]);
+
+      const lines = (
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="3" y="4" width="10" height="1.5" rx="0.75" fill="currentColor" />
+          <rect x="3" y="7.25" width="10" height="1.5" rx="0.75" fill="currentColor" />
+          <rect x="3" y="10.5" width="10" height="1.5" rx="0.75" fill="currentColor" />
+        </svg>
+      );
+
+      return (
+        <div
+          className={styles.actionCell}
+          onMouseDownCapture={preventRangeSelection}
+          onPointerDownCapture={preventRangeSelection}
+        >
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            className={styles.actionButton}
+            onClick={() => setOpen((v) => !v)}
+            onMouseDownCapture={preventRangeSelection}
+            onPointerDownCapture={preventRangeSelection}
+            onContextMenuCapture={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            disabled={!encodedId}
+            title={encodedId ? "Open menu" : "Missing Price List ID"}
+            ref={btnRef}
+          >
+            {lines}
+          </button>
+          {open &&
+            menuPos &&
+            createPortal(
+              <div
+                role="menu"
+                className={styles.actionMenu}
+                style={{ top: menuPos.top, left: menuPos.left }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={styles.actionMenuItem}
+                  onClick={() => go("products")}
+                >
+                  View Products
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={styles.actionMenuItem}
+                  onClick={() => go("basic")}
+                >
+                  View Basic Data
+                </button>
+              </div>,
+              document.body
+            )}
+        </div>
+      );
+    };
+
+    return <ActionMenu />;
+  }, [router]);
+
   const columnDefs: ColDef[] = useMemo(
     () => [
+      {
+        headerName: "",
+        field: "__actions__",
+        pinned: "left",
+        lockPinned: true,
+        lockPosition: true,
+        suppressNavigable: true,
+        resizable: false,
+        sortable: false,
+        filter: false,
+        suppressMovable: true,
+        suppressSizeToFit: true,
+        suppressColumnsToolPanel: true,
+        maxWidth: 52,
+        minWidth: 44,
+        width: 48,
+        cellClass: styles.actionCellContainer,
+        cellRenderer: ActionCell,
+      },
       { field: "Name", headerName: "Price List", filter: "agTextColumnFilter" },
       { field: "SupplierName", headerName: "Supplier", filter: "agTextColumnFilter" },
       {
@@ -73,7 +198,7 @@ export default function PriceListsClient() {
         minWidth: 220,
       },
     ],
-    []
+    [ActionCell]
   );
 
   return (

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
-import { getPool } from "../../../lib/sql";
+import { getPool } from "../../../../../lib/sql";
 
 type TextFilterModel = {
   filterType: "text";
@@ -42,7 +42,11 @@ type DateFilterModel = {
   filter?: string;
 };
 
-type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel | DateFilterModel;
+type KnownFilterModel =
+  | TextFilterModel
+  | NumberFilterModel
+  | SetFilterModel
+  | DateFilterModel;
 
 type GridRequest = {
   startRow: number;
@@ -53,30 +57,31 @@ type GridRequest = {
 
 type QueryParam = { key: string; value: string | number | boolean };
 
-type PriceListRow = {
-  PriceListID: number | null;
-  Name: string | null;
-  ValidFromDate: string | Date | null;
-  ValidToDate: string | Date | null;
+type PriceListProductRow = {
+  Description: string | null;
+  ListPrice: string | number | null;
+  Warning: string | number | boolean | null;
   Enabled: boolean | number | null;
-  SupplierName: string | null;
-  SupplierComment: string | null;
+  PartNumber: string | null;
+  PriceListID: number | null;
 };
 
-type PriceListRowWithCount = PriceListRow & { __totalCount: number | bigint | null };
+type PriceListProductRowWithCount = PriceListProductRow & {
+  __totalCount: number | bigint | null;
+};
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
-  PriceListID: "dbo.PriceLists.ID",
-  Name: "dbo.PriceLists.Name",
-  ValidFromDate: "dbo.PriceLists.ValidFromDate",
-  ValidToDate: "dbo.PriceLists.ValidToDate",
-  Enabled: "dbo.PriceLists.Enabled",
-  SupplierName: "dbo.Suppliers.Name",
-  SupplierComment: "dbo.PriceLists.SupplierComment",
+  Description: "dbo.Products.Description",
+  ListPrice: "dbo.PriceListItems.ListPrice",
+  Warning: "dbo.PriceListItems.Warning",
+  Enabled: "dbo.PriceListItems.Enabled",
+  PartNumber: "dbo.Products.PartNumber",
+  PriceListID: "dbo.PriceListItems.PriceListID",
 };
 
 function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
-  if (!filterModel || Object.keys(filterModel).length === 0) return { where: "", params: [] as QueryParam[] };
+  if (!filterModel || Object.keys(filterModel).length === 0)
+    return { where: "", params: [] as QueryParam[] };
 
   const parts: string[] = [];
   const params: QueryParam[] = [];
@@ -187,64 +192,89 @@ async function readGridRequest(req: NextRequest): Promise<GridRequest> {
       if (inner && typeof inner === "object") return inner;
     }
   } catch {
-    /* swallow, use defaults */
+    /* ignore */
   }
   return { startRow: 0, endRow: 100 };
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ priceListId: string }> },
+) {
   try {
+    const { priceListId } = await params;
+    const normalizedId = decodeURIComponent(String(priceListId ?? "")).trim();
+    if (!normalizedId) {
+      return NextResponse.json(
+        { ok: false, error: "Missing price list id", rows: [], rowCount: 0 },
+        { status: 400 },
+      );
+    }
+    const idValue = Number(normalizedId);
+    if (!Number.isFinite(idValue) || !Number.isInteger(idValue)) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid price list id", rows: [], rowCount: 0 },
+        { status: 400 },
+      );
+    }
+
     const requestPayload = await readGridRequest(req);
     const startRow = requestPayload.startRow ?? 0;
     const endRow = requestPayload.endRow ?? startRow + 100;
     const pageSize = Math.max(1, Math.min(1000, endRow - startRow));
-    const offset = startRow;
+    const offset = Math.max(0, startRow);
 
     const select = `
       SELECT
         COUNT_BIG(1) OVER () AS __totalCount,
-        dbo.PriceLists.ID AS PriceListID,
-        dbo.PriceLists.Name,
-        dbo.PriceLists.ValidFromDate,
-        dbo.PriceLists.ValidToDate,
-        dbo.PriceLists.Enabled,
-        dbo.Suppliers.Name AS SupplierName,
-        dbo.PriceLists.SupplierComment
+        dbo.Products.Description,
+        dbo.PriceListItems.ListPrice,
+        dbo.PriceListItems.Warning,
+        dbo.PriceListItems.Enabled,
+        dbo.Products.PartNumber,
+        dbo.PriceListItems.PriceListID
     `;
 
     const from = `
-      FROM dbo.PriceLists
-      INNER JOIN dbo.Suppliers ON dbo.PriceLists.SupplierID = dbo.Suppliers.ID
+      FROM dbo.PriceListItems
+      INNER JOIN dbo.Products ON dbo.PriceListItems.ProductID = dbo.Products.ID
     `;
 
+    const baseWhere = "WHERE dbo.PriceListItems.PriceListID = @__priceListId";
     const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);
-    const order = buildOrder(requestPayload.sortModel) || "ORDER BY dbo.PriceLists.Name";
+    const trimmedWhere = where.trim().replace(/^WHERE\s+/i, "");
+    const combinedWhere = trimmedWhere
+      ? `${baseWhere} AND ${trimmedWhere}`
+      : baseWhere;
+    const order = buildOrder(requestPayload.sortModel) || "ORDER BY dbo.Products.Description";
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
-    const dataSql = `${select} ${from} ${where} ${order} ${paging}`;
+    const query = `${select} ${from} ${combinedWhere} ${order} ${paging}`;
 
     const pool = await getPool();
-    const dataReq = pool.request();
-    whereParams.forEach((p) => dataReq.input(p.key, p.value));
-    dataReq.input("__offset", sql.Int, offset);
-    dataReq.input("__limit", sql.Int, pageSize);
-    const dataRes = await dataReq.query<PriceListRowWithCount>(dataSql);
+    const sqlRequest = pool.request();
+    sqlRequest.input("__priceListId", sql.Int, idValue);
+    whereParams.forEach((p) => sqlRequest.input(p.key, p.value));
+    sqlRequest.input("__offset", sql.Int, offset);
+    sqlRequest.input("__limit", sql.Int, pageSize);
 
-    const rowsWithCount = dataRes.recordset ?? [];
-    const rowCount = rowsWithCount.length > 0 ? Number(rowsWithCount[0].__totalCount ?? 0) : 0;
-    const rows = rowsWithCount.map((row: PriceListRowWithCount) => {
+    const result = await sqlRequest.query<PriceListProductRowWithCount>(query);
+    const rowsWithCount = result.recordset ?? [];
+    const rowCount =
+      rowsWithCount.length > 0 ? Number(rowsWithCount[0].__totalCount ?? 0) : 0;
+    const rows = rowsWithCount.map((row) => {
       const { __totalCount, ...rest } = row;
       void __totalCount;
       return rest;
     });
 
     return NextResponse.json({ ok: true, rows, rowCount });
-  } catch (err: unknown) {
+  } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : "Server error";
     return NextResponse.json(
-      { ok: false, error: message },
-      { status: 500 }
+      { ok: false, error: message, rows: [], rowCount: 0 },
+      { status: 500 },
     );
   }
 }
