@@ -1,0 +1,217 @@
+.panel {
+  border: 2px solid #000000;
+  border-radius: 14px;
+  padding: 14px;
+  background: #f8f8f8;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionCard {
+  border: 1px solid #000000;
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: #ffffff;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.12);
+}
+
+.sectionHeading {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #000000;
+}
+
+.generalGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.generalRows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.generalRow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.sectionsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.detailSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sectionFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.field,
+.fieldBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fieldWide {
+  grid-column: span 2;
+}
+
+.fieldFull {
+  grid-column: 1 / -1;
+}
+
+.fieldLabel {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #000000;
+}
+
+.fieldControl {
+  width: 100%;
+  border: 1px solid #000000;
+  border-radius: 8px;
+  background: #ffffff;
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 0.88rem;
+  line-height: 1.3;
+  color: #000000;
+  font-weight: 500;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.06);
+}
+
+.fieldControlMultiline {
+   min-height: 90px;
+   resize: vertical;
+ }
+
+.generalSection .fieldLabel {
+  font-size: 0.75rem;
+}
+
+.generalSection .fieldControl,
+.generalSection .fieldReadonly {
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 0.88rem;
+}
+
+.generalSection .fieldControlMultiline {
+  min-height: 90px;
+}
+
+.fieldControlPending {
+  opacity: 0.7;
+}
+
+.fieldControl[list]::-webkit-calendar-picker-indicator {
+  display: none;
+}
+
+.fieldReadonly {
+  width: 100%;
+  border: 1px solid #000000;
+  border-radius: 8px;
+  background: #f1f1f1;
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 0.88rem;
+  line-height: 1.3;
+  color: #111111;
+  display: flex;
+  align-items: center;
+}
+
+.contactListWrapper {
+   margin-top: 8px;
+   display: flex;
+   flex-direction: column;
+   gap: 6px;
+ }
+
+.contactListHeading {
+  font-size: 0.75rem;
+   font-weight: 700;
+   letter-spacing: 0.08em;
+   text-transform: uppercase;
+   color: #000000;
+ }
+
+.contactList {
+   display: flex;
+   flex-direction: column;
+   gap: 4px;
+ }
+
+.contactChip {
+   border: 1px solid #000000;
+   border-radius: 6px;
+   padding: 6px 10px;
+   font-size: 0.8rem;
+   background: #ffffff;
+   color: #000000;
+ }
+
+.contactListEmpty {
+  font-size: 0.8rem;
+  color: #555555;
+}
+
+.fieldControl:focus {
+  outline: 2px solid #000000;
+  outline-offset: 0;
+}
+
+.emptyState {
+  border: 1px dashed #000000;
+  border-radius: 12px;
+  padding: 18px;
+  text-align: center;
+  color: #111111;
+  background: #ffffff;
+}
+
+@media (max-width: 1200px) {
+  .generalRow {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+
+  .sectionsGrid {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .sectionsGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 960px) {
+  .fieldWide {
+    grid-column: span 1;
+  }
+}
