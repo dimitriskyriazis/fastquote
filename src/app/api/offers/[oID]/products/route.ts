@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
+import { buildAuditContext, type AuditContext } from '../../../../../lib/auditTrail';
 import { getPool } from '../../../../../lib/sql';
 
 type TextFilterModel = {
@@ -198,6 +199,7 @@ const normalizeAggregateValue = (value: unknown): number => {
 async function handleCreateRow(
   offerId: number,
   payload: CreateRowRequest | null,
+  audit: AuditContext,
 ) {
   const type = normalizeCreateRowType(payload?.type ?? null);
   if (!type) {
@@ -212,7 +214,7 @@ async function handleCreateRow(
       ? 1
       : 0;
   const quantity = 0;
-  const createdBy = 0;
+  const createdBy = audit.userId;
 
   const pool = await getPool();
   const request = pool.request();
@@ -221,8 +223,8 @@ async function handleCreateRow(
   request.input('__isPrintable', isPrintable);
   request.input('__description', description);
   request.input('__quantity', quantity);
-  request.input('__createdBy', createdBy);
-  request.input('__modifiedBy', createdBy);
+  request.input('__createdBy', sql.Int, createdBy);
+  request.input('__modifiedBy', sql.Int, createdBy);
 
   const query = `
     DECLARE @lastRootValue INT =
@@ -399,6 +401,7 @@ export async function POST(
       body = null;
     }
 
+    const audit = buildAuditContext(req);
     const { oID } = await params;
     const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
 
@@ -418,7 +421,7 @@ export async function POST(
     }
 
     if ((body as CreateRowRequest | null)?.action === 'create') {
-      return handleCreateRow(idValue, body as CreateRowRequest);
+      return handleCreateRow(idValue, body as CreateRowRequest, audit);
     }
 
     const pool = await getPool();
@@ -512,6 +515,7 @@ export async function PUT(
   { params }: { params: Promise<{ oID: string }> },
 ) {
   try {
+    const audit = buildAuditContext(req);
     const { oID } = await params;
     const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
     if (!normalizedId) {
@@ -551,6 +555,7 @@ export async function PUT(
       if (chunk.length === 0) continue;
       const request = pool.request();
       request.input('__offerId', sql.Int, offerId);
+      request.input('__modifiedBy', sql.Int, audit.userId);
 
       const valueClauses: string[] = [];
       chunk.forEach((entry, chunkIdx) => {
@@ -567,7 +572,9 @@ export async function PUT(
           FROM (VALUES ${valueClauses.join(', ')}) AS v (OfferDetailID, TreeOrdering)
         )
         UPDATE od
-        SET od.TreeOrdering = PendingUpdates.TreeOrdering
+        SET od.TreeOrdering = PendingUpdates.TreeOrdering,
+            od.ModifiedOn = SYSUTCDATETIME(),
+            od.ModifiedBy = @__modifiedBy
         FROM dbo.OfferDetails od
           INNER JOIN PendingUpdates ON od.ID = PendingUpdates.OfferDetailID
         WHERE od.OfferID = @__offerId;
@@ -593,6 +600,7 @@ export async function PATCH(
   { params }: { params: Promise<{ oID: string }> },
 ) {
   try {
+    const audit = buildAuditContext(req);
     const { oID } = await params;
     const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
     if (!normalizedId) {
@@ -635,6 +643,7 @@ export async function PATCH(
       if (chunk.length === 0) continue;
       const request = pool.request();
       request.input('__offerId', sql.Int, offerId);
+      request.input('__modifiedBy', sql.Int, audit.userId);
       const valueClauses: string[] = [];
       chunk.forEach((entry, chunkIdx) => {
         const idParam = `odid_${chunkIdx}`;
@@ -649,7 +658,9 @@ export async function PATCH(
           FROM (VALUES ${valueClauses.join(', ')}) AS v (OfferDetailID, Description)
         )
         UPDATE od
-        SET od.ProductDescription = PendingDescriptionUpdates.Description
+        SET od.ProductDescription = PendingDescriptionUpdates.Description,
+            od.ModifiedOn = SYSUTCDATETIME(),
+            od.ModifiedBy = @__modifiedBy
         FROM dbo.OfferDetails od
           INNER JOIN PendingDescriptionUpdates ON od.ID = PendingDescriptionUpdates.OfferDetailID
         WHERE od.OfferID = @__offerId;
