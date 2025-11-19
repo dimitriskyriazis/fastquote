@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import sql from 'mssql';
+import sql, { type ISqlTypeFactory } from 'mssql';
 import { getPool } from '../../../../../lib/sql';
-import type { OfferBasicUpdateField } from '../../../offers/[oID]/OfferBasicDataTypes';
+import { resolveAuditUserId } from '../../../../../lib/auditTrail';
+import type { OfferBasicUpdateField } from '../../../../offers/[oID]/OfferBasicDataTypes';
 
 type UpdateInput = {
   field?: OfferBasicUpdateField;
@@ -13,12 +14,19 @@ type UpdateRequestBody = {
 };
 
 type FieldType = 'string' | 'number' | 'date';
+type NormalizedValue = string | number | Date | null;
 
 type FieldConfig = {
   column: string;
   type: FieldType;
   length?: number;
-  sqlType: sql.ISqlTypeFactory;
+  sqlType: ISqlTypeFactory;
+};
+
+type NormalizedUpdate = {
+  field: OfferBasicUpdateField;
+  config: FieldConfig;
+  value: NormalizedValue;
 };
 
 const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
@@ -51,7 +59,7 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   OfferDate: { column: 'OfferDate', type: 'date', sqlType: sql.DateTime2 },
 };
 
-const normalizeValue = (value: unknown, type: FieldType) => {
+const normalizeValue = (value: unknown, type: FieldType): NormalizedValue => {
   if (value === null || value === undefined) return null;
   if (type === 'string') {
     const str = typeof value === 'string' ? value : String(value);
@@ -100,15 +108,15 @@ export async function PATCH(
     }
 
     const updates = Array.isArray(body?.updates) ? body?.updates : [];
-    const normalizedUpdates = updates
-      .map((entry) => {
-        if (!entry?.field) return null;
-        const config = FIELD_CONFIG[entry.field];
-        if (!config) return null;
-        const normalizedValue = normalizeValue(entry.value, config.type);
-        return { field: entry.field, config, value: normalizedValue };
-      })
-      .filter((entry): entry is { field: OfferBasicUpdateField; config: FieldConfig; value: unknown } => entry != null);
+    const normalizedUpdates: NormalizedUpdate[] = [];
+
+    updates.forEach((entry) => {
+      if (!entry?.field) return;
+      const config = FIELD_CONFIG[entry.field];
+      if (!config) return;
+      const normalizedValue = normalizeValue(entry.value, config.type);
+      normalizedUpdates.push({ field: entry.field, config, value: normalizedValue });
+    });
 
     if (normalizedUpdates.length === 0) {
       return NextResponse.json({ ok: false, error: 'No valid updates provided' }, { status: 400 });
@@ -130,6 +138,13 @@ export async function PATCH(
       }
       setClauses.push(`[${config.column}] = @${paramName}`);
     });
+
+    const auditUserId = resolveAuditUserId(req);
+    if (auditUserId) {
+      request.input('__modifiedBy', sql.NVarChar(450), auditUserId);
+      setClauses.push('[ModifiedBy] = @__modifiedBy');
+    }
+    setClauses.push('[ModifiedOn] = SYSUTCDATETIME()');
 
     const query = `
       UPDATE dbo.Offer

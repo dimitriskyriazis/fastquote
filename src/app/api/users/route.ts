@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import sql from 'mssql';
 import { getPool } from '../../../lib/sql';
 
 type UserRecord = {

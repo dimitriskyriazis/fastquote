@@ -33,18 +33,28 @@ declare module 'mssql' {
     query<T = unknown>(query: string): Promise<IResult<T>>;
   }
 
-  type SqlTypeFactory = (...args: unknown[]) => unknown;
+  export type ISqlTypeFactory = (...args: unknown[]) => unknown;
+  export interface ISqlTypeFactoryWithLength extends ISqlTypeFactory {
+    (length?: number): unknown;
+  }
 
-  export const Int: symbol;
-  export const NVarChar: SqlTypeFactory;
+  export const Int: ISqlTypeFactory;
+  export const Bit: ISqlTypeFactory;
+  export const DateTime2: ISqlTypeFactory;
+  export const NVarChar: ISqlTypeFactoryWithLength;
+  export const MAX: number;
 
   export function connect(config: config): Promise<ConnectionPool>;
 
   const sql: {
     connect: typeof connect;
     ConnectionPool: typeof ConnectionPool;
+    Request: typeof Request;
     Int: typeof Int;
+    Bit: typeof Bit;
+    DateTime2: typeof DateTime2;
     NVarChar: typeof NVarChar;
+    MAX: typeof MAX;
   };
 
   export default sql;

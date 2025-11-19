@@ -29,6 +29,7 @@ type FieldDefinition = {
   recordKey: keyof OfferBasicRecord;
   updateField?: OfferBasicUpdateField;
   span?: number;
+  fullWidth?: boolean;
   multiline?: boolean;
   inputType?: string;
   valueType?: 'string' | 'number' | 'date';

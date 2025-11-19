@@ -33,71 +33,63 @@ const AUDIT_QUERY_PARAM_CANDIDATES = [
   'aspnetuserid',
 ];
 
-const resolveFallbackAuditUserId = (): number => {
+const normalizeAuditUserId = (value: string | null | undefined): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.includes(':') ? trimmed.split(':').pop()?.trim() ?? null : trimmed;
+};
+
+const resolveFallbackAuditUserId = (): string | null => {
   const envCandidates = [
     process.env.AUDIT_DEFAULT_USER_ID,
     process.env.DEFAULT_ASPNET_USER_ID,
   ];
   for (const raw of envCandidates) {
-    if (!raw) continue;
-    const parsed = Number.parseInt(raw.trim(), 10);
-    if (Number.isInteger(parsed)) {
-      return parsed;
-    }
+    const normalized = normalizeAuditUserId(raw ?? null);
+    if (normalized) return normalized;
   }
-  return 0;
+  return null;
 };
 
 const FALLBACK_AUDIT_USER_ID = resolveFallbackAuditUserId();
 
-const parseAuditUserId = (value: string | null | undefined): number | null => {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const sanitized = trimmed.includes(':')
-    ? trimmed.split(':').pop()?.trim() ?? ''
-    : trimmed;
-  if (!sanitized) return null;
-  const parsed = Number.parseInt(sanitized, 10);
-  return Number.isInteger(parsed) ? parsed : null;
-};
-
-const readFromHeaders = (req: RequestLike): number | null => {
+const readFromHeaders = (req: RequestLike): string | null => {
   if (!req?.headers) return null;
   for (const headerName of AUDIT_HEADER_CANDIDATES) {
-    const parsed = parseAuditUserId(req.headers.get(headerName));
-    if (parsed != null) {
-      return parsed;
+    const normalized = normalizeAuditUserId(req.headers.get(headerName));
+    if (normalized) {
+      return normalized;
     }
   }
   return null;
 };
 
-const readFromCookies = (req: RequestLike): number | null => {
+const readFromCookies = (req: RequestLike): string | null => {
   if (!req?.cookies || typeof req.cookies.get !== 'function') return null;
   for (const cookieName of AUDIT_COOKIE_CANDIDATES) {
-    const parsed = parseAuditUserId(req.cookies.get(cookieName)?.value ?? null);
-    if (parsed != null) {
-      return parsed;
+    const normalized = normalizeAuditUserId(req.cookies.get(cookieName)?.value ?? null);
+    if (normalized) {
+      return normalized;
     }
   }
   return null;
 };
 
-const readFromQueryParams = (req: RequestLike): number | null => {
+const readFromQueryParams = (req: RequestLike): string | null => {
   const searchParams = req?.nextUrl?.searchParams;
   if (!searchParams) return null;
   for (const paramName of AUDIT_QUERY_PARAM_CANDIDATES) {
-    const parsed = parseAuditUserId(searchParams.get(paramName));
-    if (parsed != null) {
-      return parsed;
+    const normalized = normalizeAuditUserId(searchParams.get(paramName));
+    if (normalized) {
+      return normalized;
     }
   }
   return null;
 };
 
 export type AuditContext = {
-  userId: number;
+  userId: string | null;
   hasExplicitUser: boolean;
 };
 
@@ -105,19 +97,19 @@ export const getAuditFallbackUserId = () => FALLBACK_AUDIT_USER_ID;
 
 export function buildAuditContext(req?: RequestLike): AuditContext {
   const fromHeaders = readFromHeaders(req);
-  if (fromHeaders != null) {
+  if (fromHeaders) {
     return { userId: fromHeaders, hasExplicitUser: true };
   }
   const fromCookies = readFromCookies(req);
-  if (fromCookies != null) {
+  if (fromCookies) {
     return { userId: fromCookies, hasExplicitUser: true };
   }
   const fromQuery = readFromQueryParams(req);
-  if (fromQuery != null) {
+  if (fromQuery) {
     return { userId: fromQuery, hasExplicitUser: true };
   }
-  return { userId: FALLBACK_AUDIT_USER_ID, hasExplicitUser: false };
+  return { userId: FALLBACK_AUDIT_USER_ID ?? null, hasExplicitUser: false };
 }
 
-export const resolveAuditUserId = (req?: RequestLike): number =>
+export const resolveAuditUserId = (req?: RequestLike): string | null =>
   buildAuditContext(req).userId;

@@ -1,3 +1,5 @@
+import type { DropdownOption } from '../../../lib/dropdownOptions';
+
 export type OfferBasicRecord = {
   OfferID: number | null;
   CustomerID: number | null;
@@ -39,6 +41,9 @@ export type OfferBasicRecord = {
   DeliveryDue: Date | string | null;
   Delivery: Date | string | null;
   OfferDate: Date | string | null;
+  ModifiedOn: Date | string | null;
+  ModifiedByUserName: string | null;
+  ModifiedByFullName: string | null;
 };
 
 export type OfferContactInfo = {
@@ -48,10 +53,7 @@ export type OfferContactInfo = {
   FullName: string;
 };
 
-export type OfferDropdownOption = {
-  value: string;
-  label: string;
-};
+export type OfferDropdownOption = DropdownOption;
 
 export type OfferBasicUpdateField =
   | 'Title'

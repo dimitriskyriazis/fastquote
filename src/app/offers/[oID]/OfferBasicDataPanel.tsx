@@ -1,5 +1,6 @@
 import sql from 'mssql';
 import { getPool } from '../../../lib/sql';
+import { toDropdownOptions, type RawDropdownRow } from '../../../lib/dropdownOptions';
 import styles from './OfferBasicDataPanel.module.css';
 import OfferBasicDataClient from './OfferBasicDataClient';
 import type { OfferBasicRecord, OfferContactInfo, OfferDropdownOption } from './OfferBasicDataTypes';
@@ -54,7 +55,10 @@ async function fetchOfferBasicRecord(offerId: number) {
         o.OrderSigned,
         o.DeliveryDue,
         o.Delivery,
-        o.OfferDate
+        o.OfferDate,
+        o.ModifiedOn,
+        modified.FullName AS ModifiedByFullName,
+        modified.UserName AS ModifiedByUserName
       FROM dbo.Offer AS o
       LEFT JOIN dbo.Customers AS c ON o.CustomerID = c.ID
       LEFT JOIN dbo.OfferStatus AS os ON o.StatusID = os.ID
@@ -64,6 +68,7 @@ async function fetchOfferBasicRecord(offerId: number) {
       LEFT JOIN dbo.AspNetUsers AS created ON o.CreatedBy = created.Id
       LEFT JOIN dbo.AspNetUsers AS sales ON o.SalesPersonId = sales.Id
       LEFT JOIN dbo.AspNetUsers AS approver ON o.ApprovalUserId = approver.Id
+      LEFT JOIN dbo.AspNetUsers AS modified ON o.ModifiedBy = modified.Id
       WHERE o.ID = @offerId
     `);
     return result.recordset?.[0] ?? null;
@@ -73,15 +78,10 @@ async function fetchOfferBasicRecord(offerId: number) {
   }
 }
 
-type LookupRow = { ID: number; Name: string | null };
+type LookupRow = RawDropdownRow & { ID: number; Name: string | null };
 
 const mapLookupRows = (rows: LookupRow[] | undefined | null): OfferDropdownOption[] =>
-  (rows ?? [])
-    .filter((row): row is LookupRow & { ID: number } => row?.ID != null)
-    .map((row) => ({
-      value: String(row.ID),
-      label: row.Name?.trim() && row.Name.trim().length > 0 ? row.Name.trim() : `Option ${row.ID}`,
-    }));
+  toDropdownOptions<LookupRow>(rows);
 
 async function fetchOfferStatuses() {
   try {
