@@ -40,7 +40,7 @@ const resolveFallbackAuditUserId = (): number => {
   ];
   for (const raw of envCandidates) {
     if (!raw) continue;
-    const parsed = Number.parseInt(raw, 10);
+    const parsed = Number.parseInt(raw.trim(), 10);
     if (Number.isInteger(parsed)) {
       return parsed;
     }

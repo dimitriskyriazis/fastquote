@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
+import UserIdControl from "./UserIdControl";
 
 type NavItem = {
   label: string;
@@ -105,6 +106,8 @@ export default function SideNav() {
           );
         })}
       </nav>
+      <div className="side-nav__divider" aria-hidden="true" />
+      <UserIdControl collapsed={collapsed} />
     </aside>
   );
 }
