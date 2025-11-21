@@ -3,9 +3,10 @@
 import React, { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import type { ColDef, ICellRendererParams, ValueFormatterParams } from "ag-grid-community";
+import type { ColDef, GetContextMenuItemsParams, ICellRendererParams, ValueFormatterParams } from "ag-grid-community";
 import { createPortal } from "react-dom";
 import styles from "./PriceListsClient.module.css";
+import { GridRowDeletion } from "../../lib/gridRowDeletion";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -31,6 +32,32 @@ const formatEnabledValue = (value: unknown) => {
   return value == null ? "" : String(value);
 };
 
+const normalizePriceListIdValue = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
+};
+
+const resolvePriceListRowLabel = (
+  row: { Name?: string | null; SupplierName?: string | null } | null,
+  fallback: string,
+) => {
+  if (!row) return fallback;
+  const normalize = (value: string | null | undefined) =>
+    typeof value === "string" ? value.trim() : value ? String(value) : "";
+  const name = normalize(row.Name);
+  const supplier = normalize(row.SupplierName);
+  if (name && supplier) return `${name} – ${supplier}`;
+  if (name) return name;
+  if (supplier) return supplier;
+  return fallback;
+};
+
+const PRICE_LIST_ROW_TYPE_LABEL = "price list";
+
 export default function PriceListsClient() {
   const router = useRouter();
   const handleImportClick = useCallback(() => {
@@ -51,6 +78,7 @@ export default function PriceListsClient() {
       };
 
       const preventRangeSelection = (event: React.SyntheticEvent) => {
+        event.preventDefault();
         event.stopPropagation();
       };
 
@@ -82,13 +110,21 @@ export default function PriceListsClient() {
           className={styles.actionCell}
           onMouseDownCapture={preventRangeSelection}
           onPointerDownCapture={preventRangeSelection}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
         >
           <button
             type="button"
             aria-haspopup="menu"
             aria-expanded={open}
             className={styles.actionButton}
-            onClick={() => setOpen((v) => !v)}
+            onClick={(event) => {
+              event.stopPropagation();
+              setOpen((v) => !v);
+            }}
             onMouseDownCapture={preventRangeSelection}
             onPointerDownCapture={preventRangeSelection}
             onContextMenuCapture={(e) => {
@@ -136,8 +172,36 @@ export default function PriceListsClient() {
       );
     };
 
-    return <ActionMenu />;
+  return <ActionMenu />;
   }, [router]);
+
+  const priceListRowDeletion = useMemo(
+    () =>
+      new GridRowDeletion<Record<string, unknown>>({
+        endpoint: '/api/price-lists',
+        resolveRowId: (row) =>
+          normalizePriceListIdValue((row as { PriceListID?: unknown } | null | undefined)?.PriceListID ?? null),
+        resolveRowLabel: (row, fallback) =>
+          resolvePriceListRowLabel(
+            row as { Name?: string | null; SupplierName?: string | null } | null,
+            fallback,
+          ),
+        resolveRowTypeLabel: () => PRICE_LIST_ROW_TYPE_LABEL,
+        buildPayload: (ids) => ({ PriceListIDs: ids }),
+        confirmTitle: 'Delete price list',
+        confirmConfirmLabel: 'Delete price list',
+        confirmCancelLabel: 'Keep price list',
+        successToastMessage: 'Price list deleted',
+        failureToastMessage: 'Unable to delete price list. Please try again.',
+      }),
+    [],
+  );
+
+  const priceListsContextMenuItems = useCallback(
+    (params: GetContextMenuItemsParams<Record<string, unknown>>) =>
+      priceListRowDeletion.getContextMenuItems(params),
+    [priceListRowDeletion],
+  );
 
   const columnDefs: ColDef[] = useMemo(
     () => [
@@ -159,6 +223,11 @@ export default function PriceListsClient() {
         width: 48,
         cellClass: styles.actionCellContainer,
         cellRenderer: ActionCell,
+      },
+      {
+        field: "PriceListID",
+        hide: true,
+        suppressColumnsToolPanel: true,
       },
       { field: "Name", headerName: "Price List", filter: "agTextColumnFilter" },
       { field: "SupplierName", headerName: "Supplier", filter: "agTextColumnFilter" },
@@ -221,6 +290,7 @@ export default function PriceListsClient() {
       <AgGridAll
         endpoint="/api/price-lists"
         columnDefs={columnDefs}
+        getContextMenuItems={priceListsContextMenuItems}
         autoSizeExclusions={["ValidFromDate", "ValidToDate"]}
       />
     </main>

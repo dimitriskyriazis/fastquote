@@ -12,8 +12,9 @@ const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
     </div>
   ),
 });
-import type { ColDef, ICellRendererParams } from 'ag-grid-community';
+import type { ColDef, ICellRendererParams, GetContextMenuItemsParams } from 'ag-grid-community';
 import { createPortal } from 'react-dom';
+import { GridRowDeletion } from '../../lib/gridRowDeletion';
 
 const formatEnabledValue = (value: unknown) => {
   if (value === 1 || value === true || value === 'true') return 'Yes';
@@ -21,11 +22,65 @@ const formatEnabledValue = (value: unknown) => {
   return value == null ? '' : String(value);
 };
 
+const normalizeOfferIdValue = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
+};
+
+const resolveOfferRowLabel = (
+  row: { Description?: string | null; Title?: string | null } | null,
+  fallback: string,
+) => {
+  if (!row) return fallback;
+  const normalize = (value: string | null | undefined) =>
+    typeof value === 'string' ? value.trim() : value ? String(value) : '';
+  const description = normalize(row.Description);
+  const title = normalize(row.Title);
+  if (description && title) return `${description} – ${title}`;
+  if (description) return description;
+  if (title) return title;
+  return fallback;
+};
+
+const OFFER_ROW_TYPE_LABEL = 'offer';
+
 export default function OffersClient() {
   const router = useRouter();
   const handleCreateOfferClick = useCallback(() => {
     router.push('/offers/create');
   }, [router]);
+
+  const offersRowDeletion = useMemo(
+    () =>
+      new GridRowDeletion<Record<string, unknown>>({
+        endpoint: '/api/offers',
+        resolveRowId: (row) =>
+          normalizeOfferIdValue((row as { oID?: unknown } | null | undefined)?.oID ?? null),
+        resolveRowLabel: (row, fallback) =>
+          resolveOfferRowLabel(
+            row as { Description?: string | null; Title?: string | null } | null,
+            fallback,
+          ),
+        resolveRowTypeLabel: () => OFFER_ROW_TYPE_LABEL,
+        buildPayload: (ids) => ({ OfferIDs: ids }),
+        confirmTitle: 'Delete offer',
+        confirmConfirmLabel: 'Delete offer',
+        confirmCancelLabel: 'Keep offer',
+        successToastMessage: 'Offer deleted',
+        failureToastMessage: 'Unable to delete offer. Please try again.',
+      }),
+    [],
+  );
+
+  const offersContextMenuItems = useCallback(
+    (params: GetContextMenuItemsParams<Record<string, unknown>>) =>
+      offersRowDeletion.getContextMenuItems(params),
+    [offersRowDeletion],
+  );
 
   const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     // A small React component for the action menu
@@ -42,6 +97,7 @@ export default function OffersClient() {
       };
 
       const preventRangeSelection = (event: React.SyntheticEvent) => {
+        event.preventDefault();
         event.stopPropagation();
       };
 
@@ -75,13 +131,21 @@ export default function OffersClient() {
           className={styles.actionCell}
           onMouseDownCapture={preventRangeSelection}
           onPointerDownCapture={preventRangeSelection}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
         >
           <button
             type="button"
             aria-haspopup="menu"
             aria-expanded={open}
             className={styles.actionButton}
-            onClick={() => setOpen(v => !v)}
+            onClick={(event) => {
+              event.stopPropagation();
+              setOpen((v) => !v);
+            }}
             onMouseDownCapture={preventRangeSelection}
             onPointerDownCapture={preventRangeSelection}
             onContextMenuCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
@@ -125,25 +189,25 @@ export default function OffersClient() {
   }, [router]);
 
   const columnDefs: ColDef[] = useMemo(() => [
-    {
-      headerName: '',
-      field: '__actions__',
-      pinned: 'left',
-      lockPinned: true,
-      lockPosition: true,
-      suppressNavigable: true,
-      resizable: false,
-      sortable: false,
-      filter: false,
-      suppressMovable: true,
-      suppressSizeToFit: true,
-      suppressColumnsToolPanel: true,
-      maxWidth: 52,
-      minWidth: 44,
-      width: 48,
-      cellClass: styles.actionCellContainer,
-      cellRenderer: ActionCell,
-    },
+      {
+        headerName: '',
+        field: '__actions__',
+        pinned: 'left',
+        lockPinned: true,
+        lockPosition: true,
+        suppressNavigable: true,
+        resizable: false,
+        sortable: false,
+        filter: false,
+        suppressMovable: true,
+        suppressSizeToFit: true,
+        suppressColumnsToolPanel: true,
+        maxWidth: 52,
+        minWidth: 44,
+        width: 48,
+        cellClass: styles.actionCellContainer,
+        cellRenderer: ActionCell,
+      },
     { field: 'Description', headerName: 'Description', filter: 'agTextColumnFilter' },
     { field: 'Title', headerName: 'Title', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'CustomerName', headerName: 'Customer Name', filter: 'agTextColumnFilter', enableRowGroup: true },
@@ -184,7 +248,11 @@ export default function OffersClient() {
           Create Offer
         </button>
       </div>
-      <AgGridAll endpoint="/api/offers" columnDefs={columnDefs} />
+      <AgGridAll
+        endpoint="/api/offers"
+        columnDefs={columnDefs}
+        getContextMenuItems={offersContextMenuItems}
+      />
     </main>
   );
 }

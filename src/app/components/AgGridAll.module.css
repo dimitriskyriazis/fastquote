@@ -14,6 +14,27 @@
   position: relative;
 }
 
+.gridShell :global(.ag-row-odd .ag-cell) {
+  background: #f4f6fb !important;
+}
+
+.gridShell :global(.ag-row-even .ag-cell) {
+  background: #ffffff !important;
+}
+
+.gridShell :global(.ag-row-hover .ag-cell) {
+  background: #e9f1ff !important;
+}
+
+.gridShell :global(.ag-row--context-menu-active .ag-cell) {
+  background: #8fcdff75 !important; /* subtle slate */
+  color: inherit;
+}
+
+.gridShell :global(.ag-cell) {
+  transition: background-color 140ms ease;
+}
+
 .rowHoverOverlay {
   position: absolute;
   left: 0;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useCallback, useRef } from 'react';
+import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import styles from './OfferBasicDataPanel.module.css';
 import type {
   OfferBasicRecord,
@@ -18,6 +18,7 @@ type Props = {
   pricingPolicies: OfferDropdownOption[];
   markets: OfferDropdownOption[];
   users: OfferDropdownOption[];
+  titles: OfferDropdownOption[];
 };
 
 type SectionKey = 'general' | 'info' | 'commercial' | 'code' | 'dates';
@@ -39,6 +40,49 @@ type FieldDefinition = {
   datalistOptions?: OfferDropdownOption[];
 };
 
+type ContactFormValues = {
+  firstName: string;
+  lastName: string;
+  titleId: string;
+  position: string;
+  importance: string;
+  enabled: boolean;
+  phone: string;
+  mobile: string;
+  email: string;
+  emailStatusId: string;
+  secondEmail: string;
+  secondEmailStatusId: string;
+  notes: string;
+};
+
+const EMPTY_CONTACT_FORM: ContactFormValues = {
+  firstName: '',
+  lastName: '',
+  titleId: '',
+  position: '',
+  importance: '',
+  enabled: true,
+  phone: '',
+  mobile: '',
+  email: '',
+  emailStatusId: '',
+  secondEmail: '',
+  secondEmailStatusId: '',
+  notes: '',
+};
+
+const sortContacts = (list: OfferContactInfo[]) =>
+  [...list].sort((a, b) =>
+    (a.FullName || '').localeCompare(b.FullName || '', undefined, { sensitivity: 'base' })
+  );
+
+const parseOfferContactNames = (value: string | null | undefined): string[] =>
+  (value ?? '')
+    .split(/[\n;,]+/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+
 const SECTION_METADATA: Record<SectionKey, { title: string; gridClass: string }> = {
   general: { title: 'General', gridClass: styles.generalGrid },
   info: { title: 'Info', gridClass: styles.fieldGrid },
@@ -55,8 +99,8 @@ const buildFieldDefinitions = (
 ): FieldDefinition[] => [
   { id: 'title', label: 'Title', section: 'general', recordKey: 'Title', updateField: 'Title' },
   { id: 'description', label: 'Description', section: 'general', recordKey: 'Description', updateField: 'Description' },
-  { id: 'paymentTerms', label: 'Payment Terms', section: 'general', recordKey: 'PaymentTerms', updateField: 'PaymentTerms' },
-  { id: 'install', label: 'Installation Schedule', section: 'general', recordKey: 'InstallationSchedule', updateField: 'InstallationSchedule' },
+  { id: 'paymentTerms', label: 'Payment Terms', section: 'general', recordKey: 'PaymentTerms', updateField: 'PaymentTerms', multiline: true },
+  { id: 'install', label: 'Installation Schedule', section: 'general', recordKey: 'InstallationSchedule', updateField: 'InstallationSchedule', multiline: true },
   { id: 'closingNote', label: 'Closing Note', section: 'general', recordKey: 'OfferNotesClosing', updateField: 'OfferNotesClosing', multiline: true },
   { id: 'offerValidity', label: 'Offer Validity', section: 'general', recordKey: 'OfferValidity', updateField: 'OfferValidity' },
   { id: 'deliveryTime', label: 'Delivery Time', section: 'general', recordKey: 'DeliveryTime', updateField: 'DeliveryTime' },
@@ -189,7 +233,7 @@ const formatInitialValue = (record: OfferBasicRecord, def: FieldDefinition) => {
 const resolveFieldValue = (record: OfferBasicRecord, def: FieldDefinition) =>
   (typeof def.resolveValue === 'function' ? def.resolveValue(record) : record[def.recordKey]) ?? null;
 
-export default function OfferBasicDataClient({ oID, record, contacts, statuses, pricingPolicies, markets, users }: Props) {
+export default function OfferBasicDataClient({ oID, record, contacts, statuses, pricingPolicies, markets, users, titles }: Props) {
   const fieldDefinitions = useMemo(
     () => buildFieldDefinitions(statuses, pricingPolicies, markets, users),
     [statuses, pricingPolicies, markets, users]
@@ -212,6 +256,48 @@ export default function OfferBasicDataClient({ oID, record, contacts, statuses, 
   const [savedValues, setSavedValues] = useState(initialValues);
   const savedValuesRef = useRef(savedValues);
   savedValuesRef.current = savedValues;
+  const [contactList, setContactList] = useState(sortContacts(contacts));
+  const [isContactModalOpen, setContactModalOpen] = useState(false);
+  const [contactForm, setContactForm] = useState<ContactFormValues>(EMPTY_CONTACT_FORM);
+  const [contactSaving, setContactSaving] = useState(false);
+  const [contactError, setContactError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setContactList(sortContacts(contacts));
+  }, [contacts]);
+
+  const offerContactNames = useMemo(
+    () => parseOfferContactNames(record.OfferContact),
+    [record.OfferContact],
+  );
+
+  const visibleContacts = useMemo(() => {
+    if (offerContactNames.length === 0) {
+      return contactList;
+    }
+
+    return offerContactNames.map((name, idx) => {
+      const normalized = name.toLowerCase();
+      const match = contactList.find((contact) => {
+        const full = (contact.FullName ?? '').trim().toLowerCase();
+        const firstLast = [contact.FirstName, contact.LastName]
+          .map((part) => part?.trim())
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return full === normalized || firstLast === normalized;
+      });
+
+      if (match) return match;
+
+      return {
+        ContactID: -(idx + 1),
+        FirstName: null,
+        LastName: null,
+        FullName: name,
+      };
+    });
+  }, [contactList, offerContactNames]);
 
   const handleValueChange = useCallback((fieldId: string, value: string) => {
     setValues((prev) => ({ ...prev, [fieldId]: value }));
@@ -269,6 +355,99 @@ export default function OfferBasicDataClient({ oID, record, contacts, statuses, 
     if (latestValue === savedValuesRef.current[def.id]) return;
     void saveField(def, latestValue);
   }, [saveField, values]);
+
+  const resetContactForm = useCallback(() => {
+    setContactForm({ ...EMPTY_CONTACT_FORM });
+    setContactError(null);
+  }, []);
+
+  const handleContactFieldChange = useCallback(
+    (field: keyof ContactFormValues, value: string | boolean) => {
+      setContactForm((prev) => ({ ...prev, [field]: value } as ContactFormValues));
+    },
+    [],
+  );
+
+  const handleOpenContactModal = useCallback(() => {
+    if (!record.CustomerID) {
+      showToastMessage('Please set a customer before adding contacts.', 'error');
+      return;
+    }
+    resetContactForm();
+    setContactModalOpen(true);
+  }, [record.CustomerID, resetContactForm]);
+
+  const handleCloseContactModal = useCallback(() => {
+    setContactModalOpen(false);
+    setContactSaving(false);
+    setContactError(null);
+  }, []);
+
+  const normalizeNumberInput = (value: string): number | null => {
+    const trimmed = (value ?? '').toString().trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isInteger(parsed) ? parsed : null;
+  };
+
+  const handleCreateContact = useCallback(async () => {
+    if (!record.CustomerID) {
+      showToastMessage('Please set a customer before adding contacts.', 'error');
+      return;
+    }
+
+    const trimmedFirst = (contactForm.firstName ?? '').trim();
+    const trimmedLast = (contactForm.lastName ?? '').trim();
+    if (!trimmedFirst && !trimmedLast) {
+      setContactError('Please enter at least a first or last name.');
+      return;
+    }
+
+    const payload = {
+      firstName: trimmedFirst,
+      lastName: trimmedLast,
+      titleId: normalizeNumberInput(contactForm.titleId),
+      position: (contactForm.position ?? '').trim(),
+      importance: normalizeNumberInput(contactForm.importance),
+      enabled: contactForm.enabled,
+      phone: (contactForm.phone ?? '').trim(),
+      mobile: (contactForm.mobile ?? '').trim(),
+      email: (contactForm.email ?? '').trim(),
+      emailStatusId: normalizeNumberInput(contactForm.emailStatusId),
+      secondEmail: (contactForm.secondEmail ?? '').trim(),
+      secondEmailStatusId: normalizeNumberInput(contactForm.secondEmailStatusId),
+      notes: (contactForm.notes ?? '').trim(),
+    };
+
+    setContactSaving(true);
+    setContactError(null);
+    try {
+      const response = await fetch(`/api/offers/${encodeURIComponent(oID)}/contacts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const result = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+        contact?: OfferContactInfo;
+      } | null;
+      if (!response.ok || !result?.ok || !result.contact) {
+        throw new Error(result?.error ?? 'Unable to add contact');
+      }
+      const createdContact = result.contact;
+      setContactList((prev) => sortContacts([...prev, createdContact]));
+      setContactModalOpen(false);
+      resetContactForm();
+      showToastMessage('Contact added', 'success');
+    } catch (err) {
+      console.error(err);
+      setContactError(err instanceof Error ? err.message : 'Unable to add contact.');
+      showToastMessage('Unable to add contact. Please try again.', 'error');
+    } finally {
+      setContactSaving(false);
+    }
+  }, [contactForm, oID, record.CustomerID, resetContactForm]);
 
 const renderFieldControl = (
   def: FieldDefinition,
@@ -390,17 +569,41 @@ const renderFieldControl = (
         </div>
         {sectionKey === 'info' ? (
           <div className={styles.contactListWrapper}>
-            <div className={styles.contactListHeading}>Contacts</div>
-            {contacts.length > 0 ? (
-              <div className={styles.contactList}>
-                {contacts.map((contact) => (
-                  <span key={contact.ContactID} className={styles.contactChip}>
-                    {contact.FullName || '—'}
-                  </span>
-                ))}
+            <div className={styles.contactListHeader}>
+              <div className={styles.contactListHeading}>Contacts</div>
+              <button
+                type="button"
+                className={styles.addContactButton}
+                onClick={handleOpenContactModal}
+                disabled={!record.CustomerID}
+                title={!record.CustomerID ? 'Set a customer first' : 'Add a contact'}
+              >
+                Add
+              </button>
+            </div>
+            {visibleContacts.length > 0 ? (
+              <div className={styles.contactTableContainer}>
+                <div className={styles.contactTableScroll}>
+                  <table className={styles.contactTable}>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleContacts.map((contact) => (
+                        <tr key={contact.ContactID}>
+                          <td>
+                            <div className={styles.contactPrimary}>{contact.FullName || '—'}</div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             ) : (
-              <div className={styles.contactListEmpty}>No contacts for this customer.</div>
+              <div className={styles.contactListEmpty}>No contacts for this offer.</div>
             )}
           </div>
         ) : null}
@@ -415,8 +618,8 @@ const renderFieldControl = (
   }, {});
 
   const generalRowLayout: string[][] = [
-    ['title', 'description', 'paymentTerms', 'install', 'status'],
-    ['customer', 'offerValidity', 'deliveryTime', 'introNote', 'closingNote'],
+    ['title', 'description', 'customer', 'offerValidity', 'status'],
+    ['deliveryTime', 'paymentTerms', 'install', 'introNote', 'closingNote'],
   ];
 
   const generalRows = generalRowLayout
@@ -430,29 +633,230 @@ const renderFieldControl = (
   }
 
   return (
-    <section className={styles.panel}>
-      <div className={`${styles.section} ${styles.sectionCard} ${styles.generalSection}`}>
-        <div className={styles.sectionHeading}>{SECTION_METADATA.general.title}</div>
-        <div className={styles.generalRows}>
-          {generalRows.map((row, rowIdx) => (
-            <div key={rowIdx} className={styles.generalRow}>
-              {row.map((field) => (
-                <div key={field.id} className={styles.field}>
-                  <label className={styles.fieldLabel} htmlFor={`offer-field-${field.id}`}>
-                    {field.label}
-                  </label>
-                  {renderFieldControl(field, values, pendingFields, handleValueChange, handleBlur, record)}
-                </div>
-              ))}
-            </div>
-          ))}
+    <>
+      <section className={styles.panel}>
+        <div className={`${styles.section} ${styles.sectionCard} ${styles.generalSection}`}>
+          <div className={styles.sectionHeading}>{SECTION_METADATA.general.title}</div>
+          <div className={styles.generalRows}>
+            {generalRows.map((row, rowIdx) => (
+              <div key={rowIdx} className={styles.generalRow}>
+                {row.map((field) => (
+                  <div key={field.id} className={styles.field}>
+                    <label className={styles.fieldLabel} htmlFor={`offer-field-${field.id}`}>
+                      {field.label}
+                    </label>
+                    {renderFieldControl(field, values, pendingFields, handleValueChange, handleBlur, record)}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
-      <div className={styles.sectionsGrid}>
-        {(['info', 'commercial', 'code', 'dates'] as SectionKey[]).map((sectionKey) =>
-          renderSectionCard(sectionKey)
-        )}
-      </div>
-    </section>
+        <div className={styles.sectionsGrid}>
+          {(['info', 'commercial', 'code', 'dates'] as SectionKey[]).map((sectionKey) =>
+            renderSectionCard(sectionKey)
+          )}
+        </div>
+      </section>
+
+      {isContactModalOpen ? (
+        <div
+          className={styles.contactModalOverlay}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              handleCloseContactModal();
+            }
+          }}
+        >
+          <div className={styles.contactModalCard} role="dialog" aria-modal="true" aria-label="Add contact">
+            <div className={styles.contactModalHeader}>
+              <div>
+                <div className={styles.contactModalTitle}>Add Contact</div>
+              </div>
+              <button
+                type="button"
+                className={styles.contactModalClose}
+                aria-label="Close add contact form"
+                onClick={handleCloseContactModal}
+              >
+                ×
+              </button>
+            </div>
+            <div className={styles.contactModalBody}>
+              <div className={styles.contactModalGrid}>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-first-name">
+                    First Name
+                  </label>
+                  <input
+                    id="contact-first-name"
+                    className={styles.fieldControl}
+                    value={contactForm.firstName}
+                    onChange={(event) => handleContactFieldChange('firstName', event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-last-name">
+                    Last Name
+                  </label>
+                  <input
+                    id="contact-last-name"
+                    className={styles.fieldControl}
+                    value={contactForm.lastName}
+                    onChange={(event) => handleContactFieldChange('lastName', event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-title">
+                    Title
+                  </label>
+                  <select
+                    id="contact-title"
+                    className={styles.fieldControl}
+                    value={contactForm.titleId}
+                    onChange={(event) => handleContactFieldChange('titleId', event.target.value)}
+                  >
+                    <option value="">Select title...</option>
+                    {titles.map((title) => (
+                      <option key={title.value} value={title.value}>
+                        {title.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-position">
+                    Position
+                  </label>
+                  <input
+                    id="contact-position"
+                    className={styles.fieldControl}
+                    value={contactForm.position}
+                    onChange={(event) => handleContactFieldChange('position', event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-importance">
+                    Importance
+                  </label>
+                  <input
+                    id="contact-importance"
+                    className={styles.fieldControl}
+                    type="number"
+                    value={contactForm.importance}
+                    onChange={(event) => handleContactFieldChange('importance', event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-phone">
+                    Phone
+                  </label>
+                  <input
+                    id="contact-phone"
+                    className={styles.fieldControl}
+                    value={contactForm.phone}
+                    onChange={(event) => handleContactFieldChange('phone', event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-mobile">
+                    Mobile
+                  </label>
+                  <input
+                    id="contact-mobile"
+                    className={styles.fieldControl}
+                    value={contactForm.mobile}
+                    onChange={(event) => handleContactFieldChange('mobile', event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-email">
+                    Email
+                  </label>
+                  <input
+                    id="contact-email"
+                    className={styles.fieldControl}
+                    type="email"
+                    value={contactForm.email}
+                    onChange={(event) => handleContactFieldChange('email', event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-email-status">
+                    Email Status ID
+                  </label>
+                  <input
+                    id="contact-email-status"
+                    className={styles.fieldControl}
+                    type="number"
+                    value={contactForm.emailStatusId}
+                    onChange={(event) => handleContactFieldChange('emailStatusId', event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-second-email">
+                    Second Email
+                  </label>
+                  <input
+                    id="contact-second-email"
+                    className={styles.fieldControl}
+                    type="email"
+                    value={contactForm.secondEmail}
+                    onChange={(event) => handleContactFieldChange('secondEmail', event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-second-email-status">
+                    Second Email Status ID
+                  </label>
+                  <input
+                    id="contact-second-email-status"
+                    className={styles.fieldControl}
+                    type="number"
+                    value={contactForm.secondEmailStatusId}
+                    onChange={(event) => handleContactFieldChange('secondEmailStatusId', event.target.value)}
+                  />
+                </div>
+                <div className={`${styles.contactModalField} ${styles.contactModalToggle}`}>
+                  <label className={styles.fieldLabel} htmlFor="contact-enabled">
+                    Enabled
+                  </label>
+                  <label className={styles.contactToggleControl} htmlFor="contact-enabled">
+                    <input
+                      id="contact-enabled"
+                      type="checkbox"
+                      checked={contactForm.enabled}
+                      onChange={(event) => handleContactFieldChange('enabled', event.target.checked)}
+                    />
+                  </label>
+                </div>
+                <div className={`${styles.contactModalField} ${styles.contactModalFieldFull}`}>
+                  <label className={styles.fieldLabel} htmlFor="contact-notes">
+                    Notes
+                  </label>
+                  <textarea
+                    id="contact-notes"
+                    className={`${styles.fieldControl} ${styles.fieldControlMultiline}`}
+                    value={contactForm.notes}
+                    onChange={(event) => handleContactFieldChange('notes', event.target.value)}
+                  />
+                </div>
+              </div>
+              {contactError ? <div className={styles.contactModalError}>{contactError}</div> : null}
+            </div>
+            <div className={styles.contactModalFooter}>
+              <button
+                type="button"
+                className={styles.contactSaveButton}
+                onClick={handleCreateContact}
+                disabled={contactSaving}
+              >
+                {contactSaving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }

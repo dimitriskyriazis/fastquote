@@ -49,6 +49,10 @@ type GridRequest = {
   // rowGroupCols, pivotCols, etc. available if enabling them later
 };
 
+type DeleteRequest = {
+  OfferIDs?: Array<number | string | null | undefined>;
+};
+
 type QueryParam = { key: string; value: string | number | boolean };
 
 type OfferRow = {
@@ -211,6 +215,15 @@ async function readGridRequest(req: NextRequest): Promise<GridRequest> {
   return { startRow: 0, endRow: 100 };
 }
 
+const normalizeOfferId = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
+};
+
 export async function POST(req: NextRequest) {
   try {
     const requestPayload = await readGridRequest(req);
@@ -283,5 +296,57 @@ export async function POST(req: NextRequest) {
       { ok: false, error: message },
       { status: 500 }
     );
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    let body: DeleteRequest | null = null;
+    try {
+      body = (await req.json()) as DeleteRequest;
+    } catch {
+      body = null;
+    }
+
+    const rawIds = Array.isArray(body?.OfferIDs) ? body.OfferIDs : [];
+    const normalizedIds = Array.from(
+      new Set(
+        rawIds
+          .map((value) => normalizeOfferId(value ?? null))
+          .filter((value): value is number => value != null),
+      ),
+    );
+
+    if (normalizedIds.length === 0) {
+      return NextResponse.json({ ok: false, error: 'No offers selected for deletion' }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    const chunkSize = 200;
+    let deleted = 0;
+
+    for (let idx = 0; idx < normalizedIds.length; idx += chunkSize) {
+      const chunk = normalizedIds.slice(idx, idx + chunkSize);
+      if (chunk.length === 0) continue;
+      const request = pool.request();
+      const paramNames: string[] = [];
+      chunk.forEach((offerId, chunkIdx) => {
+        const paramName = `offer_${chunkIdx}`;
+        request.input(paramName, sql.Int, offerId);
+        paramNames.push(`@${paramName}`);
+      });
+      const query = `
+        DELETE dbo.Offer
+        WHERE ID IN (${paramNames.join(', ')})
+      `;
+      const result = await request.query(query);
+      deleted += result.rowsAffected?.[0] ?? 0;
+    }
+
+    return NextResponse.json({ ok: true, deleted });
+  } catch (err: unknown) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

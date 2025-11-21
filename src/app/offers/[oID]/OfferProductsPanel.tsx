@@ -8,8 +8,6 @@ import type {
   ValueGetterParams,
   RowClassParams,
   GetContextMenuItemsParams,
-  MenuItemDef,
-  GridApi,
   CellValueChangedEvent,
 } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
@@ -25,7 +23,7 @@ const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
   ),
 });
 import { showToastMessage } from '../../../lib/toast';
-import { showConfirmDialog } from '../../../lib/confirm';
+import { GridRowDeletion } from '../../../lib/gridRowDeletion';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -118,6 +116,14 @@ const resolveRowLabel = (row: Record<string, unknown> | null | undefined, fallba
   return brand || fallback;
 };
 
+const resolveOfferProductTypeLabel = (row: Record<string, unknown> | null | undefined) => {
+  const rowType = resolveOfferProductRowType(row);
+  if (rowType === 'category') return 'category';
+  if (rowType === 'product') return 'product';
+  if (rowType === 'printable-comment' || rowType === 'non-printable-comment') return 'comment';
+  return 'record';
+};
+
 const normalizeDescriptionValue = (value: unknown): string | null => {
   if (value == null) return null;
   const str = typeof value === 'string' ? value : String(value);
@@ -165,18 +171,6 @@ const productAccentCellClassRules = {
   'offer-products-grid__cell--product-accent': (params: { data?: Record<string, unknown> | null }) =>
     isOfferProductProduct(params.data),
 };
-
-const deleteRecordMenuIcon = `
-  <span class="telquote-menu-icon telquote-menu-icon--danger" aria-hidden="true">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M19 7L18.2 19.2C18.1 20.8 16.8 22 15.2 22H8.8C7.2 22 5.9 20.8 5.8 19.2L5 7" />
-      <path d="M10 11V17" />
-      <path d="M14 11V17" />
-      <path d="M4 7H20" />
-      <path d="M9 7V4.8C9 3.8 9.8 3 10.8 3H13.2C14.2 3 15 3.8 15 4.8V7" />
-    </svg>
-  </span>
-`;
 
 type Props = {
   oID: string;
@@ -568,80 +562,27 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
     },
   ], [RowDragHandle, PartNumberCell, manualMode]);
 
-  const deleteRow = useCallback(async (
-    offerDetailId: number,
-    rowData: Record<string, unknown> | null,
-    api: GridApi<Record<string, unknown>> | null,
-  ) => {
-    const fallbackLabel = `record #${offerDetailId}`;
-    const rowLabel = resolveRowLabel(rowData, fallbackLabel);
-    const rowType = resolveOfferProductRowType(rowData);
-    const typeLabel = rowType === 'category'
-      ? 'category'
-      : rowType === 'product'
-        ? 'product'
-        : rowType === 'printable-comment' || rowType === 'non-printable-comment'
-          ? 'comment'
-          : 'record';
-    const confirmed = await showConfirmDialog({
-      title: 'Delete record',
-      message: `Delete ${typeLabel} ${rowLabel}? This action cannot be undone.`,
-      confirmLabel: 'Delete record',
-      cancelLabel: 'Keep record',
-      tone: 'danger',
-    });
-    if (!confirmed) return;
-    try {
-      const res = await fetch(resolvedEndpoint, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ OfferDetailIDs: [offerDetailId] }),
-      });
-      let payload: { ok?: boolean; error?: string } | null = null;
-      try {
-        payload = (await res.json()) as { ok?: boolean; error?: string } | null;
-      } catch {
-        payload = null;
-      }
-      if (!res.ok || !payload?.ok) {
-        throw new Error(payload?.error ?? `Failed to delete record (status ${res.status})`);
-      }
-      showToastMessage('Record deleted', 'success');
-      try {
-        api?.refreshServerSide?.({ purge: true });
-      } catch (err) {
-        console.warn('Failed to refresh products after deletion', err);
-      }
-    } catch (err) {
-      console.error('Failed to delete record', err);
-      showToastMessage('Unable to delete record. Please try again.', 'error');
-    }
-  }, [resolvedEndpoint]);
+  const productRowDeletion = useMemo(
+    () =>
+      new GridRowDeletion<Record<string, unknown>>({
+        endpoint: resolvedEndpoint,
+        resolveRowId: (row) =>
+          normalizeOfferDetailId((row as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null),
+        resolveRowLabel,
+        resolveRowTypeLabel: resolveOfferProductTypeLabel,
+        buildPayload: (ids) => ({ OfferDetailIDs: ids }),
+        confirmTitle: 'Delete row',
+        confirmConfirmLabel: 'Delete row',
+        confirmCancelLabel: 'Keep row',
+        successToastMessage: 'Row deleted',
+        failureToastMessage: 'Unable to delete row. Please try again.',
+      }),
+    [resolvedEndpoint],
+  );
 
   const productContextMenuItems = useCallback((
     params: GetContextMenuItemsParams<Record<string, unknown>>,
-  ) => {
-    const baseItems = Array.isArray(params.defaultItems) ? [...params.defaultItems] : [];
-    const rowData = params.node?.data as Record<string, unknown> | null | undefined;
-    const rawId = (rowData as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null;
-    const offerDetailId = normalizeOfferDetailId(rawId);
-    if (offerDetailId == null) {
-      return baseItems;
-    }
-    const nextItems: Array<MenuItemDef | string> = [...baseItems];
-    if (nextItems.length > 0 && nextItems[nextItems.length - 1] !== 'separator') {
-      nextItems.push('separator');
-    }
-    const deleteItem: MenuItemDef = {
-      name: 'Delete record',
-      icon: deleteRecordMenuIcon,
-      action: () => {
-        void deleteRow(offerDetailId, rowData ?? null, params.api ?? null);
-      },
-    };
-    nextItems.push(deleteItem);
-    return nextItems;
-  }, [deleteRow]);
+  ) => productRowDeletion.getContextMenuItems(params), [productRowDeletion]);
 
   const handleDescriptionEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Description') return;

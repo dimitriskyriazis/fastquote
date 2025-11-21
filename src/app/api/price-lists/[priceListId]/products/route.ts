@@ -64,6 +64,7 @@ type PriceListProductRow = {
   Enabled: boolean | number | null;
   PartNumber: string | null;
   PriceListID: number | null;
+  PriceListItemID: number | null;
 };
 
 type PriceListProductRowWithCount = PriceListProductRow & {
@@ -77,6 +78,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Enabled: "dbo.PriceListItems.Enabled",
   PartNumber: "dbo.Products.PartNumber",
   PriceListID: "dbo.PriceListItems.PriceListID",
+  PriceListItemID: "dbo.PriceListItems.ID",
 };
 
 function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
@@ -197,6 +199,19 @@ async function readGridRequest(req: NextRequest): Promise<GridRequest> {
   return { startRow: 0, endRow: 100 };
 }
 
+type DeleteRequest = {
+  PriceListItemIDs?: Array<number | string | null | undefined>;
+};
+
+const normalizePriceListItemId = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
+};
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ priceListId: string }> },
@@ -232,6 +247,7 @@ export async function POST(
         dbo.PriceListItems.Warning,
         dbo.PriceListItems.Enabled,
         dbo.Products.PartNumber,
+        dbo.PriceListItems.ID AS PriceListItemID,
         dbo.PriceListItems.PriceListID
     `;
 
@@ -276,5 +292,72 @@ export async function POST(
       { ok: false, error: message, rows: [], rowCount: 0 },
       { status: 500 },
     );
+  }
+}
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ priceListId: string }> },
+) {
+  try {
+    const { priceListId } = await params;
+    const normalizedId = decodeURIComponent(String(priceListId ?? "")).trim();
+    if (!normalizedId) {
+      return NextResponse.json({ ok: false, error: "Missing price list id" }, { status: 400 });
+    }
+    const idValue = Number(normalizedId);
+    if (!Number.isFinite(idValue) || !Number.isInteger(idValue)) {
+      return NextResponse.json({ ok: false, error: "Invalid price list id" }, { status: 400 });
+    }
+
+    let body: DeleteRequest | null = null;
+    try {
+      body = (await req.json()) as DeleteRequest;
+    } catch {
+      body = null;
+    }
+
+    const rawIds = Array.isArray(body?.PriceListItemIDs) ? body.PriceListItemIDs : [];
+    const normalizedIds = Array.from(
+      new Set(
+        rawIds
+          .map((value) => normalizePriceListItemId(value ?? null))
+          .filter((value): value is number => value != null),
+      ),
+    );
+
+    if (normalizedIds.length === 0) {
+      return NextResponse.json({ ok: false, error: "No rows selected for deletion" }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    const chunkSize = 200;
+    let deleted = 0;
+
+    for (let idx = 0; idx < normalizedIds.length; idx += chunkSize) {
+      const chunk = normalizedIds.slice(idx, idx + chunkSize);
+      if (chunk.length === 0) continue;
+      const request = pool.request();
+      request.input("__priceListId", sql.Int, idValue);
+      const paramNames: string[] = [];
+      chunk.forEach((id, chunkIdx) => {
+        const paramName = `pli_${chunkIdx}`;
+        request.input(paramName, sql.Int, id);
+        paramNames.push(`@${paramName}`);
+      });
+      const query = `
+        DELETE FROM dbo.PriceListItems
+        WHERE PriceListID = @__priceListId
+          AND ID IN (${paramNames.join(", ")})
+      `;
+      const result = await request.query(query);
+      deleted += result.rowsAffected?.[0] ?? 0;
+    }
+
+    return NextResponse.json({ ok: true, deleted });
+  } catch (err) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

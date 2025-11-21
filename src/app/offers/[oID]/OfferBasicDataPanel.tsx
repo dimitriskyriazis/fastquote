@@ -131,6 +131,22 @@ async function fetchMarkets() {
   }
 }
 
+async function fetchTitles() {
+  try {
+    const pool = await getPool();
+    const request = pool.request();
+    const result = await request.query<LookupRow>(`
+      SELECT ID, Name
+      FROM dbo.Titles
+      ORDER BY Name
+    `);
+    return mapLookupRows(result.recordset);
+  } catch (err) {
+    console.error('Failed to load titles', err);
+    return [];
+  }
+}
+
 async function fetchAspNetUsers() {
   try {
     const pool = await getPool();
@@ -191,12 +207,13 @@ export default async function OfferBasicDataPanel({ oID }: Props) {
     );
   }
 
-  const [contacts, statuses, pricingPolicies, markets, users] = await Promise.all([
+  const [contacts, statuses, pricingPolicies, markets, users, titles] = await Promise.all([
     fetchCustomerContacts(record.CustomerID ?? null),
     fetchOfferStatuses(),
     fetchPricingPolicies(),
     fetchMarkets(),
     fetchAspNetUsers(),
+    fetchTitles(),
   ]);
 
   return (
@@ -208,6 +225,7 @@ export default async function OfferBasicDataPanel({ oID }: Props) {
       pricingPolicies={pricingPolicies}
       markets={markets}
       users={users}
+      titles={titles}
     />
   );
 }
