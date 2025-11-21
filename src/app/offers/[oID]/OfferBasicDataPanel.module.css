@@ -161,10 +161,16 @@
  }
 
 .contactList {
-   display: flex;
-   flex-direction: column;
-   gap: 4px;
- }
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 322px;
+  overflow-y: auto;
+  padding: 8px 6px;
+  border: 1px solid #000000;
+  border-radius: 8px;
+  background: #fafafa;
+}
 
 .contactChip {
    border: 1px solid #000000;

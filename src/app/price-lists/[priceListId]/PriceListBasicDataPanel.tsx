@@ -26,7 +26,7 @@ export async function fetchPriceListBasicRecord(priceListId: number) {
     const request = pool.request();
     request.input('priceListId', sql.Int, priceListId);
     const result = await request.query<PriceListBasicRecord>(`
-      SELECT
+      SELECT TOP 1
         pl.ID AS PriceListID,
         pl.Name,
         pl.ValidFromDate,
@@ -35,42 +35,35 @@ export async function fetchPriceListBasicRecord(priceListId: number) {
         pl.SupplierComment,
         pl.Enabled,
         pl.FilePath,
-        conv.BrandIDInt AS BrandID,
+        pl.BrandID AS BrandID,
         b.Name AS BrandName,
-        conv.CountryIdInt AS CountryId,
+        pl.CountryId AS CountryId,
         c.Name AS CountryName,
-        conv.SupplierIdInt AS SupplierID,
+        pl.SupplierID AS SupplierID,
         s.Name AS SupplierName,
-        conv.CurrencyIdInt AS CurrencyId,
+        pl.CurrencyId AS CurrencyId,
         cur.Name AS CurrencyName,
         pl.ResponsibleUserId,
         resp.UserName AS ResponsibleUserName,
         pl.HasDuty,
-        conv.PricingPolicyRuleIdInt AS PricingPolicyRuleID,
-        conv.PricingPolicyIdInt AS PricingPolicyID,
+        ppr.ID AS PricingPolicyRuleID,
+        ppr.PricingPolicyID,
         pp.Name AS PricingPolicyName,
         pl.ModifiedOn,
         pl.ModifiedBy AS ModifiedByUserId,
         modified.UserName AS ModifiedByUserName,
         modified.FullName AS ModifiedByFullName
       FROM dbo.PriceLists AS pl
-      CROSS APPLY (
-        SELECT
-          TRY_CONVERT(int, pl.BrandID) AS BrandIDInt,
-          TRY_CONVERT(int, pl.CountryId) AS CountryIdInt,
-          TRY_CONVERT(int, pl.SupplierID) AS SupplierIdInt,
-          TRY_CONVERT(int, pl.CurrencyId) AS CurrencyIdInt,
-          TRY_CONVERT(int, pl.PricingPolicyRuleID) AS PricingPolicyRuleIdInt,
-          TRY_CONVERT(int, pl.PricingPolicyID) AS PricingPolicyIdInt
-      ) AS conv
-      LEFT JOIN dbo.Brands AS b ON conv.BrandIDInt = b.ID
-      LEFT JOIN dbo.Countries AS c ON conv.CountryIdInt = c.ID
-      LEFT JOIN dbo.Suppliers AS s ON conv.SupplierIdInt = s.ID
-      LEFT JOIN dbo.Currencies AS cur ON conv.CurrencyIdInt = cur.ID
+      LEFT JOIN dbo.Brands AS b ON pl.BrandID = b.ID
+      LEFT JOIN dbo.PricingPolicyRules AS ppr ON b.ID = ppr.BrandID
+      LEFT JOIN dbo.PricingPolicies AS pp ON ppr.PricingPolicyID = pp.ID
+      LEFT JOIN dbo.Countries AS c ON pl.CountryId = c.ID
+      LEFT JOIN dbo.Suppliers AS s ON pl.SupplierID = s.ID
+      LEFT JOIN dbo.Currencies AS cur ON pl.CurrencyId = cur.ID
       LEFT JOIN dbo.AspNetUsers AS resp ON pl.ResponsibleUserId = resp.Id
-      LEFT JOIN dbo.PricingPolicies AS pp ON conv.PricingPolicyIdInt = pp.ID
       LEFT JOIN dbo.AspNetUsers AS modified ON pl.ModifiedBy = modified.Id
       WHERE pl.ID = @priceListId
+      ORDER BY pp.Name
     `);
     return result.recordset?.[0] ?? null;
   } catch (err) {
