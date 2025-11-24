@@ -12,3 +12,11 @@
   height: 100%;
   display: flex;
 }
+
+.bandedRows :global(.ag-row-even .ag-cell) {
+  background: #ffffff;
+}
+
+.bandedRows :global(.ag-row-odd .ag-cell) {
+  background: #f4f6fb;
+}

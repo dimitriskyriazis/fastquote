@@ -74,6 +74,11 @@ type ProductRow = {
   Margin: number | null;
   GrossProfit: number | null;
   TotalCost: number | null;
+  PriceListID: number | null;
+  PriceListItemID: number | null;
+  PriceListValidFromDate: Date | string | null;
+  PriceListValidToDate: Date | string | null;
+  PriceListEnabled: boolean | number | null;
 };
 
 type ProductRowWithCount = ProductRow & {
@@ -148,6 +153,11 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Margin: 'od.Margin',
   GrossProfit: 'od.GrossProfit',
   TotalCost: 'od.TotalCost',
+  PriceListID: 'od.PriceListID',
+  PriceListItemID: 'od.PriceListItemID',
+  PriceListValidFromDate: 'pl.ValidFromDate',
+  PriceListValidToDate: 'pl.ValidToDate',
+  PriceListEnabled: 'pl.Enabled',
 };
 
 const ORDER_EXPRESSION_OVERRIDES: Record<string, string> = {
@@ -467,10 +477,16 @@ export async function POST(
         od.NetCost,
         od.Margin,
         od.GrossProfit,
-        od.TotalCost
+        od.TotalCost,
+        od.PriceListID,
+        od.PriceListItemID,
+        pl.ValidFromDate AS PriceListValidFromDate,
+        pl.ValidToDate AS PriceListValidToDate,
+        pl.Enabled AS PriceListEnabled
       FROM dbo.OfferDetails od
         LEFT OUTER JOIN dbo.Products p ON od.ProductID = p.ID
         LEFT OUTER JOIN dbo.Brands b ON p.BrandID = b.ID
+        LEFT OUTER JOIN dbo.PriceLists pl ON od.PriceListID = pl.ID
       ${whereSql}
         ${orderSql}
         ${pagingSql}

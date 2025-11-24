@@ -118,6 +118,8 @@ export default function PriceListProductsClient({ priceListId, headingText }: Pr
             if (a === b) return 0;
             return a === "true" ? -1 : 1;
           },
+          buttons: ["apply", "clear"],
+          closeOnApply: true,
         },
         width: 110,
       },
@@ -176,7 +178,7 @@ export default function PriceListProductsClient({ priceListId, headingText }: Pr
         <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`} />
       </div>
       <div className={`${layoutStyles.pageBody} ${pageStyles.gridShell}`}>
-        <div className={pageStyles.gridWrapper}>
+        <div className={`${pageStyles.gridWrapper} ${pageStyles.bandedRows}`}>
           <AgGridAll
             endpoint={endpoint}
             columnDefs={columnDefs}

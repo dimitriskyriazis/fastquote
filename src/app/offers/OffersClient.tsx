@@ -231,6 +231,8 @@ export default function OffersClient() {
         values: ['true', 'false'],
         valueFormatter: (params: { value?: unknown }) => formatEnabledValue(params.value),
         comparator: (valueA: string, valueB: string) => (valueA === valueB ? 0 : valueA === 'true' ? -1 : 1),
+        buttons: ['apply', 'clear'],
+        closeOnApply: true,
       },
       enableRowGroup: true,
     },
@@ -240,19 +242,21 @@ export default function OffersClient() {
     <main className={styles.page}>
       <div className={styles.headerRow}>
         <h1 className={styles.heading}>Offers</h1>
-        <button
-          type="button"
-          className={styles.primaryButton}
-          onClick={handleCreateOfferClick}
-        >
-          Create Offer
-        </button>
+      <button
+        type="button"
+        className={styles.primaryButton}
+        onClick={handleCreateOfferClick}
+      >
+        Create Offer
+      </button>
+    </div>
+      <div className={styles.gridFrame}>
+        <AgGridAll
+          endpoint="/api/offers"
+          columnDefs={columnDefs}
+          getContextMenuItems={offersContextMenuItems}
+        />
       </div>
-      <AgGridAll
-        endpoint="/api/offers"
-        columnDefs={columnDefs}
-        getContextMenuItems={offersContextMenuItems}
-      />
     </main>
   );
 }

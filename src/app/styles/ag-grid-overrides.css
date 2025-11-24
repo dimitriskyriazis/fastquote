@@ -247,3 +247,21 @@
 .offer-products-grid .offer-row--nonprintable-comment.ag-row-hover {
   background-color: #ffcfcf;
 }
+
+.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-active {
+  background-color: #b7ffcf !important;
+  font-weight: 400 !important;
+  color: inherit !important;
+}
+
+.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-expiring {
+  background-color: #fff8a5 !important;
+  font-weight: 400 !important;
+  color: inherit !important;
+}
+
+.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-expired {
+  background-color: #ffcfcf !important;
+  font-weight: 400 !important;
+  color: inherit !important;
+}

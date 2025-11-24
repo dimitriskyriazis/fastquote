@@ -261,6 +261,8 @@ export default function PriceListsClient() {
             if (a === b) return 0;
             return a === "true" ? -1 : 1;
           },
+          buttons: ["apply", "clear"],
+          closeOnApply: true,
         },
         width: 110,
       },
@@ -279,20 +281,22 @@ export default function PriceListsClient() {
     <main className={styles.page}>
       <div className={styles.headerRow}>
         <h1 className={styles.heading}>Price Lists</h1>
-        <button
-          type="button"
-          className={styles.importButton}
-          onClick={handleImportClick}
-        >
-          Import Price List
-        </button>
+      <button
+        type="button"
+        className={styles.importButton}
+        onClick={handleImportClick}
+      >
+        Import Price List
+      </button>
+    </div>
+      <div className={styles.gridFrame}>
+        <AgGridAll
+          endpoint="/api/price-lists"
+          columnDefs={columnDefs}
+          getContextMenuItems={priceListsContextMenuItems}
+          autoSizeExclusions={["ValidFromDate", "ValidToDate"]}
+        />
       </div>
-      <AgGridAll
-        endpoint="/api/price-lists"
-        columnDefs={columnDefs}
-        getContextMenuItems={priceListsContextMenuItems}
-        autoSizeExclusions={["ValidFromDate", "ValidToDate"]}
-      />
     </main>
   );
 }

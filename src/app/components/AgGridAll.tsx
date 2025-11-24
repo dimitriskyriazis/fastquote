@@ -575,17 +575,29 @@ export default function AgGridAll({
     autoSizeColumns();
   }, [manualMode, autoSizeColumns]);
 
-  const dcd: ColDef = useMemo(() => ({
-    sortable: true,
-    resizable: true,
-    filter: true,
-    floatingFilter: true,
-    // Hide header menu icon and disable header menu on right-click
-    suppressHeaderMenuButton: true,
-    suppressHeaderContextMenu: true,
-    width: 100,
-    ...defaultColDef,
-  }), [defaultColDef]);
+  const dcd: ColDef = useMemo(() => {
+    const baseFilterParams = {
+      buttons: ['apply', 'clear'] as const,
+      closeOnApply: true,
+    };
+    const incomingFilterParams = defaultColDef?.filterParams;
+    const mergedFilterParams = typeof incomingFilterParams === 'object' && incomingFilterParams !== null
+      ? { ...baseFilterParams, ...incomingFilterParams }
+      : baseFilterParams;
+
+    return {
+      sortable: true,
+      resizable: true,
+      filter: true,
+      floatingFilter: true,
+      // Hide header menu icon and disable header menu on right-click
+      suppressHeaderMenuButton: true,
+      suppressHeaderContextMenu: true,
+      width: 100,
+      ...defaultColDef,
+      filterParams: mergedFilterParams,
+    };
+  }, [defaultColDef]);
 
   const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     getRows: async (params: IServerSideGetRowsParams<RowData>) => {
