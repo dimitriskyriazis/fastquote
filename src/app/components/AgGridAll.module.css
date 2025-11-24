@@ -14,14 +14,6 @@
   position: relative;
 }
 
-.gridShell :global(.ag-row-odd .ag-cell) {
-  background: #f4f6fb !important;
-}
-
-.gridShell :global(.ag-row-even .ag-cell) {
-  background: #ffffff !important;
-}
-
 .gridShell :global(.ag-row-hover .ag-cell) {
   background: #e9f1ff !important;
 }

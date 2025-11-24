@@ -16,6 +16,8 @@ export type OfferBasicRecord = {
   OfferNotesIntroduction: string | null;
   TelmacoNote: string | null;
   OfferContact: string | null;
+  ContactID: number | null;
+  ContactFullName: string | null;
   CustomerName: string | null;
   StatusName: string | null;
   PricingPolicyName: string | null;
@@ -66,6 +68,7 @@ export type OfferBasicUpdateField =
   | 'OfferNotesIntroduction'
   | 'Comments'
   | 'OfferContact'
+  | 'ContactID'
   | 'StatusID'
   | 'PricingPolicyID'
   | 'MarketID'

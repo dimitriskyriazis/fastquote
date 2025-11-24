@@ -40,6 +40,7 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   OfferNotesIntroduction: { column: 'OfferNotesIntroduction', type: 'string', sqlType: sql.NVarChar, length: 2000 },
   Comments: { column: 'Comments', type: 'string', sqlType: sql.NVarChar, length: 2000 },
   OfferContact: { column: 'OfferContact', type: 'string', sqlType: sql.NVarChar, length: 500 },
+  ContactID: { column: 'ContactID', type: 'number', sqlType: sql.Int },
   StatusID: { column: 'StatusID', type: 'number', sqlType: sql.Int },
   PricingPolicyID: { column: 'PricingPolicyID', type: 'number', sqlType: sql.Int },
   MarketID: { column: 'MarketID', type: 'number', sqlType: sql.Int },

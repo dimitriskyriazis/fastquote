@@ -28,6 +28,12 @@ async function fetchOfferBasicRecord(offerId: number) {
         o.OfferNotesIntroduction,
         o.Comments AS TelmacoNote,
         o.OfferContact,
+        o.ContactID,
+        LTRIM(RTRIM(CONCAT(
+          ISNULL(oc.FirstName, ''),
+          CASE WHEN oc.FirstName IS NOT NULL AND oc.LastName IS NOT NULL THEN ' ' ELSE '' END,
+          ISNULL(oc.LastName, '')
+        ))) AS ContactFullName,
         c.Name AS CustomerName,
         o.StatusID,
         o.PricingPolicyID,
@@ -69,6 +75,7 @@ async function fetchOfferBasicRecord(offerId: number) {
       LEFT JOIN dbo.AspNetUsers AS sales ON o.SalesPersonId = sales.Id
       LEFT JOIN dbo.AspNetUsers AS approver ON o.ApprovalUserId = approver.Id
       LEFT JOIN dbo.AspNetUsers AS modified ON o.ModifiedBy = modified.Id
+      LEFT JOIN dbo.Contacts AS oc ON o.ContactID = oc.ID
       WHERE o.ID = @offerId
     `);
     return result.recordset?.[0] ?? null;

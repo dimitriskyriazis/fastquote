@@ -77,12 +77,6 @@ const sortContacts = (list: OfferContactInfo[]) =>
     (a.FullName || '').localeCompare(b.FullName || '', undefined, { sensitivity: 'base' })
   );
 
-const parseOfferContactNames = (value: string | null | undefined): string[] =>
-  (value ?? '')
-    .split(/[\n;,]+/)
-    .map((name) => name.trim())
-    .filter(Boolean);
-
 const SECTION_METADATA: Record<SectionKey, { title: string; gridClass: string }> = {
   general: { title: 'General', gridClass: styles.generalGrid },
   info: { title: 'Info', gridClass: styles.fieldGrid },
@@ -96,6 +90,7 @@ const buildFieldDefinitions = (
   pricingPolicies: OfferDropdownOption[],
   markets: OfferDropdownOption[],
   users: OfferDropdownOption[],
+  contacts: OfferDropdownOption[],
 ): FieldDefinition[] => [
   { id: 'title', label: 'Title', section: 'general', recordKey: 'Title', updateField: 'Title' },
   { id: 'description', label: 'Description', section: 'general', recordKey: 'Description', updateField: 'Description' },
@@ -116,6 +111,16 @@ const buildFieldDefinitions = (
     options: statuses,
   },
 
+  {
+    id: 'contactId',
+    label: 'Contact',
+    section: 'info',
+    recordKey: 'ContactID',
+    updateField: 'ContactID',
+    valueType: 'number',
+    options: contacts,
+    fullWidth: true,
+  },
   { id: 'telmaco', label: 'Telmaco Note', section: 'info', recordKey: 'TelmacoNote', updateField: 'Comments', multiline: true },
 
   {
@@ -234,9 +239,39 @@ const resolveFieldValue = (record: OfferBasicRecord, def: FieldDefinition) =>
   (typeof def.resolveValue === 'function' ? def.resolveValue(record) : record[def.recordKey]) ?? null;
 
 export default function OfferBasicDataClient({ oID, record, contacts, statuses, pricingPolicies, markets, users, titles }: Props) {
+  const [contactList, setContactList] = useState(() => sortContacts(contacts));
+
+  const contactOptions = useMemo(() => {
+    const options = contactList.map((contact) => {
+      const fallback = `Contact ${contact.ContactID}`;
+      const fullName =
+        contact.FullName?.trim() ||
+        [contact.FirstName, contact.LastName]
+          .map((part) => part?.trim())
+          .filter(Boolean)
+          .join(' ');
+      return {
+        value: String(contact.ContactID),
+        label: fullName || fallback,
+      };
+    });
+
+    const selectedId = record.ContactID;
+    if (
+      selectedId != null &&
+      !options.some((option) => Number(option.value) === Number(selectedId))
+    ) {
+      const fallback = `Contact ${selectedId}`;
+      const label = (record.ContactFullName ?? '').trim() || fallback;
+      options.push({ value: String(selectedId), label });
+    }
+
+    return options;
+  }, [contactList, record.ContactFullName, record.ContactID]);
+
   const fieldDefinitions = useMemo(
-    () => buildFieldDefinitions(statuses, pricingPolicies, markets, users),
-    [statuses, pricingPolicies, markets, users]
+    () => buildFieldDefinitions(statuses, pricingPolicies, markets, users, contactOptions),
+    [statuses, pricingPolicies, markets, users, contactOptions]
   );
   const editableFields = useMemo(
     () => fieldDefinitions.filter((def) => def.updateField && !def.readOnly),
@@ -256,7 +291,6 @@ export default function OfferBasicDataClient({ oID, record, contacts, statuses, 
   const [savedValues, setSavedValues] = useState(initialValues);
   const savedValuesRef = useRef(savedValues);
   savedValuesRef.current = savedValues;
-  const [contactList, setContactList] = useState(sortContacts(contacts));
   const [isContactModalOpen, setContactModalOpen] = useState(false);
   const [contactForm, setContactForm] = useState<ContactFormValues>(EMPTY_CONTACT_FORM);
   const [contactSaving, setContactSaving] = useState(false);
@@ -265,39 +299,6 @@ export default function OfferBasicDataClient({ oID, record, contacts, statuses, 
   useEffect(() => {
     setContactList(sortContacts(contacts));
   }, [contacts]);
-
-  const offerContactNames = useMemo(
-    () => parseOfferContactNames(record.OfferContact),
-    [record.OfferContact],
-  );
-
-  const visibleContacts = useMemo(() => {
-    if (offerContactNames.length === 0) {
-      return contactList;
-    }
-
-    return offerContactNames.map((name, idx) => {
-      const normalized = name.toLowerCase();
-      const match = contactList.find((contact) => {
-        const full = (contact.FullName ?? '').trim().toLowerCase();
-        const firstLast = [contact.FirstName, contact.LastName]
-          .map((part) => part?.trim())
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        return full === normalized || firstLast === normalized;
-      });
-
-      if (match) return match;
-
-      return {
-        ContactID: -(idx + 1),
-        FirstName: null,
-        LastName: null,
-        FullName: name,
-      };
-    });
-  }, [contactList, offerContactNames]);
 
   const handleValueChange = useCallback((fieldId: string, value: string) => {
     setValues((prev) => ({ ...prev, [fieldId]: value }));
@@ -562,51 +563,28 @@ const renderFieldControl = (
                 <label className={styles.fieldLabel} htmlFor={`offer-field-${field.id}`}>
                   {field.label}
                 </label>
-                {renderFieldControl(field, values, pendingFields, handleValueChange, handleBlur, record)}
+                {field.id === 'contactId' ? (
+                  <div className={styles.contactFieldRow}>
+                    <div className={styles.contactFieldControl}>
+                      {renderFieldControl(field, values, pendingFields, handleValueChange, handleBlur, record)}
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.addContactButton}
+                      onClick={handleOpenContactModal}
+                      disabled={!record.CustomerID}
+                      title={!record.CustomerID ? 'Set a customer first' : 'Add a contact'}
+                    >
+                      Add
+                    </button>
+                  </div>
+                ) : (
+                  renderFieldControl(field, values, pendingFields, handleValueChange, handleBlur, record)
+                )}
               </div>
             );
           })}
         </div>
-        {sectionKey === 'info' ? (
-          <div className={styles.contactListWrapper}>
-            <div className={styles.contactListHeader}>
-              <div className={styles.contactListHeading}>Contacts</div>
-              <button
-                type="button"
-                className={styles.addContactButton}
-                onClick={handleOpenContactModal}
-                disabled={!record.CustomerID}
-                title={!record.CustomerID ? 'Set a customer first' : 'Add a contact'}
-              >
-                Add
-              </button>
-            </div>
-            {visibleContacts.length > 0 ? (
-              <div className={styles.contactTableContainer}>
-                <div className={styles.contactTableScroll}>
-                  <table className={styles.contactTable}>
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visibleContacts.map((contact) => (
-                        <tr key={contact.ContactID}>
-                          <td>
-                            <div className={styles.contactPrimary}>{contact.FullName || '—'}</div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ) : (
-              <div className={styles.contactListEmpty}>No contacts for this offer.</div>
-            )}
-          </div>
-        ) : null}
       </section>
     );
   };
