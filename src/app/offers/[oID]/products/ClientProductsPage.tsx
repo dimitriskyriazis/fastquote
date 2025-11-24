@@ -6,6 +6,7 @@ import OfferProductsPanel from '../OfferProductsPanel';
 import { showToastMessage } from '../../../../lib/toast';
 import layoutStyles from '../../offersDetail.module.css';
 import toolbarStyles from './ClientProductsPage.module.css';
+import AddProductsModal from './AddProductsModal';
 
 type Props = {
   oID: string;
@@ -46,6 +47,7 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
   const [manualMode, setManualMode] = useState(false);
   const [pendingAction, setPendingAction] = useState<CreatableActionType | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [showAddProductModal, setShowAddProductModal] = useState(false);
   const creationCountersRef = useRef<Record<CreatableActionType, number>>({
     category: 0,
     'printable-comment': 0,
@@ -54,8 +56,7 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
 
   const handleAddAction = useCallback(async (action: AddActionType) => {
     if (action === 'product') {
-      const label = addActionLabels[action] ?? 'Add Product';
-      showToastMessage(`${label} coming soon`, 'info');
+      setShowAddProductModal(true);
       return;
     }
     if (pendingAction) {
@@ -100,6 +101,13 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
     ? `${toolbarStyles.manualToggle} ${toolbarStyles.manualToggleActive}`
     : toolbarStyles.manualToggle;
 
+  const handleProductsAdded = useCallback((count: number) => {
+    void count;
+    setRefreshToken((prev) => prev + 1);
+  }, []);
+
+  const handleCloseModal = useCallback(() => setShowAddProductModal(false), []);
+
   return (
     <main className={layoutStyles.page}>
       <div className={layoutStyles.headerRow}>
@@ -138,6 +146,9 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
         </div>
       </div>
       <OfferProductsPanel oID={oID} manualMode={manualMode} refreshToken={refreshToken} />
+      {showAddProductModal ? (
+        <AddProductsModal oID={oID} onAdded={handleProductsAdded} onClose={handleCloseModal} />
+      ) : null}
     </main>
   );
 }

@@ -217,7 +217,7 @@ async function handleCreateRow(
   }
   const fallbackLabel = CREATE_TYPE_LABELS[type] ?? 'New Entry';
   const description = normalizeDescriptionValue(payload?.description ?? null) ?? fallbackLabel;
-  const isComment = type === 'category' ? 0 : 1;
+  const isComment = type === 'category' ? null : 1;
   const isPrintable = type === 'category'
     ? null
     : type === 'printable-comment'

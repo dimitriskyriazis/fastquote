@@ -33,11 +33,18 @@ const hasPartNumber = (value: unknown): boolean => {
   return str.trim().length > 0;
 };
 
+const hasModelNumber = (value: unknown): boolean => {
+  if (value == null) return false;
+  const str = typeof value === 'string' ? value : String(value);
+  return str.trim().length > 0;
+};
+
 export const resolveOfferProductRowType = (row: OfferProductRow): OfferProductRowType => {
   if (!row || typeof row !== 'object') return 'unknown';
   const printableRaw = (row as { IsPrintable?: unknown }).IsPrintable;
   const commentRaw = (row as { IsComment?: unknown }).IsComment;
   const partNumberRaw = (row as { PartNumber?: unknown }).PartNumber;
+  const modelNumberRaw = (row as { ModelNumber?: unknown }).ModelNumber;
 
   const isComment = isTruthy(commentRaw);
   const isPrintable = isTruthy(printableRaw);
@@ -45,10 +52,12 @@ export const resolveOfferProductRowType = (row: OfferProductRow): OfferProductRo
 
   if (isComment && isPrintable) return 'printable-comment';
   if (isComment && isExplicitlyNotPrintable) return 'non-printable-comment';
-  if (printableRaw == null && !hasPartNumber(partNumberRaw)) {
+  const hasPartOrModel = hasPartNumber(partNumberRaw) || hasModelNumber(modelNumberRaw);
+
+  if (printableRaw == null && commentRaw == null && !hasPartOrModel) {
     return 'category';
   }
-  if (hasPartNumber(partNumberRaw)) {
+  if (hasPartOrModel) {
     return 'product';
   }
   return 'unknown';

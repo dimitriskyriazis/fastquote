@@ -25,6 +25,7 @@ const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
 import { showToastMessage } from '../../../lib/toast';
 import { GridRowDeletion } from '../../../lib/gridRowDeletion';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
+import { priceListStatusClassRules } from '../../../lib/priceListStatus';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const decimalFormatter = new Intl.NumberFormat('en-US', {
@@ -172,80 +173,13 @@ const productAccentCellClassRules = {
     isOfferProductProduct(params.data),
 };
 
-const MS_PER_DAY = 1000 * 60 * 60 * 24;
-const EXPIRING_THRESHOLD_DAYS = 30;
-
-type PriceListStatus = 'active' | 'expiring' | 'expired' | null;
-
-const normalizeInteger = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isInteger(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isInteger(parsed)) return parsed;
-  }
-  return null;
-};
-
-const normalizeBooleanFlag = (value: unknown): boolean | null => {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value === 1;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (['1', 'true', 'yes', 'y'].includes(normalized)) return true;
-    if (['0', 'false', 'no', 'n'].includes(normalized)) return false;
-  }
-  return null;
-};
-
-const parseDateValue = (value: unknown): Date | null => {
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-  if (typeof value === 'string' || typeof value === 'number') {
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? null : date;
-  }
-  return null;
-};
-
-const resolvePriceListStatus = (row: Record<string, unknown> | null | undefined): PriceListStatus => {
-  if (!isOfferProductProduct(row)) return null;
-  const priceListId = normalizeInteger((row as { PriceListID?: unknown })?.PriceListID ?? null);
-  if (priceListId == null) return 'expired';
-
-  const enabled = normalizeBooleanFlag((row as { PriceListEnabled?: unknown })?.PriceListEnabled ?? null);
-  if (enabled === false) return 'expired';
-
-  const now = new Date();
-  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const validFromRaw = (row as { PriceListValidFromDate?: unknown })?.PriceListValidFromDate ?? null;
-  const validToRaw = (row as { PriceListValidToDate?: unknown })?.PriceListValidToDate ?? null;
-  const validFrom = parseDateValue(validFromRaw);
-  const validTo = parseDateValue(validToRaw);
-
-  const validFromMs = validFrom ? Date.UTC(validFrom.getUTCFullYear(), validFrom.getUTCMonth(), validFrom.getUTCDate()) : null;
-  const validToMs = validTo ? Date.UTC(validTo.getUTCFullYear(), validTo.getUTCMonth(), validTo.getUTCDate()) : null;
-
-  if (validFromMs != null && validFromMs > todayUtc) return 'expired';
-  if (validToMs != null) {
-    if (validToMs < todayUtc) return 'expired';
-    const daysUntilExpiry = (validToMs - todayUtc) / MS_PER_DAY;
-    if (daysUntilExpiry <= EXPIRING_THRESHOLD_DAYS) return 'expiring';
-  }
-
-  return 'active';
-};
-
-const priceListStatusClassRules = {
-  'offer-products-grid__cell--pricelist-active': (params: { data?: Record<string, unknown> | null }) =>
-    resolvePriceListStatus(params.data) === 'active',
-  'offer-products-grid__cell--pricelist-expiring': (params: { data?: Record<string, unknown> | null }) =>
-    resolvePriceListStatus(params.data) === 'expiring',
-  'offer-products-grid__cell--pricelist-expired': (params: { data?: Record<string, unknown> | null }) =>
-    resolvePriceListStatus(params.data) === 'expired',
-};
+const productPriceListClassRules = priceListStatusClassRules((params) =>
+  isOfferProductProduct(params.data) ? params.data : null,
+);
 
 const totalPriceCellClassRules = {
   ...productAccentCellClassRules,
-  ...priceListStatusClassRules,
+  ...productPriceListClassRules,
 };
 
 type Props = {
@@ -493,7 +427,7 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
     );
   }, []);
 
-  const productColumnDefs: ColDef[] = useMemo(() => [
+const productColumnDefs: ColDef[] = useMemo(() => [
     {
       headerName: '',
       colId: '__row_drag__',
@@ -572,7 +506,10 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueGetter: categoryTotalPriceGetter,
-      valueFormatter: euroFormatter,
+      valueFormatter: (params) => {
+        if (!isOfferProductProduct(params.data)) return '';
+        return euroFormatter(params);
+      },
       cellClassRules: totalPriceCellClassRules,
     },
     {
@@ -596,7 +533,11 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
       headerName: 'List Price',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
-      valueFormatter: euroFormatter,
+      valueFormatter: (params) => {
+        if (!isOfferProductProduct(params.data)) return '';
+        return euroFormatter(params);
+      },
+      cellClassRules: productPriceListClassRules,
     },
     {
       field: 'TelmacoDiscount',

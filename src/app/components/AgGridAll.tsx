@@ -23,6 +23,7 @@ import {
   CellContextMenuEvent,
   ContextMenuVisibleChangedEvent,
   DefaultMenuItem,
+  SelectionChangedEvent,
 } from 'ag-grid-community';
 import { AllEnterpriseModule, LicenseManager } from 'ag-grid-enterprise';
 import { resolveOfferProductRowType, type OfferProductRowType, describeOfferProductRowType } from '../../lib/offerProductRows';
@@ -51,6 +52,13 @@ type Props = {
   columnDefs: ColDef[];
   defaultColDef?: ColDef;
   manualMode?: boolean;
+  requestPayload?: Record<string, unknown> | null;
+  rowSelection?: 'single' | 'multiple';
+  rowMultiSelectWithClick?: boolean;
+  suppressRowClickSelection?: boolean;
+  onGridReady?: (api: GridApi<RowData>) => void;
+  onSelectionChanged?: (rows: RowData[], api: GridApi<RowData>) => void;
+  rowGroupPanelShow?: 'always' | 'onlyWhenGrouping' | 'never';
   getRowClass?: (params: RowClassParams<RowData>) => string | string[] | undefined;
   getContextMenuItems?: (params: GetContextMenuItemsParams<RowData>) => (MenuItemDef | string)[] | undefined;
   onCellValueChanged?: (event: CellValueChangedEvent<RowData>) => void;
@@ -481,6 +489,13 @@ export default function AgGridAll({
   columnDefs,
   defaultColDef,
   manualMode = false,
+  requestPayload = null,
+  rowSelection,
+  rowMultiSelectWithClick,
+  suppressRowClickSelection,
+  onGridReady: externalGridReadyHandler,
+  onSelectionChanged: externalSelectionChangedHandler,
+  rowGroupPanelShow = 'always',
   getRowClass,
   getContextMenuItems,
   onCellValueChanged: externalCellValueChangeHandler,
@@ -602,10 +617,13 @@ export default function AgGridAll({
   const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     getRows: async (params: IServerSideGetRowsParams<RowData>) => {
       try {
+        const payload = requestPayload && typeof requestPayload === 'object'
+          ? { ...requestPayload }
+          : {};
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ request: params.request }),
+          body: JSON.stringify({ ...payload, request: params.request }),
         });
 
         let data: GridResponse | null = null;
@@ -641,15 +659,16 @@ export default function AgGridAll({
         params.fail();
       }
     },
-  }), [endpoint, onTotalsChange]);
+  }), [endpoint, onTotalsChange, requestPayload]);
 
   const sideBarDef = useMemo(() => ({
     toolPanels: ['columns', 'filters'],
   }), []);
 
   const getRowId = useCallback((params: GetRowIdParams<RowData>) => {
-    const data = params.data as { OfferDetailID?: number | string; TreeOrdering?: string } | undefined;
+    const data = params.data as { OfferDetailID?: number | string; TreeOrdering?: string; ProductID?: number | string } | undefined;
     if (data && data.OfferDetailID != null) return String(data.OfferDetailID);
+    if (data && data.ProductID != null) return String(data.ProductID);
     if (data && data.TreeOrdering) return String(data.TreeOrdering);
     return `row_${Date.now()}_${Math.random()}`;
   }, []);
@@ -669,7 +688,10 @@ export default function AgGridAll({
     }
     gridApiRef.current = e.api;
     gridApiRef.current.addEventListener('contextMenuVisibleChanged', handleContextMenuVisibleChanged);
-  }, [datasource, handleContextMenuVisibleChanged]);
+    if (typeof externalGridReadyHandler === 'function') {
+      externalGridReadyHandler(e.api);
+    }
+  }, [datasource, handleContextMenuVisibleChanged, externalGridReadyHandler]);
   const contextMenuItemsHandler = useCallback<GetContextMenuItems<RowData>>((params) => {
     if (typeof getContextMenuItems !== 'function') {
       return params.defaultItems ?? [];
@@ -1128,6 +1150,17 @@ export default function AgGridAll({
     }
   }, [manualMode, persistTreeOrderingChanges, externalCellValueChangeHandler]);
 
+  const handleSelectionChanged = useCallback((event: SelectionChangedEvent<RowData>) => {
+    if (typeof externalSelectionChangedHandler !== 'function') return;
+    try {
+      const rows = typeof event.api.getSelectedRows === 'function' ? event.api.getSelectedRows() : [];
+      externalSelectionChangedHandler(rows ?? [], event.api);
+    } catch (err) {
+      console.warn('Failed to read selected rows', err);
+      externalSelectionChangedHandler([], event.api);
+    }
+  }, [externalSelectionChangedHandler]);
+
   const clearGridSelection = useCallback(() => {
     const api = gridRef.current?.api;
     if (!api) return;
@@ -1211,6 +1244,9 @@ export default function AgGridAll({
           onCellContextMenu={handleCellContextMenu}
           rowHeight={32}
           headerHeight={38}
+          rowSelection={rowSelection}
+          rowMultiSelectWithClick={rowMultiSelectWithClick}
+          suppressRowClickSelection={suppressRowClickSelection}
 
           // Server-Side model
           rowModelType="serverSide"
@@ -1230,7 +1266,7 @@ export default function AgGridAll({
 
           // Grouping/pivot flags are fine; without a license they’re ignored, not crashed
           pivotMode={false}
-          rowGroupPanelShow="always"
+          rowGroupPanelShow={rowGroupPanelShow}
 
           // Cache settings
           cacheBlockSize={100}
@@ -1240,6 +1276,7 @@ export default function AgGridAll({
           onFilterChanged={handleFilterChanged}
           onCellClicked={handleActionCellClick}
           onCellValueChanged={handleCellValueChanged}
+          onSelectionChanged={externalSelectionChangedHandler ? handleSelectionChanged : undefined}
         />
         {/* Row hover overlay */}
         <div
