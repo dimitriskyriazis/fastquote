@@ -19,6 +19,7 @@ type Props = {
   markets: OfferDropdownOption[];
   users: OfferDropdownOption[];
   titles: OfferDropdownOption[];
+  calcMethodFormulas: OfferDropdownOption[];
 };
 
 type SectionKey = 'general' | 'info' | 'commercial' | 'code' | 'dates';
@@ -36,6 +37,7 @@ type FieldDefinition = {
   valueType?: 'string' | 'number' | 'date';
   readOnly?: boolean;
   resolveValue?: (record: OfferBasicRecord) => string | null | undefined;
+  readOnlyDisplayValue?: (record: OfferBasicRecord) => string | null | undefined;
   options?: OfferDropdownOption[];
   datalistOptions?: OfferDropdownOption[];
 };
@@ -91,6 +93,7 @@ const buildFieldDefinitions = (
   markets: OfferDropdownOption[],
   users: OfferDropdownOption[],
   contacts: OfferDropdownOption[],
+  calcMethodFormulas: OfferDropdownOption[],
 ): FieldDefinition[] => [
   { id: 'title', label: 'Title', section: 'general', recordKey: 'Title', updateField: 'Title' },
   { id: 'description', label: 'Description', section: 'general', recordKey: 'Description', updateField: 'Description' },
@@ -146,36 +149,37 @@ const buildFieldDefinitions = (
     id: 'salesCreation',
     label: 'Sales Creation Person',
     section: 'commercial',
-    recordKey: 'SalesCreationPersonName',
+    recordKey: 'SalesCreationPersonId',
     readOnly: true,
-    resolveValue: (rec) => rec.SalesCreationPersonName ?? rec.SalesCreationPersonUserName ?? '',
+    options: users,
+    readOnlyDisplayValue: (rec) => rec.SalesCreationPersonName ?? rec.SalesCreationPersonUserName ?? null,
   },
   {
     id: 'salesPersonId',
     label: 'Sales Person',
     section: 'commercial',
-    recordKey: 'SalesPersonUserName',
+    recordKey: 'SalesPersonId',
     updateField: 'SalesPersonId',
-    datalistOptions: users,
-    valueType: 'number',
-    resolveValue: (rec) => rec.SalesPersonUserName ?? '',
+    options: users,
+    valueType: 'string',
   },
   {
     id: 'approvalUserId',
     label: 'Approval User',
     section: 'commercial',
-    recordKey: 'ApprovalUserUserName',
+    recordKey: 'ApprovalUserId',
     updateField: 'ApprovalUserId',
-    datalistOptions: users,
-    valueType: 'number',
-    resolveValue: (rec) => rec.ApprovalUserUserName ?? '',
+    options: users,
+    valueType: 'string',
   },
   {
     id: 'defaultCalc',
-    label: 'Default Calc Method Formulas ID',
+    label: 'Default Calc Method Formula',
     section: 'commercial',
     recordKey: 'DefaultCalcMethodFormulasID',
-    updateField: 'DefaultCalcMethodFormulasID',
+    readOnly: true,
+    options: calcMethodFormulas,
+    readOnlyDisplayValue: (rec) => rec.DefaultCalcMethodFormulaName ?? null,
   },
 
   { id: 'projectId', label: 'Project ID', section: 'code', recordKey: 'ProjectID', updateField: 'ProjectID', valueType: 'number' },
@@ -238,7 +242,7 @@ const formatInitialValue = (record: OfferBasicRecord, def: FieldDefinition) => {
 const resolveFieldValue = (record: OfferBasicRecord, def: FieldDefinition) =>
   (typeof def.resolveValue === 'function' ? def.resolveValue(record) : record[def.recordKey]) ?? null;
 
-export default function OfferBasicDataClient({ oID, record, contacts, statuses, pricingPolicies, markets, users, titles }: Props) {
+export default function OfferBasicDataClient({ oID, record, contacts, statuses, pricingPolicies, markets, users, titles, calcMethodFormulas }: Props) {
   const [contactList, setContactList] = useState(() => sortContacts(contacts));
 
   const contactOptions = useMemo(() => {
@@ -270,8 +274,8 @@ export default function OfferBasicDataClient({ oID, record, contacts, statuses, 
   }, [contactList, record.ContactFullName, record.ContactID]);
 
   const fieldDefinitions = useMemo(
-    () => buildFieldDefinitions(statuses, pricingPolicies, markets, users, contactOptions),
-    [statuses, pricingPolicies, markets, users, contactOptions]
+    () => buildFieldDefinitions(statuses, pricingPolicies, markets, users, contactOptions, calcMethodFormulas),
+    [statuses, pricingPolicies, markets, users, contactOptions, calcMethodFormulas]
   );
   const editableFields = useMemo(
     () => fieldDefinitions.filter((def) => def.updateField && !def.readOnly),
@@ -461,16 +465,48 @@ const renderFieldControl = (
   const isEditable = Boolean(def.updateField && !def.readOnly);
   const controlId = `offer-field-${def.id}`;
   const value = isEditable ? (valueMap[def.id] ?? '') : resolveFieldValue(record, def);
+  const readOnlyDisplayValue = typeof def.readOnlyDisplayValue === 'function'
+    ? def.readOnlyDisplayValue(record)
+    : null;
   const placeholder = !isEditable ? undefined : (value == null || value === '' ? '—' : undefined);
   const pending = pendingMap[def.id];
 
-    if (!isEditable) {
+  if (!isEditable) {
+    if (def.options && def.options.length > 0) {
+      const readonlyValue = value == null ? '' : String(value);
+      const hasMatch = def.options.some((option) => String(option.value) === readonlyValue);
+      const options = hasMatch || !readonlyValue
+        ? def.options
+        : [
+            ...def.options,
+            {
+              value: readonlyValue,
+              label: readOnlyDisplayValue ?? formatDisplayValue(readonlyValue),
+            },
+          ];
       return (
-        <div className={styles.fieldReadonly} id={controlId}>
-          {formatDisplayValue(value)}
-        </div>
+        <select
+          id={controlId}
+          name={def.id}
+          className={styles.fieldControl}
+          value={readonlyValue}
+          disabled
+        >
+          <option value="">Select...</option>
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
       );
     }
+    return (
+      <div className={styles.fieldReadonly} id={controlId}>
+        {formatDisplayValue(value)}
+      </div>
+    );
+  }
 
   if (isEditable && def.options && def.options.length > 0) {
     return (

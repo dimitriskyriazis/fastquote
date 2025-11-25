@@ -25,6 +25,7 @@ export type OfferBasicRecord = {
   SalesDivisionName: string | null;
   SalesCreationPersonName: string | null;
   SalesCreationPersonUserName: string | null;
+  SalesCreationPersonId: string | null;
   SalesPersonName: string | null;
   SalesPersonUserName: string | null;
   ApprovalUserName: string | null;
@@ -32,6 +33,7 @@ export type OfferBasicRecord = {
   SalesPersonId: string | null;
   ApprovalUserId: string | null;
   DefaultCalcMethodFormulasID: string | number | null;
+  DefaultCalcMethodFormulaName: string | null;
   ProjectID: number | null;
   CustomerRef: string | null;
   InitialRequest: Date | string | null;

@@ -133,21 +133,22 @@
 
 .fieldReadonly {
   width: 100%;
-  border: 1px solid #d1d5db;
+  border: 1px solid #cbd5e1;
   border-radius: 10px;
-  background: #f7f9fb;
+  background: #e7ecf3;
   min-height: 30px;
   padding: 4px 10px;
   font-size: 0.88rem;
   line-height: 1.3;
-  color: #0f172a;
+  color: #334155;
   display: flex;
   align-items: center;
 }
 
-.fieldControlReadonly {
-  background: #e2e8f0;
-  color: #475569;
+.fieldControl:disabled {
+  background: #e7ecf3;
+  border-color: #cbd5e1;
+  color: #334155;
   cursor: not-allowed;
 }
 
@@ -184,29 +185,31 @@
  }
 
 .addContactButton {
-  border: 1px solid #3b82f6;
-  background: #3b82f6;
-  color: #ffffff;
-  border-radius: 10px;
-  padding: 6px 12px;
-  font-size: 0.78rem;
-  font-weight: 500;
-  letter-spacing: 0.08em;
+  border: 1px solid #d1d5db;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  color: #0f172a;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: transform 150ms ease, box-shadow 150ms ease, filter 150ms ease;
-  min-height: 32px;
-  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.16);
+  transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+  min-height: 30px;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
 }
 
 .addContactButton:hover:enabled {
-  filter: brightness(1.05);
+  filter: brightness(1.02);
   transform: translateY(-1px);
-  box-shadow: 0 8px 16px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.12);
 }
 
 .addContactButton:disabled {
-  opacity: 0.55;
+  background: #e7ecf3;
+  border-color: #cbd5e1;
+  color: #94a3b8;
   cursor: not-allowed;
   box-shadow: none;
 }

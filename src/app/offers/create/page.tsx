@@ -1,0 +1,195 @@
+import Link from 'next/link';
+import OfferCreateClient from './OfferCreateClient';
+import styles from '../offersDetail.module.css';
+import clientStyles from './OfferCreateClient.module.css';
+import { getPool } from '../../../lib/sql';
+import { toDropdownOptions, type RawDropdownRow, type DropdownOption } from '../../../lib/dropdownOptions';
+import { getAuditFallbackUserId } from '../../../lib/auditTrail';
+
+type LookupRow = RawDropdownRow & { ID: number; Name: string | null };
+
+const mapOptions = (rows: LookupRow[] | undefined | null): DropdownOption[] =>
+  toDropdownOptions<LookupRow>(rows);
+
+async function fetchCustomers() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<LookupRow>(`
+      SELECT ID, Name
+      FROM dbo.Customers
+      ORDER BY Name
+    `);
+    return mapOptions(result.recordset);
+  } catch (err) {
+    console.error('Failed to load customers', err);
+    return [];
+  }
+}
+
+async function fetchOfferStatuses() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<LookupRow>(`
+      SELECT ID, Name
+      FROM dbo.OfferStatus
+      ORDER BY Name
+    `);
+    return mapOptions(result.recordset);
+  } catch (err) {
+    console.error('Failed to load statuses', err);
+    return [];
+  }
+}
+
+async function fetchPricingPolicies() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<LookupRow>(`
+      SELECT ID, Name
+      FROM dbo.PricingPolicies
+      ORDER BY Name
+    `);
+    return mapOptions(result.recordset);
+  } catch (err) {
+    console.error('Failed to load pricing policies', err);
+    return [];
+  }
+}
+
+async function fetchMarkets() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<LookupRow>(`
+      SELECT ID, Name
+      FROM dbo.Markets
+      ORDER BY Name
+    `);
+    return mapOptions(result.recordset);
+  } catch (err) {
+    console.error('Failed to load markets', err);
+    return [];
+  }
+}
+
+async function fetchSalesDivisions() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<LookupRow>(`
+      SELECT ID, Name
+      FROM dbo.SalesDivision
+      ORDER BY Name
+    `);
+    return mapOptions(result.recordset);
+  } catch (err) {
+    console.error('Failed to load sales divisions', err);
+    return [];
+  }
+}
+
+async function fetchUsers() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<LookupRow>(`
+      SELECT Id AS ID, UserName AS Name
+      FROM dbo.AspNetUsers
+      ORDER BY UserName
+    `);
+    return mapOptions(result.recordset);
+  } catch (err) {
+    console.error('Failed to load users', err);
+    return [];
+  }
+}
+
+async function fetchCalcMethodFormulas() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<LookupRow>(`
+      SELECT ID, Name
+      FROM dbo.CalcMethodFormulas
+      ORDER BY Name
+    `);
+    return mapOptions(result.recordset);
+  } catch (err) {
+    console.error('Failed to load calc method formulas', err);
+    return [];
+  }
+}
+
+const resolveDefaultCalcMethod = (options: DropdownOption[]) => {
+  const target = options.find((option) => option.label.trim().toLowerCase() === 'dr');
+  if (target) return target.value;
+  const valueMatch = options.find((option) => option.value.trim().toLowerCase() === 'dr');
+  return valueMatch?.value ?? '';
+};
+
+export default async function Page() {
+  const [
+    customers,
+    statuses,
+    pricingPolicies,
+    markets,
+    salesDivisions,
+    users,
+    calcMethodFormulas,
+  ] = await Promise.all([
+    fetchCustomers(),
+    fetchOfferStatuses(),
+    fetchPricingPolicies(),
+    fetchMarkets(),
+    fetchSalesDivisions(),
+    fetchUsers(),
+    fetchCalcMethodFormulas(),
+  ]);
+
+  const fallbackUserId = getAuditFallbackUserId();
+  const hasFallbackUser = fallbackUserId
+    ? users.some((user) => user.value === fallbackUserId)
+    : false;
+
+  const defaultCalcMethod = resolveDefaultCalcMethod(calcMethodFormulas) || 'DR';
+
+  const formId = 'offer-create-form';
+
+  return (
+    <main className={styles.page}>
+      <div className={styles.headerRow}>
+        <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
+          <Link href="/offers" className={styles.backLink}>
+            <span aria-hidden="true">←</span>
+            Back to offers
+          </Link>
+        </div>
+        <h1 className={styles.heading}>Create Offer</h1>
+        <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
+          <button
+            type="submit"
+            form={formId}
+            className={clientStyles.submitButton}
+          >
+            Create offer and proceed to products
+          </button>
+        </div>
+      </div>
+      <div className={styles.pageBody}>
+        <OfferCreateClient
+          customers={customers}
+          statuses={statuses}
+          pricingPolicies={pricingPolicies}
+          markets={markets}
+          salesDivisions={salesDivisions}
+          users={users}
+          calcMethodFormulas={calcMethodFormulas}
+          defaultValues={{
+            deliveryTime: '8 weeks',
+            paymentTerms: 'Upon Agreement',
+            offerValidity: '4 weeks',
+            defaultCalcMethodFormulasId: defaultCalcMethod,
+            suggestedUserId: hasFallbackUser ? fallbackUserId ?? '' : '',
+          }}
+          formId={formId}
+        />
+      </div>
+    </main>
+  );
+}
