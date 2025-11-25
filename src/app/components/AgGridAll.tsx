@@ -942,6 +942,11 @@ export default function AgGridAll({
       const deriveParentPath = () => {
         const beforePath = gapCandidate.before?.path ?? null;
         const afterPath = gapCandidate.after?.path ?? null;
+        // Special case: dropping after the very last row should append as a new root-level entry
+        // rather than being nested under the last row's parent.
+        if (!afterPath && gapCandidate.position === 'after') {
+          return [];
+        }
         if (beforePath && afterPath) {
           const prefix = longestCommonPrefix(beforePath, afterPath);
           const beforeIsPrefix = prefix.length === beforePath.length && afterPath.length > prefix.length;

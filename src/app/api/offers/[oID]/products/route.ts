@@ -206,6 +206,168 @@ const normalizeAggregateValue = (value: unknown): number => {
   return 0;
 };
 
+type TreeOrderingRow = {
+  OfferDetailID: number;
+  TreeOrdering: string | null;
+};
+
+type TreeOrderingNode = {
+  id: number;
+  path: number[];
+  children: TreeOrderingNode[];
+};
+
+const parseTreeOrderingPath = (value: unknown): number[] => {
+  if (value == null) return [];
+  const trimmed = String(value).trim();
+  if (!trimmed) return [];
+  return trimmed
+    .split('.')
+    .map((segment) => Number.parseInt(segment, 10))
+    .filter((segment) => Number.isFinite(segment));
+};
+
+const formatTreeOrderingPath = (path: number[]): string => path.join('.');
+
+const comparePaths = (a: number[], b: number[]) => {
+  const max = Math.max(a.length, b.length);
+  for (let idx = 0; idx < max; idx += 1) {
+    const hasA = idx < a.length;
+    const hasB = idx < b.length;
+    if (!hasA && !hasB) return 0;
+    if (!hasA) return -1;
+    if (!hasB) return 1;
+    const diff = a[idx] - b[idx];
+    if (diff !== 0) return diff;
+  }
+  return 0;
+};
+
+const pathsEqual = (a: number[], b: number[]) => {
+  if (a.length !== b.length) return false;
+  for (let idx = 0; idx < a.length; idx += 1) {
+    if (a[idx] !== b[idx]) return false;
+  }
+  return true;
+};
+
+const buildTreeFromRows = (rows: TreeOrderingRow[]): TreeOrderingNode[] => {
+  const nodes: TreeOrderingNode[] = rows
+    .map((row) => ({
+      id: row.OfferDetailID,
+      path: parseTreeOrderingPath(normalizeTreeOrderingValue(row.TreeOrdering)),
+      children: [] as TreeOrderingNode[],
+    }))
+    .filter((node) => Number.isInteger(node.id) && node.path.length > 0);
+
+  const byPath = new Map<string, TreeOrderingNode>();
+  nodes.forEach((node) => {
+    const key = formatTreeOrderingPath(node.path);
+    if (!byPath.has(key)) {
+      byPath.set(key, node);
+    }
+  });
+
+  const roots: TreeOrderingNode[] = [];
+  nodes.forEach((node) => {
+    const parentPath = node.path.slice(0, -1);
+    if (parentPath.length === 0) {
+      roots.push(node);
+      return;
+    }
+    const parentKey = formatTreeOrderingPath(parentPath);
+    const parent = byPath.get(parentKey);
+    if (parent) {
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  });
+
+  const sortTree = (entries: TreeOrderingNode[]) => {
+    entries.sort((a, b) => comparePaths(a.path, b.path));
+    entries.forEach((entry) => sortTree(entry.children));
+  };
+  sortTree(roots);
+
+  return roots;
+};
+
+const collectResequencedUpdates = (roots: TreeOrderingNode[]): TreeOrderingUpdateInput[] => {
+  const updates: TreeOrderingUpdateInput[] = [];
+  const assign = (nodes: TreeOrderingNode[], parentPath: number[]) => {
+    nodes.forEach((node, idx) => {
+      const nextPath = [...parentPath, idx + 1];
+      if (!pathsEqual(node.path, nextPath)) {
+        updates.push({ OfferDetailID: node.id, TreeOrdering: formatTreeOrderingPath(nextPath) });
+      }
+      if (node.children.length > 0) {
+        assign(node.children, nextPath);
+      }
+    });
+  };
+  assign(roots, []);
+  return updates;
+};
+
+async function resequenceTreeOrdering(
+  offerId: number,
+  audit: AuditContext,
+): Promise<{ updated: number; rowsAffected: number }> {
+  const pool = await getPool();
+  const readRequest = pool.request();
+  readRequest.input('__offerId', sql.Int, offerId);
+  const readResult = await readRequest.query<TreeOrderingRow>(`
+    SELECT od.ID AS OfferDetailID, od.TreeOrdering
+    FROM dbo.OfferDetails od
+    WHERE od.OfferID = @__offerId
+      AND ${TREE_ORDERING_RAW_EXPRESSION} IS NOT NULL
+    ORDER BY ${TREE_ORDERING_HIERARCHY_EXPRESSION}, od.TreeOrdering;
+  `);
+  const rows = readResult.recordset ?? [];
+  const roots = buildTreeFromRows(rows);
+  const updates = collectResequencedUpdates(roots);
+  if (updates.length === 0) {
+    return { updated: 0, rowsAffected: 0 };
+  }
+
+  const chunkSize = 400;
+  let rowsAffected = 0;
+
+  for (let idx = 0; idx < updates.length; idx += chunkSize) {
+    const chunk = updates.slice(idx, idx + chunkSize);
+    if (chunk.length === 0) continue;
+    const request = pool.request();
+    request.input('__offerId', sql.Int, offerId);
+    request.input('__modifiedBy', sql.Int, audit.userId);
+    const valueClauses: string[] = [];
+    chunk.forEach((entry, chunkIdx) => {
+      const idParam = `odid_${chunkIdx}`;
+      const orderingParam = `ordering_${chunkIdx}`;
+      request.input(idParam, sql.Int, entry.OfferDetailID);
+      request.input(orderingParam, sql.NVarChar(255), entry.TreeOrdering);
+      valueClauses.push(`(@${idParam}, @${orderingParam})`);
+    });
+    const updateQuery = `
+      WITH PendingUpdates (OfferDetailID, TreeOrdering) AS (
+        SELECT v.OfferDetailID, v.TreeOrdering
+        FROM (VALUES ${valueClauses.join(', ')}) AS v (OfferDetailID, TreeOrdering)
+      )
+      UPDATE od
+      SET od.TreeOrdering = PendingUpdates.TreeOrdering,
+          od.ModifiedOn = SYSUTCDATETIME(),
+          od.ModifiedBy = @__modifiedBy
+      FROM dbo.OfferDetails od
+        INNER JOIN PendingUpdates ON od.ID = PendingUpdates.OfferDetailID
+      WHERE od.OfferID = @__offerId;
+    `;
+    const updateResult = await request.query(updateQuery);
+    rowsAffected += updateResult.rowsAffected?.[0] ?? 0;
+  }
+
+  return { updated: updates.length, rowsAffected };
+}
+
 async function handleCreateRow(
   offerId: number,
   payload: CreateRowRequest | null,
@@ -702,6 +864,7 @@ export async function DELETE(
   { params }: { params: Promise<{ oID: string }> },
 ) {
   try {
+    const audit = buildAuditContext(req);
     const { oID } = await params;
     const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
     if (!normalizedId) {
@@ -746,16 +909,49 @@ export async function DELETE(
         paramNames.push(`@${paramName}`);
       });
       const query = `
+        WITH PendingDeletes AS (
+          SELECT od.ID AS OfferDetailID,
+                 ${TREE_ORDERING_RAW_EXPRESSION} AS TreeOrderingTrimmed
+          FROM dbo.OfferDetails od
+          WHERE od.OfferID = @__offerId
+            AND od.ID IN (${paramNames.join(', ')})
+        ),
+        RowsToDelete AS (
+          SELECT od.ID
+          FROM dbo.OfferDetails od
+          WHERE od.OfferID = @__offerId
+            AND (
+              od.ID IN (SELECT OfferDetailID FROM PendingDeletes)
+              OR EXISTS (
+                SELECT 1
+                FROM PendingDeletes pd
+                WHERE pd.TreeOrderingTrimmed IS NOT NULL
+                  AND ${TREE_ORDERING_RAW_EXPRESSION} IS NOT NULL
+                  AND (
+                    ${TREE_ORDERING_RAW_EXPRESSION} = pd.TreeOrderingTrimmed
+                    OR ${TREE_ORDERING_RAW_EXPRESSION} LIKE pd.TreeOrderingTrimmed + '.%'
+                  )
+              )
+            )
+        )
         DELETE od
         FROM dbo.OfferDetails od
-        WHERE od.OfferID = @__offerId
-          AND od.ID IN (${paramNames.join(', ')})
+          INNER JOIN RowsToDelete rtd ON od.ID = rtd.ID
       `;
       const result = await request.query(query);
       deleted += result.rowsAffected?.[0] ?? 0;
     }
 
-    return NextResponse.json({ ok: true, deleted });
+    const resequenced = deleted > 0
+      ? await resequenceTreeOrdering(offerId, audit)
+      : { updated: 0, rowsAffected: 0 };
+
+    return NextResponse.json({
+      ok: true,
+      deleted,
+      resequenced: resequenced.updated,
+      resequencedRowsAffected: resequenced.rowsAffected,
+    });
   } catch (err: unknown) {
     console.error(err);
     const message = err instanceof Error ? err.message : 'Server error';
