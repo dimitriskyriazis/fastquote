@@ -49,6 +49,29 @@ const formatEuro = (value: unknown) => {
   return `${currencyFormatter.format(num)} €`;
 };
 
+const DescriptionCellRenderer = ({ value }: { value?: unknown }) => {
+  const [expanded, setExpanded] = useState(false);
+  const text = value == null ? '' : String(value);
+  const hasLongText = text.length > 60;
+  const toggle = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    event.preventDefault();
+    setExpanded((v) => !v);
+  };
+  return (
+    <div className={styles.descriptionCell}>
+      <div className={styles.descriptionText} data-expanded={expanded}>
+        {text}
+      </div>
+      {hasLongText ? (
+        <button type="button" className={styles.descriptionToggle} onClick={toggle}>
+          {expanded ? 'Collapse' : 'Expand'}
+        </button>
+      ) : null}
+    </div>
+  );
+};
+
 export default function AddProductsModal({ oID, onClose, onAdded }: Props) {
   const [selectedCategory, setSelectedCategory] = useState<CategoryRow | null>(null);
   const [selectedProducts, setSelectedProducts] = useState<ProductRow[]>([]);
@@ -58,32 +81,6 @@ export default function AddProductsModal({ oID, onClose, onAdded }: Props) {
 
   const categoryRequestPayload = useMemo(() => ({ action: 'categories' }), []);
   const productRequestPayload = useMemo(() => ({ action: 'products' }), []);
-
-  const DescriptionCell = useCallback(
-    (params: { value?: unknown }) => {
-      const [expanded, setExpanded] = useState(false);
-      const text = params?.value == null ? '' : String(params.value);
-      const hasLongText = text.length > 60;
-      const toggle = (event: React.MouseEvent) => {
-        event.stopPropagation();
-        event.preventDefault();
-        setExpanded((v) => !v);
-      };
-      return (
-        <div className={styles.descriptionCell}>
-          <div className={styles.descriptionText} data-expanded={expanded}>
-            {text}
-          </div>
-          {hasLongText ? (
-            <button type="button" className={styles.descriptionToggle} onClick={toggle}>
-              {expanded ? 'Collapse' : 'Expand'}
-            </button>
-          ) : null}
-        </div>
-      );
-    },
-    [],
-  );
 
   const handleCategorySelection = useCallback((rows: CategoryRow[]) => {
     setSelectedCategory(rows[0] ?? null);
@@ -139,7 +136,7 @@ export default function AddProductsModal({ oID, onClose, onAdded }: Props) {
         minWidth: 260,
         filter: 'agTextColumnFilter',
         suppressAutoSize: true,
-        cellRenderer: DescriptionCell,
+        cellRenderer: DescriptionCellRenderer,
       },
       { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter', width: 150, minWidth: 120 },
       { field: 'ModelNumber', headerName: 'Model Number', filter: 'agTextColumnFilter', width: 150, minWidth: 130 },
@@ -226,7 +223,7 @@ export default function AddProductsModal({ oID, onClose, onAdded }: Props) {
     } finally {
       setSubmitting(false);
     }
-  }, [endpoint, onAdded, onClose, selectedCategory?.OfferDetailID, selectedProducts]);
+  }, [endpoint, onAdded, selectedCategory?.OfferDetailID, selectedProducts]);
 
   const selectedCategoryLabel = selectedCategory?.Description?.trim() || selectedCategory?.TreeOrdering || 'None';
 

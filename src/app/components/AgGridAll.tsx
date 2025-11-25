@@ -1194,8 +1194,8 @@ export default function AgGridAll({
   }, [clearGridSelection]);
 
   useEffect(() => {
+    const api = gridApiRef.current ?? gridRef.current?.api ?? null;
     return () => {
-      const api = gridApiRef.current ?? gridRef.current?.api ?? null;
       if (!api || api.isDestroyed?.()) return;
       api.removeEventListener('contextMenuVisibleChanged', handleContextMenuVisibleChanged);
     };

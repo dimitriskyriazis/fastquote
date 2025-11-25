@@ -165,6 +165,16 @@ const buildOrderSql = (sortModel: GridRequest['sortModel'], columnExpressions: R
   return parts.length ? `ORDER BY ${parts.join(', ')}` : defaultOrder;
 };
 
+type CategoryGridRow = {
+  __totalCount: number | bigint | null;
+  OfferDetailID: number;
+  TreeOrdering: string | null;
+  Description: string | null;
+  ModifiedOn: Date | string | null;
+  ModifiedBy: string | null;
+  TreeOrderingHierarchy?: unknown;
+};
+
 async function handleCategoryGrid(
   offerId: number,
   body: GridRequestEnvelope,
@@ -219,7 +229,7 @@ async function handleCategoryGrid(
     OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY;
   `;
 
-  const result = await request.query(query);
+  const result = await request.query<CategoryGridRow>(query);
   const rows = result.recordset ?? [];
   const rowCount = rows.length > 0 ? Number(rows[0].__totalCount ?? 0) : 0;
   const mappedRows = rows.map((row) => {
@@ -231,6 +241,23 @@ async function handleCategoryGrid(
 
   return NextResponse.json({ ok: true, rows: mappedRows, rowCount });
 }
+
+type ProductGridRow = {
+  __totalCount: number | bigint | null;
+  ProductID: number;
+  PartNumber: string | null;
+  Description: string | null;
+  ModelNumber: string | null;
+  BrandName: string | null;
+  PriceListItemID: number | null;
+  PriceListID: number | null;
+  PriceListName: string | null;
+  ListPrice: number | null;
+  UnitPrice: number | null;
+  PriceListValidFromDate: Date | string | null;
+  PriceListValidToDate: Date | string | null;
+  PriceListEnabled: boolean | number | null;
+};
 
 async function handleProductGrid(
   offerId: number,
@@ -319,7 +346,7 @@ async function handleProductGrid(
     OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY;
   `;
 
-  const result = await request.query(query);
+  const result = await request.query<ProductGridRow>(query);
   const rows = result.recordset ?? [];
   const rowCount = rows.length > 0 ? Number(rows[0].__totalCount ?? 0) : 0;
   const mappedRows = rows.map((row) => {
