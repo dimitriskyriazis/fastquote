@@ -27,7 +27,17 @@ declare module 'mssql' {
     request(): Request;
   }
 
+  export class Transaction {
+    constructor(pool: ConnectionPool);
+    begin(): Promise<void>;
+    commit(): Promise<void>;
+    rollback(): Promise<void>;
+    request(): Request;
+  }
+
   export class Request {
+    constructor();
+    constructor(transaction: Transaction);
     input(name: string, value: unknown): Request;
     input(name: string, type: unknown, value: unknown): Request;
     query<T = unknown>(query: string): Promise<IResult<T>>;
@@ -55,6 +65,7 @@ declare module 'mssql' {
     DateTime2: typeof DateTime2;
     NVarChar: typeof NVarChar;
     MAX: typeof MAX;
+    Transaction: typeof Transaction;
   };
 
   export default sql;

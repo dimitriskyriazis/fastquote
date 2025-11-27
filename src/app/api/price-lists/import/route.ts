@@ -34,8 +34,8 @@ const HEADER_SYNONYMS: Record<HeaderColumnKey, string[]> = {
   warning: ["warning"],
 };
 
-//const UPLOAD_ROOT = path.join("C:", "Users", "dim.kyriazis", "PriceLists");
- const UPLOAD_ROOT = path.join("C:", "inetpub", "wwwroot", "Telmaco", "PriceListUploads");
+const UPLOAD_ROOT = path.join("C:", "Users", "dim.kyriazis", "PriceLists");
+// const UPLOAD_ROOT = path.join("C:", "inetpub", "wwwroot", "Telmaco", "PriceListUploads");
 
 type SqlTypeLike = unknown;
 
