@@ -47,6 +47,19 @@ const resolveOfferRowLabel = (
 };
 
 const OFFER_ROW_TYPE_LABEL = 'offer';
+const normalizeSortText = (value: unknown) => {
+  if (value == null) return '';
+  const str = typeof value === 'string' ? value : String(value);
+  return str.trim();
+};
+const localeStringComparator = (a: unknown, b: unknown) => {
+  const left = normalizeSortText(a);
+  const right = normalizeSortText(b);
+  if (!left && !right) return 0;
+  if (!left) return 1;
+  if (!right) return -1;
+  return left.localeCompare(right, undefined, { sensitivity: 'base', numeric: true });
+};
 
 export default function OffersClient() {
   const router = useRouter();
@@ -208,7 +221,12 @@ export default function OffersClient() {
         cellClass: styles.actionCellContainer,
         cellRenderer: ActionCell,
       },
-    { field: 'Description', headerName: 'Description', filter: 'agTextColumnFilter' },
+    {
+      field: 'Description',
+      headerName: 'Description',
+      filter: 'agTextColumnFilter',
+      comparator: localeStringComparator,
+    },
     { field: 'Title', headerName: 'Title', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'CustomerName', headerName: 'Customer Name', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'PricingPolicyName', headerName: 'Pricing Policy', filter: 'agTextColumnFilter', enableRowGroup: true },

@@ -16,13 +16,13 @@ import {
   CellClickedEvent,
   RowClassParams,
   FirstDataRenderedEvent,
-  ModelUpdatedEvent,
   GetContextMenuItems,
   GetContextMenuItemsParams,
   MenuItemDef,
   CellContextMenuEvent,
   ContextMenuVisibleChangedEvent,
   DefaultMenuItem,
+  SortChangedEvent,
   SelectionChangedEvent,
 } from 'ag-grid-community';
 import { AllEnterpriseModule, LicenseManager } from 'ag-grid-enterprise';
@@ -452,10 +452,11 @@ const markOrderingPersisted = (api: GridApi<RowData>, updates: TreeOrderingUpdat
   });
 };
 
-const refreshServerSideData = (api?: GridApi<RowData>) => {
+const refreshServerSideData = (api?: GridApi<RowData>, opts?: { purge?: boolean }) => {
   if (!api || typeof api.refreshServerSide !== 'function' || api.isDestroyed?.()) return;
   try {
-    api.refreshServerSide({ purge: true });
+    const purge = opts?.purge ?? true;
+    api.refreshServerSide({ purge });
   } catch (err) {
     console.error('Failed to refresh server-side rows', err);
   }
@@ -583,9 +584,6 @@ export default function AgGridAll({
     autoSizeColumns(event.api);
   }, [autoSizeColumns]);
 
-  const handleModelUpdated = useCallback((event: ModelUpdatedEvent) => {
-    autoSizeColumns(event.api);
-  }, [autoSizeColumns]);
   useEffect(() => {
     autoSizeColumns();
   }, [manualMode, autoSizeColumns]);
@@ -753,6 +751,11 @@ export default function AgGridAll({
     if (mutated) {
       event.api.setFilterModel(nextModel);
     }
+  }, []);
+
+  const handleSortChanged = useCallback((event: SortChangedEvent<RowData>) => {
+    // Keep rows visible for responsiveness while requesting the sorted data set from the server
+    refreshServerSideData(event.api, { purge: false });
   }, []);
 
   const mergedGetRowClass = useCallback((params: RowClassParams<RowData>) => {
@@ -1245,7 +1248,6 @@ export default function AgGridAll({
           getRowClass={mergedGetRowClass}
           getContextMenuItems={getContextMenuItems ? contextMenuItemsHandler : undefined}
           onFirstDataRendered={handleFirstDataRendered}
-          onModelUpdated={handleModelUpdated}
           onCellContextMenu={handleCellContextMenu}
           rowHeight={32}
           headerHeight={38}
@@ -1279,6 +1281,7 @@ export default function AgGridAll({
 
           onGridReady={onGridReady}
           onFilterChanged={handleFilterChanged}
+          onSortChanged={handleSortChanged}
           onCellClicked={handleActionCellClick}
           onCellValueChanged={handleCellValueChanged}
           onSelectionChanged={externalSelectionChangedHandler ? handleSelectionChanged : undefined}
