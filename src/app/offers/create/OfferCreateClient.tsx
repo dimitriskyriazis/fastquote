@@ -474,29 +474,37 @@ export default function OfferCreateClient({
       const options = !hasValueInOptions && value
         ? [...baseOptions, { value, label: value }]
         : baseOptions;
-      const placeholder = field.dependsOnCustomer
+      const dependsOnCustomer = Boolean(field.dependsOnCustomer);
+      const placeholder = dependsOnCustomer
         ? (!values.customerId ? 'Select a customer first' : contactsLoading ? 'Loading contacts…' : 'Select contact...')
         : 'Select...';
+      const isDisabled = disabled || (dependsOnCustomer && (!values.customerId || contactsLoading));
       return (
         <div className={styles.controlStack}>
-          <select
-            id={fieldId}
-            name={field.id}
-            className={panelStyles.fieldControl}
-            value={value}
-            disabled={disabled || (field.dependsOnCustomer && (!values.customerId || contactsLoading))}
-            onChange={(event) => {
-              const newValue = event.target.value;
-              handleChange(field.id as keyof FormValues, newValue);
-            }}
-          >
-            <option value="">{placeholder}</option>
-            {options.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          {isDisabled && dependsOnCustomer ? (
+            <div className={panelStyles.fieldReadonly}>
+              {placeholder}
+            </div>
+          ) : (
+            <select
+              id={fieldId}
+              name={field.id}
+              className={panelStyles.fieldControl}
+              value={value}
+              disabled={isDisabled}
+              onChange={(event) => {
+                const newValue = event.target.value;
+                handleChange(field.id as keyof FormValues, newValue);
+              }}
+            >
+              <option value="">{placeholder}</option>
+              {options.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          )}
           {field.dependsOnCustomer ? (
             <div className={styles.contactStatus}>
               {!values.customerId

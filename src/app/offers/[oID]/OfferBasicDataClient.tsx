@@ -474,31 +474,15 @@ const renderFieldControl = (
   if (!isEditable) {
     if (def.options && def.options.length > 0) {
       const readonlyValue = value == null ? '' : String(value);
-      const hasMatch = def.options.some((option) => String(option.value) === readonlyValue);
-      const options = hasMatch || !readonlyValue
-        ? def.options
-        : [
-            ...def.options,
-            {
-              value: readonlyValue,
-              label: readOnlyDisplayValue ?? formatDisplayValue(readonlyValue),
-            },
-          ];
+      const matchingOption = def.options.find((option) => String(option.value) === readonlyValue);
+      const displayValue =
+        matchingOption?.label ??
+        readOnlyDisplayValue ??
+        (readonlyValue ? formatDisplayValue(readonlyValue) : '—');
       return (
-        <select
-          id={controlId}
-          name={def.id}
-          className={styles.fieldControl}
-          value={readonlyValue}
-          disabled
-        >
-          <option value="">Select...</option>
-          {options.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+        <div className={styles.fieldReadonly} id={controlId}>
+          {displayValue}
+        </div>
       );
     }
     return (
