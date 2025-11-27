@@ -3,6 +3,11 @@ import sql from 'mssql';
 import { buildAuditContext, type AuditContext } from '../../../../../lib/auditTrail';
 import { getPool } from '../../../../../lib/sql';
 
+const getDecimalType = () => {
+  const decimalFactory = (sql as unknown as { Decimal: (precision: number, scale: number) => unknown }).Decimal;
+  return decimalFactory(18, 4);
+};
+
 type TextFilterModel = {
   filterType: 'text';
   type?: 'contains' | 'equals' | 'notEqual' | 'startsWith' | 'endsWith';
@@ -107,13 +112,14 @@ type DeleteRowRequest = {
   OfferDetailIDs?: Array<number | string | null | undefined>;
 };
 
-type DescriptionUpdateInput = {
+type DetailUpdateInput = {
   OfferDetailID?: number | string | null;
   Description?: string | null;
+  Quantity?: number | string | null;
 };
 
-type DescriptionUpdateRequest = {
-  updates?: DescriptionUpdateInput[];
+type DetailUpdateRequest = {
+  updates?: DetailUpdateInput[];
 };
 
 type CreateRowType = 'category' | 'printable-comment' | 'non-printable-comment';
@@ -185,6 +191,17 @@ const normalizeDescriptionValue = (value: unknown): string | null => {
   const str = typeof value === 'string' ? value : String(value);
   const trimmed = str.trim();
   return trimmed.length > 0 ? trimmed : null;
+};
+
+const normalizeQuantityValue = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number.parseFloat(trimmed);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return null;
 };
 
 const normalizeCreateRowType = (value: unknown): CreateRowType | null => {
@@ -789,27 +806,50 @@ export async function PATCH(
       return NextResponse.json({ ok: false, error: 'Invalid id' }, { status: 400 });
     }
 
-    let body: DescriptionUpdateRequest | null = null;
+    let body: DetailUpdateRequest | null = null;
     try {
-      body = (await req.json()) as DescriptionUpdateRequest;
+      body = (await req.json()) as DetailUpdateRequest;
     } catch {
       body = null;
     }
 
     const updates = Array.isArray(body?.updates) ? body?.updates : [];
+    let hadInvalidQuantity = false;
     const normalizedUpdates = updates
       .map((entry) => {
         const id = normalizeOfferDetailId(entry?.OfferDetailID ?? null);
         if (id == null) return null;
         const hasDescription = entry ? Object.prototype.hasOwnProperty.call(entry, 'Description') : false;
-        if (!hasDescription) return null;
-        const description = normalizeDescriptionValue(entry?.Description ?? null);
-        return { OfferDetailID: id, Description: description };
+        const hasQuantity = entry ? Object.prototype.hasOwnProperty.call(entry, 'Quantity') : false;
+        if (!hasDescription && !hasQuantity) return null;
+        const description = hasDescription ? normalizeDescriptionValue(entry?.Description ?? null) : null;
+        let quantity: number | null = null;
+        if (hasQuantity) {
+          quantity = normalizeQuantityValue(entry?.Quantity ?? null);
+          if (quantity == null) {
+            hadInvalidQuantity = true;
+            return null;
+          }
+        }
+        return {
+          OfferDetailID: id,
+          Description: description,
+          Quantity: quantity,
+          hasDescription,
+          hasQuantity,
+        };
       })
-      .filter((entry): entry is { OfferDetailID: number; Description: string | null } => Boolean(entry));
+      .filter((entry): entry is {
+        OfferDetailID: number;
+        Description: string | null;
+        Quantity: number | null;
+        hasDescription: boolean;
+        hasQuantity: boolean;
+      } => Boolean(entry));
 
     if (normalizedUpdates.length === 0) {
-      return NextResponse.json({ ok: false, error: 'No valid updates provided' }, { status: 400 });
+      const errorMessage = hadInvalidQuantity ? 'Invalid quantity value' : 'No valid updates provided';
+      return NextResponse.json({ ok: false, error: errorMessage }, { status: 400 });
     }
 
     const pool = await getPool();
@@ -826,21 +866,80 @@ export async function PATCH(
       chunk.forEach((entry, chunkIdx) => {
         const idParam = `odid_${chunkIdx}`;
         const descriptionParam = `description_${chunkIdx}`;
+        const hasDescriptionParam = `hasDescription_${chunkIdx}`;
+        const quantityParam = `quantity_${chunkIdx}`;
+        const hasQuantityParam = `hasQuantity_${chunkIdx}`;
         request.input(idParam, sql.Int, entry.OfferDetailID);
-        request.input(descriptionParam, sql.NVarChar(4000), entry.Description);
-        valueClauses.push(`(@${idParam}, @${descriptionParam})`);
+        request.input(descriptionParam, sql.NVarChar(4000), entry.hasDescription ? entry.Description : null);
+        request.input(hasDescriptionParam, sql.Bit, entry.hasDescription ? 1 : 0);
+        const decimalType = getDecimalType();
+        request.input(quantityParam, decimalType, entry.hasQuantity ? entry.Quantity : null);
+        request.input(hasQuantityParam, sql.Bit, entry.hasQuantity ? 1 : 0);
+        valueClauses.push(`(@${idParam}, @${descriptionParam}, @${hasDescriptionParam}, @${quantityParam}, @${hasQuantityParam})`);
       });
       const query = `
-        WITH PendingDescriptionUpdates (OfferDetailID, Description) AS (
-          SELECT v.OfferDetailID, v.Description
-          FROM (VALUES ${valueClauses.join(', ')}) AS v (OfferDetailID, Description)
+        WITH PendingUpdates (OfferDetailID, Description, HasDescription, Quantity, HasQuantity) AS (
+          SELECT v.OfferDetailID, v.Description, v.HasDescription, v.Quantity, v.HasQuantity
+          FROM (VALUES ${valueClauses.join(', ')}) AS v (OfferDetailID, Description, HasDescription, Quantity, HasQuantity)
         )
         UPDATE od
-        SET od.ProductDescription = PendingDescriptionUpdates.Description,
+        SET od.ProductDescription = CASE WHEN PendingUpdates.HasDescription = 1 THEN PendingUpdates.Description ELSE od.ProductDescription END,
+            od.Quantity = CASE WHEN PendingUpdates.HasQuantity = 1 THEN PendingUpdates.Quantity ELSE od.Quantity END,
+            od.TotalPrice = CASE
+              WHEN PendingUpdates.HasQuantity = 1 THEN
+                CASE
+                  WHEN PendingUpdates.Quantity IS NULL OR od.ListPrice IS NULL THEN od.TotalPrice
+                  ELSE COALESCE(TRY_CONVERT(decimal(18, 4), PendingUpdates.Quantity * od.ListPrice), od.TotalPrice)
+                END
+              ELSE od.TotalPrice
+            END,
+            od.TotalNet = CASE
+              WHEN PendingUpdates.HasQuantity = 1 THEN
+                CASE
+                  WHEN PendingUpdates.Quantity IS NULL OR od.NetUnitPrice IS NULL THEN od.TotalNet
+                  ELSE COALESCE(TRY_CONVERT(decimal(18, 4), PendingUpdates.Quantity * od.NetUnitPrice), od.TotalNet)
+                END
+              ELSE od.TotalNet
+            END,
+            od.TotalCost = CASE
+              WHEN PendingUpdates.HasQuantity = 1 THEN
+                CASE
+                  WHEN PendingUpdates.Quantity IS NULL OR od.NetCost IS NULL THEN od.TotalCost
+                  ELSE COALESCE(TRY_CONVERT(decimal(18, 4), PendingUpdates.Quantity * od.NetCost), od.TotalCost)
+                END
+              ELSE od.TotalCost
+            END,
+            od.GrossProfit = CASE
+              WHEN PendingUpdates.HasQuantity = 1 THEN
+                CASE
+                  WHEN PendingUpdates.Quantity IS NULL OR od.NetUnitPrice IS NULL OR od.NetCost IS NULL THEN od.GrossProfit
+                  ELSE COALESCE(
+                    TRY_CONVERT(decimal(18, 4), (PendingUpdates.Quantity * od.NetUnitPrice) - (PendingUpdates.Quantity * od.NetCost)),
+                    od.GrossProfit
+                  )
+                END
+              ELSE od.GrossProfit
+            END,
+            od.Margin = CASE
+              WHEN PendingUpdates.HasQuantity = 1 THEN
+                CASE
+                  WHEN PendingUpdates.Quantity IS NULL OR od.NetUnitPrice IS NULL OR od.NetCost IS NULL THEN od.Margin
+                  WHEN TRY_CONVERT(decimal(18, 4), PendingUpdates.Quantity * od.NetUnitPrice) = 0 THEN 0
+                  ELSE COALESCE(
+                    TRY_CONVERT(
+                      decimal(18, 4),
+                      ((PendingUpdates.Quantity * od.NetUnitPrice) - (PendingUpdates.Quantity * od.NetCost))
+                        / (PendingUpdates.Quantity * od.NetUnitPrice) * 100
+                    ),
+                    od.Margin
+                  )
+                END
+              ELSE od.Margin
+            END,
             od.ModifiedOn = SYSUTCDATETIME(),
             od.ModifiedBy = @__modifiedBy
         FROM dbo.OfferDetails od
-          INNER JOIN PendingDescriptionUpdates ON od.ID = PendingDescriptionUpdates.OfferDetailID
+          INNER JOIN PendingUpdates ON od.ID = PendingUpdates.OfferDetailID
         WHERE od.OfferID = @__offerId;
       `;
       const result = await request.query(query);

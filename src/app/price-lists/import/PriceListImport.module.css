@@ -1,5 +1,8 @@
 .importPage {
   gap: 12px;
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  padding-right: 6px;
 }
 
 .card {
@@ -296,6 +299,83 @@
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 6px;
 }
+
+.sheetSelector {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.sheetTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sheetTab {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #111827;
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.sheetTabIncluded {
+  border-color: #10b981;
+  background: #ecfdf3;
+  color: #047857;
+}
+
+.sheetTabActive {
+  border-color: #2563eb;
+  background: #e0f2fe;
+  color: #1d4ed8;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.18);
+}
+
+.sheetTabIncluded.sheetTabActive {
+  border-color: #10b981;
+  background: #ecfdf3;
+  color: #1d4ed8;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.18);
+}
+
+.mappingGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.mappingField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mappingLabel {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #334155;
+}
+
+.sheetToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed #0ea5e9;
+  border-radius: 10px;
+  background: #f0f9ff;
+  width: fit-content;
+  font-weight: 600;
+  color: #0f172a;
+}
+
 
 .columnPill {
   display: inline-flex;

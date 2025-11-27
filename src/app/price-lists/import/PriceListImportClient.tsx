@@ -60,21 +60,141 @@ type FormValues = {
 
 type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "warning";
 
-const HEADER_SYNONYMS: Record<HeaderColumnKey, string[]> = {
-  partNumber: ["partnumber", "part number", "partno", "part no"],
-  modelNumber: ["modelnumber", "model number", "modelno", "model no"],
-  description: ["name", "description"],
-  listPrice: ["listprice", "list price", "price"],
-  warning: ["warning"],
+const columnKeywords: Record<HeaderColumnKey, string[]> = {
+  partNumber: [
+    "part ",
+    "part_",
+    "partno",
+    "p/n",
+    "sku",
+    "item ",
+    "item_",
+    "article",
+    "art ",
+    "order ",
+    "order_",
+    "code",
+    "catalog",
+    "cat ",
+    "κωδικός",
+    "κωδικος",
+    "κωδ.",
+    "κωδ ",
+    "κωδ_",
+    "κωδικοσ",
+    "κωδικο προϊόντος",
+    "κωδικος προιοντος",
+    "κωδ προιοντος",
+    "κωδ προ",
+    "αρ. είδους",
+    "αριθμός είδους",
+    "αριθμος ειδους",
+    "κωδ παραγγελίας",
+    "κωδικος παραγγελιας",
+  ],
+
+  modelNumber: [
+    "model",
+    "series",
+    "type ",
+    "type_",
+    "mpn",
+    "mfg",
+    "family",
+    "version",
+    "rev",
+    "revision",
+    "μοντέλο",
+    "μοντελο",
+    "μτλο",
+    "σειρά",
+    "σειρα",
+    "τύπος",
+    "τυπος",
+    "μοντ ",
+    "μοντ_",
+    "κωδ μοντέλου",
+    "κωδ μοντελου",
+    "κωδ τύπου",
+    "κωδ τυπου",
+  ],
+
+  description: [
+    "desc",
+    "description",
+    "name",
+    "detail",
+    "περιγραφή",
+    "περιγραφη",
+    "όνομα",
+    "ονομα",
+    "ονομασία",
+    "ονομασια",
+    "περ. ",
+    "περ_",
+    "λεπτομέρειες",
+    "λεπτομερειες",
+  ],
+
+  listPrice: [
+    "price",
+    "list",
+    "msrp",
+    "rrp",
+    "retail",
+    "τιμή",
+    "τιμη",
+    "λιανική",
+    "λιανικη",
+    "κατάλογ",
+    "καταλογος",
+    "λιστ",
+    "χονδρική",
+    "χονδρικη",
+  ],
+
+  warning: [
+    "warn",
+    "note",
+    "remark",
+    "comment",
+    "info",
+    "σημείωση",
+    "σημειωση",
+    "σημ.",
+    "προσοχή",
+    "προσοχη",
+    "παρατήρηση",
+    "παρατηρηση",
+    "παρατηρ.",
+    "σχόλιο",
+    "σχολιο",
+    "σχόλια",
+    "σχολια",
+    "πληροφορίες",
+    "πληροφοριες",
+  ],
 };
 
 const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string; required?: boolean }> = [
   { key: "partNumber", label: "Part Number", required: true },
-  { key: "modelNumber", label: "Model Number", required: true },
+  { key: "modelNumber", label: "Model Number (optional)", required: false },
   { key: "description", label: "Name / Description", required: true },
   { key: "listPrice", label: "List Price", required: true },
   { key: "warning", label: "Warning (optional)", required: false },
 ];
+
+type ColumnOption = { index: number; label: string; normalized: string };
+
+type SheetMapping = {
+  name: string;
+  headerRowIndex: number;
+  columns: ColumnOption[];
+  suggestions: Record<HeaderColumnKey, ColumnOption[]>;
+  selection: Partial<Record<HeaderColumnKey, number | null>>;
+  rowCount: number;
+  enabled: boolean;
+};
 
 type FileValidation = {
   status: "idle" | "checking" | "valid" | "invalid";
@@ -82,6 +202,8 @@ type FileValidation = {
   columns: Partial<Record<HeaderColumnKey, boolean>>;
   rowCount: number;
   sheetName: string | null;
+  sheets: SheetMapping[];
+  activeSheetIndex: number;
 };
 
 const INITIAL_VALIDATION: FileValidation = {
@@ -90,6 +212,8 @@ const INITIAL_VALIDATION: FileValidation = {
   columns: {},
   rowCount: 0,
   sheetName: null,
+  sheets: [],
+  activeSheetIndex: 0,
 };
 
 const REQUIRED_FIELDS: Array<keyof FormValues> = [
@@ -110,39 +234,11 @@ const normalizeDate = (value: string) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
-const normalizeHeaderValue = (value: unknown): string | null => {
+const normalizeHeaderText = (value: unknown): string | null => {
   if (typeof value !== "string" && typeof value !== "number") return null;
   const str = typeof value === "number" ? String(value) : value;
-  const trimmed = str.trim().toLowerCase();
-  if (!trimmed) return null;
-  return trimmed.replace(/\s+/g, "");
-};
-
-const findHeaderRow = (rows: unknown[][]) => {
-  for (let idx = 0; idx < rows.length; idx += 1) {
-    const row = rows[idx];
-    if (!Array.isArray(row)) continue;
-    const columnMap: Partial<Record<HeaderColumnKey, number>> = {};
-    row.forEach((cell, colIdx) => {
-      const normalized = normalizeHeaderValue(cell);
-      if (!normalized) return;
-      (Object.keys(HEADER_SYNONYMS) as HeaderColumnKey[]).forEach((key) => {
-        if (columnMap[key] != null) return;
-        const matchesHeader = HEADER_SYNONYMS[key].some(
-          (candidate) => normalizeHeaderValue(candidate) === normalized,
-        );
-        if (matchesHeader) {
-          columnMap[key] = colIdx;
-        }
-      });
-    });
-
-    const detectedCount = Object.keys(columnMap).length;
-    if (detectedCount > 0) {
-      return { headerRowIndex: idx, columnMap };
-    }
-  }
-  return null;
+  const normalized = str.trim().toLowerCase();
+  return normalized || null;
 };
 
 const hasCellValue = (value: unknown) => {
@@ -151,112 +247,143 @@ const hasCellValue = (value: unknown) => {
   return true;
 };
 
-const summarizeColumns = (columnMap: Partial<Record<HeaderColumnKey, number>>) => {
-  const summary: Record<HeaderColumnKey, boolean> = {
-    partNumber: columnMap.partNumber != null,
-    modelNumber: columnMap.modelNumber != null,
-    description: columnMap.description != null,
-    listPrice: columnMap.listPrice != null,
-    warning: columnMap.warning != null,
-  };
-  return summary;
+const detectHeaderRowIndex = (rows: unknown[][]) => {
+  let bestIdx = 0;
+  let bestScore = -1;
+  const limit = Math.min(rows.length, 25);
+  for (let idx = 0; idx < limit; idx += 1) {
+    const row = rows[idx];
+    if (!Array.isArray(row)) continue;
+    const score = row.reduce<number>((count, cell) => (hasCellValue(cell) ? count + 1 : count), 0);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = idx;
+    }
+  }
+  return bestIdx;
 };
 
-const validateWorksheet = (rows: unknown[][]) => {
-  const header = findHeaderRow(rows);
-  if (!header) return null;
-
-  const columns = summarizeColumns(header.columnMap);
-  const dataRows = rows.slice(header.headerRowIndex + 1, header.headerRowIndex + 501);
-  let matchedRows = 0;
-
-  dataRows.forEach((row) => {
-    if (!Array.isArray(row)) return;
-    const part = header.columnMap.partNumber != null ? row[header.columnMap.partNumber] : null;
-    const model = header.columnMap.modelNumber != null ? row[header.columnMap.modelNumber] : null;
-    const description = header.columnMap.description != null ? row[header.columnMap.description] : null;
-    const price = header.columnMap.listPrice != null ? row[header.columnMap.listPrice] : null;
-
-    const hasPart = hasCellValue(part);
-    const hasModel = hasCellValue(model);
-    const hasDescription = hasCellValue(description);
-    const hasPrice = hasCellValue(price);
-    if (hasPart && hasModel && hasDescription && hasPrice) {
-      matchedRows += 1;
-    }
+const buildColumns = (headerRow: unknown[]): ColumnOption[] =>
+  headerRow.map((cell, idx) => {
+    const normalized = normalizeHeaderText(cell) ?? "";
+    const label =
+      typeof cell === "string"
+        ? cell.trim()
+        : typeof cell === "number"
+          ? String(cell)
+          : "";
+    const safeLabel = label || `Column ${idx + 1}`;
+    return { index: idx, label: safeLabel, normalized };
   });
 
-  const missingRequired: string[] = [];
-  if (!columns.partNumber) missingRequired.push("Part Number");
-  if (!columns.modelNumber) missingRequired.push("Model Number");
-  if (!columns.description) missingRequired.push("Name / Description");
-  if (!columns.listPrice) missingRequired.push("List Price");
+const buildSuggestions = (columns: ColumnOption[]) => {
+  const makeSuggestions = (key: HeaderColumnKey) => {
+    const keywords = columnKeywords[key].map((kw) => kw.toLowerCase());
+    return columns.filter((col) => keywords.some((kw) => col.normalized.includes(kw)));
+  };
 
-  const status: FileValidation["status"] =
-    missingRequired.length === 0 && matchedRows > 0 ? "valid" : "invalid";
+  return {
+    partNumber: makeSuggestions("partNumber"),
+    modelNumber: makeSuggestions("modelNumber"),
+    description: makeSuggestions("description"),
+    listPrice: makeSuggestions("listPrice"),
+    warning: makeSuggestions("warning"),
+  };
+};
 
-  const foundColumns = COLUMN_DISPLAY.filter((col) => columns[col.key]).map((col) => col.label);
-  const missingOptional = COLUMN_DISPLAY.filter((col) => !col.required && !columns[col.key]).map(
-    (col) => col.label,
-  );
+const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: number, enabled: boolean): SheetMapping => {
+  const headerRowIndex = detectHeaderRowIndex(rows);
+  const headerRow = Array.isArray(rows[headerRowIndex]) ? rows[headerRowIndex] : [];
+  const columns = buildColumns(headerRow);
+  const suggestions = buildSuggestions(columns);
+  const dataRows = rows.slice(headerRowIndex + 1, headerRowIndex + 501);
+  const rowCount = dataRows.filter((row) => Array.isArray(row) && row.some(hasCellValue)).length;
 
-  const parts: string[] = [];
-  if (missingRequired.length > 0) {
-    parts.push(`Missing required: ${missingRequired.join(", ")}`);
+  return {
+    name: sheetName || `Sheet ${fallbackIndex + 1}`,
+    headerRowIndex,
+    columns,
+    suggestions,
+    selection: {},
+    rowCount,
+    enabled,
+  };
+};
+
+const analyzeWorkbook = (workbook: XLSX.WorkBook): SheetMapping[] => {
+  const sheets: SheetMapping[] = [];
+  for (const sheetName of workbook.SheetNames ?? []) {
+    const sheet = workbook.Sheets?.[sheetName];
+    if (!sheet) continue;
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
+    if (!Array.isArray(rows)) continue;
+    sheets.push(analyzeSheet(sheetName, rows, sheets.length, sheets.length === 0));
   }
-  if (foundColumns.length > 0) {
-    parts.push(`Found: ${foundColumns.join(", ")}`);
-  }
-  if (missingOptional.length > 0) {
-    parts.push(`Missing optional: ${missingOptional.join(", ")}`);
-  }
-  if (matchedRows === 0) {
-    parts.push("No rows with part number, model number, description, and list price.");
-  } else {
-    parts.push(
-      `Found ${matchedRows} row${matchedRows === 1 ? "" : "s"} with part number, model number, description, and list price.`,
-    );
+  return sheets;
+};
+
+const evaluateSelection = (sheets: SheetMapping[], activeSheetIndex: number) => {
+  const active = sheets[activeSheetIndex];
+  if (!active) {
+    return {
+      status: "invalid" as const,
+      message: "Please upload a workbook to choose columns.",
+      columns: {},
+      rowCount: 0,
+      sheetName: null,
+    };
   }
 
-  const message = parts.join(" • ");
+  const enabledSheets = sheets.filter((sheet) => sheet.enabled);
+  const validSheets = enabledSheets.filter((sheet) => {
+    const selection = sheet.selection;
+    return selection.partNumber != null && selection.description != null && selection.listPrice != null;
+  });
 
-  return { status, message, columns, rowCount: matchedRows };
+  const selection = active.selection;
+  const columns: Partial<Record<HeaderColumnKey, boolean>> = {
+    partNumber: selection.partNumber != null,
+    modelNumber: selection.modelNumber != null,
+    description: selection.description != null,
+    listPrice: selection.listPrice != null,
+    warning: selection.warning != null,
+  };
+
+  const status: FileValidation["status"] = validSheets.length > 0 ? "valid" : "invalid";
+  const message =
+    validSheets.length === 0
+      ? "Select columns for at least one enabled sheet (Part Number, Name/Description, List Price)."
+      : `Using ${validSheets.length} sheet${validSheets.length === 1 ? "" : "s"} with selected columns.`;
+
+  const rowCount = validSheets.reduce((acc, sheet) => acc + sheet.rowCount, 0);
+
+  return { status, message, columns, rowCount, sheetName: active.name };
 };
 
 const validateFileStructure = async (uploadFile: File): Promise<FileValidation> => {
   try {
     const buffer = await uploadFile.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: "array" });
-    let fallback: FileValidation | null = null;
+    const sheets = analyzeWorkbook(workbook);
 
-    for (const sheetName of workbook.SheetNames ?? []) {
-      const sheet = workbook.Sheets?.[sheetName];
-      if (!sheet) continue;
-      const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
-      const validation = validateWorksheet(rows);
-      if (validation) {
-        const result: FileValidation = {
-          status: validation.status,
-          message: validation.message,
-          columns: validation.columns,
-          rowCount: validation.rowCount,
-          sheetName: sheetName ?? null,
-        };
-        if (result.status === "valid") {
-          return result;
-        }
-        if (!fallback) {
-          fallback = result;
-        }
-      }
+    if (sheets.length === 0) {
+      return {
+        ...INITIAL_VALIDATION,
+        status: "invalid",
+        message: "Could not read any sheets. Please check your file and try again.",
+      };
     }
 
-    if (fallback) return fallback;
+    const evaluation = evaluateSelection(sheets, 0);
 
     return {
-      ...INITIAL_VALIDATION,
-      status: "invalid",
-      message: "Could not find the required headers (Part Number, Model Number, Name/Description, List Price).",
+      status: evaluation.status,
+      message: evaluation.message,
+      columns: evaluation.columns,
+      rowCount: evaluation.rowCount,
+      sheetName: evaluation.sheetName,
+      sheets,
+      activeSheetIndex: 0,
     };
   } catch (err) {
     console.error("Failed to validate uploaded file", err);
@@ -425,6 +552,41 @@ export default function PriceListImportClient({
     setShowBrandList(false);
   }, [brandText, findBrandOption, setBrandSelection]);
 
+  const activeSheet = useMemo(
+    () => fileValidation.sheets[fileValidation.activeSheetIndex] ?? null,
+    [fileValidation.activeSheetIndex, fileValidation.sheets],
+  );
+
+  const handleSheetChange = useCallback((nextIndex: number) => {
+    setFileValidation((prev) => {
+      const boundedIndex = Math.max(0, Math.min(nextIndex, prev.sheets.length - 1));
+      const evaluation = evaluateSelection(prev.sheets, boundedIndex);
+      return { ...prev, ...evaluation, activeSheetIndex: boundedIndex };
+    });
+  }, []);
+
+  const updateColumnSelection = useCallback((key: HeaderColumnKey, columnIndex: number | null) => {
+    setFileValidation((prev) => {
+      const sheets = prev.sheets.map((sheet, idx) =>
+        idx === prev.activeSheetIndex
+          ? { ...sheet, selection: { ...sheet.selection, [key]: columnIndex } }
+          : sheet,
+      );
+      const evaluation = evaluateSelection(sheets, prev.activeSheetIndex);
+      return { ...prev, ...evaluation, sheets };
+    });
+  }, []);
+
+  const toggleSheetEnabled = useCallback((index: number, enabled: boolean) => {
+    setFileValidation((prev) => {
+      const sheets = prev.sheets.map((sheet, idx) =>
+        idx === index ? { ...sheet, enabled } : sheet,
+      );
+      const evaluation = evaluateSelection(sheets, prev.activeSheetIndex);
+      return { ...prev, ...evaluation, sheets };
+    });
+  }, []);
+
   const handleFileSelection = useCallback((nextFile: File | null) => {
     validationRunId.current += 1;
     const runId = validationRunId.current;
@@ -441,6 +603,8 @@ export default function PriceListImportClient({
       columns: {},
       rowCount: 0,
       sheetName: null,
+      sheets: [],
+      activeSheetIndex: 0,
     });
 
     void validateFileStructure(nextFile)
@@ -513,8 +677,21 @@ export default function PriceListImportClient({
     if (fileValidation.status === "invalid") {
       setError(
         fileValidation.message ??
-          "Please attach a file with Part Number, Model Number, Name/Description, and List Price columns.",
+          "Please attach a file with Part Number, Name/Description, and List Price columns (Model Number optional).",
       );
+      return;
+    }
+
+    const activeSheet = fileValidation.sheets[fileValidation.activeSheetIndex];
+    const selectedSheets = fileValidation.sheets.filter(
+      (sheet) =>
+        sheet.enabled &&
+        sheet.selection.partNumber != null &&
+        sheet.selection.description != null &&
+        sheet.selection.listPrice != null,
+    );
+    if (!activeSheet || selectedSheets.length === 0) {
+      setError("Please upload a file and select the correct columns on at least one enabled sheet.");
       return;
     }
 
@@ -553,6 +730,18 @@ export default function PriceListImportClient({
         formData.append("hasDuty", values.hasDuty ? "1" : "0");
       }
       formData.append("file", file as Blob);
+      const columnMappings = selectedSheets.map((sheet) => ({
+        sheetName: sheet.name,
+        headerRowIndex: sheet.headerRowIndex,
+        columns: {
+          partNumber: sheet.selection.partNumber ?? null,
+          modelNumber: sheet.selection.modelNumber ?? null,
+          description: sheet.selection.description ?? null,
+          listPrice: sheet.selection.listPrice ?? null,
+          warning: sheet.selection.warning ?? null,
+        },
+      }));
+      formData.append("columnMappings", JSON.stringify(columnMappings));
 
       const response = await fetch("/api/price-lists/import", {
         method: "POST",
@@ -851,7 +1040,7 @@ export default function PriceListImportClient({
                 <div className={styles.uploadText}>
                   <div className={styles.uploadTitle}>Drop your Excel file here</div>
                     <div className={styles.uploadSubtitle}>
-                      Required columns: Part Number/Part No, Model Number/Model No, Name/Description, and List Price/Price (case insensitive). Warning is optional.
+                      Required columns: Part Number/Part No, Name/Description, and List Price/Price (case insensitive). Model Number and Warning are optional. Use the dropdowns below to map the headers we find, even if the names are not exact.
                     </div>
                     {file ? (
                       <div className={styles.selectedFile}>
@@ -903,17 +1092,99 @@ export default function PriceListImportClient({
                         </div>
                         <div className={styles.validationMessage}>
                           {fileValidation.message ??
-                            "We expect Part Number, Model Number, Name/Description, and List Price columns."}
-                          {fileValidation.status === "valid" && (
+                            "Choose columns for Part Number, Name/Description, and List Price. Model Number is optional."}
+                          {activeSheet ? (
                             <span className={styles.validationHint}>
-                              {fileValidation.rowCount > 0
-                                ? `Found ${fileValidation.rowCount} row${fileValidation.rowCount === 1 ? "" : "s"} with required data${
-                                    fileValidation.sheetName ? ` in ${fileValidation.sheetName}` : ""
-                                  }.`
-                                : null}
+                              {`Detected ${activeSheet.columns.length} column${activeSheet.columns.length === 1 ? "" : "s"} in ${
+                                activeSheet.name
+                              }. ${
+                                activeSheet.rowCount > 0
+                                  ? `${activeSheet.rowCount} data row${activeSheet.rowCount === 1 ? "" : "s"} after the header.`
+                                  : "No data rows detected yet."
+                              }`}
                             </span>
-                          )}
+                          ) : null}
                         </div>
+                        {fileValidation.sheets.length > 0 ? (
+                          <div className={styles.sheetSelector}>
+                            <div className={styles.sheetTabs}>
+                              {fileValidation.sheets.map((sheet, idx) => {
+                                const isActive = idx === fileValidation.activeSheetIndex;
+                                const included = sheet.enabled;
+                                return (
+                                  <button
+                                    type="button"
+                                    key={sheet.name || idx}
+                                    className={`${styles.sheetTab} ${isActive ? styles.sheetTabActive : ""} ${included ? styles.sheetTabIncluded : ""}`}
+                                    onClick={() => handleSheetChange(idx)}
+                                  >
+                                    {sheet.name || `Sheet ${idx + 1}`}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            {activeSheet && fileValidation.sheets.length > 1 ? (
+                              <label className={styles.sheetToggle}>
+                                <input
+                                  type="checkbox"
+                                  checked={activeSheet.enabled}
+                                  onChange={(e) => toggleSheetEnabled(fileValidation.activeSheetIndex, e.target.checked)}
+                                />
+                                <span>Include this sheet</span>
+                              </label>
+                            ) : null}
+                            <div className={styles.mappingGrid}>
+                              {COLUMN_DISPLAY.map((column) => {
+                                const selectionValue =
+                                  activeSheet?.selection[column.key] != null
+                                    ? String(activeSheet.selection[column.key])
+                                    : "";
+                                const suggestions = activeSheet?.suggestions[column.key] ?? [];
+                                const suggestedIndexes = new Set(suggestions.map((opt) => opt.index));
+                                const otherOptions =
+                                  activeSheet?.columns.filter((col) => !suggestedIndexes.has(col.index)) ?? [];
+                                return (
+                                  <label key={column.key} className={styles.mappingField}>
+                                    <span className={styles.mappingLabel}>
+                                      {column.label} {column.required ? <span className={styles.requiredMark}>*</span> : null}
+                                    </span>
+                                    <select
+                                      className={styles.input}
+                                      value={selectionValue}
+                                      onChange={(e) =>
+                                        updateColumnSelection(
+                                          column.key,
+                                          e.target.value === "" ? null : Number(e.target.value),
+                                        )
+                                      }
+                                      disabled={!activeSheet}
+                                    >
+                                      <option value="">Choose a column</option>
+                                      {suggestions.length > 0 ? (
+                                        <optgroup label="Suggested">
+                                          {suggestions.map((opt) => (
+                                            <option key={opt.index} value={opt.index}>
+                                              {opt.label}
+                                            </option>
+                                          ))}
+                                        </optgroup>
+                                      ) : null}
+                                      {otherOptions.length > 0 ? (
+                                        <optgroup label="All columns">
+                                          {otherOptions.map((opt) => (
+                                            <option key={opt.index} value={opt.index}>
+                                              {opt.label}
+                                            </option>
+                                          ))}
+                                        </optgroup>
+                                      ) : null}
+                                    </select>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
                         <div className={styles.validationColumns}>
                           {COLUMN_DISPLAY.map((column) => {
                             const found = Boolean(fileValidation.columns[column.key]);

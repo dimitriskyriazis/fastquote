@@ -26,6 +26,12 @@ type ProductRow = {
 
 type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "warning";
 
+type ColumnMapping = {
+  sheetName: string | null;
+  headerRowIndex: number | null;
+  columns: Partial<Record<HeaderColumnKey, number | null>>;
+} | null;
+
 const HEADER_SYNONYMS: Record<HeaderColumnKey, string[]> = {
   partNumber: ["partnumber", "part number", "partno", "part no"],
   modelNumber: ["modelnumber", "model number", "modelno", "model no"],
@@ -161,6 +167,58 @@ const normalizeCellString = (value: unknown, maxLength = 1000): string | null =>
   return null;
 };
 
+const parseColumnMapping = (value: unknown): ColumnMapping => {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value) as {
+      sheetName?: unknown;
+      headerRowIndex?: unknown;
+      columns?: unknown;
+    };
+    const sheetName =
+      typeof parsed.sheetName === "string" && parsed.sheetName.trim()
+        ? parsed.sheetName.trim()
+        : null;
+    const headerRowIndex =
+      typeof parsed.headerRowIndex === "number" && Number.isInteger(parsed.headerRowIndex)
+        ? parsed.headerRowIndex
+        : null;
+    const rawColumns = parsed.columns;
+    const columns: Partial<Record<HeaderColumnKey, number | null>> = {};
+    if (rawColumns && typeof rawColumns === "object") {
+      (Object.keys(rawColumns) as HeaderColumnKey[]).forEach((key) => {
+        const rawValue = (rawColumns as Record<HeaderColumnKey, unknown>)[key];
+        if (rawValue === null) {
+          columns[key] = null;
+        } else if (typeof rawValue === "number" && Number.isInteger(rawValue) && rawValue >= 0) {
+          columns[key] = rawValue;
+        }
+      });
+    }
+    return { sheetName, headerRowIndex, columns };
+  } catch (err) {
+    console.error("Failed to parse column mapping", err);
+    return null;
+  }
+};
+
+const parseColumnMappings = (value: unknown): ColumnMapping[] => {
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((entry) => parseColumnMapping(JSON.stringify(entry)))
+        .filter((val): val is ColumnMapping => Boolean(val));
+    }
+    const single = parseColumnMapping(value);
+    return single ? [single] : [];
+  } catch (err) {
+    console.error("Failed to parse column mappings", err);
+    return [];
+  }
+};
+
 const findHeaderRow = (rows: unknown[][]) => {
   for (let idx = 0; idx < rows.length; idx += 1) {
     const row = rows[idx];
@@ -188,6 +246,48 @@ const findHeaderRow = (rows: unknown[][]) => {
   return null;
 };
 
+const parseSheetWithMapping = (
+  rows: unknown[][],
+  headerRowIndex: number,
+  columnMap: Partial<Record<HeaderColumnKey, number | null>>,
+) => {
+  const requiredKeys: HeaderColumnKey[] = ["partNumber", "description", "listPrice"];
+  const hasAllRequired = requiredKeys.every((key) => typeof columnMap[key] === "number");
+  if (!hasAllRequired) return [] as ParsedPriceListRow[];
+
+  const safeHeaderRowIndex = Math.max(0, Math.min(headerRowIndex, rows.length > 0 ? rows.length - 1 : 0));
+  const parsed: ParsedPriceListRow[] = [];
+
+  const getValue = (row: unknown[], key: HeaderColumnKey) => {
+    const idx = columnMap[key];
+    if (idx == null || typeof idx !== "number" || idx < 0) return null;
+    return row[idx] ?? null;
+  };
+
+  for (let rIdx = safeHeaderRowIndex + 1; rIdx < rows.length; rIdx += 1) {
+    const row = rows[rIdx];
+    if (!Array.isArray(row)) continue;
+    const partNumber = normalizeCellString(getValue(row, "partNumber"));
+    const modelNumber = normalizeCellString(getValue(row, "modelNumber"));
+    const description = normalizeCellString(getValue(row, "description"), 2000);
+    const listPrice = parsePrice(getValue(row, "listPrice"));
+    const warning = normalizeCellString(getValue(row, "warning"), 1000);
+
+    if (!partNumber && !modelNumber && !description && listPrice == null && !warning) continue;
+    if (!partNumber || !description || listPrice == null) continue;
+
+    parsed.push({
+      partNumber,
+      modelNumber,
+      description,
+      listPrice,
+      warning,
+    });
+  }
+
+  return parsed;
+};
+
 const parseSheet = (rows: unknown[][]): ParsedPriceListRow[] | null => {
   const header = findHeaderRow(rows);
   if (!header) return null;
@@ -210,7 +310,7 @@ const parseSheet = (rows: unknown[][]): ParsedPriceListRow[] | null => {
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
 
     if (!partNumber && !modelNumber && !description && listPrice == null && !warning) continue;
-    if (!partNumber || !modelNumber || !description || listPrice == null) continue;
+    if (!partNumber || !description || listPrice == null) continue;
 
     parsed.push({
       partNumber,
@@ -224,9 +324,42 @@ const parseSheet = (rows: unknown[][]): ParsedPriceListRow[] | null => {
   return parsed;
 };
 
-const parseWorkbook = (buffer: Buffer): ParsedPriceListRow[] => {
+const parseWorkbook = (buffer: Buffer, columnMappings?: ColumnMapping[]): ParsedPriceListRow[] => {
   try {
     const wb = XLSX.read(buffer, { type: "buffer" });
+
+    if (columnMappings && columnMappings.length > 0 && wb.SheetNames?.length) {
+      const allParsed: ParsedPriceListRow[] = [];
+      columnMappings.forEach((columnMapping) => {
+        if (!columnMapping) return;
+        const targetName = columnMapping.sheetName;
+        const resolvedName =
+          (targetName &&
+            wb.SheetNames.find(
+              (name) =>
+                name === targetName ||
+                name.trim() === targetName.trim() ||
+                name.toLowerCase() === targetName.toLowerCase(),
+            )) ||
+          wb.SheetNames[0];
+        if (resolvedName) {
+          const sheet = wb.Sheets[resolvedName];
+          if (sheet) {
+            const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
+            const headerRowIndex =
+              typeof columnMapping.headerRowIndex === "number" && columnMapping.headerRowIndex >= 0
+                ? columnMapping.headerRowIndex
+                : 0;
+            const parsed = parseSheetWithMapping(rows, headerRowIndex, columnMapping.columns ?? {});
+            if (parsed.length > 0) {
+              allParsed.push(...parsed);
+            }
+          }
+        }
+      });
+      return allParsed;
+    }
+
     for (const sheetName of wb.SheetNames ?? []) {
       const sheet = wb.Sheets[sheetName];
       if (!sheet) continue;
@@ -418,6 +551,7 @@ export async function POST(req: NextRequest) {
     const validToDate = normalizeDate(formData.get("validToDate"));
     const brandId = normalizeInt(formData.get("brandId"));
     const previousPriceListId = normalizeInt(formData.get("previousPriceListId"));
+    const columnMappings = parseColumnMappings(formData.get("columnMappings"));
 
     const errors: string[] = [];
     if (!name) errors.push("Price list name is required.");
@@ -438,13 +572,13 @@ export async function POST(req: NextRequest) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const parsedRows = parseWorkbook(buffer);
+    const parsedRows = parseWorkbook(buffer, columnMappings);
     if (!parsedRows.length) {
       return NextResponse.json(
         {
           ok: false,
           error:
-            "No valid rows found. Please include Part Number, Model Number, Name/Description, and List Price columns with data.",
+            "No valid rows found. Please confirm your column selections include Part Number, Name/Description, and List Price data. Model Number is optional.",
         },
         { status: 400 },
       );

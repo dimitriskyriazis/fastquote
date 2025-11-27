@@ -475,6 +475,8 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       headerName: 'Qty',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      editable: (params) => isOfferProductProduct(params.data),
+      singleClickEdit: true,
       valueFormatter: zeroBlankNumberFormatter,
     },
     {
@@ -601,6 +603,86 @@ const productColumnDefs: ColDef[] = useMemo(() => [
     params: GetContextMenuItemsParams<Record<string, unknown>>,
   ) => productRowDeletion.getContextMenuItems(params), [productRowDeletion]);
 
+  const handleQuantityEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    if (event.colDef.field !== 'Quantity') return;
+    const source = (event as { source?: string }).source;
+    if (source === 'api') return;
+    if (!isOfferProductProduct(event.data)) {
+      try {
+        event.node?.setDataValue?.('Quantity', event.oldValue ?? '');
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+
+    const normalizedOldValue = coerceNumber(event.oldValue);
+    const normalizedNewValue = coerceNumber(event.newValue);
+    if (normalizedNewValue == null || normalizedNewValue < 0) {
+      showToastMessage('Please enter a valid quantity (zero or more).', 'error');
+      try {
+        event.node?.setDataValue?.('Quantity', normalizedOldValue ?? '');
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+    if (normalizedOldValue != null && Object.is(normalizedOldValue, normalizedNewValue)) {
+      return;
+    }
+
+    const offerDetailId = normalizeOfferDetailId((event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null);
+    if (offerDetailId == null) {
+      showToastMessage('Unable to update quantity. Missing record identifier.', 'error');
+      try {
+        event.node?.setDataValue?.('Quantity', normalizedOldValue ?? '');
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+
+    const revertValue = () => {
+      try {
+        event.node?.setDataValue?.('Quantity', normalizedOldValue ?? '');
+      } catch {
+        /* noop */
+      }
+    };
+
+    const runUpdate = async () => {
+      try {
+        const res = await fetch(resolvedEndpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: [{ OfferDetailID: offerDetailId, Quantity: normalizedNewValue }],
+          }),
+        });
+        let payload: { ok?: boolean; error?: string } | null = null;
+        try {
+          payload = (await res.json()) as { ok?: boolean; error?: string } | null;
+        } catch {
+          payload = null;
+        }
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update quantity (status ${res.status})`);
+        }
+        showToastMessage('Quantity updated', 'success');
+        try {
+          event.api?.refreshServerSide?.({ purge: false });
+        } catch (refreshErr) {
+          console.warn('Failed to refresh grid after quantity update', refreshErr);
+        }
+      } catch (err) {
+        console.error('Failed to update quantity', err);
+        showToastMessage('Unable to update quantity. Please try again.', 'error');
+        revertValue();
+      }
+    };
+    void runUpdate();
+  }, [resolvedEndpoint]);
+
   const handleDescriptionEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Description') return;
     const source = (event as { source?: string }).source;
@@ -651,6 +733,11 @@ const productColumnDefs: ColDef[] = useMemo(() => [
     void runUpdate();
   }, [resolvedEndpoint]);
 
+  const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    handleDescriptionEdit(event);
+    handleQuantityEdit(event);
+  }, [handleDescriptionEdit, handleQuantityEdit]);
+
   const formatEuroTotal = (value: number | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return '—';
     return `${decimalFormatter.format(value)} €`;
@@ -670,7 +757,7 @@ const productColumnDefs: ColDef[] = useMemo(() => [
           manualMode={manualMode}
           getRowClass={getRowClass}
           getContextMenuItems={productContextMenuItems}
-          onCellValueChanged={handleDescriptionEdit}
+          onCellValueChanged={handleCellEdit}
           refreshToken={refreshToken}
           autoSizeExclusions={['Description']}
           onTotalsChange={handleTotalsChange}
