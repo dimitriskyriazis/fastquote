@@ -288,22 +288,38 @@ export async function DELETE(req: NextRequest) {
     const chunkSize = 200;
     let deleted = 0;
 
-    for (let idx = 0; idx < normalizedIds.length; idx += chunkSize) {
-      const chunk = normalizedIds.slice(idx, idx + chunkSize);
-      if (chunk.length === 0) continue;
-      const request = pool.request();
-      const paramNames: string[] = [];
-      chunk.forEach((id, chunkIdx) => {
-        const paramName = `pl_${chunkIdx}`;
-        request.input(paramName, sql.Int, id);
-        paramNames.push(`@${paramName}`);
-      });
-      const query = `
-        DELETE dbo.PriceLists
-        WHERE ID IN (${paramNames.join(", ")})
-      `;
-      const result = await request.query(query);
-      deleted += result.rowsAffected?.[0] ?? 0;
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin();
+
+    try {
+      for (let idx = 0; idx < normalizedIds.length; idx += chunkSize) {
+        const chunk = normalizedIds.slice(idx, idx + chunkSize);
+        if (chunk.length === 0) continue;
+
+        const params = chunk.map((id, chunkIdx) => ({ name: `pl_${chunkIdx}`, value: id }));
+        const paramNames = params.map((p) => `@${p.name}`);
+
+        const deleteItemsReq = new sql.Request(transaction);
+        params.forEach((p) => deleteItemsReq.input(p.name, sql.Int, p.value));
+        await deleteItemsReq.query(`
+          DELETE FROM dbo.PriceListItems
+          WHERE PriceListID IN (${paramNames.join(", ")})
+        `);
+
+        const deletePriceListsReq = new sql.Request(transaction);
+        params.forEach((p) => deletePriceListsReq.input(p.name, sql.Int, p.value));
+        const result = await deletePriceListsReq.query(`
+          DELETE dbo.PriceLists
+          WHERE ID IN (${paramNames.join(", ")})
+        `);
+
+        deleted += result.rowsAffected?.[0] ?? 0;
+      }
+
+      await transaction.commit();
+    } catch (txErr) {
+      await transaction.rollback();
+      throw txErr;
     }
 
     return NextResponse.json({ ok: true, deleted });
