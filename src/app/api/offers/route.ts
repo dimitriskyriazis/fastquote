@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
+import type { Request as SqlRequest } from 'mssql';
 import { getPool } from '../../../lib/sql';
 
 type TextFilterModel = {
@@ -328,19 +329,40 @@ export async function DELETE(req: NextRequest) {
     for (let idx = 0; idx < normalizedIds.length; idx += chunkSize) {
       const chunk = normalizedIds.slice(idx, idx + chunkSize);
       if (chunk.length === 0) continue;
-      const request = pool.request();
-      const paramNames: string[] = [];
-      chunk.forEach((offerId, chunkIdx) => {
-        const paramName = `offer_${chunkIdx}`;
-        request.input(paramName, sql.Int, offerId);
-        paramNames.push(`@${paramName}`);
-      });
-      const query = `
-        DELETE dbo.Offer
-        WHERE ID IN (${paramNames.join(', ')})
-      `;
-      const result = await request.query(query);
-      deleted += result.rowsAffected?.[0] ?? 0;
+      const transaction = new sql.Transaction(pool);
+      await transaction.begin();
+
+      try {
+        const paramNames: string[] = [];
+        chunk.forEach((offerId, chunkIdx) => {
+          const paramName = `offer_${chunkIdx}`;
+          paramNames.push(`@${paramName}`);
+        });
+        const idsSql = paramNames.join(', ');
+
+        const bindParams = (request: SqlRequest) => {
+          chunk.forEach((offerId, chunkIdx) => {
+            request.input(`offer_${chunkIdx}`, sql.Int, offerId);
+          });
+          return request;
+        };
+
+        await bindParams(new sql.Request(transaction)).query(`
+          DELETE FROM dbo.OfferDetails
+          WHERE OfferID IN (${idsSql});
+        `);
+
+        const deleteOffersResult = await bindParams(new sql.Request(transaction)).query(`
+          DELETE FROM dbo.Offer
+          WHERE ID IN (${idsSql});
+        `);
+
+        await transaction.commit();
+        deleted += deleteOffersResult.rowsAffected?.[0] ?? 0;
+      } catch (chunkErr) {
+        await transaction.rollback().catch(() => {});
+        throw chunkErr;
+      }
     }
 
     return NextResponse.json({ ok: true, deleted });

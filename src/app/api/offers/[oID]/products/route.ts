@@ -116,6 +116,11 @@ type DetailUpdateInput = {
   OfferDetailID?: number | string | null;
   Description?: string | null;
   Quantity?: number | string | null;
+  CustomerDiscount?: number | string | null;
+  TelmacoDiscount?: number | string | null;
+  NetUnitPrice?: number | string | null;
+  NetCost?: number | string | null;
+  Margin?: number | string | null;
 };
 
 type DetailUpdateRequest = {
@@ -204,6 +209,30 @@ const normalizeQuantityValue = (value: unknown): number | null => {
   return null;
 };
 
+const normalizePercentValue = (value: unknown, { allowNegative = false }: { allowNegative?: boolean } = {}): number | null => {
+  const num = normalizeQuantityValue(value);
+  if (num == null) return null;
+  if (!allowNegative && num < 0) return null;
+  return num;
+};
+
+const normalizeMoneyValue = (value: unknown): number | null => {
+  if (value == null) return null;
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number.parseFloat(trimmed);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  }
+  return null;
+};
+
+const roundTo = (value: number, places = 4) => {
+  const factor = 10 ** places;
+  return Math.round(value * factor) / factor;
+};
+
 const normalizeCreateRowType = (value: unknown): CreateRowType | null => {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
@@ -221,6 +250,165 @@ const normalizeAggregateValue = (value: unknown): number => {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+};
+
+type PricingSnapshot = {
+  listPrice: number | null;
+  customerDiscount: number | null;
+  telmacoDiscount: number | null;
+  netUnitPrice: number | null;
+  netCost: number | null;
+  margin: number | null;
+};
+
+type PricingInput = PricingSnapshot & {
+  provided: {
+    customerDiscount: boolean;
+    telmacoDiscount: boolean;
+    netUnitPrice: boolean;
+    netCost: boolean;
+    margin: boolean;
+  };
+};
+
+type ResolvedPricing = {
+  customerDiscount: number | null;
+  telmacoDiscount: number | null;
+  netUnitPrice: number | null;
+  netCost: number | null;
+  margin: number | null;
+};
+
+const percentageToFactor = (value: number) => value / 100;
+
+const deriveMarginPercent = (netPrice: number | null, telmacoCost: number | null): number | null => {
+  if (netPrice == null || telmacoCost == null) return null;
+  if (Object.is(netPrice, 0)) return null;
+  return roundTo((1 - (telmacoCost / netPrice)) * 100);
+};
+
+const computeScenario = (
+  scenario: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H',
+  lp: number,
+  cd: number | null,
+  td: number | null,
+  np: number | null,
+  tc: number | null,
+  m: number | null,
+): ResolvedPricing | null => {
+  // All percentages are stored as percent units (e.g., 12 = 12%).
+  switch (scenario) {
+    case 'A': {
+      if (cd == null || td == null) return null;
+      const netPrice = roundTo(lp * (1 - percentageToFactor(cd)));
+      const telmacoCost = roundTo(lp * (1 - percentageToFactor(td)));
+      const marginPct = deriveMarginPercent(netPrice, telmacoCost);
+      return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: netPrice, netCost: telmacoCost, margin: marginPct };
+    }
+    case 'B': {
+      if (td == null || m == null) return null;
+      const telmacoCost = roundTo(lp * (1 - percentageToFactor(td)));
+      const marginFactor = 1 - percentageToFactor(m);
+      if (Object.is(marginFactor, 0)) return null;
+      const netPrice = roundTo(telmacoCost / marginFactor);
+      const customerDiscount = roundTo((1 - (netPrice / lp)) * 100);
+      return { customerDiscount, telmacoDiscount: td, netUnitPrice: netPrice, netCost: telmacoCost, margin: m };
+    }
+    case 'C': {
+      if (np == null || tc == null) return null;
+      const customerDiscount = roundTo((1 - (np / lp)) * 100);
+      const telmacoDiscount = roundTo((1 - (tc / lp)) * 100);
+      const marginPct = deriveMarginPercent(np, tc);
+      return { customerDiscount, telmacoDiscount, netUnitPrice: np, netCost: tc, margin: marginPct };
+    }
+    case 'D': {
+      if (cd == null || m == null) return null;
+      const netPrice = roundTo(lp * (1 - percentageToFactor(cd)));
+      const telmacoCost = roundTo(netPrice * (1 - percentageToFactor(m)));
+      const telmacoDiscount = roundTo((1 - (telmacoCost / lp)) * 100);
+      return { customerDiscount: cd, telmacoDiscount, netUnitPrice: netPrice, netCost: telmacoCost, margin: m };
+    }
+    case 'E': {
+      if (cd == null || tc == null) return null;
+      const netPrice = roundTo(lp * (1 - percentageToFactor(cd)));
+      const telmacoDiscount = roundTo((1 - (tc / lp)) * 100);
+      const marginPct = deriveMarginPercent(netPrice, tc);
+      return { customerDiscount: cd, telmacoDiscount, netUnitPrice: netPrice, netCost: tc, margin: marginPct };
+    }
+    case 'F': {
+      if (td == null || np == null) return null;
+      const customerDiscount = roundTo((1 - (np / lp)) * 100);
+      const telmacoCost = roundTo(lp * (1 - percentageToFactor(td)));
+      const marginPct = deriveMarginPercent(np, telmacoCost);
+      return { customerDiscount, telmacoDiscount: td, netUnitPrice: np, netCost: telmacoCost, margin: marginPct };
+    }
+    case 'G': {
+      if (np == null || m == null) return null;
+      const telmacoCost = roundTo(np * (1 - percentageToFactor(m)));
+      const customerDiscount = roundTo((1 - (np / lp)) * 100);
+      const telmacoDiscount = roundTo((1 - (telmacoCost / lp)) * 100);
+      return { customerDiscount, telmacoDiscount, netUnitPrice: np, netCost: telmacoCost, margin: m };
+    }
+    case 'H': {
+      if (tc == null || m == null) return null;
+      const marginFactor = 1 - percentageToFactor(m);
+      if (Object.is(marginFactor, 0)) return null;
+      const netPrice = roundTo(tc / marginFactor);
+      const customerDiscount = roundTo((1 - (netPrice / lp)) * 100);
+      const telmacoDiscount = roundTo((1 - (tc / lp)) * 100);
+      return { customerDiscount, telmacoDiscount, netUnitPrice: netPrice, netCost: tc, margin: m };
+    }
+    default:
+      return null;
+  }
+};
+
+const resolvePricing = (input: PricingInput): ResolvedPricing | null => {
+  const lp = input.listPrice;
+  if (lp == null || !Number.isFinite(lp) || Object.is(lp, 0)) return null;
+
+  const cd = input.customerDiscount;
+  const td = input.telmacoDiscount;
+  const np = input.netUnitPrice;
+  const tc = input.netCost;
+  const m = input.margin;
+
+  type PricingRequiredKey = keyof PricingInput['provided'];
+
+  const scenarios: Array<{
+    key: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H';
+    required: PricingRequiredKey[];
+  }> = [
+    { key: 'A', required: ['customerDiscount', 'telmacoDiscount'] },
+    { key: 'B', required: ['telmacoDiscount', 'margin'] },
+    { key: 'C', required: ['netUnitPrice', 'netCost'] },
+    { key: 'D', required: ['customerDiscount', 'margin'] },
+    { key: 'E', required: ['customerDiscount', 'netCost'] },
+    { key: 'F', required: ['telmacoDiscount', 'netUnitPrice'] },
+    { key: 'G', required: ['netUnitPrice', 'margin'] },
+    { key: 'H', required: ['netCost', 'margin'] },
+  ];
+
+  const values: PricingSnapshot = { listPrice: lp, customerDiscount: cd, telmacoDiscount: td, netUnitPrice: np, netCost: tc, margin: m };
+  const providedMap = input.provided;
+
+  for (const scenario of scenarios) {
+    const missingRequired = scenario.required.some((field) => values[field] == null);
+    const hasUserInput = scenario.required.some((field) => providedMap[field]);
+    if (missingRequired || !hasUserInput) continue;
+    const resolved = computeScenario(
+      scenario.key,
+      lp,
+      values.customerDiscount,
+      values.telmacoDiscount,
+      values.netUnitPrice,
+      values.netCost,
+      values.margin,
+    );
+    if (resolved) return resolved;
+  }
+
+  return null;
 };
 
 type TreeOrderingRow = {
@@ -815,13 +1003,21 @@ export async function PATCH(
 
     const updates = Array.isArray(body?.updates) ? body?.updates : [];
     let hadInvalidQuantity = false;
+    let hadInvalidPricing = false;
     const normalizedUpdates = updates
       .map((entry) => {
         const id = normalizeOfferDetailId(entry?.OfferDetailID ?? null);
         if (id == null) return null;
         const hasDescription = entry ? Object.prototype.hasOwnProperty.call(entry, 'Description') : false;
         const hasQuantity = entry ? Object.prototype.hasOwnProperty.call(entry, 'Quantity') : false;
-        if (!hasDescription && !hasQuantity) return null;
+        const hasCustomerDiscount = entry ? Object.prototype.hasOwnProperty.call(entry, 'CustomerDiscount') : false;
+        const hasTelmacoDiscount = entry ? Object.prototype.hasOwnProperty.call(entry, 'TelmacoDiscount') : false;
+        const hasNetUnitPrice = entry ? Object.prototype.hasOwnProperty.call(entry, 'NetUnitPrice') : false;
+        const hasNetCost = entry ? Object.prototype.hasOwnProperty.call(entry, 'NetCost') : false;
+        const hasMargin = entry ? Object.prototype.hasOwnProperty.call(entry, 'Margin') : false;
+        const hasPricingFields = hasCustomerDiscount || hasTelmacoDiscount || hasNetUnitPrice || hasNetCost || hasMargin;
+        if (!hasDescription && !hasQuantity && !hasPricingFields) return null;
+
         const description = hasDescription ? normalizeDescriptionValue(entry?.Description ?? null) : null;
         let quantity: number | null = null;
         if (hasQuantity) {
@@ -831,12 +1027,41 @@ export async function PATCH(
             return null;
           }
         }
+
+        const customerDiscount = hasCustomerDiscount ? normalizePercentValue(entry?.CustomerDiscount ?? null) : null;
+        const telmacoDiscount = hasTelmacoDiscount ? normalizePercentValue(entry?.TelmacoDiscount ?? null) : null;
+        const netUnitPrice = hasNetUnitPrice ? normalizeMoneyValue(entry?.NetUnitPrice ?? null) : null;
+        const netCost = hasNetCost ? normalizeMoneyValue(entry?.NetCost ?? null) : null;
+        const margin = hasMargin ? normalizePercentValue(entry?.Margin ?? null, { allowNegative: true }) : null;
+
+        if (hasPricingFields) {
+          const invalidPricing = (hasCustomerDiscount && customerDiscount == null)
+            || (hasTelmacoDiscount && telmacoDiscount == null)
+            || (hasNetUnitPrice && netUnitPrice == null)
+            || (hasNetCost && netCost == null)
+            || (hasMargin && (margin == null || Math.abs(margin) >= 100));
+          if (invalidPricing) {
+            hadInvalidPricing = true;
+            return null;
+          }
+        }
+
         return {
           OfferDetailID: id,
           Description: description,
           Quantity: quantity,
           hasDescription,
           hasQuantity,
+          hasCustomerDiscount,
+          hasTelmacoDiscount,
+          hasNetUnitPrice,
+          hasNetCost,
+          hasMargin,
+          customerDiscount,
+          telmacoDiscount,
+          netUnitPrice,
+          netCost,
+          margin,
         };
       })
       .filter((entry): entry is {
@@ -845,10 +1070,24 @@ export async function PATCH(
         Quantity: number | null;
         hasDescription: boolean;
         hasQuantity: boolean;
+        hasCustomerDiscount: boolean;
+        hasTelmacoDiscount: boolean;
+        hasNetUnitPrice: boolean;
+        hasNetCost: boolean;
+        hasMargin: boolean;
+        customerDiscount: number | null;
+        telmacoDiscount: number | null;
+        netUnitPrice: number | null;
+        netCost: number | null;
+        margin: number | null;
       } => Boolean(entry));
 
     if (normalizedUpdates.length === 0) {
-      const errorMessage = hadInvalidQuantity ? 'Invalid quantity value' : 'No valid updates provided';
+      const errorMessage = hadInvalidPricing
+        ? 'Invalid pricing values provided'
+        : hadInvalidQuantity
+          ? 'Invalid quantity value'
+          : 'No valid updates provided';
       return NextResponse.json({ ok: false, error: errorMessage }, { status: 400 });
     }
 
@@ -859,89 +1098,273 @@ export async function PATCH(
     for (let idx = 0; idx < normalizedUpdates.length; idx += chunkSize) {
       const chunk = normalizedUpdates.slice(idx, idx + chunkSize);
       if (chunk.length === 0) continue;
+
+      const ids = chunk.map((entry) => entry.OfferDetailID);
+      const baseRequest = pool.request();
+      baseRequest.input('__offerId', sql.Int, offerId);
+      const idParams: string[] = [];
+      ids.forEach((id, idIdx) => {
+        const param = `id_${idIdx}`;
+        baseRequest.input(param, sql.Int, id);
+        idParams.push(`@${param}`);
+      });
+
+      const currentRowsRes = await baseRequest.query<{
+        OfferDetailID: number;
+        ProductID: number | null;
+        ProductDescription: string | null;
+        Quantity: number | null;
+        ListPrice: number | null;
+        CustomerDiscount: number | null;
+        TelmacoDiscount: number | null;
+        NetUnitPrice: number | null;
+        NetCost: number | null;
+        Margin: number | null;
+      }>(`
+        SELECT
+          od.ID AS OfferDetailID,
+          od.ProductID,
+          od.ProductDescription,
+          od.Quantity,
+          od.ListPrice,
+          od.CustomerDiscount,
+          od.TelmacoDiscount,
+          od.NetUnitPrice,
+          od.NetCost,
+          od.Margin
+        FROM dbo.OfferDetails od
+        WHERE od.OfferID = @__offerId
+          AND od.ID IN (${idParams.join(', ')})
+      `);
+
+      const currentById = new Map<number, {
+        ProductID: number | null;
+        ProductDescription: string | null;
+        Quantity: number | null;
+        ListPrice: number | null;
+        CustomerDiscount: number | null;
+        TelmacoDiscount: number | null;
+        NetUnitPrice: number | null;
+        NetCost: number | null;
+        Margin: number | null;
+      }>();
+      (currentRowsRes.recordset ?? []).forEach((row) => {
+        currentById.set(row.OfferDetailID, row);
+      });
+
+      const pendingRows: Array<{
+        OfferDetailID: number;
+        Description: string | null;
+        HasDescription: boolean;
+        Quantity: number | null;
+        HasQuantity: boolean;
+        CustomerDiscount: number | null;
+        TelmacoDiscount: number | null;
+        NetUnitPrice: number | null;
+        NetCost: number | null;
+        Margin: number | null;
+        TotalPrice: number | null;
+        TotalNet: number | null;
+        TotalCost: number | null;
+        GrossProfit: number | null;
+      }> = [];
+      const errors: string[] = [];
+
+      chunk.forEach((entry) => {
+        const current = currentById.get(entry.OfferDetailID);
+        if (!current) {
+          errors.push('Offer detail not found for update.');
+          return;
+        }
+
+        const listPrice = normalizeMoneyValue(current.ListPrice);
+        const quantity = entry.hasQuantity
+          ? entry.Quantity
+          : normalizeQuantityValue(current.Quantity ?? null);
+        const safeQuantity = quantity == null ? 0 : quantity;
+        const pricingProvided = entry.hasCustomerDiscount || entry.hasTelmacoDiscount
+          || entry.hasNetUnitPrice || entry.hasNetCost || entry.hasMargin;
+
+        let resolvedPricing: ResolvedPricing | null = null;
+
+        if (pricingProvided) {
+          if (current.ProductID == null) {
+            errors.push('Pricing can only be updated for product rows.');
+            return;
+          }
+          if (listPrice == null || Object.is(listPrice, 0)) {
+            errors.push('Missing list price for pricing update.');
+            return;
+          }
+
+          const input: PricingInput = {
+            listPrice,
+            customerDiscount: entry.hasCustomerDiscount
+              ? entry.customerDiscount
+              : normalizePercentValue(current.CustomerDiscount ?? null),
+            telmacoDiscount: entry.hasTelmacoDiscount
+              ? entry.telmacoDiscount
+              : normalizePercentValue(current.TelmacoDiscount ?? null),
+            netUnitPrice: entry.hasNetUnitPrice
+              ? entry.netUnitPrice
+              : normalizeMoneyValue(current.NetUnitPrice ?? null),
+            netCost: entry.hasNetCost
+              ? entry.netCost
+              : normalizeMoneyValue(current.NetCost ?? null),
+            margin: entry.hasMargin
+              ? entry.margin
+              : normalizePercentValue(current.Margin ?? null, { allowNegative: true }),
+            provided: {
+              customerDiscount: entry.hasCustomerDiscount,
+              telmacoDiscount: entry.hasTelmacoDiscount,
+              netUnitPrice: entry.hasNetUnitPrice,
+              netCost: entry.hasNetCost,
+              margin: entry.hasMargin,
+            },
+          };
+
+          resolvedPricing = resolvePricing(input);
+          if (!resolvedPricing) {
+            errors.push('Unable to resolve pricing from inputs.');
+            return;
+          }
+        } else {
+          resolvedPricing = {
+            customerDiscount: normalizePercentValue(current.CustomerDiscount ?? null),
+            telmacoDiscount: normalizePercentValue(current.TelmacoDiscount ?? null),
+            netUnitPrice: normalizeMoneyValue(current.NetUnitPrice ?? null),
+            netCost: normalizeMoneyValue(current.NetCost ?? null),
+            margin: normalizePercentValue(current.Margin ?? null, { allowNegative: true }),
+          };
+        }
+
+        const netPrice = resolvedPricing.netUnitPrice;
+        const telmacoCost = resolvedPricing.netCost;
+        const totalPrice = listPrice != null ? roundTo(listPrice * safeQuantity) : null;
+        const totalNet = netPrice != null ? roundTo(netPrice * safeQuantity) : null;
+        const totalCost = telmacoCost != null ? roundTo(telmacoCost * safeQuantity) : null;
+        const grossProfit = netPrice != null && telmacoCost != null
+          ? roundTo((netPrice - telmacoCost) * safeQuantity)
+          : null;
+
+        pendingRows.push({
+          OfferDetailID: entry.OfferDetailID,
+          Description: entry.hasDescription ? entry.Description : current.ProductDescription,
+          HasDescription: entry.hasDescription,
+          Quantity: entry.hasQuantity ? entry.Quantity : current.Quantity ?? safeQuantity,
+          HasQuantity: entry.hasQuantity,
+          CustomerDiscount: resolvedPricing.customerDiscount,
+          TelmacoDiscount: resolvedPricing.telmacoDiscount,
+          NetUnitPrice: netPrice,
+          NetCost: telmacoCost,
+          Margin: resolvedPricing.margin,
+          TotalPrice: totalPrice,
+          TotalNet: totalNet,
+          TotalCost: totalCost,
+          GrossProfit: grossProfit,
+        });
+      });
+
+      if (errors.length > 0) {
+        return NextResponse.json({ ok: false, error: errors[0] ?? 'Invalid update payload' }, { status: 400 });
+      }
+
+      if (pendingRows.length === 0) continue;
+
       const request = pool.request();
       request.input('__offerId', sql.Int, offerId);
       request.input('__modifiedBy', sql.Int, audit.userId);
+      const decimalType = getDecimalType();
       const valueClauses: string[] = [];
-      chunk.forEach((entry, chunkIdx) => {
-        const idParam = `odid_${chunkIdx}`;
-        const descriptionParam = `description_${chunkIdx}`;
-        const hasDescriptionParam = `hasDescription_${chunkIdx}`;
-        const quantityParam = `quantity_${chunkIdx}`;
-        const hasQuantityParam = `hasQuantity_${chunkIdx}`;
-        request.input(idParam, sql.Int, entry.OfferDetailID);
-        request.input(descriptionParam, sql.NVarChar(4000), entry.hasDescription ? entry.Description : null);
-        request.input(hasDescriptionParam, sql.Bit, entry.hasDescription ? 1 : 0);
-        const decimalType = getDecimalType();
-        request.input(quantityParam, decimalType, entry.hasQuantity ? entry.Quantity : null);
-        request.input(hasQuantityParam, sql.Bit, entry.hasQuantity ? 1 : 0);
-        valueClauses.push(`(@${idParam}, @${descriptionParam}, @${hasDescriptionParam}, @${quantityParam}, @${hasQuantityParam})`);
+
+      pendingRows.forEach((row, rowIdx) => {
+        const idParam = `odid_${rowIdx}`;
+        const descriptionParam = `description_${rowIdx}`;
+        const hasDescriptionParam = `hasDescription_${rowIdx}`;
+        const quantityParam = `quantity_${rowIdx}`;
+        const hasQuantityParam = `hasQuantity_${rowIdx}`;
+        const customerDiscountParam = `customerDiscount_${rowIdx}`;
+        const telmacoDiscountParam = `telmacoDiscount_${rowIdx}`;
+        const netUnitPriceParam = `netUnitPrice_${rowIdx}`;
+        const netCostParam = `netCost_${rowIdx}`;
+        const marginParam = `margin_${rowIdx}`;
+        const totalPriceParam = `totalPrice_${rowIdx}`;
+        const totalNetParam = `totalNet_${rowIdx}`;
+        const totalCostParam = `totalCost_${rowIdx}`;
+        const grossProfitParam = `grossProfit_${rowIdx}`;
+
+        request.input(idParam, sql.Int, row.OfferDetailID);
+        request.input(descriptionParam, sql.NVarChar(4000), row.HasDescription ? row.Description : null);
+        request.input(hasDescriptionParam, sql.Bit, row.HasDescription ? 1 : 0);
+        request.input(quantityParam, decimalType, row.Quantity);
+        request.input(hasQuantityParam, sql.Bit, row.HasQuantity ? 1 : 0);
+        request.input(customerDiscountParam, decimalType, row.CustomerDiscount);
+        request.input(telmacoDiscountParam, decimalType, row.TelmacoDiscount);
+        request.input(netUnitPriceParam, decimalType, row.NetUnitPrice);
+        request.input(netCostParam, decimalType, row.NetCost);
+        request.input(marginParam, decimalType, row.Margin);
+        request.input(totalPriceParam, decimalType, row.TotalPrice);
+        request.input(totalNetParam, decimalType, row.TotalNet);
+        request.input(totalCostParam, decimalType, row.TotalCost);
+        request.input(grossProfitParam, decimalType, row.GrossProfit);
+
+        valueClauses.push(`(@${idParam}, @${descriptionParam}, @${hasDescriptionParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam})`);
       });
+
       const query = `
-        WITH PendingUpdates (OfferDetailID, Description, HasDescription, Quantity, HasQuantity) AS (
-          SELECT v.OfferDetailID, v.Description, v.HasDescription, v.Quantity, v.HasQuantity
-          FROM (VALUES ${valueClauses.join(', ')}) AS v (OfferDetailID, Description, HasDescription, Quantity, HasQuantity)
+        WITH PendingUpdates (
+          OfferDetailID,
+          Description,
+          HasDescription,
+          Quantity,
+          HasQuantity,
+          CustomerDiscount,
+          TelmacoDiscount,
+          NetUnitPrice,
+          NetCost,
+          Margin,
+          TotalPrice,
+          TotalNet,
+          TotalCost,
+          GrossProfit
+        ) AS (
+          SELECT *
+          FROM (VALUES ${valueClauses.join(', ')}) AS v (
+            OfferDetailID,
+            Description,
+            HasDescription,
+            Quantity,
+            HasQuantity,
+            CustomerDiscount,
+            TelmacoDiscount,
+            NetUnitPrice,
+            NetCost,
+            Margin,
+            TotalPrice,
+            TotalNet,
+            TotalCost,
+            GrossProfit
+          )
         )
         UPDATE od
         SET od.ProductDescription = CASE WHEN PendingUpdates.HasDescription = 1 THEN PendingUpdates.Description ELSE od.ProductDescription END,
             od.Quantity = CASE WHEN PendingUpdates.HasQuantity = 1 THEN PendingUpdates.Quantity ELSE od.Quantity END,
-            od.TotalPrice = CASE
-              WHEN PendingUpdates.HasQuantity = 1 THEN
-                CASE
-                  WHEN PendingUpdates.Quantity IS NULL OR od.ListPrice IS NULL THEN od.TotalPrice
-                  ELSE COALESCE(TRY_CONVERT(decimal(18, 4), PendingUpdates.Quantity * od.ListPrice), od.TotalPrice)
-                END
-              ELSE od.TotalPrice
-            END,
-            od.TotalNet = CASE
-              WHEN PendingUpdates.HasQuantity = 1 THEN
-                CASE
-                  WHEN PendingUpdates.Quantity IS NULL OR od.NetUnitPrice IS NULL THEN od.TotalNet
-                  ELSE COALESCE(TRY_CONVERT(decimal(18, 4), PendingUpdates.Quantity * od.NetUnitPrice), od.TotalNet)
-                END
-              ELSE od.TotalNet
-            END,
-            od.TotalCost = CASE
-              WHEN PendingUpdates.HasQuantity = 1 THEN
-                CASE
-                  WHEN PendingUpdates.Quantity IS NULL OR od.NetCost IS NULL THEN od.TotalCost
-                  ELSE COALESCE(TRY_CONVERT(decimal(18, 4), PendingUpdates.Quantity * od.NetCost), od.TotalCost)
-                END
-              ELSE od.TotalCost
-            END,
-            od.GrossProfit = CASE
-              WHEN PendingUpdates.HasQuantity = 1 THEN
-                CASE
-                  WHEN PendingUpdates.Quantity IS NULL OR od.NetUnitPrice IS NULL OR od.NetCost IS NULL THEN od.GrossProfit
-                  ELSE COALESCE(
-                    TRY_CONVERT(decimal(18, 4), (PendingUpdates.Quantity * od.NetUnitPrice) - (PendingUpdates.Quantity * od.NetCost)),
-                    od.GrossProfit
-                  )
-                END
-              ELSE od.GrossProfit
-            END,
-            od.Margin = CASE
-              WHEN PendingUpdates.HasQuantity = 1 THEN
-                CASE
-                  WHEN PendingUpdates.Quantity IS NULL OR od.NetUnitPrice IS NULL OR od.NetCost IS NULL THEN od.Margin
-                  WHEN TRY_CONVERT(decimal(18, 4), PendingUpdates.Quantity * od.NetUnitPrice) = 0 THEN 0
-                  ELSE COALESCE(
-                    TRY_CONVERT(
-                      decimal(18, 4),
-                      ((PendingUpdates.Quantity * od.NetUnitPrice) - (PendingUpdates.Quantity * od.NetCost))
-                        / (PendingUpdates.Quantity * od.NetUnitPrice) * 100
-                    ),
-                    od.Margin
-                  )
-                END
-              ELSE od.Margin
-            END,
+            od.CustomerDiscount = PendingUpdates.CustomerDiscount,
+            od.TelmacoDiscount = PendingUpdates.TelmacoDiscount,
+            od.NetUnitPrice = PendingUpdates.NetUnitPrice,
+            od.NetCost = PendingUpdates.NetCost,
+            od.Margin = PendingUpdates.Margin,
+            od.TotalPrice = PendingUpdates.TotalPrice,
+            od.TotalNet = PendingUpdates.TotalNet,
+            od.TotalCost = PendingUpdates.TotalCost,
+            od.GrossProfit = PendingUpdates.GrossProfit,
             od.ModifiedOn = SYSUTCDATETIME(),
             od.ModifiedBy = @__modifiedBy
         FROM dbo.OfferDetails od
           INNER JOIN PendingUpdates ON od.ID = PendingUpdates.OfferDetailID
         WHERE od.OfferID = @__offerId;
       `;
+
       const result = await request.query(query);
       affected += result.rowsAffected?.[0] ?? 0;
     }

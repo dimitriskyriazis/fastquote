@@ -182,6 +182,16 @@ const totalPriceCellClassRules = {
   ...productPriceListClassRules,
 };
 
+const PRICING_FIELD_LABELS: Record<string, string> = {
+  CustomerDiscount: 'Customer Discount',
+  NetUnitPrice: 'Net Unit Price',
+  TelmacoDiscount: 'Telmaco Discount',
+  NetCost: 'Net Cost',
+  Margin: 'Margin',
+};
+
+const PRICING_EDITABLE_FIELDS = new Set(Object.keys(PRICING_FIELD_LABELS));
+
 type Props = {
   oID: string;
   endpoint?: string;
@@ -493,6 +503,8 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       headerName: 'Customer Discount',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      editable: (params) => isOfferProductProduct(params.data),
+      singleClickEdit: true,
       valueFormatter: percentageFormatter,
     },
     {
@@ -500,6 +512,8 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       headerName: 'Net Unit Price',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      editable: (params) => isOfferProductProduct(params.data),
+      singleClickEdit: true,
       valueFormatter: euroFormatter,
     },
     {
@@ -546,6 +560,8 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       headerName: 'Telmaco Discount',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      editable: (params) => isOfferProductProduct(params.data),
+      singleClickEdit: true,
       valueFormatter: percentageFormatter,
     },
     {
@@ -553,6 +569,8 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       headerName: 'Net Cost',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      editable: (params) => isOfferProductProduct(params.data),
+      singleClickEdit: true,
       valueFormatter: euroFormatter,
     },
     {
@@ -560,6 +578,8 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       headerName: 'Margin',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      editable: (params) => isOfferProductProduct(params.data),
+      singleClickEdit: true,
       valueFormatter: percentageFormatter,
     },
     {
@@ -733,10 +753,79 @@ const productColumnDefs: ColDef[] = useMemo(() => [
     void runUpdate();
   }, [resolvedEndpoint]);
 
+  const handlePricingEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    const field = event.colDef.field;
+    if (!field || !PRICING_EDITABLE_FIELDS.has(field)) return;
+    const label = PRICING_FIELD_LABELS[field] ?? field;
+    const source = (event as { source?: string }).source;
+    if (source === 'api') return;
+
+    if (!isOfferProductProduct(event.data)) {
+      try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
+      showToastMessage('Pricing can only be edited on product rows.', 'error');
+      return;
+    }
+
+    const offerDetailId = normalizeOfferDetailId((event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null);
+    if (offerDetailId == null) {
+      showToastMessage(`Unable to update ${label}. Missing record identifier.`, 'error');
+      try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
+      return;
+    }
+
+    const normalizedNewValue = coerceNumber(event.newValue);
+    if (normalizedNewValue == null || !Number.isFinite(normalizedNewValue)) {
+      showToastMessage(`Please enter a valid ${label.toLowerCase()}.`, 'error');
+      try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
+      return;
+    }
+    if (field === 'Margin' && Math.abs(normalizedNewValue) >= 100) {
+      showToastMessage('Margin must be between -100 and 100.', 'error');
+      try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
+      return;
+    }
+
+    const normalizedOldValue = coerceNumber(event.oldValue);
+    if (normalizedOldValue != null && Object.is(normalizedOldValue, normalizedNewValue)) {
+      return;
+    }
+
+    const revertValue = () => {
+      try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
+    };
+
+    const runUpdate = async () => {
+      try {
+        const res = await fetch(resolvedEndpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates: [{ OfferDetailID: offerDetailId, [field]: normalizedNewValue }] }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update ${label} (status ${res.status})`);
+        }
+        showToastMessage(`${label} updated`, 'success');
+        try {
+          event.api?.refreshServerSide?.({ purge: false });
+        } catch (refreshErr) {
+          console.warn('Failed to refresh grid after pricing update', refreshErr);
+        }
+      } catch (err) {
+        console.error(`Failed to update ${label}`, err);
+        showToastMessage(`Unable to update ${label}. Please try again.`, 'error');
+        revertValue();
+      }
+    };
+
+    void runUpdate();
+  }, [resolvedEndpoint]);
+
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     handleDescriptionEdit(event);
     handleQuantityEdit(event);
-  }, [handleDescriptionEdit, handleQuantityEdit]);
+    handlePricingEdit(event);
+  }, [handleDescriptionEdit, handleQuantityEdit, handlePricingEdit]);
 
   const formatEuroTotal = (value: number | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return '—';

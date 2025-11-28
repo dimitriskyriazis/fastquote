@@ -12,7 +12,7 @@ const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
     </div>
   ),
 });
-import type { ColDef, ICellRendererParams, GetContextMenuItemsParams } from 'ag-grid-community';
+import type { ColDef, ICellRendererParams, GetContextMenuItemsParams, GridApi } from 'ag-grid-community';
 import { createPortal } from 'react-dom';
 import { GridRowDeletion } from '../../lib/gridRowDeletion';
 
@@ -63,6 +63,22 @@ const localeStringComparator = (a: unknown, b: unknown) => {
 
 export default function OffersClient() {
   const router = useRouter();
+  const defaultEnabledFilterAppliedRef = useRef(false);
+
+  const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
+    if (!api || defaultEnabledFilterAppliedRef.current) return;
+    const existingModel = api.getFilterModel() as Record<string, unknown> | null;
+    const nextModel = existingModel && typeof existingModel === 'object' ? { ...existingModel } : {};
+    if ('Enabled' in nextModel) {
+      defaultEnabledFilterAppliedRef.current = true;
+      return;
+    }
+    api.setFilterModel({
+      ...nextModel,
+      Enabled: { filterType: 'set', values: ['true'] },
+    });
+    defaultEnabledFilterAppliedRef.current = true;
+  }, []);
   const handleCreateOfferClick = useCallback(() => {
     router.push('/offers/create');
   }, [router]);
@@ -273,6 +289,7 @@ export default function OffersClient() {
           endpoint="/api/offers"
           columnDefs={columnDefs}
           getContextMenuItems={offersContextMenuItems}
+          onGridReady={handleGridReady}
         />
       </div>
     </main>

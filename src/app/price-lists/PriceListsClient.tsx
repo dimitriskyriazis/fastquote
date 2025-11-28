@@ -3,7 +3,13 @@
 import React, { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import type { ColDef, GetContextMenuItemsParams, ICellRendererParams, ValueFormatterParams } from "ag-grid-community";
+import type {
+  ColDef,
+  GetContextMenuItemsParams,
+  GridApi,
+  ICellRendererParams,
+  ValueFormatterParams,
+} from "ag-grid-community";
 import { createPortal } from "react-dom";
 import styles from "./PriceListsClient.module.css";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
@@ -60,6 +66,23 @@ const PRICE_LIST_ROW_TYPE_LABEL = "price list";
 
 export default function PriceListsClient() {
   const router = useRouter();
+  const defaultEnabledFilterAppliedRef = useRef(false);
+
+  const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
+    if (!api || defaultEnabledFilterAppliedRef.current) return;
+    const existingModel = api.getFilterModel() as Record<string, unknown> | null;
+    const nextModel = existingModel && typeof existingModel === "object" ? { ...existingModel } : {};
+    if ("Enabled" in nextModel) {
+      defaultEnabledFilterAppliedRef.current = true;
+      return;
+    }
+    api.setFilterModel({
+      ...nextModel,
+      Enabled: { filterType: "set", values: ["true"] },
+    });
+    defaultEnabledFilterAppliedRef.current = true;
+  }, []);
+
   const handleImportClick = useCallback(() => {
     router.push("/price-lists/import");
   }, [router]);
@@ -294,6 +317,7 @@ export default function PriceListsClient() {
           endpoint="/api/price-lists"
           columnDefs={columnDefs}
           getContextMenuItems={priceListsContextMenuItems}
+          onGridReady={handleGridReady}
           autoSizeExclusions={["ValidFromDate", "ValidToDate"]}
         />
       </div>

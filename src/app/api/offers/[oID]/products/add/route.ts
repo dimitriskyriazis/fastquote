@@ -476,7 +476,14 @@ async function handleAddProducts(
         WHERE od.OfferID = @__offerId
       );
 
-    WITH ProvidedProducts AS (
+    WITH OfferContext AS (
+      SELECT
+        o.ID AS OfferID,
+        o.PricingPolicyID
+      FROM dbo.Offer o
+      WHERE o.ID = @__offerId
+    ),
+    ProvidedProducts AS (
       SELECT DISTINCT v.ProductID, v.Seq
       FROM (VALUES ${valueClauses.join(', ')}) AS v (ProductID, Seq)
     ),
@@ -560,8 +567,8 @@ async function handleAddProducts(
       p.ListPrice,
       CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
       CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
-      0,
-      0,
+      COALESCE(discounts.TelmacoDiscountPercentage, 0),
+      COALESCE(discounts.CustomerDiscountPercentage, 0),
       CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
       0,
       0,
@@ -573,6 +580,16 @@ async function handleAddProducts(
       SYSUTCDATETIME(),
       @__modifiedBy
     FROM ProductData p
+    CROSS JOIN OfferContext oc
+    OUTER APPLY (
+      SELECT TOP (1)
+        ppr.TelmacoDiscountPercentage,
+        ppr.CustomerDiscountPercentage
+      FROM dbo.PricingPolicyRules ppr
+      WHERE ppr.PricingPolicyID = oc.PricingPolicyID
+        AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
+      ORDER BY CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END, ppr.ID DESC
+    ) AS discounts
     ORDER BY p.Seq;
   `;
 
