@@ -129,9 +129,9 @@ export default function ProductHistoryGrid({ rows }: Props) {
     { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', width: 200, minWidth: 200, suppressHeaderMenuButton: true, valueFormatter: (p: ValueFormatterParams<HistoryRow>) => p.value ? new Date(p.value as string | number | Date).toLocaleDateString() : '' },
     { field: 'CustomerName', headerName: 'Customer', filter: 'agTextColumnFilter', width: 200, suppressHeaderMenuButton: true },
     { field: 'ListPrice', headerName: 'List Price', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: currencyFormatter, suppressHeaderMenuButton: true },
-    { field: 'CustomerDiscount', headerName: 'Customer Disc.', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: percentFormatter, suppressHeaderMenuButton: true },
+    { field: 'CustomerDiscount', headerName: 'Customer Discount', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: percentFormatter, suppressHeaderMenuButton: true },
     { field: 'NetUnitPrice', headerName: 'Net Unit Price', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 150, valueFormatter: currencyFormatter, suppressHeaderMenuButton: true },
-    { field: 'TelmacoDiscount', headerName: 'Telamco Discount', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 160, valueFormatter: percentFormatter, suppressHeaderMenuButton: true },
+    { field: 'TelmacoDiscount', headerName: 'Telmaco Discount', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 160, valueFormatter: percentFormatter, suppressHeaderMenuButton: true },
     { field: 'NetCost', headerName: 'Net Cost', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: currencyFormatter, suppressHeaderMenuButton: true },
   ], []);
 

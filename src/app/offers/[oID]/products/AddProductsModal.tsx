@@ -172,10 +172,6 @@ export default function AddProductsModal({ oID, onClose, onAdded }: Props) {
   );
 
   const handleAddProducts = useCallback(async () => {
-    if (!selectedCategory?.OfferDetailID) {
-      showToastMessage('Select a category first', 'info');
-      return;
-    }
     if (!selectedProducts.length) {
       showToastMessage('Select one or more products first', 'info');
       return;
@@ -194,7 +190,9 @@ export default function AddProductsModal({ oID, onClose, onAdded }: Props) {
     try {
       const payload = {
         action: 'add',
-        categoryId: selectedCategory.OfferDetailID,
+        ...(selectedCategory?.OfferDetailID != null
+          ? { categoryId: selectedCategory.OfferDetailID }
+          : {}),
         products: productPayload,
       };
       const res = await fetch(endpoint, {
@@ -255,8 +253,8 @@ export default function AddProductsModal({ oID, onClose, onAdded }: Props) {
             <div className={`${styles.sectionInner} ${styles.categoriesColumn}`}>
               <div className={styles.sectionHeader}>
                 <div>
-                  <div className={styles.sectionTitle}>Categories (select one)</div>
-                  <div className={styles.sectionHint}>Showing current offer categories (scroll for more).</div>
+                  <div className={styles.sectionTitle}>Categories (select one or none)</div>
+                  <div className={styles.sectionHint}>Showing current offer categories.</div>
                 </div>
                 <div className={styles.selectedBadge}>
                   Selected: <span className={styles.selectedValue}>{selectedCategoryLabel}</span>

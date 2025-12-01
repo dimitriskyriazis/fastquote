@@ -397,35 +397,38 @@ async function handleAddProducts(
   body: Record<string, unknown>,
   auditUserId: string | number | null,
 ) {
-  const categoryId = normalizeOfferDetailId(body?.categoryId ?? (body as { CategoryID?: unknown })?.CategoryID ?? null);
-  if (categoryId == null) {
-    return NextResponse.json({ ok: false, error: 'Select a category first' }, { status: 400 });
-  }
-
+  const categoryId = normalizeOfferDetailId(
+    body?.categoryId ?? (body as { CategoryID?: unknown })?.CategoryID ?? null,
+);
   const selections = normalizeSelectionPayload((body as { products?: unknown })?.products ?? null);
   if (selections.length === 0) {
     return NextResponse.json({ ok: false, error: 'No products selected' }, { status: 400 });
   }
 
   const pool = await getPool();
-  const lookup = pool.request();
-  lookup.input('__offerId', sql.Int, offerId);
-  lookup.input('__categoryId', sql.Int, categoryId);
-  const categoryResult = await lookup.query<{
-    TreeOrdering: string | null;
-  }>(`
-    SELECT TOP (1)
-      NULLIF(LTRIM(RTRIM(ISNULL(od.TreeOrdering, ''))), '') AS TreeOrdering
-    FROM dbo.OfferDetails od
-    WHERE od.ID = @__categoryId
-      AND od.OfferID = @__offerId
-      AND ISNULL(od.IsComment, 0) = 0
-      AND ISNULL(od.ProductID, 0) = 0
-  `);
 
-  const parentTreeOrdering = categoryResult.recordset?.[0]?.TreeOrdering ?? null;
-  if (!parentTreeOrdering) {
-    return NextResponse.json({ ok: false, error: 'Invalid category selection' }, { status: 400 });
+  let parentTreeOrdering: string | null = null;
+
+  if (categoryId != null) {
+    const lookup = pool.request();
+    lookup.input('__offerId', sql.Int, offerId);
+    lookup.input('__categoryId', sql.Int, categoryId);
+    const categoryResult = await lookup.query<{
+      TreeOrdering: string | null;
+    }>(`
+      SELECT TOP (1)
+        NULLIF(LTRIM(RTRIM(ISNULL(od.TreeOrdering, ''))), '') AS TreeOrdering
+      FROM dbo.OfferDetails od
+      WHERE od.ID = @__categoryId
+        AND od.OfferID = @__offerId
+        AND ISNULL(od.IsComment, 0) = 0
+        AND ISNULL(od.ProductID, 0) = 0
+    `);
+
+    parentTreeOrdering = categoryResult.recordset?.[0]?.TreeOrdering ?? null;
+    if (!parentTreeOrdering) {
+      return NextResponse.json({ ok: false, error: 'Invalid category selection' }, { status: 400 });
+    }
   }
 
   const request = pool.request();
@@ -445,36 +448,54 @@ async function handleAddProducts(
   });
 
   const query = `
-    DECLARE @parentTree NVARCHAR(255) = NULLIF(LTRIM(RTRIM(@__parentTree)), '');
-    IF @parentTree IS NULL
-    BEGIN
-      THROW 51000, 'Invalid category selection', 1;
-    END;
+  DECLARE @parentTree NVARCHAR(255) = NULLIF(LTRIM(RTRIM(@__parentTree)), '');
+  DECLARE @prefix NVARCHAR(260);
+  DECLARE @targetSegments INT;
+  DECLARE @maxChild INT;
 
-    DECLARE @prefix NVARCHAR(260) = CONCAT(@parentTree, '.');
-    DECLARE @targetSegments INT = (LEN(@parentTree) - LEN(REPLACE(@parentTree, '.', '')) + 2);
-    DECLARE @maxChild INT =
-      (
-        SELECT MAX(
-          TRY_CONVERT(INT, RIGHT(t.TreeOrderingTrimmed, CHARINDEX('.', REVERSE(t.TreeOrderingTrimmed) + '.') - 1))
+  IF @parentTree IS NULL
+  BEGIN
+    -- No category selected: find max top-level TreeOrdering
+    SELECT @maxChild =
+      MAX(
+        TRY_CONVERT(
+          INT,
+          NULLIF(LTRIM(RTRIM(od.TreeOrdering)), '')
         )
-        FROM (
-          SELECT LTRIM(RTRIM(ISNULL(od.TreeOrdering, ''))) AS TreeOrderingTrimmed
-          FROM dbo.OfferDetails od
-          WHERE od.OfferID = @__offerId
-        ) AS t
-        WHERE t.TreeOrderingTrimmed <> ''
-          AND t.TreeOrderingTrimmed LIKE CONCAT(@prefix, '%')
-          AND (LEN(t.TreeOrderingTrimmed) - LEN(REPLACE(t.TreeOrderingTrimmed, '.', '')) + 1) = @targetSegments
-      );
-    SET @maxChild = ISNULL(@maxChild, 0);
+      )
+    FROM dbo.OfferDetails od
+    WHERE od.OfferID = @__offerId;
 
-    DECLARE @nextOrdering INT =
-      (
-        SELECT ISNULL(MAX(ISNULL(od.Ordering, 0)), 0) + 1
-        FROM dbo.OfferDetails od
-        WHERE od.OfferID = @__offerId
-      );
+    SET @maxChild = ISNULL(@maxChild, 0);
+  END
+  ELSE
+  BEGIN
+    SET @prefix = CONCAT(@parentTree, '.');
+    SET @targetSegments = (LEN(@parentTree) - LEN(REPLACE(@parentTree, '.', '')) + 2);
+
+    SELECT @maxChild =
+      MAX(
+        TRY_CONVERT(INT, RIGHT(t.TreeOrderingTrimmed, CHARINDEX('.', REVERSE(t.TreeOrderingTrimmed) + '.') - 1))
+      )
+    FROM (
+      SELECT LTRIM(RTRIM(ISNULL(od.TreeOrdering, ''))) AS TreeOrderingTrimmed
+      FROM dbo.OfferDetails od
+      WHERE od.OfferID = @__offerId
+    ) AS t
+    WHERE t.TreeOrderingTrimmed <> ''
+      AND t.TreeOrderingTrimmed LIKE CONCAT(@prefix, '%')
+      AND (LEN(t.TreeOrderingTrimmed) - LEN(REPLACE(t.TreeOrderingTrimmed, '.', '')) + 1) = @targetSegments;
+
+    SET @maxChild = ISNULL(@maxChild, 0);
+  END;
+
+  DECLARE @nextOrdering INT =
+    (
+      SELECT ISNULL(MAX(ISNULL(od.Ordering, 0)), 0) + 1
+      FROM dbo.OfferDetails od
+      WHERE od.OfferID = @__offerId
+    );
+
 
     WITH OfferContext AS (
       SELECT
@@ -551,9 +572,13 @@ async function handleAddProducts(
     OUTPUT INSERTED.ID AS OfferDetailID, INSERTED.TreeOrdering
     SELECT
       @__offerId,
-      @__categoryId,
-      CONCAT(@parentTree, '.', @maxChild + ROW_NUMBER() OVER (ORDER BY p.Seq)),
+      CASE WHEN @parentTree IS NULL THEN NULL ELSE @__categoryId END,
+      CASE
+        WHEN @parentTree IS NULL THEN CONVERT(NVARCHAR(255), @maxChild + ROW_NUMBER() OVER (ORDER BY p.Seq))
+        ELSE CONCAT(@parentTree, '.', @maxChild + ROW_NUMBER() OVER (ORDER BY p.Seq))
+      END,
       @nextOrdering + ROW_NUMBER() OVER (ORDER BY p.Seq) - 1,
+
       NULL,
       0,
       p.ProductID,
