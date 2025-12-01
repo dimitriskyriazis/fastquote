@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import "ag-grid-community/styles/ag-theme-quartz.css";
 import SideNav from "./components/SideNav";
+import { AuditUserProvider } from "./components/AuditUserProvider";
+import AuditUserPrompt from "./components/AuditUserPrompt";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -25,10 +27,13 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <div className="app-shell">
-          <SideNav />
-          <div className="app-content">{children}</div>
-        </div>
+        <AuditUserProvider>
+          <AuditUserPrompt />
+          <div className="app-shell">
+            <SideNav />
+            <div className="app-content">{children}</div>
+          </div>
+        </AuditUserProvider>
       </body>
     </html>
   );

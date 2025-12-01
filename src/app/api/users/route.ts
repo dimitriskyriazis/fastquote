@@ -3,8 +3,7 @@ import { getPool } from '../../../lib/sql';
 
 type UserRecord = {
   Id: number;
-  FullName: string | null;
-  Email: string | null;
+  UserName: string | null;
 };
 
 export async function GET() {
@@ -14,18 +13,16 @@ export async function GET() {
     const query = `
       SELECT
         Id,
-        FullName,
-        Email
+        UserName
       FROM dbo.AspNetUsers
       ORDER BY
-        CASE WHEN FullName IS NULL OR LTRIM(RTRIM(FullName)) = '' THEN 1 ELSE 0 END,
-        FullName
+        CASE WHEN UserName IS NULL OR LTRIM(RTRIM(UserName)) = '' THEN 1 ELSE 0 END,
+        UserName
     `;
     const result = await request.query<UserRecord>(query);
     const users = (result.recordset ?? []).map((user) => ({
       id: user.Id,
-      fullName: user.FullName ?? 'Unknown user',
-      email: user.Email ?? null,
+      userName: user.UserName ?? null,
     }));
     return NextResponse.json({ ok: true, users });
   } catch (err) {
