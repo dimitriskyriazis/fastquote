@@ -38,16 +38,30 @@
 .backLink {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  white-space: nowrap;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border-radius: 9999px;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background: #e5e7eb;
+  color: #0f172a;
+  font-weight: 540;
+  font-size: 0.9rem;
   text-decoration: none;
-  color: inherit;
-  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, transform 120ms ease;
+}
+
+.backLink:hover {
+  transform: translateY(-1px);
 }
 
 .backLinkAbsolute {
   position: absolute;
   left: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .headerSide {

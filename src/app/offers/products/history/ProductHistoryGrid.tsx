@@ -64,7 +64,7 @@ export default function ProductHistoryGrid({ rows }: Props) {
     sortable: true,
     filter: true,
     floatingFilter: true,
-    enableRowGroup: true,
+    enableRowGroup: false,
     filterParams: { buttons: ['apply', 'clear'], closeOnApply: true },
     minWidth: 80,
   }), []);
@@ -128,12 +128,12 @@ export default function ProductHistoryGrid({ rows }: Props) {
     { field: 'OfferID', headerName: 'Offer ID', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 90, suppressHeaderMenuButton: true },
     { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', width: 107, minWidth: 107, maxWidth: 107, suppressAutoSize: true, 
       suppressHeaderMenuButton: true, valueFormatter: (p: ValueFormatterParams<HistoryRow>) => p.value ? new Date(p.value as string | number | Date).toLocaleDateString() : '' },
-    { field: 'CustomerName', headerName: 'Customer', filter: 'agTextColumnFilter', width: 200, suppressHeaderMenuButton: true },
-    { field: 'ListPrice', headerName: 'List Price', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: currencyFormatter, suppressHeaderMenuButton: true },
-    { field: 'CustomerDiscount', headerName: 'Customer Discount', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: percentFormatter, suppressHeaderMenuButton: true },
-    { field: 'NetUnitPrice', headerName: 'Net Unit Price', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 150, valueFormatter: currencyFormatter, suppressHeaderMenuButton: true },
-    { field: 'TelmacoDiscount', headerName: 'Telmaco Discount', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 160, valueFormatter: percentFormatter, suppressHeaderMenuButton: true },
-    { field: 'NetCost', headerName: 'Net Cost', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: currencyFormatter, suppressHeaderMenuButton: true },
+    { field: 'CustomerName', headerName: 'Customer', filter: 'agTextColumnFilter', width: 200, suppressHeaderMenuButton: true, enableRowGroup: true },
+    { field: 'ListPrice', headerName: 'List Price', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: currencyFormatter, suppressHeaderMenuButton: true, enableRowGroup: true },
+    { field: 'CustomerDiscount', headerName: 'Customer Discount', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: percentFormatter, suppressHeaderMenuButton: true, enableRowGroup: true },
+    { field: 'NetUnitPrice', headerName: 'Net Unit Price', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 150, valueFormatter: currencyFormatter, suppressHeaderMenuButton: true, enableRowGroup: true },
+    { field: 'TelmacoDiscount', headerName: 'Telmaco Discount', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 160, valueFormatter: percentFormatter, suppressHeaderMenuButton: true, enableRowGroup: true },
+    { field: 'NetCost', headerName: 'Net Cost', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: currencyFormatter, suppressHeaderMenuButton: true, enableRowGroup: true },
   ], []);
 
   return (

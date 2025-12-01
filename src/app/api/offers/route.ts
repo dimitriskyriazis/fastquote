@@ -39,10 +39,12 @@ type DateFilterModel = {
 type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel | DateFilterModel;
 
 type GridRequest = {
-  startRow: number;
-  endRow: number;
+  startRow?: number;
+  endRow?: number;
   filterModel?: Record<string, KnownFilterModel> | null;
   sortModel?: Array<{ colId: string; sort: 'asc' | 'desc' }>;
+  rowGroupCols?: Array<{ field?: string | null; colId?: string | null }>;
+  groupKeys?: Array<string | null>;
   // rowGroupCols, pivotCols, etc. available if enabling them later
 };
 
@@ -90,6 +92,68 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferVersion: 'dbo.Offer.OfferVersion',
   Enabled: 'dbo.Offer.Enabled',
   OfferDate: 'dbo.Offer.OfferDate',
+};
+
+const ALLOWED_ROW_GROUP_FIELDS = new Set([
+  'CustomerName',
+  'PricingPolicyName',
+  'SalesMarket',
+  'SalesDivision',
+  'SalesPerson',
+  'OfferStatus',
+]);
+
+type GroupField = {
+  field: string;
+  expression: string;
+};
+
+const combineWhereClauses = (...clauses: Array<string | undefined>) => {
+  const cleaned = clauses
+    .map((clause) => clause?.trim())
+    .filter((clause): clause is string => typeof clause === 'string' && clause.length > 0)
+    .map((clause) => clause.replace(/^\s*WHERE\s+/i, '').trim())
+    .filter((clause) => clause.length > 0);
+  if (cleaned.length === 0) return '';
+  return `WHERE ${cleaned.join(' AND ')}`;
+};
+
+const resolveGroupingFields = (rowGroupCols?: GridRequest['rowGroupCols']): GroupField[] => {
+  if (!Array.isArray(rowGroupCols) || rowGroupCols.length === 0) return [];
+  const resolved: GroupField[] = [];
+  for (const col of rowGroupCols) {
+    const candidate = typeof col.field === 'string' && col.field.length > 0
+      ? col.field
+      : typeof col.colId === 'string' && col.colId.length > 0
+        ? col.colId
+        : null;
+    if (!candidate || !ALLOWED_ROW_GROUP_FIELDS.has(candidate)) {
+      return [];
+    }
+    const expression = COLUMN_EXPRESSIONS[candidate] ?? `[${candidate}]`;
+    resolved.push({ field: candidate, expression });
+  }
+  return resolved;
+};
+
+const buildGroupKeyFilter = (fields: GroupField[], keys: Array<string | null>) => {
+  const clauses: string[] = [];
+  const params: QueryParam[] = [];
+  for (let idx = 0; idx < keys.length && idx < fields.length; idx += 1) {
+    const key = keys[idx];
+    const expression = fields[idx].expression;
+    if (key === null) {
+      clauses.push(`${expression} IS NULL`);
+      continue;
+    }
+    const paramName = `__group_key_${idx}`;
+    clauses.push(`${expression} = @${paramName}`);
+    params.push({ key: paramName, value: key });
+  }
+  if (clauses.length === 0) {
+    return { clause: '', params };
+  }
+  return { clause: `WHERE ${clauses.join(' AND ')}`, params };
 };
 
 // Map a basic AG Grid filter model to SQL WHERE snippets (parameterized)
@@ -226,8 +290,7 @@ export async function POST(req: NextRequest) {
     const startRow = requestPayload.startRow ?? 0;
     const endRow = requestPayload.endRow ?? startRow + 100;
     const pageSize = Math.max(1, Math.min(1000, endRow - startRow));
-    const offset = startRow;
-
+    const offset = Math.max(0, startRow);
 
     const select = `
       SELECT
@@ -263,14 +326,66 @@ export async function POST(req: NextRequest) {
     `;
 
     const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);
-    const order = buildOrder(requestPayload.sortModel) || 'ORDER BY dbo.Offer.Description'; // default sort
+    const defaultOrder = 'ORDER BY dbo.Offer.Description';
+    const orderClause = buildOrder(requestPayload.sortModel) || defaultOrder;
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
-    const dataSql = `${select} ${from} ${where} ${order} ${paging}`;
+    const groupingFields = resolveGroupingFields(requestPayload.rowGroupCols);
+    const rawGroupKeys = Array.isArray(requestPayload.groupKeys) ? requestPayload.groupKeys : [];
+    const groupKeys = rawGroupKeys.slice(0, groupingFields.length);
+    const parentFilter = groupingFields.length > 0
+      ? buildGroupKeyFilter(groupingFields, groupKeys)
+      : { clause: '', params: [] };
+    const groupLevel = Math.min(groupKeys.length, groupingFields.length);
 
     const pool = await getPool();
-    const dataReq = pool.request();
-    whereParams.forEach(p => dataReq.input(p.key, p.value));
+    const bindParams = (request: SqlRequest, paramsList: QueryParam[]) => {
+      paramsList.forEach((param) => request.input(param.key, param.value));
+      return request;
+    };
+
+    if (groupingFields.length > 0 && groupLevel < groupingFields.length) {
+      const groupWhere = combineWhereClauses(where, parentFilter.clause);
+      const countReq = bindParams(pool.request(), [...whereParams, ...parentFilter.params]);
+      const countSql = `
+        SELECT COUNT(DISTINCT ${groupingFields[groupLevel].expression}) AS __groupCount
+        ${from}
+        ${groupWhere}
+      `;
+      const countRes = await countReq.query<{ __groupCount: number }>(countSql);
+      const totalGroupCount = Number(countRes.recordset?.[0]?.__groupCount ?? 0);
+
+      const groupReq = bindParams(pool.request(), [...whereParams, ...parentFilter.params]);
+      groupReq.input('__offset', sql.Int, offset);
+      groupReq.input('__limit', sql.Int, pageSize);
+      const groupSql = `
+        SELECT DISTINCT ${groupingFields[groupLevel].expression} AS GroupValue
+        ${from}
+        ${groupWhere}
+        ORDER BY ${groupingFields[groupLevel].expression}
+        ${paging}
+      `;
+      const groupRes = await groupReq.query<{ GroupValue: string | null }>(groupSql);
+      const rows = (groupRes.recordset ?? []).map((row) => {
+        const value = row.GroupValue ?? null;
+        return {
+          group: true,
+          key: value === null ? null : String(value),
+          field: groupingFields[groupLevel].field,
+          [groupingFields[groupLevel].field]: value,
+        };
+      });
+
+      return NextResponse.json({ ok: true, rows, rowCount: totalGroupCount });
+    }
+
+    const appliedWhere = groupingFields.length > 0
+      ? combineWhereClauses(where, parentFilter.clause)
+      : where;
+    const appliedParams = [...whereParams, ...parentFilter.params];
+
+    const dataSql = `${select} ${from} ${appliedWhere} ${orderClause} ${paging}`;
+    const dataReq = bindParams(pool.request(), appliedParams);
     dataReq.input('__offset', sql.Int, offset);
     dataReq.input('__limit', sql.Int, pageSize);
     const dataRes = await dataReq.query<OfferRowWithCount>(dataSql);

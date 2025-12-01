@@ -253,7 +253,7 @@ export default function PriceListsClient() {
         suppressColumnsToolPanel: true,
       },
       { field: "Name", headerName: "Price List", filter: "agTextColumnFilter" },
-      { field: "SupplierName", headerName: "Supplier", filter: "agTextColumnFilter" },
+      { field: "SupplierName", headerName: "Supplier", filter: "agTextColumnFilter", enableRowGroup: true },
       {
         field: "ValidFromDate",
         headerName: "Valid From",

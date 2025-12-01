@@ -63,6 +63,7 @@ type PriceListProductRow = {
   Warning: string | number | boolean | null;
   Enabled: boolean | number | null;
   PartNumber: string | null;
+  ModelNumber: string | null;
   PriceListID: number | null;
   PriceListItemID: number | null;
 };
@@ -73,6 +74,7 @@ type PriceListProductRowWithCount = PriceListProductRow & {
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   Description: "dbo.Products.Description",
+  ModelNumber: "dbo.Products.ModelNumber",
   ListPrice: "dbo.PriceListItems.ListPrice",
   Warning: "dbo.PriceListItems.Warning",
   Enabled: "dbo.PriceListItems.Enabled",
@@ -243,6 +245,7 @@ export async function POST(
       SELECT
         COUNT_BIG(1) OVER () AS __totalCount,
         dbo.Products.Description,
+        dbo.Products.ModelNumber,
         dbo.PriceListItems.ListPrice,
         dbo.PriceListItems.Warning,
         dbo.PriceListItems.Enabled,

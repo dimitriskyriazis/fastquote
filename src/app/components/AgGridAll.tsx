@@ -718,6 +718,10 @@ export default function AgGridAll({
       : result;
   }, [getContextMenuItems, clearContextMenuRow]);
 
+  const handleColumnRowGroupChanged = useCallback(() => {
+    autoSizeColumns();
+  }, [autoSizeColumns]);
+
   // Apply/remove the context menu highlight directly on row elements so it always clears
   useEffect(() => {
     const shell = shellRef.current;
@@ -757,6 +761,10 @@ export default function AgGridAll({
     // Keep rows visible for responsiveness while requesting the sorted data set from the server
     refreshServerSideData(event.api, { purge: false });
   }, []);
+
+  const handleModelUpdated = useCallback(() => {
+    autoSizeColumns();
+  }, [autoSizeColumns]);
 
   const mergedGetRowClass = useCallback((params: RowClassParams<RowData>) => {
     const parts: string[] = [];
@@ -1282,9 +1290,11 @@ export default function AgGridAll({
           onGridReady={onGridReady}
           onFilterChanged={handleFilterChanged}
           onSortChanged={handleSortChanged}
+          onModelUpdated={handleModelUpdated}
           onCellClicked={handleActionCellClick}
           onCellValueChanged={handleCellValueChanged}
           onSelectionChanged={externalSelectionChangedHandler ? handleSelectionChanged : undefined}
+          onColumnRowGroupChanged={handleColumnRowGroupChanged}
         />
         {/* Row hover overlay */}
         <div

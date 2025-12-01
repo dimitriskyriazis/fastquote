@@ -257,7 +257,7 @@ export default function OffersClient() {
       filter: 'agTextColumnFilter',
       comparator: localeStringComparator,
     },
-    { field: 'Title', headerName: 'Title', filter: 'agTextColumnFilter', enableRowGroup: true },
+    { field: 'Title', headerName: 'Title', filter: 'agTextColumnFilter' },
     { field: 'CustomerName', headerName: 'Customer Name', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'PricingPolicyName', headerName: 'Pricing Policy', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'SalesMarket', headerName: 'Market', filter: 'agTextColumnFilter', enableRowGroup: true },
@@ -268,7 +268,7 @@ export default function OffersClient() {
     { field: 'oID', headerName: 'Offer ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
-    { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', enableRowGroup: true, valueFormatter: (params) => formatDateDMY(params.value),
+    { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', valueFormatter: (params) => formatDateDMY(params.value),
        width: 107, minWidth: 107, maxWidth: 107, suppressAutoSize: true },
     { field: 'OfferVersion', headerName: 'Offer Version', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     {
@@ -283,7 +283,6 @@ export default function OffersClient() {
         buttons: ['apply', 'clear'],
         closeOnApply: true,
       },
-      enableRowGroup: true,
     },
   ], [ActionCell]);
 

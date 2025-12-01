@@ -35,5 +35,11 @@ export default async function Page({
   const headingBase = priceListName ?? buildFallbackHeading(decodedId);
   const headingText = `${headingBase} - Products`;
 
-  return <PriceListProductsClient priceListId={decodedId} headingText={headingText} />;
+  return (
+    <PriceListProductsClient
+      priceListId={decodedId}
+      headingText={headingText}
+      priceListLabel={headingBase}
+    />
+  );
 }

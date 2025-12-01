@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
+import type { Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
 
 type TextFilterModel = {
@@ -45,10 +46,12 @@ type DateFilterModel = {
 type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel | DateFilterModel;
 
 type GridRequest = {
-  startRow: number;
-  endRow: number;
+  startRow?: number;
+  endRow?: number;
   filterModel?: Record<string, KnownFilterModel> | null;
   sortModel?: Array<{ colId: string; sort: "asc" | "desc" }>;
+  rowGroupCols?: Array<{ field?: string | null; colId?: string | null }>;
+  groupKeys?: Array<string | null>;
 };
 
 type DeleteRequest = {
@@ -205,6 +208,45 @@ const normalizePriceListId = (value: unknown): number | null => {
   return null;
 };
 
+type GroupField = {
+  field: string;
+  expression: string;
+};
+
+const ALLOWED_ROW_GROUP_FIELD = "SupplierName";
+
+const combineWhereClauses = (...clauses: Array<string | undefined>) => {
+  const cleaned = clauses
+    .map((clause) => clause?.trim())
+    .filter((clause): clause is string => typeof clause === "string" && clause.length > 0)
+    .map((clause) => clause.replace(/^\s*WHERE\s+/i, "").trim())
+    .filter((clause) => clause.length > 0);
+  if (cleaned.length === 0) return "";
+  return `WHERE ${cleaned.join(" AND ")}`;
+};
+
+const resolveGroupingField = (rowGroupCols?: GridRequest["rowGroupCols"]): GroupField | null => {
+  if (!Array.isArray(rowGroupCols) || rowGroupCols.length === 0) return null;
+  const first = rowGroupCols[0];
+  const candidate =
+    (typeof first.field === "string" && first.field.length > 0 && first.field) ??
+    (typeof first.colId === "string" && first.colId.length > 0 && first.colId) ??
+    null;
+  if (!candidate || candidate !== ALLOWED_ROW_GROUP_FIELD) return null;
+  const expression = COLUMN_EXPRESSIONS[ALLOWED_ROW_GROUP_FIELD] ?? `[${ALLOWED_ROW_GROUP_FIELD}]`;
+  return { field: ALLOWED_ROW_GROUP_FIELD, expression };
+};
+
+const buildGroupKeyFilter = (field: GroupField, key: string | null) => {
+  if (key === null) {
+    return { clause: `WHERE ${field.expression} IS NULL`, params: [] as QueryParam[] };
+  }
+  return {
+    clause: `WHERE ${field.expression} = @__group_key`,
+    params: [{ key: "__group_key", value: key }],
+  };
+};
+
 export async function POST(req: NextRequest) {
   try {
     const requestPayload = await readGridRequest(req);
@@ -234,11 +276,62 @@ export async function POST(req: NextRequest) {
     const order = buildOrder(requestPayload.sortModel) || "ORDER BY dbo.PriceLists.Name";
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
-    const dataSql = `${select} ${from} ${where} ${order} ${paging}`;
+    const groupingField = resolveGroupingField(requestPayload.rowGroupCols);
+    const rawGroupKeys = Array.isArray(requestPayload.groupKeys) ? requestPayload.groupKeys : [];
+    const groupKey = rawGroupKeys.length > 0 ? rawGroupKeys[0] : null;
+    const parentFilter =
+      groupingField && rawGroupKeys.length > 0
+        ? buildGroupKeyFilter(groupingField, groupKey)
+        : { clause: "", params: [] as QueryParam[] };
+    const groupLevel = groupingField ? Math.min(rawGroupKeys.length, 1) : 0;
 
     const pool = await getPool();
-    const dataReq = pool.request();
-    whereParams.forEach((p) => dataReq.input(p.key, p.value));
+    const bindParams = (request: SqlRequest, paramsList: QueryParam[]) => {
+      paramsList.forEach((param) => request.input(param.key, param.value));
+      return request;
+    };
+
+    if (groupingField && groupLevel < 1) {
+      const groupWhere = combineWhereClauses(where, parentFilter.clause);
+
+      const countReq = bindParams(pool.request(), [...whereParams, ...parentFilter.params]);
+      const countSql = `
+        SELECT COUNT(DISTINCT ${groupingField.expression}) AS __groupCount
+        ${from}
+        ${groupWhere}
+      `;
+      const countRes = await countReq.query<{ __groupCount: number }>(countSql);
+      const totalGroupCount = Number(countRes.recordset?.[0]?.__groupCount ?? 0);
+
+      const groupReq = bindParams(pool.request(), [...whereParams, ...parentFilter.params]);
+      groupReq.input("__offset", sql.Int, offset);
+      groupReq.input("__limit", sql.Int, pageSize);
+      const groupSql = `
+        SELECT DISTINCT ${groupingField.expression} AS GroupValue
+        ${from}
+        ${groupWhere}
+        ORDER BY ${groupingField.expression}
+        ${paging}
+      `;
+      const groupRes = await groupReq.query<{ GroupValue: string | null }>(groupSql);
+      const groupRows = (groupRes.recordset ?? []).map((row) => {
+        const value = row.GroupValue ?? null;
+        return {
+          group: true,
+          key: value,
+          field: groupingField.field,
+          [groupingField.field]: value,
+        };
+      });
+
+      return NextResponse.json({ ok: true, rows: groupRows, rowCount: totalGroupCount });
+    }
+
+    const appliedWhere = combineWhereClauses(where, parentFilter.clause);
+    const appliedParams = [...whereParams, ...parentFilter.params];
+    const dataSql = `${select} ${from} ${appliedWhere} ${order} ${paging}`;
+
+    const dataReq = bindParams(pool.request(), appliedParams);
     dataReq.input("__offset", sql.Int, offset);
     dataReq.input("__limit", sql.Int, pageSize);
     const dataRes = await dataReq.query<PriceListRowWithCount>(dataSql);

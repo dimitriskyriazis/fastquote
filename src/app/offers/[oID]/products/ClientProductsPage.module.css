@@ -5,6 +5,17 @@
   gap: 8px;
 }
 
+.leftColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.leftRequestedRow {
+  display: flex;
+  align-items: center;
+}
+
 .topControls {
   display: flex;
   align-items: center;
@@ -24,6 +35,7 @@
   border-radius: 9999px;
   padding: 6px 14px;
   font-size: 0.85rem;
+  font-weight: 540;
   white-space: nowrap;
   cursor: pointer;
   transition: background-color 140ms ease, transform 120ms ease, box-shadow 150ms ease;
@@ -75,12 +87,14 @@
   font-size: 0.9rem;
   background: #e5e7eb;
   color: #0f172a;
+  font-weight: 540;
   cursor: pointer;
   transition: background-color 140ms ease, color 140ms ease;
 }
 
 .manualToggle:hover {
   background: #d1d5db;
+  transform: translateY(-1px);
 }
 
 .manualToggleActive {

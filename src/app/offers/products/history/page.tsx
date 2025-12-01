@@ -63,17 +63,31 @@ export default async function Page({
   const modelNumber = toNullable(getFirstParam(resolvedSearch.modelNumber));
   const offerId = toNullable(getFirstParam(resolvedSearch.offerId));
   const description = toNullable(getFirstParam(resolvedSearch.description));
+  const backHrefParam = toNullable(getFirstParam(resolvedSearch.backHref));
+  const backLabelParam = toNullable(getFirstParam(resolvedSearch.backLabel));
+
+  const resolvedBackHref =
+    backHrefParam ??
+    (offerId ? `/offers/${encodeURIComponent(offerId)}/products` : '/offers');
+  const resolvedBackLabel = backLabelParam ?? (offerId ? `offer ${offerId}` : 'offers');
+
+  const renderHeader = () => (
+    <div className={`${styles.headerRow} ${styles.headerRowCentered}`}>
+      <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
+        <Link href={resolvedBackHref} className={styles.backLink}>
+          <span aria-hidden="true">←</span>
+          Back to {resolvedBackLabel}
+        </Link>
+      </div>
+      <h1 className={`${styles.heading} ${styles.headingCentered}`}>Product history</h1>
+      <div className={`${styles.headerSide} ${styles.headerSideEnd}`} aria-hidden="true" />
+    </div>
+  );
 
   if (!partNumber && !modelNumber) {
     return (
       <main className={styles.page}>
-        <div className={`${styles.headerRow} ${styles.headerRowCentered}`}>
-          <Link href="/offers" className={`${styles.backLink} ${styles.backLinkAbsolute}`}>
-            <span aria-hidden="true">←</span>
-            Back to offers
-          </Link>
-          <h1 className={styles.heading}>Product history</h1>
-        </div>
+        {renderHeader()}
         <div className={historyStyles.tableWrapper}>
           <div className={historyStyles.emptyState}>Select a product to view its history.</div>
         </div>
@@ -82,16 +96,9 @@ export default async function Page({
   }
 
   const historyRows = await fetchProductHistory(partNumber, modelNumber);
-  const backHref = offerId ? `/offers/${encodeURIComponent(offerId)}/products` : '/offers';
   return (
     <main className={styles.page}>
-      <div className={`${styles.headerRow} ${styles.headerRowCentered}`}>
-        <Link href={backHref} className={`${styles.backLink} ${styles.backLinkAbsolute}`}>
-          <span aria-hidden="true">←</span>
-          Back to {offerId ? `offer ${offerId}` : 'offers'}
-        </Link>
-        <h1 className={styles.heading}>Product history</h1>
-      </div>
+      {renderHeader()}
 
       <div className={styles.pageBody}>
         <ProductHistoryMetaGrid

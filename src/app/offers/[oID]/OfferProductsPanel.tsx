@@ -973,6 +973,7 @@ const productColumnDefs: ColDef[] = useMemo(() => [
           refreshToken={refreshToken}
           autoSizeExclusions={['Description']}
           onTotalsChange={handleTotalsChange}
+          rowGroupPanelShow="never"
         />
       </div>
       <div className={styles.totalsBar}>

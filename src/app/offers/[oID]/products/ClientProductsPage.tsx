@@ -112,10 +112,23 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
     <main className={layoutStyles.page}>
       <div className={layoutStyles.headerRow}>
         <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideStart}`}>
-          <Link href="/offers" className={layoutStyles.backLink}>
-            <span aria-hidden="true">←</span>
-            Back to offers
-          </Link>
+          <div className={toolbarStyles.leftColumn}>
+            <div className={toolbarStyles.topControls}>
+              <Link href="/offers" className={layoutStyles.backLink}>
+                <span aria-hidden="true">←</span>
+                Back to offers
+              </Link>
+            </div>
+            <div className={toolbarStyles.leftRequestedRow}>
+              <button
+                type="button"
+                className={`${toolbarStyles.button} ${toolbarStyles.buttonProduct}`}
+                disabled
+              >
+                Add Requested Products
+              </button>
+            </div>
+          </div>
         </div>
         <h1 className={`${layoutStyles.heading} ${layoutStyles.headingCentered}`}>{headingText}</h1>
         <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>

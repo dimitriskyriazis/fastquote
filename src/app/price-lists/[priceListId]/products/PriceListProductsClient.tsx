@@ -3,7 +3,13 @@
 import React, { useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import type { ColDef, GetContextMenuItemsParams, ValueFormatterParams } from "ag-grid-community";
+import { useRouter } from "next/navigation";
+import type {
+  ColDef,
+  GetContextMenuItemsParams,
+  MenuItemDef,
+  ValueFormatterParams,
+} from "ag-grid-community";
 import layoutStyles from "../../priceListDetail.module.css";
 import pageStyles from "./PriceListProductsPage.module.css";
 import { GridRowDeletion } from "../../../../lib/gridRowDeletion";
@@ -16,12 +22,14 @@ const AgGridAll = dynamic(() => import("../../../components/AgGridAll"), {
 type Props = {
   priceListId: string;
   headingText: string;
+  priceListLabel: string;
 };
 
 type PriceListProductRowGrid = {
   PriceListItemID?: number | null;
   Description?: string | null;
   PartNumber?: string | null;
+  ModelNumber?: string | null;
 };
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
@@ -65,11 +73,26 @@ const resolvePriceListRowLabel = (row: PriceListProductRowGrid | null | undefine
 
 const PRICE_LIST_ROW_TYPE_LABEL = "price list item";
 
-export default function PriceListProductsClient({ priceListId, headingText }: Props) {
+const productHistoryMenuIcon = `
+  <span class="telquote-menu-icon telquote-menu-icon--history" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 5a7 7 0 1 1-7 7" />
+      <path d="M12 9v4l2.6 1.5" />
+      <path d="M5 7 4 4l3 1" />
+    </svg>
+  </span>
+`;
+
+export default function PriceListProductsClient({
+  priceListId,
+  headingText,
+  priceListLabel,
+}: Props) {
   const endpoint = useMemo(
     () => `/api/price-lists/${encodeURIComponent(priceListId)}/products`,
     [priceListId],
   );
+  const router = useRouter();
 
   const columnDefs: ColDef[] = useMemo(
     () => [
@@ -156,6 +179,9 @@ export default function PriceListProductsClient({ priceListId, headingText }: Pr
     [],
   );
 
+  const historyBackHref = `/price-lists/${encodeURIComponent(priceListId)}/products`;
+  const historyBackLabel = priceListLabel?.trim() ? priceListLabel.trim() : "price list";
+
   const priceListRowDeletion = useMemo(
     () =>
       new GridRowDeletion<PriceListProductRowGrid>({
@@ -174,9 +200,60 @@ export default function PriceListProductsClient({ priceListId, headingText }: Pr
   );
 
   const priceListContextMenuItems = useCallback(
-    (params: GetContextMenuItemsParams<Record<string, unknown>>) =>
-      priceListRowDeletion.getContextMenuItems(params),
-    [priceListRowDeletion],
+    (params: GetContextMenuItemsParams<Record<string, unknown>>) => {
+      const baseItems = priceListRowDeletion.getContextMenuItems(params) ?? [];
+      const items = [...baseItems];
+      const rowData = params.node?.data ?? null;
+      if (!rowData) {
+        return items;
+      }
+
+      const normalizeText = (value: unknown) => {
+        if (typeof value === "string") {
+          const trimmed = value.trim();
+          return trimmed.length > 0 ? trimmed : null;
+        }
+        if (value == null) return null;
+        const str = String(value).trim();
+        return str.length > 0 ? str : null;
+      };
+
+      const partNumber = normalizeText(rowData.PartNumber);
+      const description = normalizeText(rowData.Description);
+      const modelNumber = normalizeText((rowData as { ModelNumber?: unknown }).ModelNumber);
+
+      if (!partNumber && !modelNumber) {
+        return items;
+      }
+
+      const historyItem: MenuItemDef = {
+        name: "View Product's History",
+        icon: productHistoryMenuIcon,
+        action: () => {
+          const qs = new URLSearchParams();
+          if (partNumber) qs.set("partNumber", partNumber);
+          if (modelNumber) qs.set("modelNumber", modelNumber);
+          if (description) qs.set("description", description);
+          qs.set("backHref", historyBackHref);
+          qs.set("backLabel", historyBackLabel);
+          void router.push(`/offers/products/history?${qs.toString()}`);
+        },
+      };
+
+      const deleteIndex = items.findIndex(
+        (item) =>
+          typeof item === "object" &&
+          item != null &&
+          (item as MenuItemDef).name === "Delete row",
+      );
+      if (deleteIndex >= 0) {
+        items.splice(deleteIndex, 0, historyItem);
+        return items;
+      }
+      items.push(historyItem);
+      return items;
+    },
+    [historyBackHref, historyBackLabel, priceListRowDeletion, router],
   );
 
   return (
@@ -205,6 +282,7 @@ export default function PriceListProductsClient({ priceListId, headingText }: Pr
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             getContextMenuItems={priceListContextMenuItems}
+            rowGroupPanelShow="never"
           />
         </div>
       </div>
