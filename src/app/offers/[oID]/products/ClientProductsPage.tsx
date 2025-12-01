@@ -145,7 +145,7 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
                 href={`/offers/${encodeURIComponent(oID)}/basic`}
                 className={layoutStyles.headerActionButton}
               >
-                View basic data
+                View Basic Data
               </Link>
             </div>
             <div className={toolbarStyles.addButtons}>

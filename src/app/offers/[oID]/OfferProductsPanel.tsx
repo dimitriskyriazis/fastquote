@@ -139,6 +139,9 @@ const normalizeDescriptionValue = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const isOfferProductCommentOrProduct = (row: Record<string, unknown> | null | undefined) =>
+  isOfferProductProduct(row) || isOfferProductComment(row);
+
 const buildCategoryAggregateGetter = (field: 'TotalPrice' | 'TotalNet' | 'TotalCost') => (
   params: ValueGetterParams<Record<string, unknown>, unknown>,
 ) => {
@@ -155,7 +158,7 @@ const buildCategoryAggregateGetter = (field: 'TotalPrice' | 'TotalNet' | 'TotalC
   params.api.forEachNode((node) => {
     if (!node?.data || node === params.node) return;
     const candidateData = node.data as Record<string, unknown>;
-    if (!isOfferProductProduct(candidateData)) return;
+    if (!isOfferProductCommentOrProduct(candidateData)) return;
     const candidatePath = parseTreeOrderingPath((candidateData as { TreeOrdering?: string | null }).TreeOrdering);
     if (candidatePath.length <= path.length) return;
     const isDescendant = path.every((segment, idx) => candidatePath[idx] === segment);
@@ -250,6 +253,7 @@ const PRICING_FIELD_LABELS: Record<string, string> = {
   TelmacoDiscount: 'Telmaco Discount',
   NetCost: 'Net Cost',
   Margin: 'Margin',
+  ListPrice: 'List Price',
 };
 
 const PRICING_EDITABLE_FIELDS = new Set(Object.keys(PRICING_FIELD_LABELS));
@@ -332,7 +336,6 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
       }
       return next;
     });
-    setCategoryChildrenKnown(true);
     setCollapsedCategoryPaths((prev) => {
       let changed = false;
       const nextCollapsed = new Set(prev);
@@ -391,7 +394,25 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
     const key = buildTreeOrderingKey(path);
     if (!categoryChildrenKnown) return true;
     return key.length > 0 && categoryPathsWithChildren.has(key);
-  }, [categoryPathsWithChildren, categoryChildrenKnown]);
+  }, [categoryChildrenKnown, categoryPathsWithChildren]);
+
+  const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
+    if (!isOfferProductCategory(row)) return;
+    if (!hasCategoryChildren(row)) return;
+    const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+    if (path.length === 0) return;
+    const key = buildTreeOrderingKey(path);
+    if (!key) return;
+    setCollapsedCategoryPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, [hasCategoryChildren]);
 
   const getRowClass = useCallback((params: RowClassParams<Record<string, unknown>>) => {
     const rowType = resolveOfferProductRowType(params.data);
@@ -429,23 +450,8 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
   }, [isCategoryRowCollapsed, isRowHiddenByCollapsedAncestor, hasCategoryChildren]);
 
   const handleRowDoubleClicked = useCallback((params: RowDoubleClickedEvent<Record<string, unknown>>) => {
-    const rowData = params.data ?? null;
-    if (!isOfferProductCategory(rowData)) return;
-    if (!hasCategoryChildren(rowData)) return;
-    const path = parseTreeOrderingPath((rowData as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
-    if (path.length === 0) return;
-    const key = buildTreeOrderingKey(path);
-    if (!key) return;
-    setCollapsedCategoryPaths((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return next;
-    });
-  }, [hasCategoryChildren]);
+    toggleCategoryCollapsed(params.data ?? null);
+  }, [toggleCategoryCollapsed]);
 
   const handleGridModelUpdated = useCallback((api: GridApi<Record<string, unknown>>) => {
     updateCategoryAncestors(api);
@@ -468,17 +474,34 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
         : `${styles.treeOrderingIndicator} ${styles.treeOrderingIndicatorEmpty}`
       : undefined;
 
+    const handleIndicatorClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      if (hasChildren) {
+        toggleCategoryCollapsed(rowData);
+      }
+    };
+
+    const indicatorLabel = hasChildren
+      ? (collapsed ? 'Expand category' : 'Collapse category')
+      : 'Category without child entries';
+
     return (
       <span className={styles.treeOrderingCell}>
-        {indicator && (
-          <span className={indicatorClass} aria-hidden="true">
-            {indicator}
-          </span>
-        )}
         <span>{value ?? ''}</span>
+        {indicator && (
+          <button
+            type="button"
+            className={`${styles.treeOrderingIndicatorButton} ${indicatorClass ?? ''}`.trim()}
+            onClick={handleIndicatorClick}
+            aria-label={indicatorLabel}
+            disabled={!hasChildren}
+          >
+            {indicator}
+          </button>
+        )}
       </span>
     );
-  }, [hasCategoryChildren, isCategoryRowCollapsed]);
+  }, [hasCategoryChildren, isCategoryRowCollapsed, toggleCategoryCollapsed]);
 
   const getRowHeight = useCallback((params: RowHeightParams<Record<string, unknown>>) => (
     isRowHiddenByCollapsedAncestor(params.data) ? 0 : 32
@@ -698,6 +721,7 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       editable: manualMode,
       singleClickEdit: manualMode,
       cellRenderer: TreeOrderingCell,
+      cellClass: 'offer-products-tree-ordering-cell',
     },
     {
       field: 'BrandName',
@@ -730,17 +754,19 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: (params) => {
-        if (!isOfferProductProduct(params.data)) return '';
+        if (!isOfferProductCommentOrProduct(params.data ?? null)) return '';
         return euroFormatter(params);
       },
       cellClassRules: productPriceListClassRules,
+      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      singleClickEdit: true,
     },
     {
       field: 'CustomerDiscount',
       headerName: 'Customer Discount',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
-      editable: (params) => isOfferProductProduct(params.data),
+      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: percentageFormatter,
     },
@@ -749,7 +775,7 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       headerName: 'Net Unit Price',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
-      editable: (params) => isOfferProductProduct(params.data),
+      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: euroFormatter,
     },
@@ -758,7 +784,7 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       headerName: 'Qty',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
-      editable: (params) => isOfferProductProduct(params.data),
+      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: zeroBlankNumberFormatter,
     },
@@ -769,7 +795,7 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       type: 'numericColumn',
       valueGetter: categoryTotalPriceGetter,
       valueFormatter: (params) => {
-        if (!isOfferProductProduct(params.data)) return '';
+        if (!isOfferProductCommentOrProduct(params.data ?? null)) return '';
         return euroFormatter(params);
       },
       cellClassRules: totalPriceCellClassRules,
@@ -795,7 +821,7 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       headerName: 'Telmaco Discount',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
-      editable: (params) => isOfferProductProduct(params.data),
+      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: percentageFormatter,
     },
@@ -804,7 +830,7 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       headerName: 'Net Cost',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
-      editable: (params) => isOfferProductProduct(params.data),
+      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: euroFormatter,
     },
@@ -813,7 +839,7 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       headerName: 'Margin',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
-      editable: (params) => isOfferProductProduct(params.data),
+      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: percentageFormatter,
     },
@@ -915,12 +941,12 @@ const productColumnDefs: ColDef[] = useMemo(() => [
     if (event.colDef.field !== 'Quantity') return;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
-    if (!isOfferProductProduct(event.data)) {
-      try {
-        event.node?.setDataValue?.('Quantity', event.oldValue ?? '');
-      } catch {
-        /* noop */
-      }
+      if (!isOfferProductCommentOrProduct(event.data)) {
+        try {
+          event.node?.setDataValue?.('Quantity', event.oldValue ?? '');
+        } catch {
+          /* noop */
+        }
       return;
     }
 
@@ -1054,9 +1080,9 @@ const productColumnDefs: ColDef[] = useMemo(() => [
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
 
-    if (!isOfferProductProduct(event.data)) {
+    if (!isOfferProductCommentOrProduct(event.data)) {
       try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
-      showToastMessage('Pricing can only be edited on product rows.', 'error');
+      showToastMessage('Pricing can only be edited on product or comment rows.', 'error');
       return;
     }
 

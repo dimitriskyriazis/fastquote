@@ -37,7 +37,7 @@ export default async function Page({
             href={`/price-lists/${encodeURIComponent(decodedId)}/products`}
             className={layoutStyles.headerActionButton}
           >
-            View products
+            View Products
           </Link>
         </div>
       </div>

@@ -271,7 +271,7 @@ export default function PriceListProductsClient({
             href={`/price-lists/${encodeURIComponent(priceListId)}/basic`}
             className={layoutStyles.headerActionButton}
           >
-            View basic data
+            View Basic Data
           </Link>
         </div>
       </div>

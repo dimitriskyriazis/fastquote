@@ -121,6 +121,7 @@ type DetailUpdateInput = {
   NetUnitPrice?: number | string | null;
   NetCost?: number | string | null;
   Margin?: number | string | null;
+  ListPrice?: number | string | null;
 };
 
 type DetailUpdateRequest = {
@@ -819,9 +820,9 @@ export async function POST(
     const query = `
       SELECT
         COUNT_BIG(1) OVER () AS __totalCount,
-        SUM(CASE WHEN od.ProductID IS NOT NULL THEN COALESCE(od.TotalPrice, 0) ELSE 0 END) OVER () AS __sumTotalPrice,
-        SUM(CASE WHEN od.ProductID IS NOT NULL THEN COALESCE(od.TotalNet, 0) ELSE 0 END) OVER () AS __sumTotalNet,
-        SUM(CASE WHEN od.ProductID IS NOT NULL THEN COALESCE(od.TotalCost, 0) ELSE 0 END) OVER () AS __sumTotalCost,
+        SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalPrice, 0) ELSE 0 END) OVER () AS __sumTotalPrice,
+        SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalNet, 0) ELSE 0 END) OVER () AS __sumTotalNet,
+        SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalCost, 0) ELSE 0 END) OVER () AS __sumTotalCost,
         od.ID AS OfferDetailID,
         od.ParentOfferDetailID,
         od.TreeOrdering AS TreeOrdering,
@@ -1015,8 +1016,9 @@ export async function PATCH(
         const hasNetUnitPrice = entry ? Object.prototype.hasOwnProperty.call(entry, 'NetUnitPrice') : false;
         const hasNetCost = entry ? Object.prototype.hasOwnProperty.call(entry, 'NetCost') : false;
         const hasMargin = entry ? Object.prototype.hasOwnProperty.call(entry, 'Margin') : false;
+        const hasListPrice = entry ? Object.prototype.hasOwnProperty.call(entry, 'ListPrice') : false;
         const hasPricingFields = hasCustomerDiscount || hasTelmacoDiscount || hasNetUnitPrice || hasNetCost || hasMargin;
-        if (!hasDescription && !hasQuantity && !hasPricingFields) return null;
+        if (!hasDescription && !hasQuantity && !hasPricingFields && !hasListPrice) return null;
 
         const description = hasDescription ? normalizeDescriptionValue(entry?.Description ?? null) : null;
         let quantity: number | null = null;
@@ -1033,6 +1035,7 @@ export async function PATCH(
         const netUnitPrice = hasNetUnitPrice ? normalizeMoneyValue(entry?.NetUnitPrice ?? null) : null;
         const netCost = hasNetCost ? normalizeMoneyValue(entry?.NetCost ?? null) : null;
         const margin = hasMargin ? normalizePercentValue(entry?.Margin ?? null, { allowNegative: true }) : null;
+        const listPrice = hasListPrice ? normalizeMoneyValue(entry?.ListPrice ?? null) : null;
 
         if (hasPricingFields) {
           const invalidPricing = (hasCustomerDiscount && customerDiscount == null)
@@ -1057,11 +1060,13 @@ export async function PATCH(
           hasNetUnitPrice,
           hasNetCost,
           hasMargin,
+          hasListPrice,
           customerDiscount,
           telmacoDiscount,
           netUnitPrice,
           netCost,
           margin,
+          listPrice,
         };
       })
       .filter((entry): entry is {
@@ -1075,11 +1080,13 @@ export async function PATCH(
         hasNetUnitPrice: boolean;
         hasNetCost: boolean;
         hasMargin: boolean;
+        hasListPrice: boolean;
         customerDiscount: number | null;
         telmacoDiscount: number | null;
         netUnitPrice: number | null;
         netCost: number | null;
         margin: number | null;
+        listPrice: number | null;
       } => Boolean(entry));
 
     if (normalizedUpdates.length === 0) {
@@ -1112,6 +1119,7 @@ export async function PATCH(
       const currentRowsRes = await baseRequest.query<{
         OfferDetailID: number;
         ProductID: number | null;
+        IsComment: number | null;
         ProductDescription: string | null;
         Quantity: number | null;
         ListPrice: number | null;
@@ -1122,9 +1130,10 @@ export async function PATCH(
         Margin: number | null;
       }>(`
         SELECT
-          od.ID AS OfferDetailID,
-          od.ProductID,
-          od.ProductDescription,
+        od.ID AS OfferDetailID,
+        od.ProductID,
+        od.IsComment,
+        od.ProductDescription,
           od.Quantity,
           od.ListPrice,
           od.CustomerDiscount,
@@ -1139,6 +1148,7 @@ export async function PATCH(
 
       const currentById = new Map<number, {
         ProductID: number | null;
+        IsComment: number | null;
         ProductDescription: string | null;
         Quantity: number | null;
         ListPrice: number | null;
@@ -1167,6 +1177,8 @@ export async function PATCH(
         TotalNet: number | null;
         TotalCost: number | null;
         GrossProfit: number | null;
+        ListPrice: number | null;
+        HasListPrice: boolean;
       }> = [];
       const errors: string[] = [];
 
@@ -1177,56 +1189,80 @@ export async function PATCH(
           return;
         }
 
-        const listPrice = normalizeMoneyValue(current.ListPrice);
+        const listPriceCandidate = entry.hasListPrice
+          ? entry.listPrice
+          : normalizeMoneyValue(current.ListPrice);
+        const fallbackListPrice = listPriceCandidate ?? entry.netUnitPrice ?? entry.netCost ?? null;
         const quantity = entry.hasQuantity
           ? entry.Quantity
           : normalizeQuantityValue(current.Quantity ?? null);
         const safeQuantity = quantity == null ? 0 : quantity;
         const pricingProvided = entry.hasCustomerDiscount || entry.hasTelmacoDiscount
           || entry.hasNetUnitPrice || entry.hasNetCost || entry.hasMargin;
+        const isCommentRow = Boolean(current.IsComment);
 
         let resolvedPricing: ResolvedPricing | null = null;
 
         if (pricingProvided) {
-          if (current.ProductID == null) {
-            errors.push('Pricing can only be updated for product rows.');
+          if (current.ProductID == null && !isCommentRow) {
+            errors.push('Pricing can only be updated for product or comment rows.');
             return;
           }
-          if (listPrice == null || Object.is(listPrice, 0)) {
+          if (fallbackListPrice == null || Object.is(fallbackListPrice, 0)) {
             errors.push('Missing list price for pricing update.');
             return;
           }
 
-          const input: PricingInput = {
-            listPrice,
-            customerDiscount: entry.hasCustomerDiscount
-              ? entry.customerDiscount
-              : normalizePercentValue(current.CustomerDiscount ?? null),
-            telmacoDiscount: entry.hasTelmacoDiscount
-              ? entry.telmacoDiscount
-              : normalizePercentValue(current.TelmacoDiscount ?? null),
-            netUnitPrice: entry.hasNetUnitPrice
-              ? entry.netUnitPrice
-              : normalizeMoneyValue(current.NetUnitPrice ?? null),
-            netCost: entry.hasNetCost
-              ? entry.netCost
-              : normalizeMoneyValue(current.NetCost ?? null),
-            margin: entry.hasMargin
-              ? entry.margin
-              : normalizePercentValue(current.Margin ?? null, { allowNegative: true }),
-            provided: {
-              customerDiscount: entry.hasCustomerDiscount,
-              telmacoDiscount: entry.hasTelmacoDiscount,
-              netUnitPrice: entry.hasNetUnitPrice,
-              netCost: entry.hasNetCost,
-              margin: entry.hasMargin,
-            },
-          };
+          if (isCommentRow) {
+            resolvedPricing = {
+              customerDiscount: entry.hasCustomerDiscount
+                ? entry.customerDiscount
+                : normalizePercentValue(current.CustomerDiscount ?? null),
+              telmacoDiscount: entry.hasTelmacoDiscount
+                ? entry.telmacoDiscount
+                : normalizePercentValue(current.TelmacoDiscount ?? null),
+              netUnitPrice: entry.hasNetUnitPrice
+                ? entry.netUnitPrice
+                : normalizeMoneyValue(current.NetUnitPrice ?? null),
+              netCost: entry.hasNetCost
+                ? entry.netCost
+                : normalizeMoneyValue(current.NetCost ?? null),
+              margin: entry.hasMargin
+                ? entry.margin
+                : normalizePercentValue(current.Margin ?? null, { allowNegative: true }),
+            };
+          } else {
+            const input: PricingInput = {
+              listPrice: fallbackListPrice,
+              customerDiscount: entry.hasCustomerDiscount
+                ? entry.customerDiscount
+                : normalizePercentValue(current.CustomerDiscount ?? null),
+              telmacoDiscount: entry.hasTelmacoDiscount
+                ? entry.telmacoDiscount
+                : normalizePercentValue(current.TelmacoDiscount ?? null),
+              netUnitPrice: entry.hasNetUnitPrice
+                ? entry.netUnitPrice
+                : normalizeMoneyValue(current.NetUnitPrice ?? null),
+              netCost: entry.hasNetCost
+                ? entry.netCost
+                : normalizeMoneyValue(current.NetCost ?? null),
+              margin: entry.hasMargin
+                ? entry.margin
+                : normalizePercentValue(current.Margin ?? null, { allowNegative: true }),
+              provided: {
+                customerDiscount: entry.hasCustomerDiscount,
+                telmacoDiscount: entry.hasTelmacoDiscount,
+                netUnitPrice: entry.hasNetUnitPrice,
+                netCost: entry.hasNetCost,
+                margin: entry.hasMargin,
+              },
+            };
 
-          resolvedPricing = resolvePricing(input);
-          if (!resolvedPricing) {
-            errors.push('Unable to resolve pricing from inputs.');
-            return;
+            resolvedPricing = resolvePricing(input);
+            if (!resolvedPricing) {
+              errors.push('Unable to resolve pricing from inputs.');
+              return;
+            }
           }
         } else {
           resolvedPricing = {
@@ -1240,7 +1276,8 @@ export async function PATCH(
 
         const netPrice = resolvedPricing.netUnitPrice;
         const telmacoCost = resolvedPricing.netCost;
-        const totalPrice = listPrice != null ? roundTo(listPrice * safeQuantity) : null;
+        const listPriceForTotals = listPriceCandidate ?? fallbackListPrice;
+        const totalPrice = listPriceForTotals != null ? roundTo(listPriceForTotals * safeQuantity) : null;
         const totalNet = netPrice != null ? roundTo(netPrice * safeQuantity) : null;
         const totalCost = telmacoCost != null ? roundTo(telmacoCost * safeQuantity) : null;
         const grossProfit = netPrice != null && telmacoCost != null
@@ -1262,6 +1299,8 @@ export async function PATCH(
           TotalNet: totalNet,
           TotalCost: totalCost,
           GrossProfit: grossProfit,
+          ListPrice: entry.hasListPrice ? entry.listPrice ?? null : null,
+          HasListPrice: entry.hasListPrice,
         });
       });
 
@@ -1292,6 +1331,8 @@ export async function PATCH(
         const totalNetParam = `totalNet_${rowIdx}`;
         const totalCostParam = `totalCost_${rowIdx}`;
         const grossProfitParam = `grossProfit_${rowIdx}`;
+        const listPriceParam = `listPrice_${rowIdx}`;
+        const hasListPriceParam = `hasListPrice_${rowIdx}`;
 
         request.input(idParam, sql.Int, row.OfferDetailID);
         request.input(descriptionParam, sql.NVarChar(4000), row.HasDescription ? row.Description : null);
@@ -1307,8 +1348,10 @@ export async function PATCH(
         request.input(totalNetParam, decimalType, row.TotalNet);
         request.input(totalCostParam, decimalType, row.TotalCost);
         request.input(grossProfitParam, decimalType, row.GrossProfit);
+        request.input(listPriceParam, decimalType, row.HasListPrice ? row.ListPrice : null);
+        request.input(hasListPriceParam, sql.Bit, row.HasListPrice ? 1 : 0);
 
-        valueClauses.push(`(@${idParam}, @${descriptionParam}, @${hasDescriptionParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam})`);
+        valueClauses.push(`(@${idParam}, @${descriptionParam}, @${hasDescriptionParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam})`);
       });
 
       const query = `
@@ -1326,7 +1369,9 @@ export async function PATCH(
           TotalPrice,
           TotalNet,
           TotalCost,
-          GrossProfit
+          GrossProfit,
+          ListPrice,
+          HasListPrice
         ) AS (
           SELECT *
           FROM (VALUES ${valueClauses.join(', ')}) AS v (
@@ -1343,7 +1388,9 @@ export async function PATCH(
             TotalPrice,
             TotalNet,
             TotalCost,
-            GrossProfit
+            GrossProfit,
+            ListPrice,
+            HasListPrice
           )
         )
         UPDATE od
@@ -1358,6 +1405,7 @@ export async function PATCH(
             od.TotalNet = PendingUpdates.TotalNet,
             od.TotalCost = PendingUpdates.TotalCost,
             od.GrossProfit = PendingUpdates.GrossProfit,
+            od.ListPrice = CASE WHEN PendingUpdates.HasListPrice = 1 THEN PendingUpdates.ListPrice ELSE od.ListPrice END,
             od.ModifiedOn = SYSUTCDATETIME(),
             od.ModifiedBy = @__modifiedBy
         FROM dbo.OfferDetails od

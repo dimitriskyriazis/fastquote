@@ -25,7 +25,7 @@ export default async function Page({ params }: { params: Promise<{ oID: string }
             href={`/offers/${encodeURIComponent(decodedId)}/products`}
             className={styles.headerActionButton}
           >
-            View products
+            View Products
           </Link>
         </div>
       </div>

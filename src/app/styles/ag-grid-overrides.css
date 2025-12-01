@@ -232,6 +232,12 @@
   background-color: #ffffff !important;
 }
 
+.offer-products-grid .ag-cell.offer-products-tree-ordering-cell {
+  text-align: left !important;
+  justify-content: flex-start !important;
+  padding-left: 0.5rem !important;
+}
+
 .offer-products-grid .offer-row--product.ag-row-hover .offer-products-grid__cell--product-accent {
   background-color: #f3f4f6 !important;
 }
