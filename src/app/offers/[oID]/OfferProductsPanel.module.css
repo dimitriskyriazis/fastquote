@@ -12,6 +12,29 @@
   display: flex;
 }
 
+.treeOrderingCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.treeOrderingIndicator {
+  width: 1.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.treeOrderingIndicatorArrow {
+  color: #0f172a;
+}
+
+.treeOrderingIndicatorEmpty {
+  color: #94a3b8;
+}
+
 .totalsBar {
   display: flex;
   flex-wrap: wrap;

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useCallback, useState } from 'react';
+import React, { useMemo, useCallback, useState, useRef, useEffect } from 'react';
 import type {
   ColDef,
   ICellRendererParams,
@@ -11,6 +11,8 @@ import type {
   CellValueChangedEvent,
   GridApi,
   MenuItemDef,
+  RowDoubleClickedEvent,
+  RowHeightParams,
 } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
@@ -95,6 +97,8 @@ const parseTreeOrderingPath = (value: unknown): number[] => {
     .map((segment) => Number.parseInt(segment, 10))
     .filter((segment) => Number.isFinite(segment));
 };
+
+const buildTreeOrderingKey = (segments: number[]) => segments.join('.');
 
 const normalizeOfferDetailId = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isInteger(value)) return value;
@@ -267,6 +271,10 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
     return buildEndpointForOffer(oID);
   }, [endpoint, oID]);
   const [totals, setTotals] = useState<{ totalListPrice: number; totalNetPrice: number; totalCost: number; totalMargin: number } | null>(null);
+  const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
+  const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() => new Set());
+  const [categoryPathsWithChildren, setCategoryPathsWithChildren] = useState<Set<string>>(() => new Set());
+  const [categoryChildrenKnown, setCategoryChildrenKnown] = useState(false);
 
   const defaultColDef = useMemo<ColDef>(() => ({
     editable: (params) => isOfferProductComment(params?.data ?? null),
@@ -296,21 +304,185 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
     });
   }, []);
 
-  const getRowClass = useCallback((params: RowClassParams<Record<string, unknown>>) => {
-    const rowType = resolveOfferProductRowType(params.data);
-    switch (rowType) {
-      case 'category':
-        return 'offer-row offer-row--category';
-      case 'product':
-        return 'offer-row offer-row--product';
-      case 'printable-comment':
-        return 'offer-row offer-row--printable-comment';
-      case 'non-printable-comment':
-        return 'offer-row offer-row--nonprintable-comment';
-      default:
-        return undefined;
+  const updateCategoryAncestors = useCallback((api: GridApi<Record<string, unknown>>) => {
+    const next = new Set<string>();
+    let nodesSeen = false;
+    api.forEachNode((node) => {
+      if (!node.data) return;
+      const data = node.data as Record<string, unknown>;
+      nodesSeen = true;
+      const path = parseTreeOrderingPath((data as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+      for (let idx = 1; idx < path.length; idx += 1) {
+        const ancestorKey = buildTreeOrderingKey(path.slice(0, idx));
+        if (ancestorKey) {
+          next.add(ancestorKey);
+        }
+      }
+    });
+    setCategoryPathsWithChildren((prev) => {
+      if (prev.size === next.size) {
+        let identical = true;
+        for (const value of prev) {
+          if (!next.has(value)) {
+            identical = false;
+            break;
+          }
+        }
+        if (identical) return prev;
+      }
+      return next;
+    });
+    setCategoryChildrenKnown(true);
+    setCollapsedCategoryPaths((prev) => {
+      let changed = false;
+      const nextCollapsed = new Set(prev);
+      for (const value of prev) {
+        if (!next.has(value)) {
+          nextCollapsed.delete(value);
+          changed = true;
+        }
+      }
+      return changed ? nextCollapsed : prev;
+    });
+    if (nodesSeen) {
+      setCategoryChildrenKnown(true);
     }
   }, []);
+
+  const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
+    gridApiRef.current = api;
+    updateCategoryAncestors(api);
+  }, [updateCategoryAncestors]);
+
+  useEffect(() => {
+    const api = gridApiRef.current;
+    if (api) {
+      api.resetRowHeights();
+      api.redrawRows();
+      updateCategoryAncestors(api);
+    }
+  }, [collapsedCategoryPaths, updateCategoryAncestors]);
+
+  const isRowHiddenByCollapsedAncestor = useCallback((row: Record<string, unknown> | null | undefined) => {
+    if (!row) return false;
+    const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+    if (path.length === 0) return false;
+    for (let idx = 1; idx < path.length; idx += 1) {
+      const ancestorKey = buildTreeOrderingKey(path.slice(0, idx));
+      if (ancestorKey && collapsedCategoryPaths.has(ancestorKey)) {
+        return true;
+      }
+    }
+    return false;
+  }, [collapsedCategoryPaths]);
+
+  const isCategoryRowCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
+    if (!row) return false;
+    const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+    if (path.length === 0) return false;
+    const key = buildTreeOrderingKey(path);
+    return key.length > 0 && collapsedCategoryPaths.has(key);
+  }, [collapsedCategoryPaths]);
+
+  const hasCategoryChildren = useCallback((row: Record<string, unknown> | null | undefined) => {
+    if (!isOfferProductCategory(row)) return false;
+    const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+    if (path.length === 0) return false;
+    const key = buildTreeOrderingKey(path);
+    if (!categoryChildrenKnown) return true;
+    return key.length > 0 && categoryPathsWithChildren.has(key);
+  }, [categoryPathsWithChildren, categoryChildrenKnown]);
+
+  const getRowClass = useCallback((params: RowClassParams<Record<string, unknown>>) => {
+    const rowType = resolveOfferProductRowType(params.data);
+    let baseClass: string | undefined;
+    switch (rowType) {
+      case 'category':
+        baseClass = 'offer-row offer-row--category';
+        break;
+      case 'product':
+        baseClass = 'offer-row offer-row--product';
+        break;
+      case 'printable-comment':
+        baseClass = 'offer-row offer-row--printable-comment';
+        break;
+      case 'non-printable-comment':
+        baseClass = 'offer-row offer-row--nonprintable-comment';
+        break;
+      default:
+        baseClass = undefined;
+    }
+    if (!baseClass) return undefined;
+    const classes = [baseClass];
+    if (rowType === 'category') {
+      if (isCategoryRowCollapsed(params.data)) {
+        classes.push('offer-row--category-collapsed');
+      }
+      if (!hasCategoryChildren(params.data)) {
+        classes.push('offer-row--category-empty');
+      }
+    }
+    if (isRowHiddenByCollapsedAncestor(params.data)) {
+      classes.push('offer-row--collapsed-child');
+    }
+    return classes.join(' ');
+  }, [isCategoryRowCollapsed, isRowHiddenByCollapsedAncestor, hasCategoryChildren]);
+
+  const handleRowDoubleClicked = useCallback((params: RowDoubleClickedEvent<Record<string, unknown>>) => {
+    const rowData = params.data ?? null;
+    if (!isOfferProductCategory(rowData)) return;
+    if (!hasCategoryChildren(rowData)) return;
+    const path = parseTreeOrderingPath((rowData as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+    if (path.length === 0) return;
+    const key = buildTreeOrderingKey(path);
+    if (!key) return;
+    setCollapsedCategoryPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, [hasCategoryChildren]);
+
+  const handleGridModelUpdated = useCallback((api: GridApi<Record<string, unknown>>) => {
+    updateCategoryAncestors(api);
+  }, [updateCategoryAncestors]);
+
+  const TreeOrderingCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
+    const value = params.value;
+    const rowData = params.data ?? null;
+    const isCategory = isOfferProductCategory(rowData);
+    const hasChildren = isCategory && hasCategoryChildren(rowData);
+    const collapsed = isCategory && isCategoryRowCollapsed(rowData);
+    const indicator = isCategory
+      ? hasChildren
+        ? (collapsed ? '▸' : '▾')
+        : '•'
+      : null;
+    const indicatorClass = isCategory
+      ? hasChildren
+        ? `${styles.treeOrderingIndicator} ${styles.treeOrderingIndicatorArrow}`
+        : `${styles.treeOrderingIndicator} ${styles.treeOrderingIndicatorEmpty}`
+      : undefined;
+
+    return (
+      <span className={styles.treeOrderingCell}>
+        {indicator && (
+          <span className={indicatorClass} aria-hidden="true">
+            {indicator}
+          </span>
+        )}
+        <span>{value ?? ''}</span>
+      </span>
+    );
+  }, [hasCategoryChildren, isCategoryRowCollapsed]);
+
+  const getRowHeight = useCallback((params: RowHeightParams<Record<string, unknown>>) => (
+    isRowHiddenByCollapsedAncestor(params.data) ? 0 : 32
+  ), [isRowHiddenByCollapsedAncestor]);
 
   // Row drag handle: starts native drag with row data (no visible selection)
   const RowDragHandle = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
@@ -525,6 +697,7 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       sortIndex: 0,
       editable: manualMode,
       singleClickEdit: manualMode,
+      cellRenderer: TreeOrderingCell,
     },
     {
       field: 'BrandName',
@@ -661,7 +834,7 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       valueGetter: categoryTotalCostGetter,
       cellClassRules: productAccentCellClassRules,
     },
-  ], [RowDragHandle, PartNumberCell, manualMode]);
+  ], [RowDragHandle, PartNumberCell, manualMode, TreeOrderingCell]);
 
   const productRowDeletion = useMemo(
     () =>
@@ -971,9 +1144,13 @@ const productColumnDefs: ColDef[] = useMemo(() => [
           getContextMenuItems={productContextMenuItems}
           onCellValueChanged={handleCellEdit}
           refreshToken={refreshToken}
+          onGridReady={handleGridReady}
+          onRowDoubleClicked={handleRowDoubleClicked}
           autoSizeExclusions={['Description']}
           onTotalsChange={handleTotalsChange}
           rowGroupPanelShow="never"
+          onModelUpdated={handleGridModelUpdated}
+          getRowHeight={getRowHeight}
         />
       </div>
       <div className={styles.totalsBar}>

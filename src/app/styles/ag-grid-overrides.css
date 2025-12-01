@@ -194,6 +194,16 @@
   background-color: #d9dde3 !important;
 }
 
+.offer-products-grid .offer-row--category.offer-row--category-empty .ag-cell {
+  background-color: #f1f5f9 !important;
+  cursor: default;
+  color: #475569 !important;
+}
+
+.offer-products-grid .offer-row--category.offer-row--category-empty.ag-row-hover .ag-cell {
+  background-color: #e2e8f0 !important;
+}
+
 .offer-products-grid .offer-row--printable-comment .ag-cell {
   background-color: #e0f2fe !important;
 }

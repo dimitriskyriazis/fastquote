@@ -11,6 +11,8 @@ import {
   IServerSideGetRowsParams,
   GridApi,
   RowNode,
+  RowDoubleClickedEvent,
+  ModelUpdatedEvent,
   GetRowIdParams,
   CellValueChangedEvent,
   CellClickedEvent,
@@ -24,6 +26,7 @@ import {
   DefaultMenuItem,
   SortChangedEvent,
   SelectionChangedEvent,
+  RowHeightParams,
 } from 'ag-grid-community';
 import { AllEnterpriseModule, LicenseManager } from 'ag-grid-enterprise';
 import { resolveOfferProductRowType, type OfferProductRowType, describeOfferProductRowType } from '../../lib/offerProductRows';
@@ -58,10 +61,13 @@ type Props = {
   suppressRowClickSelection?: boolean;
   onGridReady?: (api: GridApi<RowData>) => void;
   onSelectionChanged?: (rows: RowData[], api: GridApi<RowData>) => void;
+  onModelUpdated?: (api: GridApi<RowData>) => void;
   rowGroupPanelShow?: 'always' | 'onlyWhenGrouping' | 'never';
   getRowClass?: (params: RowClassParams<RowData>) => string | string[] | undefined;
   getContextMenuItems?: (params: GetContextMenuItemsParams<RowData>) => (MenuItemDef | string)[] | undefined;
   onCellValueChanged?: (event: CellValueChangedEvent<RowData>) => void;
+  onRowDoubleClicked?: (event: RowDoubleClickedEvent<RowData>) => void;
+  getRowHeight?: (params: RowHeightParams<RowData>) => number | undefined;
   refreshToken?: number;
   autoSizeExclusions?: string[];
   onTotalsChange?: (totals: GridTotals | null) => void;
@@ -496,10 +502,13 @@ export default function AgGridAll({
   suppressRowClickSelection,
   onGridReady: externalGridReadyHandler,
   onSelectionChanged: externalSelectionChangedHandler,
+  onRowDoubleClicked: externalRowDoubleClickHandler,
   rowGroupPanelShow = 'always',
   getRowClass,
   getContextMenuItems,
   onCellValueChanged: externalCellValueChangeHandler,
+  getRowHeight,
+  onModelUpdated,
   refreshToken = 0,
   autoSizeExclusions = [],
   onTotalsChange,
@@ -762,9 +771,12 @@ export default function AgGridAll({
     refreshServerSideData(event.api, { purge: false });
   }, []);
 
-  const handleModelUpdated = useCallback(() => {
-    autoSizeColumns();
-  }, [autoSizeColumns]);
+  const handleModelUpdated = useCallback((event: ModelUpdatedEvent<RowData>) => {
+    autoSizeColumns(event.api);
+    if (typeof onModelUpdated === 'function') {
+      onModelUpdated(event.api);
+    }
+  }, [autoSizeColumns, onModelUpdated]);
 
   const mergedGetRowClass = useCallback((params: RowClassParams<RowData>) => {
     const parts: string[] = [];
@@ -1150,6 +1162,12 @@ export default function AgGridAll({
     }
   }, []);
 
+  const handleRowDoubleClick = useCallback((event: RowDoubleClickedEvent<RowData>) => {
+    if (typeof externalRowDoubleClickHandler === 'function') {
+      externalRowDoubleClickHandler(event);
+    }
+  }, [externalRowDoubleClickHandler]);
+
   const handleCellValueChanged = useCallback((event: CellValueChangedEvent<RowData>) => {
     if (manualMode && event.colDef.field === 'TreeOrdering') {
       event.api.applyColumnState({
@@ -1282,6 +1300,7 @@ export default function AgGridAll({
           // Grouping/pivot flags are fine; without a license they’re ignored, not crashed
           pivotMode={false}
           rowGroupPanelShow={rowGroupPanelShow}
+          getRowHeight={getRowHeight}
 
           // Cache settings
           cacheBlockSize={100}
@@ -1292,6 +1311,7 @@ export default function AgGridAll({
           onSortChanged={handleSortChanged}
           onModelUpdated={handleModelUpdated}
           onCellClicked={handleActionCellClick}
+          onRowDoubleClicked={handleRowDoubleClick}
           onCellValueChanged={handleCellValueChanged}
           onSelectionChanged={externalSelectionChangedHandler ? handleSelectionChanged : undefined}
           onColumnRowGroupChanged={handleColumnRowGroupChanged}
