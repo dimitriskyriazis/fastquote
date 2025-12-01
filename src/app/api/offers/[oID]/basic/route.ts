@@ -124,6 +124,46 @@ export async function PATCH(
     }
 
     const pool = await getPool();
+
+    const contactUpdate = normalizedUpdates.find((entry) => entry.field === 'ContactID');
+    const hasOfferContactUpdate = normalizedUpdates.some((entry) => entry.field === 'OfferContact');
+    if (contactUpdate && !hasOfferContactUpdate) {
+      let contactFullName: string | null = null;
+      const contactId = contactUpdate.value;
+      if (typeof contactId === 'number' && Number.isInteger(contactId)) {
+        try {
+          const contactNameRequest = pool.request();
+          contactNameRequest.input('__contactId', sql.Int, contactId);
+          const contactResult = await contactNameRequest.query<{
+            FirstName: string | null;
+            LastName: string | null;
+          }>(`
+            SELECT FirstName, LastName
+            FROM dbo.Contacts
+            WHERE ID = @__contactId
+          `);
+          const row = contactResult.recordset?.[0];
+          if (row) {
+            contactFullName = [row.FirstName, row.LastName]
+              .map((value) => value?.trim())
+              .filter(Boolean)
+              .join(' ');
+          }
+        } catch (err) {
+          console.error('Unable to resolve contact name for offer update', err);
+        }
+      }
+      const normalizedContactName = normalizeValue(
+        contactFullName,
+        FIELD_CONFIG.OfferContact.type,
+      );
+      normalizedUpdates.push({
+        field: 'OfferContact',
+        config: FIELD_CONFIG.OfferContact,
+        value: normalizedContactName,
+      });
+    }
+
     const request = pool.request();
     request.input('__offerId', sql.Int, offerId);
 

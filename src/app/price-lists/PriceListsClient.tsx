@@ -259,8 +259,9 @@ export default function PriceListsClient() {
         headerName: "Valid From",
         filter: "agDateColumnFilter",
         valueFormatter: formatDateValue,
-        width: 200,
-        minWidth: 200,
+        width: 107,
+        minWidth: 107,
+        maxWidth: 107,
         suppressAutoSize: true,
       },
       {
@@ -268,8 +269,8 @@ export default function PriceListsClient() {
         headerName: "Valid To",
         filter: "agDateColumnFilter",
         valueFormatter: formatDateValue,
-        width: 200,
-        minWidth: 200,
+        width: 105,
+        minWidth: 105,
         suppressAutoSize: true,
       },
       {

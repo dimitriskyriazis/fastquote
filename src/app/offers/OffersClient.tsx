@@ -268,7 +268,8 @@ export default function OffersClient() {
     { field: 'oID', headerName: 'Offer ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
-    { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', enableRowGroup: true, valueFormatter: (params) => formatDateDMY(params.value), width: 200, minWidth: 200 },
+    { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', enableRowGroup: true, valueFormatter: (params) => formatDateDMY(params.value),
+       width: 107, minWidth: 107, maxWidth: 107, suppressAutoSize: true },
     { field: 'OfferVersion', headerName: 'Offer Version', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     {
       field: 'Enabled',

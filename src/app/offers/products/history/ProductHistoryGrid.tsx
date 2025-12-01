@@ -126,7 +126,8 @@ export default function ProductHistoryGrid({ rows }: Props) {
 
   const pricingCols = useMemo<ColDef[]>(() => [
     { field: 'OfferID', headerName: 'Offer ID', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 90, suppressHeaderMenuButton: true },
-    { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', width: 200, minWidth: 200, suppressHeaderMenuButton: true, valueFormatter: (p: ValueFormatterParams<HistoryRow>) => p.value ? new Date(p.value as string | number | Date).toLocaleDateString() : '' },
+    { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', width: 107, minWidth: 107, maxWidth: 107, suppressAutoSize: true, 
+      suppressHeaderMenuButton: true, valueFormatter: (p: ValueFormatterParams<HistoryRow>) => p.value ? new Date(p.value as string | number | Date).toLocaleDateString() : '' },
     { field: 'CustomerName', headerName: 'Customer', filter: 'agTextColumnFilter', width: 200, suppressHeaderMenuButton: true },
     { field: 'ListPrice', headerName: 'List Price', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: currencyFormatter, suppressHeaderMenuButton: true },
     { field: 'CustomerDiscount', headerName: 'Customer Discount', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: percentFormatter, suppressHeaderMenuButton: true },
