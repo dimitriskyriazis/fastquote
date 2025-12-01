@@ -12,12 +12,22 @@ export default async function Page({ params }: { params: Promise<{ oID: string }
 
   return (
     <main className={styles.page}>
-      <div className={`${styles.headerRow} ${styles.headerRowCentered}`}>
-        <Link href="/offers" className={`${styles.backLink} ${styles.backLinkAbsolute}`}>
-          <span aria-hidden="true">←</span>
-          Back to offers
-        </Link>
-        <h1 className={styles.heading}>{headingText}</h1>
+      <div className={styles.headerRow}>
+        <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
+          <Link href="/offers" className={styles.backLink}>
+            <span aria-hidden="true">←</span>
+            Back to offers
+          </Link>
+        </div>
+        <h1 className={`${styles.heading} ${styles.headingCentered}`}>{headingText}</h1>
+        <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
+          <Link
+            href={`/offers/${encodeURIComponent(decodedId)}/products`}
+            className={styles.headerActionButton}
+          >
+            View products
+          </Link>
+        </div>
       </div>
       <div className={styles.pageBody}>
         <OfferBasicDataPanel oID={decodedId} />

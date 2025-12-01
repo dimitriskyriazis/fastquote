@@ -28,8 +28,6 @@ type SetFilterModel = {
   values?: Array<string | number | boolean>;
 };
 
-/*
-Not using dates yet
 type DateFilterModel = {
   filterType: 'date';
   type?: 'equals' | 'notEqual' | 'lessThan' | 'greaterThan' | 'inRange';
@@ -37,10 +35,8 @@ type DateFilterModel = {
   dateTo?: string;
   filter?: string;
 };
-*/
 
-type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel; 
-// | DateFilterModel;
+type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel | DateFilterModel;
 
 type GridRequest = {
   startRow: number;
@@ -72,6 +68,7 @@ type OfferRow = {
   OfferContact: string | null;
   OfferVersion: number | null;
   Enabled: boolean | number | null;
+  OfferDate: string | null;
 };
 
 type OfferRowWithCount = OfferRow & { __totalCount: number | bigint | null };
@@ -92,6 +89,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferContact: 'dbo.Offer.OfferContact',
   OfferVersion: 'dbo.Offer.OfferVersion',
   Enabled: 'dbo.Offer.Enabled',
+  OfferDate: 'dbo.Offer.OfferDate',
 };
 
 // Map a basic AG Grid filter model to SQL WHERE snippets (parameterized)
@@ -164,8 +162,6 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
         break;
       }
 
-      /*
-      Not using dates yet
       case 'date': {
         // Expecting YYYY-MM-DD from AG Grid date filter
         const type = fm.type;
@@ -186,7 +182,6 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
       default:
         // Additional filter types can be handled here
         break;
-      */
     }
   });
 
@@ -252,7 +247,8 @@ export async function POST(req: NextRequest) {
         dbo.Offer.ProtocolNo,
         dbo.Offer.OfferContact,
         dbo.Offer.OfferVersion,
-        dbo.Offer.Enabled
+        dbo.Offer.Enabled,
+        dbo.Offer.OfferDate
     `;
 
     const from = `

@@ -172,6 +172,10 @@
   color: #b91c1c;
 }
 
+.telquote-menu-icon--history {
+  color: #2563eb;
+}
+
 .dragging,
 .dragging * {
   cursor: grabbing !important;

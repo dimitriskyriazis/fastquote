@@ -74,6 +74,20 @@ export default function PriceListProductsClient({ priceListId, headingText }: Pr
   const columnDefs: ColDef[] = useMemo(
     () => [
       {
+        colId: "__seq__",
+        headerName: "#",
+        maxWidth: 80,
+        width: 64,
+        suppressMovable: true,
+        suppressSizeToFit: true,
+        sortable: false,
+        filter: false,
+        valueGetter: (params) => {
+          const idx = params.node?.rowIndex;
+          return typeof idx === "number" && idx >= 0 ? idx + 1 : "";
+        },
+      },
+      {
         field: "PriceListItemID",
         hide: true,
         suppressColumnsToolPanel: true,
@@ -175,7 +189,14 @@ export default function PriceListProductsClient({ priceListId, headingText }: Pr
           </Link>
         </div>
         <h1 className={`${layoutStyles.heading} ${layoutStyles.headingCentered}`}>{headingText}</h1>
-        <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`} />
+        <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>
+          <Link
+            href={`/price-lists/${encodeURIComponent(priceListId)}/basic`}
+            className={layoutStyles.headerActionButton}
+          >
+            View basic data
+          </Link>
+        </div>
       </div>
       <div className={`${layoutStyles.pageBody} ${pageStyles.gridShell}`}>
         <div className={`${pageStyles.gridWrapper} ${pageStyles.bandedRows}`}>

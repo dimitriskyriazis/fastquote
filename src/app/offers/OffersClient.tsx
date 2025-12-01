@@ -111,6 +111,20 @@ export default function OffersClient() {
     [offersRowDeletion],
   );
 
+  const formatDateDMY = (value: unknown): string => {
+  if (!value) return '';
+
+  const date = new Date(value as string);
+  if (Number.isNaN(date.getTime())) return '';
+
+  // dd/mm/yyyy
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+
+  return `${day}/${month}/${year}`;
+};
+
   const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     // A small React component for the action menu
     const ActionMenu: React.FC = () => {
@@ -252,9 +266,9 @@ export default function OffersClient() {
     { field: 'OfferStatus', headerName: 'Status', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'ProjectID', headerName: 'Project ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'oID', headerName: 'Offer ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
-    { field: 'CustomerRef', headerName: 'Customer Ref', filter: 'agTextColumnFilter' },
     { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
+    { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', enableRowGroup: true, valueFormatter: (params) => formatDateDMY(params.value), width: 200, minWidth: 200 },
     { field: 'OfferVersion', headerName: 'Offer Version', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     {
       field: 'Enabled',

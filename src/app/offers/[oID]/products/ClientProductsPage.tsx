@@ -120,28 +120,38 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
         <h1 className={`${layoutStyles.heading} ${layoutStyles.headingCentered}`}>{headingText}</h1>
         <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>
           <div className={toolbarStyles.toolbar}>
-            {addActionButtons.map((action) => {
-              const disabled = pendingAction != null;
-              const variantClass = buttonVariantClass[action.key];
-              return (
-                <button
-                  type="button"
-                  key={action.key}
-                  className={`${toolbarStyles.button} ${variantClass}`}
-                  onClick={() => handleAddAction(action.key)}
-                  disabled={disabled}
-                >
-                  {action.label}
-                </button>
-              );
-            })}
-            <button
-              type="button"
-              className={manualToggleClass}
-              onClick={() => setManualMode((prev) => !prev)}
-            >
-              Manual Mode
-            </button>
+            <div className={toolbarStyles.topControls}>
+              <button
+                type="button"
+                className={manualToggleClass}
+                onClick={() => setManualMode((prev) => !prev)}
+              >
+                Manual Mode
+              </button>
+              <Link
+                href={`/offers/${encodeURIComponent(oID)}/basic`}
+                className={layoutStyles.headerActionButton}
+              >
+                View basic data
+              </Link>
+            </div>
+            <div className={toolbarStyles.addButtons}>
+              {addActionButtons.map((action) => {
+                const disabled = pendingAction != null;
+                const variantClass = buttonVariantClass[action.key];
+                return (
+                  <button
+                    type="button"
+                    key={action.key}
+                    className={`${toolbarStyles.button} ${variantClass}`}
+                    onClick={() => handleAddAction(action.key)}
+                    disabled={disabled}
+                  >
+                    {action.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>

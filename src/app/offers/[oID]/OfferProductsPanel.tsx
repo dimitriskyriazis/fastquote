@@ -9,8 +9,11 @@ import type {
   RowClassParams,
   GetContextMenuItemsParams,
   CellValueChangedEvent,
+  GridApi,
+  MenuItemDef,
 } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
 import styles from './OfferProductsPanel.module.css';
 import type { GridTotals } from '../../components/AgGridAll';
 
@@ -164,9 +167,64 @@ const buildCategoryAggregateGetter = (field: 'TotalPrice' | 'TotalNet' | 'TotalC
   return sum;
 };
 
+const roundMoney = (value: number, places = 4) => {
+  const factor = 10 ** places;
+  return Math.round(value * factor) / factor;
+};
+
+const recalcProductTotals = (
+  event: CellValueChangedEvent<Record<string, unknown>>,
+  quantityOverride?: number | null,
+) => {
+  const node = event.node;
+  const data = event.data;
+  if (!node || !data) return;
+
+  const quantity = quantityOverride ?? coerceNumber((data as { Quantity?: unknown }).Quantity) ?? 0;
+  const listPrice = coerceNumber((data as { ListPrice?: unknown }).ListPrice);
+  const netUnitPrice = coerceNumber((data as { NetUnitPrice?: unknown }).NetUnitPrice);
+  const netCost = coerceNumber((data as { NetCost?: unknown }).NetCost);
+
+  const setValue = (field: 'TotalPrice' | 'TotalNet' | 'TotalCost' | 'GrossProfit', value: number | null) => {
+    try {
+      node.setDataValue(field, value);
+    } catch {
+      /* noop */
+    }
+  };
+
+  setValue('TotalPrice', listPrice != null ? roundMoney(listPrice * quantity) : null);
+  setValue('TotalNet', netUnitPrice != null ? roundMoney(netUnitPrice * quantity) : null);
+  setValue('TotalCost', netCost != null ? roundMoney(netCost * quantity) : null);
+  setValue(
+    'GrossProfit',
+    netUnitPrice != null && netCost != null ? roundMoney((netUnitPrice - netCost) * quantity) : null,
+  );
+};
+
+const CATEGORY_TOTAL_COLUMNS: string[] = ['TotalPrice', 'TotalNet', 'TotalCost'];
+const refreshCategoryAggregates = (api?: GridApi<Record<string, unknown>> | null) => {
+  if (!api || typeof api.refreshCells !== 'function') return;
+  try {
+    api.refreshCells({ columns: CATEGORY_TOTAL_COLUMNS, force: true });
+  } catch (err) {
+    console.warn('Failed to refresh category aggregates', err);
+  }
+};
+
 const categoryTotalPriceGetter = buildCategoryAggregateGetter('TotalPrice');
 const categoryTotalNetGetter = buildCategoryAggregateGetter('TotalNet');
 const categoryTotalCostGetter = buildCategoryAggregateGetter('TotalCost');
+
+const productHistoryMenuIcon = `
+  <span class="telquote-menu-icon telquote-menu-icon--history" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 5a7 7 0 1 1-7 7" />
+      <path d="M12 9v4l2.6 1.5" />
+      <path d="M5 7 4 4l3 1" />
+    </svg>
+  </span>
+`;
 
 const productAccentCellClassRules = {
   'offer-products-grid__cell--product-accent': (params: { data?: Record<string, unknown> | null }) =>
@@ -203,6 +261,7 @@ const buildEndpointForOffer = (oID: string) =>
   `/api/offers/${encodeURIComponent(oID)}/products`;
 
 export default function OfferProductsPanel({ oID, endpoint, manualMode = false, refreshToken = 0 }: Props) {
+  const router = useRouter();
   const resolvedEndpoint = useMemo(() => {
     if (endpoint) return endpoint;
     return buildEndpointForOffer(oID);
@@ -481,22 +540,27 @@ const productColumnDefs: ColDef[] = useMemo(() => [
     },
     { field: 'ModelNumber', headerName: 'Model Number', filter: 'agTextColumnFilter' },
     {
-      field: 'Quantity',
-      headerName: 'Qty',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      editable: (params) => isOfferProductProduct(params.data),
-      singleClickEdit: true,
-      valueFormatter: zeroBlankNumberFormatter,
-    },
-    {
       field: 'Description',
       headerName: 'Description',
       minWidth: 280,
       width: 320,
       filter: 'agTextColumnFilter',
-      editable: true,
+      editable: (params) => {
+        const row = params?.data ?? null;
+        return isOfferProductCategory(row) || isOfferProductComment(row);
+      },
       singleClickEdit: true,
+    },
+    {
+      field: 'ListPrice',
+      headerName: 'List Price',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      valueFormatter: (params) => {
+        if (!isOfferProductProduct(params.data)) return '';
+        return euroFormatter(params);
+      },
+      cellClassRules: productPriceListClassRules,
     },
     {
       field: 'CustomerDiscount',
@@ -515,6 +579,15 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       editable: (params) => isOfferProductProduct(params.data),
       singleClickEdit: true,
       valueFormatter: euroFormatter,
+    },
+    {
+      field: 'Quantity',
+      headerName: 'Qty',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      editable: (params) => isOfferProductProduct(params.data),
+      singleClickEdit: true,
+      valueFormatter: zeroBlankNumberFormatter,
     },
     {
       field: 'TotalPrice',
@@ -543,17 +616,6 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: zeroBlankNumberFormatter,
-    },
-    {
-      field: 'ListPrice',
-      headerName: 'List Price',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      valueFormatter: (params) => {
-        if (!isOfferProductProduct(params.data)) return '';
-        return euroFormatter(params);
-      },
-      cellClassRules: productPriceListClassRules,
     },
     {
       field: 'TelmacoDiscount',
@@ -621,7 +683,60 @@ const productColumnDefs: ColDef[] = useMemo(() => [
 
   const productContextMenuItems = useCallback((
     params: GetContextMenuItemsParams<Record<string, unknown>>,
-  ) => productRowDeletion.getContextMenuItems(params), [productRowDeletion]);
+  ) => {
+    const baseItems = productRowDeletion.getContextMenuItems(params) ?? [];
+    const items = [...baseItems];
+    const rowData = params.node?.data ?? null;
+    if (!isOfferProductProduct(rowData)) {
+      return items;
+    }
+
+    const normalize = (value: unknown) => {
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : null;
+      }
+      if (value == null) return null;
+      const str = String(value).trim();
+      return str.length > 0 ? str : null;
+    };
+
+    const partNumber = normalize((rowData as { PartNumber?: unknown }).PartNumber);
+    const modelNumber = normalize((rowData as { ModelNumber?: unknown }).ModelNumber);
+    const description = normalize((rowData as { Description?: unknown }).Description);
+
+    if (!partNumber && !modelNumber) {
+      return items;
+    }
+
+    const qs = new URLSearchParams();
+    qs.set('offerId', oID);
+    if (partNumber) qs.set('partNumber', partNumber);
+    if (modelNumber) qs.set('modelNumber', modelNumber);
+    if (description) qs.set('description', description);
+
+    const historyItem: MenuItemDef = {
+      name: "View Product's History",
+      icon: productHistoryMenuIcon,
+      action: () => {
+        router.push(`/offers/products/history?${qs.toString()}`);
+      },
+    };
+
+    const deleteIndex = items.findIndex((item) => (
+      typeof item === 'object'
+      && item != null
+      && (item as MenuItemDef).name === 'Delete row'
+    ));
+
+    if (deleteIndex >= 0) {
+      items.splice(deleteIndex, 0, historyItem);
+      return items;
+    }
+
+    items.push(historyItem);
+    return items;
+  }, [productRowDeletion, router, oID]);
 
   const handleQuantityEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Quantity') return;
@@ -694,6 +809,8 @@ const productColumnDefs: ColDef[] = useMemo(() => [
         } catch (refreshErr) {
           console.warn('Failed to refresh grid after quantity update', refreshErr);
         }
+        recalcProductTotals(event, normalizedNewValue);
+        refreshCategoryAggregates(event.api);
       } catch (err) {
         console.error('Failed to update quantity', err);
         showToastMessage('Unable to update quantity. Please try again.', 'error');
@@ -710,6 +827,10 @@ const productColumnDefs: ColDef[] = useMemo(() => [
     const normalizedOldValue = normalizeDescriptionValue(event.oldValue);
     const normalizedNewValue = normalizeDescriptionValue(event.newValue);
     if (normalizedOldValue === normalizedNewValue) {
+      return;
+    }
+    if (isOfferProductProduct(event.data)) {
+      event.node?.setDataValue?.('Description', normalizedOldValue ?? '');
       return;
     }
     const offerDetailId = normalizeOfferDetailId((event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null);
@@ -811,6 +932,8 @@ const productColumnDefs: ColDef[] = useMemo(() => [
         } catch (refreshErr) {
           console.warn('Failed to refresh grid after pricing update', refreshErr);
         }
+        recalcProductTotals(event);
+        refreshCategoryAggregates(event.api);
       } catch (err) {
         console.error(`Failed to update ${label}`, err);
         showToastMessage(`Unable to update ${label}. Please try again.`, 'error');

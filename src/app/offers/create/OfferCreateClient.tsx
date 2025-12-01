@@ -382,14 +382,14 @@ export default function OfferCreateClient({
       { id: 'customerRef', label: 'Customer Ref', section: 'code' },
 
       { id: 'initialRequest', label: 'Initial Request', section: 'dates', type: 'date' },
-      { id: 'draftOffer', label: 'Draft Offer', section: 'dates', type: 'date' },
       { id: 'officialRequest', label: 'Official Request', section: 'dates', type: 'date' },
-      { id: 'offerDeadline', label: 'Offer Deadline', section: 'dates', type: 'date' },
+      { id: 'draftOffer', label: 'Draft Offer', section: 'dates', type: 'date' },
       { id: 'officialQuoteOffer', label: 'Official Quote Offer', section: 'dates', type: 'date' },
+      { id: 'offerDate', label: 'Offer Date', section: 'dates', type: 'date' },
+      { id: 'offerDeadline', label: 'Offer Deadline', section: 'dates', type: 'date' },
       { id: 'orderSigned', label: 'Order Signed', section: 'dates', type: 'date' },
       { id: 'deliveryDue', label: 'Delivery Due', section: 'dates', type: 'date' },
       { id: 'delivery', label: 'Delivery', section: 'dates', type: 'date' },
-      { id: 'offerDate', label: 'Offer Date', section: 'dates', type: 'date' },
     ],
     [
       calcMethodFormulas,

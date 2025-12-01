@@ -24,12 +24,22 @@ export default async function Page({
 
   return (
     <main className={layoutStyles.page}>
-      <div className={`${layoutStyles.headerRow} ${layoutStyles.headerRowCentered}`}>
-        <Link href="/price-lists" className={`${layoutStyles.backLink} ${layoutStyles.backLinkAbsolute}`}>
-          <span aria-hidden="true">←</span>
-          Back to price lists
-        </Link>
-        <h1 className={layoutStyles.heading}>{headingText}</h1>
+      <div className={layoutStyles.headerRow}>
+        <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideStart}`}>
+          <Link href="/price-lists" className={layoutStyles.backLink}>
+            <span aria-hidden="true">←</span>
+            Back to price lists
+          </Link>
+        </div>
+        <h1 className={`${layoutStyles.heading} ${layoutStyles.headingCentered}`}>{headingText}</h1>
+        <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>
+          <Link
+            href={`/price-lists/${encodeURIComponent(decodedId)}/products`}
+            className={layoutStyles.headerActionButton}
+          >
+            View products
+          </Link>
+        </div>
       </div>
       <div className={layoutStyles.pageBody}>
         <PriceListBasicDataPanel priceListId={decodedId} initialRecord={record} />
