@@ -76,16 +76,18 @@ type Props = {
   onTotalsChange?: (totals: GridTotals | null) => void;
   enableColumnStatePersistence?: boolean;
   columnStateNamespace?: string;
+  onResponse?: (response: GridResponse | null) => void;
 };
 
 type RowData = Record<string, unknown>;
 
-type GridResponse = {
+export type GridResponse = {
   ok: boolean;
   rows: RowData[];
   rowCount: number;
   totals?: GridTotals | null;
   error?: string;
+  requestedColumns?: Record<string, boolean> | null;
 };
 
 type FilterDescriptor = {
@@ -618,6 +620,7 @@ export default function AgGridAll({
   onTotalsChange,
   enableColumnStatePersistence = true,
   columnStateNamespace = '',
+  onResponse,
 }: Props) {
   const gridRef = useRef<AgGridReact<RowData> | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -832,13 +835,16 @@ export default function AgGridAll({
           const parsedTotals = parseTotalsPayload(data.totals ?? null);
           onTotalsChange(parsedTotals);
         }
+        if (typeof onResponse === 'function') {
+          onResponse(data);
+        }
         params.success({ rowData: normalizedRows, rowCount: resolvedRowCount });
       } catch (e) {
         console.error('Datasource fetch exception', e);
         params.fail();
       }
     },
-  }), [endpoint, onTotalsChange, requestPayload]);
+  }), [endpoint, onResponse, onTotalsChange, requestPayload]);
 
   const sideBarDef = useMemo(() => ({
     toolPanels: ['columns', 'filters'],

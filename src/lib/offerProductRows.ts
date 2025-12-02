@@ -45,6 +45,8 @@ export const resolveOfferProductRowType = (row: OfferProductRow): OfferProductRo
   const commentRaw = (row as { IsComment?: unknown }).IsComment;
   const partNumberRaw = (row as { PartNumber?: unknown }).PartNumber;
   const modelNumberRaw = (row as { ModelNumber?: unknown }).ModelNumber;
+  const requestedPartRaw = (row as { RequestedPartNo?: unknown }).RequestedPartNo;
+  const requestedModelRaw = (row as { RequestedModelNo?: unknown }).RequestedModelNo;
 
   const isComment = isTruthy(commentRaw);
   const isPrintable = isTruthy(printableRaw);
@@ -52,7 +54,11 @@ export const resolveOfferProductRowType = (row: OfferProductRow): OfferProductRo
 
   if (isComment && isPrintable) return 'printable-comment';
   if (isComment && isExplicitlyNotPrintable) return 'non-printable-comment';
-  const hasPartOrModel = hasPartNumber(partNumberRaw) || hasModelNumber(modelNumberRaw);
+  const hasPartOrModel =
+    hasPartNumber(partNumberRaw)
+    || hasModelNumber(modelNumberRaw)
+    || hasPartNumber(requestedPartRaw)
+    || hasModelNumber(requestedModelRaw);
 
   if (printableRaw == null && commentRaw == null && !hasPartOrModel) {
     return 'category';

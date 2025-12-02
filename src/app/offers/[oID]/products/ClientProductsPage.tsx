@@ -7,6 +7,7 @@ import { showToastMessage } from '../../../../lib/toast';
 import layoutStyles from '../../offersDetail.module.css';
 import toolbarStyles from './ClientProductsPage.module.css';
 import AddProductsModal from './AddProductsModal';
+import AddRequestedProductsModal from './AddRequestedProductsModal';
 
 type Props = {
   oID: string;
@@ -48,6 +49,7 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
   const [pendingAction, setPendingAction] = useState<CreatableActionType | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
+  const [showRequestedModal, setShowRequestedModal] = useState(false);
   const creationCountersRef = useRef<Record<CreatableActionType, number>>({
     category: 0,
     'printable-comment': 0,
@@ -107,6 +109,11 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
   }, []);
 
   const handleCloseModal = useCallback(() => setShowAddProductModal(false), []);
+  const handleCloseRequestedModal = useCallback(() => setShowRequestedModal(false), []);
+  const handleRequestedImported = useCallback((result: { inserted?: number; updated?: number; total?: number }) => {
+    void result;
+    setRefreshToken((prev) => prev + 1);
+  }, []);
 
   return (
     <main className={layoutStyles.page}>
@@ -123,7 +130,7 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
               <button
                 type="button"
                 className={`${toolbarStyles.button} ${toolbarStyles.buttonProduct}`}
-                disabled
+                onClick={() => setShowRequestedModal(true)}
               >
                 Add Requested Products
               </button>
@@ -171,6 +178,13 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
       <OfferProductsPanel oID={oID} manualMode={manualMode} refreshToken={refreshToken} />
       {showAddProductModal ? (
         <AddProductsModal oID={oID} onAdded={handleProductsAdded} onClose={handleCloseModal} />
+      ) : null}
+      {showRequestedModal ? (
+        <AddRequestedProductsModal
+          oID={oID}
+          onClose={handleCloseRequestedModal}
+          onImported={handleRequestedImported}
+        />
       ) : null}
     </main>
   );

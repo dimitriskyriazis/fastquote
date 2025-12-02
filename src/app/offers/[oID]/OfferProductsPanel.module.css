@@ -129,3 +129,12 @@
   color: #1d4ed8;
   text-decoration: underline;
 }
+
+.requestedHeader {
+  background: #ffb17c;
+}
+
+.requestedHeader :global(.ag-header-cell-label) {
+  background: #ffb17c;
+  color: inherit;
+}

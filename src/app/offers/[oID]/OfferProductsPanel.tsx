@@ -17,7 +17,7 @@ import type {
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import styles from './OfferProductsPanel.module.css';
-import type { GridTotals } from '../../components/AgGridAll';
+import type { GridTotals, GridResponse } from '../../components/AgGridAll';
 
 const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
   ssr: false,
@@ -78,6 +78,23 @@ const zeroBlankNumberFormatter = ({ value }: FormatterParams) => {
   if (Object.is(num, 0)) return '';
   return plainNumberFormatter.format(num);
 };
+
+type RequestedFieldKey =
+  | 'RequestedItemNo'
+  | 'RequestedBrand'
+  | 'RequestedModelNo'
+  | 'RequestedPartNo'
+  | 'RequestedDescription'
+  | 'RequestedQuantity';
+
+type RequestedDisplayFieldKey = Exclude<RequestedFieldKey, 'RequestedItemNo'>;
+const REQUESTED_DISPLAY_FIELD_KEYS: RequestedDisplayFieldKey[] = [
+  'RequestedBrand',
+  'RequestedModelNo',
+  'RequestedPartNo',
+  'RequestedDescription',
+  'RequestedQuantity',
+];
 
 const compareTreeOrderingValues = (a: unknown, b: unknown) => {
   const sa = String(a ?? '').trim();
@@ -275,13 +292,51 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
     return buildEndpointForOffer(oID);
   }, [endpoint, oID]);
   const [totals, setTotals] = useState<{ totalListPrice: number; totalNetPrice: number; totalCost: number; totalMargin: number } | null>(null);
+  const [requestedColumnVisibility, setRequestedColumnVisibility] = useState<Record<RequestedDisplayFieldKey, boolean>>({
+    RequestedBrand: false,
+    RequestedModelNo: false,
+    RequestedPartNo: false,
+    RequestedDescription: false,
+    RequestedQuantity: false,
+  });
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() => new Set());
   const [categoryPathsWithChildren, setCategoryPathsWithChildren] = useState<Set<string>>(() => new Set());
   const [categoryChildrenKnown, setCategoryChildrenKnown] = useState(false);
 
+  const applyRequestedColumnVisibility = useCallback((visibility: Partial<Record<RequestedDisplayFieldKey, boolean>> | null | undefined, replace = false) => {
+    if (!visibility) {
+      if (!replace) return;
+      setRequestedColumnVisibility({
+        RequestedBrand: false,
+        RequestedModelNo: false,
+        RequestedPartNo: false,
+        RequestedDescription: false,
+        RequestedQuantity: false,
+      });
+      return;
+    }
+    setRequestedColumnVisibility((prev) => {
+      const next = replace
+        ? {
+          RequestedBrand: false,
+          RequestedModelNo: false,
+          RequestedPartNo: false,
+          RequestedDescription: false,
+          RequestedQuantity: false,
+        }
+        : { ...prev };
+      REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
+        if (visibility[key] == null) return;
+        next[key] = Boolean(visibility[key]);
+      });
+      return next;
+    });
+  }, []);
+
   const defaultColDef = useMemo<ColDef>(() => ({
     editable: (params) => isOfferProductComment(params?.data ?? null),
+    sortable: false,
   }), []);
 
   const handleTotalsChange = useCallback((payload: GridTotals | null) => {
@@ -307,6 +362,21 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
       return { totalNetPrice, totalListPrice, totalCost, totalMargin };
     });
   }, []);
+
+  const handleGridResponse = useCallback((response: GridResponse | null) => {
+    if (response?.requestedColumns) {
+      const visibility: Partial<Record<RequestedDisplayFieldKey, boolean>> = {};
+      REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
+        const value = response.requestedColumns?.[key];
+        if (value != null) {
+          visibility[key] = Boolean(value);
+        }
+      });
+      applyRequestedColumnVisibility(visibility, true);
+    } else if (response) {
+      applyRequestedColumnVisibility(null, true);
+    }
+  }, [applyRequestedColumnVisibility]);
 
   const updateCategoryAncestors = useCallback((api: GridApi<Record<string, unknown>>) => {
     const next = new Set<string>();
@@ -691,69 +761,128 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
     );
   }, []);
 
-const productColumnDefs: ColDef[] = useMemo(() => [
-    {
-      headerName: '',
-      colId: '__row_drag__',
-      lockPosition: true,
-      suppressMovable: true,
-      suppressSizeToFit: true,
-      suppressColumnsToolPanel: true,
-      resizable: false,
-      sortable: false,
-      filter: false,
-      maxWidth: 52,
-      minWidth: 40,
-      width: 44,
-      cellStyle: { padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' },
-      cellRenderer: RowDragHandle,
+const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>(() => ({
+  RequestedBrand: {
+    field: 'RequestedBrand',
+    headerName: 'Req. Brand',
+    filter: 'agTextColumnFilter',
+      minWidth: 140,
+      headerClass: styles.requestedHeader,
     },
-    {
-      field: 'ProductID',
-      hide: true,
-      lockVisible: true,
-      suppressColumnsToolPanel: true,
-    },
-    {
-      field: 'TreeOrdering',
-      headerName: '#',
-      maxWidth: 90,
+    RequestedModelNo: {
+      field: 'RequestedModelNo',
+      headerName: 'Req. Model Number',
       filter: 'agTextColumnFilter',
+      minWidth: 140,
+      headerClass: styles.requestedHeader,
+    },
+    RequestedPartNo: {
+      field: 'RequestedPartNo',
+      headerName: 'Req. Part Number',
+      filter: 'agTextColumnFilter',
+      minWidth: 150,
+      headerClass: styles.requestedHeader,
+    },
+    RequestedDescription: {
+      field: 'RequestedDescription',
+      headerName: 'Req. Description',
+      filter: 'agTextColumnFilter',
+      minWidth: 220,
+      flex: 1,
+      headerClass: styles.requestedHeader,
+    },
+    RequestedQuantity: {
+      field: 'RequestedQuantity',
+      headerName: 'Req. Qty',
+      filter: 'agNumberColumnFilter',
       type: 'numericColumn',
-      comparator: compareTreeOrderingValues,
-      sort: 'asc',
-      sortingOrder: ['asc', 'desc', null],
-      sortIndex: 0,
-      editable: manualMode,
-      singleClickEdit: manualMode,
-      cellRenderer: TreeOrderingCell,
-      cellClass: 'offer-products-tree-ordering-cell',
+      valueFormatter: zeroBlankNumberFormatter,
+      width: 120,
+      headerClass: styles.requestedHeader,
     },
-    {
-      field: 'BrandName',
-      headerName: 'Brand',
-      filter: 'agTextColumnFilter',
-      cellClassRules: productAccentCellClassRules,
-    },
-    {
-      field: 'PartNumber',
-      headerName: 'Part Number',
-      filter: 'agTextColumnFilter',
-      cellRenderer: PartNumberCell,
-    },
-    { field: 'ModelNumber', headerName: 'Model Number', filter: 'agTextColumnFilter' },
-    {
-      field: 'Description',
-      headerName: 'Description',
-      minWidth: 280,
-      width: 320,
-      filter: 'agTextColumnFilter',
-      editable: (params) => {
-        const row = params?.data ?? null;
-        return isOfferProductCategory(row) || isOfferProductComment(row);
+  }), []);
+
+  const productColumnDefs: ColDef[] = useMemo(() => {
+    const requestedColumns: ColDef[] = [];
+    REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
+      const baseColDef = requestedColumnDefsMap[key];
+      if (!baseColDef) return;
+      const isVisible = requestedColumnVisibility[key];
+      requestedColumns.push({
+        ...baseColDef,
+        hide: !isVisible,
+        suppressSizeToFit: !isVisible,
+        suppressAutoSize: !isVisible,
+      });
+      if (!isVisible && baseColDef.flex) {
+        requestedColumns[requestedColumns.length - 1].flex = undefined;
+      }
+    });
+
+    return [
+      {
+        headerName: '',
+        colId: '__row_drag__',
+        lockPosition: true,
+        suppressMovable: true,
+        suppressSizeToFit: true,
+        suppressColumnsToolPanel: true,
+        resizable: false,
+        sortable: false,
+        filter: false,
+        maxWidth: 52,
+        minWidth: 40,
+        width: 44,
+        cellStyle: { padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' },
+        cellRenderer: RowDragHandle,
       },
-      singleClickEdit: true,
-    },
+      {
+        field: 'ProductID',
+        hide: true,
+        lockVisible: true,
+        suppressColumnsToolPanel: true,
+      },
+      {
+        field: 'TreeOrdering',
+        headerName: '#',
+        maxWidth: 90,
+        filter: 'agTextColumnFilter',
+        type: 'numericColumn',
+        comparator: compareTreeOrderingValues,
+        sort: 'asc',
+        sortingOrder: ['asc', 'desc', null],
+        sortIndex: 0,
+        editable: manualMode,
+        singleClickEdit: manualMode,
+        cellRenderer: TreeOrderingCell,
+        cellClass: 'offer-products-tree-ordering-cell',
+      },
+      ...requestedColumns,
+      {
+        field: 'BrandName',
+        headerName: 'Brand',
+        filter: 'agTextColumnFilter',
+        cellClassRules: productAccentCellClassRules,
+      },
+      {
+        field: 'PartNumber',
+        headerName: 'Part Number',
+        filter: 'agTextColumnFilter',
+        cellRenderer: PartNumberCell,
+      },
+      { field: 'ModelNumber', headerName: 'Model Number', filter: 'agTextColumnFilter' },
+      {
+        field: 'Description',
+        headerName: 'Description',
+        minWidth: 280,
+        width: 320,
+        filter: 'agTextColumnFilter',
+        editable: (params) => {
+          const row = params?.data ?? null;
+          return isOfferProductCategory(row) || isOfferProductComment(row);
+        },
+        singleClickEdit: true,
+      },
     {
       field: 'ListPrice',
       headerName: 'List Price',
@@ -866,7 +995,23 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       valueGetter: categoryTotalCostGetter,
       cellClassRules: productAccentCellClassRules,
     },
-  ], [RowDragHandle, PartNumberCell, manualMode, TreeOrderingCell]);
+  ];
+  }, [RowDragHandle, PartNumberCell, manualMode, TreeOrderingCell, requestedColumnDefsMap, requestedColumnVisibility]);
+
+  useEffect(() => {
+    const api = gridApiRef.current;
+    if (!api) return;
+    try {
+      const keys = REQUESTED_DISPLAY_FIELD_KEYS.map((key) => key);
+      api.setColumnsVisible(keys, false);
+      const visibleKeys = keys.filter((key) => requestedColumnVisibility[key]);
+      if (visibleKeys.length > 0) {
+        api.setColumnsVisible(visibleKeys, true);
+      }
+    } catch {
+      /* noop */
+    }
+  }, [requestedColumnVisibility]);
 
   const productRowDeletion = useMemo(
     () =>
@@ -1171,6 +1316,7 @@ const productColumnDefs: ColDef[] = useMemo(() => [
           onRowDoubleClicked={handleRowDoubleClicked}
           autoSizeExclusions={['Description']}
           onTotalsChange={handleTotalsChange}
+          onResponse={handleGridResponse}
           rowGroupPanelShow="never"
           onModelUpdated={handleGridModelUpdated}
           getRowHeight={getRowHeight}

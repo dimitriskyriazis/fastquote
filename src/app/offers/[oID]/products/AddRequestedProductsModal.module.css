@@ -1,0 +1,283 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 2147483646;
+}
+
+.card {
+  background: #ffffff;
+  border-radius: 16px;
+  width: min(1600px, 100vw);
+  height: min(95vh, 980px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.45);
+  overflow: hidden;
+}
+
+.header {
+  padding: 18px 22px;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.headerText {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.subtitle {
+  font-size: 0.95rem;
+  color: #475569;
+}
+
+.headerActions {
+  display: flex;
+  gap: 10px;
+}
+
+.primaryButton {
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ea580c 0%, #f97316 100%);
+  color: #ffffff;
+  font-weight: 600;
+  padding: 10px 20px;
+  cursor: pointer;
+  box-shadow: 0 14px 30px rgba(234, 88, 12, 0.35);
+  transition: transform 120ms ease, box-shadow 150ms ease, filter 120ms ease;
+}
+
+.primaryButton:hover:not(:disabled) {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+}
+
+.primaryButton:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.ghostButton {
+  border: 1px solid #cbd5f5;
+  background: #f8fafc;
+  color: #0f172a;
+  border-radius: 999px;
+  font-weight: 600;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+
+.ghostButton:hover {
+  background: #e2e8f0;
+  transform: translateY(-1px);
+}
+
+.body {
+  flex: 1;
+  display: flex;
+  gap: 18px;
+  padding: 18px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.mappingColumn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.previewColumn {
+  width: 340px;
+  flex-shrink: 0;
+  border-left: 1px solid #e2e8f0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.uploadLabel {
+  border: 2px dashed #cbd5e1;
+  border-radius: 14px;
+  padding: 24px;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+
+.uploadLabel:hover {
+  border-color: #ea580c;
+  background: #fff7ed;
+  transform: translateY(-1px);
+}
+
+.uploadLabelDragging {
+  border-color: #ea580c;
+  background: #ffedd5;
+  transform: translateY(-1px);
+}
+
+.fileInput {
+  display: none;
+}
+
+.uploadTitle {
+  font-weight: 700;
+  color: #7c2d12;
+}
+
+.uploadSubtitle {
+  color: #92400e;
+  font-size: 0.92rem;
+}
+
+.selectedFile {
+  font-size: 0.9rem;
+  color: #0f172a;
+}
+
+.statusCard {
+  border: 1px solid #ffe4cc;
+  background: linear-gradient(135deg, #fff7ed 0%, #fff1e6 100%);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.statusTitle {
+  font-weight: 700;
+  color: #7c2d12;
+}
+
+.statusText {
+  color: #7c2d12;
+  font-size: 0.92rem;
+}
+
+.sheetTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sheetTab {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 6px 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.sheetTabActive {
+  border-color: #ea580c;
+  color: #b45309;
+  box-shadow: 0 6px 16px rgba(234, 88, 12, 0.25);
+}
+
+.sheetTabIncluded {
+  border-color: #15803d;
+  color: #065f46;
+  background: #dcfce7;
+}
+
+.mappingGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.mappingField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mappingLabel {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #334155;
+}
+
+.requiredMark {
+  color: #dc2626;
+}
+
+.select {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 0.95rem;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.sheetToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-weight: 600;
+  color: #92400e;
+}
+
+.helpText {
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.previewList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.previewItem {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 12px;
+  font-size: 0.9rem;
+  color: #0f172a;
+}
+
+.previewCount {
+  font-weight: 700;
+  color: #7c2d12;
+}
+
+.errorText {
+  color: #b91c1c;
+  font-weight: 600;
+}

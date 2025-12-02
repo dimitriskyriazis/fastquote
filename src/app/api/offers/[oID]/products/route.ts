@@ -85,13 +85,35 @@ type ProductRow = {
   PriceListValidFromDate: Date | string | null;
   PriceListValidToDate: Date | string | null;
   PriceListEnabled: boolean | number | null;
+  RequestedItemNo: string | null;
+  RequestedBrand: string | null;
+  RequestedModelNo: string | null;
+  RequestedPartNo: string | null;
+  RequestedDescription: string | null;
+  RequestedQuantity: number | null;
 };
+
+type RequestedFieldKey =
+  | 'RequestedItemNo'
+  | 'RequestedBrand'
+  | 'RequestedModelNo'
+  | 'RequestedPartNo'
+  | 'RequestedDescription'
+  | 'RequestedQuantity';
+
+type RequestedColumns = Record<RequestedFieldKey, boolean>;
 
 type ProductRowWithCount = ProductRow & {
   __totalCount: number | bigint | null;
   __sumTotalPrice?: number | bigint | string | null;
   __sumTotalNet?: number | bigint | string | null;
   __sumTotalCost?: number | bigint | string | null;
+  __hasRequestedItemNo?: number | bigint | null;
+  __hasRequestedBrand?: number | bigint | null;
+  __hasRequestedModelNo?: number | bigint | null;
+  __hasRequestedPartNo?: number | bigint | null;
+  __hasRequestedDescription?: number | bigint | null;
+  __hasRequestedQuantity?: number | bigint | null;
 };
 
 type OfferProductTotals = {
@@ -171,6 +193,12 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   PriceListValidFromDate: 'pl.ValidFromDate',
   PriceListValidToDate: 'pl.ValidToDate',
   PriceListEnabled: 'pl.Enabled',
+  RequestedItemNo: 'od.RequestedItemNo',
+  RequestedBrand: 'od.RequestedBrand',
+  RequestedModelNo: 'od.RequestedModelNo',
+  RequestedPartNo: 'od.RequestedPartNo',
+  RequestedDescription: 'od.RequestedDescription',
+  RequestedQuantity: 'od.RequestedQuantity',
 };
 
 const ORDER_EXPRESSION_OVERRIDES: Record<string, string> = {
@@ -252,6 +280,15 @@ const normalizeAggregateValue = (value: unknown): number => {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+};
+
+const normalizeAggregateFlag = (value: unknown): boolean => {
+  if (value === true) return true;
+  if (value === false) return false;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'bigint') return value !== BigInt(0);
+  if (typeof value === 'string') return value.trim() !== '' && value !== '0';
+  return false;
 };
 
 type PricingSnapshot = {
@@ -851,7 +888,19 @@ export async function POST(
         od.PriceListItemID,
         pl.ValidFromDate AS PriceListValidFromDate,
         pl.ValidToDate AS PriceListValidToDate,
-        pl.Enabled AS PriceListEnabled
+        pl.Enabled AS PriceListEnabled,
+        od.RequestedItemNo,
+        od.RequestedBrand,
+        od.RequestedModelNo,
+        od.RequestedPartNo,
+        od.RequestedDescription,
+        od.RequestedQuantity,
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedItemNo,
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedBrand)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedBrand,
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedModelNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedModelNo,
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedPartNo,
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription,
+        MAX(CASE WHEN od.RequestedQuantity IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedQuantity
       FROM dbo.OfferDetails od
         LEFT OUTER JOIN dbo.Products p ON od.ProductID = p.ID
         LEFT OUTER JOIN dbo.Brands b ON p.BrandID = b.ID
@@ -878,16 +927,44 @@ export async function POST(
       }
       : { totalListPrice: 0, totalNetPrice: 0, totalCost: 0 };
 
+    const aggregateRow = recordset[0] ?? null;
+    const requestedColumns: RequestedColumns = {
+      RequestedItemNo: normalizeAggregateFlag(aggregateRow?.__hasRequestedItemNo ?? 0),
+      RequestedBrand: normalizeAggregateFlag(aggregateRow?.__hasRequestedBrand ?? 0),
+      RequestedModelNo: normalizeAggregateFlag(aggregateRow?.__hasRequestedModelNo ?? 0),
+      RequestedPartNo: normalizeAggregateFlag(aggregateRow?.__hasRequestedPartNo ?? 0),
+      RequestedDescription: normalizeAggregateFlag(aggregateRow?.__hasRequestedDescription ?? 0),
+      RequestedQuantity: normalizeAggregateFlag(aggregateRow?.__hasRequestedQuantity ?? 0),
+    };
+
     const rows: ProductRow[] = recordset.map(row => {
-      const { __totalCount, __sumTotalPrice, __sumTotalNet, __sumTotalCost, ...rest } = row;
+      const {
+        __totalCount,
+        __sumTotalPrice,
+        __sumTotalNet,
+        __sumTotalCost,
+        __hasRequestedItemNo,
+        __hasRequestedBrand,
+        __hasRequestedModelNo,
+        __hasRequestedPartNo,
+        __hasRequestedDescription,
+        __hasRequestedQuantity,
+        ...rest
+      } = row;
       void __totalCount;
       void __sumTotalPrice;
       void __sumTotalNet;
       void __sumTotalCost;
+      void __hasRequestedItemNo;
+      void __hasRequestedBrand;
+      void __hasRequestedModelNo;
+      void __hasRequestedPartNo;
+      void __hasRequestedDescription;
+      void __hasRequestedQuantity;
       return rest;
     });
 
-    return NextResponse.json({ ok: true, rows, rowCount, totals });
+    return NextResponse.json({ ok: true, rows, rowCount, totals, requestedColumns });
   } catch (err: unknown) {
     console.error(err);
     const message = err instanceof Error ? err.message : 'Server error';
