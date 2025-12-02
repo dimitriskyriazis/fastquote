@@ -19,12 +19,12 @@ import gridStyles from '../../../components/AgGridAll.module.css';
 
 declare global {
   // Prevent double registration during HMR/StrictMode
-  var __TELQUOTE_HISTORY_AG__: boolean | undefined;
+  var __FASTQUOTE_HISTORY_AG__: boolean | undefined;
 }
 
-if (!globalThis.__TELQUOTE_HISTORY_AG__) {
+if (!globalThis.__FASTQUOTE_HISTORY_AG__) {
   ModuleRegistry.registerModules([AllEnterpriseModule]);
-  globalThis.__TELQUOTE_HISTORY_AG__ = true;
+  globalThis.__FASTQUOTE_HISTORY_AG__ = true;
 }
 
 LicenseManager.setLicenseKey(process.env.NEXT_PUBLIC_AG_GRID_LICENSE || '');

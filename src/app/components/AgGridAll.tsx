@@ -1063,7 +1063,7 @@ export default function AgGridAll({
 
     if (typeof window !== 'undefined') {
       try {
-        window.dispatchEvent(new CustomEvent('telquote-row-drop'));
+        window.dispatchEvent(new CustomEvent('fastquote-row-drop'));
       } catch {
         /* noop */
       }
@@ -1073,7 +1073,7 @@ export default function AgGridAll({
       return;
     }
 
-    const rawPayload = ev.dataTransfer?.getData('application/x-telquote-row+json')
+    const rawPayload = ev.dataTransfer?.getData('application/x-fastquote-row+json')
       || ev.dataTransfer?.getData('text/plain');
     if (!rawPayload) return;
 

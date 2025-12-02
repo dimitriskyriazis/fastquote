@@ -19,35 +19,35 @@ export const showConfirmDialog = async ({
 
   return new Promise<boolean>((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'telquote-confirm-overlay';
+    overlay.className = 'fastquote-confirm-overlay';
 
     const dialog = document.createElement('div');
-    dialog.className = 'telquote-confirm-dialog';
+    dialog.className = 'fastquote-confirm-dialog';
 
     if (title) {
       const heading = document.createElement('h3');
-      heading.className = 'telquote-confirm-title';
+      heading.className = 'fastquote-confirm-title';
       heading.textContent = title;
       dialog.appendChild(heading);
     }
 
     const messageEl = document.createElement('p');
-    messageEl.className = 'telquote-confirm-message';
+    messageEl.className = 'fastquote-confirm-message';
     messageEl.textContent = message;
     dialog.appendChild(messageEl);
 
     const buttons = document.createElement('div');
-    buttons.className = 'telquote-confirm-buttons';
+    buttons.className = 'fastquote-confirm-buttons';
 
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
-    cancelBtn.className = 'telquote-confirm-btn telquote-confirm-btn--cancel';
+    cancelBtn.className = 'fastquote-confirm-btn fastquote-confirm-btn--cancel';
     cancelBtn.textContent = cancelLabel;
 
     const confirmBtn = document.createElement('button');
     confirmBtn.type = 'button';
-    confirmBtn.className = `telquote-confirm-btn telquote-confirm-btn--confirm${
-      tone === 'danger' ? ' telquote-confirm-btn--danger' : ''
+    confirmBtn.className = `fastquote-confirm-btn fastquote-confirm-btn--confirm${
+      tone === 'danger' ? ' fastquote-confirm-btn--danger' : ''
     }`;
     confirmBtn.textContent = confirmLabel;
 

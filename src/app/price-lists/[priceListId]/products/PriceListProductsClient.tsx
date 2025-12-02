@@ -74,7 +74,7 @@ const resolvePriceListRowLabel = (row: PriceListProductRowGrid | null | undefine
 const PRICE_LIST_ROW_TYPE_LABEL = "price list item";
 
 const productHistoryMenuIcon = `
-  <span class="telquote-menu-icon telquote-menu-icon--history" aria-hidden="true">
+  <span class="fastquote-menu-icon fastquote-menu-icon--history" aria-hidden="true">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 5a7 7 0 1 1-7 7" />
       <path d="M12 9v4l2.6 1.5" />

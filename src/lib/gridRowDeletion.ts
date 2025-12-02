@@ -3,7 +3,7 @@ import { showConfirmDialog } from './confirm';
 import { showToastMessage } from './toast';
 
 const deleteRecordMenuIcon = `
-  <span class="telquote-menu-icon telquote-menu-icon--danger" aria-hidden="true">
+  <span class="fastquote-menu-icon fastquote-menu-icon--danger" aria-hidden="true">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
       <path d="M19 7L18.2 19.2C18.1 20.8 16.8 22 15.2 22H8.8C7.2 22 5.9 20.8 5.8 19.2L5 7" />
       <path d="M10 11V17" />

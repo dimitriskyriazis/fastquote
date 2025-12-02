@@ -22,8 +22,8 @@ const AUDIT_HEADER_CANDIDATES = [
 const AUDIT_COOKIE_CANDIDATES = [
   'aspnet-user-id',
   'aspnetuserid',
-  'telquote-user-id',
-  'telquote_user_id',
+  'fastquote-user-id',
+  'fastquote_user_id',
 ];
 
 const AUDIT_QUERY_PARAM_CANDIDATES = [

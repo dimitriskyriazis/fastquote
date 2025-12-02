@@ -17,8 +17,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Telquote FastQuote",
-  description: "Browse and explore active Telquote offers.",
+  title: "Fastquote FastQuote",
+  description: "Browse and explore active Fastquote offers.",
 };
 
 export default function RootLayout({

@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 
-const COOKIE_NAME = 'telquote-user-id';
+const COOKIE_NAME = 'fastquote-user-id';
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365; // one year
 
 type AuditUser = {

@@ -70,7 +70,7 @@
   transform: translateY(0);
 }
 
-.telquote-confirm-overlay {
+.fastquote-confirm-overlay {
   position: fixed;
   inset: 0;
   background: rgba(15, 23, 42, 0.55);
@@ -83,11 +83,11 @@
   padding: 16px;
 }
 
-.telquote-confirm-overlay.visible {
+.fastquote-confirm-overlay.visible {
   opacity: 1;
 }
 
-.telquote-confirm-dialog {
+.fastquote-confirm-dialog {
   background: #ffffff;
   border-radius: 14px;
   padding: 20px 24px;
@@ -96,27 +96,27 @@
   color: #0f172a;
 }
 
-.telquote-confirm-title {
+.fastquote-confirm-title {
   margin: 0 0 8px;
   font-size: 1.15rem;
   font-weight: 600;
   color: #111827;
 }
 
-.telquote-confirm-message {
+.fastquote-confirm-message {
   margin: 0 0 20px;
   font-size: 0.95rem;
   color: #374151;
   line-height: 1.4;
 }
 
-.telquote-confirm-buttons {
+.fastquote-confirm-buttons {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
 }
 
-.telquote-confirm-btn {
+.fastquote-confirm-btn {
   border-radius: 9999px;
   border: none;
   padding: 8px 18px;
@@ -126,35 +126,35 @@
   transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
 }
 
-.telquote-confirm-btn--cancel {
+.fastquote-confirm-btn--cancel {
   background: #e5e7eb;
   color: #1f2937;
 }
 
-.telquote-confirm-btn--cancel:hover {
+.fastquote-confirm-btn--cancel:hover {
   background: #d1d5db;
 }
 
-.telquote-confirm-btn--confirm {
+.fastquote-confirm-btn--confirm {
   background: #2563eb;
   color: #ffffff;
   box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35);
 }
 
-.telquote-confirm-btn--confirm:hover {
+.fastquote-confirm-btn--confirm:hover {
   background: #1d4ed8;
 }
 
-.telquote-confirm-btn--danger {
+.fastquote-confirm-btn--danger {
   background: #b91c1c;
   box-shadow: 0 6px 18px rgba(185, 28, 28, 0.35);
 }
 
-.telquote-confirm-btn--danger:hover {
+.fastquote-confirm-btn--danger:hover {
   background: #991b1b;
 }
 
-.telquote-menu-icon {
+.fastquote-menu-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -162,17 +162,17 @@
   height: 16px;
 }
 
-.telquote-menu-icon svg {
+.fastquote-menu-icon svg {
   display: block;
   width: 14px;
   height: 14px;
 }
 
-.telquote-menu-icon--danger {
+.fastquote-menu-icon--danger {
   color: #b91c1c;
 }
 
-.telquote-menu-icon--history {
+.fastquote-menu-icon--history {
   color: #2563eb;
 }
 

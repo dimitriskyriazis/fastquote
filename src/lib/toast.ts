@@ -2,7 +2,7 @@ export type ToastTone = 'info' | 'error' | 'success';
 
 export const showToastMessage = (message: string, tone: ToastTone = 'info') => {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
-  const containerId = 'telquote-drop-toast-container';
+  const containerId = 'fastquote-drop-toast-container';
   let container = document.getElementById(containerId);
   if (!container) {
     container = document.createElement('div');

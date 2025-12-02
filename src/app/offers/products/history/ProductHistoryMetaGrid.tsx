@@ -12,12 +12,12 @@ import styles from './ProductHistory.module.css';
 
 declare global {
   // Prevent double registration during HMR/StrictMode
-  var __TELQUOTE_HISTORY_AG__META__: boolean | undefined;
+  var __FASTQUOTE_HISTORY_AG__META__: boolean | undefined;
 }
 
-if (!globalThis.__TELQUOTE_HISTORY_AG__META__) {
+if (!globalThis.__FASTQUOTE_HISTORY_AG__META__) {
   ModuleRegistry.registerModules([AllEnterpriseModule]);
-  globalThis.__TELQUOTE_HISTORY_AG__META__ = true;
+  globalThis.__FASTQUOTE_HISTORY_AG__META__ = true;
 }
 
 LicenseManager.setLicenseKey(process.env.NEXT_PUBLIC_AG_GRID_LICENSE || '');
