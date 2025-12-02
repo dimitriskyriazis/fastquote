@@ -709,6 +709,12 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       cellRenderer: RowDragHandle,
     },
     {
+      field: 'ProductID',
+      hide: true,
+      lockVisible: true,
+      suppressColumnsToolPanel: true,
+    },
+    {
       field: 'TreeOrdering',
       headerName: '#',
       maxWidth: 90,
@@ -890,35 +896,26 @@ const productColumnDefs: ColDef[] = useMemo(() => [
       return items;
     }
 
-    const normalize = (value: unknown) => {
-      if (typeof value === 'string') {
-        const trimmed = value.trim();
-        return trimmed.length > 0 ? trimmed : null;
-      }
-      if (value == null) return null;
-      const str = String(value).trim();
-      return str.length > 0 ? str : null;
-    };
-
-    const partNumber = normalize((rowData as { PartNumber?: unknown }).PartNumber);
-    const modelNumber = normalize((rowData as { ModelNumber?: unknown }).ModelNumber);
-    const description = normalize((rowData as { Description?: unknown }).Description);
-
-    if (!partNumber && !modelNumber) {
+    const rawProductId = (rowData as { ProductID?: unknown }).ProductID;
+    const productId =
+      typeof rawProductId === 'number'
+        ? rawProductId
+        : typeof rawProductId === 'string'
+          ? Number.parseInt(rawProductId, 10)
+          : null;
+    if (!productId || !Number.isInteger(productId)) {
       return items;
     }
 
     const qs = new URLSearchParams();
-    qs.set('offerId', oID);
-    if (partNumber) qs.set('partNumber', partNumber);
-    if (modelNumber) qs.set('modelNumber', modelNumber);
-    if (description) qs.set('description', description);
+    qs.set('backHref', `/offers/${encodeURIComponent(oID)}/products`);
+    qs.set('backLabel', `offer ${oID}`);
 
     const historyItem: MenuItemDef = {
       name: "View Product's History",
       icon: productHistoryMenuIcon,
       action: () => {
-        router.push(`/offers/products/history?${qs.toString()}`);
+        router.push(`/products/${encodeURIComponent(String(productId))}/history?${qs.toString()}`);
       },
     };
 

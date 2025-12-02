@@ -57,6 +57,7 @@ const TREE_ORDERING_HIERARCHY_EXPRESSION = `
 `;
 
 type ProductRow = {
+  ProductID: number | null;
   OfferDetailID: number | null;
   ParentOfferDetailID: number | null;
   TreeOrdering: string | null;
@@ -1130,6 +1131,7 @@ export async function PATCH(
         Margin: number | null;
       }>(`
         SELECT
+        od.ProductID,
         od.ID AS OfferDetailID,
         od.ProductID,
         od.IsComment,

@@ -26,6 +26,7 @@ type Props = {
 };
 
 type PriceListProductRowGrid = {
+  ProductID?: number | null;
   PriceListItemID?: number | null;
   Description?: string | null;
   PartNumber?: string | null;
@@ -109,6 +110,12 @@ export default function PriceListProductsClient({
           const idx = params.node?.rowIndex;
           return typeof idx === "number" && idx >= 0 ? idx + 1 : "";
         },
+      },
+      {
+        field: "ProductID",
+        hide: true,
+        lockVisible: true,
+        suppressColumnsToolPanel: true,
       },
       {
         field: "PriceListItemID",
@@ -208,21 +215,15 @@ export default function PriceListProductsClient({
         return items;
       }
 
-      const normalizeText = (value: unknown) => {
-        if (typeof value === "string") {
-          const trimmed = value.trim();
-          return trimmed.length > 0 ? trimmed : null;
-        }
-        if (value == null) return null;
-        const str = String(value).trim();
-        return str.length > 0 ? str : null;
-      };
+      const rawProductId = (rowData as { ProductID?: unknown }).ProductID;
+      const productId =
+        typeof rawProductId === "number"
+          ? rawProductId
+          : typeof rawProductId === "string"
+            ? Number.parseInt(rawProductId, 10)
+            : null;
 
-      const partNumber = normalizeText(rowData.PartNumber);
-      const description = normalizeText(rowData.Description);
-      const modelNumber = normalizeText((rowData as { ModelNumber?: unknown }).ModelNumber);
-
-      if (!partNumber && !modelNumber) {
+      if (!productId || !Number.isInteger(productId)) {
         return items;
       }
 
@@ -231,12 +232,11 @@ export default function PriceListProductsClient({
         icon: productHistoryMenuIcon,
         action: () => {
           const qs = new URLSearchParams();
-          if (partNumber) qs.set("partNumber", partNumber);
-          if (modelNumber) qs.set("modelNumber", modelNumber);
-          if (description) qs.set("description", description);
           qs.set("backHref", historyBackHref);
           qs.set("backLabel", historyBackLabel);
-          void router.push(`/offers/products/history?${qs.toString()}`);
+          void router.push(
+            `/products/${encodeURIComponent(String(productId))}/history?${qs.toString()}`,
+          );
         },
       };
 

@@ -2,11 +2,7 @@
 
 import React, { useMemo, useCallback, useRef, useEffect } from 'react';
 import { AgGridReact } from 'ag-grid-react';
-import {
-  AllEnterpriseModule,
-  ModuleRegistry,
-  LicenseManager,
-} from 'ag-grid-enterprise';
+import { AllEnterpriseModule, ModuleRegistry } from 'ag-grid-enterprise';
 import type { ColDef, GridApi, FirstDataRenderedEvent, Column } from 'ag-grid-community';
 import styles from './ProductHistory.module.css';
 
@@ -19,8 +15,6 @@ if (!globalThis.__FASTQUOTE_HISTORY_AG__META__) {
   ModuleRegistry.registerModules([AllEnterpriseModule]);
   globalThis.__FASTQUOTE_HISTORY_AG__META__ = true;
 }
-
-LicenseManager.setLicenseKey(process.env.NEXT_PUBLIC_AG_GRID_LICENSE || '');
 
 type Props = {
   partNumber: string | null;

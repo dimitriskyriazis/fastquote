@@ -247,6 +247,21 @@ const buildGroupKeyFilter = (field: GroupField, key: string | null) => {
   };
 };
 
+const ensureEnabledFilterModel = (
+  filterModel: GridRequest["filterModel"],
+): Record<string, KnownFilterModel> => {
+  const base =
+    (filterModel && typeof filterModel === "object" ? { ...filterModel } : {}) as Record<
+      string,
+      KnownFilterModel
+    >;
+  if ("Enabled" in base) {
+    return base;
+  }
+  base.Enabled = { filterType: "set", values: ["true"] };
+  return base;
+};
+
 export async function POST(req: NextRequest) {
   try {
     const requestPayload = await readGridRequest(req);
@@ -272,7 +287,8 @@ export async function POST(req: NextRequest) {
       INNER JOIN dbo.Suppliers ON dbo.PriceLists.SupplierID = dbo.Suppliers.ID
     `;
 
-    const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);
+    const normalizedFilterModel = ensureEnabledFilterModel(requestPayload.filterModel);
+    const { where, params: whereParams } = buildWhereAndParams(normalizedFilterModel);
     const order = buildOrder(requestPayload.sortModel) || "ORDER BY dbo.PriceLists.Name";
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 

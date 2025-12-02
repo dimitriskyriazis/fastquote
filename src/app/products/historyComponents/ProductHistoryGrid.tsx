@@ -2,11 +2,7 @@
 
 import React, { useMemo, useCallback, useRef, useEffect } from 'react';
 import { AgGridReact } from 'ag-grid-react';
-import {
-  AllEnterpriseModule,
-  ModuleRegistry,
-  LicenseManager,
-} from 'ag-grid-enterprise';
+import { AllEnterpriseModule, ModuleRegistry } from 'ag-grid-enterprise';
 import type {
   ColDef,
   GridApi,
@@ -15,10 +11,8 @@ import type {
   Column,
 } from 'ag-grid-community';
 import styles from './ProductHistory.module.css';
-import gridStyles from '../../../components/AgGridAll.module.css';
 
 declare global {
-  // Prevent double registration during HMR/StrictMode
   var __FASTQUOTE_HISTORY_AG__: boolean | undefined;
 }
 
@@ -26,8 +20,6 @@ if (!globalThis.__FASTQUOTE_HISTORY_AG__) {
   ModuleRegistry.registerModules([AllEnterpriseModule]);
   globalThis.__FASTQUOTE_HISTORY_AG__ = true;
 }
-
-LicenseManager.setLicenseKey(process.env.NEXT_PUBLIC_AG_GRID_LICENSE || '');
 
 export type HistoryRow = {
   OfferID: number | null;
@@ -137,9 +129,9 @@ export default function ProductHistoryGrid({ rows }: Props) {
   ], []);
 
   return (
-    <div className={`${styles.gridContainer} ${gridStyles.container} ${styles.bandedRows} offer-products-grid`}>
+    <div className={`${styles.gridContainer} ${styles.bandedRows} offer-products-grid`}>
       <div
-        className={`ag-theme-quartz ${styles.gridShell} ${gridStyles.gridShell}`}
+        className={`ag-theme-quartz ${styles.gridShell}`}
         data-ag-grid-size="compact"
       >
         <AgGridReact

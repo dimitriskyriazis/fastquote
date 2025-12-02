@@ -56,6 +56,18 @@ const navItems: NavItem[] = [
       </svg>
     ),
   },
+  {
+    label: "Products",
+    href: "/products",
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <rect x="3" y="3" width="7" height="7" rx="1" stroke="currentColor" strokeWidth="1.6" fill="none" />
+        <rect x="14" y="3" width="7" height="7" rx="1" stroke="currentColor" strokeWidth="1.6" fill="none" />
+        <rect x="3" y="14" width="7" height="7" rx="1" stroke="currentColor" strokeWidth="1.6" fill="none" />
+        <rect x="14" y="14" width="7" height="7" rx="1" stroke="currentColor" strokeWidth="1.6" fill="none" />
+      </svg>
+    ),
+  },
 ];
 
 export default function SideNav() {

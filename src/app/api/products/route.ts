@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
-import { getPool } from "../../../../../lib/sql";
+import type { Request as SqlRequest } from "mssql";
+import { getPool } from "../../../lib/sql";
 
 type TextFilterModel = {
   filterType: "text";
@@ -42,52 +43,53 @@ type DateFilterModel = {
   filter?: string;
 };
 
-type KnownFilterModel =
-  | TextFilterModel
-  | NumberFilterModel
-  | SetFilterModel
-  | DateFilterModel;
+type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel | DateFilterModel;
 
 type GridRequest = {
-  startRow: number;
-  endRow: number;
+  startRow?: number;
+  endRow?: number;
   filterModel?: Record<string, KnownFilterModel> | null;
   sortModel?: Array<{ colId: string; sort: "asc" | "desc" }>;
+  rowGroupCols?: Array<{ field?: string | null; colId?: string | null }>;
+  groupKeys?: Array<string | null>;
 };
 
 type QueryParam = { key: string; value: string | number | boolean };
 
-type PriceListProductRow = {
+type ProductRow = {
   ProductID: number | null;
-  Description: string | null;
-  ListPrice: string | number | null;
-  Warning: string | number | boolean | null;
-  Enabled: boolean | number | null;
-  PartNumber: string | null;
+  Brand: string | null;
   ModelNumber: string | null;
-  PriceListID: number | null;
-  PriceListItemID: number | null;
+  PartNumber: string | null;
+  ERPPartNumber: string | null;
+  Description: string | null;
+  Category: string | null;
+  SubCategory: string | null;
+  Type: string | null;
+  WebLink: string | null;
 };
 
-type PriceListProductRowWithCount = PriceListProductRow & {
-  __totalCount: number | bigint | null;
-};
+type ProductRowWithCount = ProductRow & { __totalCount: number | bigint | null };
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   ProductID: "dbo.Products.ID",
-  Description: "dbo.Products.Description",
+  Brand: "dbo.Brands.Name",
   ModelNumber: "dbo.Products.ModelNumber",
-  ListPrice: "dbo.PriceListItems.ListPrice",
-  Warning: "dbo.PriceListItems.Warning",
-  Enabled: "dbo.PriceListItems.Enabled",
   PartNumber: "dbo.Products.PartNumber",
-  PriceListID: "dbo.PriceListItems.PriceListID",
-  PriceListItemID: "dbo.PriceListItems.ID",
+  ERPPartNumber: "dbo.Products.ERPPartNumber",
+  Description: "dbo.Products.Description",
+  Category: "dbo.ProductCategories.Name",
+  SubCategory: "dbo.ProductSubCategories.Name",
+  Type: "dbo.ProductTypes.Name",
+  WebLink: "dbo.Products.WebLink",
 };
 
+const ALLOWED_ROW_GROUP_FIELDS = new Set(["Brand", "Category", "SubCategory", "Type"]);
+
 function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
-  if (!filterModel || Object.keys(filterModel).length === 0)
+  if (!filterModel || Object.keys(filterModel).length === 0) {
     return { where: "", params: [] as QueryParam[] };
+  }
 
   const parts: string[] = [];
   const params: QueryParam[] = [];
@@ -190,6 +192,38 @@ function buildOrder(sortModel: GridRequest["sortModel"]) {
   return `ORDER BY ${parts.join(", ")}`;
 }
 
+const combineWhereClauses = (...clauses: Array<string | undefined>) => {
+  const cleaned = clauses
+    .map((clause) => clause?.trim())
+    .filter((clause): clause is string => typeof clause === "string" && clause.length > 0)
+    .map((clause) => clause.replace(/^\s*WHERE\s+/i, "").trim())
+    .filter((clause) => clause.length > 0);
+  if (cleaned.length === 0) return "";
+  return `WHERE ${cleaned.join(" AND ")}`;
+};
+
+const resolveGroupingField = (rowGroupCols?: GridRequest["rowGroupCols"]) => {
+  if (!Array.isArray(rowGroupCols) || rowGroupCols.length === 0) return null;
+  const first = rowGroupCols[0];
+  const candidate =
+    (typeof first.field === "string" && first.field.length > 0 && first.field) ??
+    (typeof first.colId === "string" && first.colId.length > 0 && first.colId) ??
+    null;
+  if (!candidate || !ALLOWED_ROW_GROUP_FIELDS.has(candidate)) return null;
+  const expression = COLUMN_EXPRESSIONS[candidate] ?? `[${candidate}]`;
+  return { field: candidate, expression };
+};
+
+const buildGroupKeyFilter = (field: { field: string; expression: string }, key: string | null) => {
+  if (key === null) {
+    return { clause: `WHERE ${field.expression} IS NULL`, params: [] as QueryParam[] };
+  }
+  return {
+    clause: `WHERE ${field.expression} = @__group_key`,
+    params: [{ key: "__group_key", value: key }],
+  };
+};
+
 async function readGridRequest(req: NextRequest): Promise<GridRequest> {
   try {
     const payload = await req.json();
@@ -198,92 +232,114 @@ async function readGridRequest(req: NextRequest): Promise<GridRequest> {
       if (inner && typeof inner === "object") return inner;
     }
   } catch {
-    /* ignore */
+    /* swallow, use defaults */
   }
   return { startRow: 0, endRow: 100 };
 }
 
-type DeleteRequest = {
-  PriceListItemIDs?: Array<number | string | null | undefined>;
-};
-
-const normalizePriceListItemId = (value: unknown): number | null => {
-  if (typeof value === "number" && Number.isInteger(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isInteger(parsed)) return parsed;
-  }
-  return null;
-};
-
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ priceListId: string }> },
-) {
+export async function POST(req: NextRequest) {
   try {
-    const { priceListId } = await params;
-    const normalizedId = decodeURIComponent(String(priceListId ?? "")).trim();
-    if (!normalizedId) {
-      return NextResponse.json(
-        { ok: false, error: "Missing price list id", rows: [], rowCount: 0 },
-        { status: 400 },
-      );
-    }
-    const idValue = Number(normalizedId);
-    if (!Number.isFinite(idValue) || !Number.isInteger(idValue)) {
-      return NextResponse.json(
-        { ok: false, error: "Invalid price list id", rows: [], rowCount: 0 },
-        { status: 400 },
-      );
-    }
-
     const requestPayload = await readGridRequest(req);
     const startRow = requestPayload.startRow ?? 0;
     const endRow = requestPayload.endRow ?? startRow + 100;
     const pageSize = Math.max(1, Math.min(1000, endRow - startRow));
-    const offset = Math.max(0, startRow);
+    const offset = startRow;
 
     const select = `
       SELECT
         COUNT_BIG(1) OVER () AS __totalCount,
         dbo.Products.ID AS ProductID,
-        dbo.Products.Description,
+        dbo.Brands.Name AS Brand,
         dbo.Products.ModelNumber,
-        dbo.PriceListItems.ListPrice,
-        dbo.PriceListItems.Warning,
-        dbo.PriceListItems.Enabled,
         dbo.Products.PartNumber,
-        dbo.PriceListItems.ID AS PriceListItemID,
-        dbo.PriceListItems.PriceListID
+        dbo.Products.ERPPartNumber,
+        dbo.Products.Description,
+        dbo.ProductCategories.Name AS Category,
+        dbo.ProductSubCategories.Name AS SubCategory,
+        dbo.ProductTypes.Name AS Type,
+        dbo.Products.WebLink
     `;
 
     const from = `
-      FROM dbo.PriceListItems
-      INNER JOIN dbo.Products ON dbo.PriceListItems.ProductID = dbo.Products.ID
+      FROM dbo.ProductTypes
+      RIGHT OUTER JOIN (
+        dbo.Brands
+        INNER JOIN dbo.Products ON dbo.Brands.ID = dbo.Products.BrandID
+      ) ON dbo.ProductTypes.ID = dbo.Products.TypeID
+      LEFT OUTER JOIN (
+        dbo.ProductCategories
+        RIGHT OUTER JOIN dbo.ProductSubCategories ON dbo.ProductCategories.ID = dbo.ProductSubCategories.CategoryID
+      ) ON dbo.Products.CategoryID = dbo.ProductCategories.ID
     `;
 
-    const baseWhere = "WHERE dbo.PriceListItems.PriceListID = @__priceListId";
     const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);
-    const trimmedWhere = where.trim().replace(/^WHERE\s+/i, "");
-    const combinedWhere = trimmedWhere
-      ? `${baseWhere} AND ${trimmedWhere}`
-      : baseWhere;
-    const order = buildOrder(requestPayload.sortModel) || "ORDER BY dbo.Products.Description";
+    const order =
+      buildOrder(requestPayload.sortModel) || "ORDER BY dbo.Brands.Name, dbo.Products.ModelNumber";
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
-    const query = `${select} ${from} ${combinedWhere} ${order} ${paging}`;
+    const groupingField = resolveGroupingField(requestPayload.rowGroupCols);
+    const rawGroupKeys = Array.isArray(requestPayload.groupKeys) ? requestPayload.groupKeys : [];
+    const groupKey = rawGroupKeys.length > 0 ? rawGroupKeys[0] : null;
+    const parentFilter =
+      groupingField && rawGroupKeys.length > 0
+        ? buildGroupKeyFilter(groupingField, groupKey)
+        : { clause: "", params: [] as QueryParam[] };
+    const groupLevel = groupingField ? Math.min(rawGroupKeys.length, 1) : 0;
 
     const pool = await getPool();
-    const sqlRequest = pool.request();
-    sqlRequest.input("__priceListId", sql.Int, idValue);
-    whereParams.forEach((p) => sqlRequest.input(p.key, p.value));
-    sqlRequest.input("__offset", sql.Int, offset);
-    sqlRequest.input("__limit", sql.Int, pageSize);
+    const bindParams = (request: SqlRequest, paramsList: QueryParam[]) => {
+      paramsList.forEach((param) => request.input(param.key, param.value));
+      return request;
+    };
 
-    const result = await sqlRequest.query<PriceListProductRowWithCount>(query);
-    const rowsWithCount = result.recordset ?? [];
+    if (groupingField && groupLevel < 1) {
+      const groupWhere = combineWhereClauses(where, parentFilter.clause);
+
+      const countReq = bindParams(pool.request(), [...whereParams, ...parentFilter.params]);
+      const countSql = `
+        SELECT COUNT(DISTINCT ${groupingField.expression}) AS __groupCount
+        ${from}
+        ${groupWhere}
+      `;
+      const countRes = await countReq.query<{ __groupCount: number }>(countSql);
+      const totalGroupCount = Number(countRes.recordset?.[0]?.__groupCount ?? 0);
+
+      const groupReq = bindParams(pool.request(), [...whereParams, ...parentFilter.params]);
+      groupReq.input("__offset", sql.Int, offset);
+      groupReq.input("__limit", sql.Int, pageSize);
+      const groupSql = `
+        SELECT DISTINCT ${groupingField.expression} AS GroupValue
+        ${from}
+        ${groupWhere}
+        ORDER BY ${groupingField.expression}
+        ${paging}
+      `;
+      const groupRes = await groupReq.query<{ GroupValue: string | null }>(groupSql);
+      const groupRows = (groupRes.recordset ?? []).map((row) => {
+        const value = row.GroupValue ?? null;
+        return {
+          group: true,
+          key: value,
+          field: groupingField.field,
+          [groupingField.field]: value,
+        };
+      });
+
+      return NextResponse.json({ ok: true, rows: groupRows, rowCount: totalGroupCount });
+    }
+
+    const appliedWhere = combineWhereClauses(where, parentFilter.clause);
+    const appliedParams = [...whereParams, ...parentFilter.params];
+    const dataSql = `${select} ${from} ${appliedWhere} ${order} ${paging}`;
+
+    const dataReq = bindParams(pool.request(), appliedParams);
+    dataReq.input("__offset", sql.Int, offset);
+    dataReq.input("__limit", sql.Int, pageSize);
+    const dataRes = await dataReq.query<ProductRowWithCount>(dataSql);
+
+    const rowsWithCount = dataRes.recordset ?? [];
     const rowCount =
-      rowsWithCount.length > 0 ? Number(rowsWithCount[0].__totalCount ?? 0) : 0;
+      rowsWithCount.length > 0 ? Number(rowsWithCount[0].__totalCount ?? 0) : rowsWithCount.length;
     const rows = rowsWithCount.map((row) => {
       const { __totalCount, ...rest } = row;
       void __totalCount;
@@ -291,77 +347,7 @@ export async function POST(
     });
 
     return NextResponse.json({ ok: true, rows, rowCount });
-  } catch (err) {
-    console.error(err);
-    const message = err instanceof Error ? err.message : "Server error";
-    return NextResponse.json(
-      { ok: false, error: message, rows: [], rowCount: 0 },
-      { status: 500 },
-    );
-  }
-}
-
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ priceListId: string }> },
-) {
-  try {
-    const { priceListId } = await params;
-    const normalizedId = decodeURIComponent(String(priceListId ?? "")).trim();
-    if (!normalizedId) {
-      return NextResponse.json({ ok: false, error: "Missing price list id" }, { status: 400 });
-    }
-    const idValue = Number(normalizedId);
-    if (!Number.isFinite(idValue) || !Number.isInteger(idValue)) {
-      return NextResponse.json({ ok: false, error: "Invalid price list id" }, { status: 400 });
-    }
-
-    let body: DeleteRequest | null = null;
-    try {
-      body = (await req.json()) as DeleteRequest;
-    } catch {
-      body = null;
-    }
-
-    const rawIds = Array.isArray(body?.PriceListItemIDs) ? body.PriceListItemIDs : [];
-    const normalizedIds = Array.from(
-      new Set(
-        rawIds
-          .map((value) => normalizePriceListItemId(value ?? null))
-          .filter((value): value is number => value != null),
-      ),
-    );
-
-    if (normalizedIds.length === 0) {
-      return NextResponse.json({ ok: false, error: "No rows selected for deletion" }, { status: 400 });
-    }
-
-    const pool = await getPool();
-    const chunkSize = 200;
-    let deleted = 0;
-
-    for (let idx = 0; idx < normalizedIds.length; idx += chunkSize) {
-      const chunk = normalizedIds.slice(idx, idx + chunkSize);
-      if (chunk.length === 0) continue;
-      const request = pool.request();
-      request.input("__priceListId", sql.Int, idValue);
-      const paramNames: string[] = [];
-      chunk.forEach((id, chunkIdx) => {
-        const paramName = `pli_${chunkIdx}`;
-        request.input(paramName, sql.Int, id);
-        paramNames.push(`@${paramName}`);
-      });
-      const query = `
-        DELETE FROM dbo.PriceListItems
-        WHERE PriceListID = @__priceListId
-          AND ID IN (${paramNames.join(", ")})
-      `;
-      const result = await request.query(query);
-      deleted += result.rowsAffected?.[0] ?? 0;
-    }
-
-    return NextResponse.json({ ok: true, deleted });
-  } catch (err) {
+  } catch (err: unknown) {
     console.error(err);
     const message = err instanceof Error ? err.message : "Server error";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });

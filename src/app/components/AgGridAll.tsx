@@ -1,36 +1,36 @@
 'use client';
 
-import React, { useMemo, useRef, useCallback, useState, useEffect, type CSSProperties } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
-  ModuleRegistry,
-  ColDef,
-  IServerSideDatasource,
-  GridReadyEvent,
-  FilterChangedEvent,
-  IServerSideGetRowsParams,
-  GridApi,
-  RowNode,
-  RowDoubleClickedEvent,
-  ModelUpdatedEvent,
-  GetRowIdParams,
-  CellValueChangedEvent,
   CellClickedEvent,
-  RowClassParams,
+  CellContextMenuEvent,
+  CellValueChangedEvent,
+  ColumnPinnedType,
+  ColumnState,
+  ColDef,
+  ContextMenuVisibleChangedEvent,
+  DefaultMenuItem,
+  FilterChangedEvent,
   FirstDataRenderedEvent,
   GetContextMenuItems,
   GetContextMenuItemsParams,
+  GetRowIdParams,
+  GridApi,
+  GridReadyEvent,
+  IServerSideDatasource,
+  IServerSideGetRowsParams,
   MenuItemDef,
-  CellContextMenuEvent,
-  ContextMenuVisibleChangedEvent,
-  DefaultMenuItem,
-  SortChangedEvent,
-  SelectionChangedEvent,
+  ModelUpdatedEvent,
+  RowClassParams,
+  RowDoubleClickedEvent,
   RowHeightParams,
-  ColumnPinnedType,
-  ColumnState,
+  RowNode,
+  SelectionChangedEvent,
+  SortChangedEvent,
 } from 'ag-grid-community';
-import { AllEnterpriseModule, LicenseManager } from 'ag-grid-enterprise';
+import { AllEnterpriseModule, LicenseManager, ModuleRegistry } from 'ag-grid-enterprise';
+import { usePathname } from 'next/navigation';
 import { resolveOfferProductRowType, type OfferProductRowType, describeOfferProductRowType } from '../../lib/offerProductRows';
 import { showToastMessage } from '../../lib/toast';
 import styles from './AgGridAll.module.css';
@@ -74,6 +74,8 @@ type Props = {
   refreshToken?: number;
   autoSizeExclusions?: string[];
   onTotalsChange?: (totals: GridTotals | null) => void;
+  enableColumnStatePersistence?: boolean;
+  columnStateNamespace?: string;
 };
 
 type RowData = Record<string, unknown>;
@@ -136,29 +138,43 @@ const GRID_COLUMN_STATE_DEFAULT_USER = 'anon';
 
 type SavedColumnStateEntry = {
   colId: string;
-  hide?: boolean | null;
   pinned?: ColumnPinnedType | null;
   width?: number;
   flex?: number | null;
+  rowGroup?: boolean;
+  rowGroupIndex?: number | null;
 };
 
 const sanitizeStorageSegment = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, '_');
 
-const buildGridColumnStateStorageKey = (endpoint: string, userId: string): string => {
+const buildGridColumnStateStorageKey = (endpoint: string, userId: string, context: string): string => {
   const normalizedEndpoint = sanitizeStorageSegment(endpoint || '');
   const normalizedUser = userId && userId.trim() ? userId.trim() : GRID_COLUMN_STATE_DEFAULT_USER;
-  return `${GRID_COLUMN_STATE_STORAGE_PREFIX}:${normalizedUser}:${normalizedEndpoint || 'grid'}`;
+  const normalizedContext = sanitizeStorageSegment(context || '');
+  const endpointPart = normalizedEndpoint || 'grid';
+  const contextPart = normalizedContext || 'grid';
+  return `${GRID_COLUMN_STATE_STORAGE_PREFIX}:${normalizedUser}:${endpointPart}:${contextPart}`;
 };
 
 const collectPersistableColumnState = (state: ColumnState[]): SavedColumnStateEntry[] =>
   state
-    .map((entry) => ({
-      colId: entry.colId ?? '',
-      hide: entry.hide ?? undefined,
-      pinned: (entry.pinned ?? null) as ColumnPinnedType | null,
-      width: entry.width,
-      flex: entry.flex ?? null,
-    }))
+    .map((entry) => {
+      const width =
+        typeof entry.width === 'number' && Number.isFinite(entry.width) && entry.width > 0
+          ? entry.width
+          : undefined;
+      return {
+        colId: entry.colId ?? '',
+        pinned: (entry.pinned ?? null) as ColumnPinnedType | null,
+        width,
+        flex: entry.flex ?? null,
+        rowGroup: entry.rowGroup ?? undefined,
+        rowGroupIndex:
+          typeof entry.rowGroupIndex === 'number' && Number.isFinite(entry.rowGroupIndex)
+            ? entry.rowGroupIndex
+            : undefined,
+      };
+    })
     .filter((entry) => typeof entry.colId === 'string' && entry.colId.length > 0);
 
 const readPersistedColumnState = (key: string): SavedColumnStateEntry[] | null => {
@@ -176,9 +192,6 @@ const readPersistedColumnState = (key: string): SavedColumnStateEntry[] | null =
         : '';
       if (!colId) continue;
       const entry: SavedColumnStateEntry = { colId };
-      if ('hide' in candidate) {
-        entry.hide = (candidate as { hide?: boolean | null }).hide ?? undefined;
-      }
       if ('pinned' in candidate) {
         entry.pinned = (candidate as { pinned?: ColumnPinnedType | null }).pinned ?? null;
       }
@@ -189,6 +202,14 @@ const readPersistedColumnState = (key: string): SavedColumnStateEntry[] | null =
       }
       if ('flex' in candidate) {
         entry.flex = (candidate as { flex?: number | null }).flex ?? null;
+      }
+      if ('rowGroup' in candidate) {
+        entry.rowGroup = Boolean((candidate as { rowGroup?: boolean }).rowGroup);
+      }
+      if ('rowGroupIndex' in candidate) {
+        const idx = (candidate as { rowGroupIndex?: number }).rowGroupIndex;
+        entry.rowGroupIndex =
+          typeof idx === 'number' && Number.isFinite(idx) ? idx : undefined;
       }
       entries.push(entry);
     }
@@ -595,6 +616,8 @@ export default function AgGridAll({
   refreshToken = 0,
   autoSizeExclusions = [],
   onTotalsChange,
+  enableColumnStatePersistence = true,
+  columnStateNamespace = '',
 }: Props) {
   const gridRef = useRef<AgGridReact<RowData> | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -602,9 +625,15 @@ export default function AgGridAll({
   const columnSaveTimerRef = useRef<number | null>(null);
   const [isGridReady, setIsGridReady] = useState(false);
   const { userId } = useAuditUser();
+  const pathname = usePathname();
+  const shouldPersistColumnState = enableColumnStatePersistence !== false;
   const columnStateStorageKey = useMemo(
-    () => buildGridColumnStateStorageKey(endpoint, userId),
-    [endpoint, userId],
+    () => {
+      if (!shouldPersistColumnState) return '';
+      const context = columnStateNamespace || pathname || '';
+      return buildGridColumnStateStorageKey(endpoint, userId, context ?? '');
+    },
+    [columnStateNamespace, endpoint, pathname, userId, shouldPersistColumnState],
   );
   const [gapHover, setGapHover] = useState<GapHoverState | null>(null);
   const [rowHover, setRowHover] = useState<RowHoverState | null>(null);
@@ -645,15 +674,15 @@ export default function AgGridAll({
   }, [clearContextMenuRow]);
 
   const persistColumnState = useCallback(() => {
-    if (!columnStateStorageKey) return;
+    if (!shouldPersistColumnState || !columnStateStorageKey) return;
     const api = gridRef.current?.api;
     if (!api || api.isDestroyed?.()) return;
     const nextState = collectPersistableColumnState(api.getColumnState());
     writePersistedColumnState(columnStateStorageKey, nextState);
-  }, [columnStateStorageKey]);
+  }, [columnStateStorageKey, shouldPersistColumnState]);
 
   const queuePersistColumnState = useCallback(() => {
-    if (typeof window === 'undefined') return;
+    if (!shouldPersistColumnState || typeof window === 'undefined') return;
     if (columnSaveTimerRef.current) {
       window.clearTimeout(columnSaveTimerRef.current);
     }
@@ -661,18 +690,34 @@ export default function AgGridAll({
       columnSaveTimerRef.current = null;
       persistColumnState();
     }, 200);
-  }, [persistColumnState]);
+  }, [persistColumnState, shouldPersistColumnState]);
 
   const applySavedColumnState = useCallback((api: GridApi<RowData>) => {
-    if (!columnStateStorageKey) return;
+    if (!shouldPersistColumnState || !columnStateStorageKey) return;
     const persisted = readPersistedColumnState(columnStateStorageKey);
     if (!persisted || persisted.length === 0) return;
+    const currentColumnIds = new Set(
+      api
+        .getColumnState()
+        .map((entry) => entry.colId ?? '')
+        .filter((colId): colId is string => typeof colId === 'string' && colId.length > 0),
+    );
+    const filtered = persisted.filter((entry) => currentColumnIds.has(entry.colId));
+    if (filtered.length === 0) return;
+    const sanitizedState = filtered.map((entry) => ({
+      colId: entry.colId,
+      width: entry.width,
+      flex: entry.flex ?? undefined,
+      pinned: entry.pinned ?? undefined,
+      rowGroup: entry.rowGroup ?? undefined,
+      rowGroupIndex: entry.rowGroup ? entry.rowGroupIndex ?? 0 : undefined,
+    }));
     try {
-      api.applyColumnState({ state: persisted, applyOrder: true });
+      api.applyColumnState({ state: sanitizedState, applyOrder: true, defaultState: { hide: null } });
     } catch (err) {
       console.warn('Failed to apply saved column state', err);
     }
-  }, [columnStateStorageKey]);
+  }, [columnStateStorageKey, shouldPersistColumnState]);
 
   useEffect(() => () => {
     if (columnSaveTimerRef.current) {
@@ -924,10 +969,14 @@ export default function AgGridAll({
   }, [getRowClass, contextMenuRowId]);
 
   useEffect(() => {
-    if (!isGridReady) return;
+    if (!isGridReady || !shouldPersistColumnState) return;
     const api = gridRef.current?.api;
     if (!api || api.isDestroyed?.()) return;
     applySavedColumnState(api);
+    const hasTreeOrderingColumn = api
+      .getColumnState()
+      .some((entry) => entry.colId === 'TreeOrdering');
+    if (!hasTreeOrderingColumn) return;
     api.applyColumnState({
       state: [{ colId: 'TreeOrdering', sort: 'asc', sortIndex: 0 }],
       defaultState: { sort: null },
@@ -936,7 +985,7 @@ export default function AgGridAll({
     if (!manualMode) {
       reorderRowsByTreeOrdering(api);
     }
-  }, [applySavedColumnState, isGridReady, manualMode]);
+  }, [applySavedColumnState, isGridReady, manualMode, shouldPersistColumnState]);
 
   useEffect(() => {
     if (refreshToken === 0) return;
@@ -1444,10 +1493,10 @@ export default function AgGridAll({
           onRowDoubleClicked={handleRowDoubleClick}
           onCellValueChanged={handleCellValueChanged}
           onSelectionChanged={externalSelectionChangedHandler ? handleSelectionChanged : undefined}
-          onColumnMoved={queuePersistColumnState}
-          onColumnPinned={queuePersistColumnState}
-          onColumnVisible={queuePersistColumnState}
-          onColumnResized={queuePersistColumnState}
+          onColumnMoved={shouldPersistColumnState ? queuePersistColumnState : undefined}
+          onColumnPinned={shouldPersistColumnState ? queuePersistColumnState : undefined}
+          onColumnVisible={shouldPersistColumnState ? queuePersistColumnState : undefined}
+          onColumnResized={shouldPersistColumnState ? queuePersistColumnState : undefined}
           onColumnRowGroupChanged={handleColumnRowGroupChanged}
         />
         {/* Row hover overlay */}

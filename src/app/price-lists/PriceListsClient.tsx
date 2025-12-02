@@ -247,11 +247,6 @@ export default function PriceListsClient() {
         cellClass: styles.actionCellContainer,
         cellRenderer: ActionCell,
       },
-      {
-        field: "PriceListID",
-        hide: true,
-        suppressColumnsToolPanel: true,
-      },
       { field: "Name", headerName: "Price List", filter: "agTextColumnFilter" },
       { field: "SupplierName", headerName: "Supplier", filter: "agTextColumnFilter", enableRowGroup: true },
       {
