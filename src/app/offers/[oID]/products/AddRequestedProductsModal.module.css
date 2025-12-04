@@ -180,6 +180,44 @@
   font-size: 0.92rem;
 }
 
+.pasteCard {
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pasteHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pasteTitle {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.pasteDescription {
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.pasteTextarea {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  min-height: 120px;
+  padding: 10px;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  font-family: inherit;
+  resize: vertical;
+  color: #64748b;
+}
+
 .sheetTabs {
   display: flex;
   flex-wrap: wrap;

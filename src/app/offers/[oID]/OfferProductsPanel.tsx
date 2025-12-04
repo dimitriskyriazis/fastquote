@@ -156,6 +156,76 @@ const normalizeDescriptionValue = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const REQUESTED_HISTORY_LOOKUP_ENDPOINT = '/api/products/resolve';
+const requestedHistoryLookupCache = new Map<string, number | null>();
+
+const normalizeRequestedLookupValue = (value: unknown): string | null => {
+  if (value == null) return null;
+  const str = typeof value === 'string' ? value : String(value);
+  const trimmed = str.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+type RequestedLookupInfo = {
+  partNumber: string | null;
+  modelNumber: string | null;
+  brand: string | null;
+};
+
+const buildRequestedLookupInfo = (row: Record<string, unknown> | null | undefined): RequestedLookupInfo => {
+  if (!row || typeof row !== 'object') {
+    return { partNumber: null, modelNumber: null, brand: null };
+  }
+  const requestedPart = normalizeRequestedLookupValue((row as { RequestedPartNo?: unknown }).RequestedPartNo ?? (row as { PartNumber?: unknown }).PartNumber);
+  const requestedModel = normalizeRequestedLookupValue((row as { RequestedModelNo?: unknown }).RequestedModelNo ?? (row as { ModelNumber?: unknown }).ModelNumber);
+  const requestedBrand = normalizeRequestedLookupValue((row as { RequestedBrand?: unknown }).RequestedBrand ?? (row as { BrandName?: unknown }).BrandName);
+  return {
+    partNumber: requestedPart,
+    modelNumber: requestedModel,
+    brand: requestedBrand,
+  };
+};
+
+const resolveProductIdFromRequestedInfo = async (info: RequestedLookupInfo): Promise<number | null> => {
+  const { partNumber, modelNumber, brand } = info;
+  if (!partNumber && !modelNumber) return null;
+  const params = new URLSearchParams();
+  if (partNumber) params.set('partNumber', partNumber);
+  if (modelNumber) params.set('modelNumber', modelNumber);
+  if (brand) params.set('brand', brand);
+  const cacheKey = `${partNumber ?? ''}|${modelNumber ?? ''}|${brand ?? ''}`;
+  if (requestedHistoryLookupCache.has(cacheKey)) {
+    return requestedHistoryLookupCache.get(cacheKey) ?? null;
+  }
+  try {
+    const response = await fetch(`${REQUESTED_HISTORY_LOOKUP_ENDPOINT}?${params.toString()}`);
+    if (!response.ok) {
+      requestedHistoryLookupCache.set(cacheKey, null);
+      return null;
+    }
+    const payload = (await response.json().catch(() => null)) as { ok?: boolean; productId?: number | null } | null;
+    const productId =
+      payload?.ok && typeof payload.productId === 'number' && Number.isInteger(payload.productId)
+        ? payload.productId
+        : null;
+    requestedHistoryLookupCache.set(cacheKey, productId);
+    return productId;
+  } catch (err) {
+    console.error('Failed to resolve product for requested row', err);
+    requestedHistoryLookupCache.set(cacheKey, null);
+    return null;
+  }
+};
+
+const buildRequestedTextGetter = (field: RequestedDisplayFieldKey) => (
+  params: ValueGetterParams<Record<string, unknown>, unknown>,
+) => {
+  const row = params.data ?? null;
+  const rawValue = row ? row[field] : null;
+  if (typeof rawValue === 'string') return rawValue.trim();
+  return rawValue;
+};
+
 const isOfferProductCommentOrProduct = (row: Record<string, unknown> | null | undefined) =>
   isOfferProductProduct(row) || isOfferProductComment(row);
 
@@ -300,6 +370,7 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
     RequestedQuantity: false,
   });
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
+  const [requestedColumnsReady, setRequestedColumnsReady] = useState(false);
   const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() => new Set());
   const [categoryPathsWithChildren, setCategoryPathsWithChildren] = useState<Set<string>>(() => new Set());
   const [categoryChildrenKnown, setCategoryChildrenKnown] = useState(false);
@@ -424,8 +495,9 @@ export default function OfferProductsPanel({ oID, endpoint, manualMode = false, 
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     gridApiRef.current = api;
+    setRequestedColumnsReady(true);
     updateCategoryAncestors(api);
-  }, [updateCategoryAncestors]);
+  }, [updateCategoryAncestors, setRequestedColumnsReady]);
 
   useEffect(() => {
     const api = gridApiRef.current;
@@ -766,41 +838,45 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     field: 'RequestedBrand',
     headerName: 'Req. Brand',
     filter: 'agTextColumnFilter',
-      minWidth: 140,
-      headerClass: styles.requestedHeader,
-    },
-    RequestedModelNo: {
-      field: 'RequestedModelNo',
-      headerName: 'Req. Model Number',
-      filter: 'agTextColumnFilter',
-      minWidth: 140,
-      headerClass: styles.requestedHeader,
-    },
-    RequestedPartNo: {
-      field: 'RequestedPartNo',
-      headerName: 'Req. Part Number',
-      filter: 'agTextColumnFilter',
-      minWidth: 150,
-      headerClass: styles.requestedHeader,
-    },
-    RequestedDescription: {
-      field: 'RequestedDescription',
-      headerName: 'Req. Description',
-      filter: 'agTextColumnFilter',
-      minWidth: 220,
-      flex: 1,
-      headerClass: styles.requestedHeader,
-    },
-    RequestedQuantity: {
-      field: 'RequestedQuantity',
-      headerName: 'Req. Qty',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      valueFormatter: zeroBlankNumberFormatter,
-      width: 120,
-      headerClass: styles.requestedHeader,
-    },
-  }), []);
+    valueGetter: buildRequestedTextGetter('RequestedBrand'),
+    minWidth: 140,
+    headerClass: styles.requestedHeader,
+  },
+  RequestedModelNo: {
+    field: 'RequestedModelNo',
+    headerName: 'Req. Model Number',
+    filter: 'agTextColumnFilter',
+    valueGetter: buildRequestedTextGetter('RequestedModelNo'),
+    minWidth: 140,
+    headerClass: styles.requestedHeader,
+  },
+  RequestedPartNo: {
+    field: 'RequestedPartNo',
+    headerName: 'Req. Part Number',
+    filter: 'agTextColumnFilter',
+    valueGetter: buildRequestedTextGetter('RequestedPartNo'),
+    minWidth: 150,
+    headerClass: styles.requestedHeader,
+  },
+  RequestedDescription: {
+    field: 'RequestedDescription',
+    headerName: 'Req. Description',
+    filter: 'agTextColumnFilter',
+    valueGetter: buildRequestedTextGetter('RequestedDescription'),
+    minWidth: 280,
+    width: 320,
+    headerClass: styles.requestedHeader,
+  },
+  RequestedQuantity: {
+    field: 'RequestedQuantity',
+    headerName: 'Req. Qty',
+    filter: 'agNumberColumnFilter',
+    type: 'numericColumn',
+    valueFormatter: zeroBlankNumberFormatter,
+    width: 120,
+    headerClass: styles.requestedHeader,
+  },
+}), []);
 
   const productColumnDefs: ColDef[] = useMemo(() => {
     const requestedColumns: ColDef[] = [];
@@ -999,6 +1075,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   }, [RowDragHandle, PartNumberCell, manualMode, TreeOrderingCell, requestedColumnDefsMap, requestedColumnVisibility]);
 
   useEffect(() => {
+    if (!requestedColumnsReady) return;
     const api = gridApiRef.current;
     if (!api) return;
     try {
@@ -1011,7 +1088,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     } catch {
       /* noop */
     }
-  }, [requestedColumnVisibility]);
+  }, [requestedColumnVisibility, requestedColumnsReady]);
 
   const productRowDeletion = useMemo(
     () =>
@@ -1037,18 +1114,22 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     const baseItems = productRowDeletion.getContextMenuItems(params) ?? [];
     const items = [...baseItems];
     const rowData = params.node?.data ?? null;
-    if (!isOfferProductProduct(rowData)) {
-      return items;
-    }
-
     const rawProductId = (rowData as { ProductID?: unknown }).ProductID;
-    const productId =
+    const parsedProductId =
       typeof rawProductId === 'number'
         ? rawProductId
         : typeof rawProductId === 'string'
           ? Number.parseInt(rawProductId, 10)
           : null;
-    if (!productId || !Number.isInteger(productId)) {
+    const resolvedProductId =
+      typeof parsedProductId === 'number' &&
+      Number.isInteger(parsedProductId) &&
+      parsedProductId > 0
+        ? parsedProductId
+        : null;
+    const requestedLookup = buildRequestedLookupInfo(rowData);
+    const hasRequestedLookupFields = Boolean(requestedLookup.partNumber || requestedLookup.modelNumber);
+    if (!resolvedProductId && !hasRequestedLookupFields) {
       return items;
     }
 
@@ -1059,8 +1140,17 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     const historyItem: MenuItemDef = {
       name: "View Product's History",
       icon: productHistoryMenuIcon,
-      action: () => {
-        router.push(`/products/${encodeURIComponent(String(productId))}/history?${qs.toString()}`);
+      action: async () => {
+        let targetProductId = resolvedProductId;
+        if (!targetProductId) {
+          const fetchedId = await resolveProductIdFromRequestedInfo(requestedLookup);
+          if (!fetchedId) {
+            showToastMessage('Unable to find a product for the requested entry.', 'error');
+            return;
+          }
+          targetProductId = fetchedId;
+        }
+        router.push(`/products/${encodeURIComponent(String(targetProductId))}/history?${qs.toString()}`);
       },
     };
 
@@ -1314,7 +1404,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           refreshToken={refreshToken}
           onGridReady={handleGridReady}
           onRowDoubleClicked={handleRowDoubleClicked}
-          autoSizeExclusions={['Description']}
+          autoSizeExclusions={['Description', 'RequestedDescription']}
+          enableColumnStatePersistence={false}
+          suppressColumnVirtualisation
           onTotalsChange={handleTotalsChange}
           onResponse={handleGridResponse}
           rowGroupPanelShow="never"

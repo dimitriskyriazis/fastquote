@@ -64,6 +64,12 @@
   background-color: #ffffff;
 }
 
+.buttonAddRequested {
+  background-color: #fae5d1;
+  color: #c2630b;
+  border-color: rgba(163, 90, 22, 0.4);
+}
+
 .buttonCategory {
   background-color: #d3d3d3;
 }

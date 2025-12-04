@@ -261,15 +261,13 @@ export async function POST(req: NextRequest) {
     `;
 
     const from = `
-      FROM dbo.ProductTypes
-      RIGHT OUTER JOIN (
-        dbo.Brands
-        INNER JOIN dbo.Products ON dbo.Brands.ID = dbo.Products.BrandID
-      ) ON dbo.ProductTypes.ID = dbo.Products.TypeID
-      LEFT OUTER JOIN (
-        dbo.ProductCategories
-        RIGHT OUTER JOIN dbo.ProductSubCategories ON dbo.ProductCategories.ID = dbo.ProductSubCategories.CategoryID
-      ) ON dbo.Products.CategoryID = dbo.ProductCategories.ID
+    FROM            
+      dbo.ProductSubCategories RIGHT OUTER JOIN
+      dbo.ProductCategories RIGHT OUTER JOIN
+      dbo.ProductTypes RIGHT OUTER JOIN
+      dbo.Brands INNER JOIN
+      dbo.Products ON dbo.Brands.ID = dbo.Products.BrandID ON dbo.ProductTypes.ID = dbo.Products.TypeID ON dbo.ProductCategories.ID = dbo.Products.CategoryID ON 
+      dbo.ProductSubCategories.ID = dbo.Products.SubCategoryID
     `;
 
     const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);

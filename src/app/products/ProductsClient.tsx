@@ -30,12 +30,6 @@ export default function ProductsClient() {
   const router = useRouter();
   const columnDefs = useMemo<ColDef[]>(() => [
     {
-      field: "ProductID",
-      hide: true,
-      lockVisible: true,
-      suppressColumnsToolPanel: true,
-    },
-    {
       field: "Brand",
       headerName: "Brand",
       enableRowGroup: true,

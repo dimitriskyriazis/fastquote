@@ -73,6 +73,7 @@ type Props = {
   getRowHeight?: (params: RowHeightParams<RowData>) => number | undefined;
   refreshToken?: number;
   autoSizeExclusions?: string[];
+  suppressColumnVirtualisation?: boolean;
   onTotalsChange?: (totals: GridTotals | null) => void;
   enableColumnStatePersistence?: boolean;
   columnStateNamespace?: string;
@@ -618,6 +619,7 @@ export default function AgGridAll({
   refreshToken = 0,
   autoSizeExclusions = [],
   onTotalsChange,
+  suppressColumnVirtualisation = false,
   enableColumnStatePersistence = true,
   columnStateNamespace = '',
   onResponse,
@@ -764,13 +766,20 @@ export default function AgGridAll({
     }
   }, [autoSizeExclusions]);
 
+  const handleColumnVisible = useCallback(() => {
+    autoSizeColumns();
+    if (shouldPersistColumnState) {
+      queuePersistColumnState();
+    }
+  }, [autoSizeColumns, queuePersistColumnState, shouldPersistColumnState]);
+
   const handleFirstDataRendered = useCallback((event: FirstDataRenderedEvent) => {
     autoSizeColumns(event.api);
   }, [autoSizeColumns]);
 
   useEffect(() => {
     autoSizeColumns();
-  }, [manualMode, autoSizeColumns]);
+  }, [autoSizeColumns, manualMode]);
 
   const dcd: ColDef = useMemo(() => {
     const baseFilterParams = {
@@ -874,10 +883,11 @@ export default function AgGridAll({
     gridApiRef.current = e.api;
     gridApiRef.current.addEventListener('contextMenuVisibleChanged', handleContextMenuVisibleChanged);
     setIsGridReady(true);
+    autoSizeColumns(e.api);
     if (typeof externalGridReadyHandler === 'function') {
       externalGridReadyHandler(e.api);
     }
-  }, [datasource, handleContextMenuVisibleChanged, externalGridReadyHandler]);
+  }, [autoSizeColumns, datasource, handleContextMenuVisibleChanged, externalGridReadyHandler]);
   const contextMenuItemsHandler = useCallback<GetContextMenuItems<RowData>>((params) => {
     if (typeof getContextMenuItems !== 'function') {
       return params.defaultItems ?? [];
@@ -1486,6 +1496,7 @@ export default function AgGridAll({
           pivotMode={false}
           rowGroupPanelShow={rowGroupPanelShow}
           getRowHeight={getRowHeight}
+          suppressColumnVirtualisation={suppressColumnVirtualisation}
 
           // Cache settings
           cacheBlockSize={100}
@@ -1501,7 +1512,7 @@ export default function AgGridAll({
           onSelectionChanged={externalSelectionChangedHandler ? handleSelectionChanged : undefined}
           onColumnMoved={shouldPersistColumnState ? queuePersistColumnState : undefined}
           onColumnPinned={shouldPersistColumnState ? queuePersistColumnState : undefined}
-          onColumnVisible={shouldPersistColumnState ? queuePersistColumnState : undefined}
+          onColumnVisible={handleColumnVisible}
           onColumnResized={shouldPersistColumnState ? queuePersistColumnState : undefined}
           onColumnRowGroupChanged={handleColumnRowGroupChanged}
         />

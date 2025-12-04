@@ -129,7 +129,7 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
             <div className={toolbarStyles.leftRequestedRow}>
               <button
                 type="button"
-                className={`${toolbarStyles.button} ${toolbarStyles.buttonProduct}`}
+                className={`${toolbarStyles.button} ${toolbarStyles.buttonAddRequested}`}
                 onClick={() => setShowRequestedModal(true)}
               >
                 Add Requested Products

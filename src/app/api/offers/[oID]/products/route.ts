@@ -863,6 +863,7 @@ export async function POST(
         SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalCost, 0) ELSE 0 END) OVER () AS __sumTotalCost,
         od.ID AS OfferDetailID,
         od.ParentOfferDetailID,
+        od.ProductID,
         od.TreeOrdering AS TreeOrdering,
         od.IsPrintable,
         od.IsComment,

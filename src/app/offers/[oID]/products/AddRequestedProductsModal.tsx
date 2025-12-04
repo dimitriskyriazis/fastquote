@@ -31,6 +31,8 @@ type SheetMapping = {
   selection: Partial<Record<HeaderColumnKey, number | null>>;
   rowCount: number;
   enabled: boolean;
+  includeHeaderRow: boolean;
+  rawRows: unknown[][];
 };
 
 type FileValidation = {
@@ -62,11 +64,11 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
 
 const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string }> = [
   { key: 'itemNo', label: 'Item No / Tree Ordering' },
-  { key: 'brand', label: 'Brand (optional)' },
-  { key: 'modelNumber', label: 'Model No (optional)' },
-  { key: 'partNumber', label: 'Part No (optional)' },
-  { key: 'description', label: 'Description (optional)' },
-  { key: 'quantity', label: 'Quantity (optional)' },
+  { key: 'brand', label: 'Brand' },
+  { key: 'modelNumber', label: 'Model No' },
+  { key: 'partNumber', label: 'Part No' },
+  { key: 'description', label: 'Description' },
+  { key: 'quantity', label: 'Quantity' },
 ];
 
 const INITIAL_VALIDATION: FileValidation = {
@@ -137,17 +139,19 @@ const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: numbe
   const headerRow = Array.isArray(rows[headerRowIndex]) ? rows[headerRowIndex] : [];
   const columns = buildColumns(headerRow);
   const suggestions = buildSuggestions(columns);
-  const dataRows = rows.slice(headerRowIndex + 1);
-  const rowCount = dataRows.filter((row) => Array.isArray(row) && row.some(hasCellValue)).length;
-  return {
+  const includeHeaderRow = Object.values(suggestions).some((match) => match.length > 0);
+  const baseSheet: SheetMapping = {
     name: sheetName || `Sheet ${fallbackIndex + 1}`,
     headerRowIndex,
     columns,
     suggestions,
     selection: {},
-    rowCount,
+    rowCount: 0,
     enabled,
+    includeHeaderRow,
+    rawRows: rows,
   };
+  return enrichSheet(baseSheet);
 };
 
 const analyzeWorkbook = (workbook: XLSX.WorkBook): SheetMapping[] => {
@@ -214,14 +218,53 @@ const hasPayloadValues = (row: PayloadRow) => {
   );
 };
 
+const getSheetDataRows = (sheet: SheetMapping) => {
+  const startIndex = sheet.includeHeaderRow ? sheet.headerRowIndex + 1 : sheet.headerRowIndex;
+  return sheet.rawRows.slice(startIndex);
+};
+
+const computeSheetRowCount = (sheet: SheetMapping) => (
+  getSheetDataRows(sheet).filter((row) => Array.isArray(row) && row.some(hasCellValue)).length
+);
+
+const enrichSheet = (sheet: SheetMapping): SheetMapping => ({
+  ...sheet,
+  rowCount: computeSheetRowCount(sheet),
+});
+
+const parsePastedText = (text: string): unknown[][] => {
+  const lines = text.split(/\r?\n/);
+  return lines
+    .map((line) => line.split(/\t/).map((cell) => {
+      const cleaned = cell.replace(/\r/g, '');
+      const normalizedSpace = typeof cleaned === 'string' ? cleaned.replace(/\u00a0/g, ' ') : cleaned;
+      const trimmed = typeof normalizedSpace === 'string' ? normalizedSpace.trim() : normalizedSpace;
+      return trimmed === '' ? null : trimmed;
+    }))
+    .filter((row) => row.some(hasCellValue));
+};
+
 export default function AddRequestedProductsModal({ oID, onClose, onImported }: Props) {
   const [file, setFile] = useState<File | null>(null);
-  const [fileBuffer, setFileBuffer] = useState<ArrayBuffer | null>(null);
   const [fileValidation, setFileValidation] = useState<FileValidation>(INITIAL_VALIDATION);
+  const [pasteText, setPasteText] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const validationRunId = useRef(0);
+
+  const applySheets = useCallback((sheets: SheetMapping[]) => {
+    const normalizedSheets = sheets.map(enrichSheet);
+    const evaluation = evaluateSelection(normalizedSheets, 0);
+    setFileValidation({
+      status: evaluation.status,
+      message: evaluation.message,
+      columns: evaluation.columns,
+      rowCount: evaluation.rowCount,
+      sheets: normalizedSheets,
+      activeSheetIndex: 0,
+    });
+  }, []);
 
   const activeSheet = useMemo(
     () => fileValidation.sheets[fileValidation.activeSheetIndex] ?? null,
@@ -262,10 +305,10 @@ export default function AddRequestedProductsModal({ oID, onClose, onImported }: 
     validationRunId.current += 1;
     const runId = validationRunId.current;
     setFile(nextFile);
+    setPasteText('');
     setError(null);
 
     if (!nextFile) {
-      setFileBuffer(null);
       setFileValidation(INITIAL_VALIDATION);
       return;
     }
@@ -282,7 +325,6 @@ export default function AddRequestedProductsModal({ oID, onClose, onImported }: 
     nextFile.arrayBuffer()
       .then((buffer) => {
         if (runId !== validationRunId.current) return;
-        setFileBuffer(buffer);
         let sheets: SheetMapping[] = [];
         try {
           const workbook = XLSX.read(buffer, { type: 'array' });
@@ -299,27 +341,41 @@ export default function AddRequestedProductsModal({ oID, onClose, onImported }: 
           });
           return;
         }
-        const evaluation = evaluateSelection(sheets, 0);
-        setFileValidation({
-          status: evaluation.status,
-          message: evaluation.message,
-          columns: evaluation.columns,
-          rowCount: evaluation.rowCount,
-          sheets,
-          activeSheetIndex: 0,
-        });
+        applySheets(sheets);
       })
       .catch((err) => {
         console.error('Failed to read file', err);
         if (runId !== validationRunId.current) return;
-        setFileBuffer(null);
         setFileValidation({
           ...INITIAL_VALIDATION,
           status: 'invalid',
           message: 'Unable to read the file. Please try another upload.',
         });
       });
-  }, []);
+  }, [applySheets]);
+
+  const handlePasteInput = useCallback((value: string) => {
+    setPasteText(value);
+    if (!value.trim()) {
+      setFileValidation(INITIAL_VALIDATION);
+      setFile(null);
+      setError(null);
+      return;
+    }
+    const rows = parsePastedText(value);
+    if (!rows.length) {
+      setFileValidation({
+        ...INITIAL_VALIDATION,
+        status: 'invalid',
+        message: 'Paste tab-separated rows from Excel.',
+      });
+      return;
+    }
+    const sheet = analyzeSheet('Pasted data', rows, 0, true);
+    applySheets([sheet]);
+    setFile(null);
+    setError(null);
+  }, [applySheets]);
 
   const handleFileChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextFile = event.target.files?.[0] ?? null;
@@ -356,17 +412,13 @@ export default function AddRequestedProductsModal({ oID, onClose, onImported }: 
   }), [enabledSheets]);
 
   const extractRows = useCallback(() => {
-    if (!fileBuffer) return [] as PayloadRow[];
-    const workbook = XLSX.read(fileBuffer, { type: 'array' });
     const payload: PayloadRow[] = [];
-    enabledSheets.forEach((sheet) => {
+    fileValidation.sheets.forEach((sheet) => {
+      if (!sheet.enabled) return;
       const selection = sheet.selection;
       const hasSelection = (Object.values(selection) as Array<number | null | undefined>).some((value) => value != null);
       if (!hasSelection) return;
-      const worksheet = workbook.Sheets?.[sheet.name];
-      if (!worksheet) return;
-      const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, defval: null, raw: false });
-      const dataRows = rows.slice(sheet.headerRowIndex + 1);
+      const dataRows = getSheetDataRows(sheet);
       dataRows.forEach((row) => {
         if (!Array.isArray(row)) return;
         const getCell = (index: number | null | undefined) => (typeof index === 'number' ? row[index] : null);
@@ -391,24 +443,20 @@ export default function AddRequestedProductsModal({ oID, onClose, onImported }: 
       });
     });
     return payload;
-  }, [enabledSheets, fileBuffer]);
+  }, [fileValidation.sheets]);
 
   const handleImport = useCallback(async () => {
     setError(null);
-    if (!file) {
-      setError('Please attach a workbook first.');
-      return;
-    }
-    if (!fileBuffer) {
-      setError('Unable to read the workbook. Please re-upload the file.');
-      return;
-    }
     if (fileValidation.status === 'checking') {
       setError('Please wait for the file analysis to finish.');
       return;
     }
     if (fileValidation.status !== 'valid') {
       setError('Select at least one column on an enabled sheet.');
+      return;
+    }
+    if (!fileValidation.sheets.length) {
+      setError('Provide data via paste or file upload before importing.');
       return;
     }
     const rows = extractRows();
@@ -439,7 +487,14 @@ export default function AddRequestedProductsModal({ oID, onClose, onImported }: 
     } finally {
       setSubmitting(false);
     }
-  }, [extractRows, file, fileBuffer, fileValidation.status, oID, onClose, onImported]);
+  }, [
+    extractRows,
+    fileValidation.status,
+    fileValidation.sheets.length,
+    oID,
+    onClose,
+    onImported,
+  ]);
 
   const handleOverlayClick = useCallback(() => {
     if (submitting) return;
@@ -511,6 +566,18 @@ export default function AddRequestedProductsModal({ oID, onClose, onImported }: 
               {fileValidation.rowCount > 0 ? (
                 <div className={styles.helpText}>{`Detected approximately ${fileValidation.rowCount} rows in the enabled sheets.`}</div>
               ) : null}
+            </div>
+            <div className={styles.pasteCard}>
+              <div className={styles.pasteHeader}>
+                <div className={styles.pasteTitle}>Paste rows from Excel or Sheets</div>
+                <div className={styles.pasteDescription}>Copy cells and paste them here; columns are separated by tabs.</div>
+              </div>
+              <textarea
+                value={pasteText}
+                onChange={(event) => handlePasteInput(event.target.value)}
+                placeholder="Brand	partNo	Description	Quantity"
+                className={styles.pasteTextarea}
+              />
             </div>
             {fileValidation.sheets.length > 0 ? (
               <div className={styles.sheetTabs}>
