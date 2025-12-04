@@ -54,6 +54,7 @@ type GridRequest = {
 type QueryParam = { key: string; value: string | number | boolean };
 
 type CustomerGroupRow = {
+  CustomerGroupID: number | null;
   Name: string | null;
   Enabled: boolean | number | null;
   CreatedOn: string | Date | null;
@@ -62,6 +63,7 @@ type CustomerGroupRow = {
 type CustomerGroupRowWithCount = CustomerGroupRow & { __totalCount: number | bigint | null };
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
+  CustomerGroupID: "dbo.CustomerGroups.ID",
   Name: "dbo.CustomerGroups.Name",
   Enabled: "dbo.CustomerGroups.Enabled",
   CreatedOn: "dbo.CustomerGroups.CreatedOn",
@@ -182,6 +184,43 @@ const ensureEnabledFilterModel = (
   return base;
 };
 
+const normalizeGroupId = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
+const normalizeBooleanInput = (value: unknown): boolean => {
+  if (value === 1 || value === true || value === "1") return true;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "yes", "y"].includes(normalized)) return true;
+    if (["false", "no", "n", "0"].includes(normalized)) return false;
+  }
+  return false;
+};
+
+const normalizeGroupText = (value: unknown): string => {
+  if (value == null) return "";
+  if (typeof value === "string") return value.trim();
+  return String(value).trim();
+};
+
+type GroupUpdateInput = {
+  CustomerGroupID?: number | string | null;
+  field?: string | null;
+  value?: unknown;
+};
+
+type NormalizedGroupUpdate = {
+  groupId: number;
+  field: "Name" | "Enabled";
+  value: unknown;
+};
+
 async function readGridRequest(req: NextRequest): Promise<GridRequest> {
   try {
     const payload = await req.json();
@@ -211,6 +250,7 @@ export async function POST(req: NextRequest) {
     const select = `
       SELECT
         COUNT_BIG(1) OVER () AS __totalCount,
+        dbo.CustomerGroups.ID AS CustomerGroupID,
         dbo.CustomerGroups.Name,
         dbo.CustomerGroups.Enabled,
         dbo.CustomerGroups.CreatedOn
@@ -236,6 +276,64 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ ok: true, rows, rowCount });
+  } catch (err) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => null);
+    const updates = Array.isArray((body as { updates?: GroupUpdateInput[] } | null)?.updates)
+      ? ((body as { updates?: GroupUpdateInput[] }).updates ?? [])
+      : [];
+    const normalized: NormalizedGroupUpdate[] = updates
+      .map((entry) => {
+        const groupId = normalizeGroupId(entry?.CustomerGroupID ?? null);
+        const field = typeof entry?.field === "string" ? entry.field : null;
+        if (
+          groupId == null ||
+          !field ||
+          (field !== "Name" && field !== "Enabled")
+        ) {
+          return null;
+        }
+        return {
+          groupId,
+          field,
+          value: entry?.value,
+        } as NormalizedGroupUpdate;
+      })
+      .filter((entry): entry is NormalizedGroupUpdate => entry != null);
+
+    if (normalized.length === 0) {
+      return NextResponse.json({ ok: false, error: "No valid updates provided" }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    for (const entry of normalized) {
+      const request = pool.request();
+      request.input("groupId", sql.Int, entry.groupId);
+      if (entry.field === "Name") {
+        request.input("value", sql.NVarChar, normalizeGroupText(entry.value));
+        await request.query(`
+          UPDATE dbo.CustomerGroups
+          SET Name = @value
+          WHERE ID = @groupId
+        `);
+      } else {
+        request.input("value", sql.Bit, normalizeBooleanInput(entry.value) ? 1 : 0);
+        await request.query(`
+          UPDATE dbo.CustomerGroups
+          SET Enabled = @value
+          WHERE ID = @groupId
+        `);
+      }
+    }
+
+    return NextResponse.json({ ok: true, updated: normalized.length });
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : "Server error";

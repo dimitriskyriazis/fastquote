@@ -863,10 +863,18 @@ export default function AgGridAll({
   }), []);
 
   const getRowId = useCallback((params: GetRowIdParams<RowData>) => {
-    const data = params.data as { OfferDetailID?: number | string; TreeOrdering?: string; ProductID?: number | string } | undefined;
-    if (data && data.OfferDetailID != null) return String(data.OfferDetailID);
-    if (data && data.ProductID != null) return String(data.ProductID);
-    if (data && data.TreeOrdering) return String(data.TreeOrdering);
+    const data = params.data as Record<string, unknown> | undefined;
+    if (!data) return `row_${Date.now()}_${Math.random()}`;
+    const toKey = (value: unknown) => (value == null ? null : String(value));
+    const key =
+      toKey((data as { OfferDetailID?: number | string }).OfferDetailID) ??
+      toKey((data as { ProductID?: number | string }).ProductID) ??
+      toKey((data as { ContactID?: number | string }).ContactID) ??
+      toKey((data as { CustomerGroupID?: number | string }).CustomerGroupID) ??
+      toKey((data as { MarketID?: number | string }).MarketID) ??
+      toKey((data as { ID?: number | string }).ID) ??
+      toKey((data as { TreeOrdering?: string }).TreeOrdering);
+    if (key) return key;
     return `row_${Date.now()}_${Math.random()}`;
   }, []);
 

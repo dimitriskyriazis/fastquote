@@ -83,6 +83,10 @@ export default function OffersClient() {
     router.push('/offers/create');
   }, [router]);
 
+  const handleViewMarketsClick = useCallback(() => {
+    router.push('/markets');
+  }, [router]);
+
   const offersRowDeletion = useMemo(
     () =>
       new GridRowDeletion<Record<string, unknown>>({
@@ -290,14 +294,23 @@ export default function OffersClient() {
     <main className={styles.page}>
       <div className={styles.headerRow}>
         <h1 className={styles.heading}>Offers</h1>
-      <button
-        type="button"
-        className={`${styles.primaryButton} page-header-button`}
-        onClick={handleCreateOfferClick}
-      >
-        Create Offer
-      </button>
-    </div>
+        <div className={styles.headerActions}>
+          <button
+            type="button"
+            className={`${styles.primaryButton} page-header-button`}
+            onClick={handleViewMarketsClick}
+          >
+            View Markets
+          </button>
+          <button
+            type="button"
+            className={`${styles.primaryButton} page-header-button`}
+            onClick={handleCreateOfferClick}
+          >
+            Create Offer
+          </button>
+        </div>
+      </div>
       <div className={styles.gridFrame}>
         <AgGridAll
           endpoint="/api/offers"

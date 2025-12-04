@@ -22,6 +22,12 @@
   gap: 12px;
 }
 
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .primaryButton {
   border: 1px solid #d1d5db;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);

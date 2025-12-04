@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
-import type { Request as SqlRequest } from "mssql";
+import type { ConnectionPool, Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
 
 type TextFilterModel = {
@@ -63,7 +63,9 @@ type ContactRow = {
   Position: string | null;
   CustomerName: string | null;
   Email: string | null;
+  Status1: string | null;
   SecondEmail: string | null;
+  Status2: string | null;
   Phone: string | null;
   Mobile: string | null;
   Importance: string | null;
@@ -79,7 +81,9 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Position: "dbo.Contacts.Position",
   CustomerName: "dbo.Customers.Name",
   Email: "dbo.Contacts.Email",
+  Status1: "es1.Name",
   SecondEmail: "dbo.Contacts.SecondEmail",
+  Status2: "es2.Name",
   Phone: "dbo.Contacts.Phone",
   Mobile: "dbo.Contacts.Mobile",
   Importance: "dbo.Contacts.Importance",
@@ -87,6 +91,39 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
 };
 
 const ALLOWED_ROW_GROUP_FIELDS = new Set(["CustomerName", "Importance"]);
+
+type ContactUpdateDefinition =
+  | { kind: "contact-text"; column: string }
+  | { kind: "contact-boolean"; column: string }
+  | { kind: "status"; column: "EmailStatusID" | "SecondEmailStatusID" }
+  | { kind: "customer-name" };
+
+const CONTACT_UPDATE_DEFINITIONS: Record<string, ContactUpdateDefinition> = {
+  LastName: { kind: "contact-text", column: "LastName" },
+  FirstName: { kind: "contact-text", column: "FirstName" },
+  Position: { kind: "contact-text", column: "Position" },
+  CustomerName: { kind: "customer-name" },
+  Email: { kind: "contact-text", column: "Email" },
+  SecondEmail: { kind: "contact-text", column: "SecondEmail" },
+  Phone: { kind: "contact-text", column: "Phone" },
+  Mobile: { kind: "contact-text", column: "Mobile" },
+  Importance: { kind: "contact-text", column: "Importance" },
+  Status1: { kind: "status", column: "EmailStatusID" },
+  Status2: { kind: "status", column: "SecondEmailStatusID" },
+  Enabled: { kind: "contact-boolean", column: "Enabled" },
+};
+
+type ContactUpdateInput = {
+  ContactID?: number | string | null;
+  field?: string | null;
+  value?: unknown;
+};
+
+type NormalizedContactUpdate = {
+  contactId: number;
+  field: keyof typeof CONTACT_UPDATE_DEFINITIONS;
+  value: unknown;
+};
 
 function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
   if (!filterModel || Object.keys(filterModel).length === 0) {
@@ -267,6 +304,116 @@ const ensureEnabledFilterModel = (
   return base;
 };
 
+const normalizeContactId = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
+const normalizeTextValue = (value: unknown): string => {
+  if (value == null) return "";
+  if (typeof value === "string") return value.trim();
+  return String(value).trim();
+};
+
+const normalizeStatusName = (value: unknown): string => {
+  if (typeof value === "string") return value.trim();
+  return "";
+};
+
+const resolveBooleanInput = (value: unknown): boolean => {
+  if (value === 1 || value === true || value === "1") return true;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "yes", "y"].includes(normalized)) return true;
+    if (["false", "no", "n", "0"].includes(normalized)) return false;
+  }
+  if (value === "true" || value === "Yes" || value === "YES") return true;
+  return false;
+};
+
+class ContactUpdateError extends Error {
+  status: number;
+
+  constructor(message: string, status = 400) {
+    super(message);
+    this.status = status;
+    this.name = "ContactUpdateError";
+  }
+}
+
+const applyContactUpdate = async (
+  pool: ConnectionPool,
+  contactId: number,
+  def: ContactUpdateDefinition,
+  rawValue: unknown,
+) => {
+  if (def.kind === "contact-text") {
+    const request = pool.request();
+    request.input("contactId", sql.Int, contactId);
+    request.input("value", sql.NVarChar, normalizeTextValue(rawValue));
+    await request.query(`
+      UPDATE dbo.Contacts
+      SET ${def.column} = @value
+      WHERE ID = @contactId
+    `);
+    return;
+  }
+  if (def.kind === "contact-boolean") {
+    const request = pool.request();
+    request.input("contactId", sql.Int, contactId);
+    request.input("value", sql.Bit, resolveBooleanInput(rawValue) ? 1 : 0);
+    await request.query(`
+      UPDATE dbo.Contacts
+      SET ${def.column} = @value
+      WHERE ID = @contactId
+    `);
+    return;
+  }
+  if (def.kind === "status") {
+    const statusName = normalizeStatusName(rawValue);
+    let statusId: number | null = null;
+    if (statusName) {
+      const statusLookup = pool.request();
+      statusLookup.input("statusName", sql.NVarChar, statusName);
+      const statusResult = await statusLookup.query<{ ID: number }>(`
+        SELECT TOP 1 ID
+        FROM dbo.EmailStatuses
+        WHERE Name = @statusName
+        ORDER BY ID
+      `);
+      statusId = statusResult.recordset?.[0]?.ID ?? null;
+      if (statusId == null) {
+        throw new ContactUpdateError(`Email status "${statusName}" not found`, 400);
+      }
+    }
+    const updateReq = pool.request();
+    updateReq.input("contactId", sql.Int, contactId);
+    updateReq.input("statusId", sql.Int, statusId);
+    await updateReq.query(`
+      UPDATE dbo.Contacts
+      SET ${def.column} = @statusId
+      WHERE ID = @contactId
+    `);
+    return;
+  }
+  if (def.kind === "customer-name") {
+    const request = pool.request();
+    request.input("contactId", sql.Int, contactId);
+    request.input("value", sql.NVarChar, normalizeTextValue(rawValue));
+    await request.query(`
+      UPDATE customers
+      SET customers.Name = @value
+      FROM dbo.Customers AS customers
+      INNER JOIN dbo.Contacts AS contacts ON contacts.CustomerID = customers.ID
+      WHERE contacts.ID = @contactId
+    `);
+  }
+};
+
 export async function POST(req: NextRequest) {
   try {
     const requestPayload = await readGridRequest(req);
@@ -284,7 +431,9 @@ export async function POST(req: NextRequest) {
         dbo.Contacts.Position,
         dbo.Customers.Name AS CustomerName,
         dbo.Contacts.Email,
+        es1.Name AS Status1,
         dbo.Contacts.SecondEmail,
+        es2.Name AS Status2,
         dbo.Contacts.Phone,
         dbo.Contacts.Mobile,
         dbo.Contacts.Importance,
@@ -294,6 +443,8 @@ export async function POST(req: NextRequest) {
     const from = `
       FROM dbo.Contacts
       INNER JOIN dbo.Customers ON dbo.Contacts.CustomerID = dbo.Customers.ID
+      LEFT OUTER JOIN dbo.EmailStatuses AS es1 ON dbo.Contacts.EmailStatusID = es1.ID
+      LEFT OUTER JOIN dbo.EmailStatuses AS es2 ON dbo.Contacts.SecondEmailStatusID = es2.ID
     `;
 
     const normalizedFilterModel = ensureEnabledFilterModel(requestPayload.filterModel);
@@ -374,6 +525,48 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, rows, rowCount });
   } catch (err: unknown) {
     console.error(err);
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => null);
+    const updates = Array.isArray((body as { updates?: ContactUpdateInput[] } | null)?.updates)
+      ? ((body as { updates?: ContactUpdateInput[] }).updates ?? [])
+      : [];
+    const normalized: NormalizedContactUpdate[] = updates
+      .map((entry) => {
+        const contactId = normalizeContactId(entry?.ContactID ?? null);
+        const field = typeof entry?.field === "string" ? entry.field : null;
+        if (contactId == null || !field || !(field in CONTACT_UPDATE_DEFINITIONS)) {
+          return null;
+        }
+        return {
+          contactId,
+          field: field as keyof typeof CONTACT_UPDATE_DEFINITIONS,
+          value: entry?.value,
+        };
+      })
+      .filter((entry): entry is NormalizedContactUpdate => entry != null);
+
+    if (normalized.length === 0) {
+      return NextResponse.json({ ok: false, error: "No valid updates provided" }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    for (const entry of normalized) {
+      const def = CONTACT_UPDATE_DEFINITIONS[entry.field];
+      await applyContactUpdate(pool, entry.contactId, def, entry.value);
+    }
+
+    return NextResponse.json({ ok: true, updated: normalized.length });
+  } catch (err) {
+    console.error(err);
+    if (err instanceof ContactUpdateError) {
+      return NextResponse.json({ ok: false, error: err.message }, { status: err.status });
+    }
     const message = err instanceof Error ? err.message : "Server error";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }

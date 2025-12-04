@@ -1,34 +1,44 @@
 "use client";
 
 import React, { useMemo, useCallback, useRef } from "react";
+import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
-import type { CellValueChangedEvent, ColDef, GridApi, ValueFormatterParams } from "ag-grid-community";
-import styles from "./CustomerGroupsClient.module.css";
+import type { CellValueChangedEvent, ColDef, GridApi } from "ag-grid-community";
+import styles from "./MarketsClient.module.css";
 import { showToastMessage } from "../../lib/toast";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
   loading: () => (
     <div className={styles.loading}>
-      Loading customer groups…
+      Loading markets…
     </div>
   ),
 });
 
+type Props = {
+  salesDivisions: string[];
+};
+
+const resolveEnabledState = (value: unknown): boolean | null => {
+  if (value === 1 || value === true || value === "true" || value === "Yes") return true;
+  if (value === 0 || value === false || value === "false" || value === "No") return false;
+  return null;
+};
+
 const formatBooleanValue = (value: unknown) => {
-  if (value === 1 || value === true || value === "true") return "Yes";
-  if (value === 0 || value === false || value === "false") return "No";
-  return value == null ? "" : String(value);
+  const state = resolveEnabledState(value);
+  if (state === true) return "Yes";
+  if (state === false) return "No";
+  return "";
 };
 
 const normalizeEnabledInput = (value: unknown): boolean => {
-  if (value === 1 || value === true || value === "true" || value === "Yes") return true;
-  if (value === 0 || value === false || value === "false" || value === "No") return false;
-  return false;
+  const state = resolveEnabledState(value);
+  return state === true;
 };
 
-const normalizeGroupId = (value: unknown): number | null => {
+const normalizeMarketId = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
   if (typeof value === "string" && value.trim().length > 0) {
     const parsed = Number.parseInt(value, 10);
@@ -43,21 +53,20 @@ const normalizeTextValue = (value: unknown): string => {
   return String(value).trim();
 };
 
-const formatDateValue = (value: unknown) => {
-  if (!value) return "";
-  const date = new Date(value as string);
-  if (Number.isNaN(date.getTime())) return String(value ?? "");
-  return date.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
-};
-
-const GROUP_FIELD_LABELS: Record<string, string> = {
-  Name: "Group name",
+const MARKET_FIELD_LABELS: Record<string, string> = {
+  Name: "Market name",
+  SalesDivision: "Sales division",
   Enabled: "Enabled",
 };
 
-export default function CustomerGroupsClient() {
-  const router = useRouter();
+export default function MarketsClient({ salesDivisions }: Props) {
   const defaultEnabledFilterAppliedRef = useRef(false);
+  const salesDivisionOptions = useMemo(() => {
+    const unique = new Set(
+      salesDivisions.map((name) => (typeof name === "string" ? name.trim() : "")).filter(Boolean),
+    );
+    return Array.from(unique);
+  }, [salesDivisions]);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
@@ -79,17 +88,35 @@ export default function CustomerGroupsClient() {
     () => [
       {
         field: "Name",
-        headerName: "Group Name",
+        headerName: "Market",
         filter: "agTextColumnFilter",
         flex: 1,
-        minWidth: 220,
+        minWidth: 200,
         editable: true,
+      },
+      {
+        field: "SalesDivision",
+        headerName: "Sales Division",
+        filter: "agTextColumnFilter",
+        enableRowGroup: true,
+        minWidth: 200,
+        flex: 1,
+        editable: true,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: {
+          values: salesDivisionOptions,
+        },
+        valueSetter: (params) => {
+          const next = typeof params.newValue === "string" ? params.newValue : "";
+          params.data = params.data ?? {};
+          (params.data as Record<string, unknown>).SalesDivision = next;
+          return true;
+        },
       },
       {
         field: "Enabled",
         headerName: "Enabled",
         filter: "agSetColumnFilter",
-        width: 130,
         valueFormatter: (params) => formatBooleanValue(params.value),
         filterParams: {
           values: ["true", "false"],
@@ -101,36 +128,31 @@ export default function CustomerGroupsClient() {
           buttons: ["apply"],
           closeOnApply: true,
         },
+        width: 120,
         editable: true,
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: { values: enabledOptions },
+        cellEditorParams: {
+          values: enabledOptions,
+        },
         valueSetter: (params) => {
           params.data = params.data ?? {};
           (params.data as Record<string, unknown>).Enabled = normalizeEnabledInput(params.newValue);
           return true;
         },
       },
-      {
-        field: "CreatedOn",
-        headerName: "Created On",
-        filter: "agDateColumnFilter",
-        valueFormatter: (params: ValueFormatterParams) => formatDateValue(params.value),
-        minWidth: 150,
-        width: 160,
-      },
     ],
-    [enabledOptions],
+    [enabledOptions, salesDivisionOptions],
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
-    if (!field || !(field in GROUP_FIELD_LABELS)) return;
+    if (!field || !(field in MARKET_FIELD_LABELS)) return;
     if (event.newValue === event.oldValue) return;
-    const groupId = normalizeGroupId(
-      (event.data as { CustomerGroupID?: unknown } | undefined)?.CustomerGroupID ?? null,
+    const marketId = normalizeMarketId(
+      (event.data as { MarketID?: unknown } | undefined)?.MarketID ?? null,
     );
-    if (groupId == null) return;
-    const label = GROUP_FIELD_LABELS[field] ?? field;
+    if (marketId == null) return;
+    const label = MARKET_FIELD_LABELS[field] ?? field;
     const revertValue = () => {
       if (event.node) {
         try {
@@ -151,10 +173,10 @@ export default function CustomerGroupsClient() {
 
     const submit = async () => {
       try {
-        const res = await fetch("/api/customer-groups", {
+        const res = await fetch("/api/markets", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ updates: [{ CustomerGroupID: groupId, field, value }] }),
+          body: JSON.stringify({ updates: [{ MarketID: marketId, field, value }] }),
         });
         const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
         if (!res.ok || !payload?.ok) {
@@ -175,39 +197,33 @@ export default function CustomerGroupsClient() {
   return (
     <main className={styles.page}>
       <div className={styles.headerRow}>
-        <h1 className={styles.heading}>Customer Groups</h1>
-        <div className={styles.headerActions}>
-          <button
-            type="button"
-            className={`${styles.headerButton} page-header-button`}
-            onClick={() => router.push("/customers")}
-          >
-            View Customers
-          </button>
-          <button
-            type="button"
-            className={`${styles.headerButton} page-header-button`}
-            onClick={() => router.push("/customer-contacts")}
-          >
-            View Contacts
-          </button>
-          <button
-            type="button"
-            className={`${styles.headerButton} page-header-button`}
-            onClick={() => {
-              /* Add group placeholder */
-            }}
-          >
-            Add Group
-          </button>
+        <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
+          <Link href="/offers" className={`page-header-button ${styles.headerButton}`}>
+            <span aria-hidden="true">←</span>
+            Back to offers
+          </Link>
+        </div>
+        <h1 className={styles.heading}>Markets</h1>
+        <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
+          <div className={styles.headerActions}>
+            <button
+              type="button"
+              className={`page-header-button ${styles.headerButton}`}
+              onClick={() => {
+                /* add market placeholder */
+              }}
+            >
+              Add Market
+            </button>
+          </div>
         </div>
       </div>
       <div className={styles.gridFrame}>
         <AgGridAll
-          endpoint="/api/customer-groups"
+          endpoint="/api/markets"
           columnDefs={columnDefs}
-          columnStateNamespace="customer-groups"
-          rowGroupPanelShow="never"
+          rowGroupPanelShow="always"
+          columnStateNamespace="markets"
           onGridReady={handleGridReady}
           onCellValueChanged={handleCellEdit}
         />
