@@ -36,25 +36,20 @@
 }
 
 .backLink {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 6px 16px;
-  border-radius: 9999px;
   border: 1px solid rgba(15, 23, 42, 0.15);
-  background: #e5e7eb;
+  background-color: #e5e7eb;
   color: #0f172a;
-  font-weight: 540;
-  font-size: 0.9rem;
   text-decoration: none;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background-color 140ms ease, color 140ms ease, transform 120ms ease;
 }
 
-.backLink:hover {
-  transform: translateY(-1px);
+.backLink:hover,
+.backLink:focus-visible {
+  background-color: #d1d5db;
+}
+
+.backLink:hover,
+.backLink:focus-visible {
+  background-color: #d1d5db;
 }
 
 .backLinkAbsolute {
@@ -85,32 +80,12 @@
 }
 
 .headerActionButton {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
   border: 1px solid rgba(15, 23, 42, 0.15);
-  border-radius: 9999px;
   background-color: #f8fafc;
   color: #0f172a;
   text-decoration: none;
-  white-space: nowrap;
-  font-size: 0.9rem;
-  transition: background-color 140ms ease, transform 120ms ease, box-shadow 150ms ease;
-}
-
-.headerActionButton:hover {
-  background-color: #e5e7eb;
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.2);
-  transform: translateY(-1px);
-}
-
-.headerActionButton:focus-visible {
-  outline: 2px solid #2563eb;
-  outline-offset: 2px;
-}
-
-.headerActionButton:active {
-  transform: translateY(0);
-  box-shadow: none;
+  display: inline-flex;
+  gap: 6px;
+  justify-content: center;
+  align-items: center;
 }

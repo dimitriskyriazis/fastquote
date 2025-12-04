@@ -1,70 +1,28 @@
 "use client";
 
-import React, { useMemo, useCallback, useEffect, useRef, useState } from "react";
+import React, { useMemo, useCallback, useRef, useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import type {
-  ColDef,
-  GetContextMenuItemsParams,
-  GridApi,
-  ICellRendererParams,
-  ValueFormatterParams,
-} from "ag-grid-community";
+import type { ColDef, GridApi, ICellRendererParams } from "ag-grid-community";
 import { createPortal } from "react-dom";
-import styles from "./PriceListsClient.module.css";
-import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import styles from "./CustomersClient.module.css";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
   loading: () => (
     <div className={styles.loading}>
-      Loading grid…
+      Loading customers…
     </div>
   ),
 });
 
-const formatDateValue = (params: ValueFormatterParams) => {
-  const raw = params.value;
-  if (!raw) return "";
-  const date = new Date(raw as string);
-  return Number.isNaN(date.getTime())
-    ? String(raw)
-    : date.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
-};
-
-const formatEnabledValue = (value: unknown) => {
+const formatBooleanValue = (value: unknown) => {
   if (value === 1 || value === true || value === "true") return "Yes";
   if (value === 0 || value === false || value === "false") return "No";
   return value == null ? "" : String(value);
 };
 
-const normalizePriceListIdValue = (value: unknown): number | null => {
-  if (typeof value === "number" && Number.isInteger(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isInteger(parsed)) return parsed;
-  }
-  return null;
-};
-
-const resolvePriceListRowLabel = (
-  row: { Name?: string | null; SupplierName?: string | null } | null,
-  fallback: string,
-) => {
-  if (!row) return fallback;
-  const normalize = (value: string | null | undefined) =>
-    typeof value === "string" ? value.trim() : value ? String(value) : "";
-  const name = normalize(row.Name);
-  const supplier = normalize(row.SupplierName);
-  if (name && supplier) return `${name} – ${supplier}`;
-  if (name) return name;
-  if (supplier) return supplier;
-  return fallback;
-};
-
-const PRICE_LIST_ROW_TYPE_LABEL = "price list";
-
-export default function PriceListsClient() {
+export default function CustomersClient() {
   const router = useRouter();
   const defaultEnabledFilterAppliedRef = useRef(false);
 
@@ -83,21 +41,17 @@ export default function PriceListsClient() {
     defaultEnabledFilterAppliedRef.current = true;
   }, []);
 
-  const handleImportClick = useCallback(() => {
-    router.push("/price-lists/import");
-  }, [router]);
-
   const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     const ActionMenu: React.FC = () => {
       const [open, setOpen] = useState(false);
       const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
       const btnRef = useRef<HTMLButtonElement | null>(null);
-      const priceListId = params?.data?.PriceListID as string | number | undefined;
-      const encodedId = priceListId != null ? encodeURIComponent(String(priceListId)) : "";
+      const id = params?.data?.CustomerID as string | number | undefined;
+      const encodedId = id != null ? encodeURIComponent(String(id)) : "";
 
-      const go = (suffix: "products" | "basic") => {
+      const go = (suffix: "basic" | "contacts") => {
         if (!encodedId) return;
-        router.push(`/price-lists/${encodedId}/${suffix}`);
+        router.push(`/customers/${encodedId}/${suffix}`);
       };
 
       const preventRangeSelection = (event: React.SyntheticEvent) => {
@@ -155,7 +109,7 @@ export default function PriceListsClient() {
               e.stopPropagation();
             }}
             disabled={!encodedId}
-            title={encodedId ? "Open menu" : "Missing Price List ID"}
+            title={encodedId ? "Open menu" : "Missing Customer ID"}
             ref={btnRef}
           >
             {lines}
@@ -184,49 +138,21 @@ export default function PriceListsClient() {
                   type="button"
                   role="menuitem"
                   className={styles.actionMenuItem}
-                  onClick={() => go("products")}
+                  onClick={() => go("contacts")}
                 >
-                  View Products
+                  View Contacts
                 </button>
               </div>,
-              document.body
+              document.body,
             )}
         </div>
       );
     };
 
-  return <ActionMenu />;
+    return <ActionMenu />;
   }, [router]);
 
-  const priceListRowDeletion = useMemo(
-    () =>
-      new GridRowDeletion<Record<string, unknown>>({
-        endpoint: '/api/price-lists',
-        resolveRowId: (row) =>
-          normalizePriceListIdValue((row as { PriceListID?: unknown } | null | undefined)?.PriceListID ?? null),
-        resolveRowLabel: (row, fallback) =>
-          resolvePriceListRowLabel(
-            row as { Name?: string | null; SupplierName?: string | null } | null,
-            fallback,
-          ),
-        resolveRowTypeLabel: () => PRICE_LIST_ROW_TYPE_LABEL,
-        buildPayload: (ids) => ({ PriceListIDs: ids }),
-        confirmTitle: 'Delete price list',
-        confirmConfirmLabel: 'Delete price list',
-        confirmCancelLabel: 'Keep price list',
-        successToastMessage: 'Price list deleted',
-        failureToastMessage: 'Unable to delete price list. Please try again.',
-      }),
-    [],
-  );
-
-  const priceListsContextMenuItems = useCallback(
-    (params: GetContextMenuItemsParams<Record<string, unknown>>) =>
-      priceListRowDeletion.getContextMenuItems(params),
-    [priceListRowDeletion],
-  );
-
-  const columnDefs: ColDef[] = useMemo(
+  const columnDefs = useMemo<ColDef[]>(
     () => [
       {
         headerName: "",
@@ -247,35 +173,28 @@ export default function PriceListsClient() {
         cellClass: styles.actionCellContainer,
         cellRenderer: ActionCell,
       },
-      { field: "Name", headerName: "Price List", filter: "agTextColumnFilter" },
-      { field: "SupplierName", headerName: "Supplier", filter: "agTextColumnFilter", enableRowGroup: true },
       {
-        field: "ValidFromDate",
-        headerName: "Valid From",
-        filter: "agDateColumnFilter",
-        valueFormatter: formatDateValue,
-        width: 107,
-        minWidth: 107,
-        maxWidth: 107,
-        suppressAutoSize: true,
+        field: "CustomerName",
+        headerName: "Customer",
+        filter: "agTextColumnFilter",
+        flex: 1,
+        minWidth: 200,
       },
       {
-        field: "ValidToDate",
-        headerName: "Valid To",
-        filter: "agDateColumnFilter",
-        valueFormatter: formatDateValue,
-        width: 105,
-        minWidth: 105,
-        suppressAutoSize: true,
+        field: "BrandName",
+        headerName: "Brand",
+        filter: "agTextColumnFilter",
+        minWidth: 160,
       },
       {
-        field: "Enabled",
-        headerName: "Enabled",
+        field: "IsParent",
+        headerName: "Is Parent",
         filter: "agSetColumnFilter",
-        valueFormatter: (params) => formatEnabledValue(params.value),
+        enableRowGroup: true,
+        valueFormatter: (params) => formatBooleanValue(params.value),
         filterParams: {
           values: ["true", "false"],
-          valueFormatter: (params: { value?: unknown }) => formatEnabledValue(params.value),
+          valueFormatter: (params: { value?: unknown }) => formatBooleanValue(params.value),
           comparator: (a: string, b: string) => {
             if (a === b) return 0;
             return a === "true" ? -1 : 1;
@@ -283,38 +202,94 @@ export default function PriceListsClient() {
           buttons: ["apply"],
           closeOnApply: true,
         },
-        width: 110,
+        width: 130,
+        minWidth: 120,
       },
       {
-        field: "SupplierComment",
-        headerName: "Supplier Comment",
+        field: "ParentCustomer",
+        headerName: "Parent Customer",
         filter: "agTextColumnFilter",
-        flex: 1,
+        enableRowGroup: true,
         minWidth: 220,
+        flex: 1,
+      },
+      {
+        field: "PricingPolicy",
+        headerName: "Pricing Policy",
+        filter: "agTextColumnFilter",
+        enableRowGroup: true,
+        minWidth: 220,
+        flex: 1,
+      },
+      {
+        field: "Importance",
+        headerName: "Importance",
+        filter: "agTextColumnFilter",
+        enableRowGroup: true,
+        minWidth: 160,
+      },
+      {
+        field: "Enabled",
+        headerName: "Enabled",
+        filter: "agSetColumnFilter",
+        valueFormatter: (params) => formatBooleanValue(params.value),
+        filterParams: {
+          values: ["true", "false"],
+          valueFormatter: (params: { value?: unknown }) => formatBooleanValue(params.value),
+          comparator: (a: string, b: string) => {
+            if (a === b) return 0;
+            return a === "true" ? -1 : 1;
+          },
+          buttons: ["apply"],
+          closeOnApply: true,
+        },
+        width: 120,
       },
     ],
-    [ActionCell]
+    [ActionCell],
   );
 
   return (
     <main className={styles.page}>
       <div className={styles.headerRow}>
-        <h1 className={styles.heading}>Price Lists</h1>
-      <button
-        type="button"
-        className={`${styles.importButton} page-header-button`}
-        onClick={handleImportClick}
-      >
-        Import Price List
-      </button>
-    </div>
+        <h1 className={styles.heading}>Customers</h1>
+        <div className={styles.headerActions}>
+          <button
+            type="button"
+            className={`${styles.headerButton} page-header-button`}
+            onClick={() => {
+              router.push("/customer-contacts");
+            }}
+          >
+            View All Contacts
+          </button>
+          <button
+            type="button"
+            className={`${styles.headerButton} page-header-button`}
+            onClick={() => {
+              router.push("/customer-groups");
+            }}
+          >
+            View Groups
+          </button>
+          <button
+            type="button"
+            className={`${styles.headerButton} page-header-button`}
+            onClick={() => {
+              /* Add customer action placeholder */
+            }}
+          >
+            Add Customer
+          </button>
+        </div>
+      </div>
       <div className={styles.gridFrame}>
         <AgGridAll
-          endpoint="/api/price-lists"
+          endpoint="/api/customers"
           columnDefs={columnDefs}
-          getContextMenuItems={priceListsContextMenuItems}
+          rowGroupPanelShow="always"
+          columnStateNamespace="customers"
           onGridReady={handleGridReady}
-          autoSizeExclusions={["ValidFromDate", "ValidToDate"]}
         />
       </div>
     </main>

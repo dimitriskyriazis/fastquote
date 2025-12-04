@@ -789,7 +789,7 @@ export default function PriceListImportClient({
   return (
     <main className={`${layoutStyles.page} ${styles.importPage}`}>
       <div className={`${layoutStyles.headerRow} ${layoutStyles.headerRowCentered}`}>
-        <Link href="/price-lists" className={`${layoutStyles.backLink} ${layoutStyles.backLinkAbsolute}`}>
+        <Link href="/price-lists" className={`${layoutStyles.backLink} ${layoutStyles.backLinkAbsolute} page-header-button`}>
           ← Back to price lists
         </Link>
         <h1 className={layoutStyles.heading}>Import Price List</h1>
@@ -1217,7 +1217,7 @@ export default function PriceListImportClient({
           <div className={styles.actionsRow}>
             {error && <div className={styles.error}>{error}</div>}
             <div className={styles.actionsSpacer} />
-            <button type="submit" className={styles.submitButton} disabled={submitting}>
+            <button type="submit" className={`${styles.submitButton} page-header-button`} disabled={submitting}>
               {submitting ? "Importing…" : "Create Price List"}
             </button>
           </div>

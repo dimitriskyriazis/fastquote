@@ -22,14 +22,22 @@
   gap: 12px;
 }
 
-.importButton {
+.headerActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.headerButton {
   border: 1px solid #d1d5db;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   color: #0f172a;
   box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
 }
 
-.importButton:active {
+.headerButton:active {
   box-shadow: 0 4px 10px rgba(15, 23, 42, 0.1);
 }
 

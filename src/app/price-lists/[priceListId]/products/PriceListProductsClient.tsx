@@ -162,7 +162,7 @@ export default function PriceListProductsClient({
             if (a === b) return 0;
             return a === "true" ? -1 : 1;
           },
-          buttons: ["apply", "clear"],
+          buttons: ["apply"],
           closeOnApply: true,
         },
         width: 110,
@@ -260,7 +260,7 @@ export default function PriceListProductsClient({
     <main className={layoutStyles.page}>
       <div className={layoutStyles.headerRow}>
         <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideStart}`}>
-          <Link href="/price-lists" className={layoutStyles.backLink}>
+          <Link href="/price-lists" className={`${layoutStyles.backLink} page-header-button`}>
             <span aria-hidden="true">←</span>
             Back to price lists
           </Link>
@@ -269,7 +269,7 @@ export default function PriceListProductsClient({
         <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>
           <Link
             href={`/price-lists/${encodeURIComponent(priceListId)}/basic`}
-            className={layoutStyles.headerActionButton}
+            className={`${layoutStyles.headerActionButton} page-header-button`}
           >
             View Basic Data
           </Link>

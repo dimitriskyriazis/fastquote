@@ -155,7 +155,7 @@ export default async function Page() {
     <main className={styles.page}>
       <div className={styles.headerRow}>
         <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
-          <Link href="/offers" className={styles.backLink}>
+          <Link href="/offers" className={`${styles.backLink} page-header-button`}>
             <span aria-hidden="true">←</span>
             Back to offers
           </Link>
@@ -165,7 +165,7 @@ export default async function Page() {
           <button
             type="submit"
             form={formId}
-            className={clientStyles.submitButton}
+            className={`${clientStyles.submitButton} page-header-button`}
           >
             Create offer and proceed to products
           </button>

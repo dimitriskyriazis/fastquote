@@ -575,7 +575,10 @@ const refreshServerSideData = (api?: GridApi<RowData>, opts?: { purge?: boolean 
   }
 };
 
-const GUARDED_SET_FILTERS = new Set(['Enabled']);
+const GUARDED_SET_FILTERS = new Map<string, string[]>([
+  ['Enabled', ['true', 'false']],
+  ['IsParent', ['true', 'false']],
+]);
 
 const reorderRowsByTreeOrdering = (api: GridApi<RowData>) => {
   if (typeof api.applyServerSideTransaction !== 'function') return;
@@ -940,13 +943,14 @@ export default function AgGridAll({
     let mutated = false;
 
     Object.entries(model).forEach(([colId, descriptor]) => {
-      if (!GUARDED_SET_FILTERS.has(colId)) return;
+      const guardValues = GUARDED_SET_FILTERS.get(colId);
+      if (!guardValues) return;
       if (!descriptor || typeof descriptor !== 'object') return;
       if (descriptor.filterType !== 'set') return;
       const values = Array.isArray(descriptor.values) ? descriptor.values : [];
       if (values.length > 0) return;
 
-      delete nextModel[colId];
+      nextModel[colId] = { ...descriptor, values: [...guardValues] };
       mutated = true;
     });
 

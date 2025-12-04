@@ -280,7 +280,7 @@ export default function OffersClient() {
         values: ['true', 'false'],
         valueFormatter: (params: { value?: unknown }) => formatEnabledValue(params.value),
         comparator: (valueA: string, valueB: string) => (valueA === valueB ? 0 : valueA === 'true' ? -1 : 1),
-        buttons: ['apply', 'clear'],
+        buttons: ['apply'],
         closeOnApply: true,
       },
     },
@@ -292,7 +292,7 @@ export default function OffersClient() {
         <h1 className={styles.heading}>Offers</h1>
       <button
         type="button"
-        className={styles.primaryButton}
+        className={`${styles.primaryButton} page-header-button`}
         onClick={handleCreateOfferClick}
       >
         Create Offer

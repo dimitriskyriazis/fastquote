@@ -94,7 +94,7 @@ export default async function Page({
       <main className={styles.page}>
         <div className={`${styles.headerRow} ${styles.headerRowCentered}`}>
           <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
-            <Link href={resolvedBackHref} className={styles.backLink}>
+            <Link href={resolvedBackHref} className={`${styles.backLink} page-header-button`}>
               <span aria-hidden="true">←</span>
               Back to {resolvedBackLabel}
             </Link>
@@ -114,7 +114,7 @@ export default async function Page({
   const renderHeader = () => (
     <div className={`${styles.headerRow} ${styles.headerRowCentered}`}>
       <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
-        <Link href={resolvedBackHref} className={styles.backLink}>
+        <Link href={resolvedBackHref} className={`${styles.backLink} page-header-button`}>
           <span aria-hidden="true">←</span>
           Back to {resolvedBackLabel}
         </Link>

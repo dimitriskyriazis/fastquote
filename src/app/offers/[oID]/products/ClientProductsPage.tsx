@@ -100,8 +100,8 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
   }, [oID, pendingAction]);
 
   const manualToggleClass = manualMode
-    ? `${toolbarStyles.manualToggle} ${toolbarStyles.manualToggleActive}`
-    : toolbarStyles.manualToggle;
+    ? `${toolbarStyles.manualToggle} ${toolbarStyles.manualToggleActive} page-header-button`
+    : `${toolbarStyles.manualToggle} page-header-button`;
 
   const handleProductsAdded = useCallback((count: number) => {
     void count;
@@ -121,7 +121,7 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
         <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideStart}`}>
           <div className={toolbarStyles.leftColumn}>
             <div className={toolbarStyles.topControls}>
-              <Link href="/offers" className={layoutStyles.backLink}>
+              <Link href="/offers" className={`${layoutStyles.backLink} page-header-button`}>
                 <span aria-hidden="true">←</span>
                 Back to offers
               </Link>
@@ -129,7 +129,7 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
             <div className={toolbarStyles.leftRequestedRow}>
               <button
                 type="button"
-                className={`${toolbarStyles.button} ${toolbarStyles.buttonAddRequested}`}
+                className={`${toolbarStyles.button} ${toolbarStyles.buttonAddRequested} page-header-button`}
                 onClick={() => setShowRequestedModal(true)}
               >
                 Add Requested Products
@@ -150,7 +150,7 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
               </button>
               <Link
                 href={`/offers/${encodeURIComponent(oID)}/basic`}
-                className={layoutStyles.headerActionButton}
+                className={`${layoutStyles.headerActionButton} page-header-button`}
               >
                 View Basic Data
               </Link>
@@ -163,7 +163,7 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
                   <button
                     type="button"
                     key={action.key}
-                    className={`${toolbarStyles.button} ${variantClass}`}
+                    className={`${toolbarStyles.button} ${variantClass} page-header-button`}
                     onClick={() => handleAddAction(action.key)}
                     disabled={disabled}
                   >

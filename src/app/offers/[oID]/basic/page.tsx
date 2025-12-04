@@ -14,7 +14,7 @@ export default async function Page({ params }: { params: Promise<{ oID: string }
     <main className={styles.page}>
       <div className={styles.headerRow}>
         <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
-          <Link href="/offers" className={styles.backLink}>
+          <Link href="/offers" className={`${styles.backLink} page-header-button`}>
             <span aria-hidden="true">←</span>
             Back to offers
           </Link>
@@ -23,7 +23,7 @@ export default async function Page({ params }: { params: Promise<{ oID: string }
         <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
           <Link
             href={`/offers/${encodeURIComponent(decodedId)}/products`}
-            className={styles.headerActionButton}
+            className={`${styles.headerActionButton} page-header-button`}
           >
             View Products
           </Link>

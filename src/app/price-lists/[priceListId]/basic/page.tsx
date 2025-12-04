@@ -26,7 +26,7 @@ export default async function Page({
     <main className={layoutStyles.page}>
       <div className={layoutStyles.headerRow}>
         <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideStart}`}>
-          <Link href="/price-lists" className={layoutStyles.backLink}>
+          <Link href="/price-lists" className={`${layoutStyles.backLink} page-header-button`}>
             <span aria-hidden="true">←</span>
             Back to price lists
           </Link>
@@ -35,7 +35,7 @@ export default async function Page({
         <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>
           <Link
             href={`/price-lists/${encodeURIComponent(decodedId)}/products`}
-            className={layoutStyles.headerActionButton}
+            className={`${layoutStyles.headerActionButton} page-header-button`}
           >
             View Products
           </Link>

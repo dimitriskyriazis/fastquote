@@ -1,0 +1,76 @@
+.page {
+  padding: 16px;
+  box-sizing: border-box;
+  height: 100vh;
+  width: 100%;
+  max-width: 100vw;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.heading {
+  margin: 0;
+  font-size: 24px;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.headerActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.headerButton {
+  border: 1px solid #d1d5db;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  color: #0f172a;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+}
+
+.headerButton:active {
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.1);
+}
+
+.loading {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #475569);
+}
+
+.gridFrame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-row-odd .ag-cell) {
+  background: #f4f6fb !important;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-row-even .ag-cell) {
+  background: #ffffff !important;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-row-hover .ag-cell) {
+  background: #e9f1ff !important;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-cell) {
+  transition: background-color 140ms ease;
+}
