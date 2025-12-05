@@ -796,7 +796,7 @@ export default function PriceListImportClient({
       </div>
 
       <section className={styles.card}>
-        <form className={styles.form} onSubmit={handleSubmit}>
+        <form className={styles.form} onSubmit={handleSubmit} autoComplete="off">
           <div className={styles.formGrid}>
             <div className={styles.fieldStack}>
               <div className={styles.sectionHeading}>Price List Details</div>
@@ -806,6 +806,7 @@ export default function PriceListImportClient({
                     Name <span className={styles.requiredMark}>*</span>
                   </span>
                   <input
+                    autoComplete="off"
                     className={styles.input}
                     value={values.name}
                     onChange={(e) => updateField("name", e.target.value)}
@@ -816,6 +817,7 @@ export default function PriceListImportClient({
                     Brand <span className={styles.requiredMark}>*</span>
                   </span>
                   <input
+                    autoComplete="off"
                     className={`${styles.input} ${styles.comboInput}`}
                     value={brandText}
                     placeholder="Type to filter brands"
@@ -944,6 +946,7 @@ export default function PriceListImportClient({
                     Valid From <span className={styles.requiredMark}>*</span>
                   </span>
                   <input
+                    autoComplete="off"
                     type="date"
                     className={styles.input}
                     value={values.validFromDate}
@@ -955,6 +958,7 @@ export default function PriceListImportClient({
                     Valid To <span className={styles.requiredMark}>*</span>
                   </span>
                   <input
+                    autoComplete="off"
                     type="date"
                     className={styles.input}
                     value={values.validToDate}
@@ -967,6 +971,7 @@ export default function PriceListImportClient({
                 <label className={styles.field}>
                   <span className={styles.label}>Comments</span>
                   <textarea
+                    autoComplete="off"
                     className={`${styles.input} ${styles.textarea}`}
                     value={values.comments}
                     onChange={(e) => updateField("comments", e.target.value)}
@@ -976,6 +981,7 @@ export default function PriceListImportClient({
                 <label className={styles.field}>
                   <span className={styles.label}>Supplier Comments</span>
                   <textarea
+                    autoComplete="off"
                     className={`${styles.input} ${styles.textarea}`}
                     value={values.supplierComments}
                     onChange={(e) => updateField("supplierComments", e.target.value)}
@@ -1032,6 +1038,7 @@ export default function PriceListImportClient({
                 onDrop={handleFileDrop}
               >
                 <input
+                  autoComplete="off"
                   type="file"
                   accept=".xlsx,.xls,.csv"
                   className={styles.fileInput}
@@ -1126,6 +1133,7 @@ export default function PriceListImportClient({
                             {activeSheet && fileValidation.sheets.length > 1 ? (
                               <label className={styles.sheetToggle}>
                                 <input
+                                  autoComplete="off"
                                   type="checkbox"
                                   checked={activeSheet.enabled}
                                   onChange={(e) => toggleSheetEnabled(fileValidation.activeSheetIndex, e.target.checked)}

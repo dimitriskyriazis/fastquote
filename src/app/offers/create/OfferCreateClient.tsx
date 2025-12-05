@@ -433,6 +433,7 @@ export default function OfferCreateClient({
       return (
         <div className={`${styles.controlStack} ${styles.comboWrapper}`}>
           <input
+            autoComplete="off"
             id={fieldId}
             className={`${panelStyles.fieldControl} ${styles.comboInput}`}
             value={customerText}
@@ -523,6 +524,7 @@ export default function OfferCreateClient({
       return (
         <div className={styles.controlStack}>
           <textarea
+            autoComplete="off"
             id={fieldId}
             name={field.id}
             className={`${panelStyles.fieldControl} ${panelStyles.fieldControlMultiline}`}
@@ -541,6 +543,7 @@ export default function OfferCreateClient({
       return (
         <div className={styles.controlStack}>
           <input
+            autoComplete="off"
             id={fieldId}
             name={field.id}
             className={panelStyles.fieldControl}
@@ -559,6 +562,7 @@ export default function OfferCreateClient({
     return (
       <div className={styles.controlStack}>
         <input
+          autoComplete="off"
           id={fieldId}
           name={field.id}
           className={panelStyles.fieldControl}
@@ -621,7 +625,7 @@ export default function OfferCreateClient({
   if (remainingFields.length > 0) generalRows.push(remainingFields);
 
   return (
-    <form id={formId} className={styles.form} onSubmit={handleSubmit}>
+    <form id={formId} className={styles.form} onSubmit={handleSubmit} autoComplete="off">
       <section className={panelStyles.panel}>
         <div className={`${panelStyles.section} ${panelStyles.sectionCard} ${panelStyles.generalSection}`}>
           <div className={panelStyles.sectionHeading}>{SECTION_METADATA.general.title}</div>

@@ -550,6 +550,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
               onDragLeave={handleDragLeave}
             >
               <input
+                autoComplete="off"
                 id="requested-products-file"
                 type="file"
                 accept=".xlsx,.xls,.csv"
@@ -573,6 +574,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
                 <div className={styles.pasteDescription}>Copy cells and paste them here; columns are separated by tabs.</div>
               </div>
               <textarea
+                autoComplete="off"
                 value={pasteText}
                 onChange={(event) => handlePasteInput(event.target.value)}
                 placeholder="Brand	partNo	Description	Quantity"
@@ -603,6 +605,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
             {activeSheet && fileValidation.sheets.length > 1 ? (
               <label className={styles.sheetToggle}>
                 <input
+                  autoComplete="off"
                   type="checkbox"
                   checked={activeSheet.enabled}
                   onChange={(event) => toggleSheetEnabled(fileValidation.activeSheetIndex, event.target.checked)}

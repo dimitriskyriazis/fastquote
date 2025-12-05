@@ -371,6 +371,7 @@ export default function PriceListBasicDataClient({
       return (
         <>
           <input
+            autoComplete="off"
             id={controlId}
             name={def.id}
             className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
@@ -392,6 +393,7 @@ export default function PriceListBasicDataClient({
     if (def.multiline) {
       return (
         <textarea
+          autoComplete="off"
           id={controlId}
           name={def.id}
           className={`${styles.fieldControl} ${styles.fieldControlMultiline} ${pending ? styles.fieldControlPending : ''}`}
@@ -405,6 +407,7 @@ export default function PriceListBasicDataClient({
 
     return (
       <input
+        autoComplete="off"
         id={controlId}
         name={def.id}
         className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}

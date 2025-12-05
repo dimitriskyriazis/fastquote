@@ -1,0 +1,86 @@
+.page {
+  padding: 16px;
+  box-sizing: border-box;
+  height: 100vh;
+  width: 100%;
+  max-width: 100vw;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.headerRowCentered {
+  align-items: baseline;
+  justify-content: center;
+  position: relative;
+}
+
+.heading {
+  margin: 0;
+  font-size: 24px;
+  flex-shrink: 1;
+}
+
+.headingCentered {
+  text-align: center;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.backLink {
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background-color: #e5e7eb;
+  color: #0f172a;
+  text-decoration: none;
+}
+
+.backLink:hover,
+.backLink:focus-visible {
+  background-color: #d1d5db;
+}
+
+.backLinkAbsolute {
+  position: absolute;
+  left: 0;
+  top: 10px;
+}
+
+.headerSide {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.headerSideStart {
+  justify-content: flex-start;
+}
+
+.headerSideEnd {
+  justify-content: flex-end;
+}
+
+.pageBody {
+  flex: 1;
+  min-height: 0;
+}
+
+.headerActionButton {
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background-color: #f8fafc;
+  color: #0f172a;
+  text-decoration: none;
+  display: inline-flex;
+  gap: 6px;
+  justify-content: center;
+  align-items: center;
+}

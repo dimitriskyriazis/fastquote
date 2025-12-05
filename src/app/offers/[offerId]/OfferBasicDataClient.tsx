@@ -517,6 +517,7 @@ const renderFieldControl = (
     return (
       <>
         <input
+          autoComplete="off"
           id={controlId}
           name={def.id}
           className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
@@ -538,6 +539,7 @@ const renderFieldControl = (
   if (def.multiline) {
       return (
         <textarea
+          autoComplete="off"
           id={controlId}
           name={def.id}
           className={`${styles.fieldControl} ${styles.fieldControlMultiline} ${pending ? styles.fieldControlPending : ''}`}
@@ -551,6 +553,7 @@ const renderFieldControl = (
 
     return (
       <input
+        autoComplete="off"
         id={controlId}
         name={def.id}
         className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
@@ -687,6 +690,7 @@ const renderFieldControl = (
                     First Name
                   </label>
                   <input
+                    autoComplete="off"
                     id="contact-first-name"
                     className={styles.fieldControl}
                     value={contactForm.firstName}
@@ -698,6 +702,7 @@ const renderFieldControl = (
                     Last Name
                   </label>
                   <input
+                    autoComplete="off"
                     id="contact-last-name"
                     className={styles.fieldControl}
                     value={contactForm.lastName}
@@ -727,6 +732,7 @@ const renderFieldControl = (
                     Position
                   </label>
                   <input
+                    autoComplete="off"
                     id="contact-position"
                     className={styles.fieldControl}
                     value={contactForm.position}
@@ -738,6 +744,7 @@ const renderFieldControl = (
                     Importance
                   </label>
                   <input
+                    autoComplete="off"
                     id="contact-importance"
                     className={styles.fieldControl}
                     type="number"
@@ -750,6 +757,7 @@ const renderFieldControl = (
                     Phone
                   </label>
                   <input
+                    autoComplete="off"
                     id="contact-phone"
                     className={styles.fieldControl}
                     value={contactForm.phone}
@@ -761,6 +769,7 @@ const renderFieldControl = (
                     Mobile
                   </label>
                   <input
+                    autoComplete="off"
                     id="contact-mobile"
                     className={styles.fieldControl}
                     value={contactForm.mobile}
@@ -772,6 +781,7 @@ const renderFieldControl = (
                     Email
                   </label>
                   <input
+                    autoComplete="off"
                     id="contact-email"
                     className={styles.fieldControl}
                     type="email"
@@ -784,6 +794,7 @@ const renderFieldControl = (
                     Email Status ID
                   </label>
                   <input
+                    autoComplete="off"
                     id="contact-email-status"
                     className={styles.fieldControl}
                     type="number"
@@ -796,6 +807,7 @@ const renderFieldControl = (
                     Second Email
                   </label>
                   <input
+                    autoComplete="off"
                     id="contact-second-email"
                     className={styles.fieldControl}
                     type="email"
@@ -808,6 +820,7 @@ const renderFieldControl = (
                     Second Email Status ID
                   </label>
                   <input
+                    autoComplete="off"
                     id="contact-second-email-status"
                     className={styles.fieldControl}
                     type="number"
@@ -821,6 +834,7 @@ const renderFieldControl = (
                   </label>
                   <label className={styles.contactToggleControl} htmlFor="contact-enabled">
                     <input
+                      autoComplete="off"
                       id="contact-enabled"
                       type="checkbox"
                       checked={contactForm.enabled}
@@ -833,6 +847,7 @@ const renderFieldControl = (
                     Notes
                   </label>
                   <textarea
+                    autoComplete="off"
                     id="contact-notes"
                     className={`${styles.fieldControl} ${styles.fieldControlMultiline}`}
                     value={contactForm.notes}

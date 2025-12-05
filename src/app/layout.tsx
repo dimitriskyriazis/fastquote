@@ -5,6 +5,7 @@ import "ag-grid-community/styles/ag-theme-quartz.css";
 import SideNav from "./components/SideNav";
 import { AuditUserProvider } from "./components/AuditUserProvider";
 import AuditUserPrompt from "./components/AuditUserPrompt";
+import DisableAutofill from "./components/DisableAutofill";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,6 +29,7 @@ export default function RootLayout({
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <AuditUserProvider>
           <AuditUserPrompt />
+          <DisableAutofill />
           <div className="app-shell">
             <SideNav />
             <div className="app-content">{children}</div>
