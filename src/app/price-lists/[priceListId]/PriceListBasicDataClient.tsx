@@ -292,7 +292,7 @@ export default function PriceListBasicDataClient({
 
       setPendingFields((prev) => ({ ...prev, [def.id]: true }));
       try {
-        const response = await fetch(`/api/price-lists/${encodeURIComponent(priceListId)}/basic`, {
+        const response = await fetch(`/api/price-lists/${encodeURIComponent(priceListId)}/basicdata`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ updates: [{ field: def.updateField, value: payloadValue }] }),

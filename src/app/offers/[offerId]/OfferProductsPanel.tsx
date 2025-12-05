@@ -346,21 +346,21 @@ const PRICING_FIELD_LABELS: Record<string, string> = {
 const PRICING_EDITABLE_FIELDS = new Set(Object.keys(PRICING_FIELD_LABELS));
 
 type Props = {
-  oID: string;
+  offerId: string;
   endpoint?: string;
   manualMode?: boolean;
   refreshToken?: number;
 };
 
-const buildEndpointForOffer = (oID: string) =>
-  `/api/offers/${encodeURIComponent(oID)}/products`;
+const buildEndpointForOffer = (offerId: string) =>
+  `/api/offers/${encodeURIComponent(offerId)}/products`;
 
-export default function OfferProductsPanel({ oID, endpoint, manualMode = false, refreshToken = 0 }: Props) {
+export default function OfferProductsPanel({ offerId, endpoint, manualMode = false, refreshToken = 0 }: Props) {
   const router = useRouter();
   const resolvedEndpoint = useMemo(() => {
     if (endpoint) return endpoint;
-    return buildEndpointForOffer(oID);
-  }, [endpoint, oID]);
+    return buildEndpointForOffer(offerId);
+  }, [endpoint, offerId]);
   const [totals, setTotals] = useState<{ totalListPrice: number; totalNetPrice: number; totalCost: number; totalMargin: number } | null>(null);
   const [requestedColumnVisibility, setRequestedColumnVisibility] = useState<Record<RequestedDisplayFieldKey, boolean>>({
     RequestedBrand: false,
@@ -1134,8 +1134,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
 
     const qs = new URLSearchParams();
-    qs.set('backHref', `/offers/${encodeURIComponent(oID)}/products`);
-    qs.set('backLabel', `offer ${oID}`);
+    qs.set('backHref', `/offers/${encodeURIComponent(offerId)}/products`);
+    qs.set('backLabel', `offer ${offerId}`);
 
     const historyItem: MenuItemDef = {
       name: "View Product's History",
@@ -1167,7 +1167,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 
     items.push(historyItem);
     return items;
-  }, [productRowDeletion, router, oID]);
+  }, [productRowDeletion, router, offerId]);
 
   const handleQuantityEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Quantity') return;

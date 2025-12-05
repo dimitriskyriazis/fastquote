@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect, useCallback, useRef, type FormEvent } fro
 import { useRouter } from 'next/navigation';
 import type { DropdownOption } from '../../../lib/dropdownOptions';
 import { showToastMessage } from '../../../lib/toast';
-import panelStyles from '../[oID]/OfferBasicDataPanel.module.css';
+import panelStyles from '../[offerId]/OfferBasicDataPanel.module.css';
 import styles from './OfferCreateClient.module.css';
 
 type SectionKey = 'general' | 'info' | 'commercial' | 'code' | 'dates';

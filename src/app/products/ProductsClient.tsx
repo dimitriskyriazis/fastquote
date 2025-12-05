@@ -59,8 +59,8 @@ export default function ProductsClient() {
       field: "Description",
       headerName: "Description",
       filter: "agTextColumnFilter",
-      minWidth: 240,
-      flex: 1,
+      minWidth: 280,
+      width: 320,
     },
     {
       field: "Category",
@@ -153,6 +153,7 @@ export default function ProductsClient() {
           columnDefs={columnDefs}
           getContextMenuItems={getContextMenuItems}
           rowGroupPanelShow="always"
+          autoSizeExclusions={["Description"]}
           columnStateNamespace="products-v2"
         />
       </div>

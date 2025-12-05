@@ -18,6 +18,7 @@ const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
 
 type Props = {
   statuses: string[];
+  importances: Array<string | number>;
 };
 
 const CONTACT_FIELD_LABELS: Record<string, string> = {
@@ -26,9 +27,9 @@ const CONTACT_FIELD_LABELS: Record<string, string> = {
   Position: "Position",
   CustomerName: "Customer name",
   Email: "Email",
-  Status1: "Status 1",
+  EmailStatus: "Email status",
   SecondEmail: "Second email",
-  Status2: "Status 2",
+  SecondEmailStatus: "Second email status",
   Phone: "Phone",
   Mobile: "Mobile",
   Importance: "Importance",
@@ -65,7 +66,7 @@ const normalizeTextInput = (value: unknown): string => {
   return String(value).trim();
 };
 
-export default function ContactsClient({ statuses }: Props) {
+export default function ContactsClient({ statuses, importances }: Props) {
   const router = useRouter();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const statusOptions = useMemo(() => {
@@ -75,6 +76,17 @@ export default function ContactsClient({ statuses }: Props) {
     return Array.from(unique);
   }, [statuses]);
   const statusDropdownValues = useMemo(() => ["", ...statusOptions], [statusOptions]);
+  const importanceOptions = useMemo(() => {
+    const normalized = importances
+      .map((entry) => {
+        if (entry == null) return "";
+        if (typeof entry === "number") return String(entry);
+        return String(entry).trim();
+      })
+      .filter((value) => value.length > 0);
+    return Array.from(new Set(normalized));
+  }, [importances]);
+  const importanceDropdownValues = useMemo(() => ["", ...importanceOptions], [importanceOptions]);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
@@ -135,8 +147,8 @@ export default function ContactsClient({ statuses }: Props) {
         editable: true,
       },
       {
-        field: "Status1",
-        headerName: "Status 1",
+        field: "EmailStatus",
+        headerName: "Email Status",
         filter: "agTextColumnFilter",
         minWidth: 160,
         editable: true,
@@ -151,8 +163,8 @@ export default function ContactsClient({ statuses }: Props) {
         editable: true,
       },
       {
-        field: "Status2",
-        headerName: "Status 2",
+        field: "SecondEmailStatus",
+        headerName: "Second Email Status",
         filter: "agTextColumnFilter",
         minWidth: 160,
         editable: true,
@@ -180,6 +192,8 @@ export default function ContactsClient({ statuses }: Props) {
         enableRowGroup: true,
         minWidth: 160,
         editable: true,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: { values: importanceDropdownValues },
       },
       {
         field: "Enabled",
@@ -208,7 +222,7 @@ export default function ContactsClient({ statuses }: Props) {
       },
     ];
     return orderedColumns;
-  }, [enabledOptions, statusDropdownValues]);
+  }, [enabledOptions, statusDropdownValues, importanceDropdownValues]);
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
@@ -235,7 +249,7 @@ export default function ContactsClient({ statuses }: Props) {
       value = normalizeEnabledInput(
         (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
       );
-    } else if (field === "Status1" || field === "Status2") {
+    } else if (field === "EmailStatus" || field === "SecondEmailStatus") {
       value = normalizeTextInput(event.newValue);
     } else {
       value = normalizeTextInput(event.newValue);

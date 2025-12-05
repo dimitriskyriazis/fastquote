@@ -63,9 +63,9 @@ type ContactRow = {
   Position: string | null;
   CustomerName: string | null;
   Email: string | null;
-  Status1: string | null;
+  EmailStatus: string | null;
   SecondEmail: string | null;
-  Status2: string | null;
+  SecondEmailStatus: string | null;
   Phone: string | null;
   Mobile: string | null;
   Importance: string | null;
@@ -81,9 +81,9 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Position: "dbo.Contacts.Position",
   CustomerName: "dbo.Customers.Name",
   Email: "dbo.Contacts.Email",
-  Status1: "es1.Name",
+  EmailStatus: "es1.Name",
   SecondEmail: "dbo.Contacts.SecondEmail",
-  Status2: "es2.Name",
+  SecondEmailStatus: "es2.Name",
   Phone: "dbo.Contacts.Phone",
   Mobile: "dbo.Contacts.Mobile",
   Importance: "dbo.Contacts.Importance",
@@ -108,8 +108,8 @@ const CONTACT_UPDATE_DEFINITIONS: Record<string, ContactUpdateDefinition> = {
   Phone: { kind: "contact-text", column: "Phone" },
   Mobile: { kind: "contact-text", column: "Mobile" },
   Importance: { kind: "contact-text", column: "Importance" },
-  Status1: { kind: "status", column: "EmailStatusID" },
-  Status2: { kind: "status", column: "SecondEmailStatusID" },
+  EmailStatus: { kind: "status", column: "EmailStatusID" },
+  SecondEmailStatus: { kind: "status", column: "SecondEmailStatusID" },
   Enabled: { kind: "contact-boolean", column: "Enabled" },
 };
 
@@ -431,9 +431,9 @@ export async function POST(req: NextRequest) {
         dbo.Contacts.Position,
         dbo.Customers.Name AS CustomerName,
         dbo.Contacts.Email,
-        es1.Name AS Status1,
+        es1.Name AS EmailStatus,
         dbo.Contacts.SecondEmail,
-        es2.Name AS Status2,
+        es2.Name AS SecondEmailStatus,
         dbo.Contacts.Phone,
         dbo.Contacts.Mobile,
         dbo.Contacts.Importance,

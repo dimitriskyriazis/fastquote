@@ -14,7 +14,7 @@ import styles from './AddRequestedProductsModal.module.css';
 import { showToastMessage } from '../../../../lib/toast';
 
 type Props = {
-  oID: string;
+  offerId: string;
   onClose: () => void;
   onImported: (result: { inserted?: number; updated?: number; total?: number }) => void;
 };
@@ -244,7 +244,7 @@ const parsePastedText = (text: string): unknown[][] => {
     .filter((row) => row.some(hasCellValue));
 };
 
-export default function AddRequestedProductsModal({ oID, onClose, onImported }: Props) {
+export default function AddRequestedProductsModal({ offerId, onClose, onImported }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [fileValidation, setFileValidation] = useState<FileValidation>(INITIAL_VALIDATION);
   const [pasteText, setPasteText] = useState('');
@@ -466,7 +466,7 @@ export default function AddRequestedProductsModal({ oID, onClose, onImported }: 
     }
     setSubmitting(true);
     try {
-      const endpoint = `/api/offers/${encodeURIComponent(oID)}/products/requested`;
+      const endpoint = `/api/offers/${encodeURIComponent(offerId)}/products/requested`;
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -491,7 +491,7 @@ export default function AddRequestedProductsModal({ oID, onClose, onImported }: 
     extractRows,
     fileValidation.status,
     fileValidation.sheets.length,
-    oID,
+    offerId,
     onClose,
     onImported,
   ]);

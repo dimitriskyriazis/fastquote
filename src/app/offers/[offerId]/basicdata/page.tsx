@@ -2,12 +2,12 @@ import Link from 'next/link';
 import OfferBasicDataPanel from '../OfferBasicDataPanel';
 import styles from '../../offersDetail.module.css';
 
-const buildHeading = (oID: string) =>
-  /^[0-9]+$/.test(oID) ? `Offer ${oID}` : oID;
+const buildHeading = (offerId: string) =>
+  /^[0-9]+$/.test(offerId) ? `Offer ${offerId}` : offerId;
 
-export default async function Page({ params }: { params: Promise<{ oID: string }> }) {
-  const { oID } = await params;
-  const decodedId = decodeURIComponent(oID);
+export default async function Page({ params }: { params: Promise<{ offerId: string }> }) {
+  const { offerId } = await params;
+  const decodedId = decodeURIComponent(offerId);
   const headingText = `${buildHeading(decodedId)} - Basic Data`;
 
   return (
@@ -30,7 +30,7 @@ export default async function Page({ params }: { params: Promise<{ oID: string }
         </div>
       </div>
       <div className={styles.pageBody}>
-        <OfferBasicDataPanel oID={decodedId} />
+        <OfferBasicDataPanel offerId={decodedId} />
       </div>
     </main>
   );

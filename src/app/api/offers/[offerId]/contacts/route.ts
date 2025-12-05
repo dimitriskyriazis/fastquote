@@ -47,11 +47,11 @@ const normalizeBoolean = (value: unknown): boolean =>
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ oID: string }> },
+  { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
-    const { oID } = await params;
-    const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
+    const { offerId: offerIdParam } = await params;
+    const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();
     if (!normalizedId) {
       return NextResponse.json({ ok: false, error: 'Missing offer id' }, { status: 400 });
     }

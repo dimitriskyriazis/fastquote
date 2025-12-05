@@ -10,7 +10,7 @@ import AddProductsModal from './AddProductsModal';
 import AddRequestedProductsModal from './AddRequestedProductsModal';
 
 type Props = {
-  oID: string;
+  offerId: string;
   headingText: string;
 };
 
@@ -44,7 +44,7 @@ const buttonVariantClass: Record<AddActionType, string> = {
   'non-printable-comment': toolbarStyles.buttonNonPrintableComment,
 };
 
-export default function ClientProductsPage({ oID, headingText }: Props) {
+export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [manualMode, setManualMode] = useState(false);
   const [pendingAction, setPendingAction] = useState<CreatableActionType | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -69,7 +69,7 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
     const description = `${baseLabel} (${nextIndex})`;
     setPendingAction(action);
     try {
-      const endpoint = `/api/offers/${encodeURIComponent(oID)}/products`;
+      const endpoint = `/api/offers/${encodeURIComponent(offerId)}/products`;
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -97,7 +97,7 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
     } finally {
       setPendingAction(null);
     }
-  }, [oID, pendingAction]);
+  }, [offerId, pendingAction]);
 
   const manualToggleClass = manualMode
     ? `${toolbarStyles.manualToggle} ${toolbarStyles.manualToggleActive} page-header-button`
@@ -149,7 +149,7 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
                 Manual Mode
               </button>
               <Link
-                href={`/offers/${encodeURIComponent(oID)}/basic`}
+                href={`/offers/${encodeURIComponent(offerId)}/basicdata`}
                 className={`${layoutStyles.headerActionButton} page-header-button`}
               >
                 View Basic Data
@@ -175,13 +175,13 @@ export default function ClientProductsPage({ oID, headingText }: Props) {
           </div>
         </div>
       </div>
-      <OfferProductsPanel oID={oID} manualMode={manualMode} refreshToken={refreshToken} />
+      <OfferProductsPanel offerId={offerId} manualMode={manualMode} refreshToken={refreshToken} />
       {showAddProductModal ? (
-        <AddProductsModal oID={oID} onAdded={handleProductsAdded} onClose={handleCloseModal} />
+        <AddProductsModal offerId={offerId} onAdded={handleProductsAdded} onClose={handleCloseModal} />
       ) : null}
       {showRequestedModal ? (
         <AddRequestedProductsModal
-          oID={oID}
+          offerId={offerId}
           onClose={handleCloseRequestedModal}
           onImported={handleRequestedImported}
         />

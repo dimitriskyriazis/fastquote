@@ -625,11 +625,11 @@ async function handleAddProducts(
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ oID: string }> },
+  { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
-    const { oID } = await params;
-    const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
+    const { offerId: offerIdParam } = await params;
+    const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();
     const offerId = normalizeOfferId(normalizedId);
     if (offerId == null) {
       return NextResponse.json({ ok: false, error: 'Invalid offer id' }, { status: 400 });

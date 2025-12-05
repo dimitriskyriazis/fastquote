@@ -6,7 +6,7 @@ import OfferBasicDataClient from './OfferBasicDataClient';
 import type { OfferBasicRecord, OfferContactInfo, OfferDropdownOption } from './OfferBasicDataTypes';
 
 type Props = {
-  oID: string;
+  offerId: string;
 };
 
 async function fetchOfferBasicRecord(offerId: number) {
@@ -220,10 +220,10 @@ async function fetchCustomerContacts(customerId: number | null) {
   }
 }
 
-export default async function OfferBasicDataPanel({ oID }: Props) {
-  const numericOfferId = Number(oID);
-  const offerId = Number.isInteger(numericOfferId) && numericOfferId > 0 ? numericOfferId : null;
-  const record = offerId ? await fetchOfferBasicRecord(offerId) : null;
+export default async function OfferBasicDataPanel({ offerId }: Props) {
+  const numericOfferId = Number(offerId);
+  const normalizedOfferId = Number.isInteger(numericOfferId) && numericOfferId > 0 ? numericOfferId : null;
+  const record = normalizedOfferId ? await fetchOfferBasicRecord(normalizedOfferId) : null;
 
   if (!record) {
     return (
@@ -253,7 +253,7 @@ export default async function OfferBasicDataPanel({ oID }: Props) {
 
   return (
     <OfferBasicDataClient
-      oID={oID}
+      offerId={offerId}
       record={record}
       contacts={contacts}
       statuses={statuses}

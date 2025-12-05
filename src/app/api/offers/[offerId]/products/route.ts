@@ -807,7 +807,7 @@ function buildOrder(sortModel: GridRequest['sortModel']) {
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ oID: string }> },
+  { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
     let body: (GridRequestEnvelope & CreateRowRequest) | null = null;
@@ -818,8 +818,8 @@ export async function POST(
     }
 
     const audit = buildAuditContext(req);
-    const { oID } = await params;
-    const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
+    const { offerId: offerIdParam } = await params;
+    const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();
 
     if (!normalizedId) {
       return NextResponse.json(
@@ -975,12 +975,12 @@ export async function POST(
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: Promise<{ oID: string }> },
+  { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
     const audit = buildAuditContext(req);
-    const { oID } = await params;
-    const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
+    const { offerId: offerIdParam } = await params;
+    const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();
     if (!normalizedId) {
       return NextResponse.json({ ok: false, error: 'Missing id' }, { status: 400 });
     }
@@ -1060,12 +1060,12 @@ export async function PUT(
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ oID: string }> },
+  { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
     const audit = buildAuditContext(req);
-    const { oID } = await params;
-    const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
+    const { offerId: offerIdParam } = await params;
+    const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();
     if (!normalizedId) {
       return NextResponse.json({ ok: false, error: 'Missing id' }, { status: 400 });
     }
@@ -1511,12 +1511,12 @@ export async function PATCH(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: Promise<{ oID: string }> },
+  { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
     const audit = buildAuditContext(req);
-    const { oID } = await params;
-    const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
+    const { offerId: offerIdParam } = await params;
+    const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();
     if (!normalizedId) {
       return NextResponse.json({ ok: false, error: 'Missing id' }, { status: 400 });
     }

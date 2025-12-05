@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql, { type ISqlTypeFactory } from 'mssql';
 import { getPool } from '../../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../../lib/auditTrail';
-import type { OfferBasicUpdateField } from '../../../../offers/[oID]/OfferBasicDataTypes';
+import type { OfferBasicUpdateField } from '../../../../offers/[offerId]/OfferBasicDataTypes';
 
 type UpdateInput = {
   field?: OfferBasicUpdateField;
@@ -88,11 +88,11 @@ const normalizeValue = (value: unknown, type: FieldType): NormalizedValue => {
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ oID: string }> },
+  { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
-    const { oID } = await params;
-    const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
+    const { offerId: offerIdParam } = await params;
+    const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();
     if (!normalizedId) {
       return NextResponse.json({ ok: false, error: 'Missing id' }, { status: 400 });
     }

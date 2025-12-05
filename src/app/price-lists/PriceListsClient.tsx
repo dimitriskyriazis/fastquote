@@ -95,7 +95,7 @@ export default function PriceListsClient() {
       const priceListId = params?.data?.PriceListID as string | number | undefined;
       const encodedId = priceListId != null ? encodeURIComponent(String(priceListId)) : "";
 
-      const go = (suffix: "products" | "basic") => {
+      const go = (suffix: "products" | "basicdata") => {
         if (!encodedId) return;
         router.push(`/price-lists/${encodedId}/${suffix}`);
       };
@@ -176,7 +176,7 @@ export default function PriceListsClient() {
                   type="button"
                   role="menuitem"
                   className={styles.actionMenuItem}
-                  onClick={() => go("basic")}
+                  onClick={() => go("basicdata")}
                 >
                   View Basic Data
                 </button>

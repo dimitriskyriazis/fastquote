@@ -10,7 +10,7 @@ import { priceListStatusClassRules } from '../../../../lib/priceListStatus';
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), { ssr: false });
 
 type Props = {
-  oID: string;
+  offerId: string;
   onClose: () => void;
   onAdded: (inserted: number) => void;
 };
@@ -72,7 +72,7 @@ const DescriptionCellRenderer = ({ value }: { value?: unknown }) => {
   );
 };
 
-export default function AddProductsModal({ oID, onClose, onAdded }: Props) {
+export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
   const [selectedCategory, setSelectedCategory] = useState<CategoryRow | null>(null);
   const [selectedProducts, setSelectedProducts] = useState<ProductRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -102,8 +102,8 @@ export default function AddProductsModal({ oID, onClose, onAdded }: Props) {
   }, [onClose]);
 
   const endpoint = useMemo(
-    () => `/api/offers/${encodeURIComponent(oID)}/products/add`,
-    [oID],
+    () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
+    [offerId],
   );
 
   const categoryColumns: ColDef[] = useMemo(

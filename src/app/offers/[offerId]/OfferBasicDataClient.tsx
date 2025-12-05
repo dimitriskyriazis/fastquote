@@ -11,7 +11,7 @@ import type {
 import { showToastMessage } from '../../../lib/toast';
 
 type Props = {
-  oID: string;
+  offerId: string;
   record: OfferBasicRecord;
   contacts: OfferContactInfo[];
   statuses: OfferDropdownOption[];
@@ -242,7 +242,7 @@ const formatInitialValue = (record: OfferBasicRecord, def: FieldDefinition) => {
 const resolveFieldValue = (record: OfferBasicRecord, def: FieldDefinition) =>
   (typeof def.resolveValue === 'function' ? def.resolveValue(record) : record[def.recordKey]) ?? null;
 
-export default function OfferBasicDataClient({ oID, record, contacts, statuses, pricingPolicies, markets, users, titles, calcMethodFormulas }: Props) {
+export default function OfferBasicDataClient({ offerId, record, contacts, statuses, pricingPolicies, markets, users, titles, calcMethodFormulas }: Props) {
   const [contactList, setContactList] = useState(() => sortContacts(contacts));
 
   const contactOptions = useMemo(() => {
@@ -329,7 +329,7 @@ export default function OfferBasicDataClient({ oID, record, contacts, statuses, 
     }
     setPendingFields((prev) => ({ ...prev, [def.id]: true }));
     try {
-      const response = await fetch(`/api/offers/${encodeURIComponent(oID)}/basic`, {
+      const response = await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ updates: [{ field: def.updateField, value: payloadValue }] }),
@@ -352,7 +352,7 @@ export default function OfferBasicDataClient({ oID, record, contacts, statuses, 
     } finally {
       setPendingFields((prev) => ({ ...prev, [def.id]: false }));
     }
-  }, [oID]);
+  }, [offerId]);
 
   const handleBlur = useCallback((def: FieldDefinition) => {
     if (!def.updateField) return;
@@ -427,7 +427,7 @@ export default function OfferBasicDataClient({ oID, record, contacts, statuses, 
     setContactSaving(true);
     setContactError(null);
     try {
-      const response = await fetch(`/api/offers/${encodeURIComponent(oID)}/contacts`, {
+      const response = await fetch(`/api/offers/${encodeURIComponent(offerId)}/contacts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -452,7 +452,7 @@ export default function OfferBasicDataClient({ oID, record, contacts, statuses, 
     } finally {
       setContactSaving(false);
     }
-  }, [contactForm, oID, record.CustomerID, resetContactForm]);
+  }, [contactForm, offerId, record.CustomerID, resetContactForm]);
 
 const renderFieldControl = (
   def: FieldDefinition,
@@ -590,7 +590,7 @@ const renderFieldControl = (
                     </div>
                     <button
                       type="button"
-                      className={styles.addContactButton}
+                      className={`${styles.addContactButton} page-header-button`}
                       onClick={handleOpenContactModal}
                       disabled={!record.CustomerID}
                       title={!record.CustomerID ? 'Set a customer first' : 'Add a contact'}
@@ -845,7 +845,7 @@ const renderFieldControl = (
             <div className={styles.contactModalFooter}>
               <button
                 type="button"
-                className={styles.contactSaveButton}
+                className={`${styles.contactSaveButton} page-header-button`}
                 onClick={handleCreateContact}
                 disabled={contactSaving}
               >

@@ -219,12 +219,12 @@ const readRequestedColumnLengths = async (pool: ConnectionPool): Promise<ColumnL
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ oID: string }> },
+  { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
     const audit = buildAuditContext(req);
-    const { oID } = await params;
-    const normalizedId = decodeURIComponent(String(oID ?? '')).trim();
+    const { offerId: offerIdParam } = await params;
+    const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();
     if (!normalizedId) {
       return NextResponse.json({ ok: false, error: 'Missing id' }, { status: 400 });
     }

@@ -92,7 +92,7 @@ export default function OffersClient() {
       new GridRowDeletion<Record<string, unknown>>({
         endpoint: '/api/offers',
         resolveRowId: (row) =>
-          normalizeOfferIdValue((row as { oID?: unknown } | null | undefined)?.oID ?? null),
+          normalizeOfferIdValue((row as { offerId?: unknown } | null | undefined)?.offerId ?? null),
         resolveRowLabel: (row, fallback) =>
           resolveOfferRowLabel(
             row as { Description?: string | null; Title?: string | null } | null,
@@ -135,10 +135,10 @@ export default function OffersClient() {
       const [open, setOpen] = useState(false);
       const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
       const btnRef = useRef<HTMLButtonElement | null>(null);
-      const id = params?.data?.oID as string | number | undefined;
+      const id = params?.data?.offerId as string | number | undefined;
       const encodedId = id != null ? encodeURIComponent(String(id)) : '';
 
-      const go = (suffix: 'products' | 'basic') => {
+      const go = (suffix: 'products' | 'basicdata') => {
         if (!encodedId) return;
         router.push(`/offers/${encodedId}/${suffix}`);
       };
@@ -197,7 +197,7 @@ export default function OffersClient() {
             onPointerDownCapture={preventRangeSelection}
             onContextMenuCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
             disabled={!encodedId}
-            title={encodedId ? 'Open menu' : 'Missing oID'}
+            title={encodedId ? 'Open menu' : 'Missing offer ID'}
             ref={btnRef}
           >
             {lines}
@@ -213,7 +213,7 @@ export default function OffersClient() {
                 type="button"
                 role="menuitem"
                 className={styles.actionMenuItem}
-                onClick={() => go('basic')}
+                onClick={() => go('basicdata')}
               >
                 View Basic Data
               </button>
@@ -269,7 +269,7 @@ export default function OffersClient() {
     { field: 'SalesPerson', headerName: 'Sales Creation Person', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'OfferStatus', headerName: 'Status', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'ProjectID', headerName: 'Project ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
-    { field: 'oID', headerName: 'Offer ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
+    { field: 'offerId', headerName: 'Offer ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
     { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', valueFormatter: (params) => formatDateDMY(params.value),

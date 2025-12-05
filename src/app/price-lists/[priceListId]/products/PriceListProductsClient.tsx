@@ -268,7 +268,7 @@ export default function PriceListProductsClient({
         <h1 className={`${layoutStyles.heading} ${layoutStyles.headingCentered}`}>{headingText}</h1>
         <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>
           <Link
-            href={`/price-lists/${encodeURIComponent(priceListId)}/basic`}
+            href={`/price-lists/${encodeURIComponent(priceListId)}/basicdata`}
             className={`${layoutStyles.headerActionButton} page-header-button`}
           >
             View Basic Data

@@ -49,7 +49,7 @@ export default function CustomersClient() {
       const id = params?.data?.CustomerID as string | number | undefined;
       const encodedId = id != null ? encodeURIComponent(String(id)) : "";
 
-      const go = (suffix: "basic" | "contacts") => {
+      const go = (suffix: "basicdata" | "contacts") => {
         if (!encodedId) return;
         router.push(`/customers/${encodedId}/${suffix}`);
       };
@@ -130,7 +130,7 @@ export default function CustomersClient() {
                   type="button"
                   role="menuitem"
                   className={styles.actionMenuItem}
-                  onClick={() => go("basic")}
+                  onClick={() => go("basicdata")}
                 >
                   View Basic Data
                 </button>
