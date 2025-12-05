@@ -125,12 +125,13 @@ const disableAutofillScript = `
             var release = function () {
               unlockInput(element);
             };
-            element.addEventListener("keydown", release);
-            element.addEventListener("paste", release);
-            element.addEventListener("input", release);
-            element.addEventListener("blur", function () {
-              lockInput(element);
-            });
+        element.addEventListener("keydown", release);
+        element.addEventListener("paste", release);
+        element.addEventListener("input", release);
+        element.addEventListener("focus", release);
+        element.addEventListener("blur", function () {
+          lockInput(element);
+        });
           } else if (element.getAttribute("readonly") !== "readonly") {
             lockInput(element);
           }
@@ -244,7 +245,7 @@ export default function DisableAutofill() {
   return (
     <Script
       id="disable-autofill-script"
-      strategy="beforeInteractive"
+      strategy="afterInteractive"
       dangerouslySetInnerHTML={{ __html: disableAutofillScript }}
     />
   );

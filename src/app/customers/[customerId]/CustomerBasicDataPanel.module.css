@@ -76,6 +76,9 @@
   color: #0f172a;
   font-weight: 500;
   box-shadow: none;
+  direction: ltr;
+  text-align: left;
+  cursor: text;
 }
 
 .fieldControl[list]::-webkit-calendar-picker-indicator {
@@ -99,6 +102,7 @@
   color: #0f172a;
   display: flex;
   align-items: center;
+  cursor: text;
 }
 
 .fieldControlPending {

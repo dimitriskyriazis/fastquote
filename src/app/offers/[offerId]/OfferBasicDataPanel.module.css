@@ -101,6 +101,8 @@
   color: #0f172a;
   font-weight: 500;
   box-shadow: none;
+  direction: ltr;
+  text-align: left;
 }
 
 .fieldControlMultiline {
@@ -143,6 +145,7 @@
   color: #334155;
   display: flex;
   align-items: center;
+  cursor: text;
 }
 
 .fieldControl:disabled {
@@ -185,6 +188,9 @@
  }
 
 .addContactButton {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
   border: 1px solid #d1d5db;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   color: #0f172a;
@@ -197,6 +203,7 @@
   cursor: pointer;
   transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
   min-height: 34px;
+  min-width: 72px;
   box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
 }
 
@@ -418,8 +425,9 @@
   font-weight: 500;
   letter-spacing: normal;
   text-transform: none;
-  padding: 8px 20px;
-  min-width: 140px;
+  padding: 6px 16px;
+  min-width: 0;
+  min-height: 32px;
   cursor: pointer;
   transition: transform 150ms ease, box-shadow 150ms ease, filter 150ms ease;
   box-shadow: 0 6px 14px rgba(34, 197, 94, 0.18);
