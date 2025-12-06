@@ -80,8 +80,21 @@ export default async function CustomerBasicDataPanel({ customerId, initialRecord
     );
   }
 
-  const [customerGroups, parentCustomers, pricingPolicies, importanceOptions, countries, cities] =
-    await Promise.all([
+  const [
+    customerGroups,
+    parentCustomers,
+    pricingPolicies,
+    importanceOptions,
+    countries,
+    cities,
+  ]: [
+    CustomerDropdownOption[],
+    CustomerDropdownOption[],
+    CustomerDropdownOption[],
+    CustomerDropdownOption[],
+    CustomerDropdownOption[],
+    CustomerCityOption[],
+  ] = await Promise.all([
       fetchCustomerGroups(),
       fetchCustomers(),
       fetchPricingPolicies(),

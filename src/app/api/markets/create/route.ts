@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import sql from "mssql";
+import sql, { ConnectionPool } from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
 
@@ -26,7 +26,7 @@ const normalizeBooleanInput = (value: unknown): boolean => {
   return false;
 };
 
-const findSalesDivisionId = async (pool: sql.ConnectionPool, divisionName: string): Promise<number | null> => {
+const findSalesDivisionId = async (pool: ConnectionPool, divisionName: string): Promise<number | null> => {
   const lookup = pool.request();
   lookup.input("divisionName", sql.NVarChar, divisionName);
   const result = await lookup.query<{ ID: number }>(`

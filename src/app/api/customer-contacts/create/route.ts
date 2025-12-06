@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import sql from "mssql";
+import sql, { ConnectionPool } from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
 
@@ -39,7 +39,7 @@ const normalizeBoolean = (value: unknown): boolean => {
 };
 
 const resolveEmailStatusId = async (
-  pool: sql.ConnectionPool,
+  pool: ConnectionPool,
   statusName: string | null,
 ): Promise<number | null> => {
   if (!statusName) return null;
@@ -54,7 +54,7 @@ const resolveEmailStatusId = async (
   return result.recordset?.[0]?.ID ?? null;
 };
 
-const ensureCustomerExists = async (pool: sql.ConnectionPool, customerId: number): Promise<boolean> => {
+const ensureCustomerExists = async (pool: ConnectionPool, customerId: number): Promise<boolean> => {
   const request = pool.request();
   request.input("customerId", sql.Int, customerId);
   const result = await request.query<{ ID: number }>(`
@@ -65,7 +65,7 @@ const ensureCustomerExists = async (pool: sql.ConnectionPool, customerId: number
   return result.recordset?.length > 0;
 };
 
-const ensureTitleExists = async (pool: sql.ConnectionPool, titleId: number): Promise<boolean> => {
+const ensureTitleExists = async (pool: ConnectionPool, titleId: number): Promise<boolean> => {
   const request = pool.request();
   request.input("titleId", sql.Int, titleId);
   const result = await request.query<{ ID: number }>(`

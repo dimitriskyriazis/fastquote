@@ -129,7 +129,10 @@ export default function MarketsClient({ salesDivisions }: Props) {
   );
 
   const getContextMenuItems = useCallback(
-    (params: GetContextMenuItemsParams<MarketRow>) => marketRowDeletion.getContextMenuItems(params),
+    (params: GetContextMenuItemsParams<Record<string, unknown>>) => {
+      const typedParams = params as unknown as GetContextMenuItemsParams<MarketRow>;
+      return marketRowDeletion.getContextMenuItems(typedParams);
+    },
     [marketRowDeletion],
   );
 

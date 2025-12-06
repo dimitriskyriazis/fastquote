@@ -229,7 +229,7 @@ export default function CustomerCreateClient({
   formId = 'customer-create-form',
 }: Props) {
   const router = useRouter();
-  const [submitting, setSubmitting] = useState(false);
+  const [, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const fieldDefinitions = useMemo(
