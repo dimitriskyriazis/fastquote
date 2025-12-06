@@ -63,6 +63,16 @@ body {
   font-size: 14px;
 }
 
+select {
+  cursor: pointer;
+}
+
+select option,
+datalist option {
+  cursor: pointer;
+}
+
+
 .page-header-button {
   border-radius: 999px;
   padding: 7px 16px;

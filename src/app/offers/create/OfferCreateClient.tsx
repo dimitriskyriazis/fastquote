@@ -6,6 +6,9 @@ import type { DropdownOption } from '../../../lib/dropdownOptions';
 import { showToastMessage } from '../../../lib/toast';
 import panelStyles from '../[offerId]/OfferBasicDataPanel.module.css';
 import styles from './OfferCreateClient.module.css';
+import lookupStyles from '../../components/LookupModal.module.css';
+import LookupModal from '../../components/LookupModal';
+import lookupButtonStyles from '../../components/LookupAddButton.module.css';
 
 type SectionKey = 'general' | 'info' | 'commercial' | 'code' | 'dates';
 
@@ -168,6 +171,27 @@ export default function OfferCreateClient({
 
   const [values, setValues] = useState<FormValues>(initialValues);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormValues, string>>>({});
+  const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
+  useEffect(() => {
+    setLocalPricingPolicies(pricingPolicies);
+  }, [pricingPolicies]);
+  const [isAddPricingPolicyOpen, setIsAddPricingPolicyOpen] = useState(false);
+  const [newPricingPolicyName, setNewPricingPolicyName] = useState("");
+  const [newPricingPolicyEnabled, setNewPricingPolicyEnabled] = useState("1");
+  const [newPricingPolicyCalcMethod, setNewPricingPolicyCalcMethod] = useState(calcMethodFormulas[0]?.value ?? "");
+  const [pricingPolicySaving, setPricingPolicySaving] = useState(false);
+  const [pricingPolicyError, setPricingPolicyError] = useState<string | null>(null);
+  useEffect(() => {
+    if (calcMethodFormulas.length === 0) {
+      setNewPricingPolicyCalcMethod("");
+      return;
+    }
+    setNewPricingPolicyCalcMethod((prev) =>
+      calcMethodFormulas.some((option) => option.value === prev)
+        ? prev
+        : calcMethodFormulas[0].value,
+    );
+  }, [calcMethodFormulas]);
 
   const findCustomerOption = useCallback((text: string) => {
     const normalized = text.trim().toLowerCase();
@@ -370,7 +394,7 @@ export default function OfferCreateClient({
       { id: 'contactId', label: 'Contact', section: 'info', required: true, type: 'select', options: contactOptions, fullWidth: true, dependsOnCustomer: true },
       { id: 'telmacoNote', label: 'Telmaco Note', section: 'info', type: 'textarea' },
 
-      { id: 'pricingPolicyId', label: 'Pricing Policy', section: 'commercial', required: true, type: 'select', options: pricingPolicies },
+      { id: 'pricingPolicyId', label: 'Pricing Policy', section: 'commercial', required: true, type: 'select', options: localPricingPolicies },
       { id: 'marketId', label: 'Market', section: 'commercial', required: true, type: 'select', options: markets },
       { id: 'salesDivisionId', label: 'Sales Division', section: 'commercial', required: true, type: 'select', options: salesDivisions },
       { id: 'salesCreationPersonId', label: 'Sales Creation Person', section: 'commercial', required: true, type: 'select', options: users },
@@ -396,11 +420,76 @@ export default function OfferCreateClient({
       contactOptions,
       customers,
       markets,
-      pricingPolicies,
+      localPricingPolicies,
       salesDivisions,
       statuses,
       users,
     ],
+  );
+
+  const openPricingPolicyModal = useCallback(() => {
+    setNewPricingPolicyName("");
+    setNewPricingPolicyEnabled("1");
+    setPricingPolicyError(null);
+    setNewPricingPolicyCalcMethod(calcMethodFormulas[0]?.value ?? "");
+    setIsAddPricingPolicyOpen(true);
+  }, [calcMethodFormulas]);
+
+  const handleCreatePricingPolicy = useCallback(async () => {
+    const trimmed = newPricingPolicyName.trim();
+    if (!trimmed) {
+      setPricingPolicyError("Name is required");
+      return;
+    }
+    if (!newPricingPolicyCalcMethod) {
+      setPricingPolicyError("Calc method formula is required");
+      return;
+    }
+    setPricingPolicySaving(true);
+    setPricingPolicyError(null);
+    try {
+      const response = await fetch("/api/pricing-policies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trimmed,
+          enabled: newPricingPolicyEnabled === "1",
+          calcMethodFormulasId: newPricingPolicyCalcMethod,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; option?: DropdownOption; error?: string }
+        | null;
+      const option = payload?.option;
+      if (!response.ok || !payload?.ok || !option) {
+        throw new Error(payload?.error ?? "Unable to add pricing policy");
+      }
+      setLocalPricingPolicies((prev) => [...prev, option]);
+      setValues((prev) => ({ ...prev, pricingPolicyId: option.value }));
+      showToastMessage("Pricing policy added", "success");
+      setIsAddPricingPolicyOpen(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to add pricing policy";
+      setPricingPolicyError(message);
+      showToastMessage(message, "error");
+    } finally {
+      setPricingPolicySaving(false);
+    }
+  }, [newPricingPolicyName, newPricingPolicyEnabled, newPricingPolicyCalcMethod]);
+
+  const renderLookupAddButton = useCallback(
+    (field: FieldConfig) =>
+      field.id === "pricingPolicyId" ? (
+        <button
+          type="button"
+          className={lookupButtonStyles.lookupAddButton}
+          onClick={openPricingPolicyModal}
+          disabled={pricingPolicySaving || calcMethodFormulas.length === 0}
+        >
+          Add Pricing Policy
+        </button>
+      ) : null,
+    [calcMethodFormulas.length, openPricingPolicyModal, pricingPolicySaving],
   );
 
   const generalLayout: Array<Array<keyof FormValues>> = [
@@ -410,8 +499,13 @@ export default function OfferCreateClient({
 
   const renderLabel = (field: FieldConfig) => (
     <label className={panelStyles.fieldLabel} htmlFor={`offer-create-${field.id}`}>
-      {field.label}
-      {field.required ? <span className={styles.requiredMark}>*</span> : null}
+      <div className={styles.lookupLabelRow}>
+        <div className={styles.labelText}>
+          {field.label}
+          {field.required ? <span className={styles.requiredMark}>*</span> : null}
+        </div>
+        {renderLookupAddButton(field)}
+      </div>
     </label>
   );
 
@@ -625,29 +719,84 @@ export default function OfferCreateClient({
   if (remainingFields.length > 0) generalRows.push(remainingFields);
 
   return (
-    <form id={formId} className={styles.form} onSubmit={handleSubmit} autoComplete="off">
-      <section className={panelStyles.panel}>
-        <div className={`${panelStyles.section} ${panelStyles.sectionCard} ${panelStyles.generalSection}`}>
-          <div className={panelStyles.sectionHeading}>{SECTION_METADATA.general.title}</div>
-          <div className={panelStyles.generalRows}>
-            {generalRows.map((row, rowIdx) => (
-              <div key={rowIdx} className={panelStyles.generalRow}>
-                {row.map((field) => (
-                  <div key={field.id} className={panelStyles.field}>
-                    {renderLabel(field)}
-                    {renderFieldControl(field)}
-                  </div>
-                ))}
-              </div>
-            ))}
+    <>
+      <form id={formId} className={styles.form} onSubmit={handleSubmit} autoComplete="off">
+        <section className={panelStyles.panel}>
+          <div className={`${panelStyles.section} ${panelStyles.sectionCard} ${panelStyles.generalSection}`}>
+            <div className={panelStyles.sectionHeading}>{SECTION_METADATA.general.title}</div>
+            <div className={panelStyles.generalRows}>
+              {generalRows.map((row, rowIdx) => (
+                <div key={rowIdx} className={panelStyles.generalRow}>
+                  {row.map((field) => (
+                    <div key={field.id} className={panelStyles.field}>
+                      {renderLabel(field)}
+                      {renderFieldControl(field)}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
           </div>
+          <div className={panelStyles.sectionsGrid}>
+            {(['info', 'commercial', 'code', 'dates'] as SectionKey[]).map((sectionKey) =>
+              renderSection(sectionKey),
+            )}
+          </div>
+        </section>
+      </form>
+      <LookupModal
+        open={isAddPricingPolicyOpen}
+        title="Add Pricing Policy"
+        onClose={() => setIsAddPricingPolicyOpen(false)}
+        onConfirm={handleCreatePricingPolicy}
+        confirmLabel="Create"
+        saving={pricingPolicySaving}
+        error={pricingPolicyError}
+      >
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="offer-pricing-policy-name">
+            Name
+          </label>
+          <input
+            id="offer-pricing-policy-name"
+            className={lookupStyles.fieldControl}
+            value={newPricingPolicyName}
+            onChange={(event) => setNewPricingPolicyName(event.target.value)}
+          />
         </div>
-        <div className={panelStyles.sectionsGrid}>
-          {(['info', 'commercial', 'code', 'dates'] as SectionKey[]).map((sectionKey) =>
-            renderSection(sectionKey),
-          )}
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="offer-pricing-policy-calc">
+            Calc method formula
+          </label>
+          <select
+            id="offer-pricing-policy-calc"
+            className={lookupStyles.fieldControl}
+            value={newPricingPolicyCalcMethod}
+            onChange={(event) => setNewPricingPolicyCalcMethod(event.target.value)}
+          >
+            <option value="">Select calc method formula</option>
+            {calcMethodFormulas.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </div>
-      </section>
-    </form>
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="offer-pricing-policy-enabled">
+            Enabled
+          </label>
+          <select
+            id="offer-pricing-policy-enabled"
+            className={lookupStyles.fieldControl}
+            value={newPricingPolicyEnabled}
+            onChange={(event) => setNewPricingPolicyEnabled(event.target.value)}
+          >
+            <option value="1">Yes</option>
+            <option value="0">No</option>
+          </select>
+        </div>
+      </LookupModal>
+    </>
   );
 }

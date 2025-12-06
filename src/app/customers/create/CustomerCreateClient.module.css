@@ -16,3 +16,16 @@
   margin-top: 2px;
   min-height: 1em;
 }
+
+.labelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.labelText {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}

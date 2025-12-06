@@ -51,7 +51,7 @@ type GridRequest = {
   filterModel?: Record<string, KnownFilterModel> | null;
   sortModel?: Array<{ colId: string; sort: "asc" | "desc" }>;
   rowGroupCols?: Array<{ field?: string | null; colId?: string | null }>;
-  groupKeys?: Array<string | null>;
+  groupKeys?: Array<string | number | boolean | null>;
 };
 
 type QueryParam = { key: string; value: string | number | boolean };
@@ -254,17 +254,30 @@ const resolveGroupingFields = (rowGroupCols?: GridRequest["rowGroupCols"]): Grou
   return resolved;
 };
 
-const normalizeGroupKeyValue = (fieldName: string, key: string | null) => {
-  if (key == null) return null;
-  if (fieldName === "IsParent") {
-    const lowered = key.trim().toLowerCase();
-    if (lowered === "true" || lowered === "1") return 1;
-    if (lowered === "false" || lowered === "0") return 0;
+const normalizeBooleanGroupKeyValue = (value: unknown): number | null => {
+  if (value === 1 || value === true || value === "1") return 1;
+  if (value === 0 || value === false || value === "0") return 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "yes", "y"].includes(normalized)) return 1;
+    if (["false", "no", "n"].includes(normalized)) return 0;
   }
-  return key;
+  return null;
 };
 
-const buildGroupKeyFilter = (fields: GroupField[], keys: Array<string | null>) => {
+const normalizeGroupKeyValue = (fieldName: string, key: unknown) => {
+  if (key == null) return null;
+  if (fieldName === "IsParent") {
+    const normalizedBoolean = normalizeBooleanGroupKeyValue(key);
+    if (normalizedBoolean !== null) return normalizedBoolean;
+  }
+  return typeof key === "string" ? key : String(key);
+};
+
+const buildGroupKeyFilter = (
+  fields: GroupField[],
+  keys: Array<string | number | boolean | null>,
+) => {
   const clauses: string[] = [];
   const params: QueryParam[] = [];
   for (let idx = 0; idx < keys.length && idx < fields.length; idx += 1) {

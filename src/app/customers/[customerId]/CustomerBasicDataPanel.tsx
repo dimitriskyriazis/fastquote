@@ -10,6 +10,7 @@ import {
   fetchCustomers,
   fetchImportanceOptions,
   fetchPricingPolicies,
+  fetchCalcMethodFormulas,
 } from './customerBasicDataLookups';
 
 type Props = {
@@ -87,20 +88,23 @@ export default async function CustomerBasicDataPanel({ customerId, initialRecord
     importanceOptions,
     countries,
     cities,
+    calcMethodFormulas,
   ]: [
-    CustomerDropdownOption[],
-    CustomerDropdownOption[],
-    CustomerDropdownOption[],
-    CustomerDropdownOption[],
-    CustomerDropdownOption[],
-    CustomerCityOption[],
-  ] = await Promise.all([
+      CustomerDropdownOption[],
+      CustomerDropdownOption[],
+      CustomerDropdownOption[],
+      CustomerDropdownOption[],
+      CustomerDropdownOption[],
+      CustomerCityOption[],
+      CustomerDropdownOption[],
+    ] = await Promise.all([
       fetchCustomerGroups(),
       fetchCustomers(),
       fetchPricingPolicies(),
       fetchImportanceOptions(),
       fetchCountries(),
       fetchCities(),
+      fetchCalcMethodFormulas(),
     ]);
 
   const filteredParents =
@@ -118,6 +122,7 @@ export default async function CustomerBasicDataPanel({ customerId, initialRecord
       importanceOptions={importanceOptions}
       countries={countries}
       cities={cities}
+      calcMethodFormulas={calcMethodFormulas}
     />
   );
 }

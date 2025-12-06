@@ -5,6 +5,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import type { CellValueChangedEvent, ColDef, GridApi, GetContextMenuItemsParams } from "ag-grid-community";
 import styles from "./MarketsClient.module.css";
+import LookupModal from "../components/LookupModal";
 import { showToastMessage } from "../../lib/toast";
 import {
   createMarket,
@@ -320,99 +321,62 @@ export default function MarketsClient({ salesDivisions }: Props) {
           />
         </div>
       </main>
-      {isAddMarketOpen ? (
-        <div
-          className={styles.marketModalOverlay}
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              closeAddMarket();
-            }
-          }}
-        >
-        <div className={styles.marketModalCard} role="dialog" aria-modal="true" aria-label="Add market">
-          <div className={styles.marketModalHeader}>
-            <div>
-              <div className={styles.marketModalTitle}>Add Market</div>
-            </div>
-            <button
-              type="button"
-              className={styles.marketModalClose}
-              aria-label="Close add market form"
-              onClick={closeAddMarket}
-            >
-              ×
-            </button>
+      <LookupModal
+        open={isAddMarketOpen}
+        title="Add market"
+        onClose={closeAddMarket}
+        onConfirm={handleCreateMarket}
+        confirmLabel="Add market"
+        saving={marketSaving}
+        error={marketError}
+      >
+        <div className={styles.marketModalGrid}>
+          <div className={styles.marketModalField}>
+            <label className={styles.fieldLabel} htmlFor="market-name">
+              Market name
+            </label>
+            <input
+              autoComplete="off"
+              id="market-name"
+              className={styles.fieldControl}
+              value={marketForm.name}
+              onChange={(event) => setMarketField("name", event.target.value)}
+            />
           </div>
-          <div className={styles.marketModalBody}>
-            <div className={styles.marketModalGrid}>
-              <div className={styles.marketModalField}>
-                <label className={styles.fieldLabel} htmlFor="market-name">
-                  Market name
-                </label>
-                <input
-                  autoComplete="off"
-                  id="market-name"
-                  className={styles.fieldControl}
-                  value={marketForm.name}
-                  onChange={(event) => setMarketField("name", event.target.value)}
-                />
-              </div>
-              <div className={styles.marketModalField}>
-                <label className={styles.fieldLabel} htmlFor="market-sales-division">
-                  Sales division
-                </label>
-                <select
-                  id="market-sales-division"
-                  className={styles.fieldControl}
-                  value={marketForm.salesDivision}
-                  onChange={(event) => setMarketField("salesDivision", event.target.value)}
-                >
-                  <option value="">Select division...</option>
-                  {salesDivisionOptions.map((division) => (
-                    <option key={division} value={division}>
-                      {division}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className={`${styles.marketModalField} ${styles.marketModalToggle}`}>
-                <label className={styles.fieldLabel} htmlFor="market-enabled">
-                  Enabled
-                </label>
-                <label className={styles.marketToggleControl} htmlFor="market-enabled">
-                  <input
-                    id="market-enabled"
-                    type="checkbox"
-                    checked={marketForm.enabled}
-                  onChange={(event) => setMarketField("enabled", event.target.checked)}
-                  />
-                  {marketForm.enabled ? "Yes" : "No"}
-                </label>
-              </div>
-            </div>
-            {marketError ? <div className={styles.marketModalError}>{marketError}</div> : null}
+          <div className={styles.marketModalField}>
+            <label className={styles.fieldLabel} htmlFor="market-sales-division">
+              Sales division
+            </label>
+            <select
+              id="market-sales-division"
+              className={styles.fieldControl}
+              value={marketForm.salesDivision}
+              onChange={(event) => setMarketField("salesDivision", event.target.value)}
+            >
+              <option value="">Select division...</option>
+              {salesDivisionOptions.map((division) => (
+                <option key={division} value={division}>
+                  {division}
+                </option>
+              ))}
+            </select>
           </div>
-          <div className={styles.marketModalFooter}>
-            <button
-              type="button"
-              className={`page-header-button ${styles.marketModalCancel}`}
-              onClick={closeAddMarket}
-              disabled={marketSaving}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className={`page-header-button ${styles.marketSaveButton}`}
-              onClick={handleCreateMarket}
-              disabled={marketSaving}
-            >
-              {marketSaving ? "Saving…" : "Save"}
-            </button>
+          <div className={`${styles.marketModalField} ${styles.marketModalToggle}`}>
+            <label className={styles.fieldLabel} htmlFor="market-enabled">
+              Enabled
+            </label>
+            <label className={styles.marketToggleControl} htmlFor="market-enabled">
+              <input
+                id="market-enabled"
+                type="checkbox"
+                checked={marketForm.enabled}
+                onChange={(event) => setMarketField("enabled", event.target.checked)}
+              />
+              {marketForm.enabled ? "Yes" : "No"}
+            </label>
           </div>
         </div>
-      </div>
-      ) : null}
+      </LookupModal>
     </>
   );
 }

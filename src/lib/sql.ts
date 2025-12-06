@@ -1,4 +1,5 @@
-import sql, { type ConnectionPool, type config as SqlConfig } from 'mssql';
+import * as sql from 'mssql';
+import type { ConnectionPool, config as SqlConfig } from 'mssql';
 
 type SqlConnectionConfig = SqlConfig;
 
@@ -12,17 +13,32 @@ const config: SqlConnectionConfig = {
   pool: { max: 10, min: 1, idleTimeoutMillis: 30000 },
 };
 
+type SqlNumericTypeFactory = (precision?: number, scale?: number) => {
+  type: any;
+  precision?: number;
+  scale?: number;
+};
+
+type SqlWithTypes = typeof sql & {
+  TYPES: {
+    Numeric: SqlNumericTypeFactory;
+    Decimal: SqlNumericTypeFactory;
+  };
+};
+
+const sqlWithTypes = sql as SqlWithTypes;
+
 let poolPromise: Promise<ConnectionPool> | null = null;
 
 export async function getPool(): Promise<ConnectionPool> {
   if (!poolPromise) {
-    poolPromise = sql.connect(config);
+    poolPromise = sqlWithTypes.connect(config);
   }
 
   try {
     const pool = await poolPromise;
     if (!pool.connected) {
-      poolPromise = sql.connect(config);
+      poolPromise = sqlWithTypes.connect(config);
       return await poolPromise;
     }
     return pool;
@@ -32,4 +48,4 @@ export async function getPool(): Promise<ConnectionPool> {
   }
 }
 
-export { sql };
+export { sqlWithTypes as sql };

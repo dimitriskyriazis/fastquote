@@ -12,6 +12,7 @@ import type {
 } from "ag-grid-community";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import styles from "./CustomerGroupsClient.module.css";
+import LookupModal from "../components/LookupModal";
 import { showToastMessage } from "../../lib/toast";
 import { useAddModal } from "../lib/useAddModal";
 import {
@@ -300,80 +301,43 @@ export default function CustomerGroupsClient() {
           refreshToken={refreshToken}
         />
       </div>
-      {isAddGroupOpen ? (
-        <div
-          className={styles.groupModalOverlay}
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              closeAddGroup();
-            }
-          }}
-        >
-          <div className={styles.groupModalCard} role="dialog" aria-modal="true" aria-label="Add customer group">
-            <div className={styles.groupModalHeader}>
-              <div>
-                <div className={styles.groupModalTitle}>Add Group</div>
-              </div>
-              <button
-                type="button"
-                className={styles.groupModalClose}
-                aria-label="Close add group form"
-                onClick={closeAddGroup}
-              >
-                ×
-              </button>
-            </div>
-            <div className={styles.groupModalBody}>
-              <div className={styles.groupModalGrid}>
-                <div className={`${styles.groupModalField} ${styles.groupModalFieldFull}`}>
-                  <label className={styles.fieldLabel} htmlFor="group-name">
-                    Group name
-                  </label>
-                  <input
-                    id="group-name"
-                    className={styles.fieldControl}
-                    value={groupForm.name}
-                    onChange={(event) => setGroupField("name", event.target.value)}
-                  />
-                </div>
-                <div className={`${styles.groupModalField} ${styles.groupModalToggle}`}>
-                  <label className={styles.fieldLabel} htmlFor="group-enabled">
-                    Enabled
-                  </label>
-                  <label className={styles.groupToggleControl} htmlFor="group-enabled">
-                    <input
-                      id="group-enabled"
-                      type="checkbox"
-                      checked={groupForm.enabled}
-                      onChange={(event) => setGroupField("enabled", event.target.checked)}
-                    />
-                    {groupForm.enabled ? "Yes" : "No"}
-                  </label>
-                </div>
-              </div>
-              {groupError ? <div className={styles.groupModalError}>{groupError}</div> : null}
-            </div>
-            <div className={styles.groupModalFooter}>
-              <button
-                type="button"
-                className={`page-header-button ${styles.groupModalCancel}`}
-                onClick={closeAddGroup}
-                disabled={groupSaving}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className={`page-header-button ${styles.groupModalSaveButton}`}
-                onClick={handleCreateGroup}
-                disabled={groupSaving}
-              >
-                {groupSaving ? "Saving…" : "Save"}
-              </button>
-            </div>
+      <LookupModal
+        open={isAddGroupOpen}
+        title="Add group"
+        onClose={closeAddGroup}
+        onConfirm={handleCreateGroup}
+        confirmLabel="Add group"
+        saving={groupSaving}
+        error={groupError}
+      >
+        <div className={styles.groupModalGrid}>
+          <div className={`${styles.groupModalField} ${styles.groupModalFieldFull}`}>
+            <label className={styles.fieldLabel} htmlFor="group-name">
+              Group name
+            </label>
+            <input
+              id="group-name"
+              className={styles.fieldControl}
+              value={groupForm.name}
+              onChange={(event) => setGroupField("name", event.target.value)}
+            />
+          </div>
+          <div className={`${styles.groupModalField} ${styles.groupModalToggle}`}>
+            <label className={styles.fieldLabel} htmlFor="group-enabled">
+              Enabled
+            </label>
+            <label className={styles.groupToggleControl} htmlFor="group-enabled">
+              <input
+                id="group-enabled"
+                type="checkbox"
+                checked={groupForm.enabled}
+                onChange={(event) => setGroupField("enabled", event.target.checked)}
+              />
+              {groupForm.enabled ? "Yes" : "No"}
+            </label>
           </div>
         </div>
-      ) : null}
+      </LookupModal>
     </main>
   );
 }

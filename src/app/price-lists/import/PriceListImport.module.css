@@ -65,6 +65,19 @@
   color: #3b4763;
 }
 
+.labelText {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lookupLabelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .requiredMark {
   color: #b91c1c;
 }

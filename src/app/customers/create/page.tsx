@@ -8,18 +8,27 @@ import {
   fetchCustomers,
   fetchImportanceOptions,
   fetchPricingPolicies,
+  fetchCalcMethodFormulas,
 } from '../[customerId]/customerBasicDataLookups';
 
 export default async function Page() {
-  const [customerGroups, parentCustomers, pricingPolicies, importanceOptions, countries, cities] =
-    await Promise.all([
-      fetchCustomerGroups(),
-      fetchCustomers(),
-      fetchPricingPolicies(),
-      fetchImportanceOptions(),
-      fetchCountries(),
-      fetchCities(),
-    ]);
+  const [
+    customerGroups,
+    parentCustomers,
+    pricingPolicies,
+    importanceOptions,
+    countries,
+    cities,
+    calcMethodFormulas,
+  ] = await Promise.all([
+    fetchCustomerGroups(),
+    fetchCustomers(),
+    fetchPricingPolicies(),
+    fetchImportanceOptions(),
+    fetchCountries(),
+    fetchCities(),
+    fetchCalcMethodFormulas(),
+  ]);
 
   const formId = 'customer-create-form';
 
@@ -45,15 +54,16 @@ export default async function Page() {
       </div>
       <div className={layoutStyles.pageBody}>
         <CustomerCreateClient
-          customerGroups={customerGroups}
-          parentCustomers={parentCustomers}
-          pricingPolicies={pricingPolicies}
-          importanceOptions={importanceOptions}
-          countries={countries}
-          cities={cities}
-          formId={formId}
-        />
-      </div>
+        customerGroups={customerGroups}
+        parentCustomers={parentCustomers}
+        pricingPolicies={pricingPolicies}
+        importanceOptions={importanceOptions}
+        countries={countries}
+        cities={cities}
+        calcMethodFormulas={calcMethodFormulas}
+        formId={formId}
+      />
+    </div>
     </main>
   );
 }

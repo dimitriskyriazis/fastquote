@@ -6,6 +6,13 @@ import type { DropdownOption } from "../../../lib/dropdownOptions";
 
 type CreateCountryBody = {
   name?: string;
+  enabled?: unknown;
+};
+
+const normalizeBoolean = (value: unknown): boolean | null => {
+  if (value === true || value === 'true' || value === '1' || value === 1) return true;
+  if (value === false || value === 'false' || value === '0' || value === 0) return false;
+  return null;
 };
 
 export async function POST(req: NextRequest) {
@@ -23,9 +30,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Country name is required" }, { status: 400 });
     }
 
+    const enabledValue = normalizeBoolean(payload?.enabled);
+    const enabled = enabledValue ?? true;
+
     const pool = await getPool();
     const request = pool.request();
     request.input("__name", sql.NVarChar(512), name);
+    request.input("__enabled", sql.Bit, enabled ? 1 : 0);
     const auditUserId = resolveAuditUserId(req);
     request.input("__userId", sql.NVarChar(450), auditUserId ?? null);
 
@@ -33,7 +44,7 @@ export async function POST(req: NextRequest) {
       DECLARE @Inserted TABLE (ID INT, Name NVARCHAR(512));
       INSERT INTO dbo.Countries ([Name], [CreatedOn], [CreatedBy], [ModifiedOn], [ModifiedBy], [Enabled])
       OUTPUT INSERTED.ID, INSERTED.Name INTO @Inserted
-      VALUES (@__name, SYSUTCDATETIME(), @__userId, SYSUTCDATETIME(), @__userId, 1);
+      VALUES (@__name, SYSUTCDATETIME(), @__userId, SYSUTCDATETIME(), @__userId, @__enabled);
       SELECT TOP 1 ID, Name FROM @Inserted;
     `);
 

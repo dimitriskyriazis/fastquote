@@ -4,6 +4,10 @@ import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import styles from './CustomerBasicDataPanel.module.css';
 import offerFormStyles from '../../offers/create/OfferCreateClient.module.css';
 import offerPanelStyles from '../../offers/[offerId]/OfferBasicDataPanel.module.css';
+import type { DropdownOption } from '../../../lib/dropdownOptions';
+import lookupStyles from '../../components/LookupModal.module.css';
+import LookupModal from '../../components/LookupModal';
+import lookupButtonStyles from '../../components/LookupAddButton.module.css';
 import type {
   CustomerBasicRecord,
   CustomerDropdownOption,
@@ -21,6 +25,7 @@ type Props = {
   importanceOptions: CustomerDropdownOption[];
   countries: CustomerDropdownOption[];
   cities: CustomerCityOption[];
+  calcMethodFormulas: DropdownOption[];
 };
 
 type SectionKey = 'general' | 'business' | 'location' | 'contact' | 'notes';
@@ -42,6 +47,7 @@ type FieldDefinition = {
   onCreateOption?: (label: string) => Promise<CustomerDropdownOption | null>;
   hint?: string;
   comboBox?: boolean;
+  required?: boolean;
 };
 
 const SECTION_METADATA: Record<SectionKey, { title: string }> = {
@@ -294,8 +300,11 @@ export default function CustomerBasicDataClient({
   importanceOptions,
   countries,
   cities,
+  calcMethodFormulas,
 }: Props) {
-  const cityOptions = useMemo(() => cities, [cities]);
+  const [pricingPolicyOptions, setPricingPolicyOptions] = useState(pricingPolicies);
+  const [countryOptions, setCountryOptions] = useState(countries);
+  const [cityOptions, setCityOptions] = useState(cities);
   const [openComboField, setOpenComboField] = useState<string | null>(null);
   const [comboErrors, setComboErrors] = useState<Record<string, string | null>>({});
   const comboCloseTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | null>>({});
@@ -327,16 +336,60 @@ export default function CustomerBasicDataClient({
     [],
   );
 
+  useEffect(() => {
+    setPricingPolicyOptions(pricingPolicies);
+  }, [pricingPolicies]);
+
+  useEffect(() => {
+    setCountryOptions(countries);
+  }, [countries]);
+
+  useEffect(() => {
+    setCityOptions(cities);
+  }, [cities]);
+
+  const [isAddPricingPolicyOpen, setIsAddPricingPolicyOpen] = useState(false);
+  const [newPricingPolicyName, setNewPricingPolicyName] = useState('');
+  const [newPricingPolicyEnabled, setNewPricingPolicyEnabled] = useState('1');
+  const [newPricingPolicyCalcMethod, setNewPricingPolicyCalcMethod] = useState(
+    calcMethodFormulas[0]?.value ?? '',
+  );
+  const [pricingPolicySaving, setPricingPolicySaving] = useState(false);
+  const [pricingPolicyError, setPricingPolicyError] = useState<string | null>(null);
+  const [isAddCountryOpen, setIsAddCountryOpen] = useState(false);
+  const [newCountryName, setNewCountryName] = useState('');
+  const [newCountryEnabled, setNewCountryEnabled] = useState('1');
+  const [countrySaving, setCountrySaving] = useState(false);
+  const [countryError, setCountryError] = useState<string | null>(null);
+  const [isAddCityOpen, setIsAddCityOpen] = useState(false);
+  const [newCityName, setNewCityName] = useState('');
+  const [newCityCountryId, setNewCityCountryId] = useState('');
+  const [newCityEnabled, setNewCityEnabled] = useState('1');
+  const [citySaving, setCitySaving] = useState(false);
+  const [cityError, setCityError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (calcMethodFormulas.length === 0) {
+      setNewPricingPolicyCalcMethod('');
+      return;
+    }
+    setNewPricingPolicyCalcMethod((prev) =>
+      calcMethodFormulas.some((option) => option.value === prev)
+        ? prev
+        : calcMethodFormulas[0].value,
+    );
+  }, [calcMethodFormulas]);
+
   const fieldDefinitions = useMemo(
     () =>
       buildFieldDefinitions(
         customerGroups,
         parentCustomers,
-        pricingPolicies,
+        pricingPolicyOptions,
         importanceOptions,
-        countries,
+        countryOptions,
       ),
-    [customerGroups, parentCustomers, pricingPolicies, importanceOptions, countries],
+    [customerGroups, parentCustomers, pricingPolicyOptions, importanceOptions, countryOptions],
   );
 
   const editableFields = useMemo(
@@ -360,6 +413,16 @@ export default function CustomerBasicDataClient({
   const valuesRef = useRef(values);
   valuesRef.current = values;
   const selectedCountryId = values.country ?? '';
+
+  useEffect(() => {
+    if (!isAddCityOpen) return;
+    const fallback =
+      selectedCountryId &&
+      countryOptions.some((option) => option.value === selectedCountryId)
+        ? selectedCountryId
+        : countryOptions[0]?.value ?? '';
+    setNewCityCountryId(fallback);
+  }, [isAddCityOpen, selectedCountryId, countryOptions]);
 
   const handleValueChange = useCallback((fieldId: string, value: string) => {
     setValues((prev) => ({ ...prev, [fieldId]: value }));
@@ -437,6 +500,214 @@ export default function CustomerBasicDataClient({
       void saveField(def, latestValue);
     },
     [saveField, values],
+  );
+
+  const openPricingPolicyModal = useCallback(() => {
+    setNewPricingPolicyName('');
+    setNewPricingPolicyEnabled('1');
+    setPricingPolicyError(null);
+    setNewPricingPolicyCalcMethod(calcMethodFormulas[0]?.value ?? '');
+    setIsAddPricingPolicyOpen(true);
+  }, [calcMethodFormulas]);
+
+  const handleCreatePricingPolicy = useCallback(async () => {
+    const trimmedName = newPricingPolicyName.trim();
+    if (!trimmedName) {
+      setPricingPolicyError('Name is required');
+      return;
+    }
+    if (!newPricingPolicyCalcMethod) {
+      setPricingPolicyError('Calc method formula is required');
+      return;
+    }
+    setPricingPolicySaving(true);
+    setPricingPolicyError(null);
+    try {
+      const response = await fetch('/api/pricing-policies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: trimmedName,
+          enabled: newPricingPolicyEnabled === '1',
+          calcMethodFormulasId: newPricingPolicyCalcMethod,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; option?: CustomerDropdownOption; error?: string }
+        | null;
+      const option = payload?.option;
+      if (!response.ok || !payload?.ok || !option) {
+        throw new Error(payload?.error ?? 'Unable to add pricing policy');
+      }
+      setPricingPolicyOptions((prev) => [...prev, option]);
+      setValues((prev) => ({ ...prev, pricingPolicy: option.value }));
+      showToastMessage('Pricing policy added', 'success');
+      setIsAddPricingPolicyOpen(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to add pricing policy';
+      setPricingPolicyError(message);
+      showToastMessage(message, 'error');
+    } finally {
+      setPricingPolicySaving(false);
+    }
+  }, [
+    newPricingPolicyName,
+    newPricingPolicyEnabled,
+    newPricingPolicyCalcMethod,
+    setValues,
+  ]);
+
+  const openCountryModal = useCallback(() => {
+    setNewCountryName('');
+    setNewCountryEnabled('1');
+    setCountryError(null);
+    setIsAddCountryOpen(true);
+  }, []);
+
+  const handleCreateCountry = useCallback(async () => {
+    const trimmed = newCountryName.trim();
+    if (!trimmed) {
+      setCountryError('Name is required');
+      return;
+    }
+    setCountrySaving(true);
+    setCountryError(null);
+    try {
+      const response = await fetch('/api/countries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: trimmed,
+          enabled: newCountryEnabled === '1',
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; option?: CustomerDropdownOption; error?: string }
+        | null;
+      const option = payload?.option;
+      if (!response.ok || !payload?.ok || !option) {
+        throw new Error(payload?.error ?? 'Unable to add country');
+      }
+      setCountryOptions((prev) => [...prev, option]);
+      setValues((prev) => ({ ...prev, country: option.value }));
+      showToastMessage('Country added', 'success');
+      setIsAddCountryOpen(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to add country';
+      setCountryError(message);
+      showToastMessage(message, 'error');
+    } finally {
+      setCountrySaving(false);
+    }
+  }, [newCountryName, newCountryEnabled]);
+
+  const openCityModal = useCallback(() => {
+    setNewCityName('');
+    setNewCityEnabled('1');
+    setCityError(null);
+    setIsAddCityOpen(true);
+  }, []);
+
+  const handleCreateCity = useCallback(async () => {
+    const trimmed = newCityName.trim();
+    if (!trimmed) {
+      setCityError('Name is required');
+      return;
+    }
+    if (!newCityCountryId) {
+      setCityError('Country is required');
+      return;
+    }
+    setCitySaving(true);
+    setCityError(null);
+    try {
+      const response = await fetch('/api/cities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: trimmed,
+          countryId: newCityCountryId,
+          enabled: newCityEnabled === '1',
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; option?: DropdownOption & { countryId?: number | null }; error?: string }
+        | null;
+      const resultOption = payload?.option;
+      if (!response.ok || !payload?.ok || !resultOption) {
+        throw new Error(payload?.error ?? 'Unable to add city');
+      }
+      const option = {
+        ...resultOption,
+        countryId:
+          resultOption.countryId ??
+          (countryOptions.find((option) => option.value === newCityCountryId)
+            ? Number(newCityCountryId)
+            : null),
+      };
+      setCityOptions((prev) => [...prev, option]);
+      setValues((prev) => ({ ...prev, city: option.value }));
+      showToastMessage('City added', 'success');
+      setIsAddCityOpen(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to add city';
+      setCityError(message);
+      showToastMessage(message, 'error');
+    } finally {
+      setCitySaving(false);
+    }
+  }, [newCityName, newCityCountryId, newCityEnabled, countryOptions]);
+
+  const renderLookupAddButton = useCallback(
+    (fieldId: string) => {
+      if (fieldId === 'pricingPolicy') {
+        return (
+          <button
+            type="button"
+            className={lookupButtonStyles.lookupAddButton}
+            onClick={openPricingPolicyModal}
+            disabled={calcMethodFormulas.length === 0 || pricingPolicySaving}
+          >
+            Add Pricing Policy
+          </button>
+        );
+      }
+      if (fieldId === 'country') {
+        return (
+          <button
+            type="button"
+            className={lookupButtonStyles.lookupAddButton}
+            onClick={openCountryModal}
+            disabled={countrySaving}
+          >
+            Add Country
+          </button>
+        );
+      }
+      if (fieldId === 'city') {
+        return (
+          <button
+            type="button"
+            className={lookupButtonStyles.lookupAddButton}
+            onClick={openCityModal}
+            disabled={citySaving || countryOptions.length === 0}
+          >
+            Add City
+          </button>
+        );
+      }
+      return null;
+    },
+    [
+      calcMethodFormulas,
+      countryOptions.length,
+      openCityModal,
+      openCountryModal,
+      openPricingPolicyModal,
+      pricingPolicySaving,
+      countrySaving,
+      citySaving,
+    ],
   );
 
   const renderFieldControl = (def: FieldDefinition) => {
@@ -645,7 +916,13 @@ export default function CustomerBasicDataClient({
             return (
               <div key={field.id} className={`${styles.fieldBlock} ${spanClass}`}>
                 <label className={styles.fieldLabel} htmlFor={`customer-field-${field.id}`}>
-                  {field.label}
+                  <div className={styles.labelRow}>
+                    <div className={styles.labelText}>
+                      {field.label}
+                      {field.required ? <span className={styles.requiredMark}>*</span> : null}
+                    </div>
+                    {renderLookupAddButton(field.id)}
+                  </div>
                 </label>
                 {renderFieldControl(field)}
                 {field.hint ? <div className={styles.inlineHint}>{field.hint}</div> : null}
@@ -680,11 +957,163 @@ export default function CustomerBasicDataClient({
   const remainingSections = SECTION_ORDER.filter((section) => section !== 'general');
 
   return (
-    <div className={styles.panel}>
-      {renderSectionCard('general')}
-      <div className={styles.sectionsGrid}>
-        {remainingSections.map((section) => renderSectionCard(section))}
+    <>
+      <div className={styles.panel}>
+        {renderSectionCard('general')}
+        <div className={styles.sectionsGrid}>
+          {remainingSections.map((section) => renderSectionCard(section))}
+        </div>
       </div>
-    </div>
+      <LookupModal
+        open={isAddPricingPolicyOpen}
+        title="Add Pricing Policy"
+        onClose={() => setIsAddPricingPolicyOpen(false)}
+        onConfirm={handleCreatePricingPolicy}
+        confirmLabel="Create"
+        saving={pricingPolicySaving}
+        error={pricingPolicyError}
+      >
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="customer-pricing-policy-name">
+            Name
+          </label>
+          <input
+            id="customer-pricing-policy-name"
+            className={lookupStyles.fieldControl}
+            value={newPricingPolicyName}
+            onChange={(event) => setNewPricingPolicyName(event.target.value)}
+          />
+        </div>
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="customer-pricing-policy-calc">
+            Calc method formula
+          </label>
+          <select
+            id="customer-pricing-policy-calc"
+            className={lookupStyles.fieldControl}
+            value={newPricingPolicyCalcMethod}
+            onChange={(event) => setNewPricingPolicyCalcMethod(event.target.value)}
+          >
+            <option value="">Select calc method formula</option>
+            {calcMethodFormulas.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="customer-pricing-policy-enabled">
+            Enabled
+          </label>
+          <select
+            id="customer-pricing-policy-enabled"
+            className={lookupStyles.fieldControl}
+            value={newPricingPolicyEnabled}
+            onChange={(event) => setNewPricingPolicyEnabled(event.target.value)}
+          >
+            {BOOLEAN_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </LookupModal>
+      <LookupModal
+        open={isAddCountryOpen}
+        title="Add Country"
+        onClose={() => setIsAddCountryOpen(false)}
+        onConfirm={handleCreateCountry}
+        confirmLabel="Create"
+        saving={countrySaving}
+        error={countryError}
+      >
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="customer-country-name">
+            Name
+          </label>
+          <input
+            id="customer-country-name"
+            className={lookupStyles.fieldControl}
+            value={newCountryName}
+            onChange={(event) => setNewCountryName(event.target.value)}
+          />
+        </div>
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="customer-country-enabled">
+            Enabled
+          </label>
+          <select
+            id="customer-country-enabled"
+            className={lookupStyles.fieldControl}
+            value={newCountryEnabled}
+            onChange={(event) => setNewCountryEnabled(event.target.value)}
+          >
+            {BOOLEAN_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </LookupModal>
+      <LookupModal
+        open={isAddCityOpen}
+        title="Add City"
+        onClose={() => setIsAddCityOpen(false)}
+        onConfirm={handleCreateCity}
+        confirmLabel="Create"
+        saving={citySaving}
+        error={cityError}
+      >
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="customer-city-name">
+            Name
+          </label>
+          <input
+            id="customer-city-name"
+            className={lookupStyles.fieldControl}
+            value={newCityName}
+            onChange={(event) => setNewCityName(event.target.value)}
+          />
+        </div>
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="customer-city-country">
+            Country
+          </label>
+          <select
+            id="customer-city-country"
+            className={lookupStyles.fieldControl}
+            value={newCityCountryId}
+            onChange={(event) => setNewCityCountryId(event.target.value)}
+          >
+            <option value="">Select country</option>
+            {countryOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="customer-city-enabled">
+            Enabled
+          </label>
+          <select
+            id="customer-city-enabled"
+            className={lookupStyles.fieldControl}
+            value={newCityEnabled}
+            onChange={(event) => setNewCityEnabled(event.target.value)}
+          >
+            {BOOLEAN_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </LookupModal>
+    </>
   );
 }

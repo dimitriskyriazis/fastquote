@@ -1,9 +1,13 @@
 import PriceListImportClient, {
-  type PricingPolicyRuleOption,
   type PreviousPriceListOption,
 } from "./PriceListImportClient";
 import { getPool } from "../../../lib/sql";
-import { toDropdownOptions, type DropdownOption, type RawDropdownRow } from "../../../lib/dropdownOptions";
+import {
+  toDropdownOptions,
+  type DropdownOption,
+  type RawDropdownRow,
+} from "../../../lib/dropdownOptions";
+import type { PricingPolicyRuleOption } from "../../../lib/lookupTypes";
 
 type PriceListLookupRow = RawDropdownRow & {
   BrandID?: number | null;
@@ -103,6 +107,21 @@ async function fetchUsers(): Promise<DropdownOption[]> {
   }
 }
 
+async function fetchCalcMethodFormulas(): Promise<DropdownOption[]> {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<RawDropdownRow>(`
+      SELECT ID, Name
+      FROM dbo.CalcMethodFormulas
+      ORDER BY Name
+    `);
+    return toOptions(result.recordset);
+  } catch (err) {
+    console.error("Failed to load calc method formulas", err);
+    return [];
+  }
+}
+
 async function fetchPreviousPriceLists(): Promise<PreviousPriceListOption[]> {
   try {
     const pool = await getPool();
@@ -188,12 +207,14 @@ export default async function PriceListImportPage() {
       }),
   ]);
 
-  const [pricingPolicies, pricingPolicyRules, users, previousPriceLists] = await Promise.all([
-    fetchPricingPolicies(),
-    fetchPricingPolicyRules(),
-    fetchUsers(),
-    fetchPreviousPriceLists(),
-  ]);
+  const [pricingPolicies, pricingPolicyRules, users, previousPriceLists, calcMethodFormulas] =
+    await Promise.all([
+      fetchPricingPolicies(),
+      fetchPricingPolicyRules(),
+      fetchUsers(),
+      fetchPreviousPriceLists(),
+      fetchCalcMethodFormulas(),
+    ]);
 
   return (
     <PriceListImportClient
@@ -205,6 +226,7 @@ export default async function PriceListImportPage() {
       pricingPolicyRules={pricingPolicyRules}
       users={users}
       previousPriceLists={previousPriceLists}
+      calcMethodFormulas={calcMethodFormulas}
     />
   );
 }

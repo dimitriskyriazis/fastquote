@@ -76,72 +76,6 @@
   color: var(--text-muted, #475569);
 }
 
-.marketModalOverlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2500;
-  padding: 16px;
-}
-
-.marketModalCard {
-  background: #ffffff;
-  border: 1px solid #c7d2fe;
-  border-radius: 16px;
-  box-shadow: 0 16px 38px rgba(37, 99, 235, 0.2);
-  width: min(600px, calc(100% - 24px));
-  max-height: 86vh;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.marketModalHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 16px;
-  border-bottom: 1px solid #e0e7ff;
-  background: #f8fafc;
-}
-
-.marketModalTitle {
-  font-size: 1rem;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: #1f2937;
-}
-
-.marketModalClose {
-  background: #fef2f2;
-  border: 1px solid #fecdd3;
-  color: #b91c1c;
-  border-radius: 10px;
-  width: 32px;
-  height: 32px;
-  font-size: 1.2rem;
-  line-height: 1;
-  cursor: pointer;
-  transition: all 140ms ease;
-  box-shadow: 0 6px 12px rgba(248, 113, 113, 0.3);
-}
-
-.marketModalClose:hover {
-  background: #dc2626;
-  color: #ffffff;
-  border-color: #dc2626;
-}
-
-.marketModalBody {
-  padding: 14px 16px 6px;
-  overflow-y: auto;
-}
-
 .marketModalGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(220px, 1fr));
@@ -193,55 +127,7 @@
   font-size: 0.9rem;
 }
 
-.marketModalError {
-  margin-top: 10px;
-  color: #b91c1c;
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
 .fieldControl option {
   color: #0f172a;
   font-weight: 500;
-}
-
-.marketModalFooter {
-  padding: 12px 16px 16px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.marketSaveButton {
-  border: 1px solid #22c55e;
-  border-radius: 999px;
-  background: #22c55e;
-  color: #ffffff;
-  font-weight: 500;
-  letter-spacing: normal;
-  text-transform: none;
-  padding: 6px 16px;
-  min-width: 0;
-  min-height: 32px;
-  cursor: pointer;
-  transition: transform 150ms ease, box-shadow 150ms ease, filter 150ms ease;
-  box-shadow: 0 6px 14px rgba(34, 197, 94, 0.18);
-}
-
-.marketSaveButton:hover:not(:disabled) {
-  filter: brightness(1.05);
-  transform: translateY(-1px);
-  box-shadow: 0 10px 20px rgba(34, 197, 94, 0.22);
-}
-
-.marketSaveButton:disabled {
-  opacity: 0.65;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
-.marketModalCancel {
-  border: 1px solid rgba(15, 23, 42, 0.15);
-  background-color: #f8fafc;
-  color: #0f172a;
 }
