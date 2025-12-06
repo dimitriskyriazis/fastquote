@@ -1,6 +1,9 @@
 import ContactsClient from "./ContactsClient";
 import { getPool } from "../../lib/sql";
-import { IMPORTANCE_VALUES } from "../customers/[customerId]/customerBasicDataLookups";
+import { IMPORTANCE_VALUES, fetchCustomers } from "../customers/[customerId]/customerBasicDataLookups";
+import { toDropdownOptions, type RawDropdownRow, type DropdownOption } from "../../lib/dropdownOptions";
+
+type LookupRow = RawDropdownRow & { ID: number | string | null };
 
 async function fetchEmailStatuses(): Promise<string[]> {
   try {
@@ -24,7 +27,33 @@ async function fetchEmailStatuses(): Promise<string[]> {
   }
 }
 
+async function fetchTitles(): Promise<DropdownOption[]> {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<LookupRow>(`
+      SELECT ID, Name
+      FROM dbo.Titles
+      ORDER BY Name
+    `);
+    return toDropdownOptions(result.recordset);
+  } catch (err) {
+    console.error("Failed to fetch titles", err);
+    return [];
+  }
+}
+
 export default async function Page() {
-  const [statuses] = await Promise.all([fetchEmailStatuses()]);
-  return <ContactsClient statuses={statuses} importances={IMPORTANCE_VALUES} />;
+  const [statuses, customers, titles] = await Promise.all([
+    fetchEmailStatuses(),
+    fetchCustomers(),
+    fetchTitles(),
+  ]);
+  return (
+    <ContactsClient
+      statuses={statuses}
+      importances={IMPORTANCE_VALUES}
+      customers={customers}
+      titles={titles}
+    />
+  );
 }

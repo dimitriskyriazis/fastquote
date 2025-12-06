@@ -4,6 +4,7 @@ import React, { useMemo, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import type { ColDef, DefaultMenuItem, GetContextMenuItemsParams, MenuItemDef } from "ag-grid-community";
+import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import styles from "./ProductsClient.module.css";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
@@ -25,6 +26,31 @@ const productHistoryMenuIcon = `
 
 const HISTORY_BACK_HREF = "/products";
 const HISTORY_BACK_LABEL = "products";
+
+const normalizeProductId = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
+const resolveProductLabel = (row: Record<string, unknown> | null | undefined, fallback: string) => {
+  if (!row) return fallback;
+  const brand = typeof row.Brand === "string" ? row.Brand.trim() : "";
+  const model = typeof row.ModelNumber === "string" ? row.ModelNumber.trim() : "";
+  const part = typeof row.PartNumber === "string" ? row.PartNumber.trim() : "";
+  const segments = [part, model].filter((segment) => segment.length > 0);
+  const prefix = brand.length > 0 ? `${brand} – ` : "";
+  if (segments.length > 0) return `${prefix}${segments.join(" – ")}`;
+  if (brand.length > 0) return brand;
+  const description = typeof row.Description === "string" ? row.Description.trim() : "";
+  if (description.length > 0) return description;
+  return fallback;
+};
+
+const PRODUCT_ROW_TYPE = "product";
 
 export default function ProductsClient() {
   const router = useRouter();
@@ -92,11 +118,27 @@ export default function ProductsClient() {
     },
   ], []);
 
+  const productRowDeletion = useMemo(
+    () =>
+      new GridRowDeletion<Record<string, unknown>>({
+        endpoint: "/api/products",
+        resolveRowId: (row) => normalizeProductId((row as { ProductID?: unknown } | null)?.ProductID ?? null),
+        resolveRowLabel: (row, fallback) => resolveProductLabel(row, fallback),
+        resolveRowTypeLabel: () => PRODUCT_ROW_TYPE,
+        buildPayload: (ids) => ({ ProductIDs: ids }),
+        confirmTitle: "Delete product",
+        confirmConfirmLabel: "Delete product",
+        confirmCancelLabel: "Keep product",
+        successToastMessage: "Product deleted",
+        failureToastMessage: "Unable to delete product. Please try again.",
+      }),
+    [],
+  );
+
   const getContextMenuItems = useCallback(
     (params: GetContextMenuItemsParams<Record<string, unknown>>) => {
-      const items: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> = [
-        ...(params.defaultItems ?? []),
-      ];
+      const items: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> =
+        (productRowDeletion.getContextMenuItems(params) ?? []).map((item) => item);
       const rowData = params.node?.data ?? null;
       if (!rowData) {
         return items;
@@ -139,7 +181,7 @@ export default function ProductsClient() {
 
       return items;
     },
-    [router],
+    [router, productRowDeletion],
   );
 
   return (

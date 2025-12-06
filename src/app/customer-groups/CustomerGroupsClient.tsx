@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useCallback, useRef } from "react";
+import React, { useMemo, useCallback, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import type {
@@ -13,6 +13,13 @@ import type {
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import styles from "./CustomerGroupsClient.module.css";
 import { showToastMessage } from "../../lib/toast";
+import { useAddModal } from "../lib/useAddModal";
+import {
+  createGroup,
+  EMPTY_GROUP_FORM,
+  GroupFormValues,
+  validateGroupForm,
+} from "./groupModalHelpers";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -75,6 +82,18 @@ export default function CustomerGroupsClient() {
   const router = useRouter();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const {
+    values: groupForm,
+    setField: setGroupField,
+    isOpen: isAddGroupOpen,
+    open: openAddGroup,
+    close: closeAddGroup,
+    saving: groupSaving,
+    error: groupError,
+    setSaving: setGroupSaving,
+    setError: setGroupError,
+  } = useAddModal<GroupFormValues>(() => ({ ...EMPTY_GROUP_FORM }));
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     if (!api || defaultEnabledFilterAppliedRef.current) return;
@@ -213,6 +232,29 @@ export default function CustomerGroupsClient() {
     void submit();
   }, []);
 
+  const handleCreateGroup = useCallback(async () => {
+    const validationError = validateGroupForm(groupForm);
+    if (validationError) {
+      setGroupError(validationError);
+      showToastMessage(validationError, "error");
+      return;
+    }
+    setGroupSaving(true);
+    setGroupError(null);
+    const result = await createGroup(groupForm);
+    if (!result.ok) {
+      const message = result.error ?? "Unable to add group.";
+      setGroupError(message);
+      showToastMessage(message, "error");
+      setGroupSaving(false);
+      return;
+    }
+    closeAddGroup();
+    setGroupSaving(false);
+    setRefreshToken((prev) => prev + 1);
+    showToastMessage("Customer group added", "success");
+  }, [groupForm, closeAddGroup, setGroupError, setGroupSaving, setRefreshToken]);
+
   return (
     <main className={styles.page}>
       <div className={styles.headerRow}>
@@ -239,9 +281,7 @@ export default function CustomerGroupsClient() {
             <button
               type="button"
               className={`${styles.headerButton} page-header-button`}
-              onClick={() => {
-                /* Add group placeholder */
-              }}
+              onClick={openAddGroup}
             >
               Add Group
             </button>
@@ -257,8 +297,83 @@ export default function CustomerGroupsClient() {
           onGridReady={handleGridReady}
           getContextMenuItems={groupContextMenuItems}
           onCellValueChanged={handleCellEdit}
+          refreshToken={refreshToken}
         />
       </div>
+      {isAddGroupOpen ? (
+        <div
+          className={styles.groupModalOverlay}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeAddGroup();
+            }
+          }}
+        >
+          <div className={styles.groupModalCard} role="dialog" aria-modal="true" aria-label="Add customer group">
+            <div className={styles.groupModalHeader}>
+              <div>
+                <div className={styles.groupModalTitle}>Add Group</div>
+              </div>
+              <button
+                type="button"
+                className={styles.groupModalClose}
+                aria-label="Close add group form"
+                onClick={closeAddGroup}
+              >
+                ×
+              </button>
+            </div>
+            <div className={styles.groupModalBody}>
+              <div className={styles.groupModalGrid}>
+                <div className={`${styles.groupModalField} ${styles.groupModalFieldFull}`}>
+                  <label className={styles.fieldLabel} htmlFor="group-name">
+                    Group name
+                  </label>
+                  <input
+                    id="group-name"
+                    className={styles.fieldControl}
+                    value={groupForm.name}
+                    onChange={(event) => setGroupField("name", event.target.value)}
+                  />
+                </div>
+                <div className={`${styles.groupModalField} ${styles.groupModalToggle}`}>
+                  <label className={styles.fieldLabel} htmlFor="group-enabled">
+                    Enabled
+                  </label>
+                  <label className={styles.groupToggleControl} htmlFor="group-enabled">
+                    <input
+                      id="group-enabled"
+                      type="checkbox"
+                      checked={groupForm.enabled}
+                      onChange={(event) => setGroupField("enabled", event.target.checked)}
+                    />
+                    {groupForm.enabled ? "Yes" : "No"}
+                  </label>
+                </div>
+              </div>
+              {groupError ? <div className={styles.groupModalError}>{groupError}</div> : null}
+            </div>
+            <div className={styles.groupModalFooter}>
+              <button
+                type="button"
+                className={`page-header-button ${styles.groupModalCancel}`}
+                onClick={closeAddGroup}
+                disabled={groupSaving}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={`page-header-button ${styles.groupModalSaveButton}`}
+                onClick={handleCreateGroup}
+                disabled={groupSaving}
+              >
+                {groupSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

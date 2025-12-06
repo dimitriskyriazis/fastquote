@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useCallback, useRef } from "react";
+import React, { useMemo, useCallback, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import type {
@@ -12,6 +12,15 @@ import type {
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import styles from "./ContactsClient.module.css";
 import { showToastMessage } from "../../lib/toast";
+import { useAddModal } from "../lib/useAddModal";
+import type { DropdownOption } from "../../lib/dropdownOptions";
+import type { CustomerDropdownOption } from "../customers/[customerId]/CustomerBasicDataTypes";
+import {
+  createContact,
+  ContactFormValues,
+  EMPTY_CONTACT_FORM,
+  validateContactForm,
+} from "./contactModalHelpers";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -25,6 +34,8 @@ const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
 type Props = {
   statuses: string[];
   importances: Array<string | number>;
+  customers: CustomerDropdownOption[];
+  titles: DropdownOption[];
 };
 
 const CONTACT_FIELD_LABELS: Record<string, string> = {
@@ -88,7 +99,7 @@ const resolveContactLabel = (
   return fallback;
 };
 
-export default function ContactsClient({ statuses, importances }: Props) {
+export default function ContactsClient({ statuses, importances, customers, titles }: Props) {
   const router = useRouter();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const statusOptions = useMemo(() => {
@@ -110,6 +121,21 @@ export default function ContactsClient({ statuses, importances }: Props) {
   }, [importances]);
   const importanceDropdownValues = useMemo(() => ["", ...importanceOptions], [importanceOptions]);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
+
+  const [refreshToken, setRefreshToken] = useState(0);
+  const {
+    values: contactForm,
+    setField: setContactField,
+    isOpen: isAddContactOpen,
+    open: openAddContact,
+    close: closeAddContact,
+    saving: contactSaving,
+    error: contactError,
+    setSaving: setContactSaving,
+    setError: setContactError,
+  } = useAddModal<ContactFormValues>(() => ({ ...EMPTY_CONTACT_FORM }));
+  const customerOptions = useMemo(() => customers, [customers]);
+  const titleOptions = useMemo(() => titles, [titles]);
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     if (!api || defaultEnabledFilterAppliedRef.current) return;
@@ -325,6 +351,29 @@ export default function ContactsClient({ statuses, importances }: Props) {
     void submit();
   }, []);
 
+  const handleCreateContact = useCallback(async () => {
+    const validationError = validateContactForm(contactForm);
+    if (validationError) {
+      setContactError(validationError);
+      showToastMessage(validationError, "error");
+      return;
+    }
+    setContactSaving(true);
+    setContactError(null);
+    const result = await createContact(contactForm);
+    if (!result.ok) {
+      const message = result.error ?? "Unable to add contact.";
+      setContactError(message);
+      showToastMessage(message, "error");
+      setContactSaving(false);
+      return;
+    }
+    closeAddContact();
+    setContactSaving(false);
+    setRefreshToken((prev) => prev + 1);
+    showToastMessage("Contact added", "success");
+  }, [contactForm, closeAddContact, setContactError, setContactSaving, setRefreshToken]);
+
   return (
     <main className={styles.page}>
       <div className={styles.headerRow}>
@@ -355,9 +404,7 @@ export default function ContactsClient({ statuses, importances }: Props) {
             <button
               type="button"
               className={`${styles.headerButton} page-header-button`}
-              onClick={() => {
-                /* Add contact placeholder */
-              }}
+              onClick={openAddContact}
             >
               Add Contact
             </button>
@@ -373,8 +420,237 @@ export default function ContactsClient({ statuses, importances }: Props) {
           onGridReady={handleGridReady}
           getContextMenuItems={contactContextMenuItems}
           onCellValueChanged={handleCellEdit}
+          refreshToken={refreshToken}
         />
       </div>
+      {isAddContactOpen ? (
+        <div
+          className={styles.contactModalOverlay}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeAddContact();
+            }
+          }}
+        >
+          <div className={styles.contactModalCard} role="dialog" aria-modal="true" aria-label="Add contact">
+            <div className={styles.contactModalHeader}>
+              <div>
+                <div className={styles.contactModalTitle}>Add Contact</div>
+              </div>
+              <button
+                type="button"
+                className={styles.contactModalClose}
+                aria-label="Close add contact form"
+                onClick={closeAddContact}
+              >
+                ×
+              </button>
+            </div>
+            <div className={styles.contactModalBody}>
+              <div className={styles.contactModalGrid}>
+                <div className={`${styles.contactModalField} ${styles.contactModalFieldFull}`}>
+                  <label className={styles.fieldLabel} htmlFor="contact-customer">
+                    Customer
+                  </label>
+                  <select
+                    id="contact-customer"
+                    className={styles.fieldControl}
+                    value={contactForm.customerId}
+                    onChange={(event) => setContactField("customerId", event.target.value)}
+                  >
+                    <option value="">Select customer...</option>
+                    {customerOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className={`${styles.contactModalField} ${styles.contactModalFieldFull}`}>
+                  <label className={styles.fieldLabel} htmlFor="contact-title">
+                    Title
+                  </label>
+                  <select
+                    id="contact-title"
+                    className={styles.fieldControl}
+                    value={contactForm.titleId}
+                    onChange={(event) => setContactField("titleId", event.target.value)}
+                  >
+                    <option value="">Select title...</option>
+                    {titleOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-last-name">
+                    Last name
+                  </label>
+                  <input
+                    id="contact-last-name"
+                    className={styles.fieldControl}
+                    value={contactForm.lastName}
+                    onChange={(event) => setContactField("lastName", event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-first-name">
+                    First name
+                  </label>
+                  <input
+                    id="contact-first-name"
+                    className={styles.fieldControl}
+                    value={contactForm.firstName}
+                    onChange={(event) => setContactField("firstName", event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-position">
+                    Position
+                  </label>
+                  <input
+                    id="contact-position"
+                    className={styles.fieldControl}
+                    value={contactForm.position}
+                    onChange={(event) => setContactField("position", event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-importance">
+                    Importance
+                  </label>
+                  <select
+                    id="contact-importance"
+                    className={styles.fieldControl}
+                    value={contactForm.importance}
+                    onChange={(event) => setContactField("importance", event.target.value)}
+                  >
+                    <option value="">Select importance...</option>
+                    {importanceOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-email">
+                    Email
+                  </label>
+                  <input
+                    id="contact-email"
+                    className={styles.fieldControl}
+                    value={contactForm.email}
+                    onChange={(event) => setContactField("email", event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-email-status">
+                    Email status
+                  </label>
+                  <select
+                    id="contact-email-status"
+                    className={styles.fieldControl}
+                    value={contactForm.emailStatus}
+                    onChange={(event) => setContactField("emailStatus", event.target.value)}
+                  >
+                    {statusDropdownValues.map((option) => (
+                      <option key={option} value={option}>
+                        {option || "Select status..."}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-second-email">
+                    Second email
+                  </label>
+                  <input
+                    id="contact-second-email"
+                    className={styles.fieldControl}
+                    value={contactForm.secondEmail}
+                    onChange={(event) => setContactField("secondEmail", event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-second-email-status">
+                    Second email status
+                  </label>
+                  <select
+                    id="contact-second-email-status"
+                    className={styles.fieldControl}
+                    value={contactForm.secondEmailStatus}
+                    onChange={(event) => setContactField("secondEmailStatus", event.target.value)}
+                  >
+                    {statusDropdownValues.map((option) => (
+                      <option key={option} value={option}>
+                        {option || "Select status..."}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-phone">
+                    Phone
+                  </label>
+                  <input
+                    id="contact-phone"
+                    className={styles.fieldControl}
+                    value={contactForm.phone}
+                    onChange={(event) => setContactField("phone", event.target.value)}
+                  />
+                </div>
+                <div className={styles.contactModalField}>
+                  <label className={styles.fieldLabel} htmlFor="contact-mobile">
+                    Mobile
+                  </label>
+                  <input
+                    id="contact-mobile"
+                    className={styles.fieldControl}
+                    value={contactForm.mobile}
+                    onChange={(event) => setContactField("mobile", event.target.value)}
+                  />
+                </div>
+                <div className={`${styles.contactModalField} ${styles.contactModalToggle}`}>
+                  <label className={styles.fieldLabel} htmlFor="contact-enabled">
+                    Enabled
+                  </label>
+                  <label className={styles.contactToggleControl} htmlFor="contact-enabled">
+                    <input
+                      id="contact-enabled"
+                      type="checkbox"
+                      checked={contactForm.enabled}
+                      onChange={(event) => setContactField("enabled", event.target.checked)}
+                    />
+                    {contactForm.enabled ? "Yes" : "No"}
+                  </label>
+                </div>
+              </div>
+              {contactError ? <div className={styles.contactModalError}>{contactError}</div> : null}
+            </div>
+            <div className={styles.contactModalFooter}>
+              <button
+                type="button"
+                className={`page-header-button ${styles.contactModalCancel}`}
+                onClick={closeAddContact}
+                disabled={contactSaving}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={`page-header-button ${styles.contactModalSaveButton}`}
+                onClick={handleCreateContact}
+                disabled={contactSaving}
+              >
+                {contactSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

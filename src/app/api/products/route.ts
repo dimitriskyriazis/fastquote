@@ -84,6 +84,29 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   WebLink: "dbo.Products.WebLink",
 };
 
+const normalizeProductId = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
+const collectProductIds = (values: unknown): number[] => {
+  if (!Array.isArray(values)) return [];
+  const normalized = new Set<number>();
+  values.forEach((value) => {
+    const id = normalizeProductId(value);
+    if (id != null) {
+      normalized.add(id);
+    }
+  });
+  return Array.from(normalized);
+};
+
+const PRODUCT_DELETE_BATCH = 200;
+
 const ALLOWED_ROW_GROUP_FIELDS = new Set(["Brand", "Category", "SubCategory", "Type"]);
 
 function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
@@ -235,6 +258,51 @@ async function readGridRequest(req: NextRequest): Promise<GridRequest> {
     /* swallow, use defaults */
   }
   return { startRow: 0, endRow: 100 };
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => null);
+    const ids = collectProductIds((body as { ProductIDs?: unknown } | null)?.ProductIDs ?? []);
+    if (ids.length === 0) {
+      return NextResponse.json({ ok: false, error: "No products selected for deletion" }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    let deleted = 0;
+
+    for (let idx = 0; idx < ids.length; idx += PRODUCT_DELETE_BATCH) {
+      const chunk = ids.slice(idx, idx + PRODUCT_DELETE_BATCH);
+      if (chunk.length === 0) continue;
+      const transaction = new sql.Transaction(pool);
+      await transaction.begin();
+      try {
+        const request = transaction.request();
+        const placeholders: string[] = [];
+        chunk.forEach((value, chunkIdx) => {
+          const paramName = `product_${chunkIdx}`;
+          request.input(paramName, sql.Int, value);
+          placeholders.push(`@${paramName}`);
+        });
+        const deleteSql = `
+          DELETE FROM dbo.Products
+          WHERE ID IN (${placeholders.join(", ")});
+        `;
+        const result = await request.query(deleteSql);
+        await transaction.commit();
+        deleted += result.rowsAffected?.[0] ?? 0;
+      } catch (chunkErr) {
+        await transaction.rollback().catch(() => {});
+        throw chunkErr;
+      }
+    }
+
+    return NextResponse.json({ ok: true, deleted });
+  } catch (err: unknown) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
