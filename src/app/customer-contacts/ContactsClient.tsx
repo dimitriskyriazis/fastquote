@@ -3,7 +3,13 @@
 import React, { useMemo, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import type { CellValueChangedEvent, ColDef, GridApi } from "ag-grid-community";
+import type {
+  CellValueChangedEvent,
+  ColDef,
+  GetContextMenuItemsParams,
+  GridApi,
+} from "ag-grid-community";
+import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import styles from "./ContactsClient.module.css";
 import { showToastMessage } from "../../lib/toast";
 
@@ -64,6 +70,22 @@ const normalizeTextInput = (value: unknown): string => {
   if (value == null) return "";
   if (typeof value === "string") return value.trim();
   return String(value).trim();
+};
+
+const resolveContactLabel = (
+  row: Record<string, unknown> | null | undefined,
+  fallback: string,
+) => {
+  if (!row) return fallback;
+  const firstName = normalizeTextInput(row.FirstName);
+  const lastName = normalizeTextInput(row.LastName);
+  const nameParts = [firstName, lastName].filter((segment) => segment.length > 0);
+  if (nameParts.length > 0) return nameParts.join(" ");
+  const email = normalizeTextInput(row.Email);
+  if (email.length > 0) return email;
+  const secondEmail = normalizeTextInput(row.SecondEmail);
+  if (secondEmail.length > 0) return secondEmail;
+  return fallback;
 };
 
 export default function ContactsClient({ statuses, importances }: Props) {
@@ -224,6 +246,31 @@ export default function ContactsClient({ statuses, importances }: Props) {
     return orderedColumns;
   }, [enabledOptions, statusDropdownValues, importanceDropdownValues]);
 
+  const contactRowDeletion = useMemo(
+    () =>
+      new GridRowDeletion<Record<string, unknown>>({
+        endpoint: "/api/customer-contacts",
+        resolveRowId: (row) =>
+          normalizeContactId((row as { ContactID?: unknown } | null)?.ContactID ?? null),
+        resolveRowLabel: (row, fallback) =>
+          resolveContactLabel(row as Record<string, unknown> | null | undefined, fallback),
+        resolveRowTypeLabel: () => "contact",
+        buildPayload: (ids) => ({ ContactIDs: ids }),
+        confirmTitle: "Delete contact",
+        confirmConfirmLabel: "Delete contact",
+        confirmCancelLabel: "Keep contact",
+        successToastMessage: "Contact deleted",
+        failureToastMessage: "Unable to delete contact. Please try again.",
+      }),
+    [],
+  );
+
+  const contactContextMenuItems = useCallback(
+    (params: GetContextMenuItemsParams<Record<string, unknown>>) =>
+      contactRowDeletion.getContextMenuItems(params),
+    [contactRowDeletion],
+  );
+
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
     if (!field || !(field in CONTACT_FIELD_LABELS)) return;
@@ -281,35 +328,40 @@ export default function ContactsClient({ statuses, importances }: Props) {
   return (
     <main className={styles.page}>
       <div className={styles.headerRow}>
-        <h1 className={styles.heading}>Contacts</h1>
-        <div className={styles.headerActions}>
+        <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
           <button
             type="button"
-            className={`${styles.headerButton} page-header-button`}
+            className={`${styles.backLink} page-header-button`}
             onClick={() => {
               router.push("/customers");
             }}
           >
-            View Customers
+            <span aria-hidden="true">←</span>
+            Back to customers
           </button>
-          <button
-            type="button"
-            className={`${styles.headerButton} page-header-button`}
-            onClick={() => {
-              router.push("/customer-groups");
-            }}
-          >
-            View Groups
-          </button>
-          <button
-            type="button"
-            className={`${styles.headerButton} page-header-button`}
-            onClick={() => {
-              /* Add contact placeholder */
-            }}
-          >
-            Add Contact
-          </button>
+        </div>
+        <h1 className={styles.heading}>Contacts</h1>
+        <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
+          <div className={styles.headerActions}>
+            <button
+              type="button"
+              className={`${styles.headerButton} page-header-button`}
+              onClick={() => {
+                router.push("/customer-groups");
+              }}
+            >
+              View Groups
+            </button>
+            <button
+              type="button"
+              className={`${styles.headerButton} page-header-button`}
+              onClick={() => {
+                /* Add contact placeholder */
+              }}
+            >
+              Add Contact
+            </button>
+          </div>
         </div>
       </div>
       <div className={styles.gridFrame}>
@@ -319,6 +371,7 @@ export default function ContactsClient({ statuses, importances }: Props) {
           rowGroupPanelShow="always"
           columnStateNamespace="customer-contacts-all"
           onGridReady={handleGridReady}
+          getContextMenuItems={contactContextMenuItems}
           onCellValueChanged={handleCellEdit}
         />
       </div>

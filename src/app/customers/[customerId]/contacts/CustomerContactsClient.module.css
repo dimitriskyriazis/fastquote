@@ -37,6 +37,7 @@
   background-color: #f8fafc;
   color: #0f172a;
   text-decoration: none;
+  cursor: pointer;
 }
 
 .headerActionButton:active {

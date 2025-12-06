@@ -3,7 +3,14 @@
 import React, { useMemo, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import type { CellValueChangedEvent, ColDef, GridApi, ValueFormatterParams } from "ag-grid-community";
+import type {
+  CellValueChangedEvent,
+  ColDef,
+  GetContextMenuItemsParams,
+  GridApi,
+  ValueFormatterParams,
+} from "ag-grid-community";
+import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import styles from "./CustomerGroupsClient.module.css";
 import { showToastMessage } from "../../lib/toast";
 
@@ -41,6 +48,15 @@ const normalizeTextValue = (value: unknown): string => {
   if (value == null) return "";
   if (typeof value === "string") return value.trim();
   return String(value).trim();
+};
+
+const resolveGroupLabel = (
+  row: Record<string, unknown> | null | undefined,
+  fallback: string,
+) => {
+  if (!row) return fallback;
+  const name = typeof row.Name === "string" ? row.Name.trim() : "";
+  return name.length > 0 ? name : fallback;
 };
 
 const formatDateValue = (value: unknown) => {
@@ -122,6 +138,31 @@ export default function CustomerGroupsClient() {
     [enabledOptions],
   );
 
+  const groupRowDeletion = useMemo(
+    () =>
+      new GridRowDeletion<Record<string, unknown>>({
+        endpoint: "/api/customer-groups",
+        resolveRowId: (row) =>
+          normalizeGroupId((row as { CustomerGroupID?: unknown } | null)?.CustomerGroupID ?? null),
+        resolveRowLabel: (row, fallback) =>
+          resolveGroupLabel(row as Record<string, unknown> | null | undefined, fallback),
+        resolveRowTypeLabel: () => "group",
+        buildPayload: (ids) => ({ CustomerGroupIDs: ids }),
+        confirmTitle: "Delete group",
+        confirmConfirmLabel: "Delete group",
+        confirmCancelLabel: "Keep group",
+        successToastMessage: "Customer group deleted",
+        failureToastMessage: "Unable to delete group. Please try again.",
+      }),
+    [],
+  );
+
+  const groupContextMenuItems = useCallback(
+    (params: GetContextMenuItemsParams<Record<string, unknown>>) =>
+      groupRowDeletion.getContextMenuItems(params),
+    [groupRowDeletion],
+  );
+
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
     if (!field || !(field in GROUP_FIELD_LABELS)) return;
@@ -175,31 +216,36 @@ export default function CustomerGroupsClient() {
   return (
     <main className={styles.page}>
       <div className={styles.headerRow}>
-        <h1 className={styles.heading}>Customer Groups</h1>
-        <div className={styles.headerActions}>
+        <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
           <button
             type="button"
-            className={`${styles.headerButton} page-header-button`}
+            className={`${styles.backLink} page-header-button`}
             onClick={() => router.push("/customers")}
           >
-            View Customers
+            <span aria-hidden="true">←</span>
+            Back to customers
           </button>
-          <button
-            type="button"
-            className={`${styles.headerButton} page-header-button`}
-            onClick={() => router.push("/customer-contacts")}
-          >
-            View Contacts
-          </button>
-          <button
-            type="button"
-            className={`${styles.headerButton} page-header-button`}
-            onClick={() => {
-              /* Add group placeholder */
-            }}
-          >
-            Add Group
-          </button>
+        </div>
+        <h1 className={styles.heading}>Customer Groups</h1>
+        <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
+          <div className={styles.headerActions}>
+            <button
+              type="button"
+              className={`${styles.headerButton} page-header-button`}
+              onClick={() => router.push("/customer-contacts")}
+            >
+              View Contacts
+            </button>
+            <button
+              type="button"
+              className={`${styles.headerButton} page-header-button`}
+              onClick={() => {
+                /* Add group placeholder */
+              }}
+            >
+              Add Group
+            </button>
+          </div>
         </div>
       </div>
       <div className={styles.gridFrame}>
@@ -209,6 +255,7 @@ export default function CustomerGroupsClient() {
           columnStateNamespace="customer-groups"
           rowGroupPanelShow="never"
           onGridReady={handleGridReady}
+          getContextMenuItems={groupContextMenuItems}
           onCellValueChanged={handleCellEdit}
         />
       </div>

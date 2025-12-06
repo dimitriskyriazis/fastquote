@@ -3,7 +3,8 @@
 import Link from "next/link";
 import React, { useMemo, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
-import type { ColDef, GridApi } from "ag-grid-community";
+import type { ColDef, GetContextMenuItemsParams, GridApi } from "ag-grid-community";
+import { GridRowDeletion } from "../../../../lib/gridRowDeletion";
 import styles from "./CustomerContactsClient.module.css";
 
 const AgGridAll = dynamic(() => import("../../../components/AgGridAll"), {
@@ -19,6 +20,31 @@ const formatBooleanValue = (value: unknown) => {
   if (value === 1 || value === true || value === "true") return "Yes";
   if (value === 0 || value === false || value === "false") return "No";
   return value == null ? "" : String(value);
+};
+
+const normalizeContactId = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
+const resolveCustomerContactLabel = (
+  row: Record<string, unknown> | null | undefined,
+  fallback: string,
+) => {
+  if (!row) return fallback;
+  const firstName = typeof row.FirstName === "string" ? row.FirstName.trim() : "";
+  const lastName = typeof row.LastName === "string" ? row.LastName.trim() : "";
+  const nameParts = [firstName, lastName].filter((value) => value.length > 0);
+  if (nameParts.length > 0) {
+    return nameParts.join(" ");
+  }
+  const email = typeof row.Email === "string" ? row.Email.trim() : "";
+  if (email.length > 0) return email;
+  return fallback;
 };
 
 type Props = {
@@ -118,6 +144,33 @@ export default function CustomerContactsClient({ customerId, customerName }: Pro
     [],
   );
 
+  const endpoint = `/api/customers/${encodedCustomerId}/contacts`;
+
+  const contactRowDeletion = useMemo(
+    () =>
+      new GridRowDeletion<Record<string, unknown>>({
+        endpoint,
+        resolveRowId: (row) =>
+          normalizeContactId((row as { ContactID?: unknown } | null)?.ContactID ?? null),
+        resolveRowLabel: (row, fallback) =>
+          resolveCustomerContactLabel(row as Record<string, unknown> | null | undefined, fallback),
+        resolveRowTypeLabel: () => "contact",
+        buildPayload: (ids) => ({ ContactIDs: ids }),
+        confirmTitle: "Delete contact",
+        confirmConfirmLabel: "Delete contact",
+        confirmCancelLabel: "Keep contact",
+        successToastMessage: "Contact deleted",
+        failureToastMessage: "Unable to delete contact. Please try again.",
+      }),
+    [endpoint],
+  );
+
+  const contactContextMenuItems = useCallback(
+    (params: GetContextMenuItemsParams<Record<string, unknown>>) =>
+      contactRowDeletion.getContextMenuItems(params),
+    [contactRowDeletion],
+  );
+
   const heading = customerName ? `${customerName} – Contacts` : "Customer Contacts";
 
   return (
@@ -144,11 +197,12 @@ export default function CustomerContactsClient({ customerId, customerName }: Pro
       </div>
       <div className={styles.gridFrame}>
         <AgGridAll
-          endpoint={`/api/customers/${encodedCustomerId}/contacts`}
+          endpoint={endpoint}
           columnDefs={columnDefs}
           rowGroupPanelShow="never"
           columnStateNamespace="customer-contacts"
           onGridReady={handleGridReady}
+          getContextMenuItems={contactContextMenuItems}
         />
       </div>
     </main>

@@ -3,8 +3,14 @@
 import React, { useMemo, useCallback, useRef, useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import type { ColDef, GridApi, ICellRendererParams } from "ag-grid-community";
+import type {
+  ColDef,
+  GridApi,
+  GetContextMenuItemsParams,
+  ICellRendererParams,
+} from "ag-grid-community";
 import { createPortal } from "react-dom";
+import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import styles from "./CustomersClient.module.css";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
@@ -20,6 +26,28 @@ const formatBooleanValue = (value: unknown) => {
   if (value === 1 || value === true || value === "true") return "Yes";
   if (value === 0 || value === false || value === "false") return "No";
   return value == null ? "" : String(value);
+};
+
+const normalizeCustomerId = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
+const resolveCustomerLabel = (
+  row: Record<string, unknown> | null | undefined,
+  fallback: string,
+) => {
+  if (!row) return fallback;
+  const customerName = typeof row.CustomerName === "string" ? row.CustomerName.trim() : "";
+  if (customerName.length > 0) return customerName;
+  const brandName = typeof row.BrandName === "string" ? row.BrandName.trim() : "";
+  if (brandName.length > 0) return brandName;
+  const identifier = row.CustomerID != null ? String(row.CustomerID) : "";
+  return identifier ? `#${identifier}` : fallback;
 };
 
 export default function CustomersClient() {
@@ -249,6 +277,31 @@ export default function CustomersClient() {
     [ActionCell],
   );
 
+  const customerRowDeletion = useMemo(
+    () =>
+      new GridRowDeletion<Record<string, unknown>>({
+        endpoint: "/api/customers",
+        resolveRowId: (row) =>
+          normalizeCustomerId((row as { CustomerID?: unknown } | null)?.CustomerID ?? null),
+        resolveRowLabel: (row, fallback) =>
+          resolveCustomerLabel(row as Record<string, unknown> | null | undefined, fallback),
+        resolveRowTypeLabel: () => "customer",
+        buildPayload: (ids) => ({ CustomerIDs: ids }),
+        confirmTitle: "Delete customer",
+        confirmConfirmLabel: "Delete customer",
+        confirmCancelLabel: "Keep customer",
+        successToastMessage: "Customer deleted",
+        failureToastMessage: "Unable to delete customer. Please try again.",
+      }),
+    [],
+  );
+
+  const customerContextMenuItems = useCallback(
+    (params: GetContextMenuItemsParams<Record<string, unknown>>) =>
+      customerRowDeletion.getContextMenuItems(params),
+    [customerRowDeletion],
+  );
+
   return (
     <main className={styles.page}>
       <div className={styles.headerRow}>
@@ -276,7 +329,7 @@ export default function CustomersClient() {
             type="button"
             className={`${styles.headerButton} page-header-button`}
             onClick={() => {
-              /* Add customer action placeholder */
+              router.push("/customers/create");
             }}
           >
             Add Customer
@@ -290,6 +343,7 @@ export default function CustomersClient() {
           rowGroupPanelShow="always"
           columnStateNamespace="customers"
           onGridReady={handleGridReady}
+          getContextMenuItems={customerContextMenuItems}
         />
       </div>
     </main>

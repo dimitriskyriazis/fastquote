@@ -63,7 +63,6 @@ const buildFieldDefinitions = (
   pricingPolicies: CustomerDropdownOption[],
   importanceOptions: CustomerDropdownOption[],
   countries: CustomerDropdownOption[],
-  onCreateCountry?: (label: string) => Promise<CustomerDropdownOption | null>,
 ): FieldDefinition[] => [
   {
     id: 'name',
@@ -181,14 +180,10 @@ const buildFieldDefinitions = (
     id: 'country',
     label: 'Country',
     section: 'location',
-    recordKey: 'CountryName',
-    datalistRecordKey: 'CountryID',
+    recordKey: 'CountryID',
     updateField: 'CountryID',
-    datalistOptions: countries,
-    comboBox: true,
     valueType: 'number',
-    onCreateOption: onCreateCountry,
-    hint: 'Type a new country name to add it automatically.',
+    options: countries,
   },
   {
     id: 'city',
@@ -300,7 +295,6 @@ export default function CustomerBasicDataClient({
   countries,
   cities,
 }: Props) {
-  const [countryOptions, setCountryOptions] = useState(countries);
   const cityOptions = useMemo(() => cities, [cities]);
   const [openComboField, setOpenComboField] = useState<string | null>(null);
   const [comboErrors, setComboErrors] = useState<Record<string, string | null>>({});
@@ -333,49 +327,6 @@ export default function CustomerBasicDataClient({
     [],
   );
 
-  const handleCreateCountry = useCallback(
-    async (label: string) => {
-      const trimmed = label.trim();
-      if (!trimmed) return null;
-      try {
-        const response = await fetch('/api/countries', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: trimmed }),
-        });
-        const payload = (await response.json().catch(() => null)) as {
-          ok?: boolean;
-          option?: CustomerDropdownOption;
-          error?: string;
-        } | null;
-        if (!response.ok || !payload?.ok || !payload.option) {
-          throw new Error(payload?.error ?? 'Unable to create country');
-        }
-        const newOption = payload.option;
-        setCountryOptions((prev) => {
-          if (prev.some((opt) => opt.value === newOption.value)) return prev;
-          const next = [...prev, newOption];
-          next.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
-          return next;
-        });
-        return newOption;
-      } catch (err) {
-        console.error(err);
-        showToastMessage('Unable to create country. Please try again.', 'error');
-        return null;
-      }
-    },
-    [],
-  );
-
-  const [datalistSelections, setDatalistSelections] = useState<Record<string, string | null>>(() => ({
-    country: record.CountryID != null ? String(record.CountryID) : null,
-  }));
-  const datalistSelectionsRef = useRef(datalistSelections);
-  datalistSelectionsRef.current = datalistSelections;
-
-  const selectedCountryId = datalistSelections.country;
-
   const fieldDefinitions = useMemo(
     () =>
       buildFieldDefinitions(
@@ -383,17 +334,9 @@ export default function CustomerBasicDataClient({
         parentCustomers,
         pricingPolicies,
         importanceOptions,
-        countryOptions,
-        handleCreateCountry,
+        countries,
       ),
-    [
-      customerGroups,
-      parentCustomers,
-      pricingPolicies,
-      importanceOptions,
-      countryOptions,
-      handleCreateCountry,
-    ],
+    [customerGroups, parentCustomers, pricingPolicies, importanceOptions, countries],
   );
 
   const editableFields = useMemo(
@@ -416,6 +359,7 @@ export default function CustomerBasicDataClient({
   savedValuesRef.current = savedValues;
   const valuesRef = useRef(values);
   valuesRef.current = values;
+  const selectedCountryId = values.country ?? '';
 
   const handleValueChange = useCallback((fieldId: string, value: string) => {
     setValues((prev) => ({ ...prev, [fieldId]: value }));
@@ -426,12 +370,10 @@ export default function CustomerBasicDataClient({
       if (!def.updateField) return false;
       let payloadValue: string | number | null | undefined = null;
       let resolvedDisplayValue = rawValue;
-      let pendingDatalistOptionValue: string | null | undefined;
 
       if (def.datalistOptions && def.datalistOptions.length > 0) {
         const trimmed = rawValue.trim();
         if (!trimmed) {
-          pendingDatalistOptionValue = null;
           payloadValue = null;
         } else {
           let option: CustomerDropdownOption | null | undefined = def.datalistOptions.find(
@@ -445,7 +387,6 @@ export default function CustomerBasicDataClient({
             setValues((prev) => ({ ...prev, [def.id]: savedValuesRef.current[def.id] ?? '' }));
             return false;
           }
-          pendingDatalistOptionValue = option.value;
           resolvedDisplayValue = option.label;
           payloadValue =
             def.valueType === 'number' ? Number(option.value) : def.valueType === 'date' ? option.value : option.value;
@@ -474,13 +415,6 @@ export default function CustomerBasicDataClient({
           return next;
         });
         setValues((prev) => ({ ...prev, [def.id]: resolvedDisplayValue }));
-        if (def.datalistRecordKey) {
-          setDatalistSelections((prev) => {
-            const next = { ...prev, [def.id]: pendingDatalistOptionValue ?? null };
-            datalistSelectionsRef.current = next;
-            return next;
-          });
-        }
         showToastMessage(`${def.label} updated`, 'success');
         return true;
       } catch (err) {

@@ -319,6 +319,20 @@ const normalizeTextValue = (value: unknown): string => {
   return String(value).trim();
 };
 
+const collectContactIds = (values: unknown): number[] => {
+  if (!Array.isArray(values)) return [];
+  const normalized = new Set<number>();
+  values.forEach((value) => {
+    const id = normalizeContactId(value);
+    if (id != null) {
+      normalized.add(id);
+    }
+  });
+  return Array.from(normalized);
+};
+
+const CONTACT_DELETE_BATCH = 200;
+
 const normalizeStatusName = (value: unknown): string => {
   if (typeof value === "string") return value.trim();
   return "";
@@ -567,6 +581,54 @@ export async function PATCH(req: NextRequest) {
     if (err instanceof ContactUpdateError) {
       return NextResponse.json({ ok: false, error: err.message }, { status: err.status });
     }
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => null);
+    const ids = collectContactIds((body as { ContactIDs?: unknown } | null)?.ContactIDs ?? []);
+    if (ids.length === 0) {
+      return NextResponse.json(
+        { ok: false, error: "No contacts selected for deletion" },
+        { status: 400 },
+      );
+    }
+
+    const pool = await getPool();
+    let deleted = 0;
+
+    for (let idx = 0; idx < ids.length; idx += CONTACT_DELETE_BATCH) {
+      const chunk = ids.slice(idx, idx + CONTACT_DELETE_BATCH);
+      if (chunk.length === 0) continue;
+      const transaction = new sql.Transaction(pool);
+      await transaction.begin();
+      try {
+        const request = transaction.request();
+        const placeholders: string[] = [];
+        chunk.forEach((value, chunkIdx) => {
+          const paramName = `contact_${chunkIdx}`;
+          request.input(paramName, sql.Int, value);
+          placeholders.push(`@${paramName}`);
+        });
+        const deleteSql = `
+          DELETE FROM dbo.Contacts
+          WHERE ID IN (${placeholders.join(", ")});
+        `;
+        const result = await request.query(deleteSql);
+        await transaction.commit();
+        deleted += result.rowsAffected?.[0] ?? 0;
+      } catch (chunkErr) {
+        await transaction.rollback().catch(() => {});
+        throw chunkErr;
+      }
+    }
+
+    return NextResponse.json({ ok: true, deleted });
+  } catch (err: unknown) {
+    console.error(err);
     const message = err instanceof Error ? err.message : "Server error";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }

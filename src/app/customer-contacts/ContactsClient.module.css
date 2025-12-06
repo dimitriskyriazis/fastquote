@@ -13,14 +13,31 @@
 .heading {
   margin: 0;
   font-size: 24px;
+  flex: 0 1 auto;
+  text-align: center;
 }
 
 .headerRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
+  padding: 4px 0;
   flex-wrap: wrap;
+}
+
+.headerSide {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.headerSideStart {
+  justify-content: flex-start;
+}
+
+.headerSideEnd {
+  justify-content: flex-end;
 }
 
 .headerActions {
@@ -28,7 +45,6 @@
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
 .headerButton {
@@ -73,4 +89,15 @@
 
 .gridFrame :global(.ag-theme-quartz .ag-cell) {
   transition: background-color 140ms ease;
+}
+
+.backLink {
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background-color: #e5e7eb;
+  color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  text-decoration: none;
 }

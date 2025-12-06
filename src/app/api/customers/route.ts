@@ -69,6 +69,27 @@ type CustomerRow = {
 
 type CustomerRowWithCount = CustomerRow & { __totalCount: number | bigint | null };
 
+const normalizeCustomerId = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
+};
+
+const collectCustomerIds = (values: unknown): number[] => {
+  if (!Array.isArray(values)) return [];
+  const normalized = new Set<number>();
+  values.forEach((value) => {
+    const id = normalizeCustomerId(value);
+    if (id != null) normalized.add(id);
+  });
+  return Array.from(normalized);
+};
+
+const CUSTOMER_DELETE_BATCH = 200;
+
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   CustomerID: "dbo.Customers.ID",
   CustomerName: "dbo.Customers.Name",
@@ -381,6 +402,66 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ ok: true, rows, rowCount });
+  } catch (err: unknown) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => null);
+    const ids = collectCustomerIds((body as { CustomerIDs?: unknown } | null)?.CustomerIDs ?? []);
+    if (ids.length === 0) {
+      return NextResponse.json({ ok: false, error: "No customers selected for deletion" }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    let deleted = 0;
+
+    for (let idx = 0; idx < ids.length; idx += CUSTOMER_DELETE_BATCH) {
+      const chunk = ids.slice(idx, idx + CUSTOMER_DELETE_BATCH);
+      if (chunk.length === 0) continue;
+      const transaction = new sql.Transaction(pool);
+      await transaction.begin();
+      try {
+        const request = transaction.request();
+        const paramNames: string[] = [];
+        chunk.forEach((value, chunkIdx) => {
+          const paramName = `customer_${chunkIdx}`;
+          paramNames.push(paramName);
+          request.input(paramName, sql.Int, value);
+        });
+        const placeholders = paramNames.map((name) => `@${name}`).join(", ");
+
+        await request.query(`
+          DELETE FROM dbo.Contacts
+          WHERE CustomerID IN (${placeholders});
+        `);
+        await request.query(`
+          DELETE od
+          FROM dbo.OfferDetails AS od
+          INNER JOIN dbo.Offer AS o ON od.OfferID = o.ID
+          WHERE o.CustomerID IN (${placeholders});
+        `);
+        await request.query(`
+          DELETE FROM dbo.Offer
+          WHERE CustomerID IN (${placeholders});
+        `);
+        const deleteResult = await request.query(`
+          DELETE FROM dbo.Customers
+          WHERE ID IN (${placeholders});
+        `);
+        await transaction.commit();
+        deleted += deleteResult.rowsAffected?.[0] ?? 0;
+      } catch (chunkErr) {
+        await transaction.rollback().catch(() => {});
+        throw chunkErr;
+      }
+    }
+
+    return NextResponse.json({ ok: true, deleted });
   } catch (err: unknown) {
     console.error(err);
     const message = err instanceof Error ? err.message : "Server error";

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import type { ConnectionPool, Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
+import { resolveAuditUserId } from "../../../lib/auditTrail";
 
 type TextFilterModel = {
   filterType: "text";
@@ -55,6 +56,10 @@ type NormalizedMarketUpdate = {
   marketId: number;
   field: "Name" | "SalesDivision" | "Enabled";
   value: unknown;
+};
+
+type MarketDeleteBody = {
+  MarketIDs?: Array<number | string | null>;
 };
 
 class MarketUpdateError extends Error {
@@ -166,14 +171,18 @@ const normalizeTextValue = (value: unknown): string => {
 const applyMarketUpdate = async (
   pool: ConnectionPool,
   update: NormalizedMarketUpdate,
+  auditUserId: string | null,
 ) => {
   if (update.field === "Name") {
     const request = pool.request();
     request.input("marketId", sql.Int, update.marketId);
     request.input("value", sql.NVarChar, normalizeTextValue(update.value));
+    request.input("userId", sql.NVarChar(450), auditUserId ?? null);
     await request.query(`
       UPDATE dbo.Markets
-      SET Name = @value
+      SET Name = @value,
+        ModifiedOn = SYSUTCDATETIME(),
+        ModifiedBy = @userId
       WHERE ID = @marketId
     `);
     return;
@@ -182,9 +191,12 @@ const applyMarketUpdate = async (
     const request = pool.request();
     request.input("marketId", sql.Int, update.marketId);
     request.input("value", sql.Bit, normalizeBooleanInput(update.value) ? 1 : 0);
+    request.input("userId", sql.NVarChar(450), auditUserId ?? null);
     await request.query(`
       UPDATE dbo.Markets
-      SET Enabled = @value
+      SET Enabled = @value,
+        ModifiedOn = SYSUTCDATETIME(),
+        ModifiedBy = @userId
       WHERE ID = @marketId
     `);
     return;
@@ -194,9 +206,12 @@ const applyMarketUpdate = async (
     const request = pool.request();
     request.input("marketId", sql.Int, update.marketId);
     request.input("divisionId", sql.Int, null);
+    request.input("userId", sql.NVarChar(450), auditUserId ?? null);
     await request.query(`
       UPDATE dbo.Markets
-      SET SalesDivisionID = @divisionId
+      SET SalesDivisionID = @divisionId,
+        ModifiedOn = SYSUTCDATETIME(),
+        ModifiedBy = @userId
       WHERE ID = @marketId
     `);
     return;
@@ -216,6 +231,7 @@ const applyMarketUpdate = async (
   const request = pool.request();
   request.input("marketId", sql.Int, update.marketId);
   request.input("divisionId", sql.Int, divisionId);
+  request.input("userId", sql.NVarChar(450), auditUserId ?? null);
   await request.query(`
     UPDATE dbo.Markets
     SET SalesDivisionID = @divisionId
@@ -412,8 +428,9 @@ export async function PATCH(req: NextRequest) {
     }
 
     const pool = await getPool();
+    const auditUserId = resolveAuditUserId(req);
     for (const entry of normalized) {
-      await applyMarketUpdate(pool, entry);
+        await applyMarketUpdate(pool, entry, auditUserId);
     }
 
     return NextResponse.json({ ok: true, updated: normalized.length });
@@ -423,6 +440,46 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ ok: false, error: err.message }, { status: err.status });
     }
     const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const body = (await req.json().catch(() => null)) as MarketDeleteBody | null;
+    const rawIds = Array.isArray(body?.MarketIDs) ? body.MarketIDs : [];
+    const ids = Array.from(
+      new Set(
+        rawIds
+          .map((entry) => {
+            if (typeof entry === "number" && Number.isFinite(entry)) {
+              return Math.trunc(entry);
+            }
+            if (typeof entry === "string") {
+              const parsed = Number.parseInt(entry, 10);
+              if (Number.isFinite(parsed)) return parsed;
+            }
+            return null;
+          })
+          .filter((value): value is number => value != null),
+      ),
+    );
+    if (ids.length === 0) {
+      return NextResponse.json({ ok: false, error: "No markets provided" }, { status: 400 });
+    }
+    const pool = await getPool();
+    const request = pool.request();
+    ids.forEach((value, idx) => {
+      request.input(`id${idx}`, sql.Int, value);
+    });
+    await request.query(`
+      DELETE FROM dbo.Markets
+      WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
+    `);
+    return NextResponse.json({ ok: true, deleted: ids.length });
+  } catch (err) {
+    console.error("Failed to delete markets", err);
+    const message = err instanceof Error ? err.message : "Unable to delete markets.";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

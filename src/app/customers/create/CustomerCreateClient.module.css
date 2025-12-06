@@ -1,0 +1,18 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.requiredMark {
+  color: #dc2626;
+  margin-left: 4px;
+  font-size: 0.75rem;
+}
+
+.fieldError {
+  font-size: 0.75rem;
+  color: #b91c1c;
+  margin-top: 2px;
+  min-height: 1em;
+}
