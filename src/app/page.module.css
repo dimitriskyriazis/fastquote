@@ -1,0 +1,198 @@
+.homePage {
+  width: 100%;
+  margin: 0;
+  padding: 40px 72px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: stretch;
+  gap: 48px;
+  padding: 48px;
+  border-radius: 40px;
+  border: 0;
+  background: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 30px 70px rgba(15, 23, 42, 0.1);
+  width: 100%;
+}
+
+.heroContent {
+  flex: 1;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 220px;
+}
+
+.heroMiddle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.heroTitle {
+  margin: 6px 0;
+  font-size: clamp(2rem, 2vw + 1rem, 2.8rem);
+  color: #0f172a;
+}
+
+.tagline {
+  margin: 0;
+  color: #1f2937;
+  max-width: 590px;
+  line-height: 1.5;
+}
+
+.signature {
+  margin-top: auto;
+  margin-bottom: 0;
+  align-self: flex-start;
+}
+
+.heroImage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  min-height: 220px;
+}
+
+.logoImage {
+  width: 380px;
+  height: auto;
+  border-radius: 0;
+  object-fit: contain;
+}
+
+.heroCaption {
+  margin: 0;
+  margin-top: auto;
+  font-size: 0.85rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: rgba(15, 23, 42, 0.8);
+}
+
+.recentOffersSection {
+  background: #ffffff;
+  border-radius: 36px;
+  border: 0;
+  padding: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
+}
+
+.sectionHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.sectionTitle {
+  margin: 6px 0 0;
+  font-size: 1.8rem;
+  color: #0f172a;
+}
+
+.sectionAction {
+  font-weight: 600;
+  color: #dc2626;
+  border-color: rgba(220, 38, 38, 0.5);
+  background: rgba(220, 38, 38, 0.06);
+  box-shadow: none;
+}
+
+.sectionAction:hover,
+.sectionAction:focus-visible {
+  border-color: rgba(220, 38, 38, 0.85);
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.emptyState {
+  border: 1px dashed rgba(15, 23, 42, 0.3);
+  border-radius: 18px;
+  padding: 28px;
+  background: #f9fafb;
+  text-align: center;
+  color: #475569;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.recentOfferGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.recentOfferCard {
+  border-radius: 20px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: #ecf5ffd7;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 120px;
+  transition: transform 200ms ease, box-shadow 200ms ease;
+  text-decoration: none;
+  color: inherit;
+}
+
+.recentOfferCard:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
+}
+
+.recentOfferCard:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.8);
+  outline-offset: 3px;
+}
+
+.cardLabel {
+  margin: 0;
+  font-weight: 600;
+  color: #0f172a;
+  font-size: 1.05rem;
+  line-height: 1.4;
+}
+
+.cardMetaRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cardDate {
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.cardId {
+  font-size: 0.9rem;
+  color: #a0aec0;
+}
+
+@media (max-width: 720px) {
+  .homePage {
+    padding: 20px;
+  }
+
+  .hero {
+    padding: 24px;
+  }
+
+  .recentOffersSection {
+    padding: 24px;
+  }
+}

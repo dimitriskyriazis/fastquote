@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import OfferCreateClient from './OfferCreateClient';
+import OfferCreateClient, { type MarketOption } from './OfferCreateClient';
 import styles from '../offersDetail.module.css';
 import clientStyles from './OfferCreateClient.module.css';
 import { getPool } from '../../../lib/sql';
@@ -7,6 +7,7 @@ import { toDropdownOptions, type RawDropdownRow, type DropdownOption } from '../
 import { getAuditFallbackUserId } from '../../../lib/auditTrail';
 
 type LookupRow = RawDropdownRow & { ID: number; Name: string | null };
+type MarketLookupRow = LookupRow & { SalesDivisionID?: number | null };
 
 const mapOptions = (rows: LookupRow[] | undefined | null): DropdownOption[] =>
   toDropdownOptions<LookupRow>(rows);
@@ -56,15 +57,34 @@ async function fetchPricingPolicies() {
   }
 }
 
-async function fetchMarkets() {
+const normalizeDropdownLabel = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const mapMarketOptions = (rows: MarketLookupRow[] | undefined | null): MarketOption[] =>
+  (rows ?? [])
+    .filter((row): row is MarketLookupRow & { ID: number } => row?.ID != null)
+    .map((row) => {
+      const stringId = String(row.ID);
+      const label = normalizeDropdownLabel(row.Name) ?? `Option ${stringId}`;
+      return {
+        value: stringId,
+        label,
+        salesDivisionId: row.SalesDivisionID != null ? String(row.SalesDivisionID) : '',
+      };
+    });
+
+async function fetchMarkets(): Promise<MarketOption[]> {
   try {
     const pool = await getPool();
-    const result = await pool.request().query<LookupRow>(`
-      SELECT ID, Name
+    const result = await pool.request().query<MarketLookupRow>(`
+      SELECT ID, Name, SalesDivisionID
       FROM dbo.Markets
       ORDER BY Name
     `);
-    return mapOptions(result.recordset);
+    return mapMarketOptions(result.recordset);
   } catch (err) {
     console.error('Failed to load markets', err);
     return [];

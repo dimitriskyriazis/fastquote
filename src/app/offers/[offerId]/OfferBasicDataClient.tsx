@@ -13,6 +13,7 @@ import type {
   OfferDropdownOption,
 } from './OfferBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
+import { addRecentOffer, buildRecentOfferLabel } from '../../lib/recentOffers';
 
 type Props = {
   offerId: string;
@@ -245,6 +246,26 @@ export default function OfferBasicDataClient({ offerId, record, contacts, status
 
     return options;
   }, [contacts, record.ContactFullName, record.ContactID]);
+
+  useEffect(() => {
+    const trimmedDescription = typeof record.Description === 'string'
+      ? record.Description.trim()
+      : null;
+    const trimmedTitle = typeof record.Title === 'string'
+      ? record.Title.trim()
+      : null;
+    const label = buildRecentOfferLabel({
+      title: trimmedTitle,
+      description: trimmedDescription,
+    });
+    addRecentOffer({
+      id: offerId,
+      label,
+      customerName: record.CustomerName ?? null,
+      description: trimmedDescription || null,
+      title: trimmedTitle || null,
+    });
+  }, [offerId, record.CustomerName, record.Description, record.Title]);
 
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
   useEffect(() => {

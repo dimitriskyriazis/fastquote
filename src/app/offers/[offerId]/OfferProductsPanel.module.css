@@ -138,3 +138,11 @@
   background: #ffb17c;
   color: inherit;
 }
+
+.requestedColumnCell {
+  background: #e5e7eb;
+}
+
+.requestedCategoryColumnCell {
+  background: #d9dde3;
+}

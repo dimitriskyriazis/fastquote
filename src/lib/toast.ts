@@ -1,4 +1,4 @@
-export type ToastTone = 'info' | 'error' | 'success';
+export type ToastTone = 'info' | 'error' | 'success' | 'warning';
 
 export const showToastMessage = (message: string, tone: ToastTone = 'info') => {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;

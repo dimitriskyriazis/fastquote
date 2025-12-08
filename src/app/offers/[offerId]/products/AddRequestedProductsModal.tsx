@@ -19,7 +19,7 @@ type Props = {
   onImported: (result: { inserted?: number; updated?: number; total?: number }) => void;
 };
 
-type HeaderColumnKey = 'itemNo' | 'brand' | 'modelNumber' | 'partNumber' | 'description' | 'quantity';
+type HeaderColumnKey = 'itemNo' | 'brand' | 'modelNumber' | 'partNumber' | 'description' | 'description2' | 'quantity';
 
 type ColumnOption = { index: number; label: string; normalized: string };
 
@@ -50,15 +50,17 @@ type PayloadRow = {
   modelNumber?: string | null;
   partNumber?: string | null;
   description?: string | null;
+  description2?: string | null;
   quantity?: string | number | null;
 };
 
 const columnKeywords: Record<HeaderColumnKey, string[]> = {
   itemNo: ['item', 'tree', 'ordering', 'no', '#', 'position'],
-  brand: ['brand', 'maker', 'manufacturer', 'vendor'],
+  brand: ['brand', 'maker', 'make', 'manufacturer', 'vendor'],
   modelNumber: ['model', 'series', 'type', 'model#'],
   partNumber: ['part', 'sku', 'code', 'p/n', 'article'],
   description: ['description', 'desc', 'name', 'details'],
+  description2: ['description2', 'desc2', 'desc 2', 'secondary', 'secondary description', 'details 2'],
   quantity: ['qty', 'quantity', 'amount', 'pcs', 'pieces'],
 };
 
@@ -68,6 +70,7 @@ const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string }> = [
   { key: 'modelNumber', label: 'Model No' },
   { key: 'partNumber', label: 'Part No' },
   { key: 'description', label: 'Description' },
+  { key: 'description2', label: 'Description 2' },
   { key: 'quantity', label: 'Quantity' },
 ];
 
@@ -214,6 +217,7 @@ const hasPayloadValues = (row: PayloadRow) => {
     || (row.modelNumber && row.modelNumber.trim())
     || (row.partNumber && row.partNumber.trim())
     || (row.description && row.description.trim())
+    || (row.description2 && row.description2.trim())
     || (row.quantity != null && row.quantity !== ''),
   );
 };
@@ -427,6 +431,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
         const modelNumber = normalizeCellText(getCell(selection.modelNumber ?? null));
         const partNumber = normalizeCellText(getCell(selection.partNumber ?? null));
         const description = normalizeCellText(getCell(selection.description ?? null));
+        const description2 = normalizeCellText(getCell(selection.description2 ?? null));
         const quantityRaw = getCell(selection.quantity ?? null);
         const quantity = normalizeQuantityValue(quantityRaw);
         const payloadRow: PayloadRow = {
@@ -435,6 +440,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
           modelNumber,
           partNumber,
           description,
+          description2,
           quantity,
         };
         if (hasPayloadValues(payloadRow)) {

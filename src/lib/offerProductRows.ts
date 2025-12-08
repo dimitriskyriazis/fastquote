@@ -47,22 +47,24 @@ export const resolveOfferProductRowType = (row: OfferProductRow): OfferProductRo
   const modelNumberRaw = (row as { ModelNumber?: unknown }).ModelNumber;
   const requestedPartRaw = (row as { RequestedPartNo?: unknown }).RequestedPartNo;
   const requestedModelRaw = (row as { RequestedModelNo?: unknown }).RequestedModelNo;
+  const categoryRaw = (row as { IsCategory?: unknown }).IsCategory;
 
   const isComment = isTruthy(commentRaw);
   const isPrintable = isTruthy(printableRaw);
   const isExplicitlyNotPrintable = isFalsy(printableRaw);
+  const isExplicitCategory = isTruthy(categoryRaw);
 
-  if (isComment && isPrintable) return 'printable-comment';
-  if (isComment && isExplicitlyNotPrintable) return 'non-printable-comment';
+  if (isComment) {
+    if (isExplicitlyNotPrintable) return 'non-printable-comment';
+    return 'printable-comment';
+  }
+  if (isExplicitCategory) return 'category';
   const hasPartOrModel =
     hasPartNumber(partNumberRaw)
     || hasModelNumber(modelNumberRaw)
     || hasPartNumber(requestedPartRaw)
     || hasModelNumber(requestedModelRaw);
 
-  if (printableRaw == null && commentRaw == null && !hasPartOrModel) {
-    return 'category';
-  }
   if (hasPartOrModel) {
     return 'product';
   }

@@ -60,3 +60,27 @@
   opacity: 0;
   transition: opacity 140ms ease;
 }
+
+.gridShell :global(.ag-column-drop-wrapper),
+.gridShell :global(.ag-column-drop),
+.gridShell :global(.ag-column-drop-cell),
+.gridShell :global(.ag-column-drop-cell-button),
+.gridShell :global(.ag-column-drop-vertical),
+.gridShell :global(.ag-column-drop-empty-message),
+.gridShell :global(.ag-column-drop-vertical-empty-message),
+.gridShell :global(.ag-column-drop-vertical-title-bar),
+.gridShell :global(.ag-column-drop-horizontal) {
+  display: none !important;
+}
+
+:global(.ag-column-drop-wrapper),
+:global(.ag-column-drop),
+:global(.ag-column-drop-cell),
+:global(.ag-column-drop-cell-button),
+:global(.ag-column-drop-vertical),
+:global(.ag-column-drop-empty-message),
+:global(.ag-column-drop-vertical-empty-message),
+:global(.ag-column-drop-vertical-title-bar),
+:global(.ag-column-drop-horizontal) {
+  display: none !important;
+}

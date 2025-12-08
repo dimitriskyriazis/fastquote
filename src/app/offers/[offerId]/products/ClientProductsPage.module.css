@@ -14,6 +14,7 @@
 .leftRequestedRow {
   display: flex;
   align-items: center;
+  gap: 0.5rem;
 }
 
 .topControls {
@@ -110,4 +111,8 @@
   background: #86efac;
   color: #065f46;
   border-color: rgba(22, 163, 74, 0.6);
+}
+
+.manualToggleActive:hover {
+  background: #86efadd7;
 }

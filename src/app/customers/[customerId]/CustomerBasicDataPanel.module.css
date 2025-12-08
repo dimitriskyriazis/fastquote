@@ -97,6 +97,9 @@
   box-shadow: none;
   direction: ltr;
   text-align: left;
+}
+
+.fieldControl:not(select) {
   cursor: text;
 }
 

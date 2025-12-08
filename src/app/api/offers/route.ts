@@ -57,6 +57,7 @@ type QueryParam = { key: string; value: string | number | boolean };
 type OfferRow = {
   Description: string | null;
   Title: string | null;
+  Comments: string | null;
   CustomerName: string | null;
   PricingPolicyName: string | null;
   SalesMarket: string | null;
@@ -78,6 +79,7 @@ type OfferRowWithCount = OfferRow & { __totalCount: number | bigint | null };
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   Description: 'dbo.Offer.Description',
   Title: 'dbo.Offer.Title',
+  Comments: 'dbo.Offer.Comments',
   CustomerName: 'dbo.Customers.Name',
   PricingPolicyName: 'dbo.PricingPolicies.Name',
   SalesMarket: 'dbo.Markets.Name',
@@ -298,6 +300,7 @@ export async function POST(req: NextRequest) {
         dbo.Offer.ID AS OfferPK,
         dbo.Offer.Description,
         dbo.Offer.Title,
+        dbo.Offer.Comments,
         dbo.Customers.Name AS CustomerName,
         dbo.PricingPolicies.Name AS PricingPolicyName,
         dbo.Markets.Name AS SalesMarket,

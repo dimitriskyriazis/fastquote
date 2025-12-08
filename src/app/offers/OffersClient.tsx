@@ -269,7 +269,14 @@ export default function OffersClient() {
     { field: 'SalesPerson', headerName: 'Sales Creation Person', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'OfferStatus', headerName: 'Status', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'ProjectID', headerName: 'Project ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
-    { field: 'offerId', headerName: 'Offer ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
+    {
+      field: 'Comments',
+      headerName: 'Comments',
+      filter: 'agTextColumnFilter',
+      flex: 1,
+      minWidth: 220,
+      suppressAutoSize: true,
+    },
     { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
     { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', valueFormatter: (params) => formatDateDMY(params.value),
@@ -312,12 +319,15 @@ export default function OffersClient() {
         </div>
       </div>
       <div className={styles.gridFrame}>
-        <AgGridAll
-          endpoint="/api/offers"
-          columnDefs={columnDefs}
-          getContextMenuItems={offersContextMenuItems}
-          onGridReady={handleGridReady}
-        />
+      <AgGridAll
+        endpoint="/api/offers"
+        columnDefs={columnDefs}
+        getContextMenuItems={offersContextMenuItems}
+        onGridReady={handleGridReady}
+        suppressRowGroup
+        rowGroupPanelShow="never"
+        suppressMovableColumns
+      />
       </div>
     </main>
   );

@@ -13,6 +13,29 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   {
+    label: "Home",
+    href: "/",
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M4 11.5L12 4l8 7.5v8a1 1 0 0 1-1 1h-4v-5h-6v5H5a1 1 0 0 1-1-1z"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+        />
+        <path
+          d="M7 21v-6.5h10V21"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    ),
+  },
+  {
     label: "Offers",
     href: "/offers",
     icon: (
@@ -127,7 +150,10 @@ export default function SideNav() {
       <div className="side-nav__divider" aria-hidden="true" />
       <nav className="side-nav__items" aria-label="Primary">
         {navItems.map((item) => {
-          const active = pathname?.startsWith(item.href);
+        const active =
+          item.href === '/'
+            ? pathname === '/' || pathname === ''
+            : pathname?.startsWith(item.href);
           return (
             <Link
               key={item.href}

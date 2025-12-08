@@ -2,17 +2,20 @@
 
 import React, { useMemo, useCallback, useState, useRef, useEffect } from 'react';
 import type {
-  ColDef,
-  ICellRendererParams,
-  ValueFormatterParams,
-  ValueGetterParams,
-  RowClassParams,
-  GetContextMenuItemsParams,
   CellValueChangedEvent,
+  ColDef,
+  GetContextMenuItemsParams,
   GridApi,
+  ICellRendererParams,
+  IRowNode,
   MenuItemDef,
+  RowClassParams,
   RowDoubleClickedEvent,
   RowHeightParams,
+  RowNode,
+  ValueFormatterParams,
+  ValueGetterParams,
+  ValueSetterParams,
 } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
@@ -37,6 +40,8 @@ const decimalFormatter = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
+
+type GridRowNode = RowNode<Record<string, unknown>> | IRowNode<Record<string, unknown>>;
 
 const plainNumberFormatter = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 0,
@@ -85,6 +90,7 @@ type RequestedFieldKey =
   | 'RequestedModelNo'
   | 'RequestedPartNo'
   | 'RequestedDescription'
+  | 'RequestedDescription2'
   | 'RequestedQuantity';
 
 type RequestedDisplayFieldKey = Exclude<RequestedFieldKey, 'RequestedItemNo'>;
@@ -93,8 +99,31 @@ const REQUESTED_DISPLAY_FIELD_KEYS: RequestedDisplayFieldKey[] = [
   'RequestedModelNo',
   'RequestedPartNo',
   'RequestedDescription',
+  'RequestedDescription2',
   'RequestedQuantity',
 ];
+
+const REQUESTED_FIELD_LABELS: Record<RequestedFieldKey, string> = {
+  RequestedItemNo: 'requested item number',
+  RequestedBrand: 'requested brand',
+  RequestedModelNo: 'requested model number',
+  RequestedPartNo: 'requested part number',
+  RequestedDescription: 'requested description',
+  RequestedDescription2: 'requested description 2',
+  RequestedQuantity: 'requested quantity',
+};
+const REQUESTED_FIELD_SET = new Set<RequestedFieldKey>([
+  'RequestedItemNo',
+  'RequestedBrand',
+  'RequestedModelNo',
+  'RequestedPartNo',
+  'RequestedDescription',
+  'RequestedDescription2',
+  'RequestedQuantity',
+]);
+
+const isRequestedFieldKey = (value: string | null | undefined): value is RequestedFieldKey =>
+  typeof value === 'string' && REQUESTED_FIELD_SET.has(value as RequestedFieldKey);
 
 const compareTreeOrderingValues = (a: unknown, b: unknown) => {
   const sa = String(a ?? '').trim();
@@ -114,6 +143,26 @@ const parseTreeOrderingPath = (value: unknown): number[] => {
     .map((segment) => Number.parseInt(segment, 10))
     .filter((segment) => Number.isFinite(segment));
 };
+
+const compareTreeOrderingPaths = (a: number[], b: number[]) => {
+  if (a.length === 0 && b.length === 0) return 0;
+  if (a.length === 0) return 1;
+  if (b.length === 0) return -1;
+  const max = Math.max(a.length, b.length);
+  for (let idx = 0; idx < max; idx += 1) {
+    const hasA = idx < a.length;
+    const hasB = idx < b.length;
+    if (!hasA && !hasB) return 0;
+    if (!hasA) return -1;
+    if (!hasB) return 1;
+    const va = a[idx];
+    const vb = b[idx];
+    if (va !== vb) return va - vb;
+  }
+  return 0;
+};
+
+const formatTreeOrderingPath = (segments: number[]) => segments.join('.');
 
 const buildTreeOrderingKey = (segments: number[]) => segments.join('.');
 
@@ -149,7 +198,28 @@ const resolveOfferProductTypeLabel = (row: Record<string, unknown> | null | unde
   return 'record';
 };
 
+const isRequestedRow = (row: Record<string, unknown> | null | undefined) =>
+  Boolean((row as { __isRequestedRow?: number | null })?.__isRequestedRow === 1);
+
+const isRequestedDescriptionField = (field: string | null | undefined): field is 'RequestedDescription' | 'RequestedDescription2' =>
+  field === 'RequestedDescription' || field === 'RequestedDescription2';
+
+const canEditRequestedField = (field: RequestedFieldKey, row: Record<string, unknown> | null | undefined) => {
+  if (isRequestedRow(row)) return true;
+  if (isRequestedDescriptionField(field) && isOfferProductCategory(row)) {
+    return true;
+  }
+  return false;
+};
+
 const normalizeDescriptionValue = (value: unknown): string | null => {
+  if (value == null) return null;
+  const str = typeof value === 'string' ? value : String(value);
+  const trimmed = str.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const normalizeRequestedItemNoValue = (value: unknown): string | null => {
   if (value == null) return null;
   const str = typeof value === 'string' ? value : String(value);
   const trimmed = str.trim();
@@ -164,6 +234,67 @@ const normalizeRequestedLookupValue = (value: unknown): string | null => {
   const str = typeof value === 'string' ? value : String(value);
   const trimmed = str.trim();
   return trimmed.length > 0 ? trimmed : null;
+};
+
+const normalizeRequestedQuantityValue = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number.parseFloat(trimmed);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return null;
+};
+
+const hasRequestedLookupIdentifiers = (row: Record<string, unknown> | null | undefined) => {
+  if (!row || typeof row !== 'object') return false;
+  const part = normalizeRequestedLookupValue((row as { RequestedPartNo?: unknown }).RequestedPartNo ?? null);
+  const model = normalizeRequestedLookupValue((row as { RequestedModelNo?: unknown }).RequestedModelNo ?? null);
+  const brand = normalizeRequestedLookupValue((row as { RequestedBrand?: unknown }).RequestedBrand ?? null);
+  return Boolean(part || model || brand);
+};
+
+const hasRequestedRowData = (row: Record<string, unknown> | null | undefined) => {
+  if (!row || typeof row !== 'object') return false;
+  if (hasRequestedLookupIdentifiers(row)) return true;
+  const quantity = normalizeRequestedQuantityValue(
+    (row as { RequestedQuantity?: unknown }).RequestedQuantity ?? null,
+  );
+  return quantity != null;
+};
+
+const isTruthyFlag = (value: unknown): boolean => {
+  if (value == null) return false;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes';
+  }
+  return false;
+};
+
+const shouldSyncRequestedItemNo = (row: Record<string, unknown> | null | undefined) => {
+  if (!row) return false;
+  if (!hasRequestedRowData(row)) return false;
+  if (!isTruthyFlag((row as { IsCategory?: unknown }).IsCategory)) return false;
+  if (isTruthyFlag((row as { IsComment?: unknown }).IsComment)) return false;
+  return true;
+};
+
+const hasRequestedPseudoFields = (row: Record<string, unknown> | null | undefined) => {
+  if (!row || typeof row !== 'object') return false;
+  const requestedPartNumber = normalizeRequestedLookupValue(
+    (row as { RequestedPartNo?: unknown }).RequestedPartNo ?? null,
+  );
+  const requestedModelNumber = normalizeRequestedLookupValue(
+    (row as { RequestedModelNo?: unknown }).RequestedModelNo ?? null,
+  );
+  const requestedQuantity = normalizeRequestedQuantityValue(
+    (row as { RequestedQuantity?: unknown }).RequestedQuantity ?? null,
+  );
+  return Boolean(requestedPartNumber || requestedModelNumber || requestedQuantity != null);
 };
 
 type RequestedLookupInfo = {
@@ -213,6 +344,37 @@ const resolveProductIdFromRequestedInfo = async (info: RequestedLookupInfo): Pro
   } catch (err) {
     console.error('Failed to resolve product for requested row', err);
     requestedHistoryLookupCache.set(cacheKey, null);
+    return null;
+  }
+};
+
+type ProductSummary = {
+  ProductID: number;
+  PartNumber: string | null;
+  ModelNumber: string | null;
+  BrandName: string | null;
+  Description: string | null;
+};
+
+const productSummaryCache = new Map<number, ProductSummary | null>();
+
+const fetchProductSummary = async (productId: number): Promise<ProductSummary | null> => {
+  if (productSummaryCache.has(productId)) {
+    return productSummaryCache.get(productId) ?? null;
+  }
+  try {
+    const res = await fetch(`/api/products/${encodeURIComponent(String(productId))}`);
+    if (!res.ok) {
+      productSummaryCache.set(productId, null);
+      return null;
+    }
+    const payload = (await res.json().catch(() => null)) as { ok?: boolean; product?: ProductSummary } | null;
+    const product = payload?.ok && payload.product ? payload.product : null;
+    productSummaryCache.set(productId, product);
+    return product;
+  } catch (err) {
+    console.error('Failed to fetch product summary', err);
+    productSummaryCache.set(productId, null);
     return null;
   }
 };
@@ -320,6 +482,24 @@ const productHistoryMenuIcon = `
   </span>
 `;
 
+const categoryMenuIcon = `
+  <span class="fastquote-menu-icon fastquote-menu-icon--category" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 5h6l2 2h10v12H3z" />
+      <path d="M3 7h18" />
+    </svg>
+  </span>
+`;
+
+const copyToOfferMenuIcon = `
+  <span class="fastquote-menu-icon fastquote-menu-icon--copy" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 5h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
+      <path d="M7 7V5a2 2 0 0 1 2-2h6" />
+    </svg>
+  </span>
+`;
+
 const productAccentCellClassRules = {
   'offer-products-grid__cell--product-accent': (params: { data?: Record<string, unknown> | null }) =>
     isOfferProductProduct(params.data),
@@ -367,46 +547,82 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
     RequestedModelNo: false,
     RequestedPartNo: false,
     RequestedDescription: false,
+    RequestedDescription2: false,
     RequestedQuantity: false,
   });
+  const [requestedItemNoVisible, setRequestedItemNoVisible] = useState(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
-  const [requestedColumnsReady, setRequestedColumnsReady] = useState(false);
+  const [requestedColumnsReady, setRequestedColumnsReadyFlag] = useState(false);
   const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() => new Set());
   const [categoryPathsWithChildren, setCategoryPathsWithChildren] = useState<Set<string>>(() => new Set());
   const [categoryChildrenKnown, setCategoryChildrenKnown] = useState(false);
+  const treeOrderingRootMapRef = useRef<Map<string, number>>(new Map());
+  const serverRowsRef = useRef<Array<Record<string, unknown>>>([]);
+  const collapsedRefreshRef = useRef(false);
+  const prevRequestedColumnVisibilityRef = useRef<Record<RequestedDisplayFieldKey, boolean> | null>(null);
+  const prevRequestedItemNoVisibleRef = useRef<boolean>(requestedItemNoVisible);
+  const rebuildTreeOrderingRootMap = useCallback((rows?: Array<Record<string, unknown>>) => {
+    const map = new Map<string, number>();
+    (rows ?? []).forEach((row) => {
+      if (!row) return;
+      const path = parseTreeOrderingPath((row as Record<string, unknown>)?.TreeOrdering ?? null);
+      if (path.length === 0) return;
+      const key = String(path[0]);
+      if (!map.has(key)) {
+        map.set(key, map.size + 1);
+      }
+    });
+    treeOrderingRootMapRef.current = map;
+  }, []);
+  const formatDisplayTreeOrdering = useCallback((value: unknown) => {
+    const path = parseTreeOrderingPath(value);
+    if (path.length === 0) return '';
+    const map = treeOrderingRootMapRef.current;
+    const key = String(path[0]);
+    let rootIndex = map.get(key);
+    if (rootIndex == null) {
+      rootIndex = map.size + 1;
+      map.set(key, rootIndex);
+    }
+    const displayPath = [rootIndex, ...path.slice(1)];
+    return formatTreeOrderingPath(displayPath);
+  }, []);
 
   const applyRequestedColumnVisibility = useCallback((visibility: Partial<Record<RequestedDisplayFieldKey, boolean>> | null | undefined, replace = false) => {
+    const resetState = {
+      RequestedBrand: false,
+      RequestedModelNo: false,
+      RequestedPartNo: false,
+      RequestedDescription: false,
+      RequestedDescription2: false,
+      RequestedQuantity: false,
+    };
     if (!visibility) {
       if (!replace) return;
-      setRequestedColumnVisibility({
-        RequestedBrand: false,
-        RequestedModelNo: false,
-        RequestedPartNo: false,
-        RequestedDescription: false,
-        RequestedQuantity: false,
+      setRequestedColumnVisibility((prev) => {
+        const next = { ...resetState };
+        const hasChanged = REQUESTED_DISPLAY_FIELD_KEYS.some((key) => prev[key] !== next[key]);
+        return hasChanged ? next : prev;
       });
       return;
     }
     setRequestedColumnVisibility((prev) => {
-      const next = replace
-        ? {
-          RequestedBrand: false,
-          RequestedModelNo: false,
-          RequestedPartNo: false,
-          RequestedDescription: false,
-          RequestedQuantity: false,
-        }
-        : { ...prev };
+      const next = replace ? { ...resetState } : { ...prev };
       REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
         if (visibility[key] == null) return;
-        next[key] = Boolean(visibility[key]);
+        const nextValue = Boolean(visibility[key]);
+        next[key] = nextValue;
       });
-      return next;
+      const hasChanged = REQUESTED_DISPLAY_FIELD_KEYS.some((key) => prev[key] !== next[key]);
+      return hasChanged ? next : prev;
     });
   }, []);
 
   const defaultColDef = useMemo<ColDef>(() => ({
-    editable: (params) => isOfferProductComment(params?.data ?? null),
+    editable: (params) => (
+      isOfferProductProduct(params?.data ?? null)
+      || isOfferProductComment(params?.data ?? null)
+    ),
     sortable: false,
   }), []);
 
@@ -434,34 +650,41 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
     });
   }, []);
 
-  const handleGridResponse = useCallback((response: GridResponse | null) => {
-    if (response?.requestedColumns) {
-      const visibility: Partial<Record<RequestedDisplayFieldKey, boolean>> = {};
-      REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
-        const value = response.requestedColumns?.[key];
-        if (value != null) {
-          visibility[key] = Boolean(value);
-        }
-      });
-      applyRequestedColumnVisibility(visibility, true);
-    } else if (response) {
-      applyRequestedColumnVisibility(null, true);
+  const updateCategoryAncestors = useCallback(() => {
+    const rows = serverRowsRef.current;
+    if (rows.length === 0) {
+      setCategoryPathsWithChildren((prev) => (prev.size === 0 ? prev : new Set()));
+      setCollapsedCategoryPaths((prev) => (prev.size === 0 ? prev : new Set()));
+      setCategoryChildrenKnown(false);
+      return;
     }
-  }, [applyRequestedColumnVisibility]);
-
-  const updateCategoryAncestors = useCallback((api: GridApi<Record<string, unknown>>) => {
+    const rowsByPath = new Map<string, Record<string, unknown>>();
+    rows.forEach((rowData) => {
+      if (!rowData) return;
+      const path = parseTreeOrderingPath((rowData as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+      if (path.length === 0) return;
+      const key = buildTreeOrderingKey(path);
+      if (!key) return;
+      rowsByPath.set(key, rowData);
+    });
+    if (rowsByPath.size === 0) {
+      setCategoryPathsWithChildren((prev) => (prev.size === 0 ? prev : new Set()));
+      setCategoryChildrenKnown(false);
+      return;
+    }
+    const categoryKeys = new Set<string>();
+    rowsByPath.forEach((rowData, key) => {
+      if (isOfferProductCategory(rowData)) {
+        categoryKeys.add(key);
+      }
+    });
     const next = new Set<string>();
-    let nodesSeen = false;
-    api.forEachNode((node) => {
-      if (!node.data) return;
-      const data = node.data as Record<string, unknown>;
-      nodesSeen = true;
-      const path = parseTreeOrderingPath((data as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
-      for (let idx = 1; idx < path.length; idx += 1) {
-        const ancestorKey = buildTreeOrderingKey(path.slice(0, idx));
-        if (ancestorKey) {
-          next.add(ancestorKey);
-        }
+    rowsByPath.forEach((rowData) => {
+      const path = parseTreeOrderingPath((rowData as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+      if (path.length <= 1) return;
+      const parentKey = buildTreeOrderingKey(path.slice(0, -1));
+      if (parentKey && categoryKeys.has(parentKey)) {
+        next.add(parentKey);
       }
     });
     setCategoryPathsWithChildren((prev) => {
@@ -488,38 +711,115 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
       }
       return changed ? nextCollapsed : prev;
     });
-    if (nodesSeen) {
-      setCategoryChildrenKnown(true);
-    }
+    setCategoryChildrenKnown(true);
   }, []);
+
+  const handleGridResponse = useCallback((response: GridResponse | null) => {
+    const hasRows = Boolean(response?.rowCount && response.rowCount > 0);
+    serverRowsRef.current = Array.isArray(response?.rows) ? response.rows : [];
+    rebuildTreeOrderingRootMap(response?.rows as Array<Record<string, unknown>> | undefined);
+    const requestColumnVisibility: Partial<Record<RequestedDisplayFieldKey, boolean>> = {};
+    if (response?.requestedColumns) {
+      REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
+        const value = response.requestedColumns?.[key];
+        if (value != null) {
+          requestColumnVisibility[key] = Boolean(value);
+        }
+      });
+      applyRequestedColumnVisibility(requestColumnVisibility, true);
+    } else if (response) {
+      applyRequestedColumnVisibility(null, true);
+    }
+    const hasRequestedItemInRows = (response?.rows ?? []).some((row) => normalizeRequestedItemNoValue(
+      (row as Record<string, unknown>)?.RequestedItemNo ?? null,
+    ) != null);
+    const shouldShowRequestedItemNo = hasRows
+      && (Boolean(response?.requestedColumns?.RequestedItemNo) || hasRequestedItemInRows);
+    setRequestedItemNoVisible(shouldShowRequestedItemNo);
+    updateCategoryAncestors();
+  }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, updateCategoryAncestors]);
+
+  const syncRequestedItemNumbers = useCallback((apiParam?: GridApi<Record<string, unknown>> | null) => {
+    const api = apiParam ?? gridApiRef.current;
+    if (!api) return;
+    const requestedEntries: Array<{
+      node: IRowNode<Record<string, unknown>>;
+      path: number[];
+      offerDetailId: number;
+    }> = [];
+    api.forEachNode((node) => {
+      const row = node.data ?? null;
+      if (!row) return;
+      if (!isRequestedRow(row)) return;
+      const offerDetailId = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+      if (offerDetailId == null) return;
+      if (!shouldSyncRequestedItemNo(row)) return;
+      const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+      requestedEntries.push({ node, path, offerDetailId });
+    });
+    if (requestedEntries.length === 0) return;
+    requestedEntries.sort((a, b) => compareTreeOrderingPaths(a.path, b.path));
+    const updates: Array<{ OfferDetailID: number; RequestedItemNo: string }> = [];
+    requestedEntries.forEach((entry, idx) => {
+      const targetNumber = entry.path.length > 0
+        ? formatTreeOrderingPath(entry.path)
+        : String(idx + 1);
+      const currentNumber = normalizeRequestedItemNoValue(entry.node.data?.RequestedItemNo ?? null) ?? '';
+      if (currentNumber === targetNumber) return;
+      updates.push({ OfferDetailID: entry.offerDetailId, RequestedItemNo: targetNumber });
+      try {
+        entry.node.setDataValue?.('RequestedItemNo', targetNumber);
+      } catch {
+        /* noop */
+      }
+    });
+    if (updates.length === 0) return;
+    const runUpdate = async () => {
+      try {
+        const res = await fetch(resolvedEndpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Unable to update requested item numbers (status ${res.status})`);
+        }
+      } catch (err) {
+        console.error('Failed to update requested item numbers', err);
+        showToastMessage('Unable to sync requested item numbers. Please refresh the grid.', 'error');
+      }
+    };
+    void runUpdate();
+  }, [resolvedEndpoint]);
+
+  const handleRowsMoved = useCallback((api: GridApi<Record<string, unknown>>) => {
+    syncRequestedItemNumbers(api);
+    api.applyColumnState({
+      state: [{ colId: 'RequestedItemNo', sort: 'asc', sortIndex: 0 }],
+      defaultState: { sort: null },
+      applyOrder: true,
+    });
+    try {
+      api.refreshClientSideRowModel();
+    } catch {
+      /* noop */
+    }
+  }, [syncRequestedItemNumbers]);
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     gridApiRef.current = api;
-    setRequestedColumnsReady(true);
-    updateCategoryAncestors(api);
-  }, [updateCategoryAncestors, setRequestedColumnsReady]);
+    setRequestedColumnsReadyFlag(true);
+  }, [setRequestedColumnsReadyFlag]);
 
-  useEffect(() => {
-    const api = gridApiRef.current;
-    if (api) {
-      api.resetRowHeights();
-      api.redrawRows();
-      updateCategoryAncestors(api);
-    }
-  }, [collapsedCategoryPaths, updateCategoryAncestors]);
+  const handleGridModelUpdated = useCallback((api: GridApi<Record<string, unknown>>) => {
+    updateCategoryAncestors();
+  }, [updateCategoryAncestors]);
 
-  const isRowHiddenByCollapsedAncestor = useCallback((row: Record<string, unknown> | null | undefined) => {
-    if (!row) return false;
-    const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
-    if (path.length === 0) return false;
-    for (let idx = 1; idx < path.length; idx += 1) {
-      const ancestorKey = buildTreeOrderingKey(path.slice(0, idx));
-      if (ancestorKey && collapsedCategoryPaths.has(ancestorKey)) {
-        return true;
-      }
-    }
-    return false;
-  }, [collapsedCategoryPaths]);
+  const getRowHeight = useCallback((params: RowHeightParams<Record<string, unknown>>) => {
+    const row = params.data ?? null;
+    return isOfferProductCategory(row) ? 40 : 32;
+  }, []);
 
   const isCategoryRowCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!row) return false;
@@ -537,6 +837,24 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
     if (!categoryChildrenKnown) return true;
     return key.length > 0 && categoryPathsWithChildren.has(key);
   }, [categoryChildrenKnown, categoryPathsWithChildren]);
+
+  const hasCollapsedAncestor = useCallback((path: number[]) => {
+    for (let idx = 1; idx < path.length; idx += 1) {
+      const ancestorKey = buildTreeOrderingKey(path.slice(0, idx));
+      if (ancestorKey && collapsedCategoryPaths.has(ancestorKey)) {
+        return true;
+      }
+    }
+    return false;
+  }, [collapsedCategoryPaths]);
+
+  const processVisibleRows = useCallback((rows: Array<Record<string, unknown>>) => (
+    rows.filter((row) => {
+      if (!row) return true;
+      const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+      return path.length === 0 || !hasCollapsedAncestor(path);
+    })
+  ), [hasCollapsedAncestor]);
 
   const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!isOfferProductCategory(row)) return;
@@ -577,29 +895,81 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
     }
     if (!baseClass) return undefined;
     const classes = [baseClass];
-    if (rowType === 'category') {
-      if (isCategoryRowCollapsed(params.data)) {
-        classes.push('offer-row--category-collapsed');
+      if (rowType === 'category') {
+        if (isCategoryRowCollapsed(params.data)) {
+          classes.push('offer-row--category-collapsed');
+        }
+        if (!hasCategoryChildren(params.data)) {
+          classes.push('offer-row--category-empty');
+        }
       }
-      if (!hasCategoryChildren(params.data)) {
-        classes.push('offer-row--category-empty');
-      }
-    }
-    if (isRowHiddenByCollapsedAncestor(params.data)) {
-      classes.push('offer-row--collapsed-child');
-    }
     return classes.join(' ');
-  }, [isCategoryRowCollapsed, isRowHiddenByCollapsedAncestor, hasCategoryChildren]);
+  }, [isCategoryRowCollapsed, hasCategoryChildren]);
 
   const handleRowDoubleClicked = useCallback((params: RowDoubleClickedEvent<Record<string, unknown>>) => {
+    const target = params.event?.target;
+    if (target instanceof Element) {
+      const isDescriptionCell = Boolean(target.closest('[col-id="Description"]'));
+      const isRequestedDescriptionCell = Boolean(target.closest('[col-id="RequestedDescription"]'));
+      const isRequestedDescription2Cell = Boolean(target.closest('[col-id="RequestedDescription2"]'));
+      if (isDescriptionCell || isRequestedDescriptionCell || isRequestedDescription2Cell) {
+        // Prevent collapsing the category when double-clicking a description cell.
+        return;
+      }
+    }
     toggleCategoryCollapsed(params.data ?? null);
   }, [toggleCategoryCollapsed]);
 
-  const handleGridModelUpdated = useCallback((api: GridApi<Record<string, unknown>>) => {
-    updateCategoryAncestors(api);
-  }, [updateCategoryAncestors]);
-
   const TreeOrderingCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
+    const rawValue = params.value ?? (params.data as { TreeOrdering?: unknown } | undefined)?.TreeOrdering ?? null;
+    const value = formatDisplayTreeOrdering(rawValue);
+    const rowData = params.data ?? null;
+    const isCategory = isOfferProductCategory(rowData);
+    const shouldShowIndicator = isCategory;
+    const hasChildren = isCategory && hasCategoryChildren(rowData);
+    const collapsed = isCategory && isCategoryRowCollapsed(rowData);
+    const indicator = shouldShowIndicator
+      ? hasChildren
+        ? (collapsed ? '▸' : '▾')
+        : '•'
+      : null;
+    const indicatorClass = shouldShowIndicator
+      ? hasChildren
+        ? `${styles.treeOrderingIndicator} ${styles.treeOrderingIndicatorArrow}`
+        : `${styles.treeOrderingIndicator} ${styles.treeOrderingIndicatorEmpty}`
+      : undefined;
+
+    const handleIndicatorClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      if (hasChildren) {
+        toggleCategoryCollapsed(rowData);
+      }
+    };
+
+    const indicatorLabel = hasChildren
+      ? (collapsed ? 'Expand category' : 'Collapse category')
+      : 'Category without child entries';
+
+    const display = value;
+    return (
+      <span className={styles.treeOrderingCell}>
+        <span>{display}</span>
+        {indicator && (
+          <button
+            type="button"
+            className={`${styles.treeOrderingIndicatorButton} ${indicatorClass ?? ''}`.trim()}
+            onClick={handleIndicatorClick}
+            aria-label={indicatorLabel}
+            disabled={!hasChildren}
+          >
+            {indicator}
+          </button>
+        )}
+      </span>
+    );
+  }, [hasCategoryChildren, isCategoryRowCollapsed, toggleCategoryCollapsed, formatDisplayTreeOrdering]);
+
+  const RequestedItemNoCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     const value = params.value;
     const rowData = params.data ?? null;
     const isCategory = isOfferProductCategory(rowData);
@@ -644,10 +1014,6 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
       </span>
     );
   }, [hasCategoryChildren, isCategoryRowCollapsed, toggleCategoryCollapsed]);
-
-  const getRowHeight = useCallback((params: RowHeightParams<Record<string, unknown>>) => (
-    isRowHiddenByCollapsedAncestor(params.data) ? 0 : 32
-  ), [isRowHiddenByCollapsedAncestor]);
 
   // Row drag handle: starts native drag with row data (no visible selection)
   const RowDragHandle = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
@@ -699,11 +1065,20 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
         ? params.node.rowIndex
         : null;
 
+      const selectedNodes = typeof params.api?.getSelectedNodes === 'function'
+        ? params.api.getSelectedNodes().map((node) => node.id ?? null).filter((id): id is string => typeof id === 'string' && id.length > 0)
+        : [];
+      if (params.node?.id) {
+        if (!selectedNodes.includes(params.node.id)) {
+          selectedNodes.push(params.node.id);
+        }
+      }
       const payload = {
         type: 'offer-product-row',
         rowId: params.node?.id ?? null,
         rowIndex: resolvedRowIndex,
         data: params.data ?? null,
+        selectedRowIds: selectedNodes,
       };
       try {
         e.dataTransfer.setData('application/x-fastquote-row+json', JSON.stringify(payload));
@@ -802,7 +1177,7 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
     );
   }, []);
 
-  const PartNumberCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
+const PartNumberCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     const rawValue = params.value;
     if (rawValue == null) return '';
     const partNumber = String(rawValue).trim();
@@ -829,54 +1204,183 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
         title="Open product link"
       >
         {partNumber}
-      </a>
-    );
+    </a>
+  );
+}, []);
+
+const REQUESTED_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--requested';
+const ACTUAL_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--actual';
+
+const REQUESTED_FIELDS: Array<keyof Record<string, unknown>> = [
+  'RequestedItemNo',
+  'RequestedBrand',
+  'RequestedModelNo',
+  'RequestedPartNo',
+  'RequestedDescription',
+  'RequestedDescription2',
+  'RequestedQuantity',
+];
+
+  const requestedCellClassRules = useMemo(() => ({
+    [styles.requestedColumnCell]: (params: { data?: Record<string, unknown> | null }) =>
+      isOfferProductCategory(params.data ?? null),
+    [REQUESTED_COLUMN_GLOBAL_CLASS]: (params: { data?: Record<string, unknown> | null }) =>
+      isOfferProductCategory(params.data ?? null),
+  }), []);
+
+  const clearRequestedRowProperties = useCallback((node: GridRowNode | null) => {
+    if (!node) return;
+    REQUESTED_FIELDS.forEach((field) => {
+      try {
+        node.setDataValue(field, null);
+      } catch {
+        /* noop */
+      }
+    });
+    try {
+      node.setDataValue('__isRequestedRow', 0);
+    } catch {
+      /* noop */
+    }
   }, []);
 
-const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>(() => ({
-  RequestedBrand: {
-    field: 'RequestedBrand',
-    headerName: 'Req. Brand',
+  const clearRequestedFlags = useCallback((node: GridRowNode | null) => {
+    if (!node) return;
+    try {
+      node.setDataValue('__isRequestedRow', 0);
+    } catch {
+      /* noop */
+    }
+  }, []);
+
+  const refreshRowNodes = useCallback((node: GridRowNode | null) => {
+    if (!node) return;
+    const api = gridApiRef.current;
+    if (!api) return;
+    try {
+      api.refreshCells({ rowNodes: [node], force: true });
+    } catch {
+      /* noop */
+    }
+  }, []);
+
+  const promoteNodeToCategory = useCallback((
+    node: GridRowNode | null,
+    treeOrdering: string | null,
+    description: string | null,
+  ) => {
+    if (!node) return;
+    try {
+      node.setDataValue('IsCategory', 1);
+    } catch {
+      /* noop */
+    }
+    clearRequestedFlags(node);
+    if (treeOrdering != null) {
+      try {
+        node.setDataValue('TreeOrdering', treeOrdering);
+      } catch {
+        /* noop */
+      }
+    }
+    if (treeOrdering != null) {
+      try {
+        node.setDataValue('RequestedItemNo', treeOrdering);
+      } catch {
+        /* noop */
+      }
+    }
+    if (description != null) {
+      try {
+        node.setDataValue('Description', description);
+      } catch {
+        /* noop */
+      }
+    }
+    refreshRowNodes(node);
+  }, [clearRequestedRowProperties, refreshRowNodes]);
+
+  const promoteNodeToProduct = useCallback((
+    node: GridRowNode | null,
+    productMeta: ProductSummary,
+    partNumber: string | null,
+    modelNumber: string | null,
+    brandName: string | null,
+    description: string | null,
+  ) => {
+    if (!node) return;
+    try {
+      node.setDataValue('IsCategory', 0);
+      node.setDataValue('ProductID', productMeta.ProductID);
+    } catch {
+      /* noop */
+    }
+    clearRequestedRowProperties(node);
+    try {
+      node.setDataValue('PartNumber', partNumber ?? null);
+      node.setDataValue('ModelNumber', modelNumber ?? null);
+      node.setDataValue('BrandName', brandName ?? null);
+      node.setDataValue('Description', description ?? null);
+    } catch {
+      /* noop */
+    }
+    refreshRowNodes(node);
+  }, [clearRequestedRowProperties, refreshRowNodes]);
+
+const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>(() => {
+  const buildTextRequestedColumn = (
+    field: RequestedDisplayFieldKey,
+    headerName: string,
+    minWidth: number,
+    width?: number,
+  ) => ({
+    field,
+    headerName,
     filter: 'agTextColumnFilter',
-    valueGetter: buildRequestedTextGetter('RequestedBrand'),
-    minWidth: 140,
+    valueGetter: buildRequestedTextGetter(field),
+    minWidth,
+    width,
     headerClass: styles.requestedHeader,
-  },
-  RequestedModelNo: {
-    field: 'RequestedModelNo',
-    headerName: 'Req. Model Number',
-    filter: 'agTextColumnFilter',
-    valueGetter: buildRequestedTextGetter('RequestedModelNo'),
-    minWidth: 140,
-    headerClass: styles.requestedHeader,
-  },
-  RequestedPartNo: {
-    field: 'RequestedPartNo',
-    headerName: 'Req. Part Number',
-    filter: 'agTextColumnFilter',
-    valueGetter: buildRequestedTextGetter('RequestedPartNo'),
-    minWidth: 150,
-    headerClass: styles.requestedHeader,
-  },
-  RequestedDescription: {
-    field: 'RequestedDescription',
-    headerName: 'Req. Description',
-    filter: 'agTextColumnFilter',
-    valueGetter: buildRequestedTextGetter('RequestedDescription'),
-    minWidth: 280,
-    width: 320,
-    headerClass: styles.requestedHeader,
-  },
-  RequestedQuantity: {
-    field: 'RequestedQuantity',
-    headerName: 'Req. Qty',
-    filter: 'agNumberColumnFilter',
-    type: 'numericColumn',
-    valueFormatter: zeroBlankNumberFormatter,
-    width: 120,
-    headerClass: styles.requestedHeader,
-  },
-}), []);
+    cellClassRules: requestedCellClassRules,
+    editable: (params: { data?: Record<string, unknown> | null }) =>
+      canEditRequestedField(field, params.data ?? null),
+      singleClickEdit: true,
+      cellEditor: 'agTextCellEditor',
+    valueSetter: ({ data, newValue }: ValueSetterParams<Record<string, unknown>, unknown>) => {
+      if (!data) return false;
+      const normalized = normalizeRequestedLookupValue(newValue);
+      (data as Record<string, unknown>)[field] = normalized;
+      return true;
+    },
+  });
+
+  return {
+    RequestedBrand: buildTextRequestedColumn('RequestedBrand', 'Req. Brand', 140),
+    RequestedModelNo: buildTextRequestedColumn('RequestedModelNo', 'Req. Model Number', 140),
+    RequestedPartNo: buildTextRequestedColumn('RequestedPartNo', 'Req. Part Number', 150),
+    RequestedDescription: buildTextRequestedColumn('RequestedDescription', 'Req. Description', 280, 320),
+    RequestedDescription2: buildTextRequestedColumn('RequestedDescription2', 'Req. Description 2', 280, 320),
+    RequestedQuantity: {
+      field: 'RequestedQuantity',
+      headerName: 'Req. Qty',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      valueFormatter: zeroBlankNumberFormatter,
+      width: 120,
+      headerClass: styles.requestedHeader,
+    cellClassRules: requestedCellClassRules,
+      editable: (params: { data?: Record<string, unknown> | null }) =>
+        canEditRequestedField('RequestedQuantity', params.data ?? null),
+      singleClickEdit: true,
+      cellEditor: 'agTextCellEditor',
+      valueSetter: ({ data, newValue }: ValueSetterParams<Record<string, unknown>, unknown>) => {
+        if (!data) return false;
+        (data as Record<string, unknown>).RequestedQuantity = normalizeRequestedQuantityValue(newValue);
+        return true;
+      },
+    },
+  };
+}, [requestedCellClassRules]);
 
   const productColumnDefs: ColDef[] = useMemo(() => {
     const requestedColumns: ColDef[] = [];
@@ -895,6 +1399,62 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
     });
 
+  const treeColumn: ColDef = {
+    field: 'TreeOrdering',
+    headerName: '#',
+    maxWidth: 90,
+    filter: 'agTextColumnFilter',
+    type: 'numericColumn',
+    comparator: compareTreeOrderingValues,
+    editable: manualMode,
+    singleClickEdit: manualMode,
+    cellRenderer: TreeOrderingCell,
+    cellClass: ['offer-products-tree-ordering-cell', ACTUAL_COLUMN_GLOBAL_CLASS],
+    valueGetter: ({ data }) => {
+      const row = data as {
+        __isRequestedRow?: number | null;
+        TreeOrdering?: unknown;
+      } | null | undefined;
+      const treeValue = row?.TreeOrdering;
+      if (treeValue != null) {
+          return typeof treeValue === 'string' ? treeValue.trim() : String(treeValue);
+        }
+        return '';
+      },
+    };
+
+    const requestedItemNoColumn: ColDef = {
+      field: 'RequestedItemNo',
+      headerName: 'Req. Item No',
+      minWidth: 110,
+      maxWidth: 160,
+      filter: 'agTextColumnFilter',
+      headerClass: styles.requestedHeader,
+      cellClassRules: requestedCellClassRules,
+      editable: (params) => canEditRequestedField('RequestedItemNo', params.data ?? null),
+    singleClickEdit: true,
+    cellEditor: 'agTextCellEditor',
+    valueSetter: ({ data, newValue }) => {
+      if (!data) return false;
+      (data as Record<string, unknown>).RequestedItemNo = normalizeRequestedItemNoValue(newValue);
+      return true;
+    },
+    hide: !requestedItemNoVisible,
+    suppressSizeToFit: !requestedItemNoVisible,
+    suppressAutoSize: !requestedItemNoVisible,
+    valueGetter: ({ data }) => {
+      if (!data) return '';
+      const requestedItemNo = normalizeRequestedItemNoValue(
+        (data as Record<string, unknown>).RequestedItemNo ?? null,
+      );
+      if (requestedItemNo != null) return requestedItemNo;
+      if (!isRequestedRow(data as Record<string, unknown> | null)) return '';
+      const treeOrdering = (data as Record<string, unknown>).TreeOrdering;
+      return treeOrdering != null ? formatDisplayTreeOrdering(treeOrdering) : '';
+    },
+    cellRenderer: RequestedItemNoCell,
+  };
+
     return [
       {
         headerName: '',
@@ -911,6 +1471,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         width: 44,
         cellStyle: { padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' },
         cellRenderer: RowDragHandle,
+        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
       },
       {
         field: 'ProductID',
@@ -918,46 +1479,48 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         lockVisible: true,
         suppressColumnsToolPanel: true,
       },
-      {
-        field: 'TreeOrdering',
-        headerName: '#',
-        maxWidth: 90,
-        filter: 'agTextColumnFilter',
-        type: 'numericColumn',
-        comparator: compareTreeOrderingValues,
-        sort: 'asc',
-        sortingOrder: ['asc', 'desc', null],
-        sortIndex: 0,
-        editable: manualMode,
-        singleClickEdit: manualMode,
-        cellRenderer: TreeOrderingCell,
-        cellClass: 'offer-products-tree-ordering-cell',
-      },
+      requestedItemNoColumn,
       ...requestedColumns,
+      treeColumn,
       {
         field: 'BrandName',
         headerName: 'Brand',
         filter: 'agTextColumnFilter',
         cellClassRules: productAccentCellClassRules,
+        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
       },
       {
         field: 'PartNumber',
         headerName: 'Part Number',
         filter: 'agTextColumnFilter',
         cellRenderer: PartNumberCell,
+        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
       },
-      { field: 'ModelNumber', headerName: 'Model Number', filter: 'agTextColumnFilter' },
+      { field: 'ModelNumber', headerName: 'Model Number', filter: 'agTextColumnFilter', cellClass: ACTUAL_COLUMN_GLOBAL_CLASS },
       {
         field: 'Description',
         headerName: 'Description',
         minWidth: 280,
         width: 320,
         filter: 'agTextColumnFilter',
+        valueGetter: ({ data }) => {
+          const row = data as Record<string, unknown> | null | undefined;
+          const manual = normalizeDescriptionValue(row?.Description ?? null);
+          if (manual != null) return manual;
+          return normalizeDescriptionValue(row?.ProductDescription ?? null) ?? '';
+        },
+        valueSetter: ({ data, newValue }) => {
+          if (!data) return false;
+          const normalized = normalizeDescriptionValue(newValue);
+          (data as Record<string, unknown>).Description = normalized;
+          return true;
+        },
         editable: (params) => {
           const row = params?.data ?? null;
           return isOfferProductCategory(row) || isOfferProductComment(row);
         },
         singleClickEdit: true,
+        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
       },
     {
       field: 'ListPrice',
@@ -971,6 +1534,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       cellClassRules: productPriceListClassRules,
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
+      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
     },
     {
       field: 'CustomerDiscount',
@@ -980,6 +1544,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: percentageFormatter,
+      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
     },
     {
       field: 'NetUnitPrice',
@@ -989,6 +1554,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: euroFormatter,
+      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
     },
     {
       field: 'Quantity',
@@ -998,6 +1564,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: zeroBlankNumberFormatter,
+      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
     },
     {
       field: 'TotalPrice',
@@ -1010,6 +1577,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         return euroFormatter(params);
       },
       cellClassRules: totalPriceCellClassRules,
+      editable: false,
+      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
     },
     {
       field: 'TotalNet',
@@ -1019,6 +1588,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       valueGetter: categoryTotalNetGetter,
       valueFormatter: euroFormatter,
       cellClassRules: productAccentCellClassRules,
+      editable: false,
+      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
     },
     {
       field: 'Warranty',
@@ -1026,6 +1597,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: zeroBlankNumberFormatter,
+      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
     },
     {
       field: 'TelmacoDiscount',
@@ -1035,6 +1607,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: percentageFormatter,
+      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
     },
     {
       field: 'NetCost',
@@ -1044,6 +1617,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: euroFormatter,
+      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
     },
     {
       field: 'Margin',
@@ -1053,6 +1627,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: percentageFormatter,
+      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
     },
     {
       field: 'GrossProfit',
@@ -1061,6 +1636,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       type: 'numericColumn',
       valueFormatter: euroFormatter,
       cellClassRules: productAccentCellClassRules,
+      editable: false,
+      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
     },
     {
       field: 'TotalCost',
@@ -1070,25 +1647,82 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       valueFormatter: euroFormatter,
       valueGetter: categoryTotalCostGetter,
       cellClassRules: productAccentCellClassRules,
+      editable: false,
+      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
     },
   ];
-  }, [RowDragHandle, PartNumberCell, manualMode, TreeOrderingCell, requestedColumnDefsMap, requestedColumnVisibility]);
+  }, [RowDragHandle, PartNumberCell, manualMode, TreeOrderingCell, requestedColumnDefsMap, requestedColumnVisibility, requestedItemNoVisible, formatDisplayTreeOrdering]);
 
   useEffect(() => {
     if (!requestedColumnsReady) return;
     const api = gridApiRef.current;
     if (!api) return;
+
+    const previousVisibility = prevRequestedColumnVisibilityRef.current;
+    const visibilityChanged = !previousVisibility ||
+      REQUESTED_DISPLAY_FIELD_KEYS.some((key) => previousVisibility[key] !== requestedColumnVisibility[key]);
+    const itemNoVisibilityChanged = prevRequestedItemNoVisibleRef.current !== requestedItemNoVisible;
+    if (!visibilityChanged && !itemNoVisibilityChanged) {
+      return;
+    }
+
     try {
-      const keys = REQUESTED_DISPLAY_FIELD_KEYS.map((key) => key);
-      api.setColumnsVisible(keys, false);
+      const keys = REQUESTED_DISPLAY_FIELD_KEYS;
+      const hiddenKeys = keys.filter((key) => !requestedColumnVisibility[key]);
       const visibleKeys = keys.filter((key) => requestedColumnVisibility[key]);
+      if (hiddenKeys.length > 0) {
+        api.setColumnsVisible(hiddenKeys, false);
+      }
       if (visibleKeys.length > 0) {
         api.setColumnsVisible(visibleKeys, true);
+      }
+      if (itemNoVisibilityChanged) {
+        api.setColumnsVisible(['RequestedItemNo'], requestedItemNoVisible);
       }
     } catch {
       /* noop */
     }
-  }, [requestedColumnVisibility, requestedColumnsReady]);
+
+    prevRequestedColumnVisibilityRef.current = requestedColumnVisibility;
+    prevRequestedItemNoVisibleRef.current = requestedItemNoVisible;
+  }, [requestedColumnVisibility, requestedColumnsReady, requestedItemNoVisible]);
+
+  const refreshOfferProductGrid = useCallback((api: GridApi<Record<string, unknown>> | null, options?: { refresh?: boolean }) => {
+    const targetApi = api ?? gridApiRef.current;
+    if (!targetApi) return;
+    if (options?.refresh ?? true) {
+      if (typeof targetApi.refreshServerSide === 'function') {
+        try {
+          targetApi.refreshServerSide({ purge: true });
+        } catch (err) {
+          console.warn('Failed to refresh grid after row deletion', err);
+        }
+      }
+    }
+    try {
+      targetApi.redrawRows();
+    } catch (err) {
+      console.warn('Failed to refresh category metadata after row deletion', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (refreshToken === 0) return;
+    refreshOfferProductGrid(null, { refresh: false });
+  }, [refreshOfferProductGrid, refreshToken]);
+
+  useEffect(() => {
+    if (refreshToken === 0) return;
+    syncRequestedItemNumbers();
+  }, [refreshToken, syncRequestedItemNumbers]);
+
+  useEffect(() => {
+    if (!collapsedRefreshRef.current) {
+      collapsedRefreshRef.current = true;
+      return;
+    }
+    refreshOfferProductGrid(null);
+  }, [collapsedCategoryPaths, refreshOfferProductGrid]);
 
   const productRowDeletion = useMemo(
     () =>
@@ -1104,16 +1738,155 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         confirmCancelLabel: 'Keep row',
         successToastMessage: 'Row deleted',
         failureToastMessage: 'Unable to delete row. Please try again.',
+        refreshHandler: refreshOfferProductGrid,
       }),
-    [resolvedEndpoint],
+    [resolvedEndpoint, refreshOfferProductGrid],
   );
+
+  const copyRequestedRowsToOffer = useCallback(async (nodes: RowNode<Record<string, unknown>>[]) => {
+    const requestedNodes = nodes.filter((node) => isRequestedRow(node?.data ?? null));
+    if (requestedNodes.length === 0) return;
+
+    const updates: Array<Record<string, unknown>> = [];
+    let categoriesAdded = 0;
+    let productsAdded = 0;
+    let missingProducts = 0;
+
+    for (const node of requestedNodes) {
+      const data = node?.data ?? null;
+      if (!data || typeof data !== 'object') continue;
+      const offerDetailId = normalizeOfferDetailId((data as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+      if (offerDetailId == null) continue;
+
+      const lookupInfo = buildRequestedLookupInfo(data);
+      const hasRequestedIdentifiers = Boolean(lookupInfo.partNumber || lookupInfo.modelNumber);
+      const requestedDescriptionPrimary = normalizeDescriptionValue(
+        (data as { RequestedDescription?: unknown }).RequestedDescription ?? null,
+      );
+      const requestedDescriptionSecondary = normalizeDescriptionValue(
+        (data as { RequestedDescription2?: unknown }).RequestedDescription2 ?? null,
+      );
+      const requestedDescriptionValue = requestedDescriptionPrimary ?? requestedDescriptionSecondary;
+      const descriptionOverride = normalizeDescriptionValue(
+        (data as { Description?: unknown }).Description ?? null,
+      );
+      const requestedTree = normalizeRequestedItemNoValue((data as { RequestedItemNo?: unknown }).RequestedItemNo ?? null);
+      const treeOrderingRaw = (data as { TreeOrdering?: unknown }).TreeOrdering;
+      const treeOrderingValue = requestedTree || (typeof treeOrderingRaw === 'string'
+        ? treeOrderingRaw.trim()
+        : null);
+
+      if (!hasRequestedIdentifiers) {
+        const categoryDescription = requestedDescriptionValue ?? descriptionOverride ?? null;
+        const payloadEntry: Record<string, unknown> = {
+          OfferDetailID: offerDetailId,
+          IsCategory: 1,
+        };
+        if (categoryDescription != null) {
+          payloadEntry.Description = categoryDescription;
+        }
+        if (treeOrderingValue != null) {
+          payloadEntry.TreeOrdering = treeOrderingValue;
+          payloadEntry.RequestedItemNo = treeOrderingValue;
+        }
+        if (requestedDescriptionPrimary != null) {
+          payloadEntry.RequestedDescription = requestedDescriptionPrimary;
+        }
+        if (requestedDescriptionSecondary != null) {
+          payloadEntry.RequestedDescription2 = requestedDescriptionSecondary;
+        }
+        updates.push(payloadEntry);
+        promoteNodeToCategory(node, treeOrderingValue ?? null, categoryDescription);
+        categoriesAdded += 1;
+        continue;
+      }
+
+      const productId = await resolveProductIdFromRequestedInfo(lookupInfo);
+      if (productId == null) {
+        missingProducts += 1;
+        continue;
+      }
+
+      const productMeta = await fetchProductSummary(productId);
+      if (!productMeta) {
+        missingProducts += 1;
+        continue;
+      }
+      const description = requestedDescriptionValue ?? descriptionOverride ?? productMeta.Description ?? null;
+      const partNumber = normalizeRequestedLookupValue(
+        (data as { RequestedPartNo?: unknown }).RequestedPartNo ?? (data as { PartNumber?: unknown }).PartNumber ?? productMeta.PartNumber,
+      );
+      const modelNumber = normalizeRequestedLookupValue(
+        (data as { RequestedModelNo?: unknown }).RequestedModelNo ?? (data as { ModelNumber?: unknown }).ModelNumber ?? productMeta.ModelNumber,
+      );
+      const brandName = normalizeRequestedLookupValue(
+        (data as { RequestedBrand?: unknown }).RequestedBrand ?? (data as { BrandName?: unknown }).BrandName ?? productMeta.BrandName,
+      );
+      updates.push({
+        OfferDetailID: offerDetailId,
+        IsCategory: false,
+        ProductID: productId,
+        PartNumber: partNumber ?? null,
+        ModelNumber: modelNumber ?? null,
+        BrandName: brandName ?? null,
+        Description: description ?? null,
+        RequestedItemNo: null,
+        RequestedBrand: null,
+        RequestedModelNo: null,
+        RequestedPartNo: null,
+        RequestedDescription: null,
+        RequestedDescription2: null,
+        RequestedQuantity: null,
+      });
+      promoteNodeToProduct(node, productMeta, partNumber ?? null, modelNumber ?? null, brandName ?? null, description ?? null);
+      productsAdded += 1;
+    }
+
+    if (updates.length === 0) {
+      if (missingProducts > 0) {
+        showToastMessage('Some products could not be found. See requested entries for details.', 'info');
+      }
+      return;
+    }
+
+    try {
+      const res = await fetch(resolvedEndpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates }),
+      });
+      const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? `Failed to copy requested rows (status ${res.status})`);
+      }
+      const parts: string[] = [];
+      if (categoriesAdded > 0) parts.push(`${categoriesAdded} categor${categoriesAdded === 1 ? 'y' : 'ies'}`);
+      if (productsAdded > 0) parts.push(`${productsAdded} product${productsAdded === 1 ? '' : 's'}`);
+      showToastMessage(`Copied ${parts.join(' and ')} to the offer.`, 'success');
+      if (missingProducts > 0) {
+        showToastMessage('Some requested products could not be matched and remain unchanged.', 'info');
+      }
+      try {
+        refreshOfferProductGrid(null);
+      } catch {
+        /* noop */
+      }
+    } catch (err) {
+      console.error('Failed to copy requested rows', err);
+      showToastMessage('Unable to copy requested rows to the offer. Please try again.', 'error');
+    }
+    if (missingProducts > 0 && productsAdded === 0) {
+      showToastMessage('Unable to match some requested products. They remain unchanged.', 'info');
+    }
+  }, [resolvedEndpoint, refreshOfferProductGrid, promoteNodeToCategory, promoteNodeToProduct]);
 
   const productContextMenuItems = useCallback((
     params: GetContextMenuItemsParams<Record<string, unknown>>,
   ) => {
     const baseItems = productRowDeletion.getContextMenuItems(params) ?? [];
     const items = [...baseItems];
-    const rowData = params.node?.data ?? null;
+    const rowNode = params.node ?? null;
+    const rowData = rowNode?.data ?? null;
     const rawProductId = (rowData as { ProductID?: unknown }).ProductID;
     const parsedProductId =
       typeof rawProductId === 'number'
@@ -1129,45 +1902,278 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         : null;
     const requestedLookup = buildRequestedLookupInfo(rowData);
     const hasRequestedLookupFields = Boolean(requestedLookup.partNumber || requestedLookup.modelNumber);
-    if (!resolvedProductId && !hasRequestedLookupFields) {
-      return items;
+    const canViewHistory = Boolean(resolvedProductId) || hasRequestedLookupFields;
+    if (canViewHistory) {
+      const qs = new URLSearchParams();
+      qs.set('backHref', `/offers/${encodeURIComponent(offerId)}/products`);
+      qs.set('backLabel', `offer ${offerId}`);
+
+      const historyItem: MenuItemDef = {
+        name: "View Product's History",
+        icon: productHistoryMenuIcon,
+        action: async () => {
+          let targetProductId = resolvedProductId;
+          if (!targetProductId) {
+            const fetchedId = await resolveProductIdFromRequestedInfo(requestedLookup);
+            if (!fetchedId) {
+              showToastMessage('Unable to find a product for the requested entry.', 'error');
+              return;
+            }
+            targetProductId = fetchedId;
+          }
+          router.push(`/products/${encodeURIComponent(String(targetProductId))}/history?${qs.toString()}`);
+        },
+      };
+
+      const deleteIndex = items.findIndex((item) => (
+        typeof item === 'object'
+        && item != null
+        && (item as MenuItemDef).name === 'Delete row'
+      ));
+
+      if (deleteIndex >= 0) {
+        items.splice(deleteIndex, 0, historyItem);
+      } else {
+        items.push(historyItem);
+      }
     }
 
-    const qs = new URLSearchParams();
-    qs.set('backHref', `/offers/${encodeURIComponent(offerId)}/products`);
-    qs.set('backLabel', `offer ${offerId}`);
+    const selectedNodes = typeof params.api?.getSelectedNodes === 'function'
+      ? params.api.getSelectedNodes().map((node) => node as RowNode<Record<string, unknown>>)
+      : [];
+    const relevantNodes = selectedNodes.length > 0
+      ? selectedNodes
+      : rowNode
+        ? [rowNode as RowNode<Record<string, unknown>>]
+        : [];
+    const hasRequestedSelection = relevantNodes.some((node) => isRequestedRow(node?.data ?? null));
+    const hasRequestedFields = relevantNodes.some((node) => hasRequestedPseudoFields(node?.data ?? null));
+    const rowHasRequestedFields = hasRequestedPseudoFields(rowData);
 
-    const historyItem: MenuItemDef = {
-      name: "View Product's History",
-      icon: productHistoryMenuIcon,
-      action: async () => {
-        let targetProductId = resolvedProductId;
-        if (!targetProductId) {
-          const fetchedId = await resolveProductIdFromRequestedInfo(requestedLookup);
-          if (!fetchedId) {
-            showToastMessage('Unable to find a product for the requested entry.', 'error');
-            return;
-          }
-          targetProductId = fetchedId;
-        }
-        router.push(`/products/${encodeURIComponent(String(targetProductId))}/history?${qs.toString()}`);
-      },
-    };
-
-    const deleteIndex = items.findIndex((item) => (
+    const deleteIndexAfterHistory = items.findIndex((item) => (
       typeof item === 'object'
       && item != null
       && (item as MenuItemDef).name === 'Delete row'
     ));
 
-    if (deleteIndex >= 0) {
-      items.splice(deleteIndex, 0, historyItem);
-      return items;
+    const offerDetailId = normalizeOfferDetailId((rowData as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null);
+    const canMarkCategory = (
+      offerDetailId != null
+      && !isOfferProductCategory(rowData)
+      && !hasRequestedFields
+      && !rowHasRequestedFields
+    );
+    if (canMarkCategory) {
+      const makeCategoryItem: MenuItemDef = {
+        name: 'Set as Category',
+        icon: categoryMenuIcon,
+        action: async () => {
+          const previousIsCategory = rowNode?.data ? (rowNode.data as { IsCategory?: unknown }).IsCategory : null;
+          const previousDescription = rowNode?.data ? (rowNode.data as { Description?: unknown }).Description : null;
+          const previousTreeOrdering = rowNode?.data ? (rowNode.data as { TreeOrdering?: unknown }).TreeOrdering : null;
+          const previousRequestedFlag = rowNode?.data ? (rowNode.data as { __isRequestedRow?: unknown }).__isRequestedRow : null;
+          const requestedDescriptionPrimary = normalizeDescriptionValue(
+            (rowData as { RequestedDescription?: unknown }).RequestedDescription ?? null,
+          );
+          const requestedDescriptionSecondary = normalizeDescriptionValue(
+            (rowData as { RequestedDescription2?: unknown }).RequestedDescription2 ?? null,
+          );
+          const requestedDescriptionValue = requestedDescriptionPrimary ?? requestedDescriptionSecondary;
+          const descriptionValue = requestedDescriptionValue
+            ?? normalizeDescriptionValue((rowData as { Description?: unknown }).Description ?? null);
+          const requestedTree = normalizeRequestedItemNoValue((rowData as { RequestedItemNo?: unknown }).RequestedItemNo ?? null);
+          const treeOrderingRaw = (rowData as { TreeOrdering?: unknown }).TreeOrdering;
+          const treeOrderingValue = requestedTree || (typeof treeOrderingRaw === 'string'
+            ? treeOrderingRaw.trim()
+            : null);
+          promoteNodeToCategory(rowNode, treeOrderingValue ?? null, descriptionValue ?? null);
+          try {
+            const payloadEntry: Record<string, unknown> = {
+              OfferDetailID: offerDetailId,
+              IsCategory: 1,
+            };
+            if (descriptionValue != null) {
+              payloadEntry.Description = descriptionValue;
+            }
+            if (treeOrderingValue != null) {
+              payloadEntry.TreeOrdering = treeOrderingValue;
+              payloadEntry.RequestedItemNo = treeOrderingValue;
+            }
+            if (requestedDescriptionPrimary != null) {
+              payloadEntry.RequestedDescription = requestedDescriptionPrimary;
+            }
+            if (requestedDescriptionSecondary != null) {
+              payloadEntry.RequestedDescription2 = requestedDescriptionSecondary;
+            }
+            const res = await fetch(resolvedEndpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                updates: [payloadEntry],
+              }),
+            });
+            const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+            if (!res.ok || !payload?.ok) {
+              throw new Error(payload?.error ?? `Unable to mark category (status ${res.status})`);
+            }
+            showToastMessage('Marked as category', 'success');
+            try {
+              gridApiRef.current?.refreshServerSide?.({ purge: false });
+            } catch {
+              /* noop */
+            }
+          } catch (err) {
+            if (rowNode) {
+              try {
+                rowNode.setDataValue('IsCategory', previousIsCategory ?? null);
+              } catch {
+                /* noop */
+              }
+              try {
+                rowNode.setDataValue('Description', previousDescription ?? null);
+              } catch {
+                /* noop */
+              }
+              try {
+                rowNode.setDataValue('__isRequestedRow', previousRequestedFlag ?? null);
+              } catch {
+                /* noop */
+              }
+              try {
+                rowNode.setDataValue('TreeOrdering', previousTreeOrdering ?? null);
+              } catch {
+                /* noop */
+              }
+            }
+            console.error('Failed to mark category', err);
+            showToastMessage('Unable to mark row as category. Please try again.', 'error');
+          }
+        },
+      };
+      if (deleteIndexAfterHistory >= 0) {
+        items.splice(deleteIndexAfterHistory, 0, makeCategoryItem);
+      } else {
+        items.push(makeCategoryItem);
+      }
     }
 
-    items.push(historyItem);
+    if (hasRequestedSelection) {
+      const copyItem: MenuItemDef = {
+        name: 'Copy to offer',
+        icon: copyToOfferMenuIcon,
+        action: () => {
+          const nodesToCopy = relevantNodes.filter((node): node is RowNode<Record<string, unknown>> => Boolean(node && node.data));
+          void copyRequestedRowsToOffer(nodesToCopy);
+        },
+      };
+      if (deleteIndexAfterHistory >= 0) {
+        items.splice(deleteIndexAfterHistory, 0, copyItem);
+      } else {
+        items.push(copyItem);
+      }
+    }
+
     return items;
   }, [productRowDeletion, router, offerId]);
+
+  const getCellEditorRawValue = (
+    event: CellValueChangedEvent<Record<string, unknown>>,
+  ): string | null => {
+    const domEvent = (event as { event?: Event }).event;
+    if (!domEvent) return null;
+    const target = domEvent.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+      return target.value ?? null;
+    }
+    return null;
+  };
+
+  const handleRequestedFieldEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    const field = event.colDef.field;
+    if (!isRequestedFieldKey(field)) return;
+    const source = (event as { source?: string }).source;
+    if (source === 'api') return;
+    if (!canEditRequestedField(field, event.data)) return;
+
+    const label = REQUESTED_FIELD_LABELS[field];
+    const friendlyLabel = `${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+    let normalizedOldValue: string | number | null = null;
+    let normalizedNewValue: string | number | null = null;
+
+    if (field === 'RequestedQuantity') {
+      const rawInput = getCellEditorRawValue(event);
+      const candidateValue = rawInput ?? event.newValue;
+      normalizedNewValue = normalizeRequestedQuantityValue(candidateValue ?? null);
+      normalizedOldValue = normalizeRequestedQuantityValue(event.oldValue ?? null);
+      const hasProvidedValue = Boolean(
+        (rawInput != null && rawInput.trim().length > 0)
+        || (typeof event.newValue === 'number' && Number.isFinite(event.newValue)),
+      );
+      if (hasProvidedValue && normalizedNewValue == null) {
+        showToastMessage('Please enter a valid requested quantity (zero or more).', 'error');
+        try {
+          event.node?.setDataValue?.(field, normalizedOldValue ?? '');
+        } catch {
+          /* noop */
+        }
+        return;
+      }
+    } else if (field === 'RequestedItemNo') {
+      normalizedNewValue = normalizeRequestedItemNoValue(event.newValue ?? null);
+      normalizedOldValue = normalizeRequestedItemNoValue(event.oldValue ?? null);
+    } else {
+      normalizedNewValue = normalizeRequestedLookupValue(event.newValue ?? null);
+      normalizedOldValue = normalizeRequestedLookupValue(event.oldValue ?? null);
+    }
+
+    if (Object.is(normalizedNewValue, normalizedOldValue)) {
+      return;
+    }
+
+    const offerDetailId = normalizeOfferDetailId(
+      (event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null,
+    );
+    if (offerDetailId == null) {
+      showToastMessage(`Unable to update ${friendlyLabel}. Missing record identifier.`, 'error');
+      try {
+        event.node?.setDataValue?.(field, normalizedOldValue ?? '');
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+
+    const revertValue = () => {
+      try {
+        event.node?.setDataValue?.(field, normalizedOldValue ?? '');
+      } catch {
+        /* noop */
+      }
+    };
+
+    const runUpdate = async () => {
+      try {
+        const res = await fetch(resolvedEndpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: [{ OfferDetailID: offerDetailId, [field]: normalizedNewValue }],
+          }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update ${friendlyLabel} (status ${res.status})`);
+        }
+        showToastMessage(`${friendlyLabel} updated`, 'success');
+      } catch (err) {
+        console.error(`Failed to update ${friendlyLabel}`, err);
+        showToastMessage(`Unable to update ${friendlyLabel}. Please try again.`, 'error');
+        revertValue();
+      }
+    };
+
+    void runUpdate();
+  }, [resolvedEndpoint]);
 
   const handleQuantityEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Quantity') return;
@@ -1377,9 +2383,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     handleDescriptionEdit(event);
+    handleRequestedFieldEdit(event);
     handleQuantityEdit(event);
     handlePricingEdit(event);
-  }, [handleDescriptionEdit, handleQuantityEdit, handlePricingEdit]);
+  }, [handleDescriptionEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit]);
 
   const formatEuroTotal = (value: number | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return '—';
@@ -1389,6 +2396,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     if (value == null || !Number.isFinite(value)) return '—';
     return `${decimalFormatter.format(value)} %`;
   };
+
+  const autoSizeExclusions = useMemo<string[]>(() => ['Description', 'RequestedDescription', 'RequestedDescription2'], []);
 
   return (
     <div className={styles.panel}>
@@ -1403,15 +2412,19 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           onCellValueChanged={handleCellEdit}
           refreshToken={refreshToken}
           onGridReady={handleGridReady}
+          onModelUpdated={handleGridModelUpdated}
+          getRowHeight={getRowHeight}
           onRowDoubleClicked={handleRowDoubleClicked}
-          autoSizeExclusions={['Description', 'RequestedDescription']}
+          autoSizeExclusions={autoSizeExclusions}
           enableColumnStatePersistence={false}
           suppressColumnVirtualisation
           onTotalsChange={handleTotalsChange}
           onResponse={handleGridResponse}
           rowGroupPanelShow="never"
-          onModelUpdated={handleGridModelUpdated}
-          getRowHeight={getRowHeight}
+          onRowsMoved={handleRowsMoved}
+          processRows={processVisibleRows}
+          rowSelection="multiple"
+          rowMultiSelectWithClick={true}
         />
       </div>
       <div className={styles.totalsBar}>

@@ -1,14 +1,14 @@
 'use client';
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import OfferProductsPanel from '../OfferProductsPanel';
 import { showToastMessage } from '../../../../lib/toast';
+import { addRecentOffer } from '../../../lib/recentOffers';
 import layoutStyles from '../../offersDetail.module.css';
 import toolbarStyles from './ClientProductsPage.module.css';
 import AddProductsModal from './AddProductsModal';
 import AddRequestedProductsModal from './AddRequestedProductsModal';
-
 type Props = {
   offerId: string;
   headingText: string;
@@ -45,6 +45,15 @@ const buttonVariantClass: Record<AddActionType, string> = {
 };
 
 export default function ClientProductsPage({ offerId, headingText }: Props) {
+  useEffect(() => {
+    addRecentOffer({
+      id: offerId,
+      label: headingText,
+      description: headingText.replace(/ - Products$/i, '').trim(),
+      title: headingText.replace(/ - Products$/i, '').trim(),
+    });
+  }, [offerId, headingText]);
+
   const [manualMode, setManualMode] = useState(false);
   const [pendingAction, setPendingAction] = useState<CreatableActionType | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -151,6 +160,8 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
               <Link
                 href={`/offers/${encodeURIComponent(offerId)}/basicdata`}
                 className={`${layoutStyles.headerActionButton} page-header-button`}
+                target="_blank"
+                rel="noopener noreferrer"
               >
                 View Basic Data
               </Link>

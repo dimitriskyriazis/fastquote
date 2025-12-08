@@ -63,6 +63,7 @@ type ProductRow = {
   TreeOrdering: string | null;
   IsPrintable: boolean | null;
   IsComment: boolean | null;
+  IsCategory: boolean | null;
   BrandName: string | null;
   PartNumber: string | null;
   ModelNumber: string | null;
@@ -90,7 +91,10 @@ type ProductRow = {
   RequestedModelNo: string | null;
   RequestedPartNo: string | null;
   RequestedDescription: string | null;
+  RequestedDescription2: string | null;
   RequestedQuantity: number | null;
+  __isRequestedRow?: number | bigint | null;
+  __requestedItemOrdinal?: string | null;
 };
 
 type RequestedFieldKey =
@@ -99,6 +103,7 @@ type RequestedFieldKey =
   | 'RequestedModelNo'
   | 'RequestedPartNo'
   | 'RequestedDescription'
+  | 'RequestedDescription2'
   | 'RequestedQuantity';
 
 type RequestedColumns = Record<RequestedFieldKey, boolean>;
@@ -113,7 +118,10 @@ type ProductRowWithCount = ProductRow & {
   __hasRequestedModelNo?: number | bigint | null;
   __hasRequestedPartNo?: number | bigint | null;
   __hasRequestedDescription?: number | bigint | null;
+  __hasRequestedDescription2?: number | bigint | null;
   __hasRequestedQuantity?: number | bigint | null;
+  __isRequestedRow?: number | bigint | null;
+  __requestedItemOrdinal?: string | null;
 };
 
 type OfferProductTotals = {
@@ -145,6 +153,8 @@ type DetailUpdateInput = {
   NetCost?: number | string | null;
   Margin?: number | string | null;
   ListPrice?: number | string | null;
+  IsCategory?: boolean | null;
+  RequestedItemNo?: string | null;
 };
 
 type DetailUpdateRequest = {
@@ -171,6 +181,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   TreeOrdering: 'od.TreeOrdering',
   IsPrintable: 'od.IsPrintable',
   IsComment: 'od.IsComment',
+  IsCategory: 'od.IsCategory',
   BrandName: 'b.Name',
   PartNumber: 'p.PartNumber',
   WebLink: 'p.WebLink',
@@ -198,6 +209,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   RequestedModelNo: 'od.RequestedModelNo',
   RequestedPartNo: 'od.RequestedPartNo',
   RequestedDescription: 'od.RequestedDescription',
+  RequestedDescription2: 'od.RequestedDescription2',
   RequestedQuantity: 'od.RequestedQuantity',
 };
 
@@ -228,6 +240,15 @@ const normalizeDescriptionValue = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const normalizeRequestedTextValue = (value: unknown): string | null => {
+  if (value == null) return null;
+  const str = typeof value === 'string' ? value : String(value);
+  const trimmed = str.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const normalizeRequestedItemNoValue = normalizeRequestedTextValue;
+
 const normalizeQuantityValue = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
   if (typeof value === 'string') {
@@ -254,6 +275,18 @@ const normalizeMoneyValue = (value: unknown): number | null => {
     if (!trimmed) return null;
     const parsed = Number.parseFloat(trimmed);
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  }
+  return null;
+};
+
+const normalizeBoolean = (value: unknown): boolean | null => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) return null;
+    if (trimmed === 'true' || trimmed === '1' || trimmed === 'yes') return true;
+    if (trimmed === 'false' || trimmed === '0' || trimmed === 'no') return false;
   }
   return null;
 };
@@ -443,7 +476,7 @@ const resolvePricing = (input: PricingInput): ResolvedPricing | null => {
       values.netUnitPrice,
       values.netCost,
       values.margin,
-    );
+);
     if (resolved) return resolved;
   }
 
@@ -629,6 +662,7 @@ async function handleCreateRow(
     : type === 'printable-comment'
       ? 1
       : 0;
+  const isCategory = type === 'category' ? 1 : 0;
   const quantity = 0;
   const createdBy = audit.userId;
 
@@ -641,6 +675,7 @@ async function handleCreateRow(
   request.input('__quantity', quantity);
   request.input('__createdBy', sql.Int, createdBy);
   request.input('__modifiedBy', sql.Int, createdBy);
+  request.input('__isCategory', sql.Bit, isCategory);
 
   const query = `
     DECLARE @lastRootValue INT =
@@ -672,6 +707,7 @@ async function handleCreateRow(
       Ordering,
       IsPrintable,
       IsComment,
+      IsCategory,
       ProductDescription,
       Quantity,
       CreatedOn,
@@ -692,6 +728,7 @@ async function handleCreateRow(
       @nextOrdering,
       @__isPrintable,
       @__isComment,
+      @__isCategory,
       @__description,
       @__quantity,
       SYSUTCDATETIME(),
@@ -867,6 +904,7 @@ export async function POST(
         od.TreeOrdering AS TreeOrdering,
         od.IsPrintable,
         od.IsComment,
+        od.IsCategory,
         ${TREE_ORDERING_HIERARCHY_EXPRESSION} AS TreeOrderingHierarchy,
         b.Name AS BrandName,
         p.PartNumber,
@@ -895,12 +933,27 @@ export async function POST(
         od.RequestedModelNo,
         od.RequestedPartNo,
         od.RequestedDescription,
+        od.RequestedDescription2,
         od.RequestedQuantity,
+        CASE
+          WHEN ISNULL(od.IsCategory, 0) = 1 THEN 0
+          WHEN NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') IS NOT NULL
+            OR NULLIF(LTRIM(RTRIM(od.RequestedBrand)), '') IS NOT NULL
+            OR NULLIF(LTRIM(RTRIM(od.RequestedModelNo)), '') IS NOT NULL
+            OR NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL
+            OR NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL
+            OR NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL
+            OR od.RequestedQuantity IS NOT NULL
+          THEN 1
+          ELSE 0
+        END AS __isRequestedRow,
+        NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') AS __requestedItemOrdinal,
         MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedItemNo,
         MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedBrand)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedBrand,
         MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedModelNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedModelNo,
         MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedPartNo,
         MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription,
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription2,
         MAX(CASE WHEN od.RequestedQuantity IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedQuantity
       FROM dbo.OfferDetails od
         LEFT OUTER JOIN dbo.Products p ON od.ProductID = p.ID
@@ -935,6 +988,7 @@ export async function POST(
       RequestedModelNo: normalizeAggregateFlag(aggregateRow?.__hasRequestedModelNo ?? 0),
       RequestedPartNo: normalizeAggregateFlag(aggregateRow?.__hasRequestedPartNo ?? 0),
       RequestedDescription: normalizeAggregateFlag(aggregateRow?.__hasRequestedDescription ?? 0),
+      RequestedDescription2: normalizeAggregateFlag(aggregateRow?.__hasRequestedDescription2 ?? 0),
       RequestedQuantity: normalizeAggregateFlag(aggregateRow?.__hasRequestedQuantity ?? 0),
     };
 
@@ -949,6 +1003,7 @@ export async function POST(
         __hasRequestedModelNo,
         __hasRequestedPartNo,
         __hasRequestedDescription,
+        __hasRequestedDescription2,
         __hasRequestedQuantity,
         ...rest
       } = row;
@@ -961,6 +1016,7 @@ export async function POST(
       void __hasRequestedModelNo;
       void __hasRequestedPartNo;
       void __hasRequestedDescription;
+      void __hasRequestedDescription2;
       void __hasRequestedQuantity;
       return rest;
     });
@@ -1096,14 +1152,77 @@ export async function PATCH(
         const hasNetCost = entry ? Object.prototype.hasOwnProperty.call(entry, 'NetCost') : false;
         const hasMargin = entry ? Object.prototype.hasOwnProperty.call(entry, 'Margin') : false;
         const hasListPrice = entry ? Object.prototype.hasOwnProperty.call(entry, 'ListPrice') : false;
+        const hasIsCategory = entry ? Object.prototype.hasOwnProperty.call(entry, 'IsCategory') : false;
+        const hasRequestedItemNo = entry
+          ? Object.prototype.hasOwnProperty.call(entry, 'RequestedItemNo')
+          : false;
+        const hasRequestedBrand = entry
+          ? Object.prototype.hasOwnProperty.call(entry, 'RequestedBrand')
+          : false;
+        const hasRequestedModelNo = entry
+          ? Object.prototype.hasOwnProperty.call(entry, 'RequestedModelNo')
+          : false;
+        const hasRequestedPartNo = entry
+          ? Object.prototype.hasOwnProperty.call(entry, 'RequestedPartNo')
+          : false;
+        const hasRequestedDescription = entry
+          ? Object.prototype.hasOwnProperty.call(entry, 'RequestedDescription')
+          : false;
+        const hasRequestedDescription2 = entry
+          ? Object.prototype.hasOwnProperty.call(entry, 'RequestedDescription2')
+          : false;
+        const hasRequestedQuantity = entry
+          ? Object.prototype.hasOwnProperty.call(entry, 'RequestedQuantity')
+          : false;
         const hasPricingFields = hasCustomerDiscount || hasTelmacoDiscount || hasNetUnitPrice || hasNetCost || hasMargin;
-        if (!hasDescription && !hasQuantity && !hasPricingFields && !hasListPrice) return null;
+        if (
+          !hasDescription
+          && !hasQuantity
+          && !hasPricingFields
+          && !hasListPrice
+          && !hasIsCategory
+          && !hasRequestedItemNo
+          && !hasRequestedBrand
+          && !hasRequestedModelNo
+          && !hasRequestedPartNo
+          && !hasRequestedDescription
+          && !hasRequestedDescription2
+          && !hasRequestedQuantity
+        ) {
+          return null;
+        }
 
         const description = hasDescription ? normalizeDescriptionValue(entry?.Description ?? null) : null;
         let quantity: number | null = null;
         if (hasQuantity) {
           quantity = normalizeQuantityValue(entry?.Quantity ?? null);
           if (quantity == null) {
+            hadInvalidQuantity = true;
+            return null;
+          }
+        }
+        const requestedBrand = hasRequestedBrand
+          ? normalizeRequestedTextValue(entry?.RequestedBrand ?? null)
+          : null;
+        const requestedModelNo = hasRequestedModelNo
+          ? normalizeRequestedTextValue(entry?.RequestedModelNo ?? null)
+          : null;
+        const requestedPartNo = hasRequestedPartNo
+          ? normalizeRequestedTextValue(entry?.RequestedPartNo ?? null)
+          : null;
+        const requestedDescription = hasRequestedDescription
+          ? normalizeRequestedTextValue(entry?.RequestedDescription ?? null)
+          : null;
+        const requestedDescription2 = hasRequestedDescription2
+          ? normalizeRequestedTextValue(entry?.RequestedDescription2 ?? null)
+          : null;
+        let requestedQuantity: number | null = null;
+        if (hasRequestedQuantity) {
+          requestedQuantity = normalizeQuantityValue(entry?.RequestedQuantity ?? null);
+          const requestedQuantityRaw = entry?.RequestedQuantity;
+          const hasRequestedQuantityInput = requestedQuantityRaw != null
+            && String(requestedQuantityRaw).trim().length > 0;
+          if (hasRequestedQuantityInput && requestedQuantity == null) {
             hadInvalidQuantity = true;
             return null;
           }
@@ -1115,6 +1234,7 @@ export async function PATCH(
         const netCost = hasNetCost ? normalizeMoneyValue(entry?.NetCost ?? null) : null;
         const margin = hasMargin ? normalizePercentValue(entry?.Margin ?? null, { allowNegative: true }) : null;
         const listPrice = hasListPrice ? normalizeMoneyValue(entry?.ListPrice ?? null) : null;
+        const isCategoryValue = hasIsCategory ? normalizeBoolean(entry?.IsCategory ?? null) : null;
 
         if (hasPricingFields) {
           const invalidPricing = (hasCustomerDiscount && customerDiscount == null)
@@ -1140,12 +1260,30 @@ export async function PATCH(
           hasNetCost,
           hasMargin,
           hasListPrice,
+          hasRequestedItemNo,
+          hasRequestedBrand,
+          hasRequestedModelNo,
+          hasRequestedPartNo,
+          hasRequestedDescription,
+          hasRequestedDescription2,
+          hasRequestedQuantity,
           customerDiscount,
           telmacoDiscount,
           netUnitPrice,
           netCost,
           margin,
           listPrice,
+          hasIsCategory,
+          IsCategory: isCategoryValue,
+          requestedItemNo: hasRequestedItemNo
+            ? normalizeRequestedItemNoValue(entry?.RequestedItemNo ?? null)
+            : null,
+          RequestedBrand: requestedBrand,
+          RequestedModelNo: requestedModelNo,
+          RequestedPartNo: requestedPartNo,
+          RequestedDescription: requestedDescription,
+          RequestedDescription2: requestedDescription2,
+          RequestedQuantity: requestedQuantity,
         };
       })
       .filter((entry): entry is {
@@ -1160,12 +1298,28 @@ export async function PATCH(
         hasNetCost: boolean;
         hasMargin: boolean;
         hasListPrice: boolean;
+        hasRequestedItemNo: boolean;
+        hasRequestedBrand: boolean;
+        hasRequestedModelNo: boolean;
+        hasRequestedPartNo: boolean;
+        hasRequestedDescription: boolean;
+        hasRequestedDescription2: boolean;
+        hasRequestedQuantity: boolean;
         customerDiscount: number | null;
         telmacoDiscount: number | null;
         netUnitPrice: number | null;
         netCost: number | null;
         margin: number | null;
         listPrice: number | null;
+        hasIsCategory: boolean;
+        IsCategory: boolean | null;
+        requestedItemNo: string | null;
+        RequestedBrand: string | null;
+        RequestedModelNo: string | null;
+        RequestedPartNo: string | null;
+        RequestedDescription: string | null;
+        RequestedDescription2: string | null;
+        RequestedQuantity: number | null;
       } => Boolean(entry));
 
     if (normalizedUpdates.length === 0) {
@@ -1259,6 +1413,22 @@ export async function PATCH(
         GrossProfit: number | null;
         ListPrice: number | null;
         HasListPrice: boolean;
+        RequestedItemNo: string | null;
+        HasRequestedItemNo: boolean;
+        RequestedBrand: string | null;
+        HasRequestedBrand: boolean;
+        RequestedModelNo: string | null;
+        HasRequestedModelNo: boolean;
+        RequestedPartNo: string | null;
+        HasRequestedPartNo: boolean;
+        RequestedDescription: string | null;
+        HasRequestedDescription: boolean;
+        RequestedDescription2: string | null;
+        HasRequestedDescription2: boolean;
+        RequestedQuantity: number | null;
+        HasRequestedQuantity: boolean;
+        IsCategory: boolean | null;
+        HasIsCategory: boolean;
       }> = [];
       const errors: string[] = [];
 
@@ -1381,6 +1551,22 @@ export async function PATCH(
           GrossProfit: grossProfit,
           ListPrice: entry.hasListPrice ? entry.listPrice ?? null : null,
           HasListPrice: entry.hasListPrice,
+          RequestedItemNo: entry.requestedItemNo,
+          HasRequestedItemNo: entry.hasRequestedItemNo,
+          RequestedBrand: entry.RequestedBrand,
+          HasRequestedBrand: entry.hasRequestedBrand,
+          RequestedModelNo: entry.RequestedModelNo,
+          HasRequestedModelNo: entry.hasRequestedModelNo,
+          RequestedPartNo: entry.RequestedPartNo,
+          HasRequestedPartNo: entry.hasRequestedPartNo,
+          RequestedDescription: entry.RequestedDescription,
+          HasRequestedDescription: entry.hasRequestedDescription,
+          RequestedDescription2: entry.RequestedDescription2,
+          HasRequestedDescription2: entry.hasRequestedDescription2,
+          RequestedQuantity: entry.RequestedQuantity,
+          HasRequestedQuantity: entry.hasRequestedQuantity,
+          IsCategory: entry.hasIsCategory ? entry.IsCategory : null,
+          HasIsCategory: entry.hasIsCategory,
         });
       });
 
@@ -1413,7 +1599,22 @@ export async function PATCH(
         const grossProfitParam = `grossProfit_${rowIdx}`;
         const listPriceParam = `listPrice_${rowIdx}`;
         const hasListPriceParam = `hasListPrice_${rowIdx}`;
-
+        const isCategoryParam = `isCategory_${rowIdx}`;
+        const hasIsCategoryParam = `hasIsCategory_${rowIdx}`;
+        const requestedItemNoParam = `requestedItemNo_${rowIdx}`;
+        const hasRequestedItemNoParam = `hasRequestedItemNo_${rowIdx}`;
+        const requestedBrandParam = `requestedBrand_${rowIdx}`;
+        const hasRequestedBrandParam = `hasRequestedBrand_${rowIdx}`;
+        const requestedModelNoParam = `requestedModelNo_${rowIdx}`;
+        const hasRequestedModelNoParam = `hasRequestedModelNo_${rowIdx}`;
+        const requestedPartNoParam = `requestedPartNo_${rowIdx}`;
+        const hasRequestedPartNoParam = `hasRequestedPartNo_${rowIdx}`;
+        const requestedDescriptionParam = `requestedDescription_${rowIdx}`;
+        const hasRequestedDescriptionParam = `hasRequestedDescription_${rowIdx}`;
+        const requestedDescription2Param = `requestedDescription2_${rowIdx}`;
+        const hasRequestedDescription2Param = `hasRequestedDescription2_${rowIdx}`;
+        const requestedQuantityParam = `requestedQuantity_${rowIdx}`;
+        const hasRequestedQuantityParam = `hasRequestedQuantity_${rowIdx}`;
         request.input(idParam, sql.Int, row.OfferDetailID);
         request.input(descriptionParam, sql.NVarChar(4000), row.HasDescription ? row.Description : null);
         request.input(hasDescriptionParam, sql.Bit, row.HasDescription ? 1 : 0);
@@ -1430,8 +1631,23 @@ export async function PATCH(
         request.input(grossProfitParam, decimalType, row.GrossProfit);
         request.input(listPriceParam, decimalType, row.HasListPrice ? row.ListPrice : null);
         request.input(hasListPriceParam, sql.Bit, row.HasListPrice ? 1 : 0);
-
-        valueClauses.push(`(@${idParam}, @${descriptionParam}, @${hasDescriptionParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam})`);
+        request.input(requestedItemNoParam, sql.NVarChar(400), row.HasRequestedItemNo ? row.RequestedItemNo : null);
+        request.input(hasRequestedItemNoParam, sql.Bit, row.HasRequestedItemNo ? 1 : 0);
+        request.input(requestedBrandParam, sql.NVarChar(400), row.HasRequestedBrand ? row.RequestedBrand : null);
+        request.input(hasRequestedBrandParam, sql.Bit, row.HasRequestedBrand ? 1 : 0);
+        request.input(requestedModelNoParam, sql.NVarChar(400), row.HasRequestedModelNo ? row.RequestedModelNo : null);
+        request.input(hasRequestedModelNoParam, sql.Bit, row.HasRequestedModelNo ? 1 : 0);
+        request.input(requestedPartNoParam, sql.NVarChar(400), row.HasRequestedPartNo ? row.RequestedPartNo : null);
+        request.input(hasRequestedPartNoParam, sql.Bit, row.HasRequestedPartNo ? 1 : 0);
+        request.input(requestedDescriptionParam, sql.NVarChar(4000), row.HasRequestedDescription ? row.RequestedDescription : null);
+        request.input(hasRequestedDescriptionParam, sql.Bit, row.HasRequestedDescription ? 1 : 0);
+        request.input(requestedDescription2Param, sql.NVarChar(4000), row.HasRequestedDescription2 ? row.RequestedDescription2 : null);
+        request.input(hasRequestedDescription2Param, sql.Bit, row.HasRequestedDescription2 ? 1 : 0);
+        request.input(requestedQuantityParam, decimalType, row.RequestedQuantity);
+        request.input(hasRequestedQuantityParam, sql.Bit, row.HasRequestedQuantity ? 1 : 0);
+        request.input(isCategoryParam, sql.Bit, row.HasIsCategory ? (row.IsCategory ? 1 : 0) : null);
+        request.input(hasIsCategoryParam, sql.Bit, row.HasIsCategory ? 1 : 0);
+        valueClauses.push(`(@${idParam}, @${descriptionParam}, @${hasDescriptionParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam})`);
       });
 
       const query = `
@@ -1451,7 +1667,23 @@ export async function PATCH(
           TotalCost,
           GrossProfit,
           ListPrice,
-          HasListPrice
+          HasListPrice,
+          RequestedItemNo,
+          HasRequestedItemNo,
+          RequestedBrand,
+          HasRequestedBrand,
+          RequestedModelNo,
+          HasRequestedModelNo,
+          RequestedPartNo,
+          HasRequestedPartNo,
+          RequestedDescription,
+          HasRequestedDescription,
+          RequestedDescription2,
+          HasRequestedDescription2,
+          RequestedQuantity,
+          HasRequestedQuantity,
+          IsCategory,
+          HasIsCategory
         ) AS (
           SELECT *
           FROM (VALUES ${valueClauses.join(', ')}) AS v (
@@ -1470,7 +1702,23 @@ export async function PATCH(
             TotalCost,
             GrossProfit,
             ListPrice,
-            HasListPrice
+            HasListPrice,
+            RequestedItemNo,
+            HasRequestedItemNo,
+            RequestedBrand,
+            HasRequestedBrand,
+            RequestedModelNo,
+            HasRequestedModelNo,
+            RequestedPartNo,
+            HasRequestedPartNo,
+            RequestedDescription,
+            HasRequestedDescription,
+            RequestedDescription2,
+            HasRequestedDescription2,
+            RequestedQuantity,
+            HasRequestedQuantity,
+            IsCategory,
+            HasIsCategory
           )
         )
         UPDATE od
@@ -1486,6 +1734,14 @@ export async function PATCH(
             od.TotalCost = PendingUpdates.TotalCost,
             od.GrossProfit = PendingUpdates.GrossProfit,
             od.ListPrice = CASE WHEN PendingUpdates.HasListPrice = 1 THEN PendingUpdates.ListPrice ELSE od.ListPrice END,
+            od.RequestedItemNo = CASE WHEN PendingUpdates.HasRequestedItemNo = 1 THEN PendingUpdates.RequestedItemNo ELSE od.RequestedItemNo END,
+            od.RequestedBrand = CASE WHEN PendingUpdates.HasRequestedBrand = 1 THEN PendingUpdates.RequestedBrand ELSE od.RequestedBrand END,
+            od.RequestedModelNo = CASE WHEN PendingUpdates.HasRequestedModelNo = 1 THEN PendingUpdates.RequestedModelNo ELSE od.RequestedModelNo END,
+            od.RequestedPartNo = CASE WHEN PendingUpdates.HasRequestedPartNo = 1 THEN PendingUpdates.RequestedPartNo ELSE od.RequestedPartNo END,
+            od.RequestedDescription = CASE WHEN PendingUpdates.HasRequestedDescription = 1 THEN PendingUpdates.RequestedDescription ELSE od.RequestedDescription END,
+            od.RequestedDescription2 = CASE WHEN PendingUpdates.HasRequestedDescription2 = 1 THEN PendingUpdates.RequestedDescription2 ELSE od.RequestedDescription2 END,
+            od.RequestedQuantity = CASE WHEN PendingUpdates.HasRequestedQuantity = 1 THEN PendingUpdates.RequestedQuantity ELSE od.RequestedQuantity END,
+            od.IsCategory = CASE WHEN PendingUpdates.HasIsCategory = 1 THEN PendingUpdates.IsCategory ELSE od.IsCategory END,
             od.ModifiedOn = SYSUTCDATETIME(),
             od.ModifiedBy = @__modifiedBy
         FROM dbo.OfferDetails od

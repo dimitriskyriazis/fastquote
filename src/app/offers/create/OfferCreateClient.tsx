@@ -67,11 +67,13 @@ type OfferCreateDefaults = {
   suggestedUserId?: string;
 };
 
+export type MarketOption = DropdownOption & { salesDivisionId: string | null };
+
 type Props = {
   customers: DropdownOption[];
   statuses: DropdownOption[];
   pricingPolicies: DropdownOption[];
-  markets: DropdownOption[];
+  markets: MarketOption[];
   salesDivisions: DropdownOption[];
   users: DropdownOption[];
   calcMethodFormulas: DropdownOption[];
@@ -192,6 +194,27 @@ export default function OfferCreateClient({
         : calcMethodFormulas[0].value,
     );
   }, [calcMethodFormulas]);
+
+  const marketDivisionMap = useMemo(() => {
+    const map = new Map<string, string>();
+    markets.forEach((market) => {
+      if (!market || !market.value) return;
+      map.set(market.value, market.salesDivisionId ?? '');
+    });
+    return map;
+  }, [markets]);
+
+  const lastMarketSelectionRef = useRef<string>('');
+  useEffect(() => {
+    const marketId = values.marketId;
+    if (marketId === lastMarketSelectionRef.current) return;
+    lastMarketSelectionRef.current = marketId;
+    const defaultDivision = marketId ? marketDivisionMap.get(marketId) ?? '' : '';
+    setValues((prev) => {
+      if (prev.salesDivisionId === defaultDivision) return prev;
+      return { ...prev, salesDivisionId: defaultDivision };
+    });
+  }, [marketDivisionMap, values.marketId]);
 
   const findCustomerOption = useCallback((text: string) => {
     const normalized = text.trim().toLowerCase();

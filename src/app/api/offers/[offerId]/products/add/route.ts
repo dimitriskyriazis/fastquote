@@ -222,8 +222,7 @@ async function handleCategoryGrid(
       ${TREE_ORDERING_HIERARCHY_EXPRESSION} AS TreeOrderingHierarchy
     FROM dbo.OfferDetails od
     WHERE od.OfferID = @__offerId
-      AND ISNULL(od.IsComment, 0) = 0
-      AND ISNULL(od.ProductID, 0) = 0
+      AND ISNULL(od.IsCategory, 0) = 1
       ${whereSql}
     ${orderSql}
     OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY;
@@ -545,6 +544,7 @@ async function handleAddProducts(
       Ordering,
       IsPrintable,
       IsComment,
+      IsCategory,
       ProductID,
       BrandID,
       PartNumber,
@@ -580,6 +580,7 @@ async function handleAddProducts(
       @nextOrdering + ROW_NUMBER() OVER (ORDER BY p.Seq) - 1,
 
       NULL,
+      0,
       0,
       p.ProductID,
       p.BrandID,

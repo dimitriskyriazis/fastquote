@@ -2,9 +2,9 @@
 
 import React, { useMemo, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
 import type { ColDef, DefaultMenuItem, GetContextMenuItemsParams, MenuItemDef } from "ag-grid-community";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import { openLinkInNewTab } from "../../lib/navigation";
 import styles from "./ProductsClient.module.css";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
@@ -53,7 +53,6 @@ const resolveProductLabel = (row: Record<string, unknown> | null | undefined, fa
 const PRODUCT_ROW_TYPE = "product";
 
 export default function ProductsClient() {
-  const router = useRouter();
   const columnDefs = useMemo<ColDef[]>(() => [
     {
       field: "Brand",
@@ -161,7 +160,7 @@ export default function ProductsClient() {
           const qs = new URLSearchParams();
           qs.set("backHref", HISTORY_BACK_HREF);
           qs.set("backLabel", HISTORY_BACK_LABEL);
-          void router.push(
+          openLinkInNewTab(
             `/products/${encodeURIComponent(String(productId))}/history?${qs.toString()}`,
           );
         },
@@ -181,7 +180,7 @@ export default function ProductsClient() {
 
       return items;
     },
-    [router, productRowDeletion],
+    [productRowDeletion],
   );
 
   return (

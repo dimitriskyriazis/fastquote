@@ -14,6 +14,7 @@ type RequestedRowInput = {
   modelNumber?: unknown;
   partNumber?: unknown;
   description?: unknown;
+  description2?: unknown;
   quantity?: unknown;
 };
 
@@ -28,6 +29,7 @@ type NormalizedRow = {
   modelNumber: string | null;
   partNumber: string | null;
   description: string | null;
+  description2: string | null;
   quantity: number | null;
 };
 
@@ -42,6 +44,7 @@ type RequestedFieldKey =
   | 'RequestedModelNo'
   | 'RequestedPartNo'
   | 'RequestedDescription'
+  | 'RequestedDescription2'
   | 'RequestedQuantity';
 
 type ColumnLengthKey = RequestedFieldKey | 'ProductDescription';
@@ -53,6 +56,7 @@ const REQUESTED_COLUMN_METADATA: Array<{ key: ColumnLengthKey; column: string }>
   { key: 'RequestedModelNo', column: 'RequestedModelNo' },
   { key: 'RequestedPartNo', column: 'RequestedPartNo' },
   { key: 'RequestedDescription', column: 'RequestedDescription' },
+  { key: 'RequestedDescription2', column: 'RequestedDescription2' },
   { key: 'RequestedQuantity', column: 'RequestedQuantity' },
   { key: 'ProductDescription', column: 'ProductDescription' },
 ];
@@ -110,8 +114,9 @@ const normalizeRows = (rows: RequestedRowInput[] | undefined): NormalizedRow[] =
       row.partNumber ?? (row as Record<string, unknown>).PartNo ?? (row as Record<string, unknown>).PartNumber,
     );
     const description = normalizeDescription(row.description ?? (row as Record<string, unknown>).Description);
+    const description2 = normalizeDescription(row.description2 ?? (row as Record<string, unknown>).Description2);
     const quantity = normalizeQuantity(row.quantity ?? (row as Record<string, unknown>).Quantity);
-    if (!itemNo && !brand && !modelNumber && !partNumber && !description && quantity == null) {
+    if (!itemNo && !brand && !modelNumber && !partNumber && !description && !description2 && quantity == null) {
       return;
     }
     normalized.push({
@@ -121,6 +126,7 @@ const normalizeRows = (rows: RequestedRowInput[] | undefined): NormalizedRow[] =
       modelNumber,
       partNumber,
       description,
+      description2,
       quantity,
     });
   });
@@ -187,6 +193,7 @@ const applyColumnLengthsToRow = (row: NormalizedRow, lengths: ColumnLengthMap): 
     modelNumber: truncateStringValue(row.modelNumber, lengths.RequestedModelNo),
     partNumber: truncateStringValue(row.partNumber, lengths.RequestedPartNo),
     description: truncateStringValue(row.description, combinedDescriptionLength ?? requestedDescriptionLength),
+    description2: truncateStringValue(row.description2, lengths.RequestedDescription2),
   };
 };
 
@@ -197,6 +204,7 @@ const readRequestedColumnLengths = async (pool: ConnectionPool): Promise<ColumnL
     RequestedModelNo: null,
     RequestedPartNo: null,
     RequestedDescription: null,
+    RequestedDescription2: null,
     RequestedQuantity: null,
     ProductDescription: null,
   };
@@ -270,11 +278,12 @@ export async function POST(
           request.input(`model_${chunkIdx}`, sql.NVarChar(255), row.modelNumber);
           request.input(`part_${chunkIdx}`, sql.NVarChar(255), row.partNumber);
           request.input(`desc_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description);
+          request.input(`desc2_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description2);
           request.input(`qty_${chunkIdx}`, getDecimalType(), row.quantity);
         });
         const values = chunk
           .map((_, chunkIdx) =>
-            `(@tree_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @desc_${chunkIdx}, @qty_${chunkIdx})`,
+            `(@tree_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @qty_${chunkIdx})`,
           )
           .join(', ');
         const query = `
@@ -285,10 +294,11 @@ export async function POST(
             RequestedModelNo NVARCHAR(255) NULL,
             RequestedPartNo NVARCHAR(255) NULL,
             RequestedDescription NVARCHAR(MAX) NULL,
+            RequestedDescription2 NVARCHAR(MAX) NULL,
             RequestedQuantity DECIMAL(18, 4) NULL
           );
 
-          INSERT INTO @payload (TreeOrdering, RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo, RequestedDescription, RequestedQuantity)
+          INSERT INTO @payload (TreeOrdering, RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo, RequestedDescription, RequestedDescription2, RequestedQuantity)
           VALUES ${values};
 
           DECLARE @updated TABLE (TreeOrdering NVARCHAR(255) NOT NULL);
@@ -300,6 +310,7 @@ export async function POST(
             RequestedModelNo = payload.RequestedModelNo,
             RequestedPartNo = payload.RequestedPartNo,
             RequestedDescription = payload.RequestedDescription,
+            RequestedDescription2 = payload.RequestedDescription2,
             RequestedQuantity = payload.RequestedQuantity,
             ModifiedOn = SYSUTCDATETIME(),
             ModifiedBy = @__modifiedBy
@@ -314,6 +325,7 @@ export async function POST(
                  payload.RequestedModelNo,
                  payload.RequestedPartNo,
                  payload.RequestedDescription,
+                 payload.RequestedDescription2,
                  payload.RequestedQuantity
           FROM @payload payload
           WHERE NOT EXISTS (
@@ -327,6 +339,7 @@ export async function POST(
           RequestedModelNo: string | null;
           RequestedPartNo: string | null;
           RequestedDescription: string | null;
+          RequestedDescription2: string | null;
           RequestedQuantity: number | null;
         }>(query);
         const unmatched = result.recordset ?? [];
@@ -340,6 +353,7 @@ export async function POST(
               modelNumber: row.RequestedModelNo ?? null,
               partNumber: row.RequestedPartNo ?? null,
               description: row.RequestedDescription ?? null,
+              description2: row.RequestedDescription2 ?? null,
               quantity: row.RequestedQuantity ?? null,
             }, columnLengths)),
           );
@@ -391,11 +405,12 @@ export async function POST(
         request.input(`model_${chunkIdx}`, sql.NVarChar(255), row.modelNumber);
         request.input(`part_${chunkIdx}`, sql.NVarChar(255), row.partNumber);
         request.input(`desc_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description);
+        request.input(`desc2_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description2);
         request.input(`rqty_${chunkIdx}`, getDecimalType(), row.quantity);
       });
       const values = chunk
         .map((_, chunkIdx) =>
-          `(@tree_${chunkIdx}, @parent_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @desc_${chunkIdx}, @rqty_${chunkIdx})`,
+          `(@tree_${chunkIdx}, @parent_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @rqty_${chunkIdx})`,
         )
         .join(', ');
       const query = `
@@ -408,6 +423,7 @@ export async function POST(
           RequestedModelNo NVARCHAR(255) NULL,
           RequestedPartNo NVARCHAR(255) NULL,
           RequestedDescription NVARCHAR(MAX) NULL,
+          RequestedDescription2 NVARCHAR(MAX) NULL,
           RequestedQuantity DECIMAL(18, 4) NULL
         );
 
@@ -419,6 +435,7 @@ export async function POST(
           RequestedModelNo,
           RequestedPartNo,
           RequestedDescription,
+          RequestedDescription2,
           RequestedQuantity
         )
         VALUES ${values};
@@ -430,6 +447,7 @@ export async function POST(
           Ordering,
           IsPrintable,
           IsComment,
+          IsCategory,
           ProductDescription,
           Quantity,
           RequestedItemNo,
@@ -437,6 +455,7 @@ export async function POST(
           RequestedModelNo,
           RequestedPartNo,
           RequestedDescription,
+          RequestedDescription2,
           RequestedQuantity,
           CreatedOn,
           CreatedBy,
@@ -450,6 +469,7 @@ export async function POST(
           ROW_NUMBER() OVER (ORDER BY payload.RowNumber) + @__orderingBase - 1,
           1,
           0,
+          0,
           NULL,
           0,
           payload.RequestedItemNo,
@@ -457,6 +477,7 @@ export async function POST(
           payload.RequestedModelNo,
           payload.RequestedPartNo,
           payload.RequestedDescription,
+          payload.RequestedDescription2,
           payload.RequestedQuantity,
           SYSUTCDATETIME(),
           @__userId,

@@ -57,6 +57,10 @@
   background: rgba(15, 23, 42, 0.96);
 }
 
+.drop-toast.drop-toast--warning {
+  background: #f97316;
+}
+
 .drop-toast.drop-toast--error {
   background: #b91c1c;
 }
@@ -176,6 +180,14 @@
   color: #2563eb;
 }
 
+.fastquote-menu-icon--category {
+  color: #047857;
+}
+
+.fastquote-menu-icon--copy {
+  color: #0ea5e9;
+}
+
 .dragging,
 .dragging * {
   cursor: grabbing !important;
@@ -184,24 +196,6 @@
 .drag-overlay-row,
 .drag-overlay-row .ag-cell {
   color: #00000082 !important;
-}
-
-.offer-products-grid .offer-row--category .ag-cell {
-  background-color: #e5e7eb !important;
-}
-
-.offer-products-grid .offer-row--category.ag-row-hover .ag-cell {
-  background-color: #d9dde3 !important;
-}
-
-.offer-products-grid .offer-row--category.offer-row--category-empty .ag-cell {
-  background-color: #f1f5f9 !important;
-  cursor: default;
-  color: #475569 !important;
-}
-
-.offer-products-grid .offer-row--category.offer-row--category-empty.ag-row-hover .ag-cell {
-  background-color: #e2e8f0 !important;
 }
 
 .offer-products-grid .offer-row--printable-comment .ag-cell {
@@ -228,6 +222,23 @@
   background-color: #f3f4f6 !important;
 }
 
+.offer-products-grid .offer-row--category .offer-products-grid__cell--actual,
+.offer-products-grid .offer-row--category .offer-products-grid__cell--requested {
+  background-color: #c6cace !important;
+}
+
+.offer-products-grid .offer-row--category .ag-cell {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  display: flex;
+  align-items: center;
+}
+
+.offer-products-grid .offer-row--category.ag-row-hover .offer-products-grid__cell--actual,
+.offer-products-grid .offer-row--category.ag-row-hover .offer-products-grid__cell--requested {
+  background-color: #bfc3c9 !important;
+}
+
 .offer-products-grid .offer-row--product .offer-products-grid__cell--product-accent {
   background-color: #ffffff !important;
 }
@@ -250,10 +261,6 @@
 .offer-products-grid .ag-theme-quartz .ag-cell.ag-cell-focus {
   background: none !important;
   background-color: transparent !important;
-}
-
-.offer-products-grid .offer-row--category.ag-row-hover {
-  background-color: #d9dde3;
 }
 
 .offer-products-grid .offer-row--product.ag-row-hover {
