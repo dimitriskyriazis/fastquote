@@ -131,11 +131,11 @@
 }
 
 .requestedHeader {
-  background: #ffb17c;
+  background: #ffd3a5;
 }
 
 .requestedHeader :global(.ag-header-cell-label) {
-  background: #ffb17c;
+  background: #ffd3a5;
   color: inherit;
 }
 

@@ -236,6 +236,11 @@ const normalizeRequestedLookupValue = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const getExactTextValue = (value: unknown): string | null => {
+  if (value == null) return null;
+  return typeof value === 'string' ? value : String(value);
+};
+
 const normalizeRequestedQuantityValue = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
   if (typeof value === 'string') {
@@ -294,7 +299,39 @@ const hasRequestedPseudoFields = (row: Record<string, unknown> | null | undefine
   const requestedQuantity = normalizeRequestedQuantityValue(
     (row as { RequestedQuantity?: unknown }).RequestedQuantity ?? null,
   );
-  return Boolean(requestedPartNumber || requestedModelNumber || requestedQuantity != null);
+  if (requestedPartNumber || requestedModelNumber || requestedQuantity != null) {
+    return true;
+  }
+
+  const partNumber = normalizeRequestedLookupValue(
+    (row as { PartNumber?: unknown }).PartNumber ?? null,
+  );
+  if (partNumber) return true;
+  const modelNumber = normalizeRequestedLookupValue(
+    (row as { ModelNumber?: unknown }).ModelNumber ?? null,
+  );
+  if (modelNumber) return true;
+
+  const quantity = normalizeRequestedQuantityValue(
+    (row as { Quantity?: unknown }).Quantity
+      ?? (row as { qty?: unknown }).qty
+      ?? (row as { Qty?: unknown }).Qty
+      ?? null,
+  );
+  if (quantity != null) return true;
+
+  const priceFields: Array<'ListPrice' | 'UnitPrice' | 'NetUnitPrice' | 'TotalPrice' | 'TotalNet' | 'NetCost' | 'TotalCost' | 'GrossProfit'> = [
+    'ListPrice',
+    'UnitPrice',
+    'NetUnitPrice',
+    'TotalPrice',
+    'TotalNet',
+    'NetCost',
+    'TotalCost',
+    'GrossProfit',
+  ];
+  const hasPrice = priceFields.some((field) => coerceNumber((row as Record<string, unknown>)[field] ?? null) != null);
+  return hasPrice;
 };
 
 type RequestedLookupInfo = {
@@ -541,6 +578,39 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
     if (endpoint) return endpoint;
     return buildEndpointForOffer(offerId);
   }, [endpoint, offerId]);
+  const addProductsEndpoint = useMemo(
+    () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
+    [offerId],
+  );
+  const assignRequestedRowToProduct = useCallback(
+    async (requestedRowId: number, productId: number, categoryId: number | null) => {
+      try {
+        const body: Record<string, unknown> = {
+          action: 'assign-requested',
+          requestedRowId,
+          productId,
+        };
+        if (categoryId != null) {
+          body.categoryId = categoryId;
+        }
+        const res = await fetch(addProductsEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          console.error('Failed to assign requested row to product', payload?.error ?? `status ${res.status}`);
+          return false;
+        }
+        return true;
+      } catch (err) {
+        console.error('Failed to assign requested row to product', err);
+        return false;
+      }
+    },
+    [addProductsEndpoint],
+  );
   const [totals, setTotals] = useState<{ totalListPrice: number; totalNetPrice: number; totalCost: number; totalMargin: number } | null>(null);
   const [requestedColumnVisibility, setRequestedColumnVisibility] = useState<Record<RequestedDisplayFieldKey, boolean>>({
     RequestedBrand: false,
@@ -798,7 +868,7 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
     api.applyColumnState({
       state: [{ colId: 'RequestedItemNo', sort: 'asc', sortIndex: 0 }],
       defaultState: { sort: null },
-      applyOrder: true,
+      applyOrder: false,
     });
     try {
       api.refreshClientSideRowModel();
@@ -818,7 +888,7 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
 
   const getRowHeight = useCallback((params: RowHeightParams<Record<string, unknown>>) => {
     const row = params.data ?? null;
-    return isOfferProductCategory(row) ? 40 : 32;
+    return isOfferProductCategory(row) ? 32 : 32;
   }, []);
 
   const isCategoryRowCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
@@ -969,22 +1039,23 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
     );
   }, [hasCategoryChildren, isCategoryRowCollapsed, toggleCategoryCollapsed, formatDisplayTreeOrdering]);
 
-  const RequestedItemNoCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
-    const value = params.value;
-    const rowData = params.data ?? null;
-    const isCategory = isOfferProductCategory(rowData);
-    const hasChildren = isCategory && hasCategoryChildren(rowData);
-    const collapsed = isCategory && isCategoryRowCollapsed(rowData);
-    const indicator = isCategory
-      ? hasChildren
-        ? (collapsed ? '▸' : '▾')
-        : '•'
-      : null;
-    const indicatorClass = isCategory
-      ? hasChildren
-        ? `${styles.treeOrderingIndicator} ${styles.treeOrderingIndicatorArrow}`
-        : `${styles.treeOrderingIndicator} ${styles.treeOrderingIndicatorEmpty}`
-      : undefined;
+const RequestedItemNoCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
+  const value = params.value;
+  const rowData = params.data ?? null;
+  const isCategory = isOfferProductCategory(rowData);
+  const shouldShowIndicator = isCategory && isRequestedRow(rowData);
+  const hasChildren = shouldShowIndicator && hasCategoryChildren(rowData);
+  const collapsed = shouldShowIndicator && isCategoryRowCollapsed(rowData);
+  const indicator = shouldShowIndicator
+    ? hasChildren
+      ? (collapsed ? '▸' : '▾')
+      : '•'
+    : null;
+  const indicatorClass = shouldShowIndicator
+    ? hasChildren
+      ? `${styles.treeOrderingIndicator} ${styles.treeOrderingIndicatorArrow}`
+      : `${styles.treeOrderingIndicator} ${styles.treeOrderingIndicatorEmpty}`
+    : undefined;
 
     const handleIndicatorClick = (event: React.MouseEvent<HTMLButtonElement>) => {
       event.stopPropagation();
@@ -1211,38 +1282,12 @@ const PartNumberCell = useCallback((params: ICellRendererParams<Record<string, u
 const REQUESTED_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--requested';
 const ACTUAL_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--actual';
 
-const REQUESTED_FIELDS: Array<keyof Record<string, unknown>> = [
-  'RequestedItemNo',
-  'RequestedBrand',
-  'RequestedModelNo',
-  'RequestedPartNo',
-  'RequestedDescription',
-  'RequestedDescription2',
-  'RequestedQuantity',
-];
-
   const requestedCellClassRules = useMemo(() => ({
     [styles.requestedColumnCell]: (params: { data?: Record<string, unknown> | null }) =>
       isOfferProductCategory(params.data ?? null),
     [REQUESTED_COLUMN_GLOBAL_CLASS]: (params: { data?: Record<string, unknown> | null }) =>
       isOfferProductCategory(params.data ?? null),
   }), []);
-
-  const clearRequestedRowProperties = useCallback((node: GridRowNode | null) => {
-    if (!node) return;
-    REQUESTED_FIELDS.forEach((field) => {
-      try {
-        node.setDataValue(field, null);
-      } catch {
-        /* noop */
-      }
-    });
-    try {
-      node.setDataValue('__isRequestedRow', 0);
-    } catch {
-      /* noop */
-    }
-  }, []);
 
   const clearRequestedFlags = useCallback((node: GridRowNode | null) => {
     if (!node) return;
@@ -1298,7 +1343,7 @@ const REQUESTED_FIELDS: Array<keyof Record<string, unknown>> = [
       }
     }
     refreshRowNodes(node);
-  }, [clearRequestedRowProperties, refreshRowNodes]);
+  }, [clearRequestedFlags, refreshRowNodes]);
 
   const promoteNodeToProduct = useCallback((
     node: GridRowNode | null,
@@ -1315,7 +1360,7 @@ const REQUESTED_FIELDS: Array<keyof Record<string, unknown>> = [
     } catch {
       /* noop */
     }
-    clearRequestedRowProperties(node);
+    clearRequestedFlags(node);
     try {
       node.setDataValue('PartNumber', partNumber ?? null);
       node.setDataValue('ModelNumber', modelNumber ?? null);
@@ -1325,7 +1370,7 @@ const REQUESTED_FIELDS: Array<keyof Record<string, unknown>> = [
       /* noop */
     }
     refreshRowNodes(node);
-  }, [clearRequestedRowProperties, refreshRowNodes]);
+  }, [clearRequestedFlags, refreshRowNodes]);
 
 const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>(() => {
   const buildTextRequestedColumn = (
@@ -1431,29 +1476,31 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       filter: 'agTextColumnFilter',
       headerClass: styles.requestedHeader,
       cellClassRules: requestedCellClassRules,
-      editable: (params) => canEditRequestedField('RequestedItemNo', params.data ?? null),
-    singleClickEdit: true,
-    cellEditor: 'agTextCellEditor',
-    valueSetter: ({ data, newValue }) => {
-      if (!data) return false;
-      (data as Record<string, unknown>).RequestedItemNo = normalizeRequestedItemNoValue(newValue);
-      return true;
-    },
-    hide: !requestedItemNoVisible,
-    suppressSizeToFit: !requestedItemNoVisible,
-    suppressAutoSize: !requestedItemNoVisible,
-    valueGetter: ({ data }) => {
-      if (!data) return '';
-      const requestedItemNo = normalizeRequestedItemNoValue(
-        (data as Record<string, unknown>).RequestedItemNo ?? null,
-      );
-      if (requestedItemNo != null) return requestedItemNo;
-      if (!isRequestedRow(data as Record<string, unknown> | null)) return '';
-      const treeOrdering = (data as Record<string, unknown>).TreeOrdering;
-      return treeOrdering != null ? formatDisplayTreeOrdering(treeOrdering) : '';
-    },
-    cellRenderer: RequestedItemNoCell,
-  };
+      editable: (params: { data?: Record<string, unknown> | null }) =>
+        canEditRequestedField('RequestedItemNo', params.data ?? null),
+      singleClickEdit: true,
+      cellEditor: 'agTextCellEditor',
+      valueSetter: ({ data, newValue }: ValueSetterParams<Record<string, unknown>, unknown>) => {
+        if (!data) return false;
+        const normalized = normalizeRequestedItemNoValue(newValue);
+        (data as Record<string, unknown>).RequestedItemNo = normalized;
+        return true;
+      },
+      hide: !requestedItemNoVisible,
+      suppressSizeToFit: !requestedItemNoVisible,
+      suppressAutoSize: !requestedItemNoVisible,
+      valueGetter: ({ data }) => {
+        if (!data) return '';
+        const requestedItemNo = normalizeRequestedItemNoValue(
+          (data as Record<string, unknown>).RequestedItemNo ?? null,
+        );
+        if (requestedItemNo != null) return requestedItemNo;
+        if (!isRequestedRow(data as Record<string, unknown> | null)) return '';
+        const treeOrdering = (data as Record<string, unknown>).TreeOrdering;
+        return treeOrdering != null ? formatDisplayTreeOrdering(treeOrdering) : '';
+      },
+      cellRenderer: RequestedItemNoCell,
+    };
 
     return [
       {
@@ -1770,6 +1817,15 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       const descriptionOverride = normalizeDescriptionValue(
         (data as { Description?: unknown }).Description ?? null,
       );
+      const requestedDescriptionPrimaryRaw = getExactTextValue(
+        (data as { RequestedDescription?: unknown }).RequestedDescription ?? null,
+      );
+      const requestedDescriptionSecondaryRaw = getExactTextValue(
+        (data as { RequestedDescription2?: unknown }).RequestedDescription2 ?? null,
+      );
+      const descriptionOverrideRaw = getExactTextValue(
+        (data as { Description?: unknown }).Description ?? null,
+      );
       const requestedTree = normalizeRequestedItemNoValue((data as { RequestedItemNo?: unknown }).RequestedItemNo ?? null);
       const treeOrderingRaw = (data as { TreeOrdering?: unknown }).TreeOrdering;
       const treeOrderingValue = requestedTree || (typeof treeOrderingRaw === 'string'
@@ -1801,84 +1857,111 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         continue;
       }
 
-      const productId = await resolveProductIdFromRequestedInfo(lookupInfo);
-      if (productId == null) {
+      try {
+        const productId = await resolveProductIdFromRequestedInfo(lookupInfo);
+        if (productId == null) {
+          missingProducts += 1;
+          continue;
+        }
+        const parentCategoryId = normalizeOfferDetailId(
+          (data as { ParentOfferDetailID?: unknown }).ParentOfferDetailID ?? null,
+        );
+        const assigned = await assignRequestedRowToProduct(offerDetailId, productId, parentCategoryId);
+        if (!assigned) {
+          missingProducts += 1;
+          continue;
+        }
+        const productMeta = await fetchProductSummary(productId);
+        const description = requestedDescriptionPrimaryRaw
+          ?? requestedDescriptionSecondaryRaw
+          ?? descriptionOverrideRaw
+          ?? productMeta?.Description
+          ?? null;
+        const requestedPartNumberRaw = getExactTextValue(
+          (data as { RequestedPartNo?: unknown }).RequestedPartNo ?? null,
+        );
+        const requestedModelNumberRaw = getExactTextValue(
+          (data as { RequestedModelNo?: unknown }).RequestedModelNo ?? null,
+        );
+        const requestedBrandRaw = getExactTextValue(
+          (data as { RequestedBrand?: unknown }).RequestedBrand ?? null,
+        );
+        const partNumber = requestedPartNumberRaw
+          ?? getExactTextValue((data as { PartNumber?: unknown }).PartNumber ?? null)
+          ?? productMeta?.PartNumber
+          ?? null;
+        const modelNumber = requestedModelNumberRaw
+          ?? getExactTextValue((data as { ModelNumber?: unknown }).ModelNumber ?? null)
+          ?? productMeta?.ModelNumber
+          ?? null;
+        const brandName = requestedBrandRaw
+          ?? getExactTextValue((data as { BrandName?: unknown }).BrandName ?? null)
+          ?? productMeta?.BrandName
+          ?? null;
+        const fallbackProductMeta: ProductSummary = {
+          ProductID: productId,
+          PartNumber: null,
+          ModelNumber: null,
+          BrandName: null,
+          Description: null,
+        };
+        const summary = productMeta ?? fallbackProductMeta;
+        promoteNodeToProduct(
+          node,
+          summary,
+          partNumber ?? null,
+          modelNumber ?? null,
+          brandName ?? null,
+          description ?? null,
+        );
+        productsAdded += 1;
+      } catch (err) {
+        console.error('Failed to copy requested row to offer', err);
         missingProducts += 1;
-        continue;
       }
-
-      const productMeta = await fetchProductSummary(productId);
-      if (!productMeta) {
-        missingProducts += 1;
-        continue;
-      }
-      const description = requestedDescriptionValue ?? descriptionOverride ?? productMeta.Description ?? null;
-      const partNumber = normalizeRequestedLookupValue(
-        (data as { RequestedPartNo?: unknown }).RequestedPartNo ?? (data as { PartNumber?: unknown }).PartNumber ?? productMeta.PartNumber,
-      );
-      const modelNumber = normalizeRequestedLookupValue(
-        (data as { RequestedModelNo?: unknown }).RequestedModelNo ?? (data as { ModelNumber?: unknown }).ModelNumber ?? productMeta.ModelNumber,
-      );
-      const brandName = normalizeRequestedLookupValue(
-        (data as { RequestedBrand?: unknown }).RequestedBrand ?? (data as { BrandName?: unknown }).BrandName ?? productMeta.BrandName,
-      );
-      updates.push({
-        OfferDetailID: offerDetailId,
-        IsCategory: false,
-        ProductID: productId,
-        PartNumber: partNumber ?? null,
-        ModelNumber: modelNumber ?? null,
-        BrandName: brandName ?? null,
-        Description: description ?? null,
-        RequestedItemNo: null,
-        RequestedBrand: null,
-        RequestedModelNo: null,
-        RequestedPartNo: null,
-        RequestedDescription: null,
-        RequestedDescription2: null,
-        RequestedQuantity: null,
-      });
-      promoteNodeToProduct(node, productMeta, partNumber ?? null, modelNumber ?? null, brandName ?? null, description ?? null);
-      productsAdded += 1;
+      continue;
     }
 
-    if (updates.length === 0) {
+    if (updates.length > 0) {
+      try {
+        const res = await fetch(resolvedEndpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to copy requested rows (status ${res.status})`);
+        }
+      } catch (err) {
+        console.error('Failed to copy requested rows', err);
+        showToastMessage('Unable to copy requested rows to the offer. Please try again.', 'error');
+        return;
+      }
+    }
+
+    const parts: string[] = [];
+    if (categoriesAdded > 0) parts.push(`${categoriesAdded} categor${categoriesAdded === 1 ? 'y' : 'ies'}`);
+    if (productsAdded > 0) parts.push(`${productsAdded} product${productsAdded === 1 ? '' : 's'}`);
+    if (parts.length === 0) {
       if (missingProducts > 0) {
         showToastMessage('Some products could not be found. See requested entries for details.', 'info');
       }
       return;
     }
-
-    try {
-      const res = await fetch(resolvedEndpoint, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ updates }),
-      });
-      const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-      if (!res.ok || !payload?.ok) {
-        throw new Error(payload?.error ?? `Failed to copy requested rows (status ${res.status})`);
-      }
-      const parts: string[] = [];
-      if (categoriesAdded > 0) parts.push(`${categoriesAdded} categor${categoriesAdded === 1 ? 'y' : 'ies'}`);
-      if (productsAdded > 0) parts.push(`${productsAdded} product${productsAdded === 1 ? '' : 's'}`);
-      showToastMessage(`Copied ${parts.join(' and ')} to the offer.`, 'success');
-      if (missingProducts > 0) {
-        showToastMessage('Some requested products could not be matched and remain unchanged.', 'info');
-      }
+    showToastMessage(`Copied ${parts.join(' and ')} to the offer.`, 'success');
+    const shouldRefresh = updates.length > 0 || productsAdded > 0;
+    if (shouldRefresh) {
       try {
         refreshOfferProductGrid(null);
       } catch {
         /* noop */
       }
-    } catch (err) {
-      console.error('Failed to copy requested rows', err);
-      showToastMessage('Unable to copy requested rows to the offer. Please try again.', 'error');
     }
     if (missingProducts > 0 && productsAdded === 0) {
       showToastMessage('Unable to match some requested products. They remain unchanged.', 'info');
     }
-  }, [resolvedEndpoint, refreshOfferProductGrid, promoteNodeToCategory, promoteNodeToProduct]);
+  }, [assignRequestedRowToProduct, promoteNodeToCategory, promoteNodeToProduct, refreshOfferProductGrid, resolvedEndpoint]);
 
   const productContextMenuItems = useCallback((
     params: GetContextMenuItemsParams<Record<string, unknown>>,
@@ -2424,7 +2507,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           onRowsMoved={handleRowsMoved}
           processRows={processVisibleRows}
           rowSelection="multiple"
-          rowMultiSelectWithClick={true}
+          rowMultiSelectWithClick
+          rowDeselection
         />
       </div>
       <div className={styles.totalsBar}>

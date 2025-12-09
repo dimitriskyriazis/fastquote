@@ -103,6 +103,7 @@
   border-radius: 12px;
   padding: 12px;
   min-height: 0;
+  height: 100%;
 }
 
 .splitPane {
@@ -121,7 +122,11 @@
 }
 
 .categoriesColumn {
-  flex: 0.25
+  flex: 0.35;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 10px;
 }
 
 .productsColumn {
@@ -195,11 +200,91 @@
 }
 
 .categoryGridShell {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+.requestedSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+  flex: 1;
+  min-height: 0;
+  justify-content: space-between;
+}
+
+.requestedSectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.requestedList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.requestedRow {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.requestedRow:hover {
+  border-color: #cbd5f5;
+}
+
+.requestedRowSelected {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+.requestedRowLabel {
+  font-weight: 600;
+  color: #0f172a;
+  text-align: left;
+}
+
+.requestedRowMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.requestedRowMetaItem {
+  background: #e2e8f0;
+  color: #0f172a;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.requestedRowEmpty {
+  border: 1px dashed #cbd5f5;
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 0.9rem;
+  color: #64748b;
+  background: #ffffff;
+  text-align: center;
 }
 
 .productsGridShell {

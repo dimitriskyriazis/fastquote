@@ -15,17 +15,15 @@
   --ag-header-height: 40px;
 }
 
+.ag-theme-quartz .ag-row-hover,
 .ag-theme-quartz .ag-row-hover .ag-cell {
-  background: transparent !important;
-}
-
-.ag-theme-quartz .ag-cell:hover {
-  background: var(--tab-hover-bg) !important;
+  filter: brightness(0.96) !important;
 }
 
 .ag-theme-quartz .ag-row-selected,
 .ag-theme-quartz .ag-row-selected .ag-cell {
   background: transparent !important;
+  filter: none !important;
 }
 
 .drop-toast-container {
@@ -197,34 +195,44 @@
 .drag-overlay-row .ag-cell {
   color: #00000082 !important;
 }
+.offer-products-grid .ag-row.ag-row-selected .ag-cell,
+.offer-products-grid .ag-row.ag-row-range-selected .ag-cell {
+  background-color: #e5e7eb !important;
+}
 
 .offer-products-grid .offer-row--printable-comment .ag-cell {
   background-color: #e0f2fe !important;
 }
 
-.offer-products-grid .offer-row--printable-comment.ag-row-hover .ag-cell {
-  background-color: #cbeafb !important;
+.offer-products-grid .offer-row--printable-comment.ag-row-selected .ag-cell,
+.offer-products-grid .offer-row--printable-comment.ag-row-range-selected .ag-cell,
+.offer-products-grid .offer-row--printable-comment.ag-row--context-menu-active .ag-cell {
+  background-color: #bde0ff !important;
 }
 
 .offer-products-grid .offer-row--nonprintable-comment .ag-cell {
   background-color: #fee2e2 !important;
 }
 
-.offer-products-grid .offer-row--nonprintable-comment.ag-row-hover .ag-cell {
-  background-color: #ffcfcf !important;
+.offer-products-grid .offer-row--nonprintable-comment.ag-row-selected .ag-cell,
+.offer-products-grid .offer-row--nonprintable-comment.ag-row-range-selected .ag-cell,
+.offer-products-grid .offer-row--nonprintable-comment.ag-row--context-menu-active .ag-cell {
+  background-color: #ffb7b7 !important;
 }
 
 .offer-products-grid .offer-row--product .ag-cell {
   background-color: #ffffff !important;
 }
 
-.offer-products-grid .offer-row--product.ag-row-hover .ag-cell {
-  background-color: #f3f4f6 !important;
+.offer-products-grid .offer-row--product.ag-row-selected .ag-cell,
+.offer-products-grid .offer-row--product.ag-row-range-selected .ag-cell,
+.offer-products-grid .offer-row--product.ag-row--context-menu-active .ag-cell {
+  background-color: #e5e7eb !important;
 }
 
 .offer-products-grid .offer-row--category .offer-products-grid__cell--actual,
 .offer-products-grid .offer-row--category .offer-products-grid__cell--requested {
-  background-color: #c6cace !important;
+  background-color: rgb(220, 220, 220) !important;
 }
 
 .offer-products-grid .offer-row--category .ag-cell {
@@ -234,9 +242,10 @@
   align-items: center;
 }
 
-.offer-products-grid .offer-row--category.ag-row-hover .offer-products-grid__cell--actual,
-.offer-products-grid .offer-row--category.ag-row-hover .offer-products-grid__cell--requested {
-  background-color: #bfc3c9 !important;
+.offer-products-grid .offer-row--category.ag-row-selected .ag-cell,
+.offer-products-grid .offer-row--category.ag-row-range-selected .ag-cell,
+.offer-products-grid .offer-row--category.ag-row--context-menu-active .ag-cell {
+  background-color: rgba(196, 199, 207, 0.85) !important;
 }
 
 .offer-products-grid .offer-row--product .offer-products-grid__cell--product-accent {
@@ -247,32 +256,6 @@
   text-align: left !important;
   justify-content: flex-start !important;
   padding-left: 0.5rem !important;
-}
-
-.offer-products-grid .offer-row--product.ag-row-hover .offer-products-grid__cell--product-accent {
-  background-color: #f3f4f6 !important;
-}
-
-.offer-products-grid .ag-theme-quartz {
-  --tab-hover-bg: transparent;
-}
-
-.offer-products-grid .ag-theme-quartz .ag-cell:hover,
-.offer-products-grid .ag-theme-quartz .ag-cell.ag-cell-focus {
-  background: none !important;
-  background-color: transparent !important;
-}
-
-.offer-products-grid .offer-row--product.ag-row-hover {
-  background-color: #f2f2f2;
-}
-
-.offer-products-grid .offer-row--printable-comment.ag-row-hover {
-  background-color: #cbeafb;
-}
-
-.offer-products-grid .offer-row--nonprintable-comment.ag-row-hover {
-  background-color: #ffcfcf;
 }
 
 .offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-active {

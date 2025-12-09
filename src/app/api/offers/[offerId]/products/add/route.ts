@@ -430,12 +430,12 @@ async function handleAddProducts(
     }
   }
 
-  const request = pool.request();
-  request.input('__offerId', sql.Int, offerId);
-  request.input('__categoryId', sql.Int, categoryId);
-  request.input('__parentTree', sql.NVarChar(255), parentTreeOrdering);
-  request.input('__createdBy', sql.Int, auditUserId);
-  request.input('__modifiedBy', sql.Int, auditUserId);
+const request = pool.request();
+request.input('__offerId', sql.Int, offerId);
+request.input('__categoryId', sql.Int, categoryId);
+request.input('__parentTree', sql.NVarChar(255), parentTreeOrdering);
+request.input('__createdBy', sql.Int, auditUserId);
+request.input('__modifiedBy', sql.Int, auditUserId);
 
   const valueClauses: string[] = [];
   selections.forEach((entry, idx) => {
@@ -624,6 +624,165 @@ async function handleAddProducts(
   return NextResponse.json({ ok: true, inserted });
 }
 
+const requestedRowCondition = `
+      (
+        NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') IS NOT NULL
+        OR NULLIF(LTRIM(RTRIM(od.RequestedBrand)), '') IS NOT NULL
+        OR NULLIF(LTRIM(RTRIM(od.RequestedModelNo)), '') IS NOT NULL
+        OR NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL
+        OR NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL
+        OR NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL
+        OR od.RequestedQuantity IS NOT NULL
+      )
+`;
+
+async function handleAssignProductToRequestedRow(
+  offerId: number,
+  body: Record<string, unknown>,
+  auditUserId: string | number | null,
+) {
+  const requestedRowId = normalizeOfferDetailId(
+    body?.requestedRowId ?? (body as { requestedRowID?: unknown })?.requestedRowID ?? null,
+  );
+  const productId = normalizeProductId(
+    body?.productId ?? (body as { productID?: unknown })?.productID ?? null,
+  );
+  const categoryId = normalizeOfferDetailId(
+    body?.categoryId ?? (body as { CategoryID?: unknown })?.CategoryID ?? null,
+  );
+
+  if (requestedRowId == null || productId == null) {
+    return NextResponse.json(
+      { ok: false, error: 'Missing requested row or product' },
+      { status: 400 },
+    );
+  }
+
+  const pool = await getPool();
+  let categoryTreeOrdering: string | null = null;
+  if (categoryId != null) {
+    const lookup = pool.request();
+    lookup.input('__offerId', sql.Int, offerId);
+    lookup.input('__categoryId', sql.Int, categoryId);
+    const lookupResult = await lookup.query<{ TreeOrdering: string | null }>(`
+      SELECT TOP (1)
+        NULLIF(LTRIM(RTRIM(od.TreeOrdering)), '') AS TreeOrdering
+      FROM dbo.OfferDetails od
+      WHERE od.OfferID = @__offerId
+        AND od.ID = @__categoryId
+    `);
+    categoryTreeOrdering = lookupResult.recordset?.[0]?.TreeOrdering ?? null;
+  }
+  const request = pool.request();
+  request.input('__offerId', sql.Int, offerId);
+  request.input('__rowId', sql.Int, requestedRowId);
+  request.input('__productId', sql.Int, productId);
+  request.input('__categoryId', sql.Int, categoryId);
+  request.input('__categoryTree', sql.NVarChar(255), categoryTreeOrdering);
+  request.input('__modifiedBy', sql.Int, auditUserId);
+
+  const query = `
+    WITH OfferContext AS (
+      SELECT o.ID AS OfferID, o.PricingPolicyID
+      FROM dbo.Offer o
+      WHERE o.ID = @__offerId
+    ),
+    ProductData AS (
+      SELECT
+        pr.ID AS ProductID,
+        pr.Description,
+        pr.BrandID,
+        pr.PartNumber,
+        pr.ModelNumber,
+        0 AS WarrantyValue,
+        price.PriceListID,
+        price.PriceListItemID,
+        price.ListPrice
+      FROM dbo.Products pr
+      CROSS APPLY (
+        SELECT TOP (1)
+          pli.ID AS PriceListItemID,
+          pli.PriceListID,
+          pli.ListPrice
+        FROM dbo.PriceListItems pli
+          INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
+        WHERE pli.ProductID = pr.ID
+          AND pl.Enabled = 1
+        ORDER BY
+          CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
+          pl.ValidToDate,
+          pl.ValidFromDate DESC,
+          pli.ID DESC
+      ) price
+      WHERE pr.ID = @__productId
+    )
+    UPDATE od
+    SET
+      od.IsPrintable = NULL,
+      od.IsComment = 0,
+      od.IsCategory = 0,
+      od.ProductID = p.ProductID,
+      od.BrandID = p.BrandID,
+      od.PartNumber = p.PartNumber,
+      od.ModelNumber = p.ModelNumber,
+      od.ProductDescription = COALESCE(
+        NULLIF(od.ProductDescription, ''),
+        NULLIF(od.RequestedDescription, ''),
+        p.Description
+      ),
+      od.Warranty = p.WarrantyValue,
+      od.Quantity = 1,
+      od.ListPrice = p.ListPrice,
+      od.NetUnitPrice = p.ListPrice,
+      od.TotalPrice = CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
+      od.TotalNet = CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
+      od.TelmacoDiscount = COALESCE(discounts.TelmacoDiscountPercentage, 0),
+      od.CustomerDiscount = COALESCE(discounts.CustomerDiscountPercentage, 0),
+      od.NetCost = CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
+      od.Margin = 0,
+      od.GrossProfit = 0,
+      od.TotalCost = CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
+      od.PriceListID = p.PriceListID,
+      od.PriceListItemID = p.PriceListItemID,
+      od.ModifiedOn = SYSUTCDATETIME(),
+      od.ModifiedBy = @__modifiedBy
+    FROM dbo.OfferDetails od
+      CROSS JOIN OfferContext oc
+      CROSS JOIN ProductData p
+      OUTER APPLY (
+        SELECT TOP (1)
+          ppr.TelmacoDiscountPercentage,
+          ppr.CustomerDiscountPercentage
+        FROM dbo.PricingPolicyRules ppr
+        WHERE ppr.PricingPolicyID = oc.PricingPolicyID
+          AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
+        ORDER BY CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END, ppr.ID DESC
+      ) AS discounts
+    WHERE od.OfferID = @__offerId
+      AND od.ID = @__rowId
+      AND (
+        (@__categoryId IS NULL AND od.ParentOfferDetailID IS NULL)
+        OR od.ParentOfferDetailID = @__categoryId
+        OR (
+          @__categoryTree IS NOT NULL
+          AND od.TreeOrdering LIKE CONCAT(@__categoryTree, '.%')
+        )
+      )
+      AND ${requestedRowCondition};
+  `;
+
+  const result = await request.query(query);
+  const rowsAffected = result.rowsAffected?.[0] ?? 0;
+  if (rowsAffected === 0) {
+    return NextResponse.json(
+      { ok: false, error: 'Unable to assign product to requested row' },
+      { status: 400 },
+    );
+  }
+
+  return NextResponse.json({ ok: true, updated: rowsAffected });
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
@@ -642,8 +801,11 @@ export async function POST(
     if (actionRaw === 'categories') {
       return handleCategoryGrid(offerId, body);
     }
+    const audit = buildAuditContext(req);
+    if (actionRaw === 'assign-requested') {
+      return handleAssignProductToRequestedRow(offerId, body, audit.userId);
+    }
     if (actionRaw === 'add') {
-      const audit = buildAuditContext(req);
       return handleAddProducts(offerId, body, audit.userId);
     }
 

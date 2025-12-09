@@ -15,12 +15,30 @@
   position: relative;
 }
 
-.gridShell :global(.ag-row-hover .ag-cell) {
-  background: #e9f1ff !important;
+.gridShell :global(.ag-header-cell[col-id="agSelectionColumn"]),
+.gridShell :global(.ag-cell[col-id="agSelectionColumn"]) {
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  display: none !important;
 }
 
+.gridShell :global(.ag-selection-column) {
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none;
+}
+
+
 .gridShell :global(.ag-row--context-menu-active .ag-cell) {
-  background: #8fcdff75 !important; /* subtle slate */
+  background: transparent;
   color: inherit;
 }
 

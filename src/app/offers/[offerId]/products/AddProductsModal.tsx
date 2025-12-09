@@ -37,6 +37,36 @@ type ProductRow = {
   PriceListEnabled?: boolean | number | null;
 };
 
+type RequestedRow = {
+  OfferDetailID: number;
+  TreeOrdering: string | null;
+  RequestedItemNo: string | null;
+  RequestedBrand: string | null;
+  RequestedModelNo: string | null;
+  RequestedPartNo: string | null;
+  RequestedDescription: string | null;
+  RequestedDescription2: string | null;
+  RequestedQuantity: number | null;
+};
+
+const resolveRequestedRowLabel = (row: RequestedRow): string => {
+  const candidates = [
+    row.RequestedDescription,
+    row.RequestedDescription2,
+    row.RequestedPartNo,
+    row.RequestedModelNo,
+    row.RequestedBrand,
+    row.RequestedItemNo,
+    row.TreeOrdering,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const trimmed = candidate.trim();
+    if (trimmed) return trimmed;
+  }
+  return 'Requested item';
+};
+
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
@@ -76,8 +106,13 @@ export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
   const [selectedCategory, setSelectedCategory] = useState<CategoryRow | null>(null);
   const [selectedProducts, setSelectedProducts] = useState<ProductRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [requestedRows, setRequestedRows] = useState<RequestedRow[]>([]);
+  const [requestedRowsLoading, setRequestedRowsLoading] = useState(false);
+  const [requestedRowsError, setRequestedRowsError] = useState<string | null>(null);
+  const [selectedRequestedRowId, setSelectedRequestedRowId] = useState<number | null>(null);
   const categoryApiRef = useRef<GridApi | null>(null);
   const productsApiRef = useRef<GridApi | null>(null);
+  const requestedRowsFetchIdRef = useRef(0);
 
   const categoryRequestPayload = useMemo(() => ({ action: 'categories' }), []);
   const productRequestPayload = useMemo(() => ({ action: 'products' }), []);
@@ -105,6 +140,55 @@ export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
     [offerId],
   );
+
+  const fetchRequestedRows = useCallback(async (categoryId: number) => {
+    const fetchId = ++requestedRowsFetchIdRef.current;
+    setRequestedRowsLoading(true);
+    setRequestedRowsError(null);
+    try {
+      const params = new URLSearchParams();
+      params.set('categoryId', String(categoryId));
+      const res = await fetch(
+        `/api/offers/${encodeURIComponent(offerId)}/products/requests?${params.toString()}`,
+      );
+      const payload = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        rows?: RequestedRow[];
+        error?: string;
+      } | null;
+      if (!res.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? `Failed to load requested rows (status ${res.status})`);
+      }
+      if (requestedRowsFetchIdRef.current !== fetchId) {
+        return;
+      }
+      setRequestedRows(Array.isArray(payload.rows) ? payload.rows : []);
+    } catch (err) {
+      if (requestedRowsFetchIdRef.current !== fetchId) {
+        return;
+      }
+      console.error('Failed to load requested rows', err);
+      setRequestedRows([]);
+      setRequestedRowsError(err instanceof Error ? err.message : 'Unable to load requested rows.');
+    } finally {
+      if (requestedRowsFetchIdRef.current === fetchId) {
+        setRequestedRowsLoading(false);
+      }
+    }
+  }, [offerId]);
+
+  useEffect(() => {
+    setSelectedRequestedRowId(null);
+    const categoryId = selectedCategory?.OfferDetailID ?? null;
+    if (categoryId == null) {
+      requestedRowsFetchIdRef.current += 1;
+      setRequestedRows([]);
+      setRequestedRowsError(null);
+      setRequestedRowsLoading(false);
+      return;
+    }
+    void fetchRequestedRows(categoryId);
+  }, [selectedCategory, fetchRequestedRows]);
 
   const categoryColumns: ColDef[] = useMemo(
     () => [
@@ -186,33 +270,54 @@ export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
       showToastMessage('Select one or more valid products first', 'info');
       return;
     }
+    const isAssigningRequestedRow = selectedRequestedRowId != null;
+    if (isAssigningRequestedRow && productPayload.length !== 1) {
+      showToastMessage('Select exactly one valid product to fill the requested row', 'info');
+      return;
+    }
     setSubmitting(true);
     try {
-      const payload = {
-        action: 'add',
-        ...(selectedCategory?.OfferDetailID != null
-          ? { categoryId: selectedCategory.OfferDetailID }
-          : {}),
-        products: productPayload,
-      };
+      const baseCategory = selectedCategory?.OfferDetailID ?? null;
+      const payload = isAssigningRequestedRow
+        ? {
+            action: 'assign-requested',
+            requestedRowId: selectedRequestedRowId,
+            categoryId: baseCategory,
+            productId: productPayload[0].productId,
+          }
+        : {
+            action: 'add',
+            ...(baseCategory != null ? { categoryId: baseCategory } : {}),
+            products: productPayload,
+          };
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      let data: { ok?: boolean; inserted?: number; error?: string } | null = null;
+      let data: { ok?: boolean; inserted?: number; updated?: number; error?: string } | null = null;
       try {
-        data = (await res.json()) as { ok?: boolean; inserted?: number; error?: string } | null;
+        data = (await res.json()) as { ok?: boolean; inserted?: number; updated?: number; error?: string } | null;
       } catch {
         data = null;
       }
       if (!res.ok || !data?.ok) {
         throw new Error(data?.error ?? `Failed to add products (status ${res.status})`);
       }
-      const inserted = typeof data.inserted === 'number' ? data.inserted : selectedProducts.length;
-      showToastMessage('Products added', 'success');
-      onAdded(inserted);
-      // keep modal open for faster multi-category adds; clear selections
+      const addedCount = isAssigningRequestedRow
+        ? 1
+        : typeof data.inserted === 'number'
+          ? data.inserted
+          : productPayload.length;
+      showToastMessage(
+        isAssigningRequestedRow ? 'Requested item filled' : 'Products added',
+        'success',
+      );
+      onAdded(addedCount);
+      if (isAssigningRequestedRow && baseCategory != null) {
+        void fetchRequestedRows(baseCategory);
+      }
+      setSelectedRequestedRowId(null);
       setSelectedProducts([]);
       try { productsApiRef.current?.deselectAll?.(); } catch { /* noop */ }
     } catch (err) {
@@ -221,7 +326,14 @@ export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
     } finally {
       setSubmitting(false);
     }
-  }, [endpoint, onAdded, selectedCategory?.OfferDetailID, selectedProducts]);
+  }, [
+    endpoint,
+    fetchRequestedRows,
+    onAdded,
+    selectedCategory?.OfferDetailID,
+    selectedProducts,
+    selectedRequestedRowId,
+  ]);
 
   const selectedCategoryLabel = selectedCategory?.Description?.trim() || selectedCategory?.TreeOrdering || 'None';
 
@@ -265,13 +377,59 @@ export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
                   endpoint={endpoint}
                   columnDefs={categoryColumns}
                   defaultColDef={defaultColDef}
-                requestPayload={categoryRequestPayload}
-                rowSelection="single"
-                onSelectionChanged={handleCategorySelection as (rows: Record<string, unknown>[], api: GridApi) => void}
-                rowGroupPanelShow="never"
-                autoSizeExclusions={['Description']}
-                onGridReady={(api) => { categoryApiRef.current = api; }}
-              />
+                  requestPayload={categoryRequestPayload}
+                  showSidebar={false}
+                  rowSelection="single"
+                  onSelectionChanged={handleCategorySelection as (rows: Record<string, unknown>[], api: GridApi) => void}
+                  rowGroupPanelShow="never"
+                  autoSizeExclusions={['Description']}
+                  onGridReady={(api) => { categoryApiRef.current = api; }}
+                />
+              </div>
+            <div className={styles.requestedSection}>
+              <div className={styles.requestedSectionHeader}>
+                <div>
+                  <div className={styles.sectionTitle}>Requested Items</div>
+                  <div className={styles.sectionHint}>Select a requested row to fill it with the chosen product.</div>
+                </div>
+              </div>
+              <div className={styles.requestedList}>
+                {!selectedCategory ? (
+                  <div className={styles.requestedRowEmpty}>Select a category to view its requested items.</div>
+                ) : requestedRowsLoading ? (
+                  <div className={styles.requestedRowEmpty}>Loading requested rows…</div>
+                ) : requestedRowsError ? (
+                  <div className={styles.requestedRowEmpty}>{requestedRowsError}</div>
+                ) : requestedRows.length === 0 ? (
+                  <div className={styles.requestedRowEmpty}>No requested items found for this category.</div>
+                ) : (
+                  requestedRows.map((row) => {
+                    const isSelected = selectedRequestedRowId === row.OfferDetailID;
+                    const metaParts: string[] = [];
+                    if (row.TreeOrdering) metaParts.push(`Tree ${row.TreeOrdering}`);
+                    if (row.RequestedItemNo) metaParts.push(`Item ${row.RequestedItemNo}`);
+                    if (row.RequestedQuantity != null) metaParts.push(`Qty ${row.RequestedQuantity}`);
+                    return (
+                      <button
+                        type="button"
+                        key={row.OfferDetailID}
+                        className={`${styles.requestedRow} ${isSelected ? styles.requestedRowSelected : ''}`}
+                        aria-pressed={isSelected}
+                        onClick={() => {
+                          setSelectedRequestedRowId((prev) => (prev === row.OfferDetailID ? null : row.OfferDetailID));
+                        }}
+                      >
+                        <div className={styles.requestedRowLabel}>{resolveRequestedRowLabel(row)}</div>
+                        <div className={styles.requestedRowMeta}>
+                          {metaParts.map((item) => (
+                            <span key={item} className={styles.requestedRowMetaItem}>{item}</span>
+                          ))}
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
             </div>
             </div>
 
@@ -291,14 +449,15 @@ export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
                   columnDefs={productColumns}
                   defaultColDef={defaultColDef}
                   requestPayload={productRequestPayload}
-                rowSelection="multiple"
-                rowMultiSelectWithClick
-                rowGroupPanelShow="never"
-                onSelectionChanged={handleProductSelection as (rows: Record<string, unknown>[], api: GridApi) => void}
-                autoSizeExclusions={['Description']}
-                onGridReady={(api) => { productsApiRef.current = api; }}
-              />
-            </div>
+                  showSidebar={false}
+                  rowSelection="multiple"
+                  rowMultiSelectWithClick
+                  rowGroupPanelShow="never"
+                  onSelectionChanged={handleProductSelection as (rows: Record<string, unknown>[], api: GridApi) => void}
+                  autoSizeExclusions={['Description']}
+                  onGridReady={(api) => { productsApiRef.current = api; }}
+                />
+              </div>
             </div>
           </section>
         </div>
