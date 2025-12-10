@@ -14,7 +14,9 @@ const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
 });
 import type { ColDef, ICellRendererParams, GetContextMenuItemsParams, GridApi } from 'ag-grid-community';
 import { createPortal } from 'react-dom';
+import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from '../components/actionMenuMarkers';
 import { GridRowDeletion } from '../../lib/gridRowDeletion';
+import Link from 'next/link';
 
 const formatEnabledValue = (value: unknown) => {
   if (value === 1 || value === true || value === 'true') return 'Yes';
@@ -135,17 +137,18 @@ export default function OffersClient() {
       const [open, setOpen] = useState(false);
       const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
       const btnRef = useRef<HTMLButtonElement | null>(null);
+      const menuRef = useRef<HTMLDivElement | null>(null);
       const id = params?.data?.offerId as string | number | undefined;
       const encodedId = id != null ? encodeURIComponent(String(id)) : '';
-
-      const go = (suffix: 'products' | 'basicdata') => {
-        if (!encodedId) return;
-        router.push(`/offers/${encodedId}/${suffix}`);
-      };
 
       const preventRangeSelection = (event: React.SyntheticEvent) => {
         event.preventDefault();
         event.stopPropagation();
+      };
+      const navigateTo = (suffix: 'products' | 'basicdata') => {
+        if (!encodedId) return;
+        setOpen(false);
+        router.push(`/offers/${encodedId}/${suffix}`);
       };
 
       useEffect(() => {
@@ -155,8 +158,8 @@ export default function OffersClient() {
           setMenuPos({ top: rect.bottom + 6, left: rect.left });
         }
         const onDocClick = (e: MouseEvent) => {
-          if (!btnRef.current) return setOpen(false);
-          if (e.target instanceof Node && btnRef.current.contains(e.target)) return;
+          if (!(e.target instanceof Node)) return setOpen(false);
+          if (btnRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
           setOpen(false);
         };
         window.addEventListener('click', onDocClick);
@@ -176,8 +179,7 @@ export default function OffersClient() {
       return (
         <div
           className={styles.actionCell}
-          onMouseDownCapture={preventRangeSelection}
-          onPointerDownCapture={preventRangeSelection}
+          {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
           onClick={(event) => event.stopPropagation()}
           onContextMenu={(event) => {
             event.preventDefault();
@@ -189,6 +191,7 @@ export default function OffersClient() {
             aria-haspopup="menu"
             aria-expanded={open}
             className={styles.actionButton}
+            {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
             onClick={(event) => {
               event.stopPropagation();
               setOpen((v) => !v);
@@ -207,24 +210,34 @@ export default function OffersClient() {
               role="menu"
               className={styles.actionMenu}
               style={{ top: menuPos.top, left: menuPos.left }}
+              ref={menuRef}
+              {...{ [ACTION_MENU_PANEL_ATTRIBUTE]: 'true' }}
               onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
             >
-              <button
-                type="button"
-                role="menuitem"
-                className={styles.actionMenuItem}
-                onClick={() => go('basicdata')}
-              >
-                View Basic Data
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className={styles.actionMenuItem}
-                onClick={() => go('products')}
-              >
-                View Products
-              </button>
+            <button
+              type="button"
+              role="menuitem"
+              className={styles.actionMenuItem}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                navigateTo('basicdata');
+              }}
+            >
+              View Basic Data
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className={styles.actionMenuItem}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                navigateTo('products');
+              }}
+            >
+              View Products
+            </button>
             </div>,
             document.body
           )}

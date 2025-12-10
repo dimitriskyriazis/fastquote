@@ -155,6 +155,12 @@ type DetailUpdateInput = {
   ListPrice?: number | string | null;
   IsCategory?: boolean | null;
   RequestedItemNo?: string | null;
+  RequestedBrand?: string | null;
+  RequestedModelNo?: string | null;
+  RequestedPartNo?: string | null;
+  RequestedDescription?: string | null;
+  RequestedDescription2?: string | null;
+  RequestedQuantity?: number | string | null;
 };
 
 type DetailUpdateRequest = {

@@ -7,6 +7,7 @@ import {
   CellContextMenuEvent,
   CellSelectionChangedEvent,
   CellValueChangedEvent,
+  Column,
   ColumnPinnedType,
   ColumnState,
   ColDef,
@@ -24,11 +25,13 @@ import {
   MenuItemDef,
   ModelUpdatedEvent,
   RowClassParams,
+  RowClickedEvent,
   RowDoubleClickedEvent,
   RowDragEndEvent,
   RowHeightParams,
   SideBarDef,
   RowNode,
+  IRowNode,
   RowSelectionOptions,
   SelectionChangedEvent,
   SortChangedEvent,
@@ -38,7 +41,28 @@ import { usePathname } from 'next/navigation';
 import { resolveOfferProductRowType, type OfferProductRowType, describeOfferProductRowType } from '../../lib/offerProductRows';
 import { showToastMessage } from '../../lib/toast';
 import styles from './AgGridAll.module.css';
+import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from './actionMenuMarkers';
 import { useAuditUser } from './AuditUserProvider';
+
+const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
+
+const resolveElementFromEventTarget = (target: EventTarget | null): Element | null => {
+  let current: EventTarget | null = target;
+  while (current) {
+    if (current instanceof Element) return current;
+    if (current instanceof Node) {
+      current = current.parentNode;
+      continue;
+    }
+    return null;
+  }
+  return null;
+};
+
+const isActionMenuEventTarget = (target: EventTarget | null): boolean => {
+  const element = resolveElementFromEventTarget(target);
+  return Boolean(element?.closest(ACTION_MENU_SELECTOR));
+};
 
 // Prevent double registration during HMR/StrictMode
 declare global {
@@ -71,6 +95,7 @@ type Props = {
   onSelectionChanged?: (rows: RowData[], api: GridApi<RowData>) => void;
   onModelUpdated?: (api: GridApi<RowData>) => void;
   rowGroupPanelShow?: 'always' | 'onlyWhenGrouping' | 'never';
+  suppressRowGroup?: boolean;
   getRowClass?: (params: RowClassParams<RowData>) => string | string[] | undefined;
   getContextMenuItems?: (params: GetContextMenuItemsParams<RowData>) => (MenuItemDef | string)[] | undefined;
   onCellValueChanged?: (event: CellValueChangedEvent<RowData>) => void;
@@ -79,6 +104,7 @@ type Props = {
   refreshToken?: number;
   autoSizeExclusions?: string[];
   suppressColumnVirtualisation?: boolean;
+  suppressMovableColumns?: boolean;
   onTotalsChange?: (totals: GridTotals | null) => void;
   enableColumnStatePersistence?: boolean;
   columnStateNamespace?: string;
@@ -89,6 +115,8 @@ type Props = {
 };
 
 type RowData = Record<string, unknown>;
+
+type SelectedRowNode = RowNode<RowData> | IRowNode<RowData> | null;
 
 export type GridResponse = {
   ok: boolean;
@@ -625,6 +653,7 @@ export default function AgGridAll({
   onRowDoubleClicked: externalRowDoubleClickHandler,
   onRowsMoved,
   rowGroupPanelShow = 'always',
+  suppressRowGroup = false,
   getRowClass,
   getContextMenuItems,
   onCellValueChanged: externalCellValueChangeHandler,
@@ -635,6 +664,7 @@ export default function AgGridAll({
   onTotalsChange,
   processRows,
   suppressColumnVirtualisation = false,
+  suppressMovableColumns = false,
   enableColumnStatePersistence = true,
   columnStateNamespace = '',
   onResponse,
@@ -655,6 +685,14 @@ export default function AgGridAll({
     },
     [columnStateNamespace, endpoint, pathname, userId, shouldPersistColumnState],
   );
+  const resolvedColumnDefs = useMemo(() => {
+    if (!suppressRowGroup) return columnDefs;
+    return columnDefs.map((definition) => ({
+      ...definition,
+      enableRowGroup: false,
+    }));
+  }, [columnDefs, suppressRowGroup]);
+  const hasRowSelection = Boolean(rowSelection);
   const [gapHover, setGapHover] = useState<GapHoverState | null>(null);
   const [rowHover, setRowHover] = useState<RowHoverState | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -664,6 +702,7 @@ export default function AgGridAll({
   const [contextMenuRowId, setContextMenuRowId] = useState<string | null>(null);
 
   const updateRangeSelectionRows = useCallback(() => {
+    if (!hasRowSelection) return;
     const api = gridRef.current?.api;
     if (!api || typeof api.getCellRanges !== 'function') {
       setRangeSelectionRowIds(new Set());
@@ -689,7 +728,7 @@ export default function AgGridAll({
       }
     });
     setRangeSelectionRowIds(nextIds);
-  }, []);
+  }, [hasRowSelection]);
 
   const handleCellContextMenu = useCallback((event: CellContextMenuEvent<RowData>) => {
     setContextMenuRowId(event.node?.id ?? null);
@@ -706,7 +745,8 @@ export default function AgGridAll({
   }, [clearContextMenuRow]);
 
   useEffect(() => {
-    const handleClick = () => {
+    const handleClick = (event: Event) => {
+      if (isActionMenuEventTarget(event.target ?? null)) return;
       clearContextMenuRow();
       updateRangeSelectionRows();
     };
@@ -725,9 +765,85 @@ export default function AgGridAll({
     };
   }, [clearContextMenuRow, updateRangeSelectionRows]);
 
+  useEffect(() => () => {
+    if (rangeClearTimerRef.current) {
+      window.clearTimeout(rangeClearTimerRef.current);
+      rangeClearTimerRef.current = null;
+    }
+  }, []);
+
   const handleCellSelectionChanged = useCallback((event: CellSelectionChangedEvent<RowData>) => {
     updateRangeSelectionRows();
   }, [updateRangeSelectionRows]);
+
+  const rangeClearTimerRef = useRef<number | null>(null);
+
+  const clearRangeAndUpdate = useCallback((api: GridApi<RowData>, node: SelectedRowNode) => {
+    if (!hasRowSelection) return;
+    if (typeof api.clearCellSelection === 'function') {
+      try {
+        api.clearCellSelection();
+      } catch {
+        /* noop */
+      }
+    } else if (typeof api.clearRangeSelection === 'function') {
+      try {
+        api.clearRangeSelection();
+      } catch {
+        /* noop */
+      }
+    }
+    if (node) {
+      try {
+        api.deselectAll();
+      } catch {
+        /* noop */
+      }
+      try {
+        node.setSelected(true, true, 'api');
+      } catch {
+        /* noop */
+      }
+    }
+    try {
+      api.redrawRows();
+    } catch {
+      /* noop */
+    }
+    updateRangeSelectionRows();
+  }, [hasRowSelection, updateRangeSelectionRows]);
+
+  const scheduleRangeClear = useCallback((api: GridApi<RowData>, node: SelectedRowNode) => {
+    if (!hasRowSelection) return;
+    if (typeof window === 'undefined') {
+      clearRangeAndUpdate(api, node);
+      return;
+    }
+    if (rangeClearTimerRef.current) {
+      window.clearTimeout(rangeClearTimerRef.current);
+    }
+    rangeClearTimerRef.current = window.setTimeout(() => {
+      rangeClearTimerRef.current = null;
+      clearRangeAndUpdate(api, node);
+    }, 0);
+  }, [clearRangeAndUpdate, hasRowSelection]);
+
+  const handleRowClicked = useCallback((event: RowClickedEvent<RowData> & { column?: Column | null }) => {
+    if (!hasRowSelection) return;
+    const domEvent = event.event as MouseEvent | null;
+    if (domEvent?.shiftKey || domEvent?.metaKey || domEvent?.ctrlKey) {
+      return;
+    }
+    const clickedColId = event.column?.getColId();
+    if (clickedColId === '__actions__') {
+      return;
+    }
+    const eventNode = event.node ?? null;
+    const prefetchedNode = eventNode?.id ? event.api.getRowNode(eventNode.id) : null;
+    const selectionNode: SelectedRowNode = prefetchedNode ?? eventNode;
+    scheduleRangeClear(event.api, selectionNode);
+  }, [scheduleRangeClear, hasRowSelection]);
+
 
   const persistColumnState = useCallback(() => {
     if (!shouldPersistColumnState || !columnStateStorageKey) return;
@@ -931,8 +1047,6 @@ export default function AgGridAll({
       enableClickSelection: allowDeselection,
     };
   }, [rowSelection, rowDeselection, rowMultiSelectWithClick]);
-
-  const shouldShowSidebar = showSidebar !== false;
 
   const sideBarDef = useMemo(() => ({
     toolPanels: ['columns', 'filters'],
@@ -1438,17 +1552,6 @@ export default function AgGridAll({
     void persistTreeOrderingChanges();
   }, [gapHover, rowHover, computeHoverState, persistTreeOrderingChanges]);
 
-  const handleActionCellClick = useCallback((params: CellClickedEvent<RowData>) => {
-    if (params.column?.getColId() === '__actions__') {
-      params.event?.preventDefault();
-      params.event?.stopPropagation();
-      if (typeof params.api.clearCellSelection === 'function') {
-        params.api.clearCellSelection();
-        updateRangeSelectionRows();
-      }
-    }
-  }, []);
-
   const handleRowDoubleClick = useCallback((event: RowDoubleClickedEvent<RowData>) => {
     if (typeof externalRowDoubleClickHandler === 'function') {
       externalRowDoubleClickHandler(event);
@@ -1514,6 +1617,7 @@ export default function AgGridAll({
     if (typeof api.deselectAll === 'function') {
       try {
         api.deselectAll();
+        api.redrawRows();
       } catch (err) {
         console.warn('Failed to deselect grid rows', err);
       }
@@ -1524,10 +1628,12 @@ export default function AgGridAll({
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent | TouchEvent) => {
-      const target = event.target as Node | null;
+      const rawTarget = (event.target ?? null) as EventTarget | null;
+      if (isActionMenuEventTarget(rawTarget)) return;
       const shell = shellRef.current;
-      if (shell && target && shell.contains(target)) {
-        if (target instanceof Element && target.closest('.ag-row')) {
+      const targetNode = rawTarget instanceof Node ? rawTarget : null;
+      if (shell && targetNode && shell.contains(targetNode)) {
+        if (targetNode instanceof Element && targetNode.closest('.ag-row')) {
           return;
         }
       }
@@ -1584,7 +1690,7 @@ export default function AgGridAll({
       >
         <AgGridReact
           ref={gridRef}
-          columnDefs={columnDefs}
+          columnDefs={resolvedColumnDefs}
           defaultColDef={dcd}
           getRowId={getRowId}
           getRowClass={mergedGetRowClass}
@@ -1617,6 +1723,7 @@ export default function AgGridAll({
           rowGroupPanelShow={rowGroupPanelShow}
           getRowHeight={getRowHeight}
           suppressColumnVirtualisation={suppressColumnVirtualisation}
+          suppressMovableColumns={suppressMovableColumns}
 
           // Cache settings
           cacheBlockSize={100}
@@ -1624,7 +1731,7 @@ export default function AgGridAll({
           onFilterChanged={handleFilterChanged}
           onSortChanged={handleSortChanged}
           onModelUpdated={handleModelUpdated}
-          onCellClicked={handleActionCellClick}
+          onRowClicked={handleRowClicked}
           onRowDoubleClicked={handleRowDoubleClick}
           onRowDragEnd={handleRowDragEnd}
           onCellValueChanged={handleCellValueChanged}

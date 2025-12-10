@@ -13,10 +13,11 @@ const normalizeProductId = (value: unknown): number | null => {
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { productId?: string | null } },
+  context: { params: Promise<{ productId: string }> },
 ) {
+  const { productId } = await context.params;
   try {
-    const normalized = normalizeProductId(params?.productId ?? null);
+    const normalized = normalizeProductId(productId);
     if (normalized == null) {
       return NextResponse.json({ ok: false, error: 'Invalid product id' }, { status: 400 });
     }

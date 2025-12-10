@@ -103,8 +103,8 @@ export default function Page() {
           <h1 className={styles.heroTitle}>FastQuote</h1>
           <div className={styles.heroMiddle}>
             <p className={styles.tagline}>
-              FastQuote is your single pane of glass for managing quotes—track the customers and approvals
-              you just touched and continue editing prices or products without hunting through menus.
+              FastQuote surfaces the offers you’ve been working on, plus the pricing, products, 
+              and approvals that need attention, so you can manage deals and the surrounding tasks from the same dashboard.
             </p>
           </div>
           <p className={`${styles.heroCaption} ${styles.signature}`}>Created by Dimitris Kyriazis</p>

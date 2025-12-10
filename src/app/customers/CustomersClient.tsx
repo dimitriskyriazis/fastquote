@@ -10,7 +10,9 @@ import type {
   ICellRendererParams,
 } from "ag-grid-community";
 import { createPortal } from "react-dom";
+import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from "../components/actionMenuMarkers";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import Link from "next/link";
 import styles from "./CustomersClient.module.css";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
@@ -74,6 +76,7 @@ export default function CustomersClient() {
       const [open, setOpen] = useState(false);
       const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
       const btnRef = useRef<HTMLButtonElement | null>(null);
+      const menuRef = useRef<HTMLDivElement | null>(null);
       const id = params?.data?.CustomerID as string | number | undefined;
       const encodedId = id != null ? encodeURIComponent(String(id)) : "";
 
@@ -94,8 +97,8 @@ export default function CustomersClient() {
           setMenuPos({ top: rect.bottom + 6, left: rect.left });
         }
         const onDocClick = (e: MouseEvent) => {
-          if (!btnRef.current) return setOpen(false);
-          if (e.target instanceof Node && btnRef.current.contains(e.target)) return;
+          if (!(e.target instanceof Node)) return setOpen(false);
+          if (btnRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
           setOpen(false);
         };
         window.addEventListener("click", onDocClick);
@@ -113,8 +116,7 @@ export default function CustomersClient() {
       return (
         <div
           className={styles.actionCell}
-          onMouseDownCapture={preventRangeSelection}
-          onPointerDownCapture={preventRangeSelection}
+          {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
           onClick={(event) => event.stopPropagation()}
           onContextMenu={(event) => {
             event.preventDefault();
@@ -126,6 +128,7 @@ export default function CustomersClient() {
             aria-haspopup="menu"
             aria-expanded={open}
             className={styles.actionButton}
+            {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
             onClick={(event) => {
               event.stopPropagation();
               setOpen((v) => !v);
@@ -149,27 +152,31 @@ export default function CustomersClient() {
                 role="menu"
                 className={styles.actionMenu}
                 style={{ top: menuPos.top, left: menuPos.left }}
+                ref={menuRef}
+                {...{ [ACTION_MENU_PANEL_ATTRIBUTE]: 'true' }}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                 }}
               >
-                <button
-                  type="button"
+                <Link
                   role="menuitem"
                   className={styles.actionMenuItem}
-                  onClick={() => go("basicdata")}
+                  href={`/customers/${encodedId}/basicdata`}
+                  prefetch={false}
+                  onClick={(event) => event.stopPropagation()}
                 >
                   View Basic Data
-                </button>
-                <button
-                  type="button"
+                </Link>
+                <Link
                   role="menuitem"
                   className={styles.actionMenuItem}
-                  onClick={() => go("contacts")}
+                  href={`/customers/${encodedId}/contacts`}
+                  prefetch={false}
+                  onClick={(event) => event.stopPropagation()}
                 >
                   View Contacts
-                </button>
+                </Link>
               </div>,
               document.body,
             )}

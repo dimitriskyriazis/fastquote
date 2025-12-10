@@ -133,6 +133,7 @@ const buildSuggestions = (columns: ColumnOption[]) => {
     modelNumber: makeSuggestions('modelNumber'),
     partNumber: makeSuggestions('partNumber'),
     description: makeSuggestions('description'),
+    description2: makeSuggestions('description2'),
     quantity: makeSuggestions('quantity'),
   };
 };
