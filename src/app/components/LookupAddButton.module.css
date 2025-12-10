@@ -30,3 +30,15 @@
   transform: translateY(0);
   box-shadow: 0 4px 10px rgba(15, 23, 42, 0.1);
 }
+
+.lookupAddButton:disabled {
+  color: #0f172a;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.lookupAddButton:disabled:hover,
+.lookupAddButton:disabled:focus-visible {
+  transform: none;
+  box-shadow: none;
+}

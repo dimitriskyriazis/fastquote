@@ -79,6 +79,12 @@
   text-transform: uppercase;
 }
 
+.requiredMark {
+  color: #b91c1c;
+  margin-left: 4px;
+  font-size: 0.75rem;
+}
+
 .fieldControl {
   border: 1px solid #cbd5e1;
   border-radius: 10px;

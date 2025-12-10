@@ -586,7 +586,9 @@ export default function ContactsClient({ statuses, importances, customers, title
       >
       <div className={styles.contactModalBody}>
         <div className={styles.contactModalGrid}>
-          <div className={`${styles.contactModalField} ${styles.comboWrapper}`}>
+          <div
+            className={`${styles.contactModalField} ${styles.comboWrapper} ${styles.contactModalFieldFull}`}
+          >
             <label className={styles.fieldLabel} htmlFor="contact-customer">
               Customer
             </label>

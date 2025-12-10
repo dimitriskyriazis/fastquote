@@ -1,11 +1,14 @@
 "use client";
 
-import React, { useMemo, useCallback } from "react";
+import React, { useMemo, useCallback, useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import type { ColDef, DefaultMenuItem, GetContextMenuItemsParams, MenuItemDef } from "ag-grid-community";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import { openLinkInNewTab } from "../../lib/navigation";
+import { showToastMessage } from "../../lib/toast";
 import styles from "./ProductsClient.module.css";
+import LookupModal from "../components/LookupModal";
+import lookupStyles from "../components/LookupModal.module.css";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -52,7 +55,83 @@ const resolveProductLabel = (row: Record<string, unknown> | null | undefined, fa
 
 const PRODUCT_ROW_TYPE = "product";
 
+type LookupOption = {
+  id: number;
+  name: string;
+};
+
+type SubCategoryOption = LookupOption & {
+  categoryId: number | null;
+};
+
+type ProductLookups = {
+  brands: LookupOption[];
+  categories: LookupOption[];
+  subCategories: SubCategoryOption[];
+  types: LookupOption[];
+};
+
+type ProductLookupResponse = {
+  ok?: boolean;
+  error?: string;
+  brands?: LookupOption[];
+  categories?: LookupOption[];
+  subCategories?: SubCategoryOption[];
+  types?: LookupOption[];
+};
+
+type CreateProductResponse = {
+  ok?: boolean;
+  error?: string;
+  productId?: number | null;
+};
+
+type ProductFormState = {
+  brandId: string;
+  modelNumber: string;
+  partNumber: string;
+  erpPartNumber: string;
+  typeId: string;
+  categoryId: string;
+  subCategoryId: string;
+  description: string;
+  weblink: string;
+  comments: string;
+  enabled: boolean;
+};
+
+const PRODUCT_LOOKUP_ENDPOINT = "/api/products/lookups";
+const PRODUCT_CREATE_ENDPOINT = "/api/products/create";
+
+const createEmptyProductForm = (): ProductFormState => ({
+  brandId: "",
+  modelNumber: "",
+  partNumber: "",
+  erpPartNumber: "",
+  typeId: "",
+  categoryId: "",
+  subCategoryId: "",
+  description: "",
+  weblink: "",
+  comments: "",
+  enabled: true,
+});
+
+const parseOptionalId = (value: string | null | undefined): number | null => {
+  if (typeof value !== "string") return null;
+  const parsed = Number.parseInt(value.trim(), 10);
+  return Number.isInteger(parsed) ? parsed : null;
+};
+
 export default function ProductsClient() {
+  const [isAddProductOpen, setIsAddProductOpen] = useState(false);
+  const [lookups, setLookups] = useState<ProductLookups | null>(null);
+  const [lookupsLoading, setLookupsLoading] = useState(false);
+  const [lookupsError, setLookupsError] = useState<string | null>(null);
+  const [form, setForm] = useState<ProductFormState>(createEmptyProductForm());
+  const [formError, setFormError] = useState<string | null>(null);
+  const [savingProduct, setSavingProduct] = useState(false);
+  const [refreshToken, setRefreshToken] = useState(0);
   const columnDefs = useMemo<ColDef[]>(() => [
     {
       field: "Brand",
@@ -183,21 +262,317 @@ export default function ProductsClient() {
     [productRowDeletion],
   );
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadLookups = async () => {
+      setLookupsLoading(true);
+      setLookupsError(null);
+      try {
+        const response = await fetch(PRODUCT_LOOKUP_ENDPOINT);
+        const payload = (await response.json().catch(() => null)) as
+          | ProductLookupResponse
+          | null;
+        if (!response.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? "Unable to load product lookup data.");
+        }
+        if (cancelled) return;
+        setLookups({
+          brands: payload.brands ?? [],
+          categories: payload.categories ?? [],
+          subCategories: payload.subCategories ?? [],
+          types: payload.types ?? [],
+        });
+      } catch (err) {
+        if (cancelled) return;
+        const message =
+          err instanceof Error ? err.message : "Unable to load product lookup data.";
+        setLookupsError(message);
+        setLookups(null);
+      } finally {
+        if (!cancelled) {
+          setLookupsLoading(false);
+        }
+      }
+    };
+    void loadLookups();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const openAddProduct = useCallback(() => {
+    setIsAddProductOpen(true);
+    setFormError(null);
+  }, []);
+
+  const closeAddProduct = useCallback(() => {
+    setIsAddProductOpen(false);
+    setFormError(null);
+    setForm(createEmptyProductForm());
+  }, []);
+
+  const updateFormField = useCallback(
+    <K extends keyof ProductFormState>(field: K, value: ProductFormState[K]) => {
+      setForm((prev) => ({ ...prev, [field]: value }));
+    },
+    [],
+  );
+
+  const selectedCategoryId = form.categoryId ? parseOptionalId(form.categoryId) : null;
+
+  const filteredSubCategories = useMemo(() => {
+    if (!lookups) return [];
+    if (selectedCategoryId == null) return lookups.subCategories;
+    return lookups.subCategories.filter(
+      (option) => option.categoryId == null || option.categoryId === selectedCategoryId,
+    );
+  }, [lookups, selectedCategoryId]);
+
+  const handleCreateProduct = useCallback(async () => {
+    const brandId = parseOptionalId(form.brandId);
+    if (brandId == null) {
+      setFormError("Please select a brand.");
+      return;
+    }
+    setSavingProduct(true);
+    setFormError(null);
+    try {
+      const payload = {
+        brandId,
+        modelNumber: form.modelNumber.trim(),
+        partNumber: form.partNumber.trim(),
+        erpPartNumber: form.erpPartNumber.trim(),
+        typeId: parseOptionalId(form.typeId),
+        categoryId: parseOptionalId(form.categoryId),
+        subCategoryId: parseOptionalId(form.subCategoryId),
+        description: form.description.trim(),
+        weblink: form.weblink.trim(),
+        comments: form.comments.trim(),
+        enabled: form.enabled,
+      };
+      const response = await fetch(PRODUCT_CREATE_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const result = (await response.json().catch(() => null)) as CreateProductResponse | null;
+      if (!response.ok || !result?.ok) {
+        throw new Error(result?.error ?? "Unable to add product. Please try again.");
+      }
+      closeAddProduct();
+      setRefreshToken((prev) => prev + 1);
+      showToastMessage("Product added", "success");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to add product. Please try again.";
+      setFormError(message);
+    } finally {
+      setSavingProduct(false);
+    }
+  }, [form, closeAddProduct]);
+
+  const brandOptions = lookups?.brands ?? [];
+  const typeOptions = lookups?.types ?? [];
+  const categoryOptions = lookups?.categories ?? [];
+
+  const modalError = formError ?? lookupsError;
+
   return (
-    <main className={styles.page}>
-      <div className={styles.headerRow}>
-        <h1 className={styles.heading}>Products</h1>
-      </div>
-      <div className={styles.gridFrame}>
-        <AgGridAll
-          endpoint="/api/products"
-          columnDefs={columnDefs}
-          getContextMenuItems={getContextMenuItems}
-          rowGroupPanelShow="always"
-          autoSizeExclusions={["Description"]}
-          columnStateNamespace="products-v2"
-        />
-      </div>
-    </main>
+    <>
+      <main className={styles.page}>
+        <div className={styles.headerRow}>
+          <h1 className={styles.heading}>Products</h1>
+          <div className={styles.headerActions}>
+            <button
+              type="button"
+              className={`${styles.headerButton} page-header-button`}
+              onClick={openAddProduct}
+            >
+              Add Product
+            </button>
+          </div>
+        </div>
+        <div className={styles.gridFrame}>
+          <AgGridAll
+            endpoint="/api/products"
+            columnDefs={columnDefs}
+            getContextMenuItems={getContextMenuItems}
+            rowGroupPanelShow="always"
+            autoSizeExclusions={["Description"]}
+            columnStateNamespace="products-v2"
+            refreshToken={refreshToken}
+          />
+        </div>
+      </main>
+      <LookupModal
+        open={isAddProductOpen}
+        title="Add product"
+        onClose={closeAddProduct}
+        onConfirm={handleCreateProduct}
+        confirmLabel="Add product"
+        saving={savingProduct}
+        error={modalError}
+      >
+        <div className={styles.modalGrid}>
+          <div className={`${lookupStyles.field} ${styles.modalField}`}>
+            <label className={lookupStyles.fieldLabel} htmlFor="product-brand">
+              Brand <span className={lookupStyles.requiredMark}>*</span>
+            </label>
+            <select
+              id="product-brand"
+              className={lookupStyles.fieldControl}
+              value={form.brandId}
+              onChange={(event) => updateFormField("brandId", event.target.value)}
+              disabled={lookupsLoading}
+            >
+              <option value="">Select brand...</option>
+              {brandOptions.map((option) => (
+                <option key={option.id} value={String(option.id)}>
+                  {option.name || `Brand ${option.id}`}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className={`${lookupStyles.field} ${styles.modalField}`}>
+            <label className={lookupStyles.fieldLabel} htmlFor="product-type">
+              Type
+            </label>
+            <select
+              id="product-type"
+              className={lookupStyles.fieldControl}
+              value={form.typeId}
+              onChange={(event) => updateFormField("typeId", event.target.value)}
+              disabled={lookupsLoading}
+            >
+              <option value="">Select type...</option>
+              {typeOptions.map((option) => (
+                <option key={option.id} value={String(option.id)}>
+                  {option.name || `Type ${option.id}`}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className={`${lookupStyles.field} ${styles.modalField}`}>
+            <label className={lookupStyles.fieldLabel} htmlFor="product-category">
+              Category
+            </label>
+            <select
+              id="product-category"
+              className={lookupStyles.fieldControl}
+              value={form.categoryId}
+              onChange={(event) => updateFormField("categoryId", event.target.value)}
+              disabled={lookupsLoading}
+            >
+              <option value="">Select category...</option>
+              {categoryOptions.map((option) => (
+                <option key={option.id} value={String(option.id)}>
+                  {option.name || `Category ${option.id}`}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className={`${lookupStyles.field} ${styles.modalField}`}>
+            <label className={lookupStyles.fieldLabel} htmlFor="product-sub-category">
+              Sub-category
+            </label>
+            <select
+              id="product-sub-category"
+              className={lookupStyles.fieldControl}
+              value={form.subCategoryId}
+              onChange={(event) => updateFormField("subCategoryId", event.target.value)}
+              disabled={lookupsLoading}
+            >
+              <option value="">Select sub-category...</option>
+              {filteredSubCategories.map((option) => (
+                <option key={option.id} value={String(option.id)}>
+                  {option.name || `Sub-category ${option.id}`}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className={`${lookupStyles.field} ${styles.modalField}`}>
+            <label className={lookupStyles.fieldLabel} htmlFor="product-model">
+              Model number
+            </label>
+            <input
+              id="product-model"
+              className={lookupStyles.fieldControl}
+              value={form.modelNumber}
+              onChange={(event) => updateFormField("modelNumber", event.target.value)}
+            />
+          </div>
+          <div className={`${lookupStyles.field} ${styles.modalField}`}>
+            <label className={lookupStyles.fieldLabel} htmlFor="product-part">
+              Part number
+            </label>
+            <input
+              id="product-part"
+              className={lookupStyles.fieldControl}
+              value={form.partNumber}
+              onChange={(event) => updateFormField("partNumber", event.target.value)}
+            />
+          </div>
+          <div className={`${lookupStyles.field} ${styles.modalField}`}>
+            <label className={lookupStyles.fieldLabel} htmlFor="product-erp-part">
+              ERP part number
+            </label>
+            <input
+              id="product-erp-part"
+              className={lookupStyles.fieldControl}
+              value={form.erpPartNumber}
+              onChange={(event) => updateFormField("erpPartNumber", event.target.value)}
+            />
+          </div>
+          <div className={`${lookupStyles.field} ${styles.modalField}`}>
+            <label className={lookupStyles.fieldLabel} htmlFor="product-weblink">
+              Web link
+            </label>
+            <input
+              id="product-weblink"
+              className={lookupStyles.fieldControl}
+              value={form.weblink}
+              onChange={(event) => updateFormField("weblink", event.target.value)}
+            />
+          </div>
+          <div className={`${lookupStyles.field} ${styles.modalFieldFull}`}>
+            <label className={lookupStyles.fieldLabel} htmlFor="product-description">
+              Description
+            </label>
+            <textarea
+              id="product-description"
+              className={`${lookupStyles.fieldControl} ${lookupStyles.textarea}`}
+              value={form.description}
+              onChange={(event) => updateFormField("description", event.target.value)}
+              rows={3}
+            />
+          </div>
+          <div className={`${lookupStyles.field} ${styles.modalFieldFull}`}>
+            <label className={lookupStyles.fieldLabel} htmlFor="product-comments">
+              Comments
+            </label>
+            <textarea
+              id="product-comments"
+              className={`${lookupStyles.fieldControl} ${lookupStyles.textarea}`}
+              value={form.comments}
+              onChange={(event) => updateFormField("comments", event.target.value)}
+              rows={3}
+            />
+          </div>
+          <div className={styles.modalToggleRow}>
+            <label className={styles.modalToggleLabel} htmlFor="product-enabled">
+              Enabled
+            </label>
+            <label className={styles.toggleControl} htmlFor="product-enabled">
+              <input
+                type="checkbox"
+                id="product-enabled"
+                checked={form.enabled}
+                onChange={(event) => updateFormField("enabled", event.target.checked)}
+              />
+              <span>{form.enabled ? "Yes" : "No"}</span>
+            </label>
+          </div>
+        </div>
+      </LookupModal>
+    </>
   );
 }
