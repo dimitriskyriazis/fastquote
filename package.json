@@ -16,7 +16,7 @@
     "ag-grid-enterprise": "^34.3.1",
     "ag-grid-react": "^34.3.1",
     "mssql": "^12.2.0",
-    "next": "^16.0.7",
+    "next": "^16.0.10",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "xlsx": "^0.20.2"
@@ -24,12 +24,12 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3.0.0",
     "@tailwindcss/postcss": "^4.1.17",
+    "@types/mssql": "^9.1.8",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
-    "@types/mssql": "^9.1.8",
     "eslint": "^9.39.1",
-    "eslint-config-next": "16.0.7",
+    "eslint-config-next": "^16.0.10",
     "postcss": "^8.4.49",
     "tailwindcss": "^4.1.17",
     "typescript": "^5.9.3"

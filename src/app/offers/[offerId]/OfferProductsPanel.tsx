@@ -16,6 +16,7 @@ import type {
   ValueFormatterParams,
   ValueGetterParams,
   ValueSetterParams,
+  Column,
 } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
@@ -91,6 +92,7 @@ type RequestedFieldKey =
   | 'RequestedPartNo'
   | 'RequestedDescription'
   | 'RequestedDescription2'
+  | 'RequestedDescription3'
   | 'RequestedQuantity';
 
 type RequestedDisplayFieldKey = Exclude<RequestedFieldKey, 'RequestedItemNo'>;
@@ -100,6 +102,7 @@ const REQUESTED_DISPLAY_FIELD_KEYS: RequestedDisplayFieldKey[] = [
   'RequestedPartNo',
   'RequestedDescription',
   'RequestedDescription2',
+  'RequestedDescription3',
   'RequestedQuantity',
 ];
 
@@ -110,6 +113,7 @@ const REQUESTED_FIELD_LABELS: Record<RequestedFieldKey, string> = {
   RequestedPartNo: 'requested part number',
   RequestedDescription: 'requested description',
   RequestedDescription2: 'requested description 2',
+  RequestedDescription3: 'requested description 3',
   RequestedQuantity: 'requested quantity',
 };
 const REQUESTED_FIELD_SET = new Set<RequestedFieldKey>([
@@ -119,6 +123,7 @@ const REQUESTED_FIELD_SET = new Set<RequestedFieldKey>([
   'RequestedPartNo',
   'RequestedDescription',
   'RequestedDescription2',
+  'RequestedDescription3',
   'RequestedQuantity',
 ]);
 
@@ -201,8 +206,8 @@ const resolveOfferProductTypeLabel = (row: Record<string, unknown> | null | unde
 const isRequestedRow = (row: Record<string, unknown> | null | undefined) =>
   Boolean((row as { __isRequestedRow?: number | null })?.__isRequestedRow === 1);
 
-const isRequestedDescriptionField = (field: string | null | undefined): field is 'RequestedDescription' | 'RequestedDescription2' =>
-  field === 'RequestedDescription' || field === 'RequestedDescription2';
+const isRequestedDescriptionField = (field: string | null | undefined): field is 'RequestedDescription' | 'RequestedDescription2' | 'RequestedDescription3' =>
+  field === 'RequestedDescription' || field === 'RequestedDescription2' || field === 'RequestedDescription3';
 
 const canEditRequestedField = (field: RequestedFieldKey, row: Record<string, unknown> | null | undefined) => {
   if (isRequestedRow(row)) return true;
@@ -290,48 +295,7 @@ const shouldSyncRequestedItemNo = (row: Record<string, unknown> | null | undefin
 
 const hasRequestedPseudoFields = (row: Record<string, unknown> | null | undefined) => {
   if (!row || typeof row !== 'object') return false;
-  const requestedPartNumber = normalizeRequestedLookupValue(
-    (row as { RequestedPartNo?: unknown }).RequestedPartNo ?? null,
-  );
-  const requestedModelNumber = normalizeRequestedLookupValue(
-    (row as { RequestedModelNo?: unknown }).RequestedModelNo ?? null,
-  );
-  const requestedQuantity = normalizeRequestedQuantityValue(
-    (row as { RequestedQuantity?: unknown }).RequestedQuantity ?? null,
-  );
-  if (requestedPartNumber || requestedModelNumber || requestedQuantity != null) {
-    return true;
-  }
-
-  const partNumber = normalizeRequestedLookupValue(
-    (row as { PartNumber?: unknown }).PartNumber ?? null,
-  );
-  if (partNumber) return true;
-  const modelNumber = normalizeRequestedLookupValue(
-    (row as { ModelNumber?: unknown }).ModelNumber ?? null,
-  );
-  if (modelNumber) return true;
-
-  const quantity = normalizeRequestedQuantityValue(
-    (row as { Quantity?: unknown }).Quantity
-      ?? (row as { qty?: unknown }).qty
-      ?? (row as { Qty?: unknown }).Qty
-      ?? null,
-  );
-  if (quantity != null) return true;
-
-  const priceFields: Array<'ListPrice' | 'UnitPrice' | 'NetUnitPrice' | 'TotalPrice' | 'TotalNet' | 'NetCost' | 'TotalCost' | 'GrossProfit'> = [
-    'ListPrice',
-    'UnitPrice',
-    'NetUnitPrice',
-    'TotalPrice',
-    'TotalNet',
-    'NetCost',
-    'TotalCost',
-    'GrossProfit',
-  ];
-  const hasPrice = priceFields.some((field) => coerceNumber((row as Record<string, unknown>)[field] ?? null) != null);
-  return hasPrice;
+  return hasRequestedRowData(row);
 };
 
 type RequestedLookupInfo = {
@@ -414,15 +378,6 @@ const fetchProductSummary = async (productId: number): Promise<ProductSummary | 
     productSummaryCache.set(productId, null);
     return null;
   }
-};
-
-const buildRequestedTextGetter = (field: RequestedDisplayFieldKey) => (
-  params: ValueGetterParams<Record<string, unknown>, unknown>,
-) => {
-  const row = params.data ?? null;
-  const rawValue = row ? row[field] : null;
-  if (typeof rawValue === 'string') return rawValue.trim();
-  return rawValue;
 };
 
 const isOfferProductCommentOrProduct = (row: Record<string, unknown> | null | undefined) =>
@@ -618,6 +573,7 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
     RequestedPartNo: false,
     RequestedDescription: false,
     RequestedDescription2: false,
+    RequestedDescription3: false,
     RequestedQuantity: false,
   });
   const [requestedItemNoVisible, setRequestedItemNoVisible] = useState(false);
@@ -665,6 +621,7 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
       RequestedPartNo: false,
       RequestedDescription: false,
       RequestedDescription2: false,
+      RequestedDescription3: false,
       RequestedQuantity: false,
     };
     if (!visibility) {
@@ -784,6 +741,110 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
     setCategoryChildrenKnown(true);
   }, []);
 
+  const autoSizeExclusions = useMemo<string[]>(() => [
+    'Description',
+    'RequestedDescription',
+    'RequestedDescription2',
+    'RequestedDescription3',
+  ], []);
+
+  const autoSizeOfferColumns = useCallback(() => {
+    const run = () => {
+      const api = gridApiRef.current;
+      if (!api || api.isDestroyed?.()) return;
+      const displayed: Column[] | null =
+        typeof api.getAllDisplayedColumns === 'function'
+          ? api.getAllDisplayedColumns()
+          : null;
+      if (!displayed || displayed.length === 0) return;
+      const exclusions = new Set(autoSizeExclusions);
+      const columnsToSize = displayed.filter((column) => {
+        const colId =
+          typeof column.getColId === 'function'
+            ? column.getColId()
+            : typeof (column as { getId?: () => string }).getId === 'function'
+              ? (column as { getId?: () => string }).getId?.()
+              : null;
+        if (!colId) return true;
+        return !exclusions.has(colId);
+      });
+      if (columnsToSize.length === 0) return;
+      const columnIds = columnsToSize
+        .map((column) => {
+          if (typeof column.getColId === 'function') return column.getColId();
+          if (typeof (column as { getId?: () => string }).getId === 'function') {
+            return (column as { getId?: () => string }).getId?.();
+          }
+          return null;
+        })
+        .filter((id): id is string => typeof id === 'string' && id.length > 0);
+      if (columnIds.length === 0) return;
+      api.autoSizeColumns(columnIds, false);
+    };
+
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(run);
+    } else {
+      setTimeout(run, 0);
+    }
+  }, [autoSizeExclusions]);
+
+  const autoSizeTimerRef = useRef<number | null>(null);
+  const triggerAutoSize = useCallback(() => {
+    if (typeof window === 'undefined') {
+      autoSizeOfferColumns();
+      return;
+    }
+    if (autoSizeTimerRef.current) {
+      window.clearTimeout(autoSizeTimerRef.current);
+    }
+    autoSizeTimerRef.current = window.setTimeout(() => {
+      autoSizeTimerRef.current = null;
+      autoSizeOfferColumns();
+    }, 80);
+  }, [autoSizeOfferColumns]);
+
+  useEffect(() => () => {
+    if (autoSizeTimerRef.current) {
+      window.clearTimeout(autoSizeTimerRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!requestedColumnsReady) return;
+    const api = gridApiRef.current;
+    if (!api) return;
+
+    const previousVisibility = prevRequestedColumnVisibilityRef.current;
+    const visibilityChanged = !previousVisibility ||
+      REQUESTED_DISPLAY_FIELD_KEYS.some((key) => previousVisibility[key] !== requestedColumnVisibility[key]);
+    const itemNoVisibilityChanged = prevRequestedItemNoVisibleRef.current !== requestedItemNoVisible;
+    if (!visibilityChanged && !itemNoVisibilityChanged) {
+      return;
+    }
+
+    try {
+      const keys = REQUESTED_DISPLAY_FIELD_KEYS;
+      const hiddenKeys = keys.filter((key) => !requestedColumnVisibility[key]);
+      const visibleKeys = keys.filter((key) => requestedColumnVisibility[key]);
+      if (hiddenKeys.length > 0) {
+        api.setColumnsVisible(hiddenKeys, false);
+      }
+      if (visibleKeys.length > 0) {
+        api.setColumnsVisible(visibleKeys, true);
+      }
+      if (itemNoVisibilityChanged) {
+        api.setColumnsVisible(['RequestedItemNo'], requestedItemNoVisible);
+      }
+    } catch {
+      /* noop */
+    }
+
+    prevRequestedColumnVisibilityRef.current = requestedColumnVisibility;
+    prevRequestedItemNoVisibleRef.current = requestedItemNoVisible;
+    triggerAutoSize();
+  }, [requestedColumnVisibility, requestedColumnsReady, requestedItemNoVisible, triggerAutoSize]);
+
   const handleGridResponse = useCallback((response: GridResponse | null) => {
     const hasRows = Boolean(response?.rowCount && response.rowCount > 0);
     serverRowsRef.current = Array.isArray(response?.rows) ? response.rows : [];
@@ -807,7 +868,8 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
       && (Boolean(response?.requestedColumns?.RequestedItemNo) || hasRequestedItemInRows);
     setRequestedItemNoVisible(shouldShowRequestedItemNo);
     updateCategoryAncestors();
-  }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, updateCategoryAncestors]);
+    triggerAutoSize();
+  }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, updateCategoryAncestors, triggerAutoSize]);
 
   const syncRequestedItemNumbers = useCallback((apiParam?: GridApi<Record<string, unknown>> | null) => {
     const api = apiParam ?? gridApiRef.current;
@@ -884,7 +946,8 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
 
   const handleGridModelUpdated = useCallback((api: GridApi<Record<string, unknown>>) => {
     updateCategoryAncestors();
-  }, [updateCategoryAncestors]);
+    triggerAutoSize();
+  }, [updateCategoryAncestors, triggerAutoSize]);
 
   const getRowHeight = useCallback((params: RowHeightParams<Record<string, unknown>>) => {
     const row = params.data ?? null;
@@ -982,7 +1045,8 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
       const isDescriptionCell = Boolean(target.closest('[col-id="Description"]'));
       const isRequestedDescriptionCell = Boolean(target.closest('[col-id="RequestedDescription"]'));
       const isRequestedDescription2Cell = Boolean(target.closest('[col-id="RequestedDescription2"]'));
-      if (isDescriptionCell || isRequestedDescriptionCell || isRequestedDescription2Cell) {
+      const isRequestedDescription3Cell = Boolean(target.closest('[col-id="RequestedDescription3"]'));
+      if (isDescriptionCell || isRequestedDescriptionCell || isRequestedDescription2Cell || isRequestedDescription3Cell) {
         // Prevent collapsing the category when double-clicking a description cell.
         return;
       }
@@ -1375,45 +1439,59 @@ const ACTUAL_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--actual';
 const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>(() => {
   const buildTextRequestedColumn = (
     field: RequestedDisplayFieldKey,
-    headerName: string,
-    minWidth: number,
-    width?: number,
-  ) => ({
-    field,
-    headerName,
-    filter: 'agTextColumnFilter',
-    valueGetter: buildRequestedTextGetter(field),
-    minWidth,
-    width,
-    headerClass: styles.requestedHeader,
-    cellClassRules: requestedCellClassRules,
-    editable: (params: { data?: Record<string, unknown> | null }) =>
-      canEditRequestedField(field, params.data ?? null),
+    headerName: string
+  ) => {
+    const isDescription = isRequestedDescriptionField(field);
+    const column: ColDef = {
+      field,
+      headerName,
+      filter: 'agTextColumnFilter',
+      minWidth: isDescription ? 280 : 140,
+      headerClass: styles.requestedHeader,
+      cellClassRules: requestedCellClassRules,
+      editable: (params: { data?: Record<string, unknown> | null }) =>
+        canEditRequestedField(field, params.data ?? null),
       singleClickEdit: true,
       cellEditor: 'agTextCellEditor',
-    valueSetter: ({ data, newValue }: ValueSetterParams<Record<string, unknown>, unknown>) => {
-      if (!data) return false;
-      const normalized = normalizeRequestedLookupValue(newValue);
-      (data as Record<string, unknown>)[field] = normalized;
-      return true;
-    },
-  });
+      valueGetter: (params: ValueGetterParams<Record<string, unknown>, unknown>) => {
+        const row = params.data ?? null;
+        const rawValue = row ? row[field] : null;
+        if (isDescription) {
+          return normalizeDescriptionValue(rawValue) ?? '';
+        }
+        if (typeof rawValue === 'string') return rawValue.trim();
+        return rawValue;
+      },
+      valueSetter: ({ data, newValue }: ValueSetterParams<Record<string, unknown>, unknown>) => {
+        if (!data) return false;
+        const normalized = isDescription
+          ? normalizeDescriptionValue(newValue)
+          : normalizeRequestedLookupValue(newValue);
+        (data as Record<string, unknown>)[field] = normalized;
+        return true;
+      },
+    };
+    if (isDescription) {
+      column.width = 320;
+    }
+    return column;
+  };
 
   return {
-    RequestedBrand: buildTextRequestedColumn('RequestedBrand', 'Req. Brand', 140),
-    RequestedModelNo: buildTextRequestedColumn('RequestedModelNo', 'Req. Model Number', 140),
-    RequestedPartNo: buildTextRequestedColumn('RequestedPartNo', 'Req. Part Number', 150),
-    RequestedDescription: buildTextRequestedColumn('RequestedDescription', 'Req. Description', 280, 320),
-    RequestedDescription2: buildTextRequestedColumn('RequestedDescription2', 'Req. Description 2', 280, 320),
+    RequestedBrand: buildTextRequestedColumn('RequestedBrand', 'Req. Brand'),
+    RequestedModelNo: buildTextRequestedColumn('RequestedModelNo', 'Req. Model Number'),
+    RequestedPartNo: buildTextRequestedColumn('RequestedPartNo', 'Req. Part Number'),
+    RequestedDescription: buildTextRequestedColumn('RequestedDescription', 'Req. Description'),
+    RequestedDescription2: buildTextRequestedColumn('RequestedDescription2', 'Req. Description 2'),
+    RequestedDescription3: buildTextRequestedColumn('RequestedDescription3', 'Req. Description 3'),
     RequestedQuantity: {
       field: 'RequestedQuantity',
       headerName: 'Req. Qty',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: zeroBlankNumberFormatter,
-      width: 120,
       headerClass: styles.requestedHeader,
-    cellClassRules: requestedCellClassRules,
+      cellClassRules: requestedCellClassRules,
       editable: (params: { data?: Record<string, unknown> | null }) =>
         canEditRequestedField('RequestedQuantity', params.data ?? null),
       singleClickEdit: true,
@@ -1437,7 +1515,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         ...baseColDef,
         hide: !isVisible,
         suppressSizeToFit: !isVisible,
-        suppressAutoSize: !isVisible,
       });
       if (!isVisible && baseColDef.flex) {
         requestedColumns[requestedColumns.length - 1].flex = undefined;
@@ -1488,7 +1565,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       },
       hide: !requestedItemNoVisible,
       suppressSizeToFit: !requestedItemNoVisible,
-      suppressAutoSize: !requestedItemNoVisible,
       valueGetter: ({ data }) => {
         if (!data) return '';
         const requestedItemNo = normalizeRequestedItemNoValue(
@@ -1564,7 +1640,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         },
         editable: (params) => {
           const row = params?.data ?? null;
-          return isOfferProductCategory(row) || isOfferProductComment(row);
+          return (
+            isOfferProductCategory(row)
+            || isOfferProductComment(row)
+            || isOfferProductProduct(row)
+          );
         },
         singleClickEdit: true,
         cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
@@ -1700,40 +1780,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   ];
   }, [RowDragHandle, PartNumberCell, manualMode, TreeOrderingCell, requestedColumnDefsMap, requestedColumnVisibility, requestedItemNoVisible, formatDisplayTreeOrdering]);
 
-  useEffect(() => {
-    if (!requestedColumnsReady) return;
-    const api = gridApiRef.current;
-    if (!api) return;
-
-    const previousVisibility = prevRequestedColumnVisibilityRef.current;
-    const visibilityChanged = !previousVisibility ||
-      REQUESTED_DISPLAY_FIELD_KEYS.some((key) => previousVisibility[key] !== requestedColumnVisibility[key]);
-    const itemNoVisibilityChanged = prevRequestedItemNoVisibleRef.current !== requestedItemNoVisible;
-    if (!visibilityChanged && !itemNoVisibilityChanged) {
-      return;
-    }
-
-    try {
-      const keys = REQUESTED_DISPLAY_FIELD_KEYS;
-      const hiddenKeys = keys.filter((key) => !requestedColumnVisibility[key]);
-      const visibleKeys = keys.filter((key) => requestedColumnVisibility[key]);
-      if (hiddenKeys.length > 0) {
-        api.setColumnsVisible(hiddenKeys, false);
-      }
-      if (visibleKeys.length > 0) {
-        api.setColumnsVisible(visibleKeys, true);
-      }
-      if (itemNoVisibilityChanged) {
-        api.setColumnsVisible(['RequestedItemNo'], requestedItemNoVisible);
-      }
-    } catch {
-      /* noop */
-    }
-
-    prevRequestedColumnVisibilityRef.current = requestedColumnVisibility;
-    prevRequestedItemNoVisibleRef.current = requestedItemNoVisible;
-  }, [requestedColumnVisibility, requestedColumnsReady, requestedItemNoVisible]);
-
   const refreshOfferProductGrid = useCallback((api: GridApi<Record<string, unknown>> | null, options?: { refresh?: boolean }) => {
     const targetApi = api ?? gridApiRef.current;
     if (!targetApi) return;
@@ -1810,15 +1856,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       const requestedDescriptionPrimary = normalizeDescriptionValue(
         (data as { RequestedDescription?: unknown }).RequestedDescription ?? null,
       );
-      const requestedDescriptionSecondary = normalizeDescriptionValue(
-        (data as { RequestedDescription2?: unknown }).RequestedDescription2 ?? null,
-      );
-      const requestedDescriptionValue = requestedDescriptionPrimary ?? requestedDescriptionSecondary;
-      const descriptionOverride = normalizeDescriptionValue(
-        (data as { Description?: unknown }).Description ?? null,
-      );
       const requestedDescriptionPrimaryRaw = getExactTextValue(
         (data as { RequestedDescription?: unknown }).RequestedDescription ?? null,
+      );
+      const requestedDescriptionSecondary = normalizeDescriptionValue(
+        (data as { RequestedDescription2?: unknown }).RequestedDescription2 ?? null,
       );
       const requestedDescriptionSecondaryRaw = getExactTextValue(
         (data as { RequestedDescription2?: unknown }).RequestedDescription2 ?? null,
@@ -1831,6 +1873,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       const treeOrderingValue = requestedTree || (typeof treeOrderingRaw === 'string'
         ? treeOrderingRaw.trim()
         : null);
+      const requestedDescriptionValue = requestedDescriptionPrimary ?? requestedDescriptionSecondary;
+      const descriptionOverride = normalizeDescriptionValue(descriptionOverrideRaw);
 
       if (!hasRequestedIdentifiers) {
         const categoryDescription = requestedDescriptionValue ?? descriptionOverride ?? null;
@@ -2349,10 +2393,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     if (normalizedOldValue === normalizedNewValue) {
       return;
     }
-    if (isOfferProductProduct(event.data)) {
-      event.node?.setDataValue?.('Description', normalizedOldValue ?? '');
-      return;
-    }
+    // All edits here target the offer-specific ProductDescription so shared product rows stay untouched.
     const offerDetailId = normalizeOfferDetailId((event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null);
     if (offerDetailId == null) {
       showToastMessage('Unable to update description. Missing record identifier.', 'error');
@@ -2480,35 +2521,34 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     return `${decimalFormatter.format(value)} %`;
   };
 
-  const autoSizeExclusions = useMemo<string[]>(() => ['Description', 'RequestedDescription', 'RequestedDescription2'], []);
-
   return (
     <div className={styles.panel}>
       <div className={`${styles.gridWrapper} offer-products-grid`}>
-        <AgGridAll
-          endpoint={resolvedEndpoint}
-          columnDefs={productColumnDefs}
-          defaultColDef={defaultColDef}
-          manualMode={manualMode}
-          getRowClass={getRowClass}
-          getContextMenuItems={productContextMenuItems}
-          onCellValueChanged={handleCellEdit}
-          refreshToken={refreshToken}
-          onGridReady={handleGridReady}
-          onModelUpdated={handleGridModelUpdated}
-          getRowHeight={getRowHeight}
-          onRowDoubleClicked={handleRowDoubleClicked}
-          autoSizeExclusions={autoSizeExclusions}
-          enableColumnStatePersistence={false}
-          suppressColumnVirtualisation
-          onTotalsChange={handleTotalsChange}
-          onResponse={handleGridResponse}
-          rowGroupPanelShow="never"
-          onRowsMoved={handleRowsMoved}
-          processRows={processVisibleRows}
+          <AgGridAll
+            endpoint={resolvedEndpoint}
+            columnDefs={productColumnDefs}
+            defaultColDef={defaultColDef}
+            manualMode={manualMode}
+            getRowClass={getRowClass}
+            getContextMenuItems={productContextMenuItems}
+            onCellValueChanged={handleCellEdit}
+            refreshToken={refreshToken}
+            onGridReady={handleGridReady}
+            onModelUpdated={handleGridModelUpdated}
+            getRowHeight={getRowHeight}
+            onRowDoubleClicked={handleRowDoubleClicked}
+            autoSizeExclusions={autoSizeExclusions}
+            enableColumnStatePersistence={false}
+            suppressColumnVirtualisation
+            onTotalsChange={handleTotalsChange}
+            onResponse={handleGridResponse}
+            rowGroupPanelShow="never"
+            onRowsMoved={handleRowsMoved}
+            processRows={processVisibleRows}
           rowSelection="multiple"
           rowMultiSelectWithClick
           rowDeselection
+          disableAutoSize
         />
       </div>
       <div className={styles.totalsBar}>

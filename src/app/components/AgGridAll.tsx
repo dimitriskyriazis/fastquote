@@ -3,9 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
-  CellClickedEvent,
   CellContextMenuEvent,
-  CellSelectionChangedEvent,
   CellValueChangedEvent,
   Column,
   ColumnPinnedType,
@@ -25,13 +23,11 @@ import {
   MenuItemDef,
   ModelUpdatedEvent,
   RowClassParams,
-  RowClickedEvent,
   RowDoubleClickedEvent,
   RowDragEndEvent,
   RowHeightParams,
   SideBarDef,
   RowNode,
-  IRowNode,
   RowSelectionOptions,
   SelectionChangedEvent,
   SortChangedEvent,
@@ -42,6 +38,7 @@ import { resolveOfferProductRowType, type OfferProductRowType, describeOfferProd
 import { showToastMessage } from '../../lib/toast';
 import styles from './AgGridAll.module.css';
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from './actionMenuMarkers';
+import { setGridRowDeletionContextMenuSelectionSnapshot } from '../../lib/gridRowDeletion';
 import { useAuditUser } from './AuditUserProvider';
 
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
@@ -62,6 +59,18 @@ const resolveElementFromEventTarget = (target: EventTarget | null): Element | nu
 const isActionMenuEventTarget = (target: EventTarget | null): boolean => {
   const element = resolveElementFromEventTarget(target);
   return Boolean(element?.closest(ACTION_MENU_SELECTOR));
+};
+
+const scheduleDeselectAllRows = (api?: GridApi<RowData> | null) => {
+  if (!api || typeof api.deselectAll !== 'function') return;
+  setTimeout(() => {
+    if (api.isDestroyed?.()) return;
+    try {
+      api.deselectAll();
+    } catch {
+      /* noop */
+    }
+  }, 0);
 };
 
 // Prevent double registration during HMR/StrictMode
@@ -91,13 +100,14 @@ type Props = {
   showSidebar?: boolean;
   rowMultiSelectWithClick?: boolean;
   suppressRowClickSelection?: boolean;
+  allowRowClickSelection?: boolean;
   onGridReady?: (api: GridApi<RowData>) => void;
   onSelectionChanged?: (rows: RowData[], api: GridApi<RowData>) => void;
   onModelUpdated?: (api: GridApi<RowData>) => void;
   rowGroupPanelShow?: 'always' | 'onlyWhenGrouping' | 'never';
   suppressRowGroup?: boolean;
   getRowClass?: (params: RowClassParams<RowData>) => string | string[] | undefined;
-  getContextMenuItems?: (params: GetContextMenuItemsParams<RowData>) => (MenuItemDef | string)[] | undefined;
+  getContextMenuItems?: (params: GetContextMenuItemsParams<RowData>) => Array<MenuItemDef<RowData> | DefaultMenuItem | string> | undefined;
   onCellValueChanged?: (event: CellValueChangedEvent<RowData>) => void;
   onRowDoubleClicked?: (event: RowDoubleClickedEvent<RowData>) => void;
   getRowHeight?: (params: RowHeightParams<RowData>) => number | undefined;
@@ -112,11 +122,10 @@ type Props = {
   onRowsMoved?: (api: GridApi<RowData>) => void;
   processRows?: (rows: RowData[]) => RowData[];
   rowDeselection?: boolean;
+  disableAutoSize?: boolean;
 };
 
 type RowData = Record<string, unknown>;
-
-type SelectedRowNode = RowNode<RowData> | IRowNode<RowData> | null;
 
 export type GridResponse = {
   ok: boolean;
@@ -137,6 +146,7 @@ type DragPayload = {
   rowId: string | null;
   rowIndex: number | null;
   data: RowData | null;
+  selectedRowIds?: Array<string | null>;
 };
 
 type RowHoverState = {
@@ -647,6 +657,7 @@ export default function AgGridAll({
   rowSelection,
   rowMultiSelectWithClick,
   suppressRowClickSelection,
+  allowRowClickSelection: allowRowClickSelectionProp,
   rowDeselection,
   onGridReady: externalGridReadyHandler,
   onSelectionChanged: externalSelectionChangedHandler,
@@ -668,6 +679,7 @@ export default function AgGridAll({
   enableColumnStatePersistence = true,
   columnStateNamespace = '',
   onResponse,
+  disableAutoSize = false,
 }: Props) {
   const gridRef = useRef<AgGridReact<RowData> | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -692,47 +704,20 @@ export default function AgGridAll({
       enableRowGroup: false,
     }));
   }, [columnDefs, suppressRowGroup]);
-  const hasRowSelection = Boolean(rowSelection);
   const [gapHover, setGapHover] = useState<GapHoverState | null>(null);
   const [rowHover, setRowHover] = useState<RowHoverState | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [rangeSelectedRowIds, setRangeSelectionRowIds] = useState<Set<string>>(() => new Set());
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingExternalRefreshRef = useRef<number | null>(null);
   const [contextMenuRowId, setContextMenuRowId] = useState<string | null>(null);
 
-  const updateRangeSelectionRows = useCallback(() => {
-    if (!hasRowSelection) return;
-    const api = gridRef.current?.api;
-    if (!api || typeof api.getCellRanges !== 'function') {
-      setRangeSelectionRowIds(new Set());
-      return;
-    }
-    const ranges = api.getCellRanges();
-    if (!ranges || ranges.length === 0) {
-      setRangeSelectionRowIds(new Set());
-      return;
-    }
-    const nextIds = new Set<string>();
-    ranges.forEach((range) => {
-      const startIndex = range.startRow?.rowIndex ?? range.endRow?.rowIndex;
-      const endIndex = range.endRow?.rowIndex ?? range.startRow?.rowIndex;
-      if (startIndex == null || endIndex == null) return;
-      const start = Math.min(startIndex, endIndex);
-      const end = Math.max(startIndex, endIndex);
-      for (let rowIndex = start; rowIndex <= end; rowIndex += 1) {
-        const node = api.getDisplayedRowAtIndex(rowIndex);
-        if (node?.id) {
-          nextIds.add(node.id);
-        }
-      }
-    });
-    setRangeSelectionRowIds(nextIds);
-  }, [hasRowSelection]);
-
   const handleCellContextMenu = useCallback((event: CellContextMenuEvent<RowData>) => {
+    const selectedNodes = typeof event.api?.getSelectedNodes === 'function'
+      ? (event.api.getSelectedNodes() as Array<RowNode<RowData>>)
+      : [];
+    setGridRowDeletionContextMenuSelectionSnapshot(event.api ?? null, selectedNodes ?? []);
     setContextMenuRowId(event.node?.id ?? null);
-  }, [updateRangeSelectionRows]);
+  }, []);
 
   const clearContextMenuRow = useCallback(() => {
     setContextMenuRowId(null);
@@ -748,7 +733,6 @@ export default function AgGridAll({
     const handleClick = (event: Event) => {
       if (isActionMenuEventTarget(event.target ?? null)) return;
       clearContextMenuRow();
-      updateRangeSelectionRows();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -763,87 +747,7 @@ export default function AgGridAll({
       document.removeEventListener('mousedown', handleClick, true);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [clearContextMenuRow, updateRangeSelectionRows]);
-
-  useEffect(() => () => {
-    if (rangeClearTimerRef.current) {
-      window.clearTimeout(rangeClearTimerRef.current);
-      rangeClearTimerRef.current = null;
-    }
-  }, []);
-
-  const handleCellSelectionChanged = useCallback((event: CellSelectionChangedEvent<RowData>) => {
-    updateRangeSelectionRows();
-  }, [updateRangeSelectionRows]);
-
-  const rangeClearTimerRef = useRef<number | null>(null);
-
-  const clearRangeAndUpdate = useCallback((api: GridApi<RowData>, node: SelectedRowNode) => {
-    if (!hasRowSelection) return;
-    if (typeof api.clearCellSelection === 'function') {
-      try {
-        api.clearCellSelection();
-      } catch {
-        /* noop */
-      }
-    } else if (typeof api.clearRangeSelection === 'function') {
-      try {
-        api.clearRangeSelection();
-      } catch {
-        /* noop */
-      }
-    }
-    if (node) {
-      try {
-        api.deselectAll();
-      } catch {
-        /* noop */
-      }
-      try {
-        node.setSelected(true, true, 'api');
-      } catch {
-        /* noop */
-      }
-    }
-    try {
-      api.redrawRows();
-    } catch {
-      /* noop */
-    }
-    updateRangeSelectionRows();
-  }, [hasRowSelection, updateRangeSelectionRows]);
-
-  const scheduleRangeClear = useCallback((api: GridApi<RowData>, node: SelectedRowNode) => {
-    if (!hasRowSelection) return;
-    if (typeof window === 'undefined') {
-      clearRangeAndUpdate(api, node);
-      return;
-    }
-    if (rangeClearTimerRef.current) {
-      window.clearTimeout(rangeClearTimerRef.current);
-    }
-    rangeClearTimerRef.current = window.setTimeout(() => {
-      rangeClearTimerRef.current = null;
-      clearRangeAndUpdate(api, node);
-    }, 0);
-  }, [clearRangeAndUpdate, hasRowSelection]);
-
-  const handleRowClicked = useCallback((event: RowClickedEvent<RowData> & { column?: Column | null }) => {
-    if (!hasRowSelection) return;
-    const domEvent = event.event as MouseEvent | null;
-    if (domEvent?.shiftKey || domEvent?.metaKey || domEvent?.ctrlKey) {
-      return;
-    }
-    const clickedColId = event.column?.getColId();
-    if (clickedColId === '__actions__') {
-      return;
-    }
-    const eventNode = event.node ?? null;
-    const prefetchedNode = eventNode?.id ? event.api.getRowNode(eventNode.id) : null;
-    const selectionNode: SelectedRowNode = prefetchedNode ?? eventNode;
-    scheduleRangeClear(event.api, selectionNode);
-  }, [scheduleRangeClear, hasRowSelection]);
-
+  }, [clearContextMenuRow]);
 
   const persistColumnState = useCallback(() => {
     if (!shouldPersistColumnState || !columnStateStorageKey) return;
@@ -899,6 +803,7 @@ export default function AgGridAll({
   }, []);
 
   const autoSizeColumns = useCallback((api?: GridApi<RowData> | null) => {
+    if (disableAutoSize) return;
     const gridApi = api ?? gridRef.current?.api ?? null;
     if (!gridApi || gridApi.isDestroyed?.()) return;
     const resize = () => {
@@ -931,7 +836,7 @@ export default function AgGridAll({
     } else {
       setTimeout(resize, 0);
     }
-  }, [autoSizeExclusions]);
+  }, [autoSizeExclusions, disableAutoSize]);
 
   const handleColumnVisible = useCallback(() => {
     autoSizeColumns();
@@ -1022,31 +927,38 @@ export default function AgGridAll({
     },
   }), [endpoint, onResponse, onTotalsChange, requestPayload]);
 
+  const resolvedAllowRowClickSelection =
+    typeof allowRowClickSelectionProp === 'boolean' ? allowRowClickSelectionProp : rowSelection !== 'multiple';
+
   const rowSelectionConfig = useMemo<RowSelectionOptions | undefined>(() => {
     if (!rowSelection) return undefined;
     const isMultiRow = rowSelection === 'multiple';
-    const allowMultiClick = isMultiRow && Boolean(rowMultiSelectWithClick);
-    const allowDeselection = Boolean(rowDeselection);
+    const clickSelectionEnabled = Boolean(resolvedAllowRowClickSelection);
+    const allowMultiselectClick = isMultiRow && Boolean(rowMultiSelectWithClick) && clickSelectionEnabled;
+    const allowDeselection = Boolean(rowDeselection) && clickSelectionEnabled;
 
     if (isMultiRow) {
       return {
         mode: 'multiRow',
-        checkboxes: false,
-        headerCheckbox: false,
+        checkboxes: true,
+        headerCheckbox: true,
         selectAll: 'filtered',
         groupSelects: 'self',
-        enableSelectionWithoutKeys: allowMultiClick,
-        enableClickSelection: allowMultiClick || allowDeselection,
+        enableSelectionWithoutKeys: allowMultiselectClick,
+        enableClickSelection: allowMultiselectClick || allowDeselection,
       };
     }
 
     return {
       mode: 'singleRow',
       checkboxes: false,
-      enableSelectionWithoutKeys: allowMultiClick,
+      enableSelectionWithoutKeys: allowMultiselectClick,
       enableClickSelection: allowDeselection,
     };
-  }, [rowSelection, rowDeselection, rowMultiSelectWithClick]);
+  }, [rowSelection, rowDeselection, rowMultiSelectWithClick, resolvedAllowRowClickSelection]);
+
+  const resolvedSuppressRowClickSelection =
+    Boolean(suppressRowClickSelection) || !Boolean(resolvedAllowRowClickSelection);
 
   const sideBarDef = useMemo(() => ({
     toolPanels: ['columns', 'filters'],
@@ -1090,32 +1002,39 @@ export default function AgGridAll({
     }
   }, [autoSizeColumns, datasource, handleContextMenuVisibleChanged, externalGridReadyHandler]);
   const contextMenuItemsHandler = useCallback<GetContextMenuItems<RowData>>((params) => {
+    const wrapActions = (items: Array<MenuItemDef<RowData> | DefaultMenuItem | string>) =>
+      items.map((item) => {
+        if (typeof item === 'string') return item as DefaultMenuItem;
+        if (!item || typeof item !== 'object' || !item.action) return item;
+        const original = item.action;
+        return {
+          ...item,
+          action: (actionParams: Parameters<NonNullable<MenuItemDef<RowData>['action']>>[0]) => {
+            clearContextMenuRow();
+            const runCleanup = () => scheduleDeselectAllRows(actionParams.api ?? null);
+            const result = original(actionParams);
+            const isPromise =
+              typeof result === 'object' &&
+              result !== null &&
+              typeof (result as Promise<unknown>).then === 'function';
+            if (isPromise) {
+              return (result as Promise<unknown>).finally(runCleanup);
+            }
+            runCleanup();
+            return result;
+          },
+        };
+      }) as Array<DefaultMenuItem | MenuItemDef<RowData>>;
+    const defaultItems = Array.isArray(params.defaultItems) ? params.defaultItems : [];
     if (typeof getContextMenuItems !== 'function') {
-      return params.defaultItems ?? [];
+      return wrapActions(defaultItems);
     }
     const result = getContextMenuItems(params);
-    if (!result || (Array.isArray(result) && result.length === 0 && params.defaultItems)) {
-      return params.defaultItems ?? [];
+    if (!result || (Array.isArray(result) && result.length === 0)) {
+      return wrapActions(defaultItems);
     }
-    const wrapActions = (items: Array<MenuItemDef<RowData> | DefaultMenuItem>) =>
-      items.map((item) => {
-        if (typeof item === 'string') return item;
-        if (item.action) {
-          const original = item.action;
-          return {
-            ...item,
-            action: (actionParams: Parameters<NonNullable<MenuItemDef<RowData>['action']>>[0]) => {
-              clearContextMenuRow();
-              original(actionParams);
-            },
-          };
-        }
-        return item;
-      });
-    return Array.isArray(result)
-      ? wrapActions(result as Array<MenuItemDef<RowData> | DefaultMenuItem>)
-      : result;
-  }, [getContextMenuItems, clearContextMenuRow]);
+    return Array.isArray(result) ? wrapActions(result) : result;
+  }, [clearContextMenuRow, getContextMenuItems]);
 
   const handleColumnRowGroupChanged = useCallback(() => {
     autoSizeColumns();
@@ -1182,12 +1101,8 @@ export default function AgGridAll({
     if (contextMenuRowId && params.node?.id === contextMenuRowId) {
       parts.push('ag-row--context-menu-active');
     }
-    if (params.node?.id && rangeSelectedRowIds.has(params.node.id)) {
-      parts.push('ag-row-range-selected');
-    }
-    if (parts.length === 0) return undefined;
-    return parts;
-  }, [getRowClass, contextMenuRowId, rangeSelectedRowIds]);
+    return parts.length === 0 ? undefined : parts;
+  }, [getRowClass, contextMenuRowId]);
 
   useEffect(() => {
     if (!isGridReady || !shouldPersistColumnState) return;
@@ -1500,9 +1415,35 @@ export default function AgGridAll({
     const sourceNode = resolveNode(payload.rowId, payload.rowIndex);
     if (!sourceNode) return;
 
+    const targetContext = (() => {
+      if (hoveredRowTarget) {
+        return {
+          parentPath: hoveredRowTarget.path.slice(),
+          beforeRowId: null,
+          beforeRowIndex: null,
+          afterRowId: null,
+          afterRowIndex: null,
+          position: 'after' as const,
+        };
+      }
+      if (gap) {
+        return {
+          parentPath: Array.isArray(gap.parentPath) ? gap.parentPath.slice() : [],
+          beforeRowId: gap.beforeRowId,
+          beforeRowIndex: gap.beforeRowIndex,
+          afterRowId: gap.afterRowId,
+          afterRowIndex: gap.afterRowIndex,
+          position: gap.position,
+        };
+      }
+      return null;
+    })();
+    if (!targetContext) return;
+
     let failureReason: MoveFailureReason | null = null;
     let failureTargetType: OfferProductRowType | null | undefined;
     const attemptMove = (
+      node: RowNode<RowData>,
       targetParentPath: number[],
       beforeRowId: string | null,
       beforeRowIndex: number | null,
@@ -1512,7 +1453,7 @@ export default function AgGridAll({
     ) => {
       const result = applyOrderingMove(
         api,
-        sourceNode,
+        node,
         targetParentPath,
         beforeRowId,
         beforeRowIndex,
@@ -1526,17 +1467,76 @@ export default function AgGridAll({
       return false;
     };
 
-    let moved = false;
-    if (hoveredRowTarget) {
-      const parentPath = hoveredRowTarget.path.slice();
-      moved = attemptMove(parentPath, null, null, null, null, 'after');
-    }
-    if (!moved && gap) {
-      const parentPath = Array.isArray(gap.parentPath) ? gap.parentPath.slice() : [];
-      moved = attemptMove(parentPath, gap.beforeRowId, gap.beforeRowIndex, gap.afterRowId, gap.afterRowIndex, gap.position);
+    const nodesToMove = (() => {
+      const collected: RowNode<RowData>[] = [];
+      const seenNodes = new Set<RowNode<RowData>>();
+      const addNode = (node: RowNode<RowData> | null) => {
+        if (!node) return;
+        if (seenNodes.has(node)) return;
+        seenNodes.add(node);
+        collected.push(node);
+      };
+      if (Array.isArray(payload.selectedRowIds) && payload.selectedRowIds.length > 0) {
+        payload.selectedRowIds.forEach((rowId) => {
+          if (!rowId) return;
+          addNode(api.getRowNode(rowId) as RowNode<RowData> | null);
+        });
+      }
+      addNode(sourceNode);
+      const resolveIndex = (node: RowNode<RowData>) => {
+        const indexValue = node.rowIndex;
+        return typeof indexValue === 'number' && Number.isFinite(indexValue)
+          ? indexValue
+          : Number.MAX_SAFE_INTEGER;
+      };
+      return collected.sort((a, b) => resolveIndex(a) - resolveIndex(b));
+    })();
+
+    if (nodesToMove.length === 0) return;
+
+    let movedCount = 0;
+    const totalNodes = nodesToMove.length;
+    let firstInsertedId: string | null = null;
+    let lastInsertedId: string | null = null;
+    for (const node of nodesToMove) {
+      const isFirstMove = movedCount === 0;
+      const beforeRowId = isFirstMove
+        ? targetContext.beforeRowId
+        : (targetContext.position === 'after' ? lastInsertedId : null);
+      const beforeRowIndex = isFirstMove ? targetContext.beforeRowIndex : null;
+      const afterRowId = isFirstMove
+        ? targetContext.afterRowId
+        : (targetContext.position === 'before' ? firstInsertedId : null);
+      const afterRowIndex = isFirstMove ? targetContext.afterRowIndex : null;
+
+      const moved = attemptMove(
+        node,
+        targetContext.parentPath,
+        beforeRowId,
+        beforeRowIndex,
+        afterRowId,
+        afterRowIndex,
+        targetContext.position,
+      );
+      if (!moved) {
+        break;
+      }
+
+      if (isFirstMove) {
+        firstInsertedId = node.id ?? null;
+        lastInsertedId = firstInsertedId;
+      } else if (targetContext.position === 'after') {
+        lastInsertedId = node.id ?? null;
+      } else {
+        firstInsertedId = node.id ?? null;
+      }
+      movedCount += 1;
     }
 
-    if (!moved) {
+    if (movedCount !== totalNodes) {
+      if (movedCount > 0) {
+        refreshServerSideData(api);
+      }
       console.warn('Drop detected but TreeOrdering could not be updated', { payload, gap, hoveredRowTarget });
       showInvalidDropMessage(failureReason, failureTargetType);
       return;
@@ -1545,7 +1545,7 @@ export default function AgGridAll({
     api.applyColumnState({
       state: [{ colId: 'TreeOrdering', sort: 'asc', sortIndex: 0 }],
       defaultState: { sort: null },
-      applyOrder: true,
+      applyOrder: false,
     });
     reorderRowsByTreeOrdering(api);
     api.refreshCells({ columns: TREE_DEPENDENT_COLUMNS, force: true });
@@ -1575,7 +1575,6 @@ export default function AgGridAll({
   }, [manualMode, persistTreeOrderingChanges, externalCellValueChangeHandler]);
 
   const handleSelectionChanged = useCallback((event: SelectionChangedEvent<RowData>) => {
-    updateRangeSelectionRows();
     if (typeof externalSelectionChangedHandler !== 'function') return;
     try {
       const rows = typeof event.api.getSelectedRows === 'function' ? event.api.getSelectedRows() : [];
@@ -1584,70 +1583,13 @@ export default function AgGridAll({
       console.warn('Failed to read selected rows', err);
       externalSelectionChangedHandler([], event.api);
     }
-  }, [externalSelectionChangedHandler, updateRangeSelectionRows]);
+  }, [externalSelectionChangedHandler]);
 
   const handleRowDragEnd = useCallback((event: RowDragEndEvent<RowData>) => {
     if (typeof onRowsMoved === 'function') {
       onRowsMoved(event.api);
     }
   }, [onRowsMoved]);
-
-  const resetRangeSelectionRows = useCallback(() => {
-    setRangeSelectionRowIds((prev) => (prev.size === 0 ? prev : new Set()));
-  }, []);
-
-  const removeRangeSelectionClasses = useCallback(() => {
-    const shell = shellRef.current;
-    if (!shell) return;
-    shell
-      .querySelectorAll<HTMLElement>('.ag-row-range-selected')
-      .forEach((row) => row.classList.remove('ag-row-range-selected'));
-  }, []);
-
-  const clearGridSelection = useCallback(() => {
-    const api = gridRef.current?.api;
-    if (!api) return;
-    try {
-      if (typeof api.clearCellSelection === 'function') {
-        api.clearCellSelection();
-      }
-    } catch (err) {
-      console.warn('Failed to clear cell selection', err);
-    }
-    if (typeof api.deselectAll === 'function') {
-      try {
-        api.deselectAll();
-        api.redrawRows();
-      } catch (err) {
-        console.warn('Failed to deselect grid rows', err);
-      }
-    }
-    removeRangeSelectionClasses();
-    resetRangeSelectionRows();
-  }, [removeRangeSelectionClasses, resetRangeSelectionRows]);
-
-  useEffect(() => {
-    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
-      const rawTarget = (event.target ?? null) as EventTarget | null;
-      if (isActionMenuEventTarget(rawTarget)) return;
-      const shell = shellRef.current;
-      const targetNode = rawTarget instanceof Node ? rawTarget : null;
-      if (shell && targetNode && shell.contains(targetNode)) {
-        if (targetNode instanceof Element && targetNode.closest('.ag-row')) {
-          return;
-        }
-      }
-      clearGridSelection();
-    };
-    document.addEventListener('mousedown', handlePointerDown, true);
-    document.addEventListener('touchstart', handlePointerDown, true);
-    document.addEventListener('pointerdown', handlePointerDown, true);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown, true);
-      document.removeEventListener('touchstart', handlePointerDown, true);
-      document.removeEventListener('pointerdown', handlePointerDown, true);
-    };
-  }, [clearGridSelection]);
 
   useEffect(() => {
     const api = gridApiRef.current ?? gridRef.current?.api ?? null;
@@ -1700,7 +1642,7 @@ export default function AgGridAll({
           rowHeight={32}
           headerHeight={38}
           rowSelection={rowSelectionConfig}
-          suppressRowClickSelection={suppressRowClickSelection}
+          suppressRowClickSelection={resolvedSuppressRowClickSelection}
 
           // Server-Side model
           rowModelType="serverSide"
@@ -1731,12 +1673,10 @@ export default function AgGridAll({
           onFilterChanged={handleFilterChanged}
           onSortChanged={handleSortChanged}
           onModelUpdated={handleModelUpdated}
-          onRowClicked={handleRowClicked}
           onRowDoubleClicked={handleRowDoubleClick}
           onRowDragEnd={handleRowDragEnd}
           onCellValueChanged={handleCellValueChanged}
-          onCellSelectionChanged={handleCellSelectionChanged}
-          onSelectionChanged={externalSelectionChangedHandler ? handleSelectionChanged : undefined}
+          onSelectionChanged={handleSelectionChanged}
           onColumnMoved={shouldPersistColumnState ? queuePersistColumnState : undefined}
           onColumnPinned={shouldPersistColumnState ? queuePersistColumnState : undefined}
           onColumnVisible={handleColumnVisible}

@@ -400,6 +400,9 @@ export default function ProductsClient() {
             autoSizeExclusions={["Description"]}
             columnStateNamespace="products-v2"
             refreshToken={refreshToken}
+            rowSelection="multiple"
+            rowMultiSelectWithClick
+            rowDeselection
           />
         </div>
       </main>

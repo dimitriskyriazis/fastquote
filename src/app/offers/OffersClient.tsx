@@ -15,6 +15,7 @@ const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
 import type { ColDef, ICellRendererParams, GetContextMenuItemsParams, GridApi } from 'ag-grid-community';
 import { createPortal } from 'react-dom';
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from '../components/actionMenuMarkers';
+import { useActionMenuPosition } from '../components/useActionMenuPosition';
 import { GridRowDeletion } from '../../lib/gridRowDeletion';
 import Link from 'next/link';
 
@@ -135,9 +136,7 @@ export default function OffersClient() {
     // A small React component for the action menu
     const ActionMenu: React.FC = () => {
       const [open, setOpen] = useState(false);
-      const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
-      const btnRef = useRef<HTMLButtonElement | null>(null);
-      const menuRef = useRef<HTMLDivElement | null>(null);
+      const { buttonRef, menuRef, menuPos } = useActionMenuPosition(open);
       const id = params?.data?.offerId as string | number | undefined;
       const encodedId = id != null ? encodeURIComponent(String(id)) : '';
 
@@ -153,18 +152,14 @@ export default function OffersClient() {
 
       useEffect(() => {
         if (!open) return;
-        const rect = btnRef.current?.getBoundingClientRect();
-        if (rect) {
-          setMenuPos({ top: rect.bottom + 6, left: rect.left });
-        }
         const onDocClick = (e: MouseEvent) => {
           if (!(e.target instanceof Node)) return setOpen(false);
-          if (btnRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
+          if (buttonRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
           setOpen(false);
         };
         window.addEventListener('click', onDocClick);
         return () => window.removeEventListener('click', onDocClick);
-      }, [open]);
+      }, [open, buttonRef, menuRef]);
 
       const lines = (
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
@@ -201,7 +196,7 @@ export default function OffersClient() {
             onContextMenuCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
             disabled={!encodedId}
             title={encodedId ? 'Open menu' : 'Missing offer ID'}
-            ref={btnRef}
+            ref={buttonRef}
           >
             {lines}
           </button>
@@ -340,6 +335,9 @@ export default function OffersClient() {
         suppressRowGroup
         rowGroupPanelShow="never"
         suppressMovableColumns
+        rowSelection="multiple"
+        rowMultiSelectWithClick
+        rowDeselection
       />
       </div>
     </main>

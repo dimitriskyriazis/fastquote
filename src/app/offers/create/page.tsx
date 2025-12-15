@@ -1,10 +1,11 @@
 import Link from 'next/link';
+import { cookies, headers } from 'next/headers';
 import OfferCreateClient, { type MarketOption } from './OfferCreateClient';
 import styles from '../offersDetail.module.css';
 import clientStyles from './OfferCreateClient.module.css';
 import { getPool } from '../../../lib/sql';
 import { toDropdownOptions, type RawDropdownRow, type DropdownOption } from '../../../lib/dropdownOptions';
-import { getAuditFallbackUserId } from '../../../lib/auditTrail';
+import { getAuditFallbackUserId, resolveAuditUserId } from '../../../lib/auditTrail';
 
 type LookupRow = RawDropdownRow & { ID: number; Name: string | null };
 type MarketLookupRow = LookupRow & { SalesDivisionID?: number | null };
@@ -144,6 +145,13 @@ const resolveDefaultCalcMethod = (options: DropdownOption[]) => {
 };
 
 export default async function Page() {
+  const requestHeaders = await headers();
+  const requestCookies = await cookies();
+  const loggedUserId = resolveAuditUserId({
+    headers: requestHeaders,
+    cookies: requestCookies,
+  });
+
   const [
     customers,
     statuses,
@@ -166,6 +174,7 @@ export default async function Page() {
   const hasFallbackUser = fallbackUserId
     ? users.some((user) => user.value === fallbackUserId)
     : false;
+  const suggestedUserId = loggedUserId ?? (hasFallbackUser ? fallbackUserId ?? '' : '');
 
   const defaultCalcMethod = resolveDefaultCalcMethod(calcMethodFormulas) || 'DR';
 
@@ -205,7 +214,7 @@ export default async function Page() {
             paymentTerms: 'Upon Agreement',
             offerValidity: '4 weeks',
             defaultCalcMethodFormulasId: defaultCalcMethod,
-            suggestedUserId: hasFallbackUser ? fallbackUserId ?? '' : '',
+            suggestedUserId,
           }}
           formId={formId}
         />

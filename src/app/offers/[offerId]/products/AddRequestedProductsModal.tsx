@@ -19,7 +19,7 @@ type Props = {
   onImported: (result: { inserted?: number; updated?: number; total?: number }) => void;
 };
 
-type HeaderColumnKey = 'itemNo' | 'brand' | 'modelNumber' | 'partNumber' | 'description' | 'description2' | 'quantity';
+type HeaderColumnKey = 'itemNo' | 'brand' | 'modelNumber' | 'partNumber' | 'description' | 'description2' | 'description3' | 'quantity';
 
 type ColumnOption = { index: number; label: string; normalized: string };
 
@@ -51,6 +51,7 @@ type PayloadRow = {
   partNumber?: string | null;
   description?: string | null;
   description2?: string | null;
+  description3?: string | null;
   quantity?: string | number | null;
 };
 
@@ -59,8 +60,9 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
   brand: ['brand', 'maker', 'make', 'manufacturer', 'vendor'],
   modelNumber: ['model', 'series', 'type', 'model#'],
   partNumber: ['part', 'sku', 'code', 'p/n', 'article'],
-  description: ['description', 'desc', 'name', 'details'],
-  description2: ['description2', 'desc2', 'desc 2', 'secondary', 'secondary description', 'details 2'],
+  description: ['description', 'desc', 'name', 'details', 'product', 'information', 'info', 'specs', 'specifications'],
+  description2: ['description', 'desc', 'name', 'details', 'product', 'information', 'info', 'specs', 'specifications'],
+  description3: ['description', 'desc', 'name', 'details', 'product', 'information', 'info', 'specs', 'specifications'],
   quantity: ['qty', 'quantity', 'amount', 'pcs', 'pieces'],
 };
 
@@ -71,6 +73,7 @@ const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string }> = [
   { key: 'partNumber', label: 'Part No' },
   { key: 'description', label: 'Description' },
   { key: 'description2', label: 'Description 2' },
+  { key: 'description3', label: 'Description 3' },
   { key: 'quantity', label: 'Quantity' },
 ];
 
@@ -134,6 +137,7 @@ const buildSuggestions = (columns: ColumnOption[]) => {
     partNumber: makeSuggestions('partNumber'),
     description: makeSuggestions('description'),
     description2: makeSuggestions('description2'),
+    description3: makeSuggestions('description3'),
     quantity: makeSuggestions('quantity'),
   };
 };
@@ -219,6 +223,7 @@ const hasPayloadValues = (row: PayloadRow) => {
     || (row.partNumber && row.partNumber.trim())
     || (row.description && row.description.trim())
     || (row.description2 && row.description2.trim())
+    || (row.description3 && row.description3.trim())
     || (row.quantity != null && row.quantity !== ''),
   );
 };
@@ -433,6 +438,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
         const partNumber = normalizeCellText(getCell(selection.partNumber ?? null));
         const description = normalizeCellText(getCell(selection.description ?? null));
         const description2 = normalizeCellText(getCell(selection.description2 ?? null));
+        const description3 = normalizeCellText(getCell(selection.description3 ?? null));
         const quantityRaw = getCell(selection.quantity ?? null);
         const quantity = normalizeQuantityValue(quantityRaw);
         const payloadRow: PayloadRow = {
@@ -442,6 +448,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
           partNumber,
           description,
           description2,
+          description3,
           quantity,
         };
         if (hasPayloadValues(payloadRow)) {
@@ -584,7 +591,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
                 autoComplete="off"
                 value={pasteText}
                 onChange={(event) => handlePasteInput(event.target.value)}
-                placeholder="Brand	partNo	Description	Quantity"
+                placeholder="Item No / Tree Ordering	Brand	Model No	Part No	Description	Description 2	Description 3	Quantity"
                 className={styles.pasteTextarea}
               />
             </div>

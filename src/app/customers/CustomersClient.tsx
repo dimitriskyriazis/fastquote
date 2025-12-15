@@ -14,6 +14,7 @@ import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from "../c
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import Link from "next/link";
 import styles from "./CustomersClient.module.css";
+import { useActionMenuPosition } from "../components/useActionMenuPosition";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -74,9 +75,7 @@ export default function CustomersClient() {
   const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     const ActionMenu: React.FC = () => {
       const [open, setOpen] = useState(false);
-      const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
-      const btnRef = useRef<HTMLButtonElement | null>(null);
-      const menuRef = useRef<HTMLDivElement | null>(null);
+      const { buttonRef, menuRef, menuPos } = useActionMenuPosition(open);
       const id = params?.data?.CustomerID as string | number | undefined;
       const encodedId = id != null ? encodeURIComponent(String(id)) : "";
 
@@ -92,18 +91,14 @@ export default function CustomersClient() {
 
       useEffect(() => {
         if (!open) return;
-        const rect = btnRef.current?.getBoundingClientRect();
-        if (rect) {
-          setMenuPos({ top: rect.bottom + 6, left: rect.left });
-        }
         const onDocClick = (e: MouseEvent) => {
           if (!(e.target instanceof Node)) return setOpen(false);
-          if (btnRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
+          if (buttonRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
           setOpen(false);
         };
         window.addEventListener("click", onDocClick);
         return () => window.removeEventListener("click", onDocClick);
-      }, [open]);
+      }, [open, buttonRef, menuRef]);
 
       const lines = (
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
@@ -141,7 +136,7 @@ export default function CustomersClient() {
             }}
             disabled={!encodedId}
             title={encodedId ? "Open menu" : "Missing Customer ID"}
-            ref={btnRef}
+            ref={buttonRef}
           >
             {lines}
           </button>
@@ -351,6 +346,9 @@ export default function CustomersClient() {
           columnStateNamespace="customers"
           onGridReady={handleGridReady}
           getContextMenuItems={customerContextMenuItems}
+          rowSelection="multiple"
+          rowMultiSelectWithClick
+          rowDeselection
         />
       </div>
     </main>

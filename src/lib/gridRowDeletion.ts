@@ -1,6 +1,24 @@
-import type { GridApi, GetContextMenuItemsParams, MenuItemDef, DefaultMenuItem } from 'ag-grid-community';
+import type { GridApi, GetContextMenuItemsParams, MenuItemDef, DefaultMenuItem, RowNode } from 'ag-grid-community';
 import { showConfirmDialog } from './confirm';
 import { showToastMessage } from './toast';
+
+const contextMenuSelectionSnapshots = new WeakMap<GridApi<unknown>, unknown[]>();
+
+export const setGridRowDeletionContextMenuSelectionSnapshot = <RowData>(
+  api: GridApi<RowData> | null,
+  selection: Array<RowNode<RowData>> | null,
+) => {
+  if (!api) return;
+  contextMenuSelectionSnapshots.set(api as GridApi<unknown>, selection ? selection.slice() : []);
+};
+
+const consumeContextMenuSelectionSnapshot = <RowData>(api: GridApi<RowData> | null) => {
+  if (!api) return null;
+  const stored = contextMenuSelectionSnapshots.get(api as GridApi<unknown>);
+  contextMenuSelectionSnapshots.delete(api as GridApi<unknown>);
+  if (!stored || stored.length === 0) return null;
+  return stored as Array<RowNode<RowData>>;
+};
 
 const deleteRecordMenuIcon = `
   <span class="fastquote-menu-icon fastquote-menu-icon--danger" aria-hidden="true">
@@ -18,7 +36,9 @@ type GridRowDeletionConfig<RowData> = {
   endpoint: string;
   resolveRowId: (row: RowData | null | undefined) => number | null;
   resolveRowLabel: (row: RowData | null | undefined, fallback: string) => string;
+  resolveMultiRowLabel?: (rows: RowData[], fallback: string) => string;
   resolveRowTypeLabel?: (row: RowData | null | undefined) => string | null | undefined;
+  resolveMultiRowTypeLabel?: (rows: RowData[]) => string | null | undefined;
   buildPayload?: (ids: number[]) => unknown;
   confirmTitle?: string;
   confirmMessage?: (typeLabel: string, label: string) => string;
@@ -37,6 +57,32 @@ export class GridRowDeletion<RowData> {
     const normalized = typeof resolved === 'string' ? resolved.trim() : resolved ? String(resolved).trim() : '';
     if (normalized.length > 0) return normalized;
     return 'record';
+  }
+
+  private getNonNullRows(rows: (RowData | null)[]) {
+    return rows.filter((row): row is RowData => row != null);
+  }
+
+  private getMultiRowLabel(rows: (RowData | null)[], fallback: string) {
+    if (typeof this.config.resolveMultiRowLabel === 'function') {
+      const resolved = this.config.resolveMultiRowLabel(this.getNonNullRows(rows), fallback);
+      if (typeof resolved === 'string' && resolved.trim().length > 0) {
+        return resolved.trim();
+      }
+    }
+    return fallback;
+  }
+
+  private getMultiRowTypeLabel(rows: (RowData | null)[]) {
+    if (typeof this.config.resolveMultiRowTypeLabel === 'function') {
+      const resolved = this.config.resolveMultiRowTypeLabel(this.getNonNullRows(rows));
+      const normalized = typeof resolved === 'string' ? resolved.trim() : resolved ? String(resolved).trim() : '';
+      if (normalized.length > 0) return normalized;
+    }
+    const first = rows.find((row): row is RowData => row != null) ?? null;
+    const singleLabel = this.getRowTypeLabel(first);
+    if (singleLabel.endsWith('s')) return singleLabel;
+    return `${singleLabel}s`;
   }
 
   private buildConfirmMessage(typeLabel: string, rowLabel: string) {
@@ -82,19 +128,19 @@ export class GridRowDeletion<RowData> {
     }
   }
 
-  public async deleteRow(
-    rowData: RowData | null | undefined,
-    rowId: number,
-    api: GridApi<RowData> | null,
-  ) {
-    const fallbackLabel = `record #${rowId}`;
-    const rowLabel = this.config.resolveRowLabel(rowData, fallbackLabel);
-    const typeLabel = this.getRowTypeLabel(rowData);
+  private async deleteRows(rows: (RowData | null)[], ids: number[], api: GridApi<RowData> | null) {
+    if (ids.length === 0) return;
+    const isSingle = ids.length === 1;
+    const fallbackLabel = isSingle ? `record #${ids[0]}` : `${ids.length} records`;
+    const typeLabel = isSingle ? this.getRowTypeLabel(rows[0]) : this.getMultiRowTypeLabel(rows);
+    const rowLabel = isSingle
+      ? this.config.resolveRowLabel(rows[0], fallbackLabel)
+      : this.getMultiRowLabel(rows, fallbackLabel);
     const confirmed = await showConfirmDialog({
-      title: this.config.confirmTitle ?? 'Delete row',
+      title: this.config.confirmTitle ?? (isSingle ? 'Delete row' : 'Delete rows'),
       message: this.buildConfirmMessage(typeLabel, rowLabel),
-      confirmLabel: this.config.confirmConfirmLabel ?? 'Delete row',
-      cancelLabel: this.config.confirmCancelLabel ?? 'Keep row',
+      confirmLabel: this.config.confirmConfirmLabel ?? (isSingle ? 'Delete row' : 'Delete rows'),
+      cancelLabel: this.config.confirmCancelLabel ?? (isSingle ? 'Keep row' : 'Keep rows'),
       tone: 'danger',
     });
     if (!confirmed) return;
@@ -102,7 +148,7 @@ export class GridRowDeletion<RowData> {
       const res = await fetch(this.config.endpoint, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(this.buildPayload([rowId])),
+        body: JSON.stringify(this.buildPayload(ids)),
       });
       let payload: { ok?: boolean; error?: string } | null = null;
       try {
@@ -121,25 +167,59 @@ export class GridRowDeletion<RowData> {
     }
   }
 
+  public async deleteRow(
+    rowData: RowData | null | undefined,
+    rowId: number,
+    api: GridApi<RowData> | null,
+  ) {
+    await this.deleteRows([rowData ?? null], [rowId], api);
+  }
+
   public getContextMenuItems(params: GetContextMenuItemsParams<RowData>) {
     const baseItems: Array<MenuItemDef<RowData> | DefaultMenuItem | string> =
       Array.isArray(params.defaultItems) ? [...params.defaultItems] : [];
-    const rowData = params.node?.data ?? null;
-    const rowId = this.config.resolveRowId(rowData);
-    if (rowId == null) {
+    try {
+      const rowData = params.node?.data ?? null;
+      const clickedRowId = this.config.resolveRowId(rowData);
+      const snapshotNodes = consumeContextMenuSelectionSnapshot(params.api ?? null);
+      const selectedNodes = snapshotNodes
+        ?? (typeof params.api?.getSelectedNodes === 'function'
+          ? (params.api.getSelectedNodes() as Array<RowNode<RowData>>)
+          : []);
+      const selectedEntries = selectedNodes
+        .map((node) => {
+          const data = node?.data ?? null;
+          if (!data) return null;
+          const id = this.config.resolveRowId(data);
+          if (id == null) return null;
+          return { row: data, id };
+        })
+        .filter((entry): entry is { row: NonNullable<RowData>; id: number } => entry != null);
+      const normalizedSelectedEntries = [...selectedEntries];
+      const hasMultiSelection = normalizedSelectedEntries.length > 1;
+      const targetEntries = hasMultiSelection
+        ? normalizedSelectedEntries.map((entry) => ({ row: entry.row, id: entry.id }))
+        : (clickedRowId != null ? [{ row: rowData ?? null, id: clickedRowId }] : []);
+      if (targetEntries.length === 0) {
+        return baseItems;
+      }
+      if (baseItems.length > 0 && baseItems[baseItems.length - 1] !== 'separator') {
+        baseItems.push('separator');
+      }
+      const deleteItem: MenuItemDef<RowData> = {
+        name: targetEntries.length > 1 ? 'Delete rows' : 'Delete row',
+        icon: deleteRecordMenuIcon,
+        action: () => {
+          const rows = targetEntries.map((entry) => entry.row);
+          const ids = targetEntries.map((entry) => entry.id);
+          void this.deleteRows(rows, ids, params.api ?? null);
+        },
+      };
+      baseItems.push(deleteItem);
       return baseItems;
+    } catch (err) {
+      console.error('Failed to build delete context menu items', err);
+      return baseItems.length > 0 ? baseItems : (params.defaultItems ?? []);
     }
-    if (baseItems.length > 0 && baseItems[baseItems.length - 1] !== 'separator') {
-      baseItems.push('separator');
-    }
-    const deleteItem: MenuItemDef = {
-      name: 'Delete row',
-      icon: deleteRecordMenuIcon,
-      action: () => {
-        void this.deleteRow(rowData, rowId, params.api ?? null);
-      },
-    };
-    baseItems.push(deleteItem);
-    return baseItems;
   }
 }

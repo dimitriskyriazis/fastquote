@@ -195,8 +195,8 @@
 .drag-overlay-row .ag-cell {
   color: #00000082 !important;
 }
-.offer-products-grid .ag-row.ag-row-selected .ag-cell,
-.offer-products-grid .ag-row.ag-row-range-selected .ag-cell {
+.offer-products-grid .ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell,
+.offer-products-grid .ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell {
   background-color: #e5e7eb !important;
 }
 
@@ -204,9 +204,7 @@
   background-color: #e0f2fe !important;
 }
 
-.offer-products-grid .offer-row--printable-comment.ag-row-selected .ag-cell,
-.offer-products-grid .offer-row--printable-comment.ag-row-range-selected .ag-cell,
-.offer-products-grid .offer-row--printable-comment.ag-row--context-menu-active .ag-cell {
+.offer-products-grid .offer-row--printable-comment:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell {
   background-color: #bde0ff !important;
 }
 
@@ -214,9 +212,7 @@
   background-color: #fee2e2 !important;
 }
 
-.offer-products-grid .offer-row--nonprintable-comment.ag-row-selected .ag-cell,
-.offer-products-grid .offer-row--nonprintable-comment.ag-row-range-selected .ag-cell,
-.offer-products-grid .offer-row--nonprintable-comment.ag-row--context-menu-active .ag-cell {
+.offer-products-grid .offer-row--nonprintable-comment:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell {
   background-color: #ffb7b7 !important;
 }
 
@@ -230,12 +226,8 @@
   background-color: #e5e7eb !important;
 }
 
-.offer-products-grid .offer-row--category .offer-products-grid__cell--actual,
-.offer-products-grid .offer-row--category .offer-products-grid__cell--requested {
-  background-color: rgb(220, 220, 220) !important;
-}
-
 .offer-products-grid .offer-row--category .ag-cell {
+  background-color: rgb(220, 220, 220) !important;
   padding-top: 0 !important;
   padding-bottom: 0 !important;
   display: flex;
@@ -245,7 +237,7 @@
 .offer-products-grid .offer-row--category.ag-row-selected .ag-cell,
 .offer-products-grid .offer-row--category.ag-row-range-selected .ag-cell,
 .offer-products-grid .offer-row--category.ag-row--context-menu-active .ag-cell {
-  background-color: rgba(196, 199, 207, 0.85) !important;
+  background-color: #c5c9d0 !important;
 }
 
 .offer-products-grid .offer-row--product .offer-products-grid__cell--product-accent {

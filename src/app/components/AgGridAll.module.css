@@ -46,6 +46,23 @@
   transition: background-color 140ms ease;
 }
 
+.gridShell :global(.ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell),
+.gridShell :global(.ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell) {
+  background-color: #e5e7eb !important;
+}
+
+.gridShell :global(.offer-row--printable-comment:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell) {
+  background-color: #bde0ff !important;
+}
+
+.gridShell :global(.offer-row--nonprintable-comment:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell) {
+  background-color: #ffb7b7 !important;
+}
+
+.gridShell :global(.offer-row--category:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell) {
+  background-color: #c5c9d0 !important;
+}
+
 .rowHoverOverlay {
   position: absolute;
   left: 0;

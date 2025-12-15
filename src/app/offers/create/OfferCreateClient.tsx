@@ -155,7 +155,7 @@ export default function OfferCreateClient({
     marketId: '',
     salesDivisionId: '',
     salesCreationPersonId: defaultValues.suggestedUserId ?? '',
-    salesPersonId: defaultValues.suggestedUserId ?? '',
+    salesPersonId: '',
     approvalUserId: '',
     defaultCalcMethodFormulasId: defaultValues.defaultCalcMethodFormulasId ?? '',
     projectId: '0',
@@ -195,6 +195,34 @@ export default function OfferCreateClient({
     );
   }, [calcMethodFormulas]);
 
+  const salesDivisionLabelMap = useMemo(() => {
+    const map = new Map<string, string>();
+    salesDivisions.forEach((division) => {
+      if (!division?.value) return;
+      const label = division.label?.trim();
+      if (!label) return;
+      map.set(division.value, label);
+    });
+    return map;
+  }, [salesDivisions]);
+
+  const marketsWithDivisionLabel = useMemo(() => {
+    return markets.map((market) => {
+      const divisionLabel = market.salesDivisionId
+        ? salesDivisionLabelMap.get(market.salesDivisionId) ?? ''
+        : '';
+      const label = divisionLabel ? `${market.label} - ${divisionLabel}` : market.label;
+      return { ...market, label };
+    });
+  }, [markets, salesDivisionLabelMap]);
+
+  const filteredMarkets = useMemo(() => {
+    if (!values.salesDivisionId) return marketsWithDivisionLabel;
+    return marketsWithDivisionLabel.filter(
+      (market) => market.salesDivisionId === values.salesDivisionId,
+    );
+  }, [marketsWithDivisionLabel, values.salesDivisionId]);
+
   const marketDivisionMap = useMemo(() => {
     const map = new Map<string, string>();
     markets.forEach((market) => {
@@ -215,6 +243,21 @@ export default function OfferCreateClient({
       return { ...prev, salesDivisionId: defaultDivision };
     });
   }, [marketDivisionMap, values.marketId]);
+
+  useEffect(() => {
+    const divisionId = values.salesDivisionId;
+    const marketId = values.marketId;
+    if (!divisionId || !marketId) return;
+    const marketDivision = marketDivisionMap.get(marketId) ?? '';
+    if (marketDivision && marketDivision !== divisionId) {
+      setValues((prev) => {
+        if (prev.marketId === marketId) {
+          return { ...prev, marketId: '' };
+        }
+        return prev;
+      });
+    }
+  }, [marketDivisionMap, values.marketId, values.salesDivisionId]);
 
   const findCustomerOption = useCallback((text: string) => {
     const normalized = text.trim().toLowerCase();
@@ -587,7 +630,8 @@ export default function OfferCreateClient({
     }
 
     if (field.type === 'select') {
-      const baseOptions = field.options ?? [];
+      const selectOptions = field.id === 'marketId' ? filteredMarkets : field.options ?? [];
+      const baseOptions = selectOptions;
       const hasValueInOptions = value ? baseOptions.some((option) => option.value === value) : true;
       const options = !hasValueInOptions && value
         ? [...baseOptions, { value, label: value }]

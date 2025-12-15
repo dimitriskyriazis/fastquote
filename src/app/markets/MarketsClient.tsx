@@ -3,7 +3,15 @@
 import React, { useMemo, useCallback, useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import type { CellValueChangedEvent, ColDef, GridApi, GetContextMenuItemsParams } from "ag-grid-community";
+import type {
+  CellValueChangedEvent,
+  ColDef,
+  DefaultMenuItem,
+  GetContextMenuItemsParams,
+  GridApi,
+  IMenuActionParams,
+  MenuItemDef,
+} from "ag-grid-community";
 import styles from "./MarketsClient.module.css";
 import LookupModal from "../components/LookupModal";
 import { showToastMessage } from "../../lib/toast";
@@ -24,6 +32,8 @@ const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
     </div>
   ),
 });
+
+type RowData = Record<string, unknown>;
 
 type Props = {
   salesDivisions: string[];
@@ -129,10 +139,32 @@ export default function MarketsClient({ salesDivisions }: Props) {
     [],
   );
 
+  function normalizeMenuItemDef(item: MenuItemDef<MarketRow, any>): MenuItemDef<RowData, any> {
+    return {
+      ...item,
+      action:
+        typeof item.action === "function"
+          ? (params: IMenuActionParams<RowData, any>) =>
+              item.action?.(params as unknown as IMenuActionParams<MarketRow, any>)
+          : undefined,
+      subMenu: Array.isArray(item.subMenu) ? normalizeMarketContextMenuItems(item.subMenu) : item.subMenu,
+    };
+  }
+
+  function normalizeMarketContextMenuItems(
+    items: Array<string | DefaultMenuItem | MenuItemDef<MarketRow, any>>,
+  ): Array<string | DefaultMenuItem | MenuItemDef<RowData, any>> {
+    return items.map((item) => {
+      if (typeof item === "string") return item;
+      return normalizeMenuItemDef(item as MenuItemDef<MarketRow, any>);
+    });
+  }
+
   const getContextMenuItems = useCallback(
-    (params: GetContextMenuItemsParams<Record<string, unknown>>) => {
+    (params: GetContextMenuItemsParams<RowData>) => {
       const typedParams = params as unknown as GetContextMenuItemsParams<MarketRow>;
-      return marketRowDeletion.getContextMenuItems(typedParams);
+      const items = marketRowDeletion.getContextMenuItems(typedParams);
+      return normalizeMarketContextMenuItems(items ?? []);
     },
     [marketRowDeletion],
   );
