@@ -698,7 +698,6 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
               )}
             </div>
             {error ? <div className={styles.errorText}>{error}</div> : null}
-            <div className={styles.helpText}>Only the columns you map will be sent to the server. None of them are mandatory, but Tree Ordering helps us align the rows automatically.</div>
           </div>
         </div>
       </div>

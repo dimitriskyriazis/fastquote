@@ -240,6 +240,11 @@
   background-color: #c5c9d0 !important;
 }
 
+.offer-products-grid .offer-row--category-descendant-collapsed,
+.offer-products-grid .offer-row--category-descendant-collapsed .ag-cell {
+  display: none !important;
+}
+
 .offer-products-grid .offer-row--product .offer-products-grid__cell--product-accent {
   background-color: #ffffff !important;
 }

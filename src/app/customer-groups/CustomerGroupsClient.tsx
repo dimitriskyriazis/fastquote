@@ -13,6 +13,8 @@ import type {
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import styles from "./CustomerGroupsClient.module.css";
 import LookupModal from "../components/LookupModal";
+import PageHeader from "../components/PageHeader";
+import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { showToastMessage } from "../../lib/toast";
 import { useAddModal } from "../lib/useAddModal";
 import {
@@ -258,8 +260,9 @@ export default function CustomerGroupsClient() {
 
   return (
     <main className={styles.page}>
-      <div className={styles.headerRow}>
-        <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
+      <PageHeader
+        title="Customer Groups"
+        leftActions={
           <button
             type="button"
             className={`${styles.backLink} page-header-button`}
@@ -268,9 +271,8 @@ export default function CustomerGroupsClient() {
             <span aria-hidden="true">←</span>
             Back to customers
           </button>
-        </div>
-        <h1 className={styles.heading}>Customer Groups</h1>
-        <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
+        }
+        rightActions={
           <div className={styles.headerActions}>
             <button
               type="button"
@@ -287,20 +289,23 @@ export default function CustomerGroupsClient() {
               Add Group
             </button>
           </div>
-        </div>
-      </div>
-      <div className={styles.gridFrame}>
-        <AgGridAll
-          endpoint="/api/customer-groups"
-          columnDefs={columnDefs}
-          columnStateNamespace="customer-groups"
-          rowGroupPanelShow="never"
-          onGridReady={handleGridReady}
-          getContextMenuItems={groupContextMenuItems}
-          onCellValueChanged={handleCellEdit}
-          refreshToken={refreshToken}
-        />
-      </div>
+        }
+      >
+        <GridQuickSearchProvider>
+          <div className={styles.gridFrame}>
+            <AgGridAll
+              endpoint="/api/customer-groups"
+              columnDefs={columnDefs}
+              columnStateNamespace="customer-groups"
+              rowGroupPanelShow="never"
+              onGridReady={handleGridReady}
+              getContextMenuItems={groupContextMenuItems}
+              onCellValueChanged={handleCellEdit}
+              refreshToken={refreshToken}
+            />
+          </div>
+        </GridQuickSearchProvider>
+      </PageHeader>
       <LookupModal
         open={isAddGroupOpen}
         title="Add group"

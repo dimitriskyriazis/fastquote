@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo, useCallback, useState, useRef, useEffect } from 'react';
+import { useContext } from 'react';
 import type {
   CellValueChangedEvent,
   ColDef,
@@ -35,6 +36,7 @@ import { showToastMessage } from '../../../lib/toast';
 import { GridRowDeletion } from '../../../lib/gridRowDeletion';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
 import { priceListStatusClassRules } from '../../../lib/priceListStatus';
+import { GridQuickSearchContext } from '../../components/GridQuickSearchProvider';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const decimalFormatter = new Intl.NumberFormat('en-US', {
@@ -527,12 +529,19 @@ type Props = {
 const buildEndpointForOffer = (offerId: string) =>
   `/api/offers/${encodeURIComponent(offerId)}/products`;
 
-export default function OfferProductsPanel({ offerId, endpoint, manualMode = false, refreshToken = 0 }: Props) {
+export default function OfferProductsPanel({
+  offerId,
+  endpoint,
+  manualMode = false,
+  refreshToken = 0,
+}: Props) {
   const router = useRouter();
   const resolvedEndpoint = useMemo(() => {
     if (endpoint) return endpoint;
     return buildEndpointForOffer(offerId);
   }, [endpoint, offerId]);
+  const quickSearchContext = useContext(GridQuickSearchContext);
+  const quickSearchActive = Boolean(quickSearchContext?.value?.trim());
   const addProductsEndpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
     [offerId],
@@ -584,11 +593,10 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
   const [categoryChildrenKnown, setCategoryChildrenKnown] = useState(false);
   const treeOrderingRootMapRef = useRef<Map<string, number>>(new Map());
   const serverRowsRef = useRef<Array<Record<string, unknown>>>([]);
-  const collapsedRefreshRef = useRef(false);
   const prevRequestedColumnVisibilityRef = useRef<Record<RequestedDisplayFieldKey, boolean> | null>(null);
   const prevRequestedItemNoVisibleRef = useRef<boolean>(requestedItemNoVisible);
-  const rebuildTreeOrderingRootMap = useCallback((rows?: Array<Record<string, unknown>>) => {
-    const map = new Map<string, number>();
+  const rebuildTreeOrderingRootMap = useCallback((rows?: Array<Record<string, unknown>>, reset = false) => {
+    const map = reset ? new Map<string, number>() : new Map(treeOrderingRootMapRef.current);
     (rows ?? []).forEach((row) => {
       if (!row) return;
       const path = parseTreeOrderingPath((row as Record<string, unknown>)?.TreeOrdering ?? null);
@@ -848,7 +856,8 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
   const handleGridResponse = useCallback((response: GridResponse | null) => {
     const hasRows = Boolean(response?.rowCount && response.rowCount > 0);
     serverRowsRef.current = Array.isArray(response?.rows) ? response.rows : [];
-    rebuildTreeOrderingRootMap(response?.rows as Array<Record<string, unknown>> | undefined);
+    const shouldResetRoots = response?.request?.startRow === 0;
+    rebuildTreeOrderingRootMap(response?.rows as Array<Record<string, unknown>> | undefined, shouldResetRoots);
     const requestColumnVisibility: Partial<Record<RequestedDisplayFieldKey, boolean>> = {};
     if (response?.requestedColumns) {
       REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
@@ -868,7 +877,9 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
       && (Boolean(response?.requestedColumns?.RequestedItemNo) || hasRequestedItemInRows);
     setRequestedItemNoVisible(shouldShowRequestedItemNo);
     updateCategoryAncestors();
-    triggerAutoSize();
+    if (!quickSearchActive) {
+      triggerAutoSize();
+    }
   }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, updateCategoryAncestors, triggerAutoSize]);
 
   const syncRequestedItemNumbers = useCallback((apiParam?: GridApi<Record<string, unknown>> | null) => {
@@ -981,14 +992,6 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
     return false;
   }, [collapsedCategoryPaths]);
 
-  const processVisibleRows = useCallback((rows: Array<Record<string, unknown>>) => (
-    rows.filter((row) => {
-      if (!row) return true;
-      const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
-      return path.length === 0 || !hasCollapsedAncestor(path);
-    })
-  ), [hasCollapsedAncestor]);
-
   const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!isOfferProductCategory(row)) return;
     if (!hasCategoryChildren(row)) return;
@@ -1026,8 +1029,9 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
       default:
         baseClass = undefined;
     }
-    if (!baseClass) return undefined;
-    const classes = [baseClass];
+    const classes: string[] = [];
+    if (baseClass) {
+      classes.push(baseClass);
       if (rowType === 'category') {
         if (isCategoryRowCollapsed(params.data)) {
           classes.push('offer-row--category-collapsed');
@@ -1036,8 +1040,18 @@ export default function OfferProductsPanel({ offerId, endpoint, manualMode = fal
           classes.push('offer-row--category-empty');
         }
       }
+    }
+    const path = parseTreeOrderingPath(
+      (params.data as { TreeOrdering?: string | null } | null | undefined)?.TreeOrdering ?? null,
+    );
+    if (path.length > 0 && hasCollapsedAncestor(path)) {
+      classes.push('offer-row--category-descendant-collapsed');
+    }
+    if (classes.length === 0) {
+      return undefined;
+    }
     return classes.join(' ');
-  }, [isCategoryRowCollapsed, hasCategoryChildren]);
+  }, [isCategoryRowCollapsed, hasCategoryChildren, hasCollapsedAncestor]);
 
   const handleRowDoubleClicked = useCallback((params: RowDoubleClickedEvent<Record<string, unknown>>) => {
     const target = params.event?.target;
@@ -1810,12 +1824,14 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   }, [refreshToken, syncRequestedItemNumbers]);
 
   useEffect(() => {
-    if (!collapsedRefreshRef.current) {
-      collapsedRefreshRef.current = true;
-      return;
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    try {
+      api.redrawRows();
+    } catch (err) {
+      console.warn('Failed to redraw rows after collapsing categories', err);
     }
-    refreshOfferProductGrid(null);
-  }, [collapsedCategoryPaths, refreshOfferProductGrid]);
+  }, [collapsedCategoryPaths]);
 
   const productRowDeletion = useMemo(
     () =>
@@ -2524,27 +2540,26 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   return (
     <div className={styles.panel}>
       <div className={`${styles.gridWrapper} offer-products-grid`}>
-          <AgGridAll
-            endpoint={resolvedEndpoint}
-            columnDefs={productColumnDefs}
-            defaultColDef={defaultColDef}
-            manualMode={manualMode}
-            getRowClass={getRowClass}
-            getContextMenuItems={productContextMenuItems}
-            onCellValueChanged={handleCellEdit}
-            refreshToken={refreshToken}
-            onGridReady={handleGridReady}
-            onModelUpdated={handleGridModelUpdated}
-            getRowHeight={getRowHeight}
-            onRowDoubleClicked={handleRowDoubleClicked}
-            autoSizeExclusions={autoSizeExclusions}
-            enableColumnStatePersistence={false}
-            suppressColumnVirtualisation
-            onTotalsChange={handleTotalsChange}
-            onResponse={handleGridResponse}
-            rowGroupPanelShow="never"
-            onRowsMoved={handleRowsMoved}
-            processRows={processVisibleRows}
+        <AgGridAll
+          endpoint={resolvedEndpoint}
+          columnDefs={productColumnDefs}
+          defaultColDef={defaultColDef}
+          manualMode={manualMode}
+          getRowClass={getRowClass}
+          getContextMenuItems={productContextMenuItems}
+          onCellValueChanged={handleCellEdit}
+          refreshToken={refreshToken}
+          onGridReady={handleGridReady}
+          onModelUpdated={handleGridModelUpdated}
+          getRowHeight={getRowHeight}
+          onRowDoubleClicked={handleRowDoubleClicked}
+          autoSizeExclusions={autoSizeExclusions}
+          enableColumnStatePersistence={false}
+          suppressColumnVirtualisation
+          onTotalsChange={handleTotalsChange}
+          onResponse={handleGridResponse}
+          rowGroupPanelShow="never"
+          onRowsMoved={handleRowsMoved}
           rowSelection="multiple"
           rowMultiSelectWithClick
           rowDeselection

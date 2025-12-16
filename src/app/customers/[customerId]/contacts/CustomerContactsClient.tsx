@@ -6,6 +6,8 @@ import dynamic from "next/dynamic";
 import type { ColDef, GetContextMenuItemsParams, GridApi } from "ag-grid-community";
 import { GridRowDeletion } from "../../../../lib/gridRowDeletion";
 import styles from "./CustomerContactsClient.module.css";
+import PageHeader from "../../../components/PageHeader";
+import { GridQuickSearchProvider } from "../../../components/GridQuickSearchProvider";
 
 const AgGridAll = dynamic(() => import("../../../components/AgGridAll"), {
   ssr: false,
@@ -175,15 +177,15 @@ export default function CustomerContactsClient({ customerId, customerName }: Pro
 
   return (
     <main className={styles.page}>
-      <div className={styles.headerRow}>
-        <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
+      <PageHeader
+        title={heading}
+        leftActions={
           <Link href="/customers" className={`${styles.backLink} page-header-button`}>
             <span aria-hidden="true">←</span>
             Back to customers
           </Link>
-        </div>
-        <h1 className={styles.heading}>{heading}</h1>
-        <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
+        }
+        rightActions={
           <button
             type="button"
             className={`${styles.headerActionButton} page-header-button`}
@@ -193,18 +195,21 @@ export default function CustomerContactsClient({ customerId, customerName }: Pro
           >
             Add Contact
           </button>
-        </div>
-      </div>
-      <div className={styles.gridFrame}>
-        <AgGridAll
-          endpoint={endpoint}
-          columnDefs={columnDefs}
-          rowGroupPanelShow="never"
-          columnStateNamespace="customer-contacts"
-          onGridReady={handleGridReady}
-          getContextMenuItems={contactContextMenuItems}
-        />
-      </div>
+        }
+      >
+        <GridQuickSearchProvider>
+          <div className={styles.gridFrame}>
+            <AgGridAll
+              endpoint={endpoint}
+              columnDefs={columnDefs}
+              rowGroupPanelShow="never"
+              columnStateNamespace="customer-contacts"
+              onGridReady={handleGridReady}
+              getContextMenuItems={contactContextMenuItems}
+            />
+          </div>
+        </GridQuickSearchProvider>
+      </PageHeader>
     </main>
   );
 }

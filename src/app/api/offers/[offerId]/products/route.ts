@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { buildAuditContext, type AuditContext } from '../../../../../lib/auditTrail';
 import { getPool } from '../../../../../lib/sql';
+import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from '../../../../../lib/gridFilters';
 
 const getDecimalType = () => {
   const decimalFactory = (sql as unknown as { Decimal: (precision: number, scale: number) => unknown }).Decimal;
@@ -39,14 +40,13 @@ type GridRequest = {
   startRow?: number;
   endRow?: number;
   filterModel?: Record<string, KnownFilterModel> | null;
+  quickFilterText?: string | null;
   sortModel?: Array<{ colId: string; sort: 'asc' | 'desc' }>;
 };
 
 type GridRequestEnvelope = {
   request?: GridRequest;
 };
-
-type QueryParam = { key: string; value: string | number | boolean };
 
 const TREE_ORDERING_RAW_EXPRESSION = 'NULLIF(LTRIM(RTRIM(od.TreeOrdering)), \'\')';
 const TREE_ORDERING_HIERARCHY_EXPRESSION = `
@@ -218,9 +218,10 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   RequestedDescription2: 'od.RequestedDescription2',
   RequestedQuantity: 'od.RequestedQuantity',
 };
+const QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
 
-const ORDER_EXPRESSION_OVERRIDES: Record<string, string> = {
-  TreeOrdering: 'TreeOrderingHierarchy',
+const ORDER_EXPRESSION_OVERRIDES: Record<string, string | string[]> = {
+  TreeOrdering: ['TreeOrderingHierarchy', 'od.TreeOrdering'],
 };
 
 const normalizeTreeOrderingValue = (value: unknown): string | null => {
@@ -836,16 +837,22 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
 
 function buildOrder(sortModel: GridRequest['sortModel']) {
   if (!sortModel || sortModel.length === 0) return '';
+  const resolveExpressions = (colId: string): string[] => {
+    const override = ORDER_EXPRESSION_OVERRIDES[colId];
+    if (override) {
+      return Array.isArray(override) ? override : [override];
+    }
+    const expression = COLUMN_EXPRESSIONS[colId];
+    return expression ? [expression] : [`[${colId}]`];
+  };
+
   const parts = sortModel
     .filter((entry): entry is { colId: string; sort: 'asc' | 'desc' } => Boolean(entry?.colId && entry?.sort))
-    .map(entry => {
-      const expression = ORDER_EXPRESSION_OVERRIDES[entry.colId]
-        ?? COLUMN_EXPRESSIONS[entry.colId]
-        ?? `[${entry.colId}]`;
+    .flatMap((entry) => {
       const direction = entry.sort === 'desc' ? 'DESC' : 'ASC';
-      return `${expression} ${direction}`;
+      return resolveExpressions(entry.colId).map((expression) => `${expression} ${direction}`);
     });
-  return parts.length ? `ORDER BY ${parts.join(', ')}` : '';
+  return parts.length ? `ORDER BY ${parts.join(', ')}, od.ID` : '';
 }
 
 export async function POST(
@@ -893,9 +900,12 @@ export async function POST(
     const { clauses, params: filterParams } = buildFilterClauses(gridRequest.filterModel);
     const whereClauses = [`od.OfferID = @__id`, ...clauses];
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+    const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, QUICK_FILTER_COLUMNS);
+    const combinedWhereSql = mergeWhereClauses(whereSql, quickFilterClause.clause);
+    const combinedParams = [...filterParams, ...quickFilterClause.params];
     const orderSql =
       buildOrder(gridRequest.sortModel) ||
-      'ORDER BY TreeOrderingHierarchy, od.TreeOrdering';
+      'ORDER BY TreeOrderingHierarchy, od.TreeOrdering, od.ID';
     const pagingSql = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
     const query = `
@@ -965,14 +975,14 @@ export async function POST(
         LEFT OUTER JOIN dbo.Products p ON od.ProductID = p.ID
         LEFT OUTER JOIN dbo.Brands b ON p.BrandID = b.ID
         LEFT OUTER JOIN dbo.PriceLists pl ON od.PriceListID = pl.ID
-      ${whereSql}
+      ${combinedWhereSql}
         ${orderSql}
         ${pagingSql}
     `;
 
     const sqlRequest = pool.request();
     sqlRequest.input('__id', sql.Int, idValue);
-    filterParams.forEach(param => sqlRequest.input(param.key, param.value));
+    combinedParams.forEach(param => sqlRequest.input(param.key, param.value));
     sqlRequest.input('__offset', sql.Int, offset);
     sqlRequest.input('__limit', sql.Int, pageSize);
 

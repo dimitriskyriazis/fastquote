@@ -1,6 +1,12 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --page-heading-font-size: 28px;
+  --page-heading-font-weight: 540;
+  --page-heading-letter-spacing: 0.02em;
+  --page-subheading-font-size: 18px;
+  --page-subheading-font-weight: 600;
+  --page-subheading-letter-spacing: normal;
 }
 
 :root {
@@ -75,20 +81,37 @@ datalist option {
 
 .page-header-button {
   border-radius: 999px;
-  padding: 7px 16px;
+  box-sizing: border-box;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 12px;
   font-size: 13px;
   font-weight: 500;
   letter-spacing: normal;
   text-transform: none;
   line-height: 1.2;
-  min-width: 140px;
+  min-width: 120px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   text-decoration: none;
   cursor: pointer;
   transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+h1 {
+  font-size: var(--page-heading-font-size);
+  font-weight: var(--page-heading-font-weight);
+  letter-spacing: var(--page-heading-letter-spacing);
+  margin: 0;
+}
+
+h2 {
+  font-size: var(--page-subheading-font-size);
+  font-weight: var(--page-subheading-font-weight);
+  letter-spacing: var(--page-subheading-letter-spacing);
+  margin: 0;
 }
 
 .page-header-button:hover,

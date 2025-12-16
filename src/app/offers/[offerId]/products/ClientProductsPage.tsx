@@ -2,10 +2,13 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
+import PageHeader from '../../../components/PageHeader';
+import { GridQuickSearchProvider } from '../../../components/GridQuickSearchProvider';
 import OfferProductsPanel from '../OfferProductsPanel';
 import { showToastMessage } from '../../../../lib/toast';
 import { addRecentOffer } from '../../../lib/recentOffers';
 import layoutStyles from '../../offersDetail.module.css';
+import pageHeaderStyles from '../../../components/PageHeader.module.css';
 import toolbarStyles from './ClientProductsPage.module.css';
 import AddProductsModal from './AddProductsModal';
 import AddRequestedProductsModal from './AddRequestedProductsModal';
@@ -64,7 +67,6 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     'printable-comment': 0,
     'non-printable-comment': 0,
   });
-
   const handleAddAction = useCallback(async (action: AddActionType) => {
     if (action === 'product') {
       setShowAddProductModal(true);
@@ -124,79 +126,95 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     setRefreshToken((prev) => prev + 1);
   }, []);
 
+  const headerRightControls = (
+    <div className={toolbarStyles.topControls}>
+      <button
+        type="button"
+        className={manualToggleClass}
+        onClick={() => setManualMode((prev) => !prev)}
+      >
+        Manual Mode
+      </button>
+      <Link
+        href={`/offers/${encodeURIComponent(offerId)}/basicdata`}
+        className={`${layoutStyles.headerActionButton} page-header-button`}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        View Basic Data
+      </Link>
+    </div>
+  );
+
+  const addButtonGroup = (
+    <div className={toolbarStyles.addButtons}>
+      {addActionButtons.map((action) => {
+        const disabled = pendingAction != null;
+        const variantClass = buttonVariantClass[action.key];
+        return (
+          <button
+            type="button"
+            key={action.key}
+            className={`${toolbarStyles.button} ${variantClass} page-header-button`}
+            onClick={() => handleAddAction(action.key)}
+            disabled={disabled}
+          >
+            {action.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const addRequestedButton = (
+    <button
+      type="button"
+      className={`${toolbarStyles.button} ${toolbarStyles.buttonAddRequested} page-header-button`}
+      onClick={() => setShowRequestedModal(true)}
+    >
+      Add Requested Products
+    </button>
+  );
+
   return (
     <main className={layoutStyles.page}>
-      <div className={layoutStyles.headerRow}>
-        <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideStart}`}>
-          <div className={toolbarStyles.leftColumn}>
-            <div className={toolbarStyles.topControls}>
-              <Link href="/offers" className={`${layoutStyles.backLink} page-header-button`}>
-                <span aria-hidden="true">←</span>
-                Back to offers
-              </Link>
-            </div>
-            <div className={toolbarStyles.leftRequestedRow}>
-              <button
-                type="button"
-                className={`${toolbarStyles.button} ${toolbarStyles.buttonAddRequested} page-header-button`}
-                onClick={() => setShowRequestedModal(true)}
-              >
-                Add Requested Products
-              </button>
-            </div>
-          </div>
+      <div className={`${pageHeaderStyles.headerRow} ${pageHeaderStyles.headerRowTop}`}>
+        <div className={`${pageHeaderStyles.headerSide} ${pageHeaderStyles.headerSideLeft}`}>
+          <Link href="/offers" className={`${layoutStyles.backLink} page-header-button`}>
+            <span aria-hidden="true">←</span>
+            Back to offers
+          </Link>
         </div>
-        <h1 className={`${layoutStyles.heading} ${layoutStyles.headingCentered}`}>{headingText}</h1>
-        <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>
-          <div className={toolbarStyles.toolbar}>
-            <div className={toolbarStyles.topControls}>
-              <button
-                type="button"
-                className={manualToggleClass}
-                onClick={() => setManualMode((prev) => !prev)}
-              >
-                Manual Mode
-              </button>
-              <Link
-                href={`/offers/${encodeURIComponent(offerId)}/basicdata`}
-                className={`${layoutStyles.headerActionButton} page-header-button`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                View Basic Data
-              </Link>
-            </div>
-            <div className={toolbarStyles.addButtons}>
-              {addActionButtons.map((action) => {
-                const disabled = pendingAction != null;
-                const variantClass = buttonVariantClass[action.key];
-                return (
-                  <button
-                    type="button"
-                    key={action.key}
-                    className={`${toolbarStyles.button} ${variantClass} page-header-button`}
-                    onClick={() => handleAddAction(action.key)}
-                    disabled={disabled}
-                  >
-                    {action.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+        <h1 className={`${pageHeaderStyles.heading} ${pageHeaderStyles.topTitle}`}>{headingText}</h1>
+        <div className={`${pageHeaderStyles.headerSide} ${pageHeaderStyles.headerSideRight}`}>
+          {headerRightControls}
         </div>
       </div>
-      <OfferProductsPanel offerId={offerId} manualMode={manualMode} refreshToken={refreshToken} />
-      {showAddProductModal ? (
-        <AddProductsModal offerId={offerId} onAdded={handleProductsAdded} onClose={handleCloseModal} />
-      ) : null}
-      {showRequestedModal ? (
-        <AddRequestedProductsModal
-          offerId={offerId}
-          onClose={handleCloseRequestedModal}
-          onImported={handleRequestedImported}
-        />
-      ) : null}
+      <PageHeader
+        title={headingText}
+        leftActions={<div className={toolbarStyles.leftRequestedRow}>{addRequestedButton}</div>}
+        rightActions={addButtonGroup}
+        className={pageHeaderStyles.headerRowBottom}
+        hideTitle
+      >
+        <GridQuickSearchProvider>
+          <OfferProductsPanel
+            offerId={offerId}
+            manualMode={manualMode}
+            refreshToken={refreshToken}
+          />
+          {showAddProductModal ? (
+            <AddProductsModal offerId={offerId} onAdded={handleProductsAdded} onClose={handleCloseModal} />
+          ) : null}
+          {showRequestedModal ? (
+            <AddRequestedProductsModal
+              offerId={offerId}
+              onClose={handleCloseRequestedModal}
+              onImported={handleRequestedImported}
+            />
+          ) : null}
+        </GridQuickSearchProvider>
+      </PageHeader>
     </main>
   );
 }

@@ -14,6 +14,8 @@ import type {
 } from "ag-grid-community";
 import styles from "./MarketsClient.module.css";
 import LookupModal from "../components/LookupModal";
+import PageHeader from "../components/PageHeader";
+import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { showToastMessage } from "../../lib/toast";
 import {
   createMarket,
@@ -320,38 +322,41 @@ export default function MarketsClient({ salesDivisions }: Props) {
   return (
     <>
       <main className={styles.page}>
-        <div className={styles.headerRow}>
-          <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
+        <PageHeader
+          title="Markets"
+          leftActions={
             <Link href="/offers" className={`page-header-button ${styles.headerButton}`}>
               <span aria-hidden="true">←</span>
               Back to offers
             </Link>
-          </div>
-          <h1 className={styles.heading}>Markets</h1>
-          <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
+          }
+          rightActions={
             <div className={styles.headerActions}>
-                <button
-                  type="button"
-                  className={`page-header-button ${styles.headerButton}`}
-                  onClick={openAddMarket}
-                >
-                  Add Market
-                </button>
+              <button
+                type="button"
+                className={`page-header-button ${styles.headerButton}`}
+                onClick={openAddMarket}
+              >
+                Add Market
+              </button>
             </div>
-          </div>
-        </div>
-        <div className={styles.gridFrame}>
-          <AgGridAll
-            endpoint="/api/markets"
-            columnDefs={columnDefs}
-            rowGroupPanelShow="always"
-            columnStateNamespace="markets"
-            onGridReady={handleGridReady}
-            onCellValueChanged={handleCellEdit}
-            refreshToken={refreshToken}
-            getContextMenuItems={getContextMenuItems}
-          />
-        </div>
+          }
+        >
+          <GridQuickSearchProvider>
+            <div className={styles.gridFrame}>
+              <AgGridAll
+                endpoint="/api/markets"
+                columnDefs={columnDefs}
+                rowGroupPanelShow="always"
+                columnStateNamespace="markets"
+                onGridReady={handleGridReady}
+                onCellValueChanged={handleCellEdit}
+                refreshToken={refreshToken}
+                getContextMenuItems={getContextMenuItems}
+              />
+            </div>
+          </GridQuickSearchProvider>
+        </PageHeader>
       </main>
       <LookupModal
         open={isAddMarketOpen}

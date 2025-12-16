@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import { getPool } from "../../../lib/sql";
+import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from "../../../lib/gridFilters";
 
 type TextFilterModel = {
   filterType: "text";
@@ -48,10 +49,9 @@ type GridRequest = {
   startRow?: number;
   endRow?: number;
   filterModel?: Record<string, KnownFilterModel> | null;
+  quickFilterText?: string | null;
   sortModel?: Array<{ colId: string; sort: "asc" | "desc" }>;
 };
-
-type QueryParam = { key: string; value: string | number | boolean };
 
 type CustomerGroupRow = {
   CustomerGroupID: number | null;
@@ -68,6 +68,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Enabled: "dbo.CustomerGroups.Enabled",
   CreatedOn: "dbo.CustomerGroups.CreatedOn",
 };
+const QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
 
 function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
   if (!filterModel || Object.keys(filterModel).length === 0) {
@@ -258,6 +259,9 @@ export async function POST(req: NextRequest) {
 
     const normalizedFilterModel = ensureEnabledFilterModel(requestPayload.filterModel);
     const { where, params: whereParams } = buildWhereAndParams(normalizedFilterModel);
+    const quickFilterClause = buildQuickFilterClause(requestPayload.quickFilterText, QUICK_FILTER_COLUMNS);
+    const combinedWhere = mergeWhereClauses(where, quickFilterClause.clause);
+    const combinedParams = [...whereParams, ...quickFilterClause.params];
     const orderClause = buildOrder(requestPayload.sortModel) || "ORDER BY dbo.CustomerGroups.Name";
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
@@ -269,14 +273,14 @@ export async function POST(req: NextRequest) {
         dbo.CustomerGroups.Enabled,
         dbo.CustomerGroups.CreatedOn
       FROM dbo.CustomerGroups
-      ${where}
+      ${combinedWhere}
       ${orderClause}
       ${paging}
     `;
 
     const pool = await getPool();
     const request = pool.request();
-    whereParams.forEach((param) => request.input(param.key, param.value));
+    combinedParams.forEach((param) => request.input(param.key, param.value));
     request.input("__offset", sql.Int, offset);
     request.input("__limit", sql.Int, pageSize);
 

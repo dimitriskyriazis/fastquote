@@ -9,6 +9,8 @@ import { showToastMessage } from "../../lib/toast";
 import styles from "./ProductsClient.module.css";
 import LookupModal from "../components/LookupModal";
 import lookupStyles from "../components/LookupModal.module.css";
+import PageHeader from "../components/PageHeader";
+import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -379,32 +381,37 @@ export default function ProductsClient() {
   return (
     <>
       <main className={styles.page}>
-        <div className={styles.headerRow}>
-          <h1 className={styles.heading}>Products</h1>
-          <div className={styles.headerActions}>
-            <button
-              type="button"
-              className={`${styles.headerButton} page-header-button`}
-              onClick={openAddProduct}
-            >
-              Add Product
-            </button>
-          </div>
-        </div>
-        <div className={styles.gridFrame}>
-          <AgGridAll
-            endpoint="/api/products"
-            columnDefs={columnDefs}
-            getContextMenuItems={getContextMenuItems}
-            rowGroupPanelShow="always"
-            autoSizeExclusions={["Description"]}
-            columnStateNamespace="products-v2"
-            refreshToken={refreshToken}
-            rowSelection="multiple"
-            rowMultiSelectWithClick
-            rowDeselection
-          />
-        </div>
+        <PageHeader
+          title="Products"
+          rightActions={
+            <div className={styles.headerActions}>
+              <button
+                type="button"
+                className={`${styles.headerButton} page-header-button`}
+                onClick={openAddProduct}
+              >
+                Add Product
+              </button>
+            </div>
+          }
+        >
+          <GridQuickSearchProvider>
+            <div className={styles.gridFrame}>
+              <AgGridAll
+                endpoint="/api/products"
+                columnDefs={columnDefs}
+                getContextMenuItems={getContextMenuItems}
+                rowGroupPanelShow="always"
+                autoSizeExclusions={["Description"]}
+                columnStateNamespace="products-v2"
+                refreshToken={refreshToken}
+                rowSelection="multiple"
+                rowMultiSelectWithClick
+                rowDeselection
+              />
+            </div>
+          </GridQuickSearchProvider>
+        </PageHeader>
       </main>
       <LookupModal
         open={isAddProductOpen}

@@ -20,3 +20,9 @@
 .bandedRows :global(.ag-row-odd .ag-cell) {
   background: #f4f6fb;
 }
+
+.quickSearchSlot {
+  display: flex;
+  align-items: center;
+  margin-right: 0.5rem;
+}

@@ -15,9 +15,12 @@ const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
 import type { ColDef, ICellRendererParams, GetContextMenuItemsParams, GridApi } from 'ag-grid-community';
 import { createPortal } from 'react-dom';
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from '../components/actionMenuMarkers';
+import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from '../components/useActionMenuCoordinator';
 import { useActionMenuPosition } from '../components/useActionMenuPosition';
 import { GridRowDeletion } from '../../lib/gridRowDeletion';
 import Link from 'next/link';
+import PageHeader from '../components/PageHeader';
+import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
 
 const formatEnabledValue = (value: unknown) => {
   if (value === 1 || value === true || value === 'true') return 'Yes';
@@ -136,6 +139,8 @@ export default function OffersClient() {
     // A small React component for the action menu
     const ActionMenu: React.FC = () => {
       const [open, setOpen] = useState(false);
+      const closeMenu = useCallback(() => setOpen(false), []);
+      const instanceId = useActionMenuCloseListener(closeMenu);
       const { buttonRef, menuRef, menuPos } = useActionMenuPosition(open);
       const id = params?.data?.offerId as string | number | undefined;
       const encodedId = id != null ? encodeURIComponent(String(id)) : '';
@@ -189,6 +194,9 @@ export default function OffersClient() {
             {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
             onClick={(event) => {
               event.stopPropagation();
+              if (!open) {
+                dispatchActionMenuCloseEvent(instanceId);
+              }
               setOpen((v) => !v);
             }}
             onMouseDownCapture={preventRangeSelection}
@@ -307,39 +315,44 @@ export default function OffersClient() {
 
   return (
     <main className={styles.page}>
-      <div className={styles.headerRow}>
-        <h1 className={styles.heading}>Offers</h1>
-        <div className={styles.headerActions}>
-          <button
-            type="button"
-            className={`${styles.primaryButton} page-header-button`}
-            onClick={handleViewMarketsClick}
-          >
-            View Markets
-          </button>
-          <button
-            type="button"
-            className={`${styles.primaryButton} page-header-button`}
-            onClick={handleCreateOfferClick}
-          >
-            Create Offer
-          </button>
-        </div>
-      </div>
-      <div className={styles.gridFrame}>
-      <AgGridAll
-        endpoint="/api/offers"
-        columnDefs={columnDefs}
-        getContextMenuItems={offersContextMenuItems}
-        onGridReady={handleGridReady}
-        suppressRowGroup
-        rowGroupPanelShow="never"
-        suppressMovableColumns
-        rowSelection="multiple"
-        rowMultiSelectWithClick
-        rowDeselection
-      />
-      </div>
+        <PageHeader
+          title="Offers"
+          rightActions={
+            <div className={styles.headerActions}>
+              <button
+                type="button"
+                className={`${styles.primaryButton} page-header-button`}
+                onClick={handleViewMarketsClick}
+              >
+                View Markets
+              </button>
+              <button
+                type="button"
+                className={`${styles.primaryButton} page-header-button`}
+                onClick={handleCreateOfferClick}
+              >
+                Create Offer
+              </button>
+            </div>
+          }
+        >
+          <GridQuickSearchProvider>
+            <div className={styles.gridFrame}>
+              <AgGridAll
+                endpoint="/api/offers"
+                columnDefs={columnDefs}
+                getContextMenuItems={offersContextMenuItems}
+                onGridReady={handleGridReady}
+                suppressRowGroup
+                rowGroupPanelShow="never"
+                suppressMovableColumns
+                rowSelection="multiple"
+                rowMultiSelectWithClick
+                rowDeselection
+              />
+            </div>
+          </GridQuickSearchProvider>
+        </PageHeader>
     </main>
   );
 }

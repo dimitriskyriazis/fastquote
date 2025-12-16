@@ -1,0 +1,58 @@
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 26px;
+  width: 100%;
+}
+
+.headerRowTop {
+  min-height: 24px;
+  margin-bottom: -8px;
+  position: relative;
+}
+
+.headerRowBottom {
+  min-height: 26px;
+  margin-bottom: -8px;
+}
+
+.headerSide {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.headerSideLeft {
+  justify-content: flex-start;
+}
+
+.headerSideRight {
+  justify-content: flex-end;
+}
+
+.heading {
+  margin: 0;
+  font-size: var(--page-heading-font-size);
+  font-weight: var(--page-heading-font-weight);
+  letter-spacing: var(--page-heading-letter-spacing);
+  flex: 0 1 auto;
+  text-align: center;
+  min-width: 0;
+}
+
+.searchSlot {
+  display: flex;
+  align-items: center;
+  min-height: 0;
+  margin-left: 8px;
+}
+
+.topTitle {
+  position: absolute;
+  left: 20%;
+  right: 20%;
+  transform: translateY(40%);
+}

@@ -1,6 +1,14 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import React, {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
   CellContextMenuEvent,
@@ -40,6 +48,7 @@ import styles from './AgGridAll.module.css';
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from './actionMenuMarkers';
 import { setGridRowDeletionContextMenuSelectionSnapshot } from '../../lib/gridRowDeletion';
 import { useAuditUser } from './AuditUserProvider';
+import { GridQuickSearchContext } from './GridQuickSearchProvider';
 
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 
@@ -120,12 +129,17 @@ type Props = {
   columnStateNamespace?: string;
   onResponse?: (response: GridResponse | null) => void;
   onRowsMoved?: (api: GridApi<RowData>) => void;
-  processRows?: (rows: RowData[]) => RowData[];
   rowDeselection?: boolean;
   disableAutoSize?: boolean;
+  allowQuickSearch?: boolean;
+  quickSearchValue?: string;
 };
 
 type RowData = Record<string, unknown>;
+
+type ServerRequestWithQuickFilter = IServerSideGetRowsParams<RowData>["request"] & {
+  quickFilterText?: string | null;
+};
 
 export type GridResponse = {
   ok: boolean;
@@ -673,13 +687,14 @@ export default function AgGridAll({
   refreshToken = 0,
   autoSizeExclusions = [],
   onTotalsChange,
-  processRows,
   suppressColumnVirtualisation = false,
   suppressMovableColumns = false,
   enableColumnStatePersistence = true,
   columnStateNamespace = '',
   onResponse,
   disableAutoSize = false,
+  allowQuickSearch = true,
+  quickSearchValue,
 }: Props) {
   const gridRef = useRef<AgGridReact<RowData> | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -710,6 +725,10 @@ export default function AgGridAll({
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingExternalRefreshRef = useRef<number | null>(null);
   const [contextMenuRowId, setContextMenuRowId] = useState<string | null>(null);
+  const quickSearchFilterRef = useRef("");
+  const quickSearchEnabled = allowQuickSearch !== false;
+  const quickSearchContext = useContext(GridQuickSearchContext);
+  const resolvedQuickSearchValue = quickSearchValue ?? quickSearchContext?.value ?? '';
 
   const handleCellContextMenu = useCallback((event: CellContextMenuEvent<RowData>) => {
     const selectedNodes = typeof event.api?.getSelectedNodes === 'function'
@@ -748,6 +767,15 @@ export default function AgGridAll({
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [clearContextMenuRow]);
+
+  useEffect(() => {
+    if (!quickSearchEnabled) return;
+    quickSearchFilterRef.current = resolvedQuickSearchValue.trim();
+    if (!isGridReady) return;
+    const api = gridApiRef.current ?? gridRef.current?.api ?? null;
+    if (!api || api.isDestroyed?.()) return;
+    refreshServerSideData(api);
+  }, [isGridReady, quickSearchEnabled, resolvedQuickSearchValue]);
 
   const persistColumnState = useCallback(() => {
     if (!shouldPersistColumnState || !columnStateStorageKey) return;
@@ -883,10 +911,20 @@ export default function AgGridAll({
         const payload = requestPayload && typeof requestPayload === 'object'
           ? { ...requestPayload }
           : {};
+        const serverRequest: ServerRequestWithQuickFilter = { ...params.request };
+        if (quickSearchEnabled) {
+          const quickFilterText = quickSearchFilterRef.current;
+          if (typeof quickFilterText === 'string' && quickFilterText.length > 0) {
+            serverRequest.quickFilterText = quickFilterText;
+          } else {
+            delete serverRequest.quickFilterText;
+          }
+        }
+        const bodyRequest = { ...payload, request: serverRequest };
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...payload, request: params.request }),
+          body: JSON.stringify(bodyRequest),
         });
 
         let data: GridResponse | null = null;

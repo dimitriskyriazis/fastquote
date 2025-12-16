@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import type { Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
+import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from "../../../lib/gridFilters";
 
 type TextFilterModel = {
   filterType: "text";
@@ -49,6 +50,7 @@ type GridRequest = {
   startRow?: number;
   endRow?: number;
   filterModel?: Record<string, KnownFilterModel> | null;
+  quickFilterText?: string | null;
   sortModel?: Array<{ colId: string; sort: "asc" | "desc" }>;
   rowGroupCols?: Array<{ field?: string | null; colId?: string | null }>;
   groupKeys?: Array<string | null>;
@@ -57,8 +59,6 @@ type GridRequest = {
 type DeleteRequest = {
   PriceListIDs?: Array<number | string | null | undefined>;
 };
-
-type QueryParam = { key: string; value: string | number | boolean };
 
 type PriceListRow = {
   PriceListID: number | null;
@@ -81,6 +81,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   SupplierName: "dbo.Suppliers.Name",
   SupplierComment: "dbo.PriceLists.SupplierComment",
 };
+const QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
 
 function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
   if (!filterModel || Object.keys(filterModel).length === 0) return { where: "", params: [] as QueryParam[] };
@@ -289,6 +290,9 @@ export async function POST(req: NextRequest) {
 
     const normalizedFilterModel = ensureEnabledFilterModel(requestPayload.filterModel);
     const { where, params: whereParams } = buildWhereAndParams(normalizedFilterModel);
+    const quickFilterClause = buildQuickFilterClause(requestPayload.quickFilterText, QUICK_FILTER_COLUMNS);
+    const combinedWhere = mergeWhereClauses(where, quickFilterClause.clause);
+    const combinedParams = [...whereParams, ...quickFilterClause.params];
     const order = buildOrder(requestPayload.sortModel) || "ORDER BY dbo.PriceLists.Name";
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
@@ -308,9 +312,9 @@ export async function POST(req: NextRequest) {
     };
 
     if (groupingField && groupLevel < 1) {
-      const groupWhere = combineWhereClauses(where, parentFilter.clause);
+      const groupWhere = combineWhereClauses(combinedWhere, parentFilter.clause);
 
-      const countReq = bindParams(pool.request(), [...whereParams, ...parentFilter.params]);
+      const countReq = bindParams(pool.request(), [...combinedParams, ...parentFilter.params]);
       const countSql = `
         SELECT COUNT(DISTINCT ${groupingField.expression}) AS __groupCount
         ${from}
@@ -319,7 +323,7 @@ export async function POST(req: NextRequest) {
       const countRes = await countReq.query<{ __groupCount: number }>(countSql);
       const totalGroupCount = Number(countRes.recordset?.[0]?.__groupCount ?? 0);
 
-      const groupReq = bindParams(pool.request(), [...whereParams, ...parentFilter.params]);
+      const groupReq = bindParams(pool.request(), [...combinedParams, ...parentFilter.params]);
       groupReq.input("__offset", sql.Int, offset);
       groupReq.input("__limit", sql.Int, pageSize);
       const groupSql = `
@@ -343,8 +347,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, rows: groupRows, rowCount: totalGroupCount });
     }
 
-    const appliedWhere = combineWhereClauses(where, parentFilter.clause);
-    const appliedParams = [...whereParams, ...parentFilter.params];
+    const appliedWhere = combineWhereClauses(combinedWhere, parentFilter.clause);
+    const appliedParams = [...combinedParams, ...parentFilter.params];
     const dataSql = `${select} ${from} ${appliedWhere} ${order} ${paging}`;
 
     const dataReq = bindParams(pool.request(), appliedParams);

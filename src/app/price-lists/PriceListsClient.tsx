@@ -12,7 +12,10 @@ import type {
 } from "ag-grid-community";
 import { createPortal } from "react-dom";
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from "../components/actionMenuMarkers";
+import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from "../components/useActionMenuCoordinator";
 import { useActionMenuPosition } from "../components/useActionMenuPosition";
+import PageHeader from "../components/PageHeader";
+import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import styles from "./PriceListsClient.module.css";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import Link from "next/link";
@@ -93,6 +96,8 @@ export default function PriceListsClient() {
   const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     const ActionMenu: React.FC = () => {
       const [open, setOpen] = useState(false);
+      const closeMenu = useCallback(() => setOpen(false), []);
+      const instanceId = useActionMenuCloseListener(closeMenu);
       const { buttonRef, menuRef, menuPos } = useActionMenuPosition(open);
       const priceListId = params?.data?.PriceListID as string | number | undefined;
       const encodedId = priceListId != null ? encodeURIComponent(String(priceListId)) : "";
@@ -144,6 +149,9 @@ export default function PriceListsClient() {
             {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
             onClick={(event) => {
               event.stopPropagation();
+              if (!open) {
+                dispatchActionMenuCloseEvent(instanceId);
+              }
               setOpen((v) => !v);
             }}
             onMouseDownCapture={preventRangeSelection}
@@ -300,28 +308,33 @@ export default function PriceListsClient() {
 
   return (
     <main className={styles.page}>
-      <div className={styles.headerRow}>
-        <h1 className={styles.heading}>Price Lists</h1>
-      <button
-        type="button"
-        className={`${styles.importButton} page-header-button`}
-        onClick={handleImportClick}
+      <PageHeader
+        title="Price Lists"
+        rightActions={
+          <button
+            type="button"
+            className={`${styles.importButton} page-header-button`}
+            onClick={handleImportClick}
+          >
+            Import Price List
+          </button>
+        }
       >
-        Import Price List
-      </button>
-    </div>
-      <div className={styles.gridFrame}>
-        <AgGridAll
-          endpoint="/api/price-lists"
-          columnDefs={columnDefs}
-          getContextMenuItems={priceListsContextMenuItems}
-          onGridReady={handleGridReady}
-          autoSizeExclusions={["ValidFromDate", "ValidToDate"]}
-          rowSelection="multiple"
-          rowMultiSelectWithClick
-          rowDeselection
-        />
-      </div>
+        <GridQuickSearchProvider>
+          <div className={styles.gridFrame}>
+            <AgGridAll
+              endpoint="/api/price-lists"
+              columnDefs={columnDefs}
+              getContextMenuItems={priceListsContextMenuItems}
+              onGridReady={handleGridReady}
+              autoSizeExclusions={["ValidFromDate", "ValidToDate"]}
+              rowSelection="multiple"
+              rowMultiSelectWithClick
+              rowDeselection
+            />
+          </div>
+        </GridQuickSearchProvider>
+      </PageHeader>
     </main>
   );
 }

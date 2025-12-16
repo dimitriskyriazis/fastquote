@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
+import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from '../../../../../../lib/gridFilters';
 
 type TextFilterModel = {
   filterType: 'text';
@@ -29,6 +30,7 @@ type GridRequest = {
   startRow?: number;
   endRow?: number;
   filterModel?: Record<string, KnownFilterModel> | null;
+  quickFilterText?: string | null;
   sortModel?: Array<{ colId: string; sort: 'asc' | 'desc' }>;
 };
 
@@ -36,8 +38,6 @@ type GridRequestEnvelope = {
   request?: GridRequest;
   action?: string | null;
 };
-
-type QueryParam = { key: string; value: string | number | boolean };
 
 const TREE_ORDERING_RAW_EXPRESSION = 'NULLIF(LTRIM(RTRIM(od.TreeOrdering)), \'\')';
 const TREE_ORDERING_HIERARCHY_EXPRESSION = `
@@ -194,9 +194,10 @@ async function handleCategoryGrid(
   };
 
   const { clauses, params } = buildWhereClauses(gridRequest.filterModel, columnExpressions);
-  const whereSql = clauses.length
-    ? `AND ${clauses.join(' AND ')}`
-    : '';
+  const whereSql = clauses.length ? `AND ${clauses.join(' AND ')}` : '';
+  const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, Object.values(columnExpressions));
+  const combinedWhereSql = mergeWhereClauses(whereSql, quickFilterClause.clause);
+  const combinedParams = [...params, ...quickFilterClause.params];
 
   const orderSql = buildOrderSql(
     gridRequest.sortModel,
@@ -209,7 +210,7 @@ async function handleCategoryGrid(
   request.input('__offerId', sql.Int, offerId);
   request.input('__offset', sql.Int, offset);
   request.input('__limit', sql.Int, pageSize);
-  params.forEach((param) => request.input(param.key, param.value));
+  combinedParams.forEach((param) => request.input(param.key, param.value));
 
   const query = `
     SELECT
@@ -223,7 +224,7 @@ async function handleCategoryGrid(
     FROM dbo.OfferDetails od
     WHERE od.OfferID = @__offerId
       AND ISNULL(od.IsCategory, 0) = 1
-      ${whereSql}
+      ${combinedWhereSql}
     ${orderSql}
     OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY;
   `;
@@ -282,6 +283,11 @@ async function handleProductGrid(
 
   const { clauses, params } = buildWhereClauses(gridRequest.filterModel, columnExpressions);
   const whereSql = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, Object.values(columnExpressions));
+  const combinedWhereSql = quickFilterClause.clause
+    ? `${whereSql} ${quickFilterClause.clause}`.trim()
+    : whereSql;
+  const combinedParams = [...params, ...quickFilterClause.params];
   const orderSql = buildOrderSql(
     gridRequest.sortModel,
     columnExpressions,
@@ -292,7 +298,7 @@ async function handleProductGrid(
   const request = pool.request();
   request.input('__offset', sql.Int, offset);
   request.input('__limit', sql.Int, pageSize);
-  params.forEach((param) => request.input(param.key, param.value));
+  combinedParams.forEach((param) => request.input(param.key, param.value));
 
   const query = `
     WITH BaseProducts AS (
@@ -340,7 +346,7 @@ async function handleProductGrid(
           pl.ValidFromDate DESC,
           pli.ID DESC
       ) price
-    ${whereSql}
+    ${combinedWhereSql}
     ${orderSql}
     OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY;
   `;

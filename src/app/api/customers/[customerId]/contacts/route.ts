@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
+import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from "../../../../../lib/gridFilters";
 
 type ContactRow = {
   ContactID: number;
@@ -55,10 +56,9 @@ type GridRequest = {
   startRow?: number;
   endRow?: number;
   filterModel?: Record<string, KnownFilterModel> | null;
+  quickFilterText?: string | null;
   sortModel?: Array<{ colId: string; sort: "asc" | "desc" }>;
 };
-
-type QueryParam = { key: string; value: string | number | boolean };
 
 type CustomerContactRow = {
   ContactID: number | null;
@@ -112,6 +112,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Importance: "dbo.Contacts.Importance",
   Enabled: "dbo.Contacts.Enabled",
 };
+const QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
 
 const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
   if (!filterModel || Object.keys(filterModel).length === 0) return { where: "", params: [] as QueryParam[] };
@@ -334,6 +335,9 @@ export async function POST(
 
     const normalizedFilterModel = ensureEnabledFilterModel(requestPayload.filterModel);
     const { where, params: whereParams } = buildWhereAndParams(normalizedFilterModel);
+    const quickFilterClause = buildQuickFilterClause(requestPayload.quickFilterText, QUICK_FILTER_COLUMNS);
+    const combinedWhere = mergeWhereClauses(where, quickFilterClause.clause);
+    const combinedParams = [...whereParams, ...quickFilterClause.params];
     const orderClause =
       buildOrder(requestPayload.sortModel) || "ORDER BY dbo.Contacts.LastName, dbo.Contacts.FirstName";
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
@@ -356,13 +360,13 @@ export async function POST(
       INNER JOIN dbo.Customers ON dbo.Contacts.CustomerID = dbo.Customers.ID
     `;
 
-    const appliedWhere = combineWhereClauses("WHERE dbo.Customers.ID = @__customerId", where);
+    const appliedWhere = combineWhereClauses("WHERE dbo.Customers.ID = @__customerId", combinedWhere);
     const dataSql = `${select} ${appliedWhere} ${orderClause} ${paging}`;
 
     const pool = await getPool();
     const dataReq = pool.request();
     dataReq.input("__customerId", sql.Int, normalized);
-    whereParams.forEach((param) => dataReq.input(param.key, param.value));
+    combinedParams.forEach((param) => dataReq.input(param.key, param.value));
     dataReq.input("__offset", sql.Int, offset);
     dataReq.input("__limit", sql.Int, pageSize);
 

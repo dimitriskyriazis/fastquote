@@ -11,10 +11,13 @@ import type {
 } from "ag-grid-community";
 import { createPortal } from "react-dom";
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from "../components/actionMenuMarkers";
+import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from "../components/useActionMenuCoordinator";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import Link from "next/link";
 import styles from "./CustomersClient.module.css";
 import { useActionMenuPosition } from "../components/useActionMenuPosition";
+import PageHeader from "../components/PageHeader";
+import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -75,6 +78,8 @@ export default function CustomersClient() {
   const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     const ActionMenu: React.FC = () => {
       const [open, setOpen] = useState(false);
+      const closeMenu = useCallback(() => setOpen(false), []);
+      const instanceId = useActionMenuCloseListener(closeMenu);
       const { buttonRef, menuRef, menuPos } = useActionMenuPosition(open);
       const id = params?.data?.CustomerID as string | number | undefined;
       const encodedId = id != null ? encodeURIComponent(String(id)) : "";
@@ -126,6 +131,9 @@ export default function CustomersClient() {
             {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
             onClick={(event) => {
               event.stopPropagation();
+              if (!open) {
+                dispatchActionMenuCloseEvent(instanceId);
+              }
               setOpen((v) => !v);
             }}
             onMouseDownCapture={preventRangeSelection}
@@ -306,51 +314,56 @@ export default function CustomersClient() {
 
   return (
     <main className={styles.page}>
-      <div className={styles.headerRow}>
-        <h1 className={styles.heading}>Customers</h1>
-        <div className={styles.headerActions}>
-          <button
-            type="button"
-            className={`${styles.headerButton} page-header-button`}
-            onClick={() => {
-              router.push("/customer-contacts");
-            }}
-          >
-            View All Contacts
-          </button>
-          <button
-            type="button"
-            className={`${styles.headerButton} page-header-button`}
-            onClick={() => {
-              router.push("/customer-groups");
-            }}
-          >
-            View Groups
-          </button>
-          <button
-            type="button"
-            className={`${styles.headerButton} page-header-button`}
-            onClick={() => {
-              router.push("/customers/create");
-            }}
-          >
-            Add Customer
-          </button>
-        </div>
-      </div>
-      <div className={styles.gridFrame}>
-        <AgGridAll
-          endpoint="/api/customers"
-          columnDefs={columnDefs}
-          rowGroupPanelShow="always"
-          columnStateNamespace="customers"
-          onGridReady={handleGridReady}
-          getContextMenuItems={customerContextMenuItems}
-          rowSelection="multiple"
-          rowMultiSelectWithClick
-          rowDeselection
-        />
-      </div>
+      <PageHeader
+        title="Customers"
+        rightActions={
+          <div className={styles.headerActions}>
+            <button
+              type="button"
+              className={`${styles.headerButton} page-header-button`}
+              onClick={() => {
+                router.push("/customer-contacts");
+              }}
+            >
+              View All Contacts
+            </button>
+            <button
+              type="button"
+              className={`${styles.headerButton} page-header-button`}
+              onClick={() => {
+                router.push("/customer-groups");
+              }}
+            >
+              View Groups
+            </button>
+            <button
+              type="button"
+              className={`${styles.headerButton} page-header-button`}
+              onClick={() => {
+                router.push("/customers/create");
+              }}
+            >
+              Add Customer
+            </button>
+          </div>
+        }
+      >
+        <GridQuickSearchProvider>
+          <div className={styles.gridFrame}>
+            <AgGridAll
+              endpoint="/api/customers"
+              columnDefs={columnDefs}
+              rowGroupPanelShow="always"
+              columnStateNamespace="customers"
+              onGridReady={handleGridReady}
+              getContextMenuItems={customerContextMenuItems}
+              rowSelection="multiple"
+              rowMultiSelectWithClick
+              rowDeselection
+            />
+          </div>
+        </GridQuickSearchProvider>
+      </PageHeader>
     </main>
   );
 }

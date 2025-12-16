@@ -15,6 +15,8 @@ import lookupStyles from "../components/LookupModal.module.css";
 import lookupButtonStyles from "../components/LookupAddButton.module.css";
 import LookupModal from "../components/LookupModal";
 import { showToastMessage } from "../../lib/toast";
+import PageHeader from "../components/PageHeader";
+import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { useAddModal } from "../lib/useAddModal";
 import type { DropdownOption } from "../../lib/dropdownOptions";
 import type { CustomerDropdownOption } from "../customers/[customerId]/CustomerBasicDataTypes";
@@ -527,8 +529,9 @@ export default function ContactsClient({ statuses, importances, customers, title
   return (
     <>
       <main className={styles.page}>
-        <div className={styles.headerRow}>
-          <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
+        <PageHeader
+          title="Contacts"
+          leftActions={
             <button
               type="button"
               className={`${styles.backLink} page-header-button`}
@@ -539,9 +542,8 @@ export default function ContactsClient({ statuses, importances, customers, title
               <span aria-hidden="true">←</span>
               Back to customers
             </button>
-          </div>
-          <h1 className={styles.heading}>Contacts</h1>
-          <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
+          }
+          rightActions={
             <div className={styles.headerActions}>
               <button
                 type="button"
@@ -560,91 +562,94 @@ export default function ContactsClient({ statuses, importances, customers, title
                 Add Contact
               </button>
             </div>
-          </div>
-        </div>
-        <div className={styles.gridFrame}>
-          <AgGridAll
-            endpoint="/api/customer-contacts"
-            columnDefs={columnDefs}
-            rowGroupPanelShow="always"
-            columnStateNamespace="customer-contacts-all"
-            onGridReady={handleGridReady}
-            getContextMenuItems={contactContextMenuItems}
-            onCellValueChanged={handleCellEdit}
-            refreshToken={refreshToken}
-          />
-        </div>
+          }
+        >
+          <GridQuickSearchProvider>
+            <div className={styles.gridFrame}>
+              <AgGridAll
+                endpoint="/api/customer-contacts"
+                columnDefs={columnDefs}
+                rowGroupPanelShow="always"
+                columnStateNamespace="customer-contacts-all"
+                onGridReady={handleGridReady}
+                getContextMenuItems={contactContextMenuItems}
+                onCellValueChanged={handleCellEdit}
+                refreshToken={refreshToken}
+              />
+            </div>
+          </GridQuickSearchProvider>
+        </PageHeader>
       </main>
       <LookupModal
         open={isAddContactOpen}
         title="Add contact"
         onClose={closeAddContact}
         onConfirm={handleCreateContact}
-        confirmLabel="Save contact"
+        confirmLabel="Add contact"
         saving={contactSaving}
         error={contactError}
       >
-      <div className={styles.contactModalBody}>
-        <div className={styles.contactModalGrid}>
-          <div
-            className={`${styles.contactModalField} ${styles.comboWrapper} ${styles.contactModalFieldFull}`}
-          >
-            <label className={styles.fieldLabel} htmlFor="contact-customer">
-              Customer
-            </label>
-            <input
-              id="contact-customer"
-              autoComplete="off"
-              className={`${styles.fieldControl} ${styles.comboInput}`}
-              value={customerText}
-              placeholder="Type to search customers"
-              onFocus={handleCustomerInputFocus}
-              onBlur={handleCustomerInputBlur}
-              onChange={handleCustomerInputChange}
-            />
-            {isCustomerListOpen ? (
-              <div className={styles.comboList}>
-                {filteredCustomerOptions.length > 0 ? (
-                  filteredCustomerOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className={styles.comboOption}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => handleCustomerOptionSelect(option)}
-                    >
-                      {option.label}
-                    </button>
-                  ))
-                ) : (
-                  <div className={styles.comboListEmpty}>No customers match</div>
-                )}
-              </div>
-            ) : null}
-          </div>
-          <div className={`${styles.contactModalField} ${styles.contactModalFieldFull}`}>
-            <label className={styles.fieldLabel} htmlFor="contact-title">
-              <div className={styles.lookupLabelRow}>
-                <div className={styles.labelText}>
-                  Title <span className={styles.requiredMark}>*</span>
-                </div>
-                {renderLookupAddButton("title")}
-              </div>
-            </label>
-            <select
-              id="contact-title"
-              className={styles.fieldControl}
-              value={contactForm.titleId}
-              onChange={(event) => setContactField("titleId", event.target.value)}
+        <div className={styles.contactModalBody}>
+          <div className={styles.contactModalGrid}>
+            <div
+              className={`${styles.contactModalField} ${styles.comboWrapper} ${styles.contactModalFieldFull}`}
             >
-              <option value="">Select title...</option>
-              {titleOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
+              <label className={styles.fieldLabel} htmlFor="contact-customer">
+                Customer
+              </label>
+              <input
+                id="contact-customer"
+                autoComplete="off"
+                className={`${styles.fieldControl} ${styles.comboInput}`}
+                value={customerText}
+                placeholder="Type to search customers"
+                onFocus={handleCustomerInputFocus}
+                onBlur={handleCustomerInputBlur}
+                onChange={handleCustomerInputChange}
+              />
+              {isCustomerListOpen ? (
+                <div className={styles.comboList}>
+                  {filteredCustomerOptions.length > 0 ? (
+                    filteredCustomerOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={styles.comboOption}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => handleCustomerOptionSelect(option)}
+                      >
+                        {option.label}
+                      </button>
+                    ))
+                  ) : (
+                    <div className={styles.comboListEmpty}>No customers match</div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+            <div className={`${styles.contactModalField} ${styles.contactModalFieldFull}`}>
+              <label className={styles.fieldLabel} htmlFor="contact-title">
+                <div className={styles.lookupLabelRow}>
+                  <div className={styles.labelText}>
+                    Title <span className={styles.requiredMark}>*</span>
+                  </div>
+                  {renderLookupAddButton("title")}
+                </div>
+              </label>
+              <select
+                id="contact-title"
+                className={styles.fieldControl}
+                value={contactForm.titleId}
+                onChange={(event) => setContactField("titleId", event.target.value)}
+              >
+                <option value="">Select title...</option>
+                {titleOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           <div className={styles.contactModalField}>
             <label className={styles.fieldLabel} htmlFor="contact-last-name">
               Last name
@@ -788,9 +793,9 @@ export default function ContactsClient({ statuses, importances, customers, title
               {contactForm.enabled ? "Yes" : "No"}
             </label>
           </div>
+          </div>
         </div>
-      </div>
-    </LookupModal>
+      </LookupModal>
       <LookupModal
         open={isAddTitleOpen}
         title="Add Title"

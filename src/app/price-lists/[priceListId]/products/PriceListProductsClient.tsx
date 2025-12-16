@@ -112,12 +112,6 @@ export default function PriceListProductsClient({
         },
       },
       {
-        field: "ProductID",
-        hide: true,
-        lockVisible: true,
-        suppressColumnsToolPanel: true,
-      },
-      {
         field: "PriceListItemID",
         hide: true,
         suppressColumnsToolPanel: true,
