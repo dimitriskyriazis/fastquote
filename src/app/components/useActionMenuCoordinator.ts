@@ -18,7 +18,7 @@ export const dispatchActionMenuCloseEvent = (source: symbol) => {
 };
 
 export const useActionMenuCloseListener = (onClose: () => void) => {
-  const instanceIdRef = useRef<symbol>();
+  const instanceIdRef = useRef<symbol | undefined>(undefined);
   if (!instanceIdRef.current) {
     instanceIdRef.current = Symbol('action-menu');
   }

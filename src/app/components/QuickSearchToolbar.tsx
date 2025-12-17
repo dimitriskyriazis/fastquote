@@ -1,16 +1,36 @@
 'use client';
 
-import React, { useCallback, useLayoutEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import styles from './AgGridAll.module.css';
 
 type Props = {
   value: string;
   onChange: (value: string) => void;
+  onRegisterFocus?: (focus: (() => void) | null) => void;
 };
 
-export default function QuickSearchToolbar({ value, onChange }: Props) {
+export default function QuickSearchToolbar({ value, onChange, onRegisterFocus }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const selectionRef = useRef<{ start: number; end: number } | null>(null);
+  const focusInput = useCallback(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    const selection = selectionRef.current;
+    if (!selection) return;
+    try {
+      input.setSelectionRange(selection.start, selection.end);
+    } catch {
+      // ignore invalid ranges
+    }
+  }, []);
+
+  useEffect(() => {
+    onRegisterFocus?.(focusInput);
+    return () => {
+      onRegisterFocus?.(null);
+    };
+  }, [focusInput, onRegisterFocus]);
 
   const handleChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -25,23 +45,9 @@ export default function QuickSearchToolbar({ value, onChange }: Props) {
 
   const handleClear = useCallback(() => {
     onChange('');
-    inputRef.current?.focus();
+    focusInput();
     selectionRef.current = { start: 0, end: 0 };
-  }, [onChange]);
-
-  useLayoutEffect(() => {
-    const input = inputRef.current;
-    if (!input) return;
-    input.focus({ preventScroll: true });
-    const selection = selectionRef.current;
-    if (selection) {
-      try {
-        input.setSelectionRange(selection.start, selection.end);
-      } catch {
-        // ignore invalid ranges
-      }
-    }
-  }, [value]);
+  }, [onChange, focusInput]);
 
   return (
     <div className={styles.searchToolbar}>
@@ -52,6 +58,7 @@ export default function QuickSearchToolbar({ value, onChange }: Props) {
           type="search"
           placeholder="Search all columns"
           aria-label="Search all columns"
+          data-disable-autofill-skip="true"
           autoComplete="off"
           value={value}
           onChange={handleChange}

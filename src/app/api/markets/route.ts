@@ -28,8 +28,6 @@ type GridRequest = {
   groupKeys?: Array<string | null>;
 };
 
-type QueryParam = { key: string; value: string | number | boolean };
-
 type MarketRow = {
   MarketID: number | null;
   Name: string | null;

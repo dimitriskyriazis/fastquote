@@ -112,7 +112,6 @@ export default function ProductHistoryMetaGrid({ partNumber, modelNumber, descri
           rowGroupPanelShow="never"
           sideBar={false}
           suppressCellFocus
-          suppressRowClickSelection
           suppressMovableColumns
           suppressDragLeaveHidesColumns
           suppressColumnVirtualisation

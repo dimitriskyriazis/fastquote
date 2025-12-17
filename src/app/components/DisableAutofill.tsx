@@ -119,6 +119,9 @@ const disableAutofillScript = `
 
         var type = canonicalType;
         if (lockableInputTypes.indexOf(type) !== -1) {
+          if (element.getAttribute("data-disable-autofill-skip") === "true") {
+            return;
+          }
           if (element.getAttribute(lockAttr) !== "true") {
             element.setAttribute(lockAttr, "true");
             lockInput(element);

@@ -148,6 +148,7 @@ export type GridResponse = {
   totals?: GridTotals | null;
   error?: string;
   requestedColumns?: Record<string, boolean> | null;
+  request?: ServerRequestWithQuickFilter | null;
 };
 
 type FilterDescriptor = {
@@ -729,6 +730,44 @@ export default function AgGridAll({
   const quickSearchEnabled = allowQuickSearch !== false;
   const quickSearchContext = useContext(GridQuickSearchContext);
   const resolvedQuickSearchValue = quickSearchValue ?? quickSearchContext?.value ?? '';
+  const quickSearchRefreshRequestedRef = useRef(false);
+  const focusRetryTimerRef = useRef<number | null>(null);
+  const quickSearchEffectInitializedRef = useRef(false);
+  const quickSearchAutoFocusEnabledRef = useRef(false);
+  const runQuickSearchFocus = useCallback(() => {
+    const focusFn = quickSearchContext?.focus;
+    if (typeof focusFn !== 'function') return;
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(focusFn);
+    } else {
+      focusFn();
+    }
+  }, [quickSearchContext]);
+  const stopQuickSearchFocusRetries = useCallback(() => {
+    if (focusRetryTimerRef.current && typeof window !== 'undefined') {
+      window.clearTimeout(focusRetryTimerRef.current);
+      focusRetryTimerRef.current = null;
+    }
+  }, []);
+  const startQuickSearchFocusRetries = useCallback(() => {
+    runQuickSearchFocus();
+    if (typeof window === 'undefined') return;
+    const attempt = () => {
+      if (focusRetryTimerRef.current) {
+        window.clearTimeout(focusRetryTimerRef.current);
+        focusRetryTimerRef.current = null;
+      }
+      focusRetryTimerRef.current = window.setTimeout(() => {
+        runQuickSearchFocus();
+        if (quickSearchRefreshRequestedRef.current) {
+          attempt();
+        } else {
+          focusRetryTimerRef.current = null;
+        }
+      }, 80);
+    };
+    attempt();
+  }, [runQuickSearchFocus]);
 
   const handleCellContextMenu = useCallback((event: CellContextMenuEvent<RowData>) => {
     const selectedNodes = typeof event.api?.getSelectedNodes === 'function'
@@ -774,8 +813,16 @@ export default function AgGridAll({
     if (!isGridReady) return;
     const api = gridApiRef.current ?? gridRef.current?.api ?? null;
     if (!api || api.isDestroyed?.()) return;
+    quickSearchRefreshRequestedRef.current = true;
     refreshServerSideData(api);
-  }, [isGridReady, quickSearchEnabled, resolvedQuickSearchValue]);
+    if (!quickSearchEffectInitializedRef.current) {
+      quickSearchEffectInitializedRef.current = true;
+    } else if (quickSearchAutoFocusEnabledRef.current) {
+      startQuickSearchFocusRetries();
+    }
+  }, [isGridReady, quickSearchEnabled, resolvedQuickSearchValue, startQuickSearchFocusRetries]);
+
+  useEffect(() => stopQuickSearchFocusRetries, [stopQuickSearchFocusRetries]);
 
   const persistColumnState = useCallback(() => {
     if (!shouldPersistColumnState || !columnStateStorageKey) return;
@@ -955,7 +1002,7 @@ export default function AgGridAll({
           onTotalsChange(parsedTotals);
         }
         if (typeof onResponse === 'function') {
-          onResponse(data);
+          onResponse({ ...data, request: serverRequest });
         }
         params.success({ rowData: normalizedRows, rowCount: resolvedRowCount });
       } catch (e) {
@@ -971,7 +1018,8 @@ export default function AgGridAll({
   const rowSelectionConfig = useMemo<RowSelectionOptions | undefined>(() => {
     if (!rowSelection) return undefined;
     const isMultiRow = rowSelection === 'multiple';
-    const clickSelectionEnabled = Boolean(resolvedAllowRowClickSelection);
+    const clickSelectionEnabled =
+      Boolean(resolvedAllowRowClickSelection) && !Boolean(suppressRowClickSelection);
     const allowMultiselectClick = isMultiRow && Boolean(rowMultiSelectWithClick) && clickSelectionEnabled;
     const allowDeselection = Boolean(rowDeselection) && clickSelectionEnabled;
 
@@ -994,9 +1042,6 @@ export default function AgGridAll({
       enableClickSelection: allowDeselection,
     };
   }, [rowSelection, rowDeselection, rowMultiSelectWithClick, resolvedAllowRowClickSelection]);
-
-  const resolvedSuppressRowClickSelection =
-    Boolean(suppressRowClickSelection) || !Boolean(resolvedAllowRowClickSelection);
 
   const sideBarDef = useMemo(() => ({
     toolPanels: ['columns', 'filters'],
@@ -1121,10 +1166,19 @@ export default function AgGridAll({
 
   const handleModelUpdated = useCallback((event: ModelUpdatedEvent<RowData>) => {
     autoSizeColumns(event.api);
+    if (quickSearchRefreshRequestedRef.current) {
+      quickSearchRefreshRequestedRef.current = false;
+      stopQuickSearchFocusRetries();
+      if (quickSearchAutoFocusEnabledRef.current) {
+        runQuickSearchFocus();
+      } else {
+        quickSearchAutoFocusEnabledRef.current = true;
+      }
+    }
     if (typeof onModelUpdated === 'function') {
       onModelUpdated(event.api);
     }
-  }, [autoSizeColumns, onModelUpdated]);
+  }, [autoSizeColumns, onModelUpdated, runQuickSearchFocus, stopQuickSearchFocusRetries]);
 
   const mergedGetRowClass = useCallback((params: RowClassParams<RowData>) => {
     const parts: string[] = [];
@@ -1680,7 +1734,6 @@ export default function AgGridAll({
           rowHeight={32}
           headerHeight={38}
           rowSelection={rowSelectionConfig}
-          suppressRowClickSelection={resolvedSuppressRowClickSelection}
 
           // Server-Side model
           rowModelType="serverSide"
