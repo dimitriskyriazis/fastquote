@@ -9,15 +9,27 @@ export const setGridRowDeletionContextMenuSelectionSnapshot = <RowData>(
   selection: Array<RowNode<RowData>> | null,
 ) => {
   if (!api) return;
-  contextMenuSelectionSnapshots.set(api as GridApi<unknown>, selection ? selection.slice() : []);
+  const key = api as GridApi<unknown>;
+  const existing = contextMenuSelectionSnapshots.get(key);
+  const existingCount = Array.isArray(existing) ? existing.length : 0;
+  const newCount = Array.isArray(selection) ? selection.length : 0;
+  if (existingCount > 1 && newCount <= 1) {
+    return;
+  }
+  contextMenuSelectionSnapshots.set(key, selection ? selection.slice() : []);
 };
 
-const consumeContextMenuSelectionSnapshot = <RowData>(api: GridApi<RowData> | null) => {
+const readContextMenuSelectionSnapshot = <RowData>(api: GridApi<RowData> | null) => {
   if (!api) return null;
   const stored = contextMenuSelectionSnapshots.get(api as GridApi<unknown>);
-  contextMenuSelectionSnapshots.delete(api as GridApi<unknown>);
   if (!stored || stored.length === 0) return null;
   return stored as Array<RowNode<RowData>>;
+};
+
+export const getContextMenuSelectionSnapshot = <RowData>(api: GridApi<RowData> | null) => {
+  const nodes = readContextMenuSelectionSnapshot(api);
+  if (!nodes) return [];
+  return nodes.slice();
 };
 
 const deleteRecordMenuIcon = `
@@ -181,7 +193,7 @@ export class GridRowDeletion<RowData> {
     try {
       const rowData = params.node?.data ?? null;
       const clickedRowId = this.config.resolveRowId(rowData);
-      const snapshotNodes = consumeContextMenuSelectionSnapshot(params.api ?? null);
+      const snapshotNodes = readContextMenuSelectionSnapshot(params.api ?? null);
       const selectedNodes = snapshotNodes
         ?? (typeof params.api?.getSelectedNodes === 'function'
           ? (params.api.getSelectedNodes() as Array<RowNode<RowData>>)

@@ -22,7 +22,7 @@ import type {
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import styles from './OfferProductsPanel.module.css';
-import type { GridTotals, GridResponse } from '../../components/AgGridAll';
+import type { GridTotals, GridResponse, ServerRequestWithQuickFilter } from '../../components/AgGridAll';
 
 const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
   ssr: false,
@@ -33,7 +33,7 @@ const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
   ),
 });
 import { showToastMessage } from '../../../lib/toast';
-import { GridRowDeletion } from '../../../lib/gridRowDeletion';
+import { GridRowDeletion, getContextMenuSelectionSnapshot, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
 import { priceListStatusClassRules } from '../../../lib/priceListStatus';
 import { GridQuickSearchContext } from '../../components/GridQuickSearchProvider';
@@ -226,6 +226,25 @@ const normalizeDescriptionValue = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const REQUESTED_DESCRIPTION_FIELD_KEYS = [
+  'RequestedDescription',
+  'RequestedDescription2',
+  'RequestedDescription3',
+] as const;
+type RequestedDescriptionFieldKey = (typeof REQUESTED_DESCRIPTION_FIELD_KEYS)[number];
+
+const getNormalizedRequestedDescriptionValues = (row: Record<string, unknown> | null | undefined): string[] => {
+  if (!row || typeof row !== 'object') return [];
+  const values: string[] = [];
+  REQUESTED_DESCRIPTION_FIELD_KEYS.forEach((key) => {
+    const normalized = normalizeDescriptionValue((row as Record<RequestedDescriptionFieldKey, unknown>)[key] ?? null);
+    if (normalized != null) {
+      values.push(normalized);
+    }
+  });
+  return values;
+};
+
 const normalizeRequestedItemNoValue = (value: unknown): string | null => {
   if (value == null) return null;
   const str = typeof value === 'string' ? value : String(value);
@@ -273,7 +292,10 @@ const hasRequestedRowData = (row: Record<string, unknown> | null | undefined) =>
   const quantity = normalizeRequestedQuantityValue(
     (row as { RequestedQuantity?: unknown }).RequestedQuantity ?? null,
   );
-  return quantity != null;
+  if (quantity != null && !Object.is(quantity, 0)) return true;
+  const actualQuantity = coerceNumber((row as { Quantity?: unknown }).Quantity ?? null);
+  if (actualQuantity != null && !Object.is(actualQuantity, 0)) return true;
+  return false;
 };
 
 const isTruthyFlag = (value: unknown): boolean => {
@@ -485,7 +507,7 @@ const categoryMenuIcon = `
   </span>
 `;
 
-const copyToOfferMenuIcon = `
+const populateOfferMenuIcon = `
   <span class="fastquote-menu-icon fastquote-menu-icon--copy" aria-hidden="true">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
       <path d="M7 5h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
@@ -595,6 +617,9 @@ export default function OfferProductsPanel({
   const serverRowsRef = useRef<Array<Record<string, unknown>>>([]);
   const prevRequestedColumnVisibilityRef = useRef<Record<RequestedDisplayFieldKey, boolean> | null>(null);
   const prevRequestedItemNoVisibleRef = useRef<boolean>(requestedItemNoVisible);
+  const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
+  const lastRowCountRef = useRef<number | null>(null);
+  const headerSelectAllInFlightRef = useRef(false);
   const rebuildTreeOrderingRootMap = useCallback((rows?: Array<Record<string, unknown>>, reset = false) => {
     const map = reset ? new Map<string, number>() : new Map(treeOrderingRootMapRef.current);
     (rows ?? []).forEach((row) => {
@@ -854,6 +879,7 @@ export default function OfferProductsPanel({
   }, [requestedColumnVisibility, requestedColumnsReady, requestedItemNoVisible, triggerAutoSize]);
 
   const handleGridResponse = useCallback((response: GridResponse | null) => {
+    lastRowCountRef.current = response?.rowCount ?? null;
     const hasRows = Boolean(response?.rowCount && response.rowCount > 0);
     serverRowsRef.current = Array.isArray(response?.rows) ? response.rows : [];
     const shouldResetRoots = response?.request?.startRow === 0;
@@ -881,6 +907,75 @@ export default function OfferProductsPanel({
       triggerAutoSize();
     }
   }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, updateCategoryAncestors, triggerAutoSize]);
+
+  const handleServerRequest = useCallback((request: ServerRequestWithQuickFilter) => {
+    lastServerRequestRef.current = request;
+  }, []);
+
+  const fetchAllRowsFromServer = useCallback(async () => {
+    const templateRequest = lastServerRequestRef.current ?? {};
+    const limit = 1000;
+    const accumulated: Array<Record<string, unknown>> = [];
+    let startRow = 0;
+    let totalCount = typeof lastRowCountRef.current === 'number' && Number.isFinite(lastRowCountRef.current)
+      ? lastRowCountRef.current
+      : Number.POSITIVE_INFINITY;
+
+    while (startRow < totalCount) {
+      const payload = {
+        request: {
+          ...templateRequest,
+          startRow,
+          endRow: startRow + limit,
+        },
+      };
+      const res = await fetch(resolvedEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = (await res.json().catch(() => null)) as GridResponse | null;
+      if (!res.ok || !data) {
+        throw new Error(data?.error ?? `Failed to fetch rows (status ${res.status})`);
+      }
+      const rows = Array.isArray(data.rows) ? data.rows : [];
+      if (rows.length === 0) break;
+      accumulated.push(...rows);
+      if (typeof data.rowCount === 'number' && Number.isFinite(data.rowCount)) {
+        totalCount = data.rowCount;
+      }
+      if (accumulated.length >= totalCount) break;
+      startRow = accumulated.length;
+    }
+
+    return accumulated;
+  }, [resolvedEndpoint]);
+
+  const handleHeaderSelectAllChange = useCallback(async (
+    selected: boolean,
+    api: GridApi<Record<string, unknown>> | null,
+  ) => {
+    if (!selected) {
+      setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, []);
+      return;
+    }
+    if (headerSelectAllInFlightRef.current) return;
+    headerSelectAllInFlightRef.current = true;
+    try {
+      const rows = await fetchAllRowsFromServer();
+      if (rows.length === 0) {
+        setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, []);
+        return;
+      }
+      const nodes = rows.map((data) => ({ data } as RowNode<Record<string, unknown>>));
+      setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, nodes);
+    } catch (err) {
+      console.error('Failed to load all rows for selection', err);
+      showToastMessage('Unable to select all rows. Please try again.', 'error');
+    } finally {
+      headerSelectAllInFlightRef.current = false;
+    }
+  }, [fetchAllRowsFromServer]);
 
   const syncRequestedItemNumbers = useCallback((apiParam?: GridApi<Record<string, unknown>> | null) => {
     const api = apiParam ?? gridApiRef.current;
@@ -1852,7 +1947,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     [resolvedEndpoint, refreshOfferProductGrid],
   );
 
-  const copyRequestedRowsToOffer = useCallback(async (nodes: RowNode<Record<string, unknown>>[]) => {
+  const populateRequestedRowsToOffer = useCallback(async (nodes: RowNode<Record<string, unknown>>[]) => {
     const requestedNodes = nodes.filter((node) => isRequestedRow(node?.data ?? null));
     if (requestedNodes.length === 0) return;
 
@@ -1860,6 +1955,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     let categoriesAdded = 0;
     let productsAdded = 0;
     let missingProducts = 0;
+    const baseRootCategoryCount = treeOrderingRootMapRef.current.size;
+    let sequentialCategoryCount = 0;
+    let lastAssignedCategoryOrdinal: string | null = null;
+    const productChildCounters = new Map<string, number>();
 
     for (const node of requestedNodes) {
       const data = node?.data ?? null;
@@ -1886,18 +1985,38 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       );
       const requestedTree = normalizeRequestedItemNoValue((data as { RequestedItemNo?: unknown }).RequestedItemNo ?? null);
       const treeOrderingRaw = (data as { TreeOrdering?: unknown }).TreeOrdering;
-      const treeOrderingValue = requestedTree || (typeof treeOrderingRaw === 'string'
+      let treeOrderingValue = requestedTree || (typeof treeOrderingRaw === 'string'
         ? treeOrderingRaw.trim()
         : null);
       const requestedDescriptionValue = requestedDescriptionPrimary ?? requestedDescriptionSecondary;
       const descriptionOverride = normalizeDescriptionValue(descriptionOverrideRaw);
-
-      if (!hasRequestedIdentifiers) {
+      const normalizedDescriptionValues = getNormalizedRequestedDescriptionValues(data);
+      const hasSingleDescriptionOnly = normalizedDescriptionValues.length > 0
+        && new Set(normalizedDescriptionValues).size === 1;
+      const requestedQuantityValue = normalizeRequestedQuantityValue(
+        (data as { RequestedQuantity?: unknown }).RequestedQuantity ?? null,
+      );
+      const actualQuantityValue = coerceNumber((data as { Quantity?: unknown }).Quantity ?? null);
+      const hasRequestedQuantity = requestedQuantityValue != null && !Object.is(requestedQuantityValue, 0);
+      const hasActualQuantity = actualQuantityValue != null && !Object.is(actualQuantityValue, 0);
+      const hasQuantity = hasRequestedQuantity || hasActualQuantity;
+      const shouldPromoteToCategory = (
+        !hasRequestedIdentifiers
+        && hasSingleDescriptionOnly
+        && !hasQuantity
+      );
+      if (shouldPromoteToCategory) {
         const categoryDescription = requestedDescriptionValue ?? descriptionOverride ?? null;
         const payloadEntry: Record<string, unknown> = {
           OfferDetailID: offerDetailId,
           IsCategory: 1,
         };
+        if (!treeOrderingValue) {
+          sequentialCategoryCount += 1;
+          treeOrderingValue = String(baseRootCategoryCount + sequentialCategoryCount);
+        }
+        lastAssignedCategoryOrdinal = treeOrderingValue;
+        productChildCounters.set(treeOrderingValue, 0);
         if (categoryDescription != null) {
           payloadEntry.Description = categoryDescription;
         }
@@ -1917,6 +2036,17 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         continue;
       }
 
+      if (!treeOrderingValue && lastAssignedCategoryOrdinal) {
+        const nextChildIndex = (productChildCounters.get(lastAssignedCategoryOrdinal) ?? 0) + 1;
+        productChildCounters.set(lastAssignedCategoryOrdinal, nextChildIndex);
+        treeOrderingValue = `${lastAssignedCategoryOrdinal}.${nextChildIndex}`;
+      }
+
+      if (!hasRequestedIdentifiers) {
+        missingProducts += 1;
+        continue;
+      }
+
       try {
         const productId = await resolveProductIdFromRequestedInfo(lookupInfo);
         if (productId == null) {
@@ -1932,10 +2062,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           continue;
         }
         const productMeta = await fetchProductSummary(productId);
-        const description = requestedDescriptionPrimaryRaw
+        const productDescription = productMeta?.Description ?? null;
+        const description = productDescription
+          ?? requestedDescriptionPrimaryRaw
           ?? requestedDescriptionSecondaryRaw
           ?? descriptionOverrideRaw
-          ?? productMeta?.Description
           ?? null;
         const requestedPartNumberRaw = getExactTextValue(
           (data as { RequestedPartNo?: unknown }).RequestedPartNo ?? null,
@@ -1976,7 +2107,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         );
         productsAdded += 1;
       } catch (err) {
-        console.error('Failed to copy requested row to offer', err);
+        console.error('Failed to populate requested row in offer', err);
         missingProducts += 1;
       }
       continue;
@@ -1991,11 +2122,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         });
         const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
         if (!res.ok || !payload?.ok) {
-          throw new Error(payload?.error ?? `Failed to copy requested rows (status ${res.status})`);
+          throw new Error(payload?.error ?? `Failed to populate requested rows (status ${res.status})`);
         }
       } catch (err) {
-        console.error('Failed to copy requested rows', err);
-        showToastMessage('Unable to copy requested rows to the offer. Please try again.', 'error');
+        console.error('Failed to populate requested rows', err);
+        showToastMessage('Unable to populate the offer with requested rows. Please try again.', 'error');
         return;
       }
     }
@@ -2005,11 +2136,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     if (productsAdded > 0) parts.push(`${productsAdded} product${productsAdded === 1 ? '' : 's'}`);
     if (parts.length === 0) {
       if (missingProducts > 0) {
-        showToastMessage('Some products could not be found. See requested entries for details.', 'info');
+        showToastMessage('Unable to match some requested products. They remain unchanged.', 'info');
       }
       return;
     }
-    showToastMessage(`Copied ${parts.join(' and ')} to the offer.`, 'success');
+    showToastMessage(`Populated ${parts.join(' and ')} in the offer.`, 'success');
     const shouldRefresh = updates.length > 0 || productsAdded > 0;
     if (shouldRefresh) {
       try {
@@ -2018,7 +2149,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         /* noop */
       }
     }
-    if (missingProducts > 0 && productsAdded === 0) {
+    if (missingProducts > 0) {
       showToastMessage('Unable to match some requested products. They remain unchanged.', 'info');
     }
   }, [assignRequestedRowToProduct, promoteNodeToCategory, promoteNodeToProduct, refreshOfferProductGrid, resolvedEndpoint]);
@@ -2081,16 +2212,18 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
     }
 
-    const selectedNodes = typeof params.api?.getSelectedNodes === 'function'
-      ? params.api.getSelectedNodes().map((node) => node as RowNode<Record<string, unknown>>)
-      : [];
+    const contextSelectionSnapshot = getContextMenuSelectionSnapshot(params.api ?? null);
+    const selectedNodes = contextSelectionSnapshot.length > 0
+      ? contextSelectionSnapshot
+      : typeof params.api?.getSelectedNodes === 'function'
+        ? params.api.getSelectedNodes().map((node) => node as RowNode<Record<string, unknown>>)
+        : [];
     const relevantNodes = selectedNodes.length > 0
       ? selectedNodes
       : rowNode
         ? [rowNode as RowNode<Record<string, unknown>>]
         : [];
     const hasRequestedSelection = relevantNodes.some((node) => isRequestedRow(node?.data ?? null));
-    const hasRequestedFields = relevantNodes.some((node) => hasRequestedPseudoFields(node?.data ?? null));
     const rowHasRequestedFields = hasRequestedPseudoFields(rowData);
 
     const deleteIndexAfterHistory = items.findIndex((item) => (
@@ -2103,7 +2236,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     const canMarkCategory = (
       offerDetailId != null
       && !isOfferProductCategory(rowData)
-      && !hasRequestedFields
       && !rowHasRequestedFields
     );
     if (canMarkCategory) {
@@ -2201,18 +2333,18 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
 
     if (hasRequestedSelection) {
-      const copyItem: MenuItemDef = {
-        name: 'Copy to offer',
-        icon: copyToOfferMenuIcon,
+      const populateItem: MenuItemDef = {
+        name: 'Populate offer',
+        icon: populateOfferMenuIcon,
         action: () => {
           const nodesToCopy = relevantNodes.filter((node): node is RowNode<Record<string, unknown>> => Boolean(node && node.data));
-          void copyRequestedRowsToOffer(nodesToCopy);
+          void populateRequestedRowsToOffer(nodesToCopy);
         },
       };
       if (deleteIndexAfterHistory >= 0) {
-        items.splice(deleteIndexAfterHistory, 0, copyItem);
+        items.splice(deleteIndexAfterHistory, 0, populateItem);
       } else {
-        items.push(copyItem);
+        items.push(populateItem);
       }
     }
 
@@ -2558,6 +2690,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           suppressColumnVirtualisation
           onTotalsChange={handleTotalsChange}
           onResponse={handleGridResponse}
+          onServerRequest={handleServerRequest}
+          onHeaderSelectAllChange={handleHeaderSelectAllChange}
           rowGroupPanelShow="never"
           onRowsMoved={handleRowsMoved}
           rowSelection="multiple"

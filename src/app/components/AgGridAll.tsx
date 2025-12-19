@@ -12,6 +12,7 @@ import React, {
 import { AgGridReact } from 'ag-grid-react';
 import {
   CellContextMenuEvent,
+  CellMouseDownEvent,
   CellValueChangedEvent,
   Column,
   ColumnPinnedType,
@@ -132,11 +133,13 @@ type Props = {
   disableAutoSize?: boolean;
   allowQuickSearch?: boolean;
   quickSearchValue?: string;
+  onServerRequest?: (request: ServerRequestWithQuickFilter) => void;
+  onHeaderSelectAllChange?: (selected: boolean, api: GridApi<RowData> | null) => void;
 };
 
 type RowData = Record<string, unknown>;
 
-type ServerRequestWithQuickFilter = IServerSideGetRowsParams<RowData>["request"] & {
+export type ServerRequestWithQuickFilter = IServerSideGetRowsParams<RowData>["request"] & {
   quickFilterText?: string | null;
 };
 
@@ -471,6 +474,8 @@ export default function AgGridAll({
   disableAutoSize = false,
   allowQuickSearch = true,
   quickSearchValue,
+  onServerRequest,
+  onHeaderSelectAllChange,
 }: Props) {
   const gridRef = useRef<AgGridReact<RowData> | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -545,13 +550,23 @@ export default function AgGridAll({
     attempt();
   }, [runQuickSearchFocus]);
 
-  const handleCellContextMenu = useCallback((event: CellContextMenuEvent<RowData>) => {
-    const selectedNodes = typeof event.api?.getSelectedNodes === 'function'
-      ? (event.api.getSelectedNodes() as Array<RowNode<RowData>>)
+  const captureSelectionSnapshot = useCallback((api: GridApi<RowData> | null) => {
+    const selectedNodes = typeof api?.getSelectedNodes === 'function'
+      ? (api.getSelectedNodes() as Array<RowNode<RowData>>)
       : [];
-    setGridRowDeletionContextMenuSelectionSnapshot(event.api ?? null, selectedNodes ?? []);
-    setContextMenuRowId(event.node?.id ?? null);
+    setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, selectedNodes ?? []);
   }, []);
+
+  const handleCellContextMenu = useCallback((event: CellContextMenuEvent<RowData>) => {
+    captureSelectionSnapshot(event.api ?? null);
+    setContextMenuRowId(event.node?.id ?? null);
+  }, [captureSelectionSnapshot]);
+
+  const handleCellMouseDown = useCallback((event: CellMouseDownEvent<RowData>) => {
+    const domEvent = event.event;
+    if (!(domEvent instanceof MouseEvent) || domEvent.button !== 2) return;
+    captureSelectionSnapshot(event.api ?? null);
+  }, [captureSelectionSnapshot]);
 
   const clearContextMenuRow = useCallback(() => {
     setContextMenuRowId(null);
@@ -562,6 +577,39 @@ export default function AgGridAll({
       clearContextMenuRow();
     }
   }, [clearContextMenuRow]);
+
+  useEffect(() => {
+    if (typeof onHeaderSelectAllChange !== 'function') return;
+    const shell = shellRef.current;
+    if (!shell) return;
+    let headerCheckbox: HTMLInputElement | null = null;
+    const handleCheckboxChange = () => {
+      if (!headerCheckbox) return;
+      onHeaderSelectAllChange(headerCheckbox.checked, gridRef.current?.api ?? null);
+    };
+
+    const attachHeaderCheckbox = () => {
+      const nextCheckbox = shell.querySelector<HTMLInputElement>('.ag-header-select-all input[type="checkbox"]');
+      if (headerCheckbox === nextCheckbox) return;
+      if (headerCheckbox) {
+        headerCheckbox.removeEventListener('change', handleCheckboxChange);
+      }
+      headerCheckbox = nextCheckbox;
+      if (headerCheckbox) {
+        headerCheckbox.addEventListener('change', handleCheckboxChange);
+      }
+    };
+
+    attachHeaderCheckbox();
+    const observer = new MutationObserver(attachHeaderCheckbox);
+    observer.observe(shell, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      if (headerCheckbox) {
+        headerCheckbox.removeEventListener('change', handleCheckboxChange);
+      }
+    };
+  }, [onHeaderSelectAllChange]);
 
   useEffect(() => {
     const handleClick = (event: Event) => {
@@ -582,6 +630,21 @@ export default function AgGridAll({
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [clearContextMenuRow]);
+
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell) return;
+    const handleMouseDownCapture = (event: MouseEvent) => {
+      if (event.button !== 2) return;
+      const element = resolveElementFromEventTarget(event.target ?? null);
+      if (!element?.closest('.ag-cell')) return;
+      captureSelectionSnapshot(gridRef.current?.api ?? null);
+    };
+    shell.addEventListener('mousedown', handleMouseDownCapture, true);
+    return () => {
+      shell.removeEventListener('mousedown', handleMouseDownCapture, true);
+    };
+  }, [captureSelectionSnapshot]);
 
   useEffect(() => {
     if (!quickSearchEnabled) return;
@@ -735,6 +798,9 @@ export default function AgGridAll({
           ? { ...requestPayload }
           : {};
         const serverRequest: ServerRequestWithQuickFilter = { ...params.request };
+        if (typeof onServerRequest === 'function') {
+          onServerRequest(serverRequest);
+        }
         if (quickSearchEnabled) {
           const quickFilterText = quickSearchFilterRef.current;
           if (typeof quickFilterText === 'string' && quickFilterText.length > 0) {
@@ -1477,6 +1543,10 @@ export default function AgGridAll({
       console.warn('Failed to read selected rows', err);
       externalSelectionChangedHandler([], event.api);
     }
+    const selectedNodes = typeof event.api.getSelectedNodes === 'function'
+      ? (event.api.getSelectedNodes() as Array<RowNode<RowData>>)
+      : [];
+    setGridRowDeletionContextMenuSelectionSnapshot(event.api ?? null, selectedNodes ?? []);
   }, [externalSelectionChangedHandler]);
 
   const handleRowDragEnd = useCallback((event: RowDragEndEvent<RowData>) => {
@@ -1533,6 +1603,7 @@ export default function AgGridAll({
           getContextMenuItems={getContextMenuItems ? contextMenuItemsHandler : undefined}
           onFirstDataRendered={handleFirstDataRendered}
           onCellContextMenu={handleCellContextMenu}
+          onCellMouseDown={handleCellMouseDown}
           rowHeight={32}
           headerHeight={38}
           rowSelection={rowSelectionConfig}

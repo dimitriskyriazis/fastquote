@@ -38,6 +38,7 @@ type NormalizedRow = {
 type RowForInsert = NormalizedRow & {
   resolvedTreeOrdering: string;
   parentTreeOrdering: string | null;
+  isCategory: boolean;
 };
 
 type RequestedFieldKey =
@@ -148,25 +149,71 @@ const dedupeRowsByTree = (rows: NormalizedRow[]): NormalizedRow[] => {
   return Array.from(seen.values());
 };
 
+const parseRootSegment = (treeOrdering: string | null): number | null => {
+  if (!treeOrdering) return null;
+  const firstSegment = treeOrdering.split('.')[0];
+  const parsed = Number.parseInt(firstSegment, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isCategoryCandidate = (row: NormalizedRow) => {
+  if (!row) return false;
+  const hasDescription = Boolean(row.description || row.description2 || row.description3);
+  const hasQuantity = row.quantity != null && !Object.is(row.quantity, 0);
+  const hasLookup = Boolean(row.partNumber || row.modelNumber || row.brand);
+  return hasDescription && !hasQuantity && !hasLookup;
+};
+
 const assignSequentialOrdering = (
-  rows: (NormalizedRow | RowForInsert)[],
+  rows: NormalizedRow[],
   lastRootValue: number,
 ): { rows: RowForInsert[]; nextRoot: number } => {
   let nextRoot = lastRootValue;
   const resolved: RowForInsert[] = [];
+  let currentCategoryRoot: string | null = null;
+  const childCounters = new Map<string, number>();
+
   rows.forEach((row) => {
     if (!row) return;
-    const resolvedTreeOrdering = (row as RowForInsert).resolvedTreeOrdering ?? row.treeOrdering;
-    let treeOrdering = resolvedTreeOrdering;
-    if (!treeOrdering) {
-      nextRoot += 1;
-      treeOrdering = String(nextRoot);
+    const isCategory = isCategoryCandidate(row);
+    let resolvedTreeOrdering = row.treeOrdering;
+    let parentTreeOrdering: string | null = null;
+
+    if (isCategory) {
+      if (!resolvedTreeOrdering) {
+        nextRoot += 1;
+        resolvedTreeOrdering = String(nextRoot);
+      } else {
+        const rootSegment = parseRootSegment(resolvedTreeOrdering);
+        if (rootSegment != null && rootSegment > nextRoot) {
+          nextRoot = rootSegment;
+        }
+      }
+      parentTreeOrdering = null;
+      currentCategoryRoot = resolvedTreeOrdering;
+      childCounters.set(resolvedTreeOrdering, 0);
+    } else {
+      if (!resolvedTreeOrdering) {
+        if (currentCategoryRoot) {
+          const nextChildIndex = (childCounters.get(currentCategoryRoot) ?? 0) + 1;
+          childCounters.set(currentCategoryRoot, nextChildIndex);
+          resolvedTreeOrdering = `${currentCategoryRoot}.${nextChildIndex}`;
+          parentTreeOrdering = currentCategoryRoot;
+        } else {
+          nextRoot += 1;
+          resolvedTreeOrdering = String(nextRoot);
+        }
+      }
+      if (!parentTreeOrdering && resolvedTreeOrdering) {
+        parentTreeOrdering = resolveParentOrdering(resolvedTreeOrdering);
+      }
     }
-    const normalizedTree = treeOrdering.trim();
+
     resolved.push({
-      ...(row as NormalizedRow),
-      resolvedTreeOrdering: normalizedTree,
-      parentTreeOrdering: resolveParentOrdering(normalizedTree),
+      ...row,
+      resolvedTreeOrdering: resolvedTreeOrdering ?? String(nextRoot),
+      parentTreeOrdering: parentTreeOrdering,
+      isCategory,
     });
   });
   return { rows: resolved, nextRoot };
@@ -422,13 +469,14 @@ export async function POST(
         request.input(`desc2_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description2);
         request.input(`desc3_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description3);
         request.input(`rqty_${chunkIdx}`, getDecimalType(), row.quantity);
+        request.input(`isCategory_${chunkIdx}`, sql.Bit, row.isCategory ? 1 : 0);
       });
-      const values = chunk
-        .map((_, chunkIdx) =>
-          `(@tree_${chunkIdx}, @parent_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @rqty_${chunkIdx})`,
-        )
-        .join(', ');
-      const query = `
+        const values = chunk
+          .map((_, chunkIdx) =>
+            `(@tree_${chunkIdx}, @parent_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @rqty_${chunkIdx}, @isCategory_${chunkIdx})`,
+          )
+          .join(', ');
+        const query = `
         DECLARE @payload TABLE (
           RowNumber INT IDENTITY(1,1) NOT NULL,
           TreeOrdering NVARCHAR(255) NOT NULL,
@@ -440,7 +488,8 @@ export async function POST(
           RequestedDescription NVARCHAR(MAX) NULL,
           RequestedDescription2 NVARCHAR(MAX) NULL,
           RequestedDescription3 NVARCHAR(MAX) NULL,
-          RequestedQuantity DECIMAL(18, 4) NULL
+          RequestedQuantity DECIMAL(18, 4) NULL,
+          IsCategory BIT NOT NULL
         );
 
         INSERT INTO @payload (
@@ -453,7 +502,8 @@ export async function POST(
           RequestedDescription,
           RequestedDescription2,
           RequestedDescription3,
-          RequestedQuantity
+          RequestedQuantity,
+          IsCategory
         )
         VALUES ${values};
 
@@ -487,7 +537,7 @@ export async function POST(
           ROW_NUMBER() OVER (ORDER BY payload.RowNumber) + @__orderingBase - 1,
           1,
           0,
-          0,
+          payload.IsCategory,
           NULL,
           0,
           payload.RequestedItemNo,
