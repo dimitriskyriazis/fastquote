@@ -42,7 +42,6 @@ import {
 } from 'ag-grid-community';
 import { AllEnterpriseModule, LicenseManager, ModuleRegistry } from 'ag-grid-enterprise';
 import { usePathname } from 'next/navigation';
-import { resolveOfferProductRowType, type OfferProductRowType, describeOfferProductRowType } from '../../lib/offerProductRows';
 import { showToastMessage } from '../../lib/toast';
 import styles from './AgGridAll.module.css';
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from './actionMenuMarkers';
@@ -184,18 +183,6 @@ type GapHoverState = {
   parentPath: number[];
 };
 
-type NodeOrderingInfo = {
-  node: RowNode<RowData>;
-  path: number[];
-  parentPath: number[];
-  leaf: number;
-  parent: NodeOrderingInfo | null;
-  children: NodeOrderingInfo[];
-};
-
-type MoveFailureReason = 'target-non-category' | 'descendant' | 'invalid-target';
-
-const ROOT_PARENT_KEY = '__root__';
 const PERSISTED_TREE_KEY = '__persistedTreeOrdering';
 const GRID_COLUMN_STATE_STORAGE_PREFIX = 'fastquote-grid-column-state';
 const GRID_COLUMN_STATE_DEFAULT_USER = 'anon';
@@ -373,26 +360,7 @@ const parseTreeOrderingPath = (value: unknown): number[] => {
     .filter((segment) => Number.isFinite(segment));
 };
 
-const formatTreeOrderingPath = (path: number[]): string => path.join('.');
-
-const parentKeyFromPath = (path: number[]): string => (path.length > 0 ? path.join('.') : ROOT_PARENT_KEY);
-
-const buildOrderingInfo = (node: RowNode<RowData>): NodeOrderingInfo | null => {
-  const path = parseTreeOrderingPath((node.data as RowData | undefined)?.TreeOrdering);
-  if (path.length === 0) return null;
-  const parentPath = path.slice(0, -1);
-  const leaf = path[path.length - 1];
-  return {
-    node,
-    path,
-    parentPath,
-    leaf,
-    parent: null,
-    children: [],
-  };
-};
-
-const longestCommonPrefix = (a: number[], b: number[]) => {
+const longestCommonPrefix = (a: number[], b: number[]): number[] => {
   const limit = Math.min(a.length, b.length);
   const prefix: number[] = [];
   for (let idx = 0; idx < limit; idx += 1) {
@@ -400,199 +368,6 @@ const longestCommonPrefix = (a: number[], b: number[]) => {
     prefix.push(a[idx]);
   }
   return prefix;
-};
-
-const collectOrderingInfos = (api: GridApi<RowData>) => {
-  const orderingInfos: NodeOrderingInfo[] = [];
-  const infoByNodeId = new Map<string, NodeOrderingInfo>();
-  api.forEachNode((node) => {
-    if (!node.data) return;
-    const info = buildOrderingInfo(node as RowNode<RowData>);
-    if (info) {
-      orderingInfos.push(info);
-      if (node.id != null) infoByNodeId.set(node.id, info);
-    }
-  });
-  return { orderingInfos, infoByNodeId };
-};
-
-const buildTreeStructure = (orderingInfos: NodeOrderingInfo[]) => {
-  const infoByPathKey = new Map<string, NodeOrderingInfo>();
-  orderingInfos.forEach((info) => {
-    info.parent = null;
-    info.children = [];
-    infoByPathKey.set(parentKeyFromPath(info.path), info);
-  });
-
-  const rootChildren: NodeOrderingInfo[] = [];
-  orderingInfos.forEach((info) => {
-    const parentKey = parentKeyFromPath(info.parentPath);
-    if (parentKey === ROOT_PARENT_KEY) {
-      rootChildren.push(info);
-      return;
-    }
-    const parent = infoByPathKey.get(parentKey);
-    if (parent) {
-      info.parent = parent;
-      parent.children.push(info);
-    } else {
-      rootChildren.push(info);
-    }
-  });
-
-  const sortChildren = (nodes: NodeOrderingInfo[]) => {
-    nodes.sort((a, b) => a.leaf - b.leaf);
-    nodes.forEach((child) => {
-      if (child.children.length > 0) sortChildren(child.children);
-    });
-  };
-  sortChildren(rootChildren);
-
-  return { rootChildren, infoByPathKey };
-};
-
-const applyPathToNode = (info: NodeOrderingInfo, newPath: number[]) => {
-  const pathCopy = newPath.slice();
-  info.path = pathCopy;
-  info.parentPath = pathCopy.slice(0, -1);
-  info.leaf = pathCopy[pathCopy.length - 1] ?? 0;
-  info.node.setDataValue('TreeOrdering', formatTreeOrderingPath(pathCopy));
-};
-
-const assignPathsFrom = (nodes: NodeOrderingInfo[], parentPath: number[]) => {
-  nodes.forEach((info, idx) => {
-    const newPath = [...parentPath, idx + 1];
-    applyPathToNode(info, newPath);
-    if (info.children.length > 0) {
-      assignPathsFrom(info.children, newPath);
-    }
-  });
-};
-
-const isDescendantOf = (candidateParent: NodeOrderingInfo | null, potentialAncestor: NodeOrderingInfo) => {
-  let current: NodeOrderingInfo | null = candidateParent;
-  while (current) {
-    if (current === potentialAncestor) return true;
-    current = current.parent;
-  }
-  return false;
-};
-
-const showInvalidDropMessage = (reason: MoveFailureReason | null, targetType?: OfferProductRowType | null) => {
-  let message: string;
-  if (reason === 'target-non-category') {
-    const friendly = describeOfferProductRowType(targetType);
-    message = `${friendly} cannot contain rows. Drop into a category row or a highlighted gap instead.`;
-  } else if (reason === 'descendant') {
-    message = 'You cannot drop a row into itself or its descendants.';
-  } else {
-    message = 'That drop location is not allowed. Try a highlighted gap or category row.';
-  }
-  showToastMessage(message, 'error');
-};
-
-type MoveResult =
-  | { success: true }
-  | { success: false; reason: MoveFailureReason; targetType?: OfferProductRowType | null };
-
-const applyOrderingMove = (
-  api: GridApi<RowData>,
-  sourceNode: RowNode<RowData>,
-  insertParentPath: number[],
-  beforeRowId: string | null,
-  beforeRowIndex: number | null,
-  afterRowId: string | null,
-  afterRowIndex: number | null,
-  position: 'before' | 'after',
-): MoveResult => {
-  const { orderingInfos, infoByNodeId } = collectOrderingInfos(api);
-  if (orderingInfos.length === 0) return { success: false, reason: 'invalid-target' };
-  const { rootChildren, infoByPathKey } = buildTreeStructure(orderingInfos);
-
-  const sourceInfo = infoByNodeId.get(sourceNode.id ?? '')
-    ?? orderingInfos.find((info) => info.node === sourceNode);
-  if (!sourceInfo) return { success: false, reason: 'invalid-target' };
-
-  const resolveInfo = (rowId: string | null, rowIndex: number | null) => {
-    if (rowId) {
-      const found = infoByNodeId.get(rowId);
-      if (found) return found;
-    }
-    if (rowIndex != null) {
-      const nodeAtIndex = api.getDisplayedRowAtIndex(rowIndex);
-      if (nodeAtIndex) {
-        return orderingInfos.find((info) => info.node === nodeAtIndex) ?? null;
-      }
-    }
-    return null;
-  };
-
-  const parentKey = parentKeyFromPath(insertParentPath);
-  const targetParentNode = parentKey === ROOT_PARENT_KEY
-    ? null
-    : infoByPathKey.get(parentKey) ?? null;
-
-  if (targetParentNode) {
-    const parentData = targetParentNode.node.data as RowData | undefined;
-    const parentType = resolveOfferProductRowType(parentData);
-    if (parentType !== 'unknown' && parentType !== 'category') {
-      return { success: false, reason: 'target-non-category', targetType: parentType };
-    }
-  }
-
-  if (isDescendantOf(targetParentNode, sourceInfo)) {
-    return { success: false, reason: 'descendant' };
-  }
-
-  const beforeInfo = resolveInfo(beforeRowId, beforeRowIndex);
-  const afterInfo = resolveInfo(afterRowId, afterRowIndex);
-
-  const getChildCollection = (parent: NodeOrderingInfo | null) => (parent ? parent.children : rootChildren);
-
-  const removeFromParent = (info: NodeOrderingInfo) => {
-    const collection = getChildCollection(info.parent);
-    const idx = collection.findIndex((entry) => entry === info);
-    if (idx >= 0) collection.splice(idx, 1);
-    info.parent = null;
-  };
-
-  removeFromParent(sourceInfo);
-  const targetSiblings = getChildCollection(targetParentNode);
-
-  const indexOfSibling = (candidate: NodeOrderingInfo | null) => {
-    if (!candidate) return -1;
-    if (candidate === sourceInfo) return -1;
-    if (candidate.parent !== targetParentNode) return -1;
-    return targetSiblings.findIndex((entry) => entry === candidate);
-  };
-
-  let insertIndex = targetSiblings.length;
-  if (position === 'before') {
-    const afterIdx = indexOfSibling(afterInfo);
-    if (afterIdx >= 0) {
-      insertIndex = afterIdx;
-    } else {
-      const beforeIdx = indexOfSibling(beforeInfo);
-      if (beforeIdx >= 0) insertIndex = beforeIdx + 1;
-    }
-  } else {
-    const beforeIdx = indexOfSibling(beforeInfo);
-    if (beforeIdx >= 0) {
-      insertIndex = beforeIdx + 1;
-    } else {
-      const afterIdx = indexOfSibling(afterInfo);
-      if (afterIdx >= 0) insertIndex = afterIdx;
-    }
-  }
-
-  if (!Number.isFinite(insertIndex)) insertIndex = targetSiblings.length;
-  const boundedIndex = Math.max(0, Math.min(insertIndex, targetSiblings.length));
-  targetSiblings.splice(boundedIndex, 0, sourceInfo);
-  sourceInfo.parent = targetParentNode;
-
-  assignPathsFrom(rootChildren, []);
-
-  return { success: true };
 };
 
 const collectTreeOrderingUpdates = (api: GridApi<RowData>): TreeOrderingUpdate[] => {
@@ -700,6 +475,7 @@ export default function AgGridAll({
   const gridRef = useRef<AgGridReact<RowData> | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const gridApiRef = useRef<GridApi<RowData> | null>(null);
+  const pendingScrollRestoreTopRef = useRef<number | null>(null);
   const columnSaveTimerRef = useRef<number | null>(null);
   const [isGridReady, setIsGridReady] = useState(false);
   const { userId } = useAuditUser();
@@ -1159,6 +935,12 @@ export default function AgGridAll({
     }
   }, []);
 
+  const getViewportElement = useCallback(() => {
+    const shell = shellRef.current;
+    if (!shell) return null;
+    return shell.querySelector<HTMLElement>('.ag-center-cols-viewport, .ag-body-viewport') ?? null;
+  }, []);
+
   const handleSortChanged = useCallback((event: SortChangedEvent<RowData>) => {
     // Keep rows visible for responsiveness while requesting the sorted data set from the server
     refreshServerSideData(event.api, { purge: false });
@@ -1178,7 +960,22 @@ export default function AgGridAll({
     if (typeof onModelUpdated === 'function') {
       onModelUpdated(event.api);
     }
-  }, [autoSizeColumns, onModelUpdated, runQuickSearchFocus, stopQuickSearchFocusRetries]);
+    const restoreTop = pendingScrollRestoreTopRef.current;
+    if (restoreTop != null) {
+      pendingScrollRestoreTopRef.current = null;
+      const viewport = getViewportElement();
+      if (viewport) {
+        const restore = () => {
+          viewport.scrollTop = restoreTop;
+        };
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(restore);
+        } else {
+          setTimeout(restore, 0);
+        }
+      }
+    }
+  }, [autoSizeColumns, getViewportElement, onModelUpdated, runQuickSearchFocus, stopQuickSearchFocusRetries]);
 
   const mergedGetRowClass = useCallback((params: RowClassParams<RowData>) => {
     const parts: string[] = [];
@@ -1251,13 +1048,48 @@ export default function AgGridAll({
       } catch (err) {
         console.error('Failed to persist tree ordering', err);
         showToastMessage('Unable to save tree ordering. Reloading data…', 'error');
-        refreshServerSideData(api);
+        refreshServerSideData(api, { purge: false });
         throw err;
       }
     };
     const chained = saveQueueRef.current.then(() => runSave());
     saveQueueRef.current = chained.catch(() => {});
     return chained;
+  }, [endpoint]);
+
+  type ReorderContext = {
+    sourceId?: string | null;
+    sourceIds?: string[];
+    parentPath: number[];
+    position: 'before' | 'after';
+    beforeId: string | null;
+    afterId: string | null;
+  };
+
+  const reorderRowOnServer = useCallback(async (context: ReorderContext) => {
+    const payload = {
+      action: 'reorder',
+      sourceId: context.sourceId,
+      sourceIds: context.sourceIds,
+      parentPath: context.parentPath,
+      position: context.position,
+      beforeId: context.beforeId,
+      afterId: context.afterId,
+    };
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    let data: { ok?: boolean; error?: string } | null = null;
+    try {
+      data = (await res.json()) as { ok?: boolean; error?: string };
+    } catch {
+      data = null;
+    }
+    if (!res.ok || !data?.ok) {
+      throw new Error(data?.error ?? `Reorder request failed (status ${res.status})`);
+    }
   }, [endpoint]);
 
   const computeHoverState = useCallback((
@@ -1428,14 +1260,52 @@ export default function AgGridAll({
     setRowHover(null);
     setIsDragging(false);
   }, []);
+  const scrollDeltaRef = useRef(0);
+  const scrollAnimationRef = useRef<number | null>(null);
+
+  const runScrollAnimation = useCallback(() => {
+    const viewport = getViewportElement();
+    const delta = scrollDeltaRef.current;
+    if (viewport && delta !== 0) {
+      viewport.scrollTop = Math.min(
+        viewport.scrollHeight - viewport.clientHeight,
+        Math.max(0, viewport.scrollTop + delta),
+      );
+    }
+    scrollAnimationRef.current = null;
+  }, [getViewportElement]);
+
+  const scheduleScroll = useCallback(() => {
+    if (scrollAnimationRef.current != null || typeof window === 'undefined') return;
+    scrollAnimationRef.current = window.requestAnimationFrame(runScrollAnimation);
+  }, [runScrollAnimation]);
+
+  const autoScrollViewport = useCallback((clientY: number) => {
+    const viewport = getViewportElement();
+    if (!viewport) return;
+    const rect = viewport.getBoundingClientRect();
+    const zone = 48;
+    const step = 32;
+    if (clientY < rect.top + zone) {
+      scrollDeltaRef.current = -step;
+      scheduleScroll();
+    } else if (clientY > rect.bottom - zone) {
+      scrollDeltaRef.current = step;
+      scheduleScroll();
+    } else {
+      scrollDeltaRef.current = 0;
+    }
+  }, [getViewportElement, scheduleScroll]);
+
   const allowDragOver = useCallback((e: React.DragEvent) => {
     // Ensure no OS "not-allowed" cursor while dragging inside grid
     e.preventDefault();
   }, []);
   const handleDragOver = useCallback((ev: React.DragEvent) => {
     ev.preventDefault();
+    autoScrollViewport(ev.clientY);
     updateHoverFromPoint(ev.clientX, ev.clientY, true);
-  }, [updateHoverFromPoint]);
+  }, [autoScrollViewport, updateHoverFromPoint]);
   const handleDragLeave = useCallback((ev: React.DragEvent) => {
     const shell = shellRef.current;
     const nextTarget = ev.relatedTarget as Node | null;
@@ -1453,6 +1323,7 @@ export default function AgGridAll({
     setGapHover(null);
     setRowHover(null);
     setIsDragging(false);
+    scrollDeltaRef.current = 0;
   }, []);
 
   const handleDrop = useCallback((ev: React.DragEvent) => {
@@ -1492,20 +1363,29 @@ export default function AgGridAll({
     }
     if (!payload || payload.type !== 'offer-product-row') return;
 
-    const resolveNode = (rowId: string | null, rowIndex: number | null) => {
-      if (rowId) {
-        const nodeById = api.getRowNode(rowId);
-        if (nodeById) return nodeById as RowNode<RowData>;
-      }
-      if (rowIndex != null) {
-        const nodeByIndex = api.getDisplayedRowAtIndex(rowIndex);
-        if (nodeByIndex) return nodeByIndex as RowNode<RowData>;
-      }
-      return null;
+    const selectedRowIds = Array.isArray(payload.selectedRowIds)
+      ? payload.selectedRowIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+      : [];
+
+    const resolveRowIndex = (rowId: string): number => {
+      const node = api.getRowNode(rowId);
+      const idx = node?.rowIndex;
+      return typeof idx === 'number' && Number.isFinite(idx) ? idx : Number.MAX_SAFE_INTEGER;
     };
 
-    const sourceNode = resolveNode(payload.rowId, payload.rowIndex);
-    if (!sourceNode) return;
+    const uniqueIds: string[] = [];
+    const seen = new Set<string>();
+    [...selectedRowIds, payload.rowId].forEach((rowId) => {
+      if (!rowId) return;
+      if (seen.has(rowId)) return;
+      seen.add(rowId);
+      uniqueIds.push(rowId);
+    });
+
+    const orderedSourceIds = uniqueIds.sort((a, b) => resolveRowIndex(a) - resolveRowIndex(b));
+    if (orderedSourceIds.length === 0) return;
+
+    const primarySourceId = orderedSourceIds[0];
 
     const targetContext = (() => {
       if (hoveredRowTarget) {
@@ -1532,117 +1412,39 @@ export default function AgGridAll({
     })();
     if (!targetContext) return;
 
-    let failureReason: MoveFailureReason | null = null;
-    let failureTargetType: OfferProductRowType | null | undefined;
-    const attemptMove = (
-      node: RowNode<RowData>,
-      targetParentPath: number[],
-      beforeRowId: string | null,
-      beforeRowIndex: number | null,
-      afterRowId: string | null,
-      afterRowIndex: number | null,
-      position: 'before' | 'after',
-    ) => {
-      const result = applyOrderingMove(
-        api,
-        node,
-        targetParentPath,
-        beforeRowId,
-        beforeRowIndex,
-        afterRowId,
-        afterRowIndex,
-        position,
-      );
-      if (result.success) return true;
-      failureReason = result.reason ?? failureReason;
-      failureTargetType = result.targetType ?? failureTargetType;
-      return false;
+    const reorderContext: ReorderContext = {
+      sourceId: primarySourceId,
+      sourceIds: orderedSourceIds.length > 1 ? orderedSourceIds : undefined,
+      parentPath: targetContext.parentPath,
+      position: targetContext.position,
+      beforeId: targetContext.beforeRowId,
+      afterId: targetContext.afterRowId,
     };
 
-    const nodesToMove = (() => {
-      const collected: RowNode<RowData>[] = [];
-      const seenNodes = new Set<RowNode<RowData>>();
-      const addNode = (node: RowNode<RowData> | null) => {
-        if (!node) return;
-        if (seenNodes.has(node)) return;
-        seenNodes.add(node);
-        collected.push(node);
-      };
-      if (Array.isArray(payload.selectedRowIds) && payload.selectedRowIds.length > 0) {
-        payload.selectedRowIds.forEach((rowId) => {
-          if (!rowId) return;
-          addNode(api.getRowNode(rowId) as RowNode<RowData> | null);
-        });
+    const executeReorder = async () => {
+      try {
+        await reorderRowOnServer(reorderContext);
+        const viewport = getViewportElement();
+        if (viewport) {
+          pendingScrollRestoreTopRef.current = viewport.scrollTop;
+        }
+        scrollDeltaRef.current = 0;
+        refreshServerSideData(api, { purge: false });
+        scheduleDeselectAllRows(api);
+      } catch (err) {
+        console.error('Failed to reorder rows', err);
+        showToastMessage('Unable to reorder rows. Refreshing data…', 'error');
+        const viewport = getViewportElement();
+        if (viewport) {
+          pendingScrollRestoreTopRef.current = viewport.scrollTop;
+        }
+        scrollDeltaRef.current = 0;
+        refreshServerSideData(api, { purge: false });
+        scheduleDeselectAllRows(api);
       }
-      addNode(sourceNode);
-      const resolveIndex = (node: RowNode<RowData>) => {
-        const indexValue = node.rowIndex;
-        return typeof indexValue === 'number' && Number.isFinite(indexValue)
-          ? indexValue
-          : Number.MAX_SAFE_INTEGER;
-      };
-      return collected.sort((a, b) => resolveIndex(a) - resolveIndex(b));
-    })();
-
-    if (nodesToMove.length === 0) return;
-
-    let movedCount = 0;
-    const totalNodes = nodesToMove.length;
-    let firstInsertedId: string | null = null;
-    let lastInsertedId: string | null = null;
-    for (const node of nodesToMove) {
-      const isFirstMove = movedCount === 0;
-      const beforeRowId = isFirstMove
-        ? targetContext.beforeRowId
-        : (targetContext.position === 'after' ? lastInsertedId : null);
-      const beforeRowIndex = isFirstMove ? targetContext.beforeRowIndex : null;
-      const afterRowId = isFirstMove
-        ? targetContext.afterRowId
-        : (targetContext.position === 'before' ? firstInsertedId : null);
-      const afterRowIndex = isFirstMove ? targetContext.afterRowIndex : null;
-
-      const moved = attemptMove(
-        node,
-        targetContext.parentPath,
-        beforeRowId,
-        beforeRowIndex,
-        afterRowId,
-        afterRowIndex,
-        targetContext.position,
-      );
-      if (!moved) {
-        break;
-      }
-
-      if (isFirstMove) {
-        firstInsertedId = node.id ?? null;
-        lastInsertedId = firstInsertedId;
-      } else if (targetContext.position === 'after') {
-        lastInsertedId = node.id ?? null;
-      } else {
-        firstInsertedId = node.id ?? null;
-      }
-      movedCount += 1;
-    }
-
-    if (movedCount !== totalNodes) {
-      if (movedCount > 0) {
-        refreshServerSideData(api);
-      }
-      console.warn('Drop detected but TreeOrdering could not be updated', { payload, gap, hoveredRowTarget });
-      showInvalidDropMessage(failureReason, failureTargetType);
-      return;
-    }
-
-    api.applyColumnState({
-      state: [{ colId: 'TreeOrdering', sort: 'asc', sortIndex: 0 }],
-      defaultState: { sort: null },
-      applyOrder: false,
-    });
-    reorderRowsByTreeOrdering(api);
-    api.refreshCells({ columns: TREE_DEPENDENT_COLUMNS, force: true });
-    void persistTreeOrderingChanges();
-  }, [gapHover, rowHover, computeHoverState, persistTreeOrderingChanges]);
+    };
+    void executeReorder();
+  }, [gapHover, rowHover, computeHoverState, refreshServerSideData, reorderRowOnServer]);
 
   const handleRowDoubleClick = useCallback((event: RowDoubleClickedEvent<RowData>) => {
     if (typeof externalRowDoubleClickHandler === 'function') {
