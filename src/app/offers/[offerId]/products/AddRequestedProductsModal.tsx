@@ -56,7 +56,7 @@ type PayloadRow = {
 };
 
 const columnKeywords: Record<HeaderColumnKey, string[]> = {
-  itemNo: ['item', 'tree', 'ordering', 'no', '#', 'position'],
+  itemNo: ['item', 'tree', 'ordering', '#', 'position'],
   brand: ['brand', 'maker', 'make', 'manufacturer', 'vendor'],
   modelNumber: ['model', 'series', 'type', 'model#'],
   partNumber: ['part', 'sku', 'code', 'p/n', 'article'],
@@ -115,15 +115,33 @@ const detectHeaderRowIndex = (rows: unknown[][]) => {
   return bestIdx;
 };
 
-const buildColumns = (headerRow: unknown[]): ColumnOption[] =>
-  headerRow.map((cell, idx) => {
+const determineColumnCount = (rows: unknown[][]) => {
+  let maxColumns = 0;
+  rows.forEach((row) => {
+    if (!Array.isArray(row)) return;
+    for (let idx = row.length - 1; idx >= 0; idx -= 1) {
+      if (hasCellValue(row[idx])) {
+        maxColumns = Math.max(maxColumns, idx + 1);
+        break;
+      }
+    }
+  });
+  return maxColumns;
+};
+
+const buildColumns = (headerRow: unknown[], columnCount: number): ColumnOption[] => {
+  const columns: ColumnOption[] = [];
+  for (let idx = 0; idx < columnCount; idx += 1) {
+    const cell = idx < headerRow.length ? headerRow[idx] : null;
     const normalized = normalizeHeaderText(cell) ?? '';
     let label = '';
     if (typeof cell === 'string') label = cell.trim();
     if (!label && typeof cell === 'number') label = String(cell);
     const safeLabel = label || `Column ${idx + 1}`;
-    return { index: idx, label: safeLabel, normalized };
-  });
+    columns.push({ index: idx, label: safeLabel, normalized });
+  }
+  return columns;
+};
 
 const buildSuggestions = (columns: ColumnOption[]) => {
   const makeSuggestions = (key: HeaderColumnKey) => {
@@ -142,10 +160,24 @@ const buildSuggestions = (columns: ColumnOption[]) => {
   };
 };
 
+const columnHasValue = (rows: unknown[][], headerRow: unknown[], columnIndex: number) => {
+  const headerCell = columnIndex < headerRow.length ? headerRow[columnIndex] : null;
+  if (hasCellValue(headerCell)) return true;
+  for (let idx = 0; idx < rows.length; idx += 1) {
+    const row = rows[idx];
+    if (!Array.isArray(row)) continue;
+    const cell = columnIndex < row.length ? row[columnIndex] : null;
+    if (hasCellValue(cell)) return true;
+  }
+  return false;
+};
+
 const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: number, enabled: boolean): SheetMapping => {
   const headerRowIndex = detectHeaderRowIndex(rows);
   const headerRow = Array.isArray(rows[headerRowIndex]) ? rows[headerRowIndex] : [];
-  const columns = buildColumns(headerRow);
+  const columnCount = Math.max(determineColumnCount(rows), headerRow.length);
+  const baseColumns = columnCount > 0 ? buildColumns(headerRow, columnCount) : [];
+  const columns = baseColumns.filter((column) => columnHasValue(rows, headerRow, column.index));
   const suggestions = buildSuggestions(columns);
   const includeHeaderRow = Object.values(suggestions).some((match) => match.length > 0);
   const baseSheet: SheetMapping = {

@@ -39,6 +39,15 @@
   color: #111827;
 }
 
+.cardWide {
+  width: min(640px, calc(100% - 32px));
+  max-height: 640px;
+}
+
+.overlayHigh {
+  z-index: 2147483647;
+}
+
 .closeButton {
   border: 1px solid #fecaca;
   border-radius: 12px;
@@ -79,6 +88,13 @@
   text-transform: uppercase;
 }
 
+.fieldHint {
+  font-size: 0.72rem;
+  color: #475569;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
 .requiredMark {
   color: #b91c1c;
   margin-left: 4px;
@@ -92,6 +108,33 @@
   font-size: 0.95rem;
   color: #0f172a;
   background: #ffffff;
+}
+
+.fieldGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.fieldHalf {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldFull {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.checkboxLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.95rem;
+  color: #0f172a;
 }
 
 .fieldControl:focus {

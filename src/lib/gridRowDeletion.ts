@@ -1,4 +1,4 @@
-import type { GridApi, GetContextMenuItemsParams, MenuItemDef, DefaultMenuItem, RowNode } from 'ag-grid-community';
+import type { GridApi, GetContextMenuItemsParams, MenuItemDef, DefaultMenuItem, RowNode, ServerSideRowSelectionState } from 'ag-grid-community';
 import { showConfirmDialog } from './confirm';
 import { showToastMessage } from './toast';
 
@@ -32,6 +32,12 @@ export const getContextMenuSelectionSnapshot = <RowData>(api: GridApi<RowData> |
   return nodes.slice();
 };
 
+const hasServerSideSelectAll = <RowData>(api: GridApi<RowData> | null) => {
+  if (!api || typeof api.getServerSideSelectionState !== 'function') return false;
+  const state = api.getServerSideSelectionState();
+  return Boolean(state && 'selectAll' in state && Boolean((state as ServerSideRowSelectionState).selectAll));
+};
+
 const deleteRecordMenuIcon = `
   <span class="fastquote-menu-icon fastquote-menu-icon--danger" aria-hidden="true">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -44,6 +50,15 @@ const deleteRecordMenuIcon = `
   </span>
 `;
 
+type GridRowDeletionLabelContext = {
+  isSingle: boolean;
+  count: number;
+  typeLabel: string;
+  rowLabel: string;
+};
+
+type GridRowDeletionLabel = string | ((context: GridRowDeletionLabelContext) => string | undefined | null);
+
 type GridRowDeletionConfig<RowData> = {
   endpoint: string;
   resolveRowId: (row: RowData | null | undefined) => number | null;
@@ -52,10 +67,10 @@ type GridRowDeletionConfig<RowData> = {
   resolveRowTypeLabel?: (row: RowData | null | undefined) => string | null | undefined;
   resolveMultiRowTypeLabel?: (rows: RowData[]) => string | null | undefined;
   buildPayload?: (ids: number[]) => unknown;
-  confirmTitle?: string;
+  confirmTitle?: GridRowDeletionLabel;
   confirmMessage?: (typeLabel: string, label: string) => string;
-  confirmConfirmLabel?: string;
-  confirmCancelLabel?: string;
+  confirmConfirmLabel?: GridRowDeletionLabel;
+  confirmCancelLabel?: GridRowDeletionLabel;
   successToastMessage?: string | ((typeLabel: string, label: string) => string);
   failureToastMessage?: string;
   refreshHandler?: (api: GridApi<RowData> | null) => void;
@@ -109,6 +124,22 @@ export class GridRowDeletion<RowData> {
     return { ids };
   }
 
+  private resolveLabel(
+    value: GridRowDeletionLabel | undefined,
+    fallback: string,
+    context: GridRowDeletionLabelContext,
+  ) {
+    if (typeof value === 'function') {
+      const resolved = value(context);
+      if (typeof resolved === 'string' && resolved.trim().length > 0) {
+        return resolved;
+      }
+    } else if (typeof value === 'string' && value.trim().length > 0) {
+      return value;
+    }
+    return fallback;
+  }
+
   private getSuccessMessage(typeLabel: string, rowLabel: string) {
     if (typeof this.config.successToastMessage === 'string') {
       return this.config.successToastMessage;
@@ -148,11 +179,29 @@ export class GridRowDeletion<RowData> {
     const rowLabel = isSingle
       ? this.config.resolveRowLabel(rows[0], fallbackLabel)
       : this.getMultiRowLabel(rows, fallbackLabel);
+    const labelContext: GridRowDeletionLabelContext = {
+      isSingle,
+      count: ids.length,
+      typeLabel,
+      rowLabel,
+    };
+    const defaultTitle = `Delete ${typeLabel}`;
+    const title = this.resolveLabel(this.config.confirmTitle, defaultTitle, labelContext);
+    const confirmLabel = this.resolveLabel(
+      this.config.confirmConfirmLabel,
+      defaultTitle,
+      labelContext,
+    );
+    const cancelLabel = this.resolveLabel(
+      this.config.confirmCancelLabel,
+      `Keep ${typeLabel}`,
+      labelContext,
+    );
     const confirmed = await showConfirmDialog({
-      title: this.config.confirmTitle ?? (isSingle ? 'Delete row' : 'Delete rows'),
+      title,
       message: this.buildConfirmMessage(typeLabel, rowLabel),
-      confirmLabel: this.config.confirmConfirmLabel ?? (isSingle ? 'Delete row' : 'Delete rows'),
-      cancelLabel: this.config.confirmCancelLabel ?? (isSingle ? 'Keep row' : 'Keep rows'),
+      confirmLabel,
+      cancelLabel,
       tone: 'danger',
     });
     if (!confirmed) return;
@@ -194,10 +243,11 @@ export class GridRowDeletion<RowData> {
       const rowData = params.node?.data ?? null;
       const clickedRowId = this.config.resolveRowId(rowData);
       const snapshotNodes = readContextMenuSelectionSnapshot(params.api ?? null);
-      const selectedNodes = snapshotNodes
-        ?? (typeof params.api?.getSelectedNodes === 'function'
+      const selectedNodes = snapshotNodes ?? (hasServerSideSelectAll(params.api ?? null)
+        ? []
+        : (typeof params.api?.getSelectedNodes === 'function'
           ? (params.api.getSelectedNodes() as Array<RowNode<RowData>>)
-          : []);
+          : []));
       const selectedEntries = selectedNodes
         .map((node) => {
           const data = node?.data ?? null;

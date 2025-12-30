@@ -56,6 +56,11 @@ type GridRequest = {
   groupKeys?: Array<string | null>;
 };
 
+type GridRequestResult = {
+  request: GridRequest;
+  highlightProductId: number | null;
+};
+
 type ProductRow = {
   ProductID: number | null;
   Brand: string | null;
@@ -84,6 +89,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   WebLink: "dbo.Products.WebLink",
 };
 const QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
+const DEFAULT_PRODUCT_ORDER = "ORDER BY dbo.Brands.Name, dbo.Products.ModelNumber";
 
 const normalizeProductId = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
@@ -248,17 +254,23 @@ const buildGroupKeyFilter = (field: { field: string; expression: string }, key: 
   };
 };
 
-async function readGridRequest(req: NextRequest): Promise<GridRequest> {
+async function readGridRequest(req: NextRequest): Promise<GridRequestResult> {
   try {
     const payload = await req.json();
+    const highlightProductId = normalizeProductId(
+      payload && typeof payload === "object" ? (payload as { newProductId?: unknown }).newProductId ?? null : null,
+    );
     if (payload && typeof payload === "object" && "request" in payload) {
       const inner = (payload as { request?: GridRequest }).request;
-      if (inner && typeof inner === "object") return inner;
+      if (inner && typeof inner === "object") {
+        return { request: inner, highlightProductId };
+      }
     }
+    return { request: { startRow: 0, endRow: 100 }, highlightProductId };
   } catch {
     /* swallow, use defaults */
   }
-  return { startRow: 0, endRow: 100 };
+  return { request: { startRow: 0, endRow: 100 }, highlightProductId: null };
 }
 
 export async function DELETE(req: NextRequest) {
@@ -308,7 +320,7 @@ export async function DELETE(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const requestPayload = await readGridRequest(req);
+    const { request: requestPayload, highlightProductId } = await readGridRequest(req);
     const startRow = requestPayload.startRow ?? 0;
     const endRow = requestPayload.endRow ?? startRow + 100;
     const pageSize = Math.max(1, Math.min(1000, endRow - startRow));
@@ -343,8 +355,12 @@ export async function POST(req: NextRequest) {
     const quickFilterClause = buildQuickFilterClause(requestPayload.quickFilterText, QUICK_FILTER_COLUMNS);
     const combinedWhere = mergeWhereClauses(where, quickFilterClause.clause);
     const combinedParams = [...whereParams, ...quickFilterClause.params];
-    const order =
-      buildOrder(requestPayload.sortModel) || "ORDER BY dbo.Brands.Name, dbo.Products.ModelNumber";
+    const baseOrderClause = buildOrder(requestPayload.sortModel) || DEFAULT_PRODUCT_ORDER;
+    const sanitizedOrderClause = baseOrderClause.replace(/^\s*ORDER BY\s+/i, "").trim();
+    const fallbackOrderClause = sanitizedOrderClause.length > 0 ? sanitizedOrderClause : "dbo.Products.ID DESC";
+    const highlightPrefix =
+      highlightProductId != null ? "CASE WHEN dbo.Products.ID = @__highlightProductId THEN 0 ELSE 1 END, " : "";
+    const orderClause = `ORDER BY ${highlightPrefix}${fallbackOrderClause}`;
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
     const groupingField = resolveGroupingField(requestPayload.rowGroupCols);
@@ -400,11 +416,14 @@ export async function POST(req: NextRequest) {
 
     const appliedWhere = combineWhereClauses(combinedWhere, parentFilter.clause);
     const appliedParams = [...combinedParams, ...parentFilter.params];
-    const dataSql = `${select} ${from} ${appliedWhere} ${order} ${paging}`;
+    const dataSql = `${select} ${from} ${appliedWhere} ${orderClause} ${paging}`;
 
     const dataReq = bindParams(pool.request(), appliedParams);
     dataReq.input("__offset", sql.Int, offset);
     dataReq.input("__limit", sql.Int, pageSize);
+    if (highlightProductId != null) {
+      dataReq.input("__highlightProductId", sql.Int, highlightProductId);
+    }
     const dataRes = await dataReq.query<ProductRowWithCount>(dataSql);
 
     const rowsWithCount = dataRes.recordset ?? [];

@@ -12,6 +12,8 @@ import React, {
 import { AgGridReact } from 'ag-grid-react';
 import {
   CellContextMenuEvent,
+  CellEditingStartedEvent,
+  CellEditingStoppedEvent,
   CellMouseDownEvent,
   CellValueChangedEvent,
   Column,
@@ -27,6 +29,8 @@ import {
   GetRowIdParams,
   GridApi,
   GridReadyEvent,
+  IRowNode,
+  RowNode,
   IServerSideDatasource,
   IServerSideGetRowsParams,
   MenuItemDef,
@@ -36,10 +40,10 @@ import {
   RowDragEndEvent,
   RowHeightParams,
   SideBarDef,
-  RowNode,
   RowSelectionOptions,
   SelectionChangedEvent,
   SortChangedEvent,
+  ServerSideRowSelectionState,
 } from 'ag-grid-community';
 import { AllEnterpriseModule, LicenseManager, ModuleRegistry } from 'ag-grid-enterprise';
 import { usePathname } from 'next/navigation';
@@ -49,6 +53,7 @@ import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from './ac
 import { setGridRowDeletionContextMenuSelectionSnapshot } from '../../lib/gridRowDeletion';
 import { useAuditUser } from './AuditUserProvider';
 import { GridQuickSearchContext } from './GridQuickSearchProvider';
+import { restoreCaretSelection } from '../hooks/useCaretKeeper';
 
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 
@@ -76,10 +81,109 @@ const scheduleDeselectAllRows = (api?: GridApi<RowData> | null) => {
     if (api.isDestroyed?.()) return;
     try {
       api.deselectAll();
+      if (typeof api.clearCellSelection === 'function') {
+        api.clearCellSelection();
+      }
+      if (typeof api.clearFocusedCell === 'function') {
+        api.clearFocusedCell();
+      }
     } catch {
       /* noop */
     }
   }, 0);
+};
+
+const focusEditingInput = (editor?: HTMLElement | null) => {
+  const input =
+    (editor?.querySelector < HTMLInputElement | HTMLTextAreaElement >('input, textarea') ?? null) ??
+    document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+      '.ag-cell-edit-wrapper input, .ag-cell-edit-wrapper textarea, .ag-cell-editing input, .ag-cell-editing textarea',
+    );
+  if (!input) return;
+  restoreCaretSelection(input);
+};
+
+const QUICK_SEARCH_REFRESH_DEBOUNCE_MS = 220;
+
+const useMutationCaret = () => {
+  useEffect(() => {
+    const handleNodes = (nodes: NodeList) => {
+      nodes.forEach((node) => {
+        if (!(node instanceof Element)) return;
+        const target = node.matches('input, textarea')
+          ? (node as HTMLInputElement | HTMLTextAreaElement)
+          : node.querySelector<HTMLInputElement | HTMLTextAreaElement>('input, textarea');
+        if (target && target.closest('.ag-cell-editing')) {
+          restoreCaretSelection(target);
+        }
+      });
+    };
+    const handleMutation = (records: MutationRecord[]) => {
+      for (const record of records) {
+        if (record.type === 'childList') {
+          handleNodes(record.addedNodes);
+        } else if (record.type === 'attributes') {
+          const target = record.target;
+          if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+            restoreCaretSelection(target);
+          }
+        }
+      }
+    };
+    const observer = new MutationObserver(handleMutation);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['value'],
+    });
+    return () => observer.disconnect();
+  }, []);
+};
+
+const focusFromEvent = (api: GridApi<RowData>, column: Column | null) => {
+  const editors = typeof api.getCellEditorInstances === 'function'
+    ? api.getCellEditorInstances({
+        columns: column ? [column] : undefined,
+      })
+    : [];
+  const editorInstance = editors?.[0] as unknown as { getGui?: () => HTMLElement | null };
+  const editorGui =
+    editorInstance && typeof editorInstance.getGui === 'function'
+      ? editorInstance.getGui()
+      : null;
+  focusEditingInput(editorGui);
+};
+
+const useEditorFocusHandlers = () => {
+  const editingActiveRef = useRef(false);
+  const pendingRefreshRef = useRef<(() => void) | null>(null);
+
+  const flushPendingRefresh = useCallback(() => {
+    const action = pendingRefreshRef.current;
+    pendingRefreshRef.current = null;
+    action?.();
+  }, []);
+
+  const handleEditingStart = useCallback((event: CellEditingStartedEvent<RowData>) => {
+    editingActiveRef.current = true;
+    focusFromEvent(event.api, event.column);
+  }, []);
+
+  const handleEditingStop = useCallback((event: CellEditingStoppedEvent<RowData>) => {
+    editingActiveRef.current = false;
+    flushPendingRefresh();
+  }, [flushPendingRefresh]);
+
+  const requestRefresh = useCallback((action: () => void, label?: string) => {
+    if (editingActiveRef.current) {
+      pendingRefreshRef.current = action;
+      return;
+    }
+    action();
+  }, []);
+
+  return { handleEditingStart, handleEditingStop, requestRefresh };
 };
 
 // Prevent double registration during HMR/StrictMode
@@ -134,7 +238,9 @@ type Props = {
   allowQuickSearch?: boolean;
   quickSearchValue?: string;
   onServerRequest?: (request: ServerRequestWithQuickFilter) => void;
+  serverSideEnableClientSideSort?: boolean;
   onHeaderSelectAllChange?: (selected: boolean, api: GridApi<RowData> | null) => void;
+  onRequestPayloadConsumed?: () => void;
 };
 
 type RowData = Record<string, unknown>;
@@ -475,8 +581,29 @@ export default function AgGridAll({
   allowQuickSearch = true,
   quickSearchValue,
   onServerRequest,
+  serverSideEnableClientSideSort = true,
   onHeaderSelectAllChange,
+  onRequestPayloadConsumed,
 }: Props) {
+  useMutationCaret();
+  const { handleEditingStart, handleEditingStop, requestRefresh } = useEditorFocusHandlers();
+  const wrapGridApiRefreshers = useCallback((api: GridApi<RowData> | null) => {
+    if (!api || typeof requestRefresh !== 'function') return;
+    const wrap = (method: 'refreshCells' | 'refreshServerSide' | 'redrawRows') => {
+      const marker = `__fastquote_wrapped_${method}`;
+      if ((api as unknown as Record<string, unknown>)[marker]) return;
+      const original = (api as unknown as Record<string, unknown>)[method];
+      if (typeof original !== 'function') return;
+      (api as unknown as Record<string, unknown>)[marker] = true;
+      const boundOriginal = (original as (...args: any[]) => unknown).bind(api);
+      (api as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => {
+        requestRefresh(() => boundOriginal(...args));
+      };
+    };
+    wrap('refreshCells');
+    wrap('refreshServerSide');
+    wrap('redrawRows');
+  }, [requestRefresh]);
   const gridRef = useRef<AgGridReact<RowData> | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const gridApiRef = useRef<GridApi<RowData> | null>(null);
@@ -515,6 +642,7 @@ export default function AgGridAll({
   const focusRetryTimerRef = useRef<number | null>(null);
   const quickSearchEffectInitializedRef = useRef(false);
   const quickSearchAutoFocusEnabledRef = useRef(false);
+  const quickSearchRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runQuickSearchFocus = useCallback(() => {
     const focusFn = quickSearchContext?.focus;
     if (typeof focusFn !== 'function') return;
@@ -550,12 +678,22 @@ export default function AgGridAll({
     attempt();
   }, [runQuickSearchFocus]);
 
+  const hasServerSideSelectAll = useCallback((api?: GridApi<RowData> | null) => {
+    if (!api || typeof api.getServerSideSelectionState !== 'function') return false;
+    const state = api.getServerSideSelectionState();
+    return Boolean(state && 'selectAll' in state && Boolean((state as ServerSideRowSelectionState).selectAll));
+  }, []);
+
   const captureSelectionSnapshot = useCallback((api: GridApi<RowData> | null) => {
+    if (hasServerSideSelectAll(api)) {
+      setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, []);
+      return;
+    }
     const selectedNodes = typeof api?.getSelectedNodes === 'function'
       ? (api.getSelectedNodes() as Array<RowNode<RowData>>)
       : [];
     setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, selectedNodes ?? []);
-  }, []);
+  }, [hasServerSideSelectAll]);
 
   const handleCellContextMenu = useCallback((event: CellContextMenuEvent<RowData>) => {
     captureSelectionSnapshot(event.api ?? null);
@@ -612,9 +750,36 @@ export default function AgGridAll({
   }, [onHeaderSelectAllChange]);
 
   useEffect(() => {
+    const getCurrentGridApi = () => gridApiRef.current ?? gridRef.current?.api ?? null;
+    const isPageHeaderArea = (element: Element | null) =>
+      Boolean(element?.closest('.PageHeader-module__YnWxqa__headerSide'));
+
     const handleClick = (event: Event) => {
-      if (isActionMenuEventTarget(event.target ?? null)) return;
+      const target = event.target ?? null;
+      if (isActionMenuEventTarget(target)) return;
+      const element = resolveElementFromEventTarget(target);
+      const clickedInsideShell = Boolean(element?.closest('.ag-root-wrapper'));
+      const clickedOnPageHeader = isPageHeaderArea(element);
+      if (!clickedInsideShell || clickedOnPageHeader) {
+        scheduleDeselectAllRows(getCurrentGridApi());
+      }
       clearContextMenuRow();
+    };
+    const handleMouseDown = (event: MouseEvent) => {
+      const element = resolveElementFromEventTarget(event.target ?? null);
+      const clickedOnPageHeader = isPageHeaderArea(element);
+      if (!element || clickedOnPageHeader) {
+        scheduleDeselectAllRows(getCurrentGridApi());
+        return;
+      }
+      if (
+        element.closest('.ag-row') ||
+        element.closest('.ag-cell') ||
+        element.closest('.ag-header')
+      ) {
+        return;
+      }
+      scheduleDeselectAllRows(getCurrentGridApi());
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -623,10 +788,12 @@ export default function AgGridAll({
     };
     document.addEventListener('click', handleClick, true);
     document.addEventListener('mousedown', handleClick, true);
+    document.addEventListener('mousedown', handleMouseDown, true);
     document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('click', handleClick, true);
       document.removeEventListener('mousedown', handleClick, true);
+      document.removeEventListener('mousedown', handleMouseDown, true);
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [clearContextMenuRow]);
@@ -653,13 +820,32 @@ export default function AgGridAll({
     const api = gridApiRef.current ?? gridRef.current?.api ?? null;
     if (!api || api.isDestroyed?.()) return;
     quickSearchRefreshRequestedRef.current = true;
-    refreshServerSideData(api);
+
+    if (quickSearchRefreshTimerRef.current) {
+      clearTimeout(quickSearchRefreshTimerRef.current);
+      quickSearchRefreshTimerRef.current = null;
+    }
+
+    const queueQuickSearchRefresh = () => {
+      quickSearchRefreshTimerRef.current = null;
+      requestRefresh(() => refreshServerSideData(api), 'quick search refresh');
+    };
+
+    quickSearchRefreshTimerRef.current = setTimeout(queueQuickSearchRefresh, QUICK_SEARCH_REFRESH_DEBOUNCE_MS);
+
     if (!quickSearchEffectInitializedRef.current) {
       quickSearchEffectInitializedRef.current = true;
     } else if (quickSearchAutoFocusEnabledRef.current) {
       startQuickSearchFocusRetries();
     }
-  }, [isGridReady, quickSearchEnabled, resolvedQuickSearchValue, startQuickSearchFocusRetries]);
+
+    return () => {
+      if (quickSearchRefreshTimerRef.current) {
+        clearTimeout(quickSearchRefreshTimerRef.current);
+        quickSearchRefreshTimerRef.current = null;
+      }
+    };
+  }, [isGridReady, quickSearchEnabled, resolvedQuickSearchValue, requestRefresh, startQuickSearchFocusRetries]);
 
   useEffect(() => stopQuickSearchFocusRetries, [stopQuickSearchFocusRetries]);
 
@@ -791,12 +977,18 @@ export default function AgGridAll({
     };
   }, [defaultColDef]);
 
+  const requestPayloadRef = useRef(requestPayload);
+  requestPayloadRef.current = requestPayload;
+
   const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     getRows: async (params: IServerSideGetRowsParams<RowData>) => {
       try {
-        const payload = requestPayload && typeof requestPayload === 'object'
-          ? { ...requestPayload }
+        const payload = requestPayloadRef.current && typeof requestPayloadRef.current === 'object'
+          ? { ...requestPayloadRef.current }
           : {};
+        if (payload && 'newProductId' in payload && typeof onRequestPayloadConsumed === 'function') {
+          onRequestPayloadConsumed();
+        }
         const serverRequest: ServerRequestWithQuickFilter = { ...params.request };
         if (typeof onServerRequest === 'function') {
           onServerRequest(serverRequest);
@@ -852,11 +1044,11 @@ export default function AgGridAll({
         params.fail();
       }
     },
-  }), [endpoint, onResponse, onTotalsChange, requestPayload]);
+  }), [endpoint, onResponse, onTotalsChange]);
 
   const resolvedAllowRowClickSelection =
     typeof allowRowClickSelectionProp === 'boolean' ? allowRowClickSelectionProp : rowSelection !== 'multiple';
-
+  const isServerSideRowModel = true;
   const rowSelectionConfig = useMemo<RowSelectionOptions | undefined>(() => {
     if (!rowSelection) return undefined;
     const isMultiRow = rowSelection === 'multiple';
@@ -866,15 +1058,18 @@ export default function AgGridAll({
     const allowDeselection = Boolean(rowDeselection) && clickSelectionEnabled;
 
     if (isMultiRow) {
-      return {
+      const config: RowSelectionOptions = {
         mode: 'multiRow',
         checkboxes: true,
-        headerCheckbox: true,
-        selectAll: 'filtered',
         groupSelects: 'self',
         enableSelectionWithoutKeys: allowMultiselectClick,
         enableClickSelection: allowMultiselectClick || allowDeselection,
       };
+      if (!isServerSideRowModel) {
+        config.headerCheckbox = true;
+        config.selectAll = 'filtered';
+      }
+      return config;
     }
 
     return {
@@ -919,6 +1114,7 @@ export default function AgGridAll({
       gridApiRef.current.removeEventListener('contextMenuVisibleChanged', handleContextMenuVisibleChanged);
     }
     gridApiRef.current = e.api;
+    wrapGridApiRefreshers(e.api);
     gridApiRef.current.addEventListener('contextMenuVisibleChanged', handleContextMenuVisibleChanged);
     setIsGridReady(true);
     autoSizeColumns(e.api);
@@ -1086,8 +1282,8 @@ export default function AgGridAll({
       return;
     }
     pendingExternalRefreshRef.current = null;
-    refreshServerSideData(api);
-  }, [refreshToken]);
+    requestRefresh(() => refreshServerSideData(api));
+  }, [refreshToken, requestRefresh]);
 
   const persistTreeOrderingChanges = useCallback(() => {
     const runSave = async () => {
@@ -1526,28 +1722,40 @@ export default function AgGridAll({
         applyOrder: true,
       });
       reorderRowsByTreeOrdering(event.api);
-      event.api.refreshCells({ columns: TREE_DEPENDENT_COLUMNS, force: true });
+      requestRefresh(() => event.api.refreshCells({ columns: TREE_DEPENDENT_COLUMNS, force: true }));
       void persistTreeOrderingChanges();
     }
     if (typeof externalCellValueChangeHandler === 'function') {
       externalCellValueChangeHandler(event);
     }
-  }, [manualMode, persistTreeOrderingChanges, externalCellValueChangeHandler]);
+  }, [manualMode, persistTreeOrderingChanges, externalCellValueChangeHandler, requestRefresh]);
 
   const handleSelectionChanged = useCallback((event: SelectionChangedEvent<RowData>) => {
     if (typeof externalSelectionChangedHandler !== 'function') return;
-    try {
-      const rows = typeof event.api.getSelectedRows === 'function' ? event.api.getSelectedRows() : [];
-      externalSelectionChangedHandler(rows ?? [], event.api);
-    } catch (err) {
-      console.warn('Failed to read selected rows', err);
-      externalSelectionChangedHandler([], event.api);
+    const isSelectAll = hasServerSideSelectAll(event.api ?? null);
+    let rows: RowData[] = [];
+    if (!isSelectAll) {
+      try {
+        rows = typeof event.api.getSelectedRows === 'function' ? event.api.getSelectedRows() : [];
+      } catch (err) {
+        console.warn('Failed to read selected rows', err);
+        rows = [];
+      }
     }
-    const selectedNodes = typeof event.api.getSelectedNodes === 'function'
-      ? (event.api.getSelectedNodes() as Array<RowNode<RowData>>)
-      : [];
+    externalSelectionChangedHandler(rows ?? [], event.api);
+    let selectedNodes: Array<RowNode<RowData>> = [];
+    if (!isSelectAll) {
+      try {
+        selectedNodes = typeof event.api.getSelectedNodes === 'function'
+          ? (event.api.getSelectedNodes() as Array<RowNode<RowData>>)
+          : [];
+      } catch (err) {
+        console.warn('Failed to read selected nodes', err);
+        selectedNodes = [];
+      }
+    }
     setGridRowDeletionContextMenuSelectionSnapshot(event.api ?? null, selectedNodes ?? []);
-  }, [externalSelectionChangedHandler]);
+  }, [externalSelectionChangedHandler, hasServerSideSelectAll]);
 
   const handleRowDragEnd = useCallback((event: RowDragEndEvent<RowData>) => {
     if (typeof onRowsMoved === 'function') {
@@ -1564,10 +1772,14 @@ export default function AgGridAll({
   }, [handleContextMenuVisibleChanged]);
 
   useEffect(() => {
+    wrapGridApiRefreshers(gridApiRef.current);
+  }, [wrapGridApiRefreshers]);
+
+  useEffect(() => {
     const api = gridRef.current?.api;
     if (!api || api.isDestroyed?.()) return;
-    api.refreshCells({ force: true });
-  }, [contextMenuRowId]);
+    requestRefresh(() => api.refreshCells({ force: true }));
+  }, [contextMenuRowId, requestRefresh]);
 
   const rowOverlayStyle: CSSProperties = {
     top: rowHover ? rowHover.top : -9999,
@@ -1610,7 +1822,7 @@ export default function AgGridAll({
 
           // Server-Side model
           rowModelType="serverSide"
-          serverSideEnableClientSideSort={true}
+          serverSideEnableClientSideSort={serverSideEnableClientSideSort}
 
           // No selection needed for handle-only drag
           // rowSelection removed to avoid SSRM warning
@@ -1641,6 +1853,8 @@ export default function AgGridAll({
           onRowDragEnd={handleRowDragEnd}
           onCellValueChanged={handleCellValueChanged}
           onSelectionChanged={handleSelectionChanged}
+          onCellEditingStarted={handleEditingStart}
+          onCellEditingStopped={handleEditingStop}
           onColumnMoved={shouldPersistColumnState ? queuePersistColumnState : undefined}
           onColumnPinned={shouldPersistColumnState ? queuePersistColumnState : undefined}
           onColumnVisible={handleColumnVisible}

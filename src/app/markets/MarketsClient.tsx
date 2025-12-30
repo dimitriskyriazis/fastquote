@@ -124,9 +124,12 @@ export default function MarketsClient({ salesDivisions }: Props) {
         },
         resolveRowTypeLabel: () => "market",
         buildPayload: (ids) => ({ MarketIDs: ids }),
-        confirmTitle: "Delete market",
-        confirmConfirmLabel: "Delete market",
-        confirmCancelLabel: "Keep market",
+        confirmTitle: ({ isSingle }) =>
+          (isSingle ? "Delete market" : "Delete markets"),
+        confirmConfirmLabel: ({ isSingle }) =>
+          (isSingle ? "Delete market" : "Delete markets"),
+        confirmCancelLabel: ({ isSingle }) =>
+          (isSingle ? "Keep market" : "Keep markets"),
         successToastMessage: (_, label) => `${label} deleted`,
         failureToastMessage: "Unable to delete market. Please try again.",
         refreshHandler: (api) => {

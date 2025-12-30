@@ -297,9 +297,12 @@ export default function CustomersClient() {
           resolveCustomerLabel(row as Record<string, unknown> | null | undefined, fallback),
         resolveRowTypeLabel: () => "customer",
         buildPayload: (ids) => ({ CustomerIDs: ids }),
-        confirmTitle: "Delete customer",
-        confirmConfirmLabel: "Delete customer",
-        confirmCancelLabel: "Keep customer",
+        confirmTitle: ({ isSingle }) =>
+          (isSingle ? "Delete customer" : "Delete customers"),
+        confirmConfirmLabel: ({ isSingle }) =>
+          (isSingle ? "Delete customer" : "Delete customers"),
+        confirmCancelLabel: ({ isSingle }) =>
+          (isSingle ? "Keep customer" : "Keep customers"),
         successToastMessage: "Customer deleted",
         failureToastMessage: "Unable to delete customer. Please try again.",
       }),

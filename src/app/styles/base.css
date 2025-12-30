@@ -78,6 +78,16 @@ datalist option {
   cursor: pointer;
 }
 
+button {
+  cursor: pointer;
+}
+
+input,
+textarea,
+select {
+  caret-color: currentColor;
+}
+
 
 .page-header-button {
   border-radius: 999px;

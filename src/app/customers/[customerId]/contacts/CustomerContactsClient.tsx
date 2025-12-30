@@ -158,9 +158,11 @@ export default function CustomerContactsClient({ customerId, customerName }: Pro
           resolveCustomerContactLabel(row as Record<string, unknown> | null | undefined, fallback),
         resolveRowTypeLabel: () => "contact",
         buildPayload: (ids) => ({ ContactIDs: ids }),
-        confirmTitle: "Delete contact",
-        confirmConfirmLabel: "Delete contact",
-        confirmCancelLabel: "Keep contact",
+        confirmTitle: ({ isSingle }) => (isSingle ? "Delete contact" : "Delete contacts"),
+        confirmConfirmLabel: ({ isSingle }) =>
+          (isSingle ? "Delete contact" : "Delete contacts"),
+        confirmCancelLabel: ({ isSingle }) =>
+          (isSingle ? "Keep contact" : "Keep contacts"),
         successToastMessage: "Contact deleted",
         failureToastMessage: "Unable to delete contact. Please try again.",
       }),

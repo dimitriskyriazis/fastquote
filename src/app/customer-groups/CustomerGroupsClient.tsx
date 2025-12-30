@@ -170,9 +170,11 @@ export default function CustomerGroupsClient() {
           resolveGroupLabel(row as Record<string, unknown> | null | undefined, fallback),
         resolveRowTypeLabel: () => "group",
         buildPayload: (ids) => ({ CustomerGroupIDs: ids }),
-        confirmTitle: "Delete group",
-        confirmConfirmLabel: "Delete group",
-        confirmCancelLabel: "Keep group",
+        confirmTitle: ({ isSingle }) => (isSingle ? "Delete group" : "Delete groups"),
+        confirmConfirmLabel: ({ isSingle }) =>
+          (isSingle ? "Delete group" : "Delete groups"),
+        confirmCancelLabel: ({ isSingle }) =>
+          (isSingle ? "Keep group" : "Keep groups"),
         successToastMessage: "Customer group deleted",
         failureToastMessage: "Unable to delete group. Please try again.",
       }),

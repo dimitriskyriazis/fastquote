@@ -1,5 +1,70 @@
 .ag-theme-quartz .ag-cell {
-  cursor: default;
+  cursor: default !important;
+}
+
+.ag-theme-quartz .ag-cell.ag-cell-editing,
+.ag-theme-quartz .ag-cell.ag-cell-focus {
+  outline: 2px solid rgba(37, 99, 235, 0.5);
+  outline-offset: -2px;
+  cursor: text !important;
+}
+
+.ag-theme-quartz .ag-cell input,
+.ag-theme-quartz .ag-cell textarea,
+.ag-theme-quartz .ag-input-field input,
+.ag-theme-quartz .ag-input-field textarea,
+.ag-theme-quartz .ag-cell-edit-input {
+  caret-color: currentColor !important;
+  color: inherit;
+  cursor: text;
+  -webkit-text-fill-color: currentColor !important;
+}
+
+.ag-theme-quartz .ag-cell-edit-wrapper,
+.ag-theme-quartz .ag-cell-edit-wrapper *,
+.ag-theme-quartz .ag-cell-content,
+.ag-theme-quartz .ag-cell-content * {
+  caret-color: currentColor !important;
+  color: inherit !important;
+  -webkit-text-fill-color: currentColor !important;
+}
+
+.ag-theme-quartz .ag-text-field-input,
+.ag-theme-quartz .ag-text-field-input * {
+  caret-color: currentColor !important;
+  color: inherit;
+  -webkit-text-fill-color: currentColor !important;
+}
+
+.ag-theme-quartz .ag-selection-checkbox,
+.ag-theme-quartz .ag-selection-checkbox input,
+.ag-theme-quartz .ag-selection-checkbox label,
+.ag-theme-quartz .ag-selection-checkbox .ag-icon-checkbox-checked,
+.ag-theme-quartz .ag-selection-checkbox .ag-icon-checkbox-unchecked {
+  cursor: pointer !important;
+}
+
+.ag-theme-quartz .ag-selection-checkbox,
+.ag-theme-quartz .ag-selection-checkbox input {
+  cursor: pointer;
+}
+
+.ag-theme-quartz .ag-header-cell.ag-header-select-all,
+.ag-theme-quartz .ag-header-select-all,
+.ag-theme-quartz .ag-header-select-all .ag-selection-checkbox,
+.ag-theme-quartz .ag-header-select-all .ag-selection-checkbox input,
+.ag-theme-quartz .ag-header-select-all .ag-selection-checkbox label {
+  cursor: pointer !important;
+}
+
+.ag-theme-quartz .ag-header-select-all,
+.ag-theme-quartz .ag-header-select-all * {
+  cursor: pointer !important;
+}
+
+.ag-theme-quartz .ag-header-cell.ag-header-select-all .ag-header-cell-label,
+.ag-theme-quartz .ag-header-cell.ag-header-select-all .ag-header-cell-comp-wrapper {
+  cursor: pointer !important;
 }
 
 .ag-theme-quartz .ag-cell,

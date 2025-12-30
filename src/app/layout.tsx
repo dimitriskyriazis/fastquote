@@ -6,6 +6,8 @@ import SideNav from "./components/SideNav";
 import { AuditUserProvider } from "./components/AuditUserProvider";
 import AuditUserPrompt from "./components/AuditUserPrompt";
 import DisableAutofill from "./components/DisableAutofill";
+import PreventBackspaceNavigation from "./components/PreventBackspaceNavigation";
+import CaretVisibilityManager from "./components/CaretVisibilityManager";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,9 +29,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        <CaretVisibilityManager />
         <AuditUserProvider>
           <AuditUserPrompt />
           <DisableAutofill />
+          <PreventBackspaceNavigation />
           <div className="app-shell">
             <SideNav />
             <div className="app-content">{children}</div>

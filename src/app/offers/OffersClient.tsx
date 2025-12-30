@@ -106,9 +106,11 @@ export default function OffersClient() {
           ),
         resolveRowTypeLabel: () => OFFER_ROW_TYPE_LABEL,
         buildPayload: (ids) => ({ OfferIDs: ids }),
-        confirmTitle: 'Delete offer',
-        confirmConfirmLabel: 'Delete offer',
-        confirmCancelLabel: 'Keep offer',
+        confirmTitle: ({ isSingle }) => (isSingle ? 'Delete offer' : 'Delete offers'),
+        confirmConfirmLabel: ({ isSingle }) =>
+          (isSingle ? 'Delete offer' : 'Delete offers'),
+        confirmCancelLabel: ({ isSingle }) =>
+          (isSingle ? 'Keep offer' : 'Keep offers'),
         successToastMessage: 'Offer deleted',
         failureToastMessage: 'Unable to delete offer. Please try again.',
       }),

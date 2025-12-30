@@ -191,9 +191,12 @@ export default function PriceListProductsClient({
         resolveRowLabel: resolvePriceListRowLabel,
         resolveRowTypeLabel: () => PRICE_LIST_ROW_TYPE_LABEL,
         buildPayload: (ids) => ({ PriceListItemIDs: ids }),
-        confirmTitle: "Delete price list item",
-        confirmConfirmLabel: "Delete price list item",
-        confirmCancelLabel: "Keep item",
+        confirmTitle: ({ isSingle }) =>
+          (isSingle ? "Delete price list item" : "Delete price list items"),
+        confirmConfirmLabel: ({ isSingle }) =>
+          (isSingle ? "Delete price list item" : "Delete price list items"),
+        confirmCancelLabel: ({ isSingle }) =>
+          (isSingle ? "Keep item" : "Keep items"),
         successToastMessage: "Price list item deleted",
         failureToastMessage: "Unable to delete price list item. Please try again.",
       }),

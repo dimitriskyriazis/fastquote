@@ -339,7 +339,7 @@ export async function POST(
         });
         const values = chunk
           .map((_, chunkIdx) =>
-            `(@tree_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @qty_${chunkIdx})`,
+            `(@tree_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @qty_${chunkIdx})`,
           )
           .join(', ');
         const query = `

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, type CSSProperties } from 'react';
 import styles from './LookupModal.module.css';
 
 type Props = {
@@ -13,6 +13,10 @@ type Props = {
   saving?: boolean;
   error?: string | null;
   children?: React.ReactNode;
+  overlayClassName?: string;
+  overlayStyle?: CSSProperties;
+  cardClassName?: string;
+  cardStyle?: CSSProperties;
 };
 
 export default function LookupModal({
@@ -25,6 +29,10 @@ export default function LookupModal({
   saving = false,
   error = null,
   children,
+  overlayClassName = '',
+  overlayStyle,
+  cardClassName = '',
+  cardStyle,
 }: Props) {
   useEffect(() => {
     if (!open) return undefined;
@@ -32,6 +40,18 @@ export default function LookupModal({
       if (event.key === 'Escape') {
         event.preventDefault();
         onClose();
+        return;
+      }
+      if (event.key === 'Backspace') {
+        const target = event.target;
+        if (
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          (target instanceof HTMLElement && target.isContentEditable)
+        ) {
+          return;
+        }
+        event.preventDefault();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -42,7 +62,8 @@ export default function LookupModal({
 
   return (
     <div
-      className={styles.overlay}
+      className={`${styles.overlay} ${overlayClassName ?? ''}`.trim()}
+      style={overlayStyle}
       onClick={(event) => {
         if (event.currentTarget === event.target) {
           onClose();
@@ -50,7 +71,8 @@ export default function LookupModal({
       }}
     >
       <div
-        className={styles.card}
+        className={`${styles.card} ${cardClassName}`.trim()}
+        style={cardStyle}
         role="dialog"
         aria-modal="true"
         aria-label={title}

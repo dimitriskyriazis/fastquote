@@ -327,7 +327,7 @@ async function handleProductGrid(
       price.PriceListValidToDate,
       price.PriceListEnabled
     FROM BaseProducts bp
-      CROSS APPLY (
+      OUTER APPLY (
         SELECT TOP (1)
           pli.ID AS PriceListItemID,
           pli.PriceListID,
@@ -527,7 +527,7 @@ request.input('__modifiedBy', sql.Int, auditUserId);
         price.ListPrice
       FROM ProvidedProducts p
         INNER JOIN dbo.Products pr ON pr.ID = p.ProductID
-        CROSS APPLY (
+        OUTER APPLY (
           SELECT TOP (1)
             pli.ID AS PriceListItemID,
             pli.PriceListID,
@@ -705,7 +705,7 @@ async function handleAssignProductToRequestedRow(
         price.PriceListItemID,
         price.ListPrice
       FROM dbo.Products pr
-      CROSS APPLY (
+      OUTER APPLY (
         SELECT TOP (1)
           pli.ID AS PriceListItemID,
           pli.PriceListID,
@@ -732,9 +732,9 @@ async function handleAssignProductToRequestedRow(
       od.PartNumber = p.PartNumber,
       od.ModelNumber = p.ModelNumber,
       od.ProductDescription = COALESCE(
-        NULLIF(od.ProductDescription, ''),
+        NULLIF(p.Description, ''),
         NULLIF(od.RequestedDescription, ''),
-        p.Description
+        NULLIF(od.ProductDescription, '')
       ),
       od.Warranty = p.WarrantyValue,
       od.Quantity = 1,

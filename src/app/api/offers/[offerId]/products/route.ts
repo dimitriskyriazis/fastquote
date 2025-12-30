@@ -151,6 +151,7 @@ type DeleteRowRequest = {
 };
 
 type DetailUpdateInput = {
+  ProductDescription?: string | null;
   OfferDetailID?: number | string | null;
   Description?: string | null;
   Quantity?: number | string | null;
@@ -976,6 +977,7 @@ export async function POST(
         p.WebLink,
         p.ModelNumber,
         od.Quantity,
+        od.ProductDescription AS ProductDescription,
         od.ProductDescription AS Description,
         od.CustomerDiscount,
         od.NetUnitPrice,
@@ -1175,6 +1177,9 @@ export async function PATCH(
       .map((entry) => {
         const id = normalizeOfferDetailId(entry?.OfferDetailID ?? null);
         if (id == null) return null;
+        const hasProductDescription = entry
+          ? Object.prototype.hasOwnProperty.call(entry, 'ProductDescription')
+          : false;
         const hasDescription = entry ? Object.prototype.hasOwnProperty.call(entry, 'Description') : false;
         const hasQuantity = entry ? Object.prototype.hasOwnProperty.call(entry, 'Quantity') : false;
         const hasCustomerDiscount = entry ? Object.prototype.hasOwnProperty.call(entry, 'CustomerDiscount') : false;
@@ -1207,7 +1212,8 @@ export async function PATCH(
           : false;
         const hasPricingFields = hasCustomerDiscount || hasTelmacoDiscount || hasNetUnitPrice || hasNetCost || hasMargin;
         if (
-          !hasDescription
+          !hasProductDescription
+          && !hasDescription
           && !hasQuantity
           && !hasPricingFields
           && !hasListPrice
@@ -1223,7 +1229,11 @@ export async function PATCH(
           return null;
         }
 
-        const description = hasDescription ? normalizeDescriptionValue(entry?.Description ?? null) : null;
+        const productDescription = hasProductDescription
+          ? normalizeDescriptionValue(entry?.ProductDescription ?? null)
+          : hasDescription
+            ? normalizeDescriptionValue(entry?.Description ?? null)
+            : null;
         let quantity: number | null = null;
         if (hasQuantity) {
           quantity = normalizeQuantityValue(entry?.Quantity ?? null);
@@ -1281,9 +1291,8 @@ export async function PATCH(
 
         return {
           OfferDetailID: id,
-          Description: description,
+          ProductDescription: productDescription,
           Quantity: quantity,
-          hasDescription,
           hasQuantity,
           hasCustomerDiscount,
           hasTelmacoDiscount,
@@ -1319,9 +1328,9 @@ export async function PATCH(
       })
       .filter((entry): entry is {
         OfferDetailID: number;
-        Description: string | null;
+        ProductDescription: string | null;
         Quantity: number | null;
-        hasDescription: boolean;
+        hasProductDescription: boolean;
         hasQuantity: boolean;
         hasCustomerDiscount: boolean;
         hasTelmacoDiscount: boolean;
@@ -1429,8 +1438,8 @@ export async function PATCH(
 
       const pendingRows: Array<{
         OfferDetailID: number;
-        Description: string | null;
-        HasDescription: boolean;
+        ProductDescription: string | null;
+        HasProductDescription: boolean;
         Quantity: number | null;
         HasQuantity: boolean;
         CustomerDiscount: number | null;
@@ -1567,8 +1576,10 @@ export async function PATCH(
 
         pendingRows.push({
           OfferDetailID: entry.OfferDetailID,
-          Description: entry.hasDescription ? entry.Description : current.ProductDescription,
-          HasDescription: entry.hasDescription,
+          ProductDescription: entry.hasProductDescription
+            ? entry.ProductDescription
+            : current.ProductDescription,
+          HasProductDescription: entry.hasProductDescription,
           Quantity: entry.hasQuantity ? entry.Quantity : current.Quantity ?? safeQuantity,
           HasQuantity: entry.hasQuantity,
           CustomerDiscount: resolvedPricing.customerDiscount,
@@ -1615,8 +1626,8 @@ export async function PATCH(
 
       pendingRows.forEach((row, rowIdx) => {
         const idParam = `odid_${rowIdx}`;
-        const descriptionParam = `description_${rowIdx}`;
-        const hasDescriptionParam = `hasDescription_${rowIdx}`;
+        const productDescriptionParam = `productDescription_${rowIdx}`;
+        const hasProductDescriptionParam = `hasProductDescription_${rowIdx}`;
         const quantityParam = `quantity_${rowIdx}`;
         const hasQuantityParam = `hasQuantity_${rowIdx}`;
         const customerDiscountParam = `customerDiscount_${rowIdx}`;
@@ -1647,8 +1658,16 @@ export async function PATCH(
         const requestedQuantityParam = `requestedQuantity_${rowIdx}`;
         const hasRequestedQuantityParam = `hasRequestedQuantity_${rowIdx}`;
         request.input(idParam, sql.Int, row.OfferDetailID);
-        request.input(descriptionParam, sql.NVarChar(4000), row.HasDescription ? row.Description : null);
-        request.input(hasDescriptionParam, sql.Bit, row.HasDescription ? 1 : 0);
+        request.input(
+          productDescriptionParam,
+          sql.NVarChar(4000),
+          row.HasProductDescription ? row.ProductDescription : null,
+        );
+        request.input(
+          hasProductDescriptionParam,
+          sql.Bit,
+          row.HasProductDescription ? 1 : 0,
+        );
         request.input(quantityParam, decimalType, row.Quantity);
         request.input(hasQuantityParam, sql.Bit, row.HasQuantity ? 1 : 0);
         request.input(customerDiscountParam, decimalType, row.CustomerDiscount);
@@ -1678,14 +1697,14 @@ export async function PATCH(
         request.input(hasRequestedQuantityParam, sql.Bit, row.HasRequestedQuantity ? 1 : 0);
         request.input(isCategoryParam, sql.Bit, row.HasIsCategory ? (row.IsCategory ? 1 : 0) : null);
         request.input(hasIsCategoryParam, sql.Bit, row.HasIsCategory ? 1 : 0);
-        valueClauses.push(`(@${idParam}, @${descriptionParam}, @${hasDescriptionParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam})`);
+        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam})`);
       });
 
       const query = `
         WITH PendingUpdates (
           OfferDetailID,
-          Description,
-          HasDescription,
+          ProductDescription,
+          HasProductDescription,
           Quantity,
           HasQuantity,
           CustomerDiscount,
@@ -1719,8 +1738,8 @@ export async function PATCH(
           SELECT *
           FROM (VALUES ${valueClauses.join(', ')}) AS v (
             OfferDetailID,
-            Description,
-            HasDescription,
+            ProductDescription,
+            HasProductDescription,
             Quantity,
             HasQuantity,
             CustomerDiscount,
@@ -1753,7 +1772,7 @@ export async function PATCH(
           )
         )
         UPDATE od
-        SET od.ProductDescription = CASE WHEN PendingUpdates.HasDescription = 1 THEN PendingUpdates.Description ELSE od.ProductDescription END,
+        SET od.ProductDescription = CASE WHEN PendingUpdates.HasProductDescription = 1 THEN PendingUpdates.ProductDescription ELSE od.ProductDescription END,
             od.Quantity = CASE WHEN PendingUpdates.HasQuantity = 1 THEN PendingUpdates.Quantity ELSE od.Quantity END,
             od.CustomerDiscount = PendingUpdates.CustomerDiscount,
             od.TelmacoDiscount = PendingUpdates.TelmacoDiscount,

@@ -535,6 +535,7 @@ const renderFieldControl = (
           className={`${styles.fieldControl} ${styles.fieldControlMultiline} ${pending ? styles.fieldControlPending : ''}`}
           value={values[def.id] ?? ''}
           placeholder={placeholder}
+          data-disable-autofill-skip="true"
           onChange={(event) => handleValueChange(def.id, event.target.value)}
           onBlur={() => handleBlur(def)}
         />
@@ -542,17 +543,18 @@ const renderFieldControl = (
     }
 
     return (
-      <input
-        autoComplete="off"
-        id={controlId}
-        name={def.id}
-        className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
-        type={def.inputType ?? 'text'}
-        value={values[def.id] ?? ''}
-        placeholder={placeholder}
-        onChange={(event) => handleValueChange(def.id, event.target.value)}
-        onBlur={() => handleBlur(def)}
-      />
+        <input
+          autoComplete="off"
+          id={controlId}
+          name={def.id}
+          className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
+          type={def.inputType ?? 'text'}
+          value={values[def.id] ?? ''}
+          placeholder={placeholder}
+          data-disable-autofill-skip="true"
+          onChange={(event) => handleValueChange(def.id, event.target.value)}
+          onBlur={() => handleBlur(def)}
+        />
     );
   };
 

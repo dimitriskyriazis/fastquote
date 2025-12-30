@@ -5,6 +5,7 @@ import { useContext } from 'react';
 import type {
   CellValueChangedEvent,
   ColDef,
+  DefaultMenuItem,
   GetContextMenuItemsParams,
   GridApi,
   ICellRendererParams,
@@ -14,6 +15,7 @@ import type {
   RowDoubleClickedEvent,
   RowHeightParams,
   RowNode,
+  ServerSideRowSelectionState,
   ValueFormatterParams,
   ValueGetterParams,
   ValueSetterParams,
@@ -37,12 +39,22 @@ import { GridRowDeletion, getContextMenuSelectionSnapshot, setGridRowDeletionCon
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
 import { priceListStatusClassRules } from '../../../lib/priceListStatus';
 import { GridQuickSearchContext } from '../../components/GridQuickSearchProvider';
+import MatchRequestedProductsModal, {
+  type RequestedProductMatchEntry,
+} from './products/MatchRequestedProductsModal';
+import AddProductModal from '../../products/AddProductModal';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const decimalFormatter = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
+
+const hasServerSideSelectAll = (api: GridApi<Record<string, unknown>> | null) => {
+  if (!api || typeof api.getServerSideSelectionState !== 'function') return false;
+  const state = api.getServerSideSelectionState();
+  return Boolean(state && 'selectAll' in state && Boolean((state as ServerSideRowSelectionState).selectAll));
+};
 
 type GridRowNode = RowNode<Record<string, unknown>> | IRowNode<Record<string, unknown>>;
 
@@ -276,6 +288,81 @@ const normalizeRequestedQuantityValue = (value: unknown): number | null => {
     if (Number.isFinite(parsed) && parsed >= 0) return parsed;
   }
   return null;
+};
+
+const sanitizeDetailValue = (value: string | null | undefined): string | null => {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const buildRequestedProductMatchEntry = (
+  data: Record<string, unknown>,
+  offerDetailId: number,
+): RequestedProductMatchEntry => {
+  const requestedBrand = normalizeRequestedLookupValue(
+    (data as { RequestedBrand?: unknown }).RequestedBrand ?? null,
+  );
+  const requestedModel = normalizeRequestedLookupValue(
+    (data as { RequestedModelNo?: unknown }).RequestedModelNo ?? null,
+  );
+  const requestedPart = normalizeRequestedLookupValue(
+    (data as { RequestedPartNo?: unknown }).RequestedPartNo ?? null,
+  );
+  const requestedDescription = normalizeDescriptionValue(
+    (data as { RequestedDescription?: unknown }).RequestedDescription ?? null,
+  );
+  const requestedDescription2 = normalizeDescriptionValue(
+    (data as { RequestedDescription2?: unknown }).RequestedDescription2 ?? null,
+  );
+  const requestedDescription3 = normalizeDescriptionValue(
+    (data as { RequestedDescription3?: unknown }).RequestedDescription3 ?? null,
+  );
+  const requestedItemNo = normalizeRequestedItemNoValue(
+    (data as { RequestedItemNo?: unknown }).RequestedItemNo ?? null,
+  );
+  const treeOrderingRaw = (data as { TreeOrdering?: unknown }).TreeOrdering;
+  const treeOrdering = typeof treeOrderingRaw === 'string' && treeOrderingRaw.trim()
+    ? treeOrderingRaw.trim()
+    : null;
+  const labelCandidates = [
+    requestedDescription,
+    requestedDescription2,
+    requestedDescription3,
+    requestedPart,
+    requestedModel,
+    requestedBrand,
+    requestedItemNo,
+    treeOrdering,
+  ];
+  const label = labelCandidates.find((item) => typeof item === 'string' && item.trim()) ?? 'Requested item';
+  const parentCategoryId = normalizeOfferDetailId(
+    (data as { ParentOfferDetailID?: unknown }).ParentOfferDetailID ?? null,
+  );
+  const detailEntries: Array<{ label: string; value: string }> = [];
+  const addDetail = (detailLabel: string, detailValue: string | null | undefined) => {
+    const sanitized = sanitizeDetailValue(detailValue);
+    if (sanitized) {
+      detailEntries.push({ label: detailLabel, value: sanitized });
+    }
+  };
+  addDetail('Brand', requestedBrand);
+  addDetail('Model', requestedModel);
+  addDetail('Part number', requestedPart);
+  addDetail('Requested item number', requestedItemNo);
+  addDetail('Tree ordering', treeOrdering);
+  addDetail('Requested description', requestedDescription);
+  addDetail('Requested description 2', requestedDescription2);
+  addDetail('Requested description 3', requestedDescription3);
+  return {
+    offerDetailId,
+    parentCategoryId,
+    label,
+    quantity: normalizeRequestedQuantityValue(
+      (data as { RequestedQuantity?: unknown }).RequestedQuantity ?? null,
+    ),
+    details: detailEntries,
+  };
 };
 
 const hasRequestedLookupIdentifiers = (row: Record<string, unknown> | null | undefined) => {
@@ -541,6 +628,16 @@ const PRICING_FIELD_LABELS: Record<string, string> = {
 
 const PRICING_EDITABLE_FIELDS = new Set(Object.keys(PRICING_FIELD_LABELS));
 
+const findDeleteMenuItemIndex = (
+  items: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string>,
+) => items.findIndex((item) => {
+  if (!item || typeof item !== 'object') return false;
+  const { name } = item as MenuItemDef<Record<string, unknown>>;
+  if (typeof name !== 'string') return false;
+  const normalized = name.trim().toLowerCase();
+  return normalized === 'delete row' || normalized === 'delete rows';
+});
+
 type Props = {
   offerId: string;
   endpoint?: string;
@@ -610,6 +707,8 @@ export default function OfferProductsPanel({
   const [requestedItemNoVisible, setRequestedItemNoVisible] = useState(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const [requestedColumnsReady, setRequestedColumnsReadyFlag] = useState(false);
+  const [requestedMatchQueue, setRequestedMatchQueue] = useState<RequestedProductMatchEntry[]>([]);
+  const [processedRequestedMatches, setProcessedRequestedMatches] = useState(0);
   const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() => new Set());
   const [categoryPathsWithChildren, setCategoryPathsWithChildren] = useState<Set<string>>(() => new Set());
   const [categoryChildrenKnown, setCategoryChildrenKnown] = useState(false);
@@ -620,6 +719,9 @@ export default function OfferProductsPanel({
   const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
   const lastRowCountRef = useRef<number | null>(null);
   const headerSelectAllInFlightRef = useRef(false);
+  const [matchAddProductOpen, setMatchAddProductOpen] = useState(false);
+  const [matchAddedProductId, setMatchAddedProductId] = useState<number | null>(null);
+  const clearMatchAddedProductId = useCallback(() => setMatchAddedProductId(null), []);
   const rebuildTreeOrderingRootMap = useCallback((rows?: Array<Record<string, unknown>>, reset = false) => {
     const map = reset ? new Map<string, number>() : new Map(treeOrderingRootMapRef.current);
     (rows ?? []).forEach((row) => {
@@ -1309,9 +1411,12 @@ const RequestedItemNoCell = useCallback((params: ICellRendererParams<Record<stri
         ? params.node.rowIndex
         : null;
 
-      const selectedNodes = typeof params.api?.getSelectedNodes === 'function'
-        ? params.api.getSelectedNodes().map((node) => node.id ?? null).filter((id): id is string => typeof id === 'string' && id.length > 0)
-        : [];
+      const isSelectAll = hasServerSideSelectAll(params.api ?? null);
+      const selectedNodes = isSelectAll
+        ? []
+        : (typeof params.api?.getSelectedNodes === 'function'
+          ? params.api.getSelectedNodes().map((node) => node.id ?? null).filter((id): id is string => typeof id === 'string' && id.length > 0)
+          : []);
       if (params.node?.id) {
         if (!selectedNodes.includes(params.node.id)) {
           selectedNodes.push(params.node.id);
@@ -1737,13 +1842,14 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         filter: 'agTextColumnFilter',
         valueGetter: ({ data }) => {
           const row = data as Record<string, unknown> | null | undefined;
-          const manual = normalizeDescriptionValue(row?.Description ?? null);
+          const manual = normalizeDescriptionValue(row?.ProductDescription ?? null);
           if (manual != null) return manual;
-          return normalizeDescriptionValue(row?.ProductDescription ?? null) ?? '';
+          return normalizeDescriptionValue(row?.Description ?? null) ?? '';
         },
         valueSetter: ({ data, newValue }) => {
           if (!data) return false;
           const normalized = normalizeDescriptionValue(newValue);
+          (data as Record<string, unknown>).ProductDescription = normalized;
           (data as Record<string, unknown>).Description = normalized;
           return true;
         },
@@ -1919,6 +2025,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   }, [refreshToken, syncRequestedItemNumbers]);
 
   useEffect(() => {
+    if (requestedMatchQueue.length === 0 && processedRequestedMatches !== 0) {
+      setProcessedRequestedMatches(0);
+    }
+  }, [processedRequestedMatches, requestedMatchQueue.length]);
+
+  useEffect(() => {
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return;
     try {
@@ -1937,9 +2049,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         resolveRowLabel,
         resolveRowTypeLabel: resolveOfferProductTypeLabel,
         buildPayload: (ids) => ({ OfferDetailIDs: ids }),
-        confirmTitle: 'Delete row',
-        confirmConfirmLabel: 'Delete row',
-        confirmCancelLabel: 'Keep row',
+        confirmTitle: ({ isSingle }) => (isSingle ? 'Delete row' : 'Delete rows'),
+        confirmConfirmLabel: ({ isSingle }) =>
+          (isSingle ? 'Delete row' : 'Delete rows'),
+        confirmCancelLabel: ({ isSingle }) =>
+          (isSingle ? 'Keep row' : 'Keep rows'),
         successToastMessage: 'Row deleted',
         failureToastMessage: 'Unable to delete row. Please try again.',
         refreshHandler: refreshOfferProductGrid,
@@ -1954,7 +2068,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     const updates: Array<Record<string, unknown>> = [];
     let categoriesAdded = 0;
     let productsAdded = 0;
-    let missingProducts = 0;
+    const unmatchedRequestedRows: RequestedProductMatchEntry[] = [];
     const baseRootCategoryCount = treeOrderingRootMapRef.current.size;
     let sequentialCategoryCount = 0;
     let lastAssignedCategoryOrdinal: string | null = null;
@@ -2043,14 +2157,14 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
 
       if (!hasRequestedIdentifiers) {
-        missingProducts += 1;
+        unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
         continue;
       }
 
       try {
         const productId = await resolveProductIdFromRequestedInfo(lookupInfo);
         if (productId == null) {
-          missingProducts += 1;
+          unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
           continue;
         }
         const parentCategoryId = normalizeOfferDetailId(
@@ -2058,7 +2172,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         );
         const assigned = await assignRequestedRowToProduct(offerDetailId, productId, parentCategoryId);
         if (!assigned) {
-          missingProducts += 1;
+          unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
           continue;
         }
         const productMeta = await fetchProductSummary(productId);
@@ -2108,7 +2222,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         productsAdded += 1;
       } catch (err) {
         console.error('Failed to populate requested row in offer', err);
-        missingProducts += 1;
       }
       continue;
     }
@@ -2131,12 +2244,19 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
     }
 
+    const manualMatchesRequired = unmatchedRequestedRows.length > 0;
+    if (manualMatchesRequired) {
+      setRequestedMatchQueue((prev) => [...prev, ...unmatchedRequestedRows]);
+    }
     const parts: string[] = [];
     if (categoriesAdded > 0) parts.push(`${categoriesAdded} categor${categoriesAdded === 1 ? 'y' : 'ies'}`);
     if (productsAdded > 0) parts.push(`${productsAdded} product${productsAdded === 1 ? '' : 's'}`);
     if (parts.length === 0) {
-      if (missingProducts > 0) {
-        showToastMessage('Unable to match some requested products. They remain unchanged.', 'info');
+      if (manualMatchesRequired) {
+        showToastMessage(
+          'Some requested products require manual matching. Please resolve them using the matcher.',
+          'info',
+        );
       }
       return;
     }
@@ -2149,10 +2269,63 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         /* noop */
       }
     }
-    if (missingProducts > 0) {
-      showToastMessage('Unable to match some requested products. They remain unchanged.', 'info');
+    if (manualMatchesRequired) {
+      showToastMessage(
+        'Some requested products require manual matching. Please resolve them using the matcher.',
+        'info',
+      );
     }
   }, [assignRequestedRowToProduct, promoteNodeToCategory, promoteNodeToProduct, refreshOfferProductGrid, resolvedEndpoint]);
+
+  const currentRequestedMatch = requestedMatchQueue[0] ?? null;
+  const openMatchAddProduct = useCallback(() => setMatchAddProductOpen(true), []);
+  const closeMatchAddProduct = useCallback(() => setMatchAddProductOpen(false), []);
+  const handleMatchProductAdded = useCallback((result?: { productId?: number | null }) => {
+    if (result?.productId != null) {
+      setMatchAddedProductId(result.productId);
+    }
+    try {
+      refreshOfferProductGrid(null);
+    } catch {
+      /* noop */
+    }
+    closeMatchAddProduct();
+  }, [closeMatchAddProduct, refreshOfferProductGrid]);
+
+  const advanceMatchQueue = useCallback(() => {
+    setRequestedMatchQueue((prev) => (prev.length > 0 ? prev.slice(1) : prev));
+    setProcessedRequestedMatches((prev) => prev + 1);
+  }, []);
+
+  const handleManualAssign = useCallback(async (productId: number) => {
+    if (!currentRequestedMatch) return false;
+    const assigned = await assignRequestedRowToProduct(
+      currentRequestedMatch.offerDetailId,
+      productId,
+      currentRequestedMatch.parentCategoryId,
+    );
+    if (assigned) {
+      showToastMessage('Requested item filled', 'success');
+      try {
+        refreshOfferProductGrid(null);
+      } catch {
+        /* noop */
+      }
+      advanceMatchQueue();
+      return true;
+    }
+    showToastMessage('Unable to assign requested item. Please try again.', 'error');
+    return false;
+  }, [advanceMatchQueue, assignRequestedRowToProduct, currentRequestedMatch, refreshOfferProductGrid]);
+
+  const handleManualSkip = useCallback(() => {
+    if (!currentRequestedMatch) return;
+    showToastMessage('Skipped requested item.', 'info');
+    advanceMatchQueue();
+  }, [advanceMatchQueue, currentRequestedMatch]);
+
+  const manualMatchTotal = processedRequestedMatches + requestedMatchQueue.length;
+  const manualMatchPosition = currentRequestedMatch ? processedRequestedMatches + 1 : 0;
 
   const productContextMenuItems = useCallback((
     params: GetContextMenuItemsParams<Record<string, unknown>>,
@@ -2160,7 +2333,16 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     const baseItems = productRowDeletion.getContextMenuItems(params) ?? [];
     const items = [...baseItems];
     const rowNode = params.node ?? null;
-    const rowData = rowNode?.data ?? null;
+    const snapshotNodes = getContextMenuSelectionSnapshot(params.api ?? null);
+    const relevantNodes = snapshotNodes.length > 0
+      ? snapshotNodes
+      : rowNode && rowNode.data
+        ? [rowNode as RowNode<Record<string, unknown>>]
+        : [];
+    const rowData = rowNode?.data ?? relevantNodes[0]?.data ?? null;
+    if (!rowData) {
+      return items;
+    }
     const rawProductId = (rowData as { ProductID?: unknown }).ProductID;
     const parsedProductId =
       typeof rawProductId === 'number'
@@ -2199,11 +2381,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         },
       };
 
-      const deleteIndex = items.findIndex((item) => (
-        typeof item === 'object'
-        && item != null
-        && (item as MenuItemDef).name === 'Delete row'
-      ));
+      const deleteIndex = findDeleteMenuItemIndex(items);
 
       if (deleteIndex >= 0) {
         items.splice(deleteIndex, 0, historyItem);
@@ -2212,25 +2390,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
     }
 
-    const contextSelectionSnapshot = getContextMenuSelectionSnapshot(params.api ?? null);
-    const selectedNodes = contextSelectionSnapshot.length > 0
-      ? contextSelectionSnapshot
-      : typeof params.api?.getSelectedNodes === 'function'
-        ? params.api.getSelectedNodes().map((node) => node as RowNode<Record<string, unknown>>)
-        : [];
-    const relevantNodes = selectedNodes.length > 0
-      ? selectedNodes
-      : rowNode
-        ? [rowNode as RowNode<Record<string, unknown>>]
-        : [];
     const hasRequestedSelection = relevantNodes.some((node) => isRequestedRow(node?.data ?? null));
     const rowHasRequestedFields = hasRequestedPseudoFields(rowData);
 
-    const deleteIndexAfterHistory = items.findIndex((item) => (
-      typeof item === 'object'
-      && item != null
-      && (item as MenuItemDef).name === 'Delete row'
-    ));
+    const deleteIndexAfterHistory = findDeleteMenuItemIndex(items);
 
     const offerDetailId = normalizeOfferDetailId((rowData as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null);
     const canMarkCategory = (
@@ -2560,9 +2723,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         const res = await fetch(resolvedEndpoint, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            updates: [{ OfferDetailID: offerDetailId, Description: normalizedNewValue }],
-          }),
+        body: JSON.stringify({
+          updates: [{ OfferDetailID: offerDetailId, ProductDescription: normalizedNewValue }],
+        }),
         });
         let payload: { ok?: boolean; error?: string } | null = null;
         try {
@@ -2670,54 +2833,74 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   };
 
   return (
-    <div className={styles.panel}>
-      <div className={`${styles.gridWrapper} offer-products-grid`}>
-        <AgGridAll
-          endpoint={resolvedEndpoint}
-          columnDefs={productColumnDefs}
-          defaultColDef={defaultColDef}
-          manualMode={manualMode}
-          getRowClass={getRowClass}
-          getContextMenuItems={productContextMenuItems}
-          onCellValueChanged={handleCellEdit}
-          refreshToken={refreshToken}
-          onGridReady={handleGridReady}
-          onModelUpdated={handleGridModelUpdated}
-          getRowHeight={getRowHeight}
-          onRowDoubleClicked={handleRowDoubleClicked}
-          autoSizeExclusions={autoSizeExclusions}
-          enableColumnStatePersistence={false}
-          suppressColumnVirtualisation
-          onTotalsChange={handleTotalsChange}
-          onResponse={handleGridResponse}
-          onServerRequest={handleServerRequest}
-          onHeaderSelectAllChange={handleHeaderSelectAllChange}
-          rowGroupPanelShow="never"
-          onRowsMoved={handleRowsMoved}
-          rowSelection="multiple"
-          rowMultiSelectWithClick
-          rowDeselection
-          disableAutoSize
+    <>
+      <div className={styles.panel}>
+        <div className={`${styles.gridWrapper} offer-products-grid`}>
+          <AgGridAll
+            endpoint={resolvedEndpoint}
+            columnDefs={productColumnDefs}
+            defaultColDef={defaultColDef}
+            manualMode={manualMode}
+            getRowClass={getRowClass}
+            getContextMenuItems={productContextMenuItems}
+            onCellValueChanged={handleCellEdit}
+            refreshToken={refreshToken}
+            onGridReady={handleGridReady}
+            onModelUpdated={handleGridModelUpdated}
+            getRowHeight={getRowHeight}
+            onRowDoubleClicked={handleRowDoubleClicked}
+            autoSizeExclusions={autoSizeExclusions}
+            enableColumnStatePersistence={false}
+            suppressColumnVirtualisation
+            onTotalsChange={handleTotalsChange}
+            onResponse={handleGridResponse}
+            onServerRequest={handleServerRequest}
+            onHeaderSelectAllChange={handleHeaderSelectAllChange}
+            rowGroupPanelShow="never"
+            onRowsMoved={handleRowsMoved}
+            rowSelection="multiple"
+            rowMultiSelectWithClick
+            rowDeselection
+            disableAutoSize
+          />
+        </div>
+        <div className={styles.totalsBar}>
+          <div className={styles.totalItem}>
+            <span className={styles.totalLabel}>Total Net Price</span>
+            <span className={styles.totalValue}>{formatEuroTotal(totals?.totalNetPrice)}</span>
+          </div>
+          <div className={styles.totalItem}>
+            <span className={styles.totalLabel}>Total List Price</span>
+            <span className={styles.totalValue}>{formatEuroTotal(totals?.totalListPrice)}</span>
+          </div>
+          <div className={styles.totalItem}>
+            <span className={styles.totalLabel}>Total Cost</span>
+            <span className={styles.totalValue}>{formatEuroTotal(totals?.totalCost)}</span>
+          </div>
+          <div className={styles.totalItem}>
+            <span className={styles.totalLabel}>Total Margin</span>
+            <span className={styles.totalValue}>{formatPercentTotal(totals?.totalMargin)}</span>
+          </div>
+        </div>
+      </div>
+      {currentRequestedMatch ? (
+        <MatchRequestedProductsModal
+          entry={currentRequestedMatch}
+          position={manualMatchPosition}
+          total={manualMatchTotal}
+          onAssign={handleManualAssign}
+          onSkip={handleManualSkip}
+          onRequestAddProduct={openMatchAddProduct}
+          newProductId={matchAddedProductId}
+          onClearNewProductId={clearMatchAddedProductId}
+          onRequestPayloadConsumed={clearMatchAddedProductId}
         />
-      </div>
-      <div className={styles.totalsBar}>
-        <div className={styles.totalItem}>
-          <span className={styles.totalLabel}>Total Net Price</span>
-          <span className={styles.totalValue}>{formatEuroTotal(totals?.totalNetPrice)}</span>
-        </div>
-        <div className={styles.totalItem}>
-          <span className={styles.totalLabel}>Total List Price</span>
-          <span className={styles.totalValue}>{formatEuroTotal(totals?.totalListPrice)}</span>
-        </div>
-        <div className={styles.totalItem}>
-          <span className={styles.totalLabel}>Total Cost</span>
-          <span className={styles.totalValue}>{formatEuroTotal(totals?.totalCost)}</span>
-        </div>
-        <div className={styles.totalItem}>
-          <span className={styles.totalLabel}>Total Margin</span>
-          <span className={styles.totalValue}>{formatPercentTotal(totals?.totalMargin)}</span>
-        </div>
-      </div>
-    </div>
+      ) : null}
+      <AddProductModal
+        open={matchAddProductOpen}
+        onAdded={handleMatchProductAdded}
+        onClose={closeMatchAddProduct}
+      />
+    </>
   );
 }
