@@ -722,6 +722,8 @@ export default function OfferProductsPanel({
   const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
   const lastRowCountRef = useRef<number | null>(null);
   const headerSelectAllInFlightRef = useRef(false);
+  const skipModelUpdateRef = useRef(false);
+  const collapseSkipUntilRef = useRef<number | null>(null);
   const [matchAddProductOpen, setMatchAddProductOpen] = useState(false);
   const [matchAddedProductId, setMatchAddedProductId] = useState<number | null>(null);
   const clearMatchAddedProductId = useCallback(() => setMatchAddedProductId(null), []);
@@ -1147,6 +1149,14 @@ export default function OfferProductsPanel({
   }, [setRequestedColumnsReadyFlag]);
 
   const handleGridModelUpdated = useCallback(() => {
+    if (skipModelUpdateRef.current) {
+      skipModelUpdateRef.current = false;
+      return;
+    }
+    const skipUntil = collapseSkipUntilRef.current;
+    if (typeof skipUntil === 'number' && Date.now() <= skipUntil) {
+      return;
+    }
     updateCategoryAncestors();
     triggerAutoSize();
   }, [updateCategoryAncestors, triggerAutoSize]);
@@ -1190,6 +1200,8 @@ export default function OfferProductsPanel({
   const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!isOfferProductCategory(row)) return;
     if (!hasCategoryChildren(row)) return;
+    collapseSkipUntilRef.current = Date.now() + 200;
+    skipModelUpdateRef.current = true;
     const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
     if (path.length === 0) return;
     const key = buildTreeOrderingKey(path);
