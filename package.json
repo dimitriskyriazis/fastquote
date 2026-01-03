@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "clean-next-types": "node scripts/clean-next-types.js",
+    "typecheck": "npm run clean-next-types && tsc --noEmit",
     "test": "npm run lint && npm run typecheck"
   },
   "dependencies": {

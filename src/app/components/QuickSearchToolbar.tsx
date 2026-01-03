@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useId, useRef } from 'react';
 import styles from './AgGridAll.module.css';
 
 type Props = {
@@ -12,6 +12,7 @@ type Props = {
 export default function QuickSearchToolbar({ value, onChange, onRegisterFocus }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const selectionRef = useRef<{ start: number; end: number } | null>(null);
+  const inputName = `quick-search-${useId()}`;
   const focusInput = useCallback(() => {
     const input = inputRef.current;
     if (!input) return;
@@ -58,8 +59,8 @@ export default function QuickSearchToolbar({ value, onChange, onRegisterFocus }:
           type="search"
           placeholder="Search all columns"
           aria-label="Search all columns"
-          data-disable-autofill-skip="true"
-          autoComplete="off"
+          autoComplete="new-password"
+          name={inputName}
           value={value}
           onChange={handleChange}
         />

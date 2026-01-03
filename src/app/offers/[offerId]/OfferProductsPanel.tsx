@@ -2898,6 +2898,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             rowMultiSelectWithClick
             rowDeselection
             disableAutoSize
+            cacheBlockSize={40}
           />
         </div>
         <div className={styles.totalsBar}>

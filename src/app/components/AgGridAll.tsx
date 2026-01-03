@@ -27,6 +27,7 @@ import {
   GetContextMenuItemsParams,
   GetRowIdParams,
   GridApi,
+  GridOptions,
   GridReadyEvent,
   RowNode,
   IServerSideDatasource,
@@ -235,6 +236,7 @@ type Props = {
   quickSearchValue?: string;
   onServerRequest?: (request: ServerRequestWithQuickFilter) => void;
   serverSideEnableClientSideSort?: boolean;
+  cacheBlockSize?: number;
   onHeaderSelectAllChange?: (selected: boolean, api: GridApi<RowData> | null) => void;
   onRequestPayloadConsumed?: () => void;
 };
@@ -586,6 +588,7 @@ export default function AgGridAll({
   quickSearchValue,
   onServerRequest,
   serverSideEnableClientSideSort = true,
+  cacheBlockSize,
   onHeaderSelectAllChange,
   onRequestPayloadConsumed,
 }: Props) {
@@ -625,6 +628,10 @@ export default function AgGridAll({
     },
     [columnStateNamespace, endpoint, pathname, userId, shouldPersistColumnState],
   );
+  const resolvedCacheBlockSize =
+    typeof cacheBlockSize === 'number' && Number.isFinite(cacheBlockSize) && cacheBlockSize > 0
+      ? Math.floor(cacheBlockSize)
+      : 100;
   const resolvedColumnDefs = useMemo(() => {
     if (!suppressRowGroup) return columnDefs;
     return columnDefs.map((definition) => ({
@@ -1013,11 +1020,16 @@ export default function AgGridAll({
     };
   }, [defaultColDef]);
 
-  const requestPayloadRef = useRef(requestPayload);
-  requestPayloadRef.current = requestPayload;
-  const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
+const requestPayloadRef = useRef(requestPayload);
+requestPayloadRef.current = requestPayload;
+const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 
-  const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
+  const sharedGridOptions = useMemo(
+    () => ({ suppressFillHandle: true }) as unknown as GridOptions<RowData>,
+    [],
+  );
+
+const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     getRows: async (params: IServerSideGetRowsParams<RowData>) => {
       try {
         const payload = requestPayloadRef.current && typeof requestPayloadRef.current === 'object'
@@ -1871,6 +1883,7 @@ export default function AgGridAll({
         onDrop={handleDrop}
       >
         <AgGridReact
+          gridOptions={sharedGridOptions}
           ref={gridRef}
           columnDefs={resolvedColumnDefs}
           defaultColDef={dcd}
@@ -1908,7 +1921,7 @@ export default function AgGridAll({
           suppressMovableColumns={suppressMovableColumns}
 
           // Cache settings
-          cacheBlockSize={100}
+          cacheBlockSize={resolvedCacheBlockSize}
           onGridReady={onGridReady}
           onFilterChanged={handleFilterChanged}
           onSortChanged={handleSortChanged}

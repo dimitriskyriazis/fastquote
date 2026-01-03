@@ -224,7 +224,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   RequestedDescription2: 'od.RequestedDescription2',
   RequestedQuantity: 'od.RequestedQuantity',
 };
-const QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
+const PRODUCTS_QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
 
 const ORDER_EXPRESSION_OVERRIDES: Record<string, string | string[]> = {
   TreeOrdering: ['TreeOrderingHierarchy', 'od.TreeOrdering'],
@@ -948,7 +948,7 @@ export async function POST(
     const { clauses, params: filterParams } = buildFilterClauses(gridRequest.filterModel);
     const whereClauses = [`od.OfferID = @__id`, ...clauses];
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-    const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, QUICK_FILTER_COLUMNS);
+    const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, PRODUCTS_QUICK_FILTER_COLUMNS);
     const combinedWhereSql = mergeWhereClauses(whereSql, quickFilterClause.clause);
     const combinedParams = [...filterParams, ...quickFilterClause.params];
     const orderSql =

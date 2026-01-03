@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import useCaretKeeper from '../hooks/useCaretKeeper';
 
 const CONTROL_SELECTORS = ['input', 'textarea', 'select'];
-const SKIP_ATTR = 'data-disable-autofill-skip';
+const CARET_MANAGED_ATTR = 'data-caret-visibility-managed';
 
 const markControl = (element: Element) => {
   if (
@@ -15,7 +15,7 @@ const markControl = (element: Element) => {
     return;
   }
   try {
-    element.setAttribute(SKIP_ATTR, 'true');
+    element.setAttribute(CARET_MANAGED_ATTR, 'true');
     if (element.hasAttribute('readonly')) {
       element.removeAttribute('readonly');
     }

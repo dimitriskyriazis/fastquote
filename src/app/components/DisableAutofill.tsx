@@ -9,16 +9,32 @@ const disableAutofillScript = `
   }
 
   var selectors = ["form", "input", "textarea", "select"];
-  var lockableInputTypes = ["text", "email", "search", "tel", "url", "password", "number"];
   var maskedInputTypes = ["email", "tel"];
   var counter = 0;
   var idAttr = "data-disable-autofill-id";
   var nameAttr = "data-disable-autofill-original-name";
-  var lockAttr = "data-disable-autofill-lock";
   var typeAttr = "data-disable-autofill-original-type";
   var requestFrame = (window.requestAnimationFrame || window.webkitRequestAnimationFrame || window.mozRequestAnimationFrame || function (cb) {
     return window.setTimeout(cb, 0);
   });
+  var AUTOFILL_ANIMATION_NAME = "fastquote-disable-autofill";
+  var AUTOFILL_STYLE_ID = "fastquote-disable-autofill-style";
+
+  function injectAutofillStyle() {
+    if (document.getElementById(AUTOFILL_STYLE_ID)) {
+      return;
+    }
+    var style = document.createElement("style");
+    style.id = AUTOFILL_STYLE_ID;
+    var css =
+      "@keyframes " + AUTOFILL_ANIMATION_NAME + " { from {} to {} }\\n" +
+      "input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus, " +
+      "textarea:-webkit-autofill, textarea:-webkit-autofill:hover, textarea:-webkit-autofill:focus, " +
+      "select:-webkit-autofill, select:-webkit-autofill:hover, select:-webkit-autofill:focus { " +
+      "animation-name: " + AUTOFILL_ANIMATION_NAME + "; animation-duration: 0.001s; animation-iteration-count: 1; }";
+    style.textContent = css;
+    (document.head || document.documentElement).appendChild(style);
+  }
 
   function forEach(list, callback) {
     if (!list || !callback) {
@@ -41,18 +57,6 @@ const disableAutofillScript = `
     return id;
   }
 
-  function lockInput(element) {
-    if (element && typeof element.setAttribute === "function") {
-      element.setAttribute("readonly", "readonly");
-    }
-  }
-
-  function unlockInput(element) {
-    if (element && typeof element.removeAttribute === "function") {
-      element.removeAttribute("readonly");
-    }
-  }
-
   function applyAttributes(node) {
     if (!node || node.nodeType !== 1 || !node.tagName) {
       return;
@@ -73,6 +77,9 @@ const disableAutofillScript = `
     }
 
     if (tag !== "form") {
+      if (element.getAttribute("data-disable-autofill-skip") === "true") {
+        return;
+      }
       if (element.getAttribute("autocorrect") !== "off") {
         element.setAttribute("autocorrect", "off");
       }
@@ -84,18 +91,19 @@ const disableAutofillScript = `
       }
 
       if (typeof element.getAttribute === "function") {
-        var currentName = element.getAttribute("name");
-        var storedName = element.getAttribute(nameAttr);
-        if (!storedName && currentName) {
-          element.setAttribute(nameAttr, currentName);
-          storedName = currentName;
+      var currentName = element.getAttribute("name");
+      var normalizedCurrentName = typeof currentName === "string" ? currentName : "";
+      var storedName = element.getAttribute(nameAttr);
+      if (storedName === null) {
+        element.setAttribute(nameAttr, normalizedCurrentName);
+        storedName = normalizedCurrentName;
+      }
+      if (uniqueId) {
+        var disabledName = "disabled-" + uniqueId;
+        if (element.getAttribute("name") !== disabledName) {
+          element.setAttribute("name", disabledName);
         }
-        if (storedName && uniqueId) {
-          var disabledName = "disabled-" + uniqueId;
-          if (currentName !== disabledName) {
-            element.setAttribute("name", disabledName);
-          }
-        }
+      }
       }
 
       if (tag === "input") {
@@ -114,29 +122,6 @@ const disableAutofillScript = `
             element.setAttribute("type", "text");
           } catch (error) {
             // ignore if browser disallows changing type
-          }
-        }
-
-        var type = canonicalType;
-        if (lockableInputTypes.indexOf(type) !== -1) {
-          if (element.getAttribute("data-disable-autofill-skip") === "true") {
-            return;
-          }
-          if (element.getAttribute(lockAttr) !== "true") {
-            element.setAttribute(lockAttr, "true");
-            lockInput(element);
-            var release = function () {
-              unlockInput(element);
-            };
-        element.addEventListener("keydown", release);
-        element.addEventListener("paste", release);
-        element.addEventListener("input", release);
-        element.addEventListener("focus", release);
-        element.addEventListener("blur", function () {
-          lockInput(element);
-        });
-          } else if (element.getAttribute("readonly") !== "readonly") {
-            lockInput(element);
           }
         }
       }
@@ -166,8 +151,12 @@ const disableAutofillScript = `
     var elements = form.querySelectorAll("[" + nameAttr + "],[" + typeAttr + "]");
     forEach(elements, function (element) {
       var originalName = element.getAttribute(nameAttr);
-      if (originalName) {
-        element.setAttribute("name", originalName);
+      if (originalName !== null) {
+        if (originalName.length === 0) {
+          element.removeAttribute("name");
+        } else {
+          element.setAttribute("name", originalName);
+        }
       }
       var originalType = element.getAttribute(typeAttr);
       if (originalType) {
@@ -182,6 +171,29 @@ const disableAutofillScript = `
       forEach(elements, function (element) {
         applyAttributes(element);
       });
+    });
+  }
+
+  function handleAutofillAnimation(event) {
+    if (event.animationName !== AUTOFILL_ANIMATION_NAME) {
+      return;
+    }
+    var target = event.target;
+    if (
+      !(target instanceof HTMLInputElement) &&
+      !(target instanceof HTMLTextAreaElement) &&
+      !(target instanceof HTMLSelectElement)
+    ) {
+      return;
+    }
+    requestFrame(function () {
+      try {
+        target.value = "";
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+      } catch (error) {
+        // ignore
+      }
+      applyAttributes(target);
     });
   }
 
@@ -210,6 +222,10 @@ const disableAutofillScript = `
     });
   }
 
+  injectAutofillStyle();
+  document.addEventListener("animationstart", handleAutofillAnimation, true);
+  document.addEventListener("webkitAnimationStart", handleAutofillAnimation, true);
+
   document.addEventListener(
     "submit",
     function (event) {
@@ -224,6 +240,14 @@ const disableAutofillScript = `
       if (matchesForm) {
         restoreOriginalNames(target);
       }
+    },
+    true,
+  );
+
+  document.addEventListener(
+    "focusin",
+    function (event) {
+      applyAttributes(event.target);
     },
     true,
   );
@@ -248,7 +272,7 @@ export default function DisableAutofill() {
   return (
     <Script
       id="disable-autofill-script"
-      strategy="afterInteractive"
+      strategy="beforeInteractive"
       dangerouslySetInnerHTML={{ __html: disableAutofillScript }}
     />
   );

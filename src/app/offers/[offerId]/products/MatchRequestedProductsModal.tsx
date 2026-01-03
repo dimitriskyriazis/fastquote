@@ -308,6 +308,7 @@ export default function MatchRequestedProductsModal({
                 defaultColDef={productDefaultColDef}
                 requestPayload={highlightRequestPayload}
                 serverSideEnableClientSideSort={false}
+                cacheBlockSize={25}
                 onRequestPayloadConsumed={onRequestPayloadConsumed}
                 rowSelection="single"
                 rowMultiSelectWithClick
