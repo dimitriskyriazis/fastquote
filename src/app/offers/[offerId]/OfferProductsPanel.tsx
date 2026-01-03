@@ -719,7 +719,6 @@ export default function OfferProductsPanel({
   const appliedRequestedColumnVisibilityRef = useRef<Record<RequestedDisplayFieldKey, boolean> | null>(null);
   const appliedRequestedItemNoVisibleRef = useRef<boolean>(false);
   const appliedShowRequestedColumnsRef = useRef<boolean | null>(null);
-  const recentCollapseKeyRef = useRef<string | null>(null);
   const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
   const lastRowCountRef = useRef<number | null>(null);
   const headerSelectAllInFlightRef = useRef(false);
@@ -1202,7 +1201,6 @@ export default function OfferProductsPanel({
       } else {
         next.add(key);
       }
-      recentCollapseKeyRef.current = key;
       return next;
     });
   }, [hasCategoryChildren]);
@@ -2043,28 +2041,19 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   }, [processedRequestedMatches, requestedMatchQueue.length]);
 
   useEffect(() => {
-    const key = recentCollapseKeyRef.current;
-    if (!key) return;
-    recentCollapseKeyRef.current = null;
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return;
-    const nodesToRefresh: GridRowNode[] = [];
-    const prefix = `${key}.`;
-    api.forEachNode((node) => {
-      const row = node.data ?? null;
-      if (!row) return;
-      const path = parseTreeOrderingPath((row as { TreeOrdering?: unknown } | null | undefined)?.TreeOrdering ?? null);
-      if (path.length === 0) return;
-      const nodeKey = buildTreeOrderingKey(path);
-      if (nodeKey === key || nodeKey.startsWith(prefix)) {
-        nodesToRefresh.push(node);
+    if (typeof api.resetRowHeights === 'function') {
+      try {
+        api.resetRowHeights();
+      } catch (err) {
+        console.warn('Failed to reset row heights after collapsing categories', err);
       }
-    });
-    if (nodesToRefresh.length === 0) return;
+    }
     try {
-      api.redrawRows({ rowNodes: nodesToRefresh });
+      api.redrawRows();
     } catch (err) {
-      console.warn('Failed to refresh collapsed rows', err);
+      console.warn('Failed to redraw rows after collapsing categories', err);
     }
   }, [collapsedCategoryPaths]);
 
