@@ -36,10 +36,17 @@ const looksLikeOfferIdPlaceholder = (text: string, offerId: string) => {
 };
 
 export default function RecentOffersSection() {
-  const [recentOffers, setRecentOffers] = useState<RecentOfferSummary[]>(() =>
-    sortRecentOffers(loadRecentOffers()),
-  );
+  const [recentOffers, setRecentOffers] = useState<RecentOfferSummary[]>([]);
   const [descriptionOverrides, setDescriptionOverrides] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setRecentOffers(sortRecentOffers(loadRecentOffers()));
+    }, 0);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, []);
 
   useEffect(() => {
     const handleStorage = () => {

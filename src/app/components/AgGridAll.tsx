@@ -54,6 +54,7 @@ import { GridQuickSearchContext } from './GridQuickSearchProvider';
 import { restoreCaretSelection } from '../hooks/useCaretKeeper';
 
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
+const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
 
 const resolveElementFromEventTarget = (target: EventTarget | null): Element | null => {
   let current: EventTarget | null = target;
@@ -72,6 +73,9 @@ const isActionMenuEventTarget = (target: EventTarget | null): boolean => {
   const element = resolveElementFromEventTarget(target);
   return Boolean(element?.closest(ACTION_MENU_SELECTOR));
 };
+
+const isSelectionPreservingTarget = (target: Element | null) =>
+  Boolean(target?.closest(PRESERVE_SELECTION_SELECTOR));
 
 const scheduleDeselectAllRows = (api?: GridApi<RowData> | null) => {
   if (!api || typeof api.deselectAll !== 'function') return;
@@ -771,7 +775,8 @@ export default function AgGridAll({
       const element = resolveElementFromEventTarget(target);
       const clickedInsideShell = Boolean(element?.closest('.ag-root-wrapper'));
       const clickedOnPageHeader = isPageHeaderArea(element);
-      if (!clickedInsideShell || clickedOnPageHeader) {
+      const clickedInsidePersistentArea = isSelectionPreservingTarget(element);
+      if ((!clickedInsideShell && !clickedInsidePersistentArea) || clickedOnPageHeader) {
         scheduleDeselectAllRows(getCurrentGridApi());
       }
       clearContextMenuRow();
@@ -779,8 +784,14 @@ export default function AgGridAll({
     const handleMouseDown = (event: MouseEvent) => {
       const element = resolveElementFromEventTarget(event.target ?? null);
       const clickedOnPageHeader = isPageHeaderArea(element);
+      const clickedInsidePersistentArea = isSelectionPreservingTarget(element);
       if (!element || clickedOnPageHeader) {
-        scheduleDeselectAllRows(getCurrentGridApi());
+        if (!clickedInsidePersistentArea) {
+          scheduleDeselectAllRows(getCurrentGridApi());
+        }
+        return;
+      }
+      if (clickedInsidePersistentArea) {
         return;
       }
       if (
@@ -1025,7 +1036,13 @@ requestPayloadRef.current = requestPayload;
 const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 
   const sharedGridOptions = useMemo(
-    () => ({ suppressFillHandle: true }) as unknown as GridOptions<RowData>,
+    () => ({
+      cellSelection: {
+        handle: {
+          mode: 'range',
+        },
+      },
+    }) as unknown as GridOptions<RowData>,
     [],
   );
 

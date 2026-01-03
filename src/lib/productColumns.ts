@@ -2,14 +2,6 @@ import type { ColDef } from 'ag-grid-community';
 
 export const productGridColumnDefs: ColDef[] = [
   {
-    field: 'ProductID',
-    headerName: 'Product ID',
-    hide: true,
-    filter: false,
-    enableRowGroup: false,
-    suppressColumnsToolPanel: true,
-  },
-  {
     field: 'Brand',
     headerName: 'Brand',
     enableRowGroup: true,

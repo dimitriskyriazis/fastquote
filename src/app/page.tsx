@@ -18,7 +18,12 @@ export default function Page() {
           <p className={`${styles.heroCaption} ${styles.signature}`}>Created by Dimitris Kyriazis</p>
         </div>
         <div className={styles.heroImage}>
-          <Image src={telmacoLogo} alt="FastQuote emblem" className={styles.logoImage} />
+          <Image
+            src={telmacoLogo}
+            alt="Telmaco logo"
+            className={styles.logoImage}
+            loading="eager"
+          />
           <p className={styles.heroCaption}>Powered by Telmaco</p>
         </div>
       </section>

@@ -140,7 +140,8 @@ export default function MatchRequestedProductsModal({
   }, [selectedProductId, handleAssignWithId, getSelectedProductIdFromApi]);
 
   const handleRowDoubleClick = useCallback((event: RowDoubleClickedEvent<MatcherRowData>) => {
-    const productId = normalizeProductId((event.data as { ProductID?: unknown }).ProductID ?? null);
+    const rawProductId = (event.data as { ProductID?: unknown }).ProductID ?? null;
+    const productId = normalizeProductId(rawProductId);
     if (productId == null) return;
     void handleAssignWithId(productId);
   }, [handleAssignWithId]);
@@ -325,6 +326,7 @@ export default function MatchRequestedProductsModal({
               <button
                 type="button"
                 className={styles.primaryButton}
+                data-fastquote-keep-selection="true"
                 onClick={handleAssign}
                 disabled={assigning || selectedProductId == null}
               >
