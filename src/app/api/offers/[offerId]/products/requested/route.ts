@@ -39,6 +39,7 @@ type RowForInsert = NormalizedRow & {
   resolvedTreeOrdering: string;
   parentTreeOrdering: string | null;
   isCategory: boolean;
+  productDescription: string | null;
 };
 
 type RequestedFieldKey =
@@ -65,6 +66,17 @@ const REQUESTED_COLUMN_METADATA: Array<{ key: ColumnLengthKey; column: string }>
   { key: 'RequestedQuantity', column: 'RequestedQuantity' },
   { key: 'ProductDescription', column: 'ProductDescription' },
 ];
+
+const SQL_PARAMETER_LIMIT = 2100;
+const UPDATE_ROW_PARAM_COUNT = 10;
+const INSERT_ROW_PARAM_COUNT = 12;
+const computeChunkSize = (baseParams: number, perRowParams: number) => {
+  const available = SQL_PARAMETER_LIMIT - baseParams;
+  if (available <= 0) return 1;
+  return Math.max(1, Math.floor(available / perRowParams));
+};
+
+const getPrimaryDescription = (row: NormalizedRow) => row.description ?? row.description2 ?? row.description3;
 
 const normalizeString = (value: unknown, maxLength = 255): string | null => {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
@@ -122,7 +134,16 @@ const normalizeRows = (rows: RequestedRowInput[] | undefined): NormalizedRow[] =
     const description2 = normalizeDescription(row.description2 ?? (row as Record<string, unknown>).Description2);
     const description3 = normalizeDescription(row.description3 ?? (row as Record<string, unknown>).Description3);
     const quantity = normalizeQuantity(row.quantity ?? (row as Record<string, unknown>).Quantity);
-    if (!itemNo && !brand && !modelNumber && !partNumber && !description && !description2 && quantity == null) {
+    if (
+      !itemNo &&
+      !brand &&
+      !modelNumber &&
+      !partNumber &&
+      !description &&
+      !description2 &&
+      !description3 &&
+      quantity == null
+    ) {
       return;
     }
     normalized.push({
@@ -214,6 +235,7 @@ const assignSequentialOrdering = (
       resolvedTreeOrdering: resolvedTreeOrdering ?? String(nextRoot),
       parentTreeOrdering: parentTreeOrdering,
       isCategory,
+      productDescription: getPrimaryDescription(row),
     });
   });
   return { rows: resolved, nextRoot };
@@ -319,7 +341,7 @@ export async function POST(
     const rowsNeedingInsert: NormalizedRow[] = [...rowsWithoutTree];
 
     if (rowsWithTree.length) {
-      const chunkSize = 200;
+      const chunkSize = computeChunkSize(2, UPDATE_ROW_PARAM_COUNT);
       for (let idx = 0; idx < rowsWithTree.length; idx += chunkSize) {
         const chunk = rowsWithTree.slice(idx, idx + chunkSize);
         if (!chunk.length) continue;
@@ -336,10 +358,11 @@ export async function POST(
           request.input(`desc2_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description2);
           request.input(`desc3_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description3);
           request.input(`qty_${chunkIdx}`, getDecimalType(), row.quantity);
+          request.input(`productDesc_${chunkIdx}`, sql.NVarChar(sql.MAX), getPrimaryDescription(row));
         });
         const values = chunk
           .map((_, chunkIdx) =>
-            `(@tree_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @qty_${chunkIdx})`,
+            `(@tree_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @qty_${chunkIdx}, @productDesc_${chunkIdx})`,
           )
           .join(', ');
         const query = `
@@ -352,10 +375,11 @@ export async function POST(
             RequestedDescription NVARCHAR(MAX) NULL,
             RequestedDescription2 NVARCHAR(MAX) NULL,
             RequestedDescription3 NVARCHAR(MAX) NULL,
-            RequestedQuantity DECIMAL(18, 4) NULL
+            RequestedQuantity DECIMAL(18, 4) NULL,
+            ProductDescription NVARCHAR(MAX) NULL
           );
 
-          INSERT INTO @payload (TreeOrdering, RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity)
+          INSERT INTO @payload (TreeOrdering, RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity, ProductDescription)
           VALUES ${values};
 
           DECLARE @updated TABLE (TreeOrdering NVARCHAR(255) NOT NULL);
@@ -370,6 +394,7 @@ export async function POST(
             RequestedDescription2 = payload.RequestedDescription2,
             RequestedDescription3 = payload.RequestedDescription3,
             RequestedQuantity = payload.RequestedQuantity,
+            ProductDescription = payload.ProductDescription,
             ModifiedOn = SYSUTCDATETIME(),
             ModifiedBy = @__modifiedBy
           OUTPUT INSERTED.TreeOrdering INTO @updated(TreeOrdering)
@@ -385,7 +410,8 @@ export async function POST(
                  payload.RequestedDescription,
                  payload.RequestedDescription2,
                  payload.RequestedDescription3,
-                 payload.RequestedQuantity
+                 payload.RequestedQuantity,
+                 payload.ProductDescription
           FROM @payload payload
           WHERE NOT EXISTS (
             SELECT 1 FROM @updated updated WHERE updated.TreeOrdering = payload.TreeOrdering
@@ -401,6 +427,7 @@ export async function POST(
           RequestedDescription2: string | null;
           RequestedDescription3: string | null;
           RequestedQuantity: number | null;
+          ProductDescription: string | null;
         }>(query);
         const unmatched = result.recordset ?? [];
         updatedCount += chunk.length - unmatched.length;
@@ -450,7 +477,7 @@ export async function POST(
     const { rows: rowsToInsert, nextRoot } = assignSequentialOrdering(rowsNeedingInsert, nextRootValue);
     nextRootValue = nextRoot;
 
-    const chunkSize = 200;
+    const chunkSize = computeChunkSize(3, INSERT_ROW_PARAM_COUNT);
     for (let idx = 0; idx < rowsToInsert.length; idx += chunkSize) {
       const chunk = rowsToInsert.slice(idx, idx + chunkSize);
       if (!chunk.length) continue;
@@ -470,10 +497,11 @@ export async function POST(
         request.input(`desc3_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description3);
         request.input(`rqty_${chunkIdx}`, getDecimalType(), row.quantity);
         request.input(`isCategory_${chunkIdx}`, sql.Bit, row.isCategory ? 1 : 0);
+        request.input(`productDesc_${chunkIdx}`, sql.NVarChar(sql.MAX), row.productDescription);
       });
         const values = chunk
           .map((_, chunkIdx) =>
-            `(@tree_${chunkIdx}, @parent_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @rqty_${chunkIdx}, @isCategory_${chunkIdx})`,
+            `(@tree_${chunkIdx}, @parent_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @rqty_${chunkIdx}, @isCategory_${chunkIdx}, @productDesc_${chunkIdx})`,
           )
           .join(', ');
         const query = `
@@ -489,7 +517,8 @@ export async function POST(
           RequestedDescription2 NVARCHAR(MAX) NULL,
           RequestedDescription3 NVARCHAR(MAX) NULL,
           RequestedQuantity DECIMAL(18, 4) NULL,
-          IsCategory BIT NOT NULL
+          IsCategory BIT NOT NULL,
+          ProductDescription NVARCHAR(MAX) NULL
         );
 
         INSERT INTO @payload (
@@ -503,7 +532,8 @@ export async function POST(
           RequestedDescription2,
           RequestedDescription3,
           RequestedQuantity,
-          IsCategory
+          IsCategory,
+          ProductDescription
         )
         VALUES ${values};
 
@@ -538,7 +568,7 @@ export async function POST(
           1,
           0,
           payload.IsCategory,
-          NULL,
+          payload.ProductDescription,
           0,
           payload.RequestedItemNo,
           payload.RequestedBrand,

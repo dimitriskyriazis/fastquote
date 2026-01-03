@@ -102,6 +102,7 @@ type ProductRow = {
   RequestedPartNo: string | null;
   RequestedDescription: string | null;
   RequestedDescription2: string | null;
+  RequestedDescription3: string | null;
   RequestedQuantity: number | null;
   __isRequestedRow?: number | bigint | null;
   __requestedItemOrdinal?: string | null;
@@ -114,6 +115,7 @@ type RequestedFieldKey =
   | 'RequestedPartNo'
   | 'RequestedDescription'
   | 'RequestedDescription2'
+  | 'RequestedDescription3'
   | 'RequestedQuantity';
 
 type RequestedColumns = Record<RequestedFieldKey, boolean>;
@@ -129,6 +131,7 @@ type ProductRowWithCount = ProductRow & {
   __hasRequestedPartNo?: number | bigint | null;
   __hasRequestedDescription?: number | bigint | null;
   __hasRequestedDescription2?: number | bigint | null;
+  __hasRequestedDescription3?: number | bigint | null;
   __hasRequestedQuantity?: number | bigint | null;
   __isRequestedRow?: number | bigint | null;
   __requestedItemOrdinal?: string | null;
@@ -166,6 +169,7 @@ type DetailUpdateInput = {
   RequestedPartNo?: string | null;
   RequestedDescription?: string | null;
   RequestedDescription2?: string | null;
+  RequestedDescription3?: string | null;
   RequestedQuantity?: number | string | null;
 };
 
@@ -222,6 +226,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   RequestedPartNo: 'od.RequestedPartNo',
   RequestedDescription: 'od.RequestedDescription',
   RequestedDescription2: 'od.RequestedDescription2',
+  RequestedDescription3: 'od.RequestedDescription3',
   RequestedQuantity: 'od.RequestedQuantity',
 };
 const PRODUCTS_QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
@@ -999,6 +1004,7 @@ export async function POST(
         od.RequestedPartNo,
         od.RequestedDescription,
         od.RequestedDescription2,
+        od.RequestedDescription3,
         od.RequestedQuantity,
         CASE
           WHEN ISNULL(od.IsCategory, 0) = 1 THEN 0
@@ -1008,6 +1014,7 @@ export async function POST(
             OR NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL
             OR NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL
             OR NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL
+            OR NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL
             OR od.RequestedQuantity IS NOT NULL
           THEN 1
           ELSE 0
@@ -1019,6 +1026,7 @@ export async function POST(
         MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedPartNo,
         MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription,
         MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription2,
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription3,
         MAX(CASE WHEN od.RequestedQuantity IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedQuantity
       FROM dbo.OfferDetails od
         LEFT OUTER JOIN dbo.Products p ON od.ProductID = p.ID
@@ -1054,6 +1062,7 @@ export async function POST(
       RequestedPartNo: normalizeAggregateFlag(aggregateRow?.__hasRequestedPartNo ?? 0),
       RequestedDescription: normalizeAggregateFlag(aggregateRow?.__hasRequestedDescription ?? 0),
       RequestedDescription2: normalizeAggregateFlag(aggregateRow?.__hasRequestedDescription2 ?? 0),
+      RequestedDescription3: normalizeAggregateFlag(aggregateRow?.__hasRequestedDescription3 ?? 0),
       RequestedQuantity: normalizeAggregateFlag(aggregateRow?.__hasRequestedQuantity ?? 0),
     };
 
@@ -1063,14 +1072,15 @@ export async function POST(
         __sumTotalPrice,
         __sumTotalNet,
         __sumTotalCost,
-        __hasRequestedItemNo,
-        __hasRequestedBrand,
-        __hasRequestedModelNo,
-        __hasRequestedPartNo,
-        __hasRequestedDescription,
-        __hasRequestedDescription2,
-        __hasRequestedQuantity,
-        ...rest
+      __hasRequestedItemNo,
+      __hasRequestedBrand,
+      __hasRequestedModelNo,
+      __hasRequestedPartNo,
+      __hasRequestedDescription,
+      __hasRequestedDescription2,
+      __hasRequestedDescription3,
+      __hasRequestedQuantity,
+      ...rest
       } = row;
       void __totalCount;
       void __sumTotalPrice;
@@ -1082,6 +1092,7 @@ export async function POST(
       void __hasRequestedPartNo;
       void __hasRequestedDescription;
       void __hasRequestedDescription2;
+      void __hasRequestedDescription3;
       void __hasRequestedQuantity;
       return rest;
     });
@@ -1205,6 +1216,9 @@ export async function PATCH(
         const hasRequestedDescription2 = entry
           ? Object.prototype.hasOwnProperty.call(entry, 'RequestedDescription2')
           : false;
+        const hasRequestedDescription3 = entry
+          ? Object.prototype.hasOwnProperty.call(entry, 'RequestedDescription3')
+          : false;
         const hasRequestedQuantity = entry
           ? Object.prototype.hasOwnProperty.call(entry, 'RequestedQuantity')
           : false;
@@ -1222,6 +1236,7 @@ export async function PATCH(
           && !hasRequestedPartNo
           && !hasRequestedDescription
           && !hasRequestedDescription2
+          && !hasRequestedDescription3
           && !hasRequestedQuantity
         ) {
           return null;
@@ -1254,6 +1269,9 @@ export async function PATCH(
           : null;
         const requestedDescription2 = hasRequestedDescription2
           ? normalizeRequestedTextValue(entry?.RequestedDescription2 ?? null)
+          : null;
+        const requestedDescription3 = hasRequestedDescription3
+          ? normalizeRequestedTextValue(entry?.RequestedDescription3 ?? null)
           : null;
         let requestedQuantity: number | null = null;
         if (hasRequestedQuantity) {
@@ -1321,6 +1339,7 @@ export async function PATCH(
           RequestedPartNo: requestedPartNo,
           RequestedDescription: requestedDescription,
           RequestedDescription2: requestedDescription2,
+          RequestedDescription3: requestedDescription3,
           RequestedQuantity: requestedQuantity,
         };
       })
@@ -1342,6 +1361,7 @@ export async function PATCH(
         hasRequestedPartNo: boolean;
         hasRequestedDescription: boolean;
         hasRequestedDescription2: boolean;
+        hasRequestedDescription3: boolean;
         hasRequestedQuantity: boolean;
         customerDiscount: number | null;
         telmacoDiscount: number | null;
@@ -1357,6 +1377,7 @@ export async function PATCH(
         RequestedPartNo: string | null;
         RequestedDescription: string | null;
         RequestedDescription2: string | null;
+        RequestedDescription3: string | null;
         RequestedQuantity: number | null;
       } => Boolean(entry));
 
@@ -1463,6 +1484,8 @@ export async function PATCH(
         HasRequestedDescription: boolean;
         RequestedDescription2: string | null;
         HasRequestedDescription2: boolean;
+        RequestedDescription3: string | null;
+        HasRequestedDescription3: boolean;
         RequestedQuantity: number | null;
         HasRequestedQuantity: boolean;
         IsCategory: boolean | null;
@@ -1603,6 +1626,8 @@ export async function PATCH(
           HasRequestedDescription: entry.hasRequestedDescription,
           RequestedDescription2: entry.RequestedDescription2,
           HasRequestedDescription2: entry.hasRequestedDescription2,
+          RequestedDescription3: entry.RequestedDescription3,
+          HasRequestedDescription3: entry.hasRequestedDescription3,
           RequestedQuantity: entry.RequestedQuantity,
           HasRequestedQuantity: entry.hasRequestedQuantity,
           IsCategory: entry.hasIsCategory ? entry.IsCategory : null,
@@ -1653,6 +1678,8 @@ export async function PATCH(
         const hasRequestedDescriptionParam = `hasRequestedDescription_${rowIdx}`;
         const requestedDescription2Param = `requestedDescription2_${rowIdx}`;
         const hasRequestedDescription2Param = `hasRequestedDescription2_${rowIdx}`;
+        const requestedDescription3Param = `requestedDescription3_${rowIdx}`;
+        const hasRequestedDescription3Param = `hasRequestedDescription3_${rowIdx}`;
         const requestedQuantityParam = `requestedQuantity_${rowIdx}`;
         const hasRequestedQuantityParam = `hasRequestedQuantity_${rowIdx}`;
         request.input(idParam, sql.Int, row.OfferDetailID);
@@ -1691,11 +1718,13 @@ export async function PATCH(
         request.input(hasRequestedDescriptionParam, sql.Bit, row.HasRequestedDescription ? 1 : 0);
         request.input(requestedDescription2Param, sql.NVarChar(4000), row.HasRequestedDescription2 ? row.RequestedDescription2 : null);
         request.input(hasRequestedDescription2Param, sql.Bit, row.HasRequestedDescription2 ? 1 : 0);
+        request.input(requestedDescription3Param, sql.NVarChar(4000), row.HasRequestedDescription3 ? row.RequestedDescription3 : null);
+        request.input(hasRequestedDescription3Param, sql.Bit, row.HasRequestedDescription3 ? 1 : 0);
         request.input(requestedQuantityParam, decimalType, row.RequestedQuantity);
         request.input(hasRequestedQuantityParam, sql.Bit, row.HasRequestedQuantity ? 1 : 0);
         request.input(isCategoryParam, sql.Bit, row.HasIsCategory ? (row.IsCategory ? 1 : 0) : null);
         request.input(hasIsCategoryParam, sql.Bit, row.HasIsCategory ? 1 : 0);
-        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam})`);
+        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam})`);
       });
 
       const query = `
@@ -1728,6 +1757,8 @@ export async function PATCH(
           HasRequestedDescription,
           RequestedDescription2,
           HasRequestedDescription2,
+          RequestedDescription3,
+          HasRequestedDescription3,
           RequestedQuantity,
           HasRequestedQuantity,
           IsCategory,
@@ -1759,11 +1790,13 @@ export async function PATCH(
             HasRequestedModelNo,
             RequestedPartNo,
             HasRequestedPartNo,
-            RequestedDescription,
-            HasRequestedDescription,
-            RequestedDescription2,
-            HasRequestedDescription2,
-            RequestedQuantity,
+          RequestedDescription,
+          HasRequestedDescription,
+          RequestedDescription2,
+          HasRequestedDescription2,
+          RequestedDescription3,
+          HasRequestedDescription3,
+          RequestedQuantity,
             HasRequestedQuantity,
             IsCategory,
             HasIsCategory
@@ -1788,6 +1821,7 @@ export async function PATCH(
             od.RequestedPartNo = CASE WHEN PendingUpdates.HasRequestedPartNo = 1 THEN PendingUpdates.RequestedPartNo ELSE od.RequestedPartNo END,
             od.RequestedDescription = CASE WHEN PendingUpdates.HasRequestedDescription = 1 THEN PendingUpdates.RequestedDescription ELSE od.RequestedDescription END,
             od.RequestedDescription2 = CASE WHEN PendingUpdates.HasRequestedDescription2 = 1 THEN PendingUpdates.RequestedDescription2 ELSE od.RequestedDescription2 END,
+            od.RequestedDescription3 = CASE WHEN PendingUpdates.HasRequestedDescription3 = 1 THEN PendingUpdates.RequestedDescription3 ELSE od.RequestedDescription3 END,
             od.RequestedQuantity = CASE WHEN PendingUpdates.HasRequestedQuantity = 1 THEN PendingUpdates.RequestedQuantity ELSE od.RequestedQuantity END,
             od.IsCategory = CASE WHEN PendingUpdates.HasIsCategory = 1 THEN PendingUpdates.IsCategory ELSE od.IsCategory END,
             od.ModifiedOn = SYSUTCDATETIME(),

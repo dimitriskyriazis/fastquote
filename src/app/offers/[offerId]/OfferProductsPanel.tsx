@@ -884,7 +884,10 @@ export default function OfferProductsPanel({
   const autoSizeExclusions = useMemo<string[]>(() => [
     'Description',
     'RequestedItemNo',
-    ...REQUESTED_DISPLAY_FIELD_KEYS,
+    'RequestedDescription',
+    'RequestedDescription2',
+    'RequestedDescription3',
+    'RequestedQuantity',
   ], []);
 
   const autoSizeOfferColumns = useCallback(() => {
@@ -2123,6 +2126,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       const requestedDescriptionSecondaryRaw = getExactTextValue(
         (data as { RequestedDescription2?: unknown }).RequestedDescription2 ?? null,
       );
+      const requestedDescriptionTertiary = normalizeDescriptionValue(
+        (data as { RequestedDescription3?: unknown }).RequestedDescription3 ?? null,
+      );
+      const requestedDescriptionTertiaryRaw = getExactTextValue(
+        (data as { RequestedDescription3?: unknown }).RequestedDescription3 ?? null,
+      );
       const descriptionOverrideRaw = getExactTextValue(
         (data as { Description?: unknown }).Description ?? null,
       );
@@ -2131,7 +2140,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       let treeOrderingValue = requestedTree || (typeof treeOrderingRaw === 'string'
         ? treeOrderingRaw.trim()
         : null);
-      const requestedDescriptionValue = requestedDescriptionPrimary ?? requestedDescriptionSecondary;
+      const requestedDescriptionValue = requestedDescriptionPrimary ?? requestedDescriptionSecondary ?? requestedDescriptionTertiary;
       const descriptionOverride = normalizeDescriptionValue(descriptionOverrideRaw);
       const normalizedDescriptionValues = getNormalizedRequestedDescriptionValues(data);
       const hasSingleDescriptionOnly = normalizedDescriptionValues.length > 0
@@ -2173,6 +2182,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         if (requestedDescriptionSecondary != null) {
           payloadEntry.RequestedDescription2 = requestedDescriptionSecondary;
         }
+        if (requestedDescriptionTertiary != null) {
+          payloadEntry.RequestedDescription3 = requestedDescriptionTertiary;
+        }
         updates.push(payloadEntry);
         promoteNodeToCategory(node, treeOrderingValue ?? null, categoryDescription);
         categoriesAdded += 1;
@@ -2209,6 +2221,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         const description = productDescription
           ?? requestedDescriptionPrimaryRaw
           ?? requestedDescriptionSecondaryRaw
+          ?? requestedDescriptionTertiaryRaw
           ?? descriptionOverrideRaw
           ?? null;
         const requestedPartNumberRaw = getExactTextValue(

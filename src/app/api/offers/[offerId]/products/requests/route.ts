@@ -70,9 +70,10 @@ export async function GET(
         od.RequestedBrand,
         od.RequestedModelNo,
         od.RequestedPartNo,
-        od.RequestedDescription,
-        od.RequestedDescription2,
-        od.RequestedQuantity
+      od.RequestedDescription,
+      od.RequestedDescription2,
+      od.RequestedDescription3,
+      od.RequestedQuantity
       FROM dbo.OfferDetails od
       WHERE od.OfferID = @__offerId
         AND (
@@ -90,6 +91,7 @@ export async function GET(
           OR NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL
           OR NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL
           OR NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL
+          OR NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL
           OR od.RequestedQuantity IS NOT NULL
         )
       ORDER BY ${TREE_ORDERING_HIERARCHY_EXPRESSION}, od.TreeOrdering;
@@ -104,6 +106,7 @@ export async function GET(
       RequestedPartNo: string | null;
       RequestedDescription: string | null;
       RequestedDescription2: string | null;
+      RequestedDescription3: string | null;
       RequestedQuantity: number | null;
     }>(query);
 
@@ -116,6 +119,7 @@ export async function GET(
       RequestedPartNo: row.RequestedPartNo,
       RequestedDescription: row.RequestedDescription,
       RequestedDescription2: row.RequestedDescription2,
+      RequestedDescription3: row.RequestedDescription3,
       RequestedQuantity: row.RequestedQuantity,
     }));
 

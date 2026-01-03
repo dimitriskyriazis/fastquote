@@ -67,6 +67,23 @@
   cursor: pointer !important;
 }
 
+.ag-theme-quartz .ag-column-select-column,
+.ag-theme-quartz .ag-column-select-column-group,
+.ag-theme-quartz .ag-column-select-column-label {
+  cursor: pointer !important;
+}
+
+.ag-column-select-column,
+.ag-column-select-column *,
+.ag-column-select-column-group,
+.ag-column-select-column-group *,
+.ag-column-select-column-label,
+.ag-column-select-column-label *,
+.ag-column-select-virtual-list-item,
+.ag-column-select-virtual-list-item * {
+  cursor: pointer !important;
+}
+
 .ag-theme-quartz .ag-cell,
 .ag-theme-quartz .ag-header-cell,
 .ag-theme-quartz .ag-header-group-cell {

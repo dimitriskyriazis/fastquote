@@ -40,7 +40,8 @@ const HEADER_SYNONYMS: Record<HeaderColumnKey, string[]> = {
   warning: ["warning"],
 };
 
-const UPLOAD_ROOT = path.join("C:", "Users", "dim.kyriazis", "PriceLists");
+//const UPLOAD_ROOT = path.join("C:", "Users", "dim.kyriazis", "PriceLists");
+const UPLOAD_ROOT = path.join("C:", "Users", "dimik", "PriceLists");
 // const UPLOAD_ROOT = path.join("C:", "inetpub", "wwwroot", "Telmaco", "PriceListUploads");
 
 type SqlTypeLike = unknown;
@@ -392,6 +393,45 @@ const saveUploadedFile = async (buffer: Buffer, originalName: string | null | un
   return { absolutePath, relativePath, fileName };
 };
 
+const chunkArray = <T>(source: readonly T[], size: number) => {
+  const chunks: T[][] = [];
+  for (let idx = 0; idx < source.length; idx += size) {
+    chunks.push(source.slice(idx, idx + size));
+  }
+  return chunks;
+};
+
+const fetchProductsByKeys = async (
+  pool: ConnectionPool,
+  keys: readonly string[],
+  columnName: "PartNumber" | "ModelNumber",
+) => {
+  if (keys.length === 0) return [] as ProductRow[];
+
+  const columnExpression = `LOWER(LTRIM(RTRIM(${columnName})))`;
+  const rows: ProductRow[] = [];
+  const chunks = chunkArray(keys, 900);
+
+  for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
+    const chunk = chunks[chunkIdx];
+    const request = pool.request();
+    const paramNames = chunk.map((val, idx) => {
+      const param = `${columnName.toLowerCase()}_${chunkIdx}_${idx}`;
+      request.input(param, sql.NVarChar(255), val);
+      return `@${param}`;
+    });
+
+    const result = await request.query(`
+      SELECT ID, PartNumber, ModelNumber, BrandID
+      FROM dbo.Products
+      WHERE ${columnExpression} IN (${paramNames.join(", ")})
+    `);
+    rows.push(...((result.recordset ?? []) as ProductRow[]));
+  }
+
+  return rows;
+};
+
 const loadExistingProducts = async (pool: ConnectionPool, parsedRows: ParsedPriceListRow[]) => {
   const partKeys = Array.from(
     new Set(
@@ -410,35 +450,21 @@ const loadExistingProducts = async (pool: ConnectionPool, parsedRows: ParsedPric
 
   if (partKeys.length === 0 && modelKeys.length === 0) return [] as ProductRow[];
 
-  const request = pool.request();
-  const clauses: string[] = [];
+  const [partProducts, modelProducts] = await Promise.all([
+    fetchProductsByKeys(pool, partKeys, "PartNumber"),
+    fetchProductsByKeys(pool, modelKeys, "ModelNumber"),
+  ]);
 
-  if (partKeys.length > 0) {
-    const paramNames = partKeys.map((val, idx) => {
-      const param = `pn_${idx}`;
-      request.input(param, sql.NVarChar(255), val);
-      return `@${param}`;
-    });
-    clauses.push(`LOWER(LTRIM(RTRIM(PartNumber))) IN (${paramNames.join(", ")})`);
+  const allProducts = [...partProducts, ...modelProducts];
+  const seen = new Set<number>();
+  const uniqueProducts: ProductRow[] = [];
+  for (const product of allProducts) {
+    if (seen.has(product.ID)) continue;
+    seen.add(product.ID);
+    uniqueProducts.push(product);
   }
 
-  if (modelKeys.length > 0) {
-    const paramNames = modelKeys.map((val, idx) => {
-      const param = `mn_${idx}`;
-      request.input(param, sql.NVarChar(255), val);
-      return `@${param}`;
-    });
-    clauses.push(`LOWER(LTRIM(RTRIM(ModelNumber))) IN (${paramNames.join(", ")})`);
-  }
-
-  const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" OR ")}` : "";
-  const result = await request.query(`
-    SELECT ID, PartNumber, ModelNumber, BrandID
-    FROM dbo.Products
-    ${whereClause}
-  `);
-  const products = (result.recordset ?? []) as ProductRow[];
-  return products;
+  return uniqueProducts;
 };
 
 const createProduct = async (
