@@ -10,6 +10,7 @@ type PageHeaderProps = PropsWithChildren<{
   leftActions?: React.ReactNode;
   rightActions?: React.ReactNode;
   className?: string;
+  headingClassName?: string;
   hideTitle?: boolean;
 }>;
 
@@ -20,12 +21,14 @@ export default function PageHeader({
   children,
   className,
   hideTitle,
+  headingClassName,
 }: PageHeaderProps) {
   const [searchSlot, setSearchSlot] = useState<HTMLDivElement | null>(null);
   const handleSlotRef = useCallback((node: HTMLDivElement | null) => {
     setSearchSlot(node);
   }, []);
   const rowClassName = className ? `${styles.headerRow} ${className}` : styles.headerRow;
+  const headingClasses = [styles.heading, headingClassName].filter(Boolean).join(' ');
 
   return (
     <PageHeaderContext.Provider value={searchSlot}>
@@ -34,7 +37,7 @@ export default function PageHeader({
           {leftActions}
           <div ref={handleSlotRef} className={styles.searchSlot} />
         </div>
-        {hideTitle ? null : <h1 className={styles.heading}>{title}</h1>}
+        {hideTitle ? null : <h1 className={headingClasses}>{title}</h1>}
         <div className={`${styles.headerSide} ${styles.headerSideRight}`}>{rightActions}</div>
       </div>
       {children}

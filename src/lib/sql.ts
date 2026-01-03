@@ -13,16 +13,16 @@ const config: SqlConnectionConfig = {
   pool: { max: 10, min: 1, idleTimeoutMillis: 30000 },
 };
 
-type SqlNumericTypeFactory = (precision?: number, scale?: number) => {
-  type: any;
+type SqlFactoryWithPrecisionScale = (precision?: number, scale?: number) => {
+  type: unknown;
   precision?: number;
   scale?: number;
 };
 
 type SqlWithTypes = typeof sql & {
   TYPES: {
-    Numeric: SqlNumericTypeFactory;
-    Decimal: SqlNumericTypeFactory;
+    Numeric: SqlFactoryWithPrecisionScale;
+    Decimal: SqlFactoryWithPrecisionScale;
   };
 };
 

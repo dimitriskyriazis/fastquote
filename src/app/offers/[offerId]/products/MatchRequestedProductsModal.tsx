@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
-import type { GridApi, RowDoubleClickedEvent } from 'ag-grid-community';
+import type { GridApi, RowDoubleClickedEvent, RowNode } from 'ag-grid-community';
 import { PageHeaderContext } from '../../../components/PageHeader';
 import { GridQuickSearchProvider } from '../../../components/GridQuickSearchProvider';
 import { productGridColumnDefs, productDefaultColDef } from '../../../../lib/productColumns';
@@ -33,6 +33,10 @@ type MatcherGridApi = GridApi<MatcherRowData> & {
   purgeServerSideCache?: () => void;
   refreshServerSide?: (params?: { purge?: boolean }) => void;
   setPinnedTopRowData?: (data: MatcherRowData[]) => void;
+};
+
+type MatcherRowNode = RowNode<MatcherRowData> & {
+  ensureVisible?: (params?: { position?: 'top' | 'middle' | 'bottom' }) => void;
 };
 
 type Props = {
@@ -141,41 +145,42 @@ export default function MatchRequestedProductsModal({
     void handleAssignWithId(productId);
   }, [handleAssignWithId]);
 
-  const trySelectPendingProduct = useCallback((api: MatcherGridApi) => {
-    const targetId = pendingSelectionProductIdRef.current;
-    if (targetId == null) return;
-    let found = false;
-    api.forEachNode((node) => {
-      if (found) return;
-      if (!node.data) return;
-      const candidateId = normalizeProductId((node.data as { ProductID?: unknown }).ProductID ?? null);
-      if (candidateId === targetId) {
-        const rowData = node.data as MatcherRowData;
-        node.setSelected(true);
-        setSelectedProduct(rowData);
-        const pinnedSetter = api.setPinnedTopRowData;
-        if (typeof pinnedSetter === 'function') {
-          try {
-            pinnedSetter([rowData]);
-          } catch {
-            /* noop */
+    const trySelectPendingProduct = useCallback((api: MatcherGridApi) => {
+      const targetId = pendingSelectionProductIdRef.current;
+      if (targetId == null) return;
+      let found = false;
+      api.forEachNode((node) => {
+        if (found) return;
+        if (!node.data) return;
+        const candidateId = normalizeProductId((node.data as { ProductID?: unknown }).ProductID ?? null);
+        if (candidateId === targetId) {
+          const rowData = node.data as MatcherRowData;
+          node.setSelected(true);
+          setSelectedProduct(rowData);
+          const pinnedSetter = api.setPinnedTopRowData;
+          if (typeof pinnedSetter === 'function') {
+            try {
+              pinnedSetter([rowData]);
+            } catch {
+              /* noop */
+            }
           }
-        }
-        const ensureVisible = (node as any).ensureVisible;
-        if (typeof ensureVisible === 'function') {
-          try {
-            ensureVisible.call(node, { position: 'top' });
-          } catch {
-            /* noop */
+          const typedNode = node as MatcherRowNode;
+          const ensureVisible = typedNode.ensureVisible;
+          if (typeof ensureVisible === 'function') {
+            try {
+              ensureVisible.call(typedNode, { position: 'top' });
+            } catch {
+              /* noop */
+            }
           }
+          found = true;
         }
-        found = true;
+      });
+      if (found) {
+        pendingSelectionProductIdRef.current = null;
+        onClearNewProductId?.();
       }
-    });
-    if (found) {
-      pendingSelectionProductIdRef.current = null;
-      onClearNewProductId?.();
-    }
   }, [onClearNewProductId]);
 
   useEffect(() => {
@@ -302,7 +307,6 @@ export default function MatchRequestedProductsModal({
                 columnDefs={productGridColumnDefs}
                 defaultColDef={productDefaultColDef}
                 requestPayload={highlightRequestPayload}
-                showSidebar={false}
                 serverSideEnableClientSideSort={false}
                 onRequestPayloadConsumed={onRequestPayloadConsumed}
                 rowSelection="single"

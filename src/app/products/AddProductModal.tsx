@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import LookupModal from '../components/LookupModal';
 import lookupStyles from '../components/LookupModal.module.css';
 import { showToastMessage } from '../../lib/toast';

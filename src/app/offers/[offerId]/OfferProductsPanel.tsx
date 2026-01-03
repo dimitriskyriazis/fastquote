@@ -643,6 +643,7 @@ type Props = {
   endpoint?: string;
   manualMode?: boolean;
   refreshToken?: number;
+  showRequestedColumns?: boolean;
 };
 
 const buildEndpointForOffer = (offerId: string) =>
@@ -653,6 +654,7 @@ export default function OfferProductsPanel({
   endpoint,
   manualMode = false,
   refreshToken = 0,
+  showRequestedColumns = true,
 }: Props) {
   const router = useRouter();
   const resolvedEndpoint = useMemo(() => {
@@ -714,8 +716,10 @@ export default function OfferProductsPanel({
   const [categoryChildrenKnown, setCategoryChildrenKnown] = useState(false);
   const treeOrderingRootMapRef = useRef<Map<string, number>>(new Map());
   const serverRowsRef = useRef<Array<Record<string, unknown>>>([]);
-  const prevRequestedColumnVisibilityRef = useRef<Record<RequestedDisplayFieldKey, boolean> | null>(null);
-  const prevRequestedItemNoVisibleRef = useRef<boolean>(requestedItemNoVisible);
+  const appliedRequestedColumnVisibilityRef = useRef<Record<RequestedDisplayFieldKey, boolean> | null>(null);
+  const appliedRequestedItemNoVisibleRef = useRef<boolean>(false);
+  const appliedShowRequestedColumnsRef = useRef<boolean | null>(null);
+  const recentCollapseKeyRef = useRef<string | null>(null);
   const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
   const lastRowCountRef = useRef<number | null>(null);
   const headerSelectAllInFlightRef = useRef(false);
@@ -878,9 +882,8 @@ export default function OfferProductsPanel({
 
   const autoSizeExclusions = useMemo<string[]>(() => [
     'Description',
-    'RequestedDescription',
-    'RequestedDescription2',
-    'RequestedDescription3',
+    'RequestedItemNo',
+    ...REQUESTED_DISPLAY_FIELD_KEYS,
   ], []);
 
   const autoSizeOfferColumns = useCallback(() => {
@@ -924,44 +927,35 @@ export default function OfferProductsPanel({
     }
   }, [autoSizeExclusions]);
 
-  const autoSizeTimerRef = useRef<number | null>(null);
   const triggerAutoSize = useCallback(() => {
-    if (typeof window === 'undefined') {
-      autoSizeOfferColumns();
-      return;
-    }
-    if (autoSizeTimerRef.current) {
-      window.clearTimeout(autoSizeTimerRef.current);
-    }
-    autoSizeTimerRef.current = window.setTimeout(() => {
-      autoSizeTimerRef.current = null;
-      autoSizeOfferColumns();
-    }, 80);
+    autoSizeOfferColumns();
   }, [autoSizeOfferColumns]);
-
-  useEffect(() => () => {
-    if (autoSizeTimerRef.current) {
-      window.clearTimeout(autoSizeTimerRef.current);
-    }
-  }, []);
 
   useEffect(() => {
     if (!requestedColumnsReady) return;
     const api = gridApiRef.current;
     if (!api) return;
 
-    const previousVisibility = prevRequestedColumnVisibilityRef.current;
-    const visibilityChanged = !previousVisibility ||
-      REQUESTED_DISPLAY_FIELD_KEYS.some((key) => previousVisibility[key] !== requestedColumnVisibility[key]);
-    const itemNoVisibilityChanged = prevRequestedItemNoVisibleRef.current !== requestedItemNoVisible;
+    const keys = REQUESTED_DISPLAY_FIELD_KEYS;
+    const forcedHiddenVisibility = keys.reduce<Record<RequestedDisplayFieldKey, boolean>>((acc, key) => {
+      acc[key] = false;
+      return acc;
+    }, {} as Record<RequestedDisplayFieldKey, boolean>);
+    const effectiveVisibility = showRequestedColumns ? requestedColumnVisibility : forcedHiddenVisibility;
+    const effectiveItemNoVisible = showRequestedColumns ? requestedItemNoVisible : false;
+
+    const previousVisibility = appliedRequestedColumnVisibilityRef.current;
+    const visibilityChanged = !previousVisibility
+      || appliedShowRequestedColumnsRef.current !== showRequestedColumns
+      || keys.some((key) => previousVisibility?.[key] !== effectiveVisibility[key]);
+    const itemNoVisibilityChanged = appliedRequestedItemNoVisibleRef.current !== effectiveItemNoVisible;
     if (!visibilityChanged && !itemNoVisibilityChanged) {
       return;
     }
 
     try {
-      const keys = REQUESTED_DISPLAY_FIELD_KEYS;
-      const hiddenKeys = keys.filter((key) => !requestedColumnVisibility[key]);
-      const visibleKeys = keys.filter((key) => requestedColumnVisibility[key]);
+      const hiddenKeys = keys.filter((key) => !effectiveVisibility[key]);
+      const visibleKeys = keys.filter((key) => effectiveVisibility[key]);
       if (hiddenKeys.length > 0) {
         api.setColumnsVisible(hiddenKeys, false);
       }
@@ -969,16 +963,17 @@ export default function OfferProductsPanel({
         api.setColumnsVisible(visibleKeys, true);
       }
       if (itemNoVisibilityChanged) {
-        api.setColumnsVisible(['RequestedItemNo'], requestedItemNoVisible);
+        api.setColumnsVisible(['RequestedItemNo'], effectiveItemNoVisible);
       }
     } catch {
       /* noop */
     }
 
-    prevRequestedColumnVisibilityRef.current = requestedColumnVisibility;
-    prevRequestedItemNoVisibleRef.current = requestedItemNoVisible;
+    appliedRequestedColumnVisibilityRef.current = { ...effectiveVisibility };
+    appliedRequestedItemNoVisibleRef.current = effectiveItemNoVisible;
+    appliedShowRequestedColumnsRef.current = showRequestedColumns;
     triggerAutoSize();
-  }, [requestedColumnVisibility, requestedColumnsReady, requestedItemNoVisible, triggerAutoSize]);
+  }, [requestedColumnVisibility, requestedColumnsReady, requestedItemNoVisible, triggerAutoSize, showRequestedColumns]);
 
   const handleGridResponse = useCallback((response: GridResponse | null) => {
     lastRowCountRef.current = response?.rowCount ?? null;
@@ -1008,7 +1003,7 @@ export default function OfferProductsPanel({
     if (!quickSearchActive) {
       triggerAutoSize();
     }
-  }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, updateCategoryAncestors, triggerAutoSize]);
+  }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, quickSearchActive, updateCategoryAncestors, triggerAutoSize]);
 
   const handleServerRequest = useCallback((request: ServerRequestWithQuickFilter) => {
     lastServerRequestRef.current = request;
@@ -1152,15 +1147,10 @@ export default function OfferProductsPanel({
     setRequestedColumnsReadyFlag(true);
   }, [setRequestedColumnsReadyFlag]);
 
-  const handleGridModelUpdated = useCallback((api: GridApi<Record<string, unknown>>) => {
+  const handleGridModelUpdated = useCallback(() => {
     updateCategoryAncestors();
     triggerAutoSize();
   }, [updateCategoryAncestors, triggerAutoSize]);
-
-  const getRowHeight = useCallback((params: RowHeightParams<Record<string, unknown>>) => {
-    const row = params.data ?? null;
-    return isOfferProductCategory(row) ? 32 : 32;
-  }, []);
 
   const isCategoryRowCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!row) return false;
@@ -1189,6 +1179,15 @@ export default function OfferProductsPanel({
     return false;
   }, [collapsedCategoryPaths]);
 
+  const getRowHeight = useCallback((params: RowHeightParams<Record<string, unknown>>) => {
+    const row = params.data ?? null;
+    const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+    if (path.length > 0 && hasCollapsedAncestor(path)) {
+      return 0;
+    }
+    return 32;
+  }, [hasCollapsedAncestor]);
+
   const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!isOfferProductCategory(row)) return;
     if (!hasCategoryChildren(row)) return;
@@ -1203,6 +1202,7 @@ export default function OfferProductsPanel({
       } else {
         next.add(key);
       }
+      recentCollapseKeyRef.current = key;
       return next;
     });
   }, [hasCategoryChildren]);
@@ -1724,13 +1724,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
       const baseColDef = requestedColumnDefsMap[key];
       if (!baseColDef) return;
-      const isVisible = requestedColumnVisibility[key];
+      const columnVisible = showRequestedColumns && requestedColumnVisibility[key];
       requestedColumns.push({
         ...baseColDef,
-        hide: !isVisible,
-        suppressSizeToFit: !isVisible,
+        hide: !columnVisible,
+        suppressSizeToFit: !columnVisible,
       });
-      if (!isVisible && baseColDef.flex) {
+      if (!columnVisible && baseColDef.flex) {
         requestedColumns[requestedColumns.length - 1].flex = undefined;
       }
     });
@@ -1777,8 +1777,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         (data as Record<string, unknown>).RequestedItemNo = normalized;
         return true;
       },
-      hide: !requestedItemNoVisible,
-      suppressSizeToFit: !requestedItemNoVisible,
+      hide: !showRequestedColumns || !requestedItemNoVisible,
+      suppressSizeToFit: !showRequestedColumns || !requestedItemNoVisible,
       valueGetter: ({ data }) => {
         if (!data) return '';
         const requestedItemNo = normalizeRequestedItemNoValue(
@@ -1993,7 +1993,19 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
     },
   ];
-  }, [RowDragHandle, PartNumberCell, manualMode, TreeOrderingCell, requestedColumnDefsMap, requestedColumnVisibility, requestedItemNoVisible, formatDisplayTreeOrdering]);
+  }, [
+    RowDragHandle,
+    PartNumberCell,
+    manualMode,
+    TreeOrderingCell,
+    requestedColumnDefsMap,
+    requestedColumnVisibility,
+    requestedItemNoVisible,
+    RequestedItemNoCell,
+    requestedCellClassRules,
+    formatDisplayTreeOrdering,
+    showRequestedColumns,
+  ]);
 
   const refreshOfferProductGrid = useCallback((api: GridApi<Record<string, unknown>> | null, options?: { refresh?: boolean }) => {
     const targetApi = api ?? gridApiRef.current;
@@ -2031,12 +2043,28 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   }, [processedRequestedMatches, requestedMatchQueue.length]);
 
   useEffect(() => {
+    const key = recentCollapseKeyRef.current;
+    if (!key) return;
+    recentCollapseKeyRef.current = null;
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return;
+    const nodesToRefresh: GridRowNode[] = [];
+    const prefix = `${key}.`;
+    api.forEachNode((node) => {
+      const row = node.data ?? null;
+      if (!row) return;
+      const path = parseTreeOrderingPath((row as { TreeOrdering?: unknown } | null | undefined)?.TreeOrdering ?? null);
+      if (path.length === 0) return;
+      const nodeKey = buildTreeOrderingKey(path);
+      if (nodeKey === key || nodeKey.startsWith(prefix)) {
+        nodesToRefresh.push(node);
+      }
+    });
+    if (nodesToRefresh.length === 0) return;
     try {
-      api.redrawRows();
+      api.redrawRows({ rowNodes: nodesToRefresh });
     } catch (err) {
-      console.warn('Failed to redraw rows after collapsing categories', err);
+      console.warn('Failed to refresh collapsed rows', err);
     }
   }, [collapsedCategoryPaths]);
 
@@ -2512,7 +2540,14 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
 
     return items;
-  }, [productRowDeletion, router, offerId]);
+  }, [
+    productRowDeletion,
+    router,
+    offerId,
+    populateRequestedRowsToOffer,
+    promoteNodeToCategory,
+    resolvedEndpoint,
+  ]);
 
   const getCellEditorRawValue = (
     event: CellValueChangedEvent<Record<string, unknown>>,

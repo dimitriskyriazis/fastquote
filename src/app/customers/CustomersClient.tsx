@@ -84,11 +84,6 @@ export default function CustomersClient() {
       const id = params?.data?.CustomerID as string | number | undefined;
       const encodedId = id != null ? encodeURIComponent(String(id)) : "";
 
-      const go = (suffix: "basicdata" | "contacts") => {
-        if (!encodedId) return;
-        router.push(`/customers/${encodedId}/${suffix}`);
-      };
-
       const preventRangeSelection = (event: React.SyntheticEvent) => {
         event.preventDefault();
         event.stopPropagation();
@@ -188,7 +183,7 @@ export default function CustomersClient() {
     };
 
     return <ActionMenu />;
-  }, [router]);
+  }, []);
 
   const columnDefs = useMemo<ColDef[]>(
     () => [

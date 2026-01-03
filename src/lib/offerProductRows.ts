@@ -50,7 +50,6 @@ export const resolveOfferProductRowType = (row: OfferProductRow): OfferProductRo
   const categoryRaw = (row as { IsCategory?: unknown }).IsCategory;
 
   const isComment = isTruthy(commentRaw);
-  const isPrintable = isTruthy(printableRaw);
   const isExplicitlyNotPrintable = isFalsy(printableRaw);
   const isExplicitCategory = isTruthy(categoryRaw);
 

@@ -102,11 +102,6 @@ export default function PriceListsClient() {
       const priceListId = params?.data?.PriceListID as string | number | undefined;
       const encodedId = priceListId != null ? encodeURIComponent(String(priceListId)) : "";
 
-      const go = (suffix: "products" | "basicdata") => {
-        if (!encodedId) return;
-        router.push(`/price-lists/${encodedId}/${suffix}`);
-      };
-
       const preventRangeSelection = (event: React.SyntheticEvent) => {
         event.preventDefault();
         event.stopPropagation();
@@ -206,7 +201,7 @@ export default function PriceListsClient() {
     };
 
   return <ActionMenu />;
-  }, [router]);
+  }, []);
 
   const priceListRowDeletion = useMemo(
     () =>
@@ -267,9 +262,8 @@ export default function PriceListsClient() {
         headerName: "Valid From",
         filter: "agDateColumnFilter",
         valueFormatter: formatDateValue,
-        width: 107,
-        minWidth: 107,
-        maxWidth: 107,
+        width: 105,
+        minWidth: 105,
         suppressAutoSize: true,
       },
       {

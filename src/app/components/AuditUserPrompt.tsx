@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useAuditUser } from './AuditUserProvider';
 import styles from './AuditUserPrompt.module.css';
 
@@ -13,34 +13,27 @@ export default function AuditUserPrompt() {
     error,
     saveUserId,
   } = useAuditUser();
-  const [open, setOpen] = useState(false);
-  const [selection, setSelection] = useState('');
+  const [selection, setSelection] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setSelection(userId || '');
-  }, [userId]);
-
-  useEffect(() => {
-    const needsUser = (!userId || !selectedUser) && !loading;
-    setOpen(needsUser);
-  }, [loading, selectedUser, userId]);
+  const selectionValue = selection ?? userId ?? '';
+  const needsUser = (!userId || !selectedUser) && !loading;
 
   const handleSave = () => {
     setLocalError(null);
-    if (!selection) {
+    if (!selectionValue) {
       setLocalError('Select a user to continue.');
       return;
     }
-    const exists = users.some((user) => user.id === selection);
-    if (!exists || !saveUserId(selection)) {
+    const exists = users.some((user) => user.id === selectionValue);
+    if (!exists || !saveUserId(selectionValue)) {
       setLocalError('Pick a valid user from the list.');
       return;
     }
-    setOpen(false);
+    setSelection(null);
   };
 
-  if (!open) return null;
+  if (!needsUser) return null;
 
   return (
     <div
@@ -56,7 +49,7 @@ export default function AuditUserPrompt() {
         <label className={styles.field}>
           <span>Choose user</span>
           <select
-            value={selection}
+            value={selectionValue}
             onChange={(event) => {
               setSelection(event.target.value);
               setLocalError(null);

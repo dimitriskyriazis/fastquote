@@ -378,7 +378,6 @@ export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
                   columnDefs={categoryColumns}
                   defaultColDef={defaultColDef}
                   requestPayload={categoryRequestPayload}
-                  showSidebar={false}
                   rowSelection="single"
                   onSelectionChanged={handleCategorySelection as (rows: Record<string, unknown>[], api: GridApi) => void}
                   rowGroupPanelShow="never"
@@ -449,7 +448,6 @@ export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
                   columnDefs={productColumns}
                   defaultColDef={defaultColDef}
                   requestPayload={productRequestPayload}
-                  showSidebar={false}
                   rowSelection="multiple"
                   rowMultiSelectWithClick
                   rowGroupPanelShow="never"

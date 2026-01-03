@@ -7,9 +7,8 @@ import type {
   DefaultMenuItem,
   GetContextMenuItemsParams,
   GridApi,
-  GridReadyEvent,
   MenuItemDef,
-  ModelUpdatedEvent,
+  RowNode,
 } from "ag-grid-community";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import { openLinkInNewTab } from "../../lib/navigation";
@@ -65,6 +64,10 @@ type ProductSortEntry = { colId: string; sort: "asc" | "desc" };
 type ProductGridApi = GridApi<Record<string, unknown>> & {
   getSortModel?: () => ProductSortEntry[];
   setSortModel?: (model: ProductSortEntry[]) => void;
+};
+
+type ProductRowNode = RowNode<Record<string, unknown>> & {
+  ensureVisible?: (params?: { position?: "top" | "middle" | "bottom" }) => void;
 };
 
 const PRODUCT_ROW_TYPE = "product";
@@ -254,14 +257,15 @@ export default function ProductsClient() {
           } catch {
             node.setSelected(true);
           }
-          const ensureVisible = (node as any).ensureVisible;
-          if (typeof ensureVisible === "function") {
-            try {
-              ensureVisible.call(node, { position: "top" });
-            } catch {
-              /* noop */
-            }
+        const typedNode = node as ProductRowNode;
+        const ensureVisible = typedNode.ensureVisible;
+        if (typeof ensureVisible === "function") {
+          try {
+            ensureVisible.call(typedNode, { position: "top" });
+          } catch {
+            /* noop */
           }
+        }
           found = true;
         }
       });

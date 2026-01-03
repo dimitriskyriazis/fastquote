@@ -18,7 +18,6 @@ import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from '../c
 import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from '../components/useActionMenuCoordinator';
 import { useActionMenuPosition } from '../components/useActionMenuPosition';
 import { GridRowDeletion } from '../../lib/gridRowDeletion';
-import Link from 'next/link';
 import PageHeader from '../components/PageHeader';
 import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
 

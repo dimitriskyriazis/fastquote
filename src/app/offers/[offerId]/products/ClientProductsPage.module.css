@@ -81,6 +81,12 @@
   border-color: rgba(163, 90, 22, 0.4);
 }
 
+.buttonToggleRequested {
+  background-color: #f0fdf4;
+  color: #0f513b;
+  border-color: rgba(23, 129, 80, 0.2);
+}
+
 .buttonCategory {
   background-color: rgb(220, 220, 220);
 }

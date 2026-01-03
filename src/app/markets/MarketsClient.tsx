@@ -37,6 +37,34 @@ const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
 
 type RowData = Record<string, unknown>;
 
+type MarketRow = {
+  MarketID: number | null;
+  Name: string | null;
+  SalesDivision: string | null;
+  Enabled: boolean | number | null;
+};
+
+function normalizeMenuItemDef(item: MenuItemDef<MarketRow, unknown>): MenuItemDef<RowData, unknown> {
+  return {
+    ...item,
+    action:
+      typeof item.action === "function"
+        ? (params: IMenuActionParams<RowData, unknown>) =>
+            item.action?.(params as unknown as IMenuActionParams<MarketRow, unknown>)
+        : undefined,
+    subMenu: Array.isArray(item.subMenu) ? normalizeMarketContextMenuItems(item.subMenu) : item.subMenu,
+  };
+}
+
+function normalizeMarketContextMenuItems(
+  items: Array<string | DefaultMenuItem | MenuItemDef<MarketRow, unknown>>,
+): Array<string | DefaultMenuItem | MenuItemDef<RowData, unknown>> {
+  return items.map((item) => {
+    if (typeof item === "string") return item;
+    return normalizeMenuItemDef(item as MenuItemDef<MarketRow, unknown>);
+  });
+}
+
 type Props = {
   salesDivisions: string[];
 };
@@ -102,13 +130,6 @@ export default function MarketsClient({ salesDivisions }: Props) {
     setError: setMarketError,
   } = useAddModal<MarketFormValues>(() => ({ ...EMPTY_MARKET_FORM }));
 
-  type MarketRow = {
-    MarketID: number | null;
-    Name: string | null;
-    SalesDivision: string | null;
-    Enabled: boolean | number | null;
-  };
-
   const marketRowDeletion = useMemo(
     () =>
       new GridRowDeletion<MarketRow>({
@@ -143,27 +164,6 @@ export default function MarketsClient({ salesDivisions }: Props) {
       }),
     [],
   );
-
-  function normalizeMenuItemDef(item: MenuItemDef<MarketRow, any>): MenuItemDef<RowData, any> {
-    return {
-      ...item,
-      action:
-        typeof item.action === "function"
-          ? (params: IMenuActionParams<RowData, any>) =>
-              item.action?.(params as unknown as IMenuActionParams<MarketRow, any>)
-          : undefined,
-      subMenu: Array.isArray(item.subMenu) ? normalizeMarketContextMenuItems(item.subMenu) : item.subMenu,
-    };
-  }
-
-  function normalizeMarketContextMenuItems(
-    items: Array<string | DefaultMenuItem | MenuItemDef<MarketRow, any>>,
-  ): Array<string | DefaultMenuItem | MenuItemDef<RowData, any>> {
-    return items.map((item) => {
-      if (typeof item === "string") return item;
-      return normalizeMenuItemDef(item as MenuItemDef<MarketRow, any>);
-    });
-  }
 
   const getContextMenuItems = useCallback(
     (params: GetContextMenuItemsParams<RowData>) => {

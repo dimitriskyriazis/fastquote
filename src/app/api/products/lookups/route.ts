@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getPool } from "../../../../lib/sql";
 
 type LookupRow = {
@@ -38,7 +38,7 @@ const mapSubCategories = (rows: SubCategoryRow[]): SubCategoryOption[] =>
       categoryId: row.CategoryID ?? null,
     }));
 
-export async function GET(_req: NextRequest) {
+export async function GET() {
   try {
     const pool = await getPool();
     const [brandsRes, categoriesRes, subCategoriesRes, typesRes] = await Promise.all([

@@ -13,7 +13,6 @@ import { AgGridReact } from 'ag-grid-react';
 import {
   CellContextMenuEvent,
   CellEditingStartedEvent,
-  CellEditingStoppedEvent,
   CellMouseDownEvent,
   CellValueChangedEvent,
   Column,
@@ -29,7 +28,6 @@ import {
   GetRowIdParams,
   GridApi,
   GridReadyEvent,
-  IRowNode,
   RowNode,
   IServerSideDatasource,
   IServerSideGetRowsParams,
@@ -39,7 +37,6 @@ import {
   RowDoubleClickedEvent,
   RowDragEndEvent,
   RowHeightParams,
-  SideBarDef,
   RowSelectionOptions,
   SelectionChangedEvent,
   SortChangedEvent,
@@ -170,12 +167,12 @@ const useEditorFocusHandlers = () => {
     focusFromEvent(event.api, event.column);
   }, []);
 
-  const handleEditingStop = useCallback((event: CellEditingStoppedEvent<RowData>) => {
+  const handleEditingStop = useCallback(() => {
     editingActiveRef.current = false;
     flushPendingRefresh();
   }, [flushPendingRefresh]);
 
-  const requestRefresh = useCallback((action: () => void, label?: string) => {
+  const requestRefresh = useCallback((action: () => void) => {
     if (editingActiveRef.current) {
       pendingRefreshRef.current = action;
       return;
@@ -210,7 +207,6 @@ type Props = {
   manualMode?: boolean;
   requestPayload?: Record<string, unknown> | null;
   rowSelection?: 'single' | 'multiple';
-  showSidebar?: boolean;
   rowMultiSelectWithClick?: boolean;
   suppressRowClickSelection?: boolean;
   allowRowClickSelection?: boolean;
@@ -295,6 +291,7 @@ type GapHoverState = {
 const PERSISTED_TREE_KEY = '__persistedTreeOrdering';
 const GRID_COLUMN_STATE_STORAGE_PREFIX = 'fastquote-grid-column-state';
 const GRID_COLUMN_STATE_DEFAULT_USER = 'anon';
+const AUTO_SIZE_MIN_INTERVAL_MS = 400;
 
 type SavedColumnStateEntry = {
   colId: string;
@@ -306,6 +303,14 @@ type SavedColumnStateEntry = {
 };
 
 const sanitizeStorageSegment = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+const safeStringify = (value: unknown): string => {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '';
+  }
+};
 
 const buildGridColumnStateStorageKey = (endpoint: string, userId: string, context: string): string => {
   const normalizedEndpoint = sanitizeStorageSegment(endpoint || '');
@@ -551,7 +556,6 @@ export default function AgGridAll({
   columnDefs,
   defaultColDef,
   manualMode = false,
-  showSidebar = true,
   requestPayload = null,
   rowSelection,
   rowMultiSelectWithClick,
@@ -595,7 +599,7 @@ export default function AgGridAll({
       const original = (api as unknown as Record<string, unknown>)[method];
       if (typeof original !== 'function') return;
       (api as unknown as Record<string, unknown>)[marker] = true;
-      const boundOriginal = (original as (...args: any[]) => unknown).bind(api);
+      const boundOriginal = (original as (...args: unknown[]) => unknown).bind(api);
       (api as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => {
         requestRefresh(() => boundOriginal(...args));
       };
@@ -828,7 +832,7 @@ export default function AgGridAll({
 
     const queueQuickSearchRefresh = () => {
       quickSearchRefreshTimerRef.current = null;
-      requestRefresh(() => refreshServerSideData(api), 'quick search refresh');
+      requestRefresh(() => refreshServerSideData(api));
     };
 
     quickSearchRefreshTimerRef.current = setTimeout(queueQuickSearchRefresh, QUICK_SEARCH_REFRESH_DEBOUNCE_MS);
@@ -900,58 +904,90 @@ export default function AgGridAll({
       window.clearTimeout(columnSaveTimerRef.current);
       columnSaveTimerRef.current = null;
     }
+    if (autoSizeFrameRef.current) {
+      if (typeof window !== 'undefined') {
+        window.cancelAnimationFrame(autoSizeFrameRef.current);
+        window.clearTimeout(autoSizeFrameRef.current);
+      }
+      autoSizeFrameRef.current = null;
+    }
   }, []);
 
-  const autoSizeColumns = useCallback((api?: GridApi<RowData> | null) => {
+  const autoSizeCompletedRef = useRef(false);
+  const lastAutoSizeAtRef = useRef(0);
+  const pendingAutoSizeApiRef = useRef<GridApi<RowData> | null>(null);
+  const autoSizePendingRef = useRef(false);
+  const autoSizeFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    autoSizeCompletedRef.current = false;
+  }, [endpoint, disableAutoSize]);
+
+  const runAutoSize = useCallback((gridApi: GridApi<RowData>) => {
+    if (gridApi.isDestroyed?.()) return;
+    const displayed = typeof gridApi.getAllDisplayedColumns === 'function' ? gridApi.getAllDisplayedColumns() : null;
+    if (!displayed || displayed.length === 0) return;
+    const exclusions = new Set(autoSizeExclusions ?? []);
+    const columnsToSize = displayed.filter((col) => {
+      const colId = typeof col.getColId === 'function'
+        ? col.getColId()
+        : (typeof (col as { getId?: () => string }).getId === 'function'
+          ? (col as { getId?: () => string }).getId?.()
+          : null);
+      if (!colId) return true;
+      return !exclusions.has(colId);
+    });
+    if (columnsToSize.length === 0) return;
+    const columnIds = columnsToSize
+      .map((col) => {
+        if (typeof col.getColId === 'function') return col.getColId();
+        if (typeof (col as { getId?: () => string }).getId === 'function') return (col as { getId?: () => string }).getId?.();
+        return null;
+      })
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (columnIds.length === 0) return;
+    gridApi.autoSizeColumns(columnIds, false);
+  }, [autoSizeExclusions]);
+
+  const autoSizeColumns = useCallback((api?: GridApi<RowData> | null, force = false) => {
     if (disableAutoSize) return;
     const gridApi = api ?? gridRef.current?.api ?? null;
     if (!gridApi || gridApi.isDestroyed?.()) return;
-    const resize = () => {
-      if (gridApi.isDestroyed?.()) return;
-      const displayed = typeof gridApi.getAllDisplayedColumns === 'function' ? gridApi.getAllDisplayedColumns() : null;
-      if (!displayed || displayed.length === 0) return;
-      const exclusions = new Set(autoSizeExclusions ?? []);
-      const columnsToSize = displayed.filter((col) => {
-        const colId = typeof col.getColId === 'function'
-          ? col.getColId()
-          : (typeof (col as { getId?: () => string }).getId === 'function'
-            ? (col as { getId?: () => string }).getId?.()
-            : null);
-        if (!colId) return true;
-        return !exclusions.has(colId);
-      });
-      if (columnsToSize.length === 0) return;
-      const columnIds = columnsToSize
-        .map((col) => {
-          if (typeof col.getColId === 'function') return col.getColId();
-          if (typeof (col as { getId?: () => string }).getId === 'function') return (col as { getId?: () => string }).getId?.();
-          return null;
-        })
-        .filter((id): id is string => typeof id === 'string' && id.length > 0);
-      if (columnIds.length === 0) return;
-      gridApi.autoSizeColumns(columnIds, false);
+    if (!force && autoSizeCompletedRef.current) return;
+    const now = Date.now();
+    if (!force && now - lastAutoSizeAtRef.current < AUTO_SIZE_MIN_INTERVAL_MS) return;
+    pendingAutoSizeApiRef.current = gridApi;
+    if (autoSizePendingRef.current) return;
+    autoSizePendingRef.current = true;
+    const execute = () => {
+      autoSizePendingRef.current = false;
+      autoSizeFrameRef.current = null;
+      const target = pendingAutoSizeApiRef.current;
+      if (!target) return;
+      runAutoSize(target);
+      autoSizeCompletedRef.current = true;
+      lastAutoSizeAtRef.current = Date.now();
     };
-    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(resize);
+    if (force) {
+      execute();
+    } else if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      autoSizeFrameRef.current = window.requestAnimationFrame(execute);
     } else {
-      setTimeout(resize, 0);
+      autoSizeFrameRef.current = window.setTimeout(execute, 0) as unknown as number;
     }
-  }, [autoSizeExclusions, disableAutoSize]);
+  }, [disableAutoSize, runAutoSize]);
 
   const handleColumnVisible = useCallback(() => {
-    autoSizeColumns();
+    autoSizeColumns(undefined, true);
     if (shouldPersistColumnState) {
       queuePersistColumnState();
     }
   }, [autoSizeColumns, queuePersistColumnState, shouldPersistColumnState]);
 
   const handleFirstDataRendered = useCallback((event: FirstDataRenderedEvent) => {
-    autoSizeColumns(event.api);
+    autoSizeColumns(event.api, true);
+    autoSizeCompletedRef.current = true;
   }, [autoSizeColumns]);
-
-  useEffect(() => {
-    autoSizeColumns();
-  }, [autoSizeColumns, manualMode]);
 
   const dcd: ColDef = useMemo(() => {
     const baseFilterParams = {
@@ -979,6 +1015,7 @@ export default function AgGridAll({
 
   const requestPayloadRef = useRef(requestPayload);
   requestPayloadRef.current = requestPayload;
+  const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 
   const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     getRows: async (params: IServerSideGetRowsParams<RowData>) => {
@@ -1002,25 +1039,39 @@ export default function AgGridAll({
           }
         }
         const bodyRequest = { ...payload, request: serverRequest };
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(bodyRequest),
-        });
+        const cacheKey = `${endpoint}:${safeStringify(payload)}:${safeStringify(serverRequest)}`;
+        let responsePromise = requestCacheRef.current.get(cacheKey);
+        if (!responsePromise) {
+          responsePromise = (async () => {
+            const res = await fetch(endpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(bodyRequest),
+            });
 
-        let data: GridResponse | null = null;
-        let text = '';
-        try {
-          data = await res.json() as GridResponse;
-        } catch {
-          try { text = await res.text(); } catch { /* noop */ }
+            let data: GridResponse | null = null;
+            let text = '';
+            try {
+              data = (await res.json()) as GridResponse;
+            } catch {
+              try {
+                text = await res.text();
+              } catch {
+                /* noop */
+              }
+            }
+
+            if (!res.ok || !data || !data.ok) {
+              console.error('Datasource error', { status: res.status, statusText: res.statusText, data, text });
+              throw new Error('Datasource response error');
+            }
+            return data;
+          })();
+          requestCacheRef.current.set(cacheKey, responsePromise);
+          responsePromise.finally(() => requestCacheRef.current.delete(cacheKey));
         }
 
-        if (!res.ok || !data || !data.ok) {
-          console.error('Datasource error', { status: res.status, statusText: res.statusText, data, text });
-          params.fail();
-          return;
-        }
+        const data = await responsePromise;
         const rawRows = Array.isArray(data.rows) ? data.rows : [];
         const normalizedRows: RowData[] = rawRows.map((row) => {
           const normalizedOrdering = normalizeTreeOrderingValue((row as { TreeOrdering?: unknown }).TreeOrdering ?? null);
@@ -1044,7 +1095,14 @@ export default function AgGridAll({
         params.fail();
       }
     },
-  }), [endpoint, onResponse, onTotalsChange]);
+  }), [
+    endpoint,
+    onResponse,
+    onRequestPayloadConsumed,
+    onServerRequest,
+    onTotalsChange,
+    quickSearchEnabled,
+  ]);
 
   const resolvedAllowRowClickSelection =
     typeof allowRowClickSelectionProp === 'boolean' ? allowRowClickSelectionProp : rowSelection !== 'multiple';
@@ -1078,7 +1136,14 @@ export default function AgGridAll({
       enableSelectionWithoutKeys: allowMultiselectClick,
       enableClickSelection: allowDeselection,
     };
-  }, [rowSelection, rowDeselection, rowMultiSelectWithClick, resolvedAllowRowClickSelection]);
+  }, [
+    rowSelection,
+    rowDeselection,
+    rowMultiSelectWithClick,
+    resolvedAllowRowClickSelection,
+    suppressRowClickSelection,
+    isServerSideRowModel,
+  ]);
 
   const sideBarDef = useMemo(() => ({
     toolPanels: ['columns', 'filters'],
@@ -1117,11 +1182,10 @@ export default function AgGridAll({
     wrapGridApiRefreshers(e.api);
     gridApiRef.current.addEventListener('contextMenuVisibleChanged', handleContextMenuVisibleChanged);
     setIsGridReady(true);
-    autoSizeColumns(e.api);
     if (typeof externalGridReadyHandler === 'function') {
       externalGridReadyHandler(e.api);
     }
-  }, [autoSizeColumns, datasource, handleContextMenuVisibleChanged, externalGridReadyHandler]);
+  }, [datasource, handleContextMenuVisibleChanged, externalGridReadyHandler, wrapGridApiRefreshers]);
   const contextMenuItemsHandler = useCallback<GetContextMenuItems<RowData>>((params) => {
     const wrapActions = (items: Array<MenuItemDef<RowData> | DefaultMenuItem | string>) =>
       items.map((item) => {
@@ -1157,9 +1221,9 @@ export default function AgGridAll({
     return Array.isArray(result) ? wrapActions(result) : result;
   }, [clearContextMenuRow, getContextMenuItems]);
 
-  const handleColumnRowGroupChanged = useCallback(() => {
-    autoSizeColumns();
-  }, [autoSizeColumns]);
+  const handleColumnRowGroupChanged = () => {
+    autoSizeColumns(undefined, true);
+  };
 
   // Apply/remove the context menu highlight directly on row elements so it always clears
   useEffect(() => {
@@ -1209,7 +1273,7 @@ export default function AgGridAll({
   }, []);
 
   const handleModelUpdated = useCallback((event: ModelUpdatedEvent<RowData>) => {
-    autoSizeColumns(event.api);
+    autoSizeColumns(event.api, true);
     if (quickSearchRefreshRequestedRef.current) {
       quickSearchRefreshRequestedRef.current = false;
       stopQuickSearchFocusRetries();
@@ -1706,7 +1770,7 @@ export default function AgGridAll({
       }
     };
     void executeReorder();
-  }, [gapHover, rowHover, computeHoverState, refreshServerSideData, reorderRowOnServer]);
+  }, [gapHover, rowHover, computeHoverState, reorderRowOnServer, getViewportElement]);
 
   const handleRowDoubleClick = useCallback((event: RowDoubleClickedEvent<RowData>) => {
     if (typeof externalRowDoubleClickHandler === 'function') {

@@ -62,6 +62,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [refreshToken, setRefreshToken] = useState(0);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
   const [showRequestedModal, setShowRequestedModal] = useState(false);
+  const [showRequestedColumns, setShowRequestedColumns] = useState(true);
   const creationCountersRef = useRef<Record<CreatableActionType, number>>({
     category: 0,
     'printable-comment': 0,
@@ -125,6 +126,9 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     void result;
     setRefreshToken((prev) => prev + 1);
   }, []);
+  const handleToggleRequestedColumns = useCallback(() => {
+    setShowRequestedColumns((prev) => !prev);
+  }, []);
 
   const headerRightControls = (
     <div className={toolbarStyles.topControls}>
@@ -176,43 +180,60 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     </button>
   );
 
+  const requestedToggleButton = (
+    <button
+      type="button"
+      className={`${toolbarStyles.button} ${toolbarStyles.buttonToggleRequested} page-header-button`}
+      onClick={handleToggleRequestedColumns}
+    >
+      {showRequestedColumns ? 'Hide Requested' : 'Show Requested'}
+    </button>
+  );
+
   return (
     <main className={layoutStyles.page}>
-      <div className={`${pageHeaderStyles.headerRow} ${pageHeaderStyles.headerRowTop}`}>
-        <div className={`${pageHeaderStyles.headerSide} ${pageHeaderStyles.headerSideLeft}`}>
+      <PageHeader
+        title={headingText}
+        className={pageHeaderStyles.headerRowTop}
+        headingClassName={pageHeaderStyles.topTitle}
+        leftActions={
           <Link href="/offers" className={`${layoutStyles.backLink} page-header-button`}>
             <span aria-hidden="true">←</span>
             Back to offers
           </Link>
-        </div>
-        <h1 className={`${pageHeaderStyles.heading} ${pageHeaderStyles.topTitle}`}>{headingText}</h1>
-        <div className={`${pageHeaderStyles.headerSide} ${pageHeaderStyles.headerSideRight}`}>
-          {headerRightControls}
-        </div>
-      </div>
-      <PageHeader
-        title={headingText}
-        leftActions={<div className={toolbarStyles.leftRequestedRow}>{addRequestedButton}</div>}
-        rightActions={addButtonGroup}
-        className={pageHeaderStyles.headerRowBottom}
-        hideTitle
+        }
+        rightActions={headerRightControls}
       >
         <GridQuickSearchProvider>
-          <OfferProductsPanel
-            offerId={offerId}
-            manualMode={manualMode}
-            refreshToken={refreshToken}
-          />
-          {showAddProductModal ? (
-            <AddProductsModal offerId={offerId} onAdded={handleProductsAdded} onClose={handleCloseModal} />
-          ) : null}
-          {showRequestedModal ? (
-            <AddRequestedProductsModal
+          <PageHeader
+            title={headingText}
+            leftActions={
+              <div className={toolbarStyles.leftRequestedRow}>
+                {addRequestedButton}
+                {requestedToggleButton}
+              </div>
+            }
+            rightActions={addButtonGroup}
+            className={pageHeaderStyles.headerRowBottom}
+            hideTitle
+          >
+            <OfferProductsPanel
               offerId={offerId}
-              onClose={handleCloseRequestedModal}
-              onImported={handleRequestedImported}
+              manualMode={manualMode}
+              refreshToken={refreshToken}
+              showRequestedColumns={showRequestedColumns}
             />
-          ) : null}
+            {showAddProductModal ? (
+              <AddProductsModal offerId={offerId} onAdded={handleProductsAdded} onClose={handleCloseModal} />
+            ) : null}
+            {showRequestedModal ? (
+              <AddRequestedProductsModal
+                offerId={offerId}
+                onClose={handleCloseRequestedModal}
+                onImported={handleRequestedImported}
+              />
+            ) : null}
+          </PageHeader>
         </GridQuickSearchProvider>
       </PageHeader>
     </main>

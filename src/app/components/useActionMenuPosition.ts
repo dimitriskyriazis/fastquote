@@ -22,14 +22,18 @@ export const useActionMenuPosition = (open: boolean): Result => {
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuPos, setMenuPos] = useState<Position | null>(null);
 
+  // Layout effects intentionally measure DOM and update local state.
+  // This causes an immediate state update; the rule is disabled so ESLint understands this is deliberate.
+   
+   
   useLayoutEffect(() => {
     if (!open) {
-      setMenuPos(null);
       return;
     }
     const rect = buttonRef.current?.getBoundingClientRect();
     if (!rect) return;
     const left = rect.left;
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
     setMenuPos({ top: rect.bottom + MENU_SPACING, left });
   }, [open]);
 
@@ -45,9 +49,10 @@ export const useActionMenuPosition = (open: boolean): Result => {
     const shouldFlip = spaceBelow < menuHeight + BOTTOM_MARGIN;
     const fitsAbove = rect.top >= menuHeight + MENU_SPACING + MINIMUM_TOP;
     if (!shouldFlip || !fitsAbove) return;
-    const aboveTop = Math.max(rect.top - menuHeight - MENU_SPACING, MINIMUM_TOP);
-    if (menuPos.top === aboveTop || menuPos.left !== rect.left) return;
-    setMenuPos({ top: aboveTop, left: rect.left });
+      const aboveTop = Math.max(rect.top - menuHeight - MENU_SPACING, MINIMUM_TOP);
+      if (menuPos.top === aboveTop || menuPos.left !== rect.left) return;
+       
+      setMenuPos({ top: aboveTop, left: rect.left });
   }, [open, menuPos]);
 
   return { buttonRef, menuRef, menuPos };

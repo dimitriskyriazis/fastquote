@@ -6,11 +6,9 @@ import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from '../../../
 import {
   buildTreeFromRows,
   collectResequencedUpdates,
-  comparePaths,
   formatTreeOrderingPath,
   normalizeOfferDetailId,
   normalizeTreeOrderingValue,
-  parseTreeOrderingPath,
   TreeOrderingNode,
   TreeOrderingRow,
   TreeOrderingUpdateInput,

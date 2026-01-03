@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuditUser } from './AuditUserProvider';
 
 type Props = {
@@ -15,10 +15,14 @@ export default function UserIdControl({ collapsed }: Props) {
     error,
   } = useAuditUser();
   const [status, setStatus] = useState<'idle' | 'saved' | 'error'>('idle');
+  const timerRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    setStatus('idle');
-  }, [selectedUser]);
+  useEffect(() => () => {
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
 
   if (collapsed) {
     return null;
@@ -27,6 +31,13 @@ export default function UserIdControl({ collapsed }: Props) {
   const handleLogout = () => {
     clearUser();
     setStatus('saved');
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+    }
+    timerRef.current = window.setTimeout(() => {
+      setStatus('idle');
+      timerRef.current = null;
+    }, 3000);
   };
 
   return (
