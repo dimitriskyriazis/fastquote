@@ -56,6 +56,7 @@ type GridRequest = {
 
 type GridRequestEnvelope = {
   request?: GridRequest;
+  fields?: string[] | null;
 };
 
 const TREE_ORDERING_RAW_EXPRESSION = 'NULLIF(LTRIM(RTRIM(od.TreeOrdering)), \'\')';
@@ -230,6 +231,11 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   RequestedQuantity: 'od.RequestedQuantity',
 };
 const PRODUCTS_QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
+const SELECT_FIELD_EXPRESSIONS: Record<string, string> = {
+  ...COLUMN_EXPRESSIONS,
+  ProductID: 'od.ProductID',
+  ProductDescription: 'od.ProductDescription',
+};
 
 const ORDER_EXPRESSION_OVERRIDES: Record<string, string | string[]> = {
   TreeOrdering: ['TreeOrderingHierarchy', 'od.TreeOrdering'],
@@ -935,6 +941,40 @@ export async function POST(
       );
     }
 
+    const requestedFieldsRaw = Array.isArray(body?.fields) ? body?.fields : [];
+    const requestedFields = requestedFieldsRaw
+      .filter((field): field is string => typeof field === 'string')
+      .map((field) => field.trim())
+      .filter((field) => field.length > 0);
+    const requiredFields = [
+      'OfferDetailID',
+      'ParentOfferDetailID',
+      'ProductID',
+      'TreeOrdering',
+      'IsPrintable',
+      'IsComment',
+      'IsCategory',
+      'Description',
+      'ProductDescription',
+      'BrandName',
+      'PartNumber',
+      'ModelNumber',
+      'RequestedItemNo',
+      'RequestedBrand',
+      'RequestedModelNo',
+      'RequestedPartNo',
+      'RequestedDescription',
+      'RequestedDescription2',
+      'RequestedDescription3',
+      'RequestedQuantity',
+      'PriceListID',
+      'PriceListEnabled',
+      'PriceListValidFromDate',
+      'PriceListValidToDate',
+    ];
+    const selectedFields = Array.from(new Set([...requiredFields, ...requestedFields]))
+      .filter((field) => Boolean(SELECT_FIELD_EXPRESSIONS[field]));
+
     if ((body as ReorderRequest | null)?.action === 'reorder') {
       return handleReorderRow(idValue, body as ReorderRequest, audit);
     }
@@ -956,86 +996,50 @@ export async function POST(
     const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, PRODUCTS_QUICK_FILTER_COLUMNS);
     const combinedWhereSql = mergeWhereClauses(whereSql, quickFilterClause.clause);
     const combinedParams = [...filterParams, ...quickFilterClause.params];
-    const orderSql =
-      buildOrder(gridRequest.sortModel) ||
-      'ORDER BY TreeOrderingHierarchy, od.TreeOrdering, od.ID';
+    const orderSql = buildOrder(gridRequest.sortModel) || 'ORDER BY TreeOrderingHierarchy, od.TreeOrdering, od.ID';
     const pagingSql = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
+    const selectedColumnSql = selectedFields
+      .map((field) => `${SELECT_FIELD_EXPRESSIONS[field]} AS ${field}`)
+      .join(',\n          ');
     const query = `
-      SELECT
-        COUNT_BIG(1) OVER () AS __totalCount,
-        SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalPrice, 0) ELSE 0 END) OVER () AS __sumTotalPrice,
-        SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalNet, 0) ELSE 0 END) OVER () AS __sumTotalNet,
-        SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalCost, 0) ELSE 0 END) OVER () AS __sumTotalCost,
-        od.ID AS OfferDetailID,
-        od.ParentOfferDetailID,
-        od.ProductID,
-        od.TreeOrdering AS TreeOrdering,
-        od.IsPrintable,
-        od.IsComment,
-        od.IsCategory,
-        ${TREE_ORDERING_HIERARCHY_EXPRESSION} AS TreeOrderingHierarchy,
-        b.Name AS BrandName,
-        p.PartNumber,
-        p.WebLink,
-        p.ModelNumber,
-        od.Quantity,
-        od.ProductDescription AS ProductDescription,
-        od.ProductDescription AS Description,
-        od.CustomerDiscount,
-        od.NetUnitPrice,
-        od.TotalPrice,
-        od.TotalNet,
-        od.Warranty,
-        od.ListPrice,
-        od.TelmacoDiscount,
-        od.NetCost,
-        od.Margin,
-        od.GrossProfit,
-        od.TotalCost,
-        od.PriceListID,
-        od.PriceListItemID,
-        pl.ValidFromDate AS PriceListValidFromDate,
-        pl.ValidToDate AS PriceListValidToDate,
-        pl.Enabled AS PriceListEnabled,
-        od.RequestedItemNo,
-        od.RequestedBrand,
-        od.RequestedModelNo,
-        od.RequestedPartNo,
-        od.RequestedDescription,
-        od.RequestedDescription2,
-        od.RequestedDescription3,
-        od.RequestedQuantity,
-        CASE
-          WHEN ISNULL(od.IsCategory, 0) = 1 THEN 0
-          WHEN NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') IS NOT NULL
-            OR NULLIF(LTRIM(RTRIM(od.RequestedBrand)), '') IS NOT NULL
-            OR NULLIF(LTRIM(RTRIM(od.RequestedModelNo)), '') IS NOT NULL
-            OR NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL
-            OR NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL
-            OR NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL
-            OR NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL
-            OR od.RequestedQuantity IS NOT NULL
-          THEN 1
-          ELSE 0
-        END AS __isRequestedRow,
-        NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') AS __requestedItemOrdinal,
-        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedItemNo,
-        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedBrand)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedBrand,
-        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedModelNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedModelNo,
-        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedPartNo,
-        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription,
-        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription2,
-        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription3,
-        MAX(CASE WHEN od.RequestedQuantity IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedQuantity
-      FROM dbo.OfferDetails od
-        LEFT OUTER JOIN dbo.Products p ON od.ProductID = p.ID
-        LEFT OUTER JOIN dbo.Brands b ON p.BrandID = b.ID
-        LEFT OUTER JOIN dbo.PriceLists pl ON od.PriceListID = pl.ID
-      ${combinedWhereSql}
-        ${orderSql}
-        ${pagingSql}
-    `;
+        SELECT
+          COUNT_BIG(1) OVER () AS __totalCount,
+          SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalPrice, 0) ELSE 0 END) OVER () AS __sumTotalPrice,
+          SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalNet, 0) ELSE 0 END) OVER () AS __sumTotalNet,
+          SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalCost, 0) ELSE 0 END) OVER () AS __sumTotalCost,
+          ${TREE_ORDERING_HIERARCHY_EXPRESSION} AS TreeOrderingHierarchy,
+          ${selectedColumnSql},
+          CASE
+            WHEN ISNULL(od.IsCategory, 0) = 1 THEN 0
+            WHEN NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') IS NOT NULL
+              OR NULLIF(LTRIM(RTRIM(od.RequestedBrand)), '') IS NOT NULL
+              OR NULLIF(LTRIM(RTRIM(od.RequestedModelNo)), '') IS NOT NULL
+              OR NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL
+              OR NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL
+              OR NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL
+              OR NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL
+              OR od.RequestedQuantity IS NOT NULL
+            THEN 1
+            ELSE 0
+          END AS __isRequestedRow,
+          NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') AS __requestedItemOrdinal,
+          MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedItemNo,
+          MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedBrand)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedBrand,
+          MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedModelNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedModelNo,
+          MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedPartNo,
+          MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription,
+          MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription2,
+          MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription3,
+          MAX(CASE WHEN od.RequestedQuantity IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedQuantity
+        FROM dbo.OfferDetails od
+          LEFT OUTER JOIN dbo.Products p ON od.ProductID = p.ID
+          LEFT OUTER JOIN dbo.Brands b ON p.BrandID = b.ID
+          LEFT OUTER JOIN dbo.PriceLists pl ON od.PriceListID = pl.ID
+        ${combinedWhereSql}
+          ${orderSql}
+          ${pagingSql}
+      `;
 
     const sqlRequest = pool.request();
     sqlRequest.input('__id', sql.Int, idValue);

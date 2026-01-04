@@ -272,7 +272,7 @@ export default function DisableAutofill() {
   return (
     <Script
       id="disable-autofill-script"
-      strategy="beforeInteractive"
+      strategy="afterInteractive"
       dangerouslySetInnerHTML={{ __html: disableAutofillScript }}
     />
   );

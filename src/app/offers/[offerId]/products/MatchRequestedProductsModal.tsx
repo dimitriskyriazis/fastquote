@@ -95,10 +95,10 @@ export default function MatchRequestedProductsModal({
   }, []);
 
   const requestedFilterModel = useMemo(() => {
-    const filters: Record<string, { filterType: 'text'; type: 'equals'; filter: string }> = {};
+    const filters: Record<string, { filterType: 'text'; type: 'contains'; filter: string }> = {};
     const applyFilter = (colId: string, value: string | null) => {
       if (!value) return;
-      filters[colId] = { filterType: 'text', type: 'equals', filter: value };
+      filters[colId] = { filterType: 'text', type: 'contains', filter: value };
     };
     applyFilter('Brand', entry.requestedBrand);
     applyFilter('ModelNumber', entry.requestedModelNumber);
@@ -109,18 +109,22 @@ export default function MatchRequestedProductsModal({
   const requestPayload = useMemo(() => {
     const payload: Record<string, unknown> = {};
     if (newProductId != null) payload.newProductId = newProductId;
-    if (requestedFilterModel) payload.filterModel = requestedFilterModel;
     return Object.keys(payload).length > 0 ? payload : null;
-  }, [newProductId, requestedFilterModel]);
+  }, [newProductId]);
+
+  const hasAppliedRequestedFiltersRef = useRef(false);
 
   const applyRequestedFilterModel = useCallback((api: MatcherGridApi | null) => {
-    const filters = requestedFilterModel ?? null;
     if (!api) return;
+    if (hasAppliedRequestedFiltersRef.current) return;
+    const filters = requestedFilterModel ?? null;
+    if (!filters) return;
     try {
       api.setFilterModel(filters);
     } catch {
       /* noop */
     }
+    hasAppliedRequestedFiltersRef.current = true;
   }, [requestedFilterModel]);
 
   const selectedProductId = useMemo(
@@ -287,6 +291,10 @@ export default function MatchRequestedProductsModal({
     trySelectPendingProduct(api);
     applyRequestedFilterModel(api);
   }, [ensureProductSort, trySelectPendingProduct, applyRequestedFilterModel]);
+
+  useEffect(() => {
+    hasAppliedRequestedFiltersRef.current = false;
+  }, [entry.offerDetailId]);
 
   useEffect(() => {
     applyRequestedFilterModel(productsApiRef.current);

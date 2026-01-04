@@ -56,6 +56,7 @@ import { restoreCaretSelection } from '../hooks/useCaretKeeper';
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
 
+
 const resolveElementFromEventTarget = (target: EventTarget | null): Element | null => {
   let current: EventTarget | null = target;
   while (current) {
@@ -78,6 +79,25 @@ const isActionMenuEventTarget = (target: EventTarget | null): boolean => {
 
 const isSelectionPreservingTarget = (target: Element | null) =>
   Boolean(target?.closest(PRESERVE_SELECTION_SELECTOR));
+
+const collectFieldIdsFromDefs = (defs: ColDef[] | null | undefined): string[] => {
+  if (!defs) return [];
+  const fields: string[] = [];
+  const walk = (items: ColDef[]) => {
+    items.forEach((def) => {
+      if (!def) return;
+      if (typeof def.field === 'string' && def.field.length > 0) {
+        fields.push(def.field);
+      }
+      const children = (def as { children?: ColDef[] }).children;
+      if (Array.isArray(children) && children.length > 0) {
+        walk(children);
+      }
+    });
+  };
+  walk(defs);
+  return fields;
+};
 
 const scheduleDeselectAllRows = (api?: GridApi<RowData> | null) => {
   if (!api || typeof api.deselectAll !== 'function') return;
@@ -238,6 +258,7 @@ type Props = {
   onRowsMoved?: (api: GridApi<RowData>) => void;
   rowDeselection?: boolean;
   disableAutoSize?: boolean;
+  performanceMode?: boolean;
   allowQuickSearch?: boolean;
   quickSearchValue?: string;
   onServerRequest?: (request: ServerRequestWithQuickFilter) => void;
@@ -593,6 +614,7 @@ export default function AgGridAll({
   columnStateNamespace = '',
   onResponse,
   disableAutoSize = false,
+  performanceMode,
   allowQuickSearch = true,
   quickSearchValue,
   onServerRequest,
@@ -640,18 +662,26 @@ export default function AgGridAll({
     },
     [columnStateNamespace, endpoint, pathname, userId, shouldPersistColumnState],
   );
+  const resolvedPerformanceMode = performanceMode !== false;
+  const resolvedDisableAutoSize = disableAutoSize || resolvedPerformanceMode;
   const resolvedCacheBlockSize =
     typeof cacheBlockSize === 'number' && Number.isFinite(cacheBlockSize) && cacheBlockSize > 0
       ? Math.floor(cacheBlockSize)
-      : 100;
+      : resolvedPerformanceMode
+        ? 20
+        : 100;
   const resolvedRowBuffer =
     typeof rowBuffer === 'number' && Number.isFinite(rowBuffer) && rowBuffer > 0
       ? Math.floor(rowBuffer)
-      : 5;
+      : resolvedPerformanceMode
+        ? 5
+        : 5;
   const resolvedMaxBlocksInCache =
     typeof maxBlocksInCache === 'number' && Number.isFinite(maxBlocksInCache) && maxBlocksInCache > 0
       ? Math.floor(maxBlocksInCache)
-      : 10;
+      : resolvedPerformanceMode
+        ? 2
+        : 10;
   const shouldApplyMaxBlocksInCache = typeof getRowHeight !== 'function';
   const resolvedColumnDefs = useMemo(() => {
     if (!suppressRowGroup) return columnDefs;
@@ -963,7 +993,7 @@ export default function AgGridAll({
 
   useEffect(() => {
     autoSizeCompletedRef.current = false;
-  }, [endpoint, disableAutoSize]);
+  }, [endpoint, resolvedDisableAutoSize]);
 
   const runAutoSize = useCallback((gridApi: GridApi<RowData>) => {
     if (gridApi.isDestroyed?.()) return;
@@ -992,7 +1022,7 @@ export default function AgGridAll({
   }, [autoSizeExclusions]);
 
   const autoSizeColumns = useCallback((api?: GridApi<RowData> | null, force = false) => {
-    if (disableAutoSize) return;
+    if (resolvedDisableAutoSize) return;
     const gridApi = api ?? gridRef.current?.api ?? null;
     if (!gridApi || gridApi.isDestroyed?.()) return;
     if (!force && autoSizeCompletedRef.current) return;
@@ -1017,7 +1047,7 @@ export default function AgGridAll({
     } else {
       autoSizeFrameRef.current = window.setTimeout(execute, 0) as unknown as number;
     }
-  }, [disableAutoSize, runAutoSize]);
+  }, [resolvedDisableAutoSize, runAutoSize]);
 
   const handleColumnVisible = useCallback(() => {
     autoSizeColumns(undefined, true);
@@ -1091,12 +1121,17 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
             delete serverRequest.quickFilterText;
           }
         }
-        const bodyRequest = { ...payload, request: serverRequest };
-        const cacheKey = `${endpoint}:${safeStringify(payload)}:${safeStringify(serverRequest)}`;
-        let responsePromise = requestCacheRef.current.get(cacheKey);
-        if (!responsePromise) {
-          responsePromise = (async () => {
-            const res = await fetch(endpoint, {
+        const visibleFields = params.api?.getAllDisplayedColumns?.()
+          ?.map((column) => column.getColDef()?.field)
+          .filter((field): field is string => typeof field === 'string' && field.length > 0) ?? [];
+        const fallbackFields = collectFieldIdsFromDefs(resolvedColumnDefs);
+        const fields = visibleFields.length > 0 ? visibleFields : fallbackFields;
+        const bodyRequest = { ...payload, request: serverRequest, fields };
+        const cacheKey = `${endpoint}:${safeStringify(payload)}:${safeStringify(serverRequest)}:${safeStringify(fields)}`;
+          let responsePromise = requestCacheRef.current.get(cacheKey);
+          if (!responsePromise) {
+            responsePromise = (async () => {
+              const res = await fetch(endpoint, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(bodyRequest),
@@ -1121,7 +1156,9 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
             return data;
           })();
           requestCacheRef.current.set(cacheKey, responsePromise);
-          responsePromise.finally(() => requestCacheRef.current.delete(cacheKey));
+          responsePromise.finally(() => {
+            requestCacheRef.current.delete(cacheKey);
+          });
         }
 
         const data = await responsePromise;
@@ -1155,6 +1192,7 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     onServerRequest,
     onTotalsChange,
     quickSearchEnabled,
+    resolvedColumnDefs,
   ]);
 
   const resolvedAllowRowClickSelection =
@@ -1949,7 +1987,7 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
           sideBar={sideBarDef}
           statusBar={{ statusPanels: [{ statusPanel: 'agAggregationComponent' }] }}
           suppressCellFocus={true}
-          cellSelection={true}
+          cellSelection={!resolvedPerformanceMode}
 
           // Charts OFF for now (to avoid the AgCharts module requirement)
           enableCharts={false}

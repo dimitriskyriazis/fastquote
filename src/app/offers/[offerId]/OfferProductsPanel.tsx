@@ -17,7 +17,6 @@ import type {
   ValueFormatterParams,
   ValueGetterParams,
   ValueSetterParams,
-  Column,
 } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
@@ -673,10 +672,36 @@ export default function OfferProductsPanel({
   showRequestedColumns = true,
 }: Props) {
   const router = useRouter();
+  useEffect(() => {
+    deferInitialAutoSizeRef.current = true;
+    deferInitialHeavyWorkRef.current = true;
+  }, [offerId]);
   const resolvedEndpoint = useMemo(() => {
     if (endpoint) return endpoint;
     return buildEndpointForOffer(offerId);
   }, [endpoint, offerId]);
+  const dataEndpoint = resolvedEndpoint;
+  useEffect(() => {
+    warmupFetchedRef.current = false;
+  }, [dataEndpoint]);
+  useEffect(() => {
+    if (warmupFetchedRef.current) return;
+    if (typeof window === 'undefined') return;
+    const warmup = async () => {
+      try {
+        await fetch(dataEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ request: { startRow: 0, endRow: 1 }, __warmup: true }),
+        });
+      } catch {
+        /* noop */
+      } finally {
+        warmupFetchedRef.current = true;
+      }
+    };
+    void warmup();
+  }, [dataEndpoint]);
   const addProductsEndpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
     [offerId],
@@ -722,6 +747,7 @@ export default function OfferProductsPanel({
   });
   const [requestedItemNoVisible, setRequestedItemNoVisible] = useState(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
+  const warmupFetchedRef = useRef(false);
   const [requestedColumnsReady, setRequestedColumnsReadyFlag] = useState(false);
   const [requestedMatchQueue, setRequestedMatchQueue] = useState<RequestedProductMatchEntry[]>([]);
   const [processedRequestedMatches, setProcessedRequestedMatches] = useState(0);
@@ -735,12 +761,14 @@ export default function OfferProductsPanel({
   const appliedShowRequestedColumnsRef = useRef<boolean | null>(null);
   const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
   const lastRowCountRef = useRef<number | null>(null);
+  const lastRequestStartRef = useRef<number | null>(null);
+  const deferInitialAutoSizeRef = useRef(true);
+  const deferInitialHeavyWorkRef = useRef(true);
   const headerSelectAllInFlightRef = useRef(false);
   const skipModelUpdateRef = useRef(false);
   const collapseSkipUntilRef = useRef<number | null>(null);
   const autoSizeTimerRef = useRef<number | null>(null);
-  const autoSizeVirtualisationPendingRef = useRef(false);
-  const [forceColumnVirtualisationOff, setForceColumnVirtualisationOff] = useState(false);
+  // auto-size disabled; keep virtualization always on for performance
   const pendingContextMenuSelectionClearRef = useRef(false);
   const [matchAddProductOpen, setMatchAddProductOpen] = useState(false);
   const [matchAddedProductId, setMatchAddedProductId] = useState<number | null>(null);
@@ -893,110 +921,11 @@ export default function OfferProductsPanel({
     'RequestedQuantity',
   ], []);
 
-  const actualColumnIds = useMemo(() => [
-    'BrandName',
-    'PartNumber',
-    'ModelNumber',
-    'Description',
-    'ListPrice',
-    'CustomerDiscount',
-    'NetUnitPrice',
-    'Quantity',
-    'TotalPrice',
-    'TotalNet',
-    'Warranty',
-    'TelmacoDiscount',
-    'NetCost',
-    'Margin',
-    'GrossProfit',
-    'TotalCost',
-  ], []);
-
-const getAllColumnsForApi = (api: GridApi<Record<string, unknown>> | null): Column[] => {
-  if (!api) return [];
-  const typedApi = api as GridApi<Record<string, unknown>> & { getAllColumns?: () => Column[] | null };
-  const allColumns = typeof typedApi.getAllColumns === 'function' ? typedApi.getAllColumns() : null;
-  if (Array.isArray(allColumns) && allColumns.length > 0) return allColumns;
-  const columns = typeof api.getColumns === 'function' ? api.getColumns() : null;
-  if (Array.isArray(columns) && columns.length > 0) return columns;
-  const displayed = typeof api.getAllDisplayedColumns === 'function' ? api.getAllDisplayedColumns() : null;
-  return displayed ?? [];
-};
-
-const autoSizeActualColumns = useCallback((api: GridApi<Record<string, unknown>> | null) => {
-  if (!api) return;
-  try {
-    const displayed = getAllColumnsForApi(api);
-    const ids = displayed
-      .map((column: Column) => getColumnId(column))
-      .filter((id): id is string => typeof id === 'string' && actualColumnIds.includes(id));
-    if (ids.length === 0) return;
-    api.autoSizeColumns(ids, false);
-    } catch {
-      /* noop */
-    }
-  }, [actualColumnIds]);
-
-const getColumnId = (column: Column): string | null => {
-  if (typeof column.getColId === 'function') return column.getColId();
-  if (typeof column.getId === 'function') return column.getId();
-  return null;
-};
-
-const autoSizeOfferColumns = useCallback(() => {
-  const api = gridApiRef.current;
-  if (!api || api.isDestroyed?.()) return;
-
-  const run = () => {
-    if (api.isDestroyed?.()) return;
-    const displayed = getAllColumnsForApi(api);
-    if (!displayed || displayed.length === 0) return;
-    const exclusions = new Set(autoSizeExclusions);
-    const columnsToSize = displayed.filter((column: Column) => {
-      const colId = getColumnId(column);
-      if (!colId) return true;
-      return !exclusions.has(colId);
-    });
-    if (columnsToSize.length === 0) return;
-    const columnIds = columnsToSize
-      .map((column: Column) => getColumnId(column))
-      .filter((id): id is string => typeof id === 'string' && id.length > 0);
-    if (columnIds.length > 0) {
-      api.autoSizeColumns(columnIds, false);
-    }
-    autoSizeActualColumns(api);
-  };
-
-  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-    window.requestAnimationFrame(run);
-  } else {
-    setTimeout(run, 0);
-  }
-}, [autoSizeExclusions, autoSizeActualColumns]);
+  // auto-size disabled; no column sizing helpers needed
 
 const scheduleAutoSize = useCallback(() => {
-  if (typeof window === 'undefined') {
-    autoSizeOfferColumns();
-    return;
-  }
-  if (!forceColumnVirtualisationOff && !autoSizeVirtualisationPendingRef.current) {
-    autoSizeVirtualisationPendingRef.current = true;
-    setForceColumnVirtualisationOff(true);
-  }
-  if (autoSizeTimerRef.current != null) {
-    window.clearTimeout(autoSizeTimerRef.current);
-  }
-  autoSizeTimerRef.current = window.setTimeout(() => {
-    autoSizeTimerRef.current = null;
-    autoSizeOfferColumns();
-    if (autoSizeVirtualisationPendingRef.current) {
-      window.setTimeout(() => {
-        autoSizeVirtualisationPendingRef.current = false;
-        setForceColumnVirtualisationOff(false);
-      }, 0);
-    }
-  }, 100);
-}, [autoSizeOfferColumns, forceColumnVirtualisationOff]);
+  /* auto-size disabled for performance */
+}, []);
 
 const triggerAutoSize = useCallback(() => {
   scheduleAutoSize();
@@ -1081,13 +1010,30 @@ const triggerAutoSize = useCallback(() => {
     const shouldShowRequestedItemNo = hasRows
       && (Boolean(response?.requestedColumns?.RequestedItemNo) || hasRequestedItemInRows);
     setRequestedItemNoVisible(shouldShowRequestedItemNo);
-    updateCategoryAncestors();
+    const runHeavyUpdates = () => {
+      updateCategoryAncestors();
+    };
+    const shouldDeferHeavy = hasRows && deferInitialHeavyWorkRef.current;
+    if (shouldDeferHeavy && typeof window !== 'undefined') {
+      deferInitialHeavyWorkRef.current = false;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(runHeavyUpdates);
+      });
+    } else {
+      deferInitialHeavyWorkRef.current = false;
+      runHeavyUpdates();
+    }
     if (hasRows) {
-      scheduleAutoSize();
+      if (deferInitialAutoSizeRef.current) {
+        deferInitialAutoSizeRef.current = false;
+      } else {
+        scheduleAutoSize();
+      }
     }
   }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, scheduleAutoSize, updateCategoryAncestors]);
 
   const handleServerRequest = useCallback((request: ServerRequestWithQuickFilter) => {
+    lastRequestStartRef.current = performance.now();
     lastServerRequestRef.current = request;
   }, []);
 
@@ -1108,7 +1054,7 @@ const triggerAutoSize = useCallback(() => {
           endRow: startRow + limit,
         },
       };
-      const res = await fetch(resolvedEndpoint, {
+      const res = await fetch(dataEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1128,7 +1074,7 @@ const triggerAutoSize = useCallback(() => {
     }
 
     return accumulated;
-  }, [resolvedEndpoint]);
+  }, [dataEndpoint]);
 
   const handleHeaderSelectAllChange = useCallback(async (
     selected: boolean,
@@ -1822,7 +1768,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         (data as Record<string, unknown>)[field] = normalized;
         return true;
       },
-      minWidth: REQUESTED_COLUMN_MIN_WIDTHS[field] ?? 120,
+      width: REQUESTED_COLUMN_MIN_WIDTHS[field] ?? 120,
     };
     if (isDescription) {
       column.width = 320;
@@ -1854,7 +1800,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         (data as Record<string, unknown>).RequestedQuantity = normalizeRequestedQuantityValue(newValue);
         return true;
       },
-      minWidth: REQUESTED_COLUMN_MIN_WIDTHS.RequestedQuantity,
+      width: REQUESTED_COLUMN_MIN_WIDTHS.RequestedQuantity,
     },
   };
 }, [requestedCellClassRules]);
@@ -1902,8 +1848,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     const requestedItemNoColumn: ColDef = {
       field: 'RequestedItemNo',
       headerName: 'Req. Item No',
-      minWidth: 110,
-      maxWidth: 160,
+      width: 130,
       filter: 'agTextColumnFilter',
       headerClass: styles.requestedHeader,
       cellClassRules: requestedCellClassRules,
@@ -1962,6 +1907,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       {
         field: 'BrandName',
         headerName: 'Brand',
+        width: 160,
         filter: 'agTextColumnFilter',
         cellClassRules: productAccentCellClassRules,
         cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
@@ -1969,11 +1915,18 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       {
         field: 'PartNumber',
         headerName: 'Part Number',
+        width: 180,
         filter: 'agTextColumnFilter',
         cellRenderer: PartNumberCell,
         cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
       },
-      { field: 'ModelNumber', headerName: 'Model Number', filter: 'agTextColumnFilter', cellClass: ACTUAL_COLUMN_GLOBAL_CLASS },
+      {
+        field: 'ModelNumber',
+        headerName: 'Model Number',
+        width: 180,
+        filter: 'agTextColumnFilter',
+        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+      },
       {
         field: 'Description',
         headerName: 'Description',
@@ -2010,6 +1963,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'ListPrice',
       headerName: 'List Price',
+      width: 140,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: (params) => {
@@ -2024,6 +1978,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'CustomerDiscount',
       headerName: 'Customer Discount',
+      width: 160,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
@@ -2034,6 +1989,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'NetUnitPrice',
       headerName: 'Net Unit Price',
+      width: 160,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
@@ -2044,6 +2000,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'Quantity',
       headerName: 'Qty',
+      width: 90,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
@@ -2054,6 +2011,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'TotalPrice',
       headerName: 'Total List Price',
+      width: 170,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueGetter: categoryTotalPriceGetter,
@@ -2068,6 +2026,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'TotalNet',
       headerName: 'Total Net',
+      width: 140,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueGetter: categoryTotalNetGetter,
@@ -2079,6 +2038,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'Warranty',
       headerName: 'Warranty',
+      width: 110,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: zeroBlankNumberFormatter,
@@ -2087,6 +2047,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'TelmacoDiscount',
       headerName: 'Telmaco Discount',
+      width: 160,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
@@ -2097,6 +2058,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'NetCost',
       headerName: 'Net Cost',
+      width: 130,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
@@ -2107,6 +2069,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'Margin',
       headerName: 'Margin',
+      width: 110,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
@@ -2117,6 +2080,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'GrossProfit',
       headerName: 'Gross Profit',
+      width: 150,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: euroFormatter,
@@ -2127,6 +2091,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'TotalCost',
       headerName: 'Total Cost',
+      width: 140,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: euroFormatter,
@@ -3056,7 +3021,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       <div className={styles.panel}>
         <div className={`${styles.gridWrapper} offer-products-grid`}>
           <AgGridAll
-            endpoint={resolvedEndpoint}
+            endpoint={dataEndpoint}
             columnDefs={productColumnDefs}
             defaultColDef={defaultColDef}
             manualMode={manualMode}
@@ -3079,9 +3044,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             rowSelection="multiple"
             rowMultiSelectWithClick
             rowDeselection
-            suppressColumnVirtualisation={forceColumnVirtualisationOff}
+            suppressColumnVirtualisation={false}
             disableAutoSize
-            cacheBlockSize={40}
+            cacheBlockSize={20}
+            rowBuffer={5}
+            maxBlocksInCache={2}
           />
         </div>
         <div className={styles.totalsBar}>
