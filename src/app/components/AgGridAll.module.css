@@ -19,6 +19,8 @@
   flex-wrap: nowrap;
   min-height: 40px;
   height: 40px;
+  position: relative;
+  z-index: 4;
 }
 
 .searchToolbarOverlay {

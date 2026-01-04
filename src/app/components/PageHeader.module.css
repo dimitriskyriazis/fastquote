@@ -46,8 +46,10 @@
 .searchSlot {
   display: flex;
   align-items: center;
-  min-height: 0;
   margin-left: 8px;
+  min-height: 40px;
+  position: relative;
+  z-index: 3;
 }
 
 .topTitle {

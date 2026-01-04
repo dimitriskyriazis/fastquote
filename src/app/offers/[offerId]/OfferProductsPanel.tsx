@@ -13,7 +13,6 @@ import type {
   MenuItemDef,
   RowClassParams,
   RowDoubleClickedEvent,
-  RowHeightParams,
   RowNode,
   ServerSideRowSelectionState,
   ValueFormatterParams,
@@ -24,9 +23,14 @@ import type {
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import styles from './OfferProductsPanel.module.css';
-import type { GridTotals, GridResponse, ServerRequestWithQuickFilter } from '../../components/AgGridAll';
+import type {
+  AgGridAllProps,
+  GridTotals,
+  GridResponse,
+  ServerRequestWithQuickFilter,
+} from '../../components/AgGridAll';
 
-const AgGridAll = dynamic(() => import('../../components/AgGridAll'), {
+const AgGridAll = dynamic<AgGridAllProps>(() => import('../../components/AgGridAll'), {
   ssr: false,
   loading: () => (
     <div className={styles.loading}>
@@ -49,6 +53,7 @@ const decimalFormatter = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
+const DEFAULT_ROW_HEIGHT = 32;
 
 const hasServerSideSelectAll = (api: GridApi<Record<string, unknown>> | null) => {
   if (!api || typeof api.getServerSideSelectionState !== 'function') return false;
@@ -727,6 +732,8 @@ export default function OfferProductsPanel({
   const [matchAddProductOpen, setMatchAddProductOpen] = useState(false);
   const [matchAddedProductId, setMatchAddedProductId] = useState<number | null>(null);
   const clearMatchAddedProductId = useCallback(() => setMatchAddedProductId(null), []);
+  const refreshScheduledRef = useRef(false);
+  const pendingRefreshPurgeRef = useRef<boolean | null>(null);
   const rebuildTreeOrderingRootMap = useCallback((rows?: Array<Record<string, unknown>>, reset = false) => {
     const map = reset ? new Map<string, number>() : new Map(treeOrderingRootMapRef.current);
     (rows ?? []).forEach((row) => {
@@ -855,30 +862,14 @@ export default function OfferProductsPanel({
       }
     });
     setCategoryPathsWithChildren((prev) => {
-      if (prev.size === next.size) {
-        let identical = true;
-        for (const value of prev) {
-          if (!next.has(value)) {
-            identical = false;
-            break;
-          }
-        }
-        if (identical) return prev;
+      if (next.size === 0) {
+        return prev;
       }
-      return next;
+      const merged = new Set(prev);
+      next.forEach((value) => merged.add(value));
+      return merged;
     });
-    setCollapsedCategoryPaths((prev) => {
-      let changed = false;
-      const nextCollapsed = new Set(prev);
-      for (const value of prev) {
-        if (!next.has(value)) {
-          nextCollapsed.delete(value);
-          changed = true;
-        }
-      }
-      return changed ? nextCollapsed : prev;
-    });
-    setCategoryChildrenKnown(true);
+    setCategoryChildrenKnown((prev) => prev || next.size > 0);
   }, []);
 
   const autoSizeExclusions = useMemo<string[]>(() => [
@@ -1151,19 +1142,6 @@ export default function OfferProductsPanel({
     setRequestedColumnsReadyFlag(true);
   }, [setRequestedColumnsReadyFlag]);
 
-  const handleGridModelUpdated = useCallback(() => {
-    if (skipModelUpdateRef.current) {
-      skipModelUpdateRef.current = false;
-      return;
-    }
-    const skipUntil = collapseSkipUntilRef.current;
-    if (typeof skipUntil === 'number' && Date.now() <= skipUntil) {
-      return;
-    }
-    updateCategoryAncestors();
-    triggerAutoSize();
-  }, [updateCategoryAncestors, triggerAutoSize]);
-
   const isCategoryRowCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!row) return false;
     const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
@@ -1191,14 +1169,75 @@ export default function OfferProductsPanel({
     return false;
   }, [collapsedCategoryPaths]);
 
-  const getRowHeight = useCallback((params: RowHeightParams<Record<string, unknown>>) => {
-    const row = params.data ?? null;
+  const determineRowHeight = useCallback((row: Record<string, unknown> | null) => {
     const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
     if (path.length > 0 && hasCollapsedAncestor(path)) {
       return 0;
     }
-    return 32;
+    return DEFAULT_ROW_HEIGHT;
   }, [hasCollapsedAncestor]);
+
+  const applyCollapsedRowHeights = useCallback(() => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    const scrollApi = api as GridApi<Record<string, unknown>> & {
+      getHorizontalScrollPosition?: () => number;
+      setHorizontalScrollPosition?: (pos: number) => void;
+    };
+    const savedHorizontalScroll =
+      typeof scrollApi.getHorizontalScrollPosition === 'function'
+        ? scrollApi.getHorizontalScrollPosition()
+        : null;
+    let heightChanged = false;
+    api.forEachNode((node) => {
+      if (!node) return;
+      const targetHeight = determineRowHeight(node.data ?? null);
+      if (typeof node.setRowHeight !== 'function') return;
+      const currentHeight =
+        typeof node.rowHeight === 'number' && Number.isFinite(node.rowHeight)
+          ? node.rowHeight
+          : undefined;
+      if (currentHeight === targetHeight) return;
+      try {
+        node.setRowHeight(targetHeight);
+        heightChanged = true;
+      } catch {
+        /* noop */
+      }
+    });
+    if (!heightChanged) {
+      if (savedHorizontalScroll != null && typeof scrollApi.setHorizontalScrollPosition === 'function') {
+        scrollApi.setHorizontalScrollPosition(savedHorizontalScroll);
+      }
+      return;
+    }
+    if (typeof api.onRowHeightChanged === 'function') {
+      api.onRowHeightChanged();
+    } else if (typeof api.resetRowHeights === 'function') {
+      try {
+        api.resetRowHeights();
+      } catch (err) {
+        console.warn('Failed to reset row heights after collapsing categories', err);
+      }
+    }
+    if (savedHorizontalScroll != null && typeof scrollApi.setHorizontalScrollPosition === 'function') {
+      scrollApi.setHorizontalScrollPosition(savedHorizontalScroll);
+    }
+  }, [determineRowHeight]);
+
+  const handleGridModelUpdated = useCallback(() => {
+    if (skipModelUpdateRef.current) {
+      skipModelUpdateRef.current = false;
+      return;
+    }
+    const skipUntil = collapseSkipUntilRef.current;
+    if (typeof skipUntil === 'number' && Date.now() <= skipUntil) {
+      return;
+    }
+    updateCategoryAncestors();
+    triggerAutoSize();
+    applyCollapsedRowHeights();
+  }, [updateCategoryAncestors, triggerAutoSize, applyCollapsedRowHeights]);
 
   const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!isOfferProductCategory(row)) return;
@@ -2020,16 +2059,31 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     showRequestedColumns,
   ]);
 
-  const refreshOfferProductGrid = useCallback((api: GridApi<Record<string, unknown>> | null, options?: { refresh?: boolean }) => {
+  const refreshOfferProductGrid = useCallback((api: GridApi<Record<string, unknown>> | null, options?: { refresh?: boolean; purge?: boolean }) => {
     const targetApi = api ?? gridApiRef.current;
     if (!targetApi) return;
-    if (options?.refresh ?? true) {
-      if (typeof targetApi.refreshServerSide === 'function') {
-        try {
-          targetApi.refreshServerSide({ purge: true });
-        } catch (err) {
-          console.warn('Failed to refresh grid after row deletion', err);
-        }
+    const shouldRefresh = options?.refresh ?? true;
+    if (shouldRefresh && typeof targetApi.refreshServerSide === 'function') {
+      const requestedPurge = options?.purge ?? false;
+      if (pendingRefreshPurgeRef.current == null) {
+        pendingRefreshPurgeRef.current = requestedPurge;
+      } else {
+        pendingRefreshPurgeRef.current = pendingRefreshPurgeRef.current || requestedPurge;
+      }
+      if (!refreshScheduledRef.current) {
+        refreshScheduledRef.current = true;
+        Promise.resolve().then(() => {
+          refreshScheduledRef.current = false;
+          const apiForRefresh = gridApiRef.current;
+          const purge = pendingRefreshPurgeRef.current ?? false;
+          pendingRefreshPurgeRef.current = null;
+          if (!apiForRefresh) return;
+          try {
+            apiForRefresh.refreshServerSide?.({ purge });
+          } catch (err) {
+            console.warn('Failed to refresh grid after row deletion', err);
+          }
+        });
       }
     }
     try {
@@ -2056,19 +2110,16 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   }, [processedRequestedMatches, requestedMatchQueue.length]);
 
   useEffect(() => {
+    applyCollapsedRowHeights();
+  }, [collapsedCategoryPaths, applyCollapsedRowHeights]);
+
+  useEffect(() => {
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return;
-    if (typeof api.resetRowHeights === 'function') {
-      try {
-        api.resetRowHeights();
-      } catch (err) {
-        console.warn('Failed to reset row heights after collapsing categories', err);
-      }
-    }
     try {
       api.redrawRows();
-    } catch (err) {
-      console.warn('Failed to redraw rows after collapsing categories', err);
+    } catch {
+      /* noop */
     }
   }, [collapsedCategoryPaths]);
 
@@ -2088,7 +2139,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           (isSingle ? 'Keep row' : 'Keep rows'),
         successToastMessage: 'Row deleted',
         failureToastMessage: 'Unable to delete row. Please try again.',
-        refreshHandler: refreshOfferProductGrid,
+        refreshHandler: (api) => refreshOfferProductGrid(api, { purge: true }),
       }),
     [resolvedEndpoint, refreshOfferProductGrid],
   );
@@ -2306,9 +2357,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     const shouldRefresh = updates.length > 0 || productsAdded > 0;
     if (shouldRefresh) {
       try {
-        refreshOfferProductGrid(null);
+        window.requestAnimationFrame(() => refreshOfferProductGrid(null, { purge: true }));
       } catch {
-        /* noop */
+        refreshOfferProductGrid(null, { purge: true });
       }
     }
     if (manualMatchesRequired) {
@@ -2327,7 +2378,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       setMatchAddedProductId(result.productId);
     }
     try {
-      refreshOfferProductGrid(null);
+      refreshOfferProductGrid(null, { purge: true });
     } catch {
       /* noop */
     }
@@ -2349,7 +2400,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     if (assigned) {
       showToastMessage('Requested item filled', 'success');
       try {
-        refreshOfferProductGrid(null);
+        refreshOfferProductGrid(null, { purge: true });
       } catch {
         /* noop */
       }
@@ -2728,11 +2779,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           throw new Error(payload?.error ?? `Failed to update quantity (status ${res.status})`);
         }
         showToastMessage('Quantity updated', 'success');
-        try {
-          event.api?.refreshServerSide?.({ purge: false });
-        } catch (refreshErr) {
-          console.warn('Failed to refresh grid after quantity update', refreshErr);
-        }
         recalcProductTotals(event, normalizedNewValue);
         refreshCategoryAggregates(event.api);
       } catch (err) {
@@ -2848,11 +2894,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           throw new Error(payload?.error ?? `Failed to update ${label} (status ${res.status})`);
         }
         showToastMessage(`${label} updated`, 'success');
-        try {
-          event.api?.refreshServerSide?.({ purge: false });
-        } catch (refreshErr) {
-          console.warn('Failed to refresh grid after pricing update', refreshErr);
-        }
         recalcProductTotals(event);
         refreshCategoryAggregates(event.api);
       } catch (err) {
@@ -2896,15 +2937,14 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             refreshToken={refreshToken}
             onGridReady={handleGridReady}
             onModelUpdated={handleGridModelUpdated}
-            getRowHeight={getRowHeight}
             onRowDoubleClicked={handleRowDoubleClicked}
             autoSizeExclusions={autoSizeExclusions}
             enableColumnStatePersistence={false}
-            suppressColumnVirtualisation
             onTotalsChange={handleTotalsChange}
             onResponse={handleGridResponse}
             onServerRequest={handleServerRequest}
             onHeaderSelectAllChange={handleHeaderSelectAllChange}
+            floatingFilter={false}
             rowGroupPanelShow="never"
             onRowsMoved={handleRowsMoved}
             rowSelection="multiple"

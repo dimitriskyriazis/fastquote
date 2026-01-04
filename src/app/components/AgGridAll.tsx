@@ -69,6 +69,8 @@ const resolveElementFromEventTarget = (target: EventTarget | null): Element | nu
   return null;
 };
 
+export type AgGridAllProps = Props;
+
 const isActionMenuEventTarget = (target: EventTarget | null): boolean => {
   const element = resolveElementFromEventTarget(target);
   return Boolean(element?.closest(ACTION_MENU_SELECTOR));
@@ -241,6 +243,9 @@ type Props = {
   onServerRequest?: (request: ServerRequestWithQuickFilter) => void;
   serverSideEnableClientSideSort?: boolean;
   cacheBlockSize?: number;
+  rowBuffer?: number;
+  maxBlocksInCache?: number;
+  floatingFilter?: boolean;
   onHeaderSelectAllChange?: (selected: boolean, api: GridApi<RowData> | null) => void;
   onRequestPayloadConsumed?: () => void;
 };
@@ -593,6 +598,9 @@ export default function AgGridAll({
   onServerRequest,
   serverSideEnableClientSideSort = true,
   cacheBlockSize,
+  rowBuffer = 5,
+  maxBlocksInCache = 10,
+  floatingFilter = true,
   onHeaderSelectAllChange,
   onRequestPayloadConsumed,
 }: Props) {
@@ -636,6 +644,15 @@ export default function AgGridAll({
     typeof cacheBlockSize === 'number' && Number.isFinite(cacheBlockSize) && cacheBlockSize > 0
       ? Math.floor(cacheBlockSize)
       : 100;
+  const resolvedRowBuffer =
+    typeof rowBuffer === 'number' && Number.isFinite(rowBuffer) && rowBuffer > 0
+      ? Math.floor(rowBuffer)
+      : 5;
+  const resolvedMaxBlocksInCache =
+    typeof maxBlocksInCache === 'number' && Number.isFinite(maxBlocksInCache) && maxBlocksInCache > 0
+      ? Math.floor(maxBlocksInCache)
+      : 10;
+  const shouldApplyMaxBlocksInCache = typeof getRowHeight !== 'function';
   const resolvedColumnDefs = useMemo(() => {
     if (!suppressRowGroup) return columnDefs;
     return columnDefs.map((definition) => ({
@@ -850,7 +867,14 @@ export default function AgGridAll({
 
     const queueQuickSearchRefresh = () => {
       quickSearchRefreshTimerRef.current = null;
-      requestRefresh(() => refreshServerSideData(api));
+      requestRefresh(() => {
+        const refreshAction = () => refreshServerSideData(api);
+        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+          window.requestAnimationFrame(refreshAction);
+        } else {
+          refreshAction();
+        }
+      });
     };
 
     quickSearchRefreshTimerRef.current = setTimeout(queueQuickSearchRefresh, QUICK_SEARCH_REFRESH_DEBOUNCE_MS);
@@ -1021,7 +1045,7 @@ export default function AgGridAll({
       sortable: true,
       resizable: true,
       filter: true,
-      floatingFilter: true,
+      floatingFilter,
       // Hide header menu icon and disable header menu on right-click
       suppressHeaderMenuButton: true,
       suppressHeaderContextMenu: true,
@@ -1029,7 +1053,7 @@ export default function AgGridAll({
       ...defaultColDef,
       filterParams: mergedFilterParams,
     };
-  }, [defaultColDef]);
+  }, [defaultColDef, floatingFilter]);
 
 const requestPayloadRef = useRef(requestPayload);
 requestPayloadRef.current = requestPayload;
@@ -1939,6 +1963,8 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
 
           // Cache settings
           cacheBlockSize={resolvedCacheBlockSize}
+          rowBuffer={resolvedRowBuffer}
+          {...(shouldApplyMaxBlocksInCache ? { maxBlocksInCache: resolvedMaxBlocksInCache } : {})}
           onGridReady={onGridReady}
           onFilterChanged={handleFilterChanged}
           onSortChanged={handleSortChanged}

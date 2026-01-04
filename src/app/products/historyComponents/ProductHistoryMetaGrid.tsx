@@ -114,7 +114,6 @@ export default function ProductHistoryMetaGrid({ partNumber, modelNumber, descri
           suppressCellFocus
           suppressMovableColumns
           suppressDragLeaveHidesColumns
-          suppressColumnVirtualisation
           suppressPaginationPanel
           onGridReady={handleGridReady}
           onFirstDataRendered={handleFirstDataRendered}
