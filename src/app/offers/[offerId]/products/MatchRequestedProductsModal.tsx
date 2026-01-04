@@ -23,6 +23,9 @@ export type RequestedProductMatchEntry = {
   label: string;
   quantity: number | null;
   details: DetailEntry[];
+  requestedBrand: string | null;
+  requestedModelNumber: string | null;
+  requestedPartNumber: string | null;
 };
 
 type MatcherRowData = Record<string, unknown>;
@@ -49,6 +52,7 @@ type Props = {
   newProductId?: number | null;
   onClearNewProductId: () => void;
   onRequestPayloadConsumed?: () => void;
+  onSkipAll: () => void;
 };
 
 const normalizeProductId = (value: unknown): number | null => {
@@ -70,6 +74,7 @@ export default function MatchRequestedProductsModal({
   newProductId,
   onClearNewProductId,
   onRequestPayloadConsumed,
+  onSkipAll,
 }: Props) {
   const [selectedProduct, setSelectedProduct] = useState<MatcherRowData | null>(null);
   const [assigning, setAssigning] = useState(false);
@@ -89,10 +94,34 @@ export default function MatchRequestedProductsModal({
     }
   }, []);
 
-  const highlightRequestPayload = useMemo(
-    () => (newProductId != null ? { newProductId } : null),
-    [newProductId],
-  );
+  const requestedFilterModel = useMemo(() => {
+    const filters: Record<string, { filterType: 'text'; type: 'equals'; filter: string }> = {};
+    const applyFilter = (colId: string, value: string | null) => {
+      if (!value) return;
+      filters[colId] = { filterType: 'text', type: 'equals', filter: value };
+    };
+    applyFilter('Brand', entry.requestedBrand);
+    applyFilter('ModelNumber', entry.requestedModelNumber);
+    applyFilter('PartNumber', entry.requestedPartNumber);
+    return Object.keys(filters).length > 0 ? filters : null;
+  }, [entry.requestedBrand, entry.requestedModelNumber, entry.requestedPartNumber]);
+
+  const requestPayload = useMemo(() => {
+    const payload: Record<string, unknown> = {};
+    if (newProductId != null) payload.newProductId = newProductId;
+    if (requestedFilterModel) payload.filterModel = requestedFilterModel;
+    return Object.keys(payload).length > 0 ? payload : null;
+  }, [newProductId, requestedFilterModel]);
+
+  const applyRequestedFilterModel = useCallback((api: MatcherGridApi | null) => {
+    const filters = requestedFilterModel ?? null;
+    if (!api) return;
+    try {
+      api.setFilterModel(filters);
+    } catch {
+      /* noop */
+    }
+  }, [requestedFilterModel]);
 
   const selectedProductId = useMemo(
     () => normalizeProductId(selectedProduct?.ProductID ?? null),
@@ -248,14 +277,20 @@ export default function MatchRequestedProductsModal({
     productsApiRef.current = api;
     ensureProductSort();
     trySelectPendingProduct(api);
-  }, [ensureProductSort, trySelectPendingProduct]);
+    applyRequestedFilterModel(api);
+  }, [ensureProductSort, trySelectPendingProduct, applyRequestedFilterModel]);
 
   const handleGridModelUpdated = useCallback(() => {
     const api = productsApiRef.current;
     if (!api) return;
     ensureProductSort();
     trySelectPendingProduct(api);
-  }, [ensureProductSort, trySelectPendingProduct]);
+    applyRequestedFilterModel(api);
+  }, [ensureProductSort, trySelectPendingProduct, applyRequestedFilterModel]);
+
+  useEffect(() => {
+    applyRequestedFilterModel(productsApiRef.current);
+  }, [applyRequestedFilterModel]);
 
   useEffect(() => {
     setSelectedProduct(null);
@@ -307,7 +342,7 @@ export default function MatchRequestedProductsModal({
                 endpoint="/api/products"
                 columnDefs={productGridColumnDefs}
                 defaultColDef={productDefaultColDef}
-                requestPayload={highlightRequestPayload}
+                requestPayload={requestPayload}
                 serverSideEnableClientSideSort={false}
                 cacheBlockSize={25}
                 onRequestPayloadConsumed={onRequestPayloadConsumed}
@@ -339,6 +374,14 @@ export default function MatchRequestedProductsModal({
                 disabled={assigning}
               >
                 Skip
+              </button>
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                onClick={onSkipAll}
+                disabled={assigning}
+              >
+                Skip all
               </button>
             </div>
           </GridQuickSearchProvider>

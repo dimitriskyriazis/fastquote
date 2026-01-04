@@ -10,7 +10,7 @@ export const productGridColumnDefs: ColDef[] = [
   },
   {
     field: 'ModelNumber',
-    headerName: 'Model',
+    headerName: 'Model Number',
     filter: 'agTextColumnFilter',
     minWidth: 180,
     flex: 1,

@@ -21,6 +21,10 @@ import lookupStyles from "../../components/LookupModal.module.css";
 import LookupModal from "../../components/LookupModal";
 import lookupButtonStyles from "../../components/LookupAddButton.module.css";
 import type { PricingPolicyRuleOption } from "../../../lib/lookupTypes";
+import {
+  PRICE_LIST_DECIMAL_FORMAT_OPTIONS,
+  type PriceListDecimalFormat,
+} from "../../../lib/priceListDecimalFormats";
 
 export type PreviousPriceListOption = DropdownOption & {
   brandId: number | null;
@@ -54,6 +58,7 @@ type FormValues = {
   comments: string;
   supplierComments: string;
   previousPriceListId: string;
+  decimalFormat: PriceListDecimalFormat;
 };
 
 type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "warning";
@@ -182,6 +187,14 @@ const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string; required?: bo
   { key: "warning", label: "Warning (optional)", required: false },
 ];
 
+const PREVIEW_COLUMN_KEYS: HeaderColumnKey[] = [
+  "partNumber",
+  "modelNumber",
+  "description",
+  "listPrice",
+  "warning",
+];
+
 type ColumnOption = { index: number; label: string; normalized: string };
 
 type SheetMapping = {
@@ -192,6 +205,14 @@ type SheetMapping = {
   selection: Partial<Record<HeaderColumnKey, number | null>>;
   rowCount: number;
   enabled: boolean;
+  previewRows: Record<number, string>[];
+};
+
+type PreviewColumn = {
+  key: HeaderColumnKey;
+  label: string;
+  columnIndex: number;
+  isListPrice: boolean;
 };
 
 type FileValidation = {
@@ -245,6 +266,13 @@ const hasCellValue = (value: unknown) => {
   return true;
 };
 
+const stringifyCellValue = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+};
+
 const detectHeaderRowIndex = (rows: unknown[][]) => {
   let bestIdx = 0;
   let bestScore = -1;
@@ -296,6 +324,16 @@ const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: numbe
   const suggestions = buildSuggestions(columns);
   const dataRows = rows.slice(headerRowIndex + 1, headerRowIndex + 501);
   const rowCount = dataRows.filter((row) => Array.isArray(row) && row.some(hasCellValue)).length;
+  const previewRows = dataRows
+    .filter((row) => Array.isArray(row) && row.some(hasCellValue))
+    .slice(0, 3)
+    .map((row) => {
+      const preview: Record<number, string> = {};
+      row.forEach((cell, colIdx) => {
+        preview[colIdx] = stringifyCellValue(cell);
+      });
+      return preview;
+    });
 
   return {
     name: sheetName || `Sheet ${fallbackIndex + 1}`,
@@ -305,6 +343,7 @@ const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: numbe
     selection: {},
     rowCount,
     enabled,
+    previewRows,
   };
 };
 
@@ -420,6 +459,7 @@ export default function PriceListImportClient({
     comments: "",
     supplierComments: "",
     previousPriceListId: "",
+    decimalFormat: "dotDecimal",
   });
   const [file, setFile] = useState<File | null>(null);
   const [fileValidation, setFileValidation] = useState<FileValidation>(INITIAL_VALIDATION);
@@ -767,6 +807,21 @@ export default function PriceListImportClient({
     [fileValidation.activeSheetIndex, fileValidation.sheets],
   );
 
+  const previewColumns = useMemo<PreviewColumn[]>(() => {
+    if (!activeSheet) return [];
+    return PREVIEW_COLUMN_KEYS.map((key) => {
+      const columnIndex = activeSheet.selection[key];
+      if (columnIndex == null) return null;
+      const column = activeSheet.columns.find((col) => col.index === columnIndex);
+      return {
+        key,
+        label: column?.label ?? `Column ${columnIndex + 1}`,
+        columnIndex,
+        isListPrice: key === "listPrice",
+      };
+    }).filter((col): col is PreviewColumn => Boolean(col));
+  }, [activeSheet]);
+
   const handleSheetChange = useCallback((nextIndex: number) => {
     setFileValidation((prev) => {
       const boundedIndex = Math.max(0, Math.min(nextIndex, prev.sheets.length - 1));
@@ -933,6 +988,7 @@ export default function PriceListImportClient({
       formData.append("validToDate", values.validToDate);
       formData.append("comments", values.comments);
       formData.append("supplierComments", values.supplierComments);
+      formData.append("decimalFormat", values.decimalFormat);
       if (values.previousPriceListId) {
         formData.append("previousPriceListId", values.previousPriceListId);
       }
@@ -995,6 +1051,10 @@ export default function PriceListImportClient({
       {option.label}
     </option>
   );
+
+  const selectedDecimalFormatOption =
+    PRICE_LIST_DECIMAL_FORMAT_OPTIONS.find((option) => option.value === values.decimalFormat) ??
+    PRICE_LIST_DECIMAL_FORMAT_OPTIONS[0];
 
   return (
     <>
@@ -1250,6 +1310,25 @@ export default function PriceListImportClient({
 
           <div className={styles.fieldStack}>
             <div className={styles.sectionHeading}>Upload</div>
+            <div className={styles.field}>
+              <span className={styles.label}>List price format</span>
+              <select
+                className={styles.input}
+                value={values.decimalFormat}
+                onChange={(event) =>
+                  updateField("decimalFormat", event.target.value as PriceListDecimalFormat)
+                }
+              >
+                {PRICE_LIST_DECIMAL_FORMAT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {`${option.label} - ${option.description}`}
+                  </option>
+                ))}
+              </select>
+              <span className={styles.helpText}>
+                {`Detected list prices should follow ${selectedDecimalFormatOption.label} formatting (${selectedDecimalFormatOption.description}). The app still displays numbers as 1,000.00.`}
+              </span>
+            </div>
             <div className={styles.uploadCard}>
               <label
                 className={`${styles.uploadArea} ${isDragging ? styles.uploadAreaDragging : ""}`}
@@ -1412,6 +1491,53 @@ export default function PriceListImportClient({
                                 );
                               })}
                             </div>
+                            {activeSheet ? (
+                              <div className={styles.previewSection}>
+                                <div className={styles.previewHeading}>
+                                  <span>
+                                    Sample rows (first {activeSheet.previewRows.length > 0 ? activeSheet.previewRows.length : 3})
+                                  </span>
+                                  <span className={styles.previewHint}>
+                                    Showing mapped columns; the list price column is bold.
+                                  </span>
+                                </div>
+                                {previewColumns.length === 0 ? (
+                                  <div className={styles.previewEmpty}>
+                                    Select columns for Part Number, Name/Description, and List Price to see a preview.
+                                  </div>
+                                ) : activeSheet.previewRows.length === 0 ? (
+                                  <div className={styles.previewEmpty}>
+                                    No preview data available for this sheet yet.
+                                  </div>
+                                ) : (
+                                  <div className={styles.previewTableWrapper}>
+                                    <table className={styles.previewTable}>
+                                      <thead>
+                                        <tr>
+                                          {previewColumns.map((column) => (
+                                            <th key={column.key}>{column.label}</th>
+                                          ))}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {activeSheet.previewRows.map((row, rowIndex) => (
+                                          <tr key={rowIndex}>
+                                            {previewColumns.map((column) => (
+                                              <td
+                                                key={`${rowIndex}-${column.key}`}
+                                                className={column.isListPrice ? styles.previewListPrice : ""}
+                                              >
+                                                {row[column.columnIndex] ?? ""}
+                                              </td>
+                                            ))}
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                         <div className={styles.validationColumns}>

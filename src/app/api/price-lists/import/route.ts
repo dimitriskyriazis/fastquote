@@ -6,6 +6,11 @@ import sql from "mssql";
 import type { ConnectionPool } from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
+import {
+  DEFAULT_PRICE_LIST_DECIMAL_FORMAT,
+  normalizePriceListDecimalFormat,
+  type PriceListDecimalFormat,
+} from "../../../../lib/priceListDecimalFormats";
 
 export const runtime = "nodejs";
 
@@ -136,21 +141,29 @@ const normalizeHeaderValue = (value: unknown): string | null => {
   return trimmed.replace(/\s+/g, "");
 };
 
-const parsePrice = (value: unknown): number | null => {
+const formatNumericPortion = (numericPortion: string, format: PriceListDecimalFormat) => {
+  if (format === "dotDecimal") {
+    return numericPortion.replace(/,/g, "");
+  }
+  if (format === "commaDecimal") {
+    return numericPortion.replace(/\./g, "").replace(/,/g, ".");
+  }
+  const commaCount = (numericPortion.match(/,/g) || []).length;
+  const dotCount = (numericPortion.match(/\./g) || []).length;
+  if (commaCount > 0 && dotCount === 0) {
+    return numericPortion.replace(/,/g, ".");
+  }
+  return numericPortion.replace(/,/g, "");
+};
+
+const parsePrice = (value: unknown, format: PriceListDecimalFormat): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value !== "string") return null;
   const raw = value.trim();
   if (!raw) return null;
   const numericPortion = raw.replace(/[^\d.,-]/g, "");
   if (!numericPortion) return null;
-  const commaCount = (numericPortion.match(/,/g) || []).length;
-  const dotCount = (numericPortion.match(/\./g) || []).length;
-  let normalized = numericPortion;
-  if (commaCount > 0 && dotCount === 0) {
-    normalized = numericPortion.replace(/,/g, ".");
-  } else {
-    normalized = numericPortion.replace(/,/g, "");
-  }
+  const normalized = formatNumericPortion(numericPortion, format);
   const parsed = Number.parseFloat(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 };
@@ -251,6 +264,7 @@ const parseSheetWithMapping = (
   rows: unknown[][],
   headerRowIndex: number,
   columnMap: Partial<Record<HeaderColumnKey, number | null>>,
+  decimalFormat: PriceListDecimalFormat,
 ) => {
   const requiredKeys: HeaderColumnKey[] = ["partNumber", "description", "listPrice"];
   const hasAllRequired = requiredKeys.every((key) => typeof columnMap[key] === "number");
@@ -271,7 +285,7 @@ const parseSheetWithMapping = (
     const partNumber = normalizeCellString(getValue(row, "partNumber"));
     const modelNumber = normalizeCellString(getValue(row, "modelNumber"));
     const description = normalizeCellString(getValue(row, "description"), 2000);
-    const listPrice = parsePrice(getValue(row, "listPrice"));
+    const listPrice = parsePrice(getValue(row, "listPrice"), decimalFormat);
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
 
     if (!partNumber && !modelNumber && !description && listPrice == null && !warning) continue;
@@ -289,7 +303,7 @@ const parseSheetWithMapping = (
   return parsed;
 };
 
-const parseSheet = (rows: unknown[][]): ParsedPriceListRow[] | null => {
+const parseSheet = (rows: unknown[][], decimalFormat: PriceListDecimalFormat): ParsedPriceListRow[] | null => {
   const header = findHeaderRow(rows);
   if (!header) return null;
   const { headerRowIndex, columnMap } = header;
@@ -307,7 +321,7 @@ const parseSheet = (rows: unknown[][]): ParsedPriceListRow[] | null => {
     const partNumber = normalizeCellString(getValue(row, "partNumber"));
     const modelNumber = normalizeCellString(getValue(row, "modelNumber"));
     const description = normalizeCellString(getValue(row, "description"), 2000);
-    const listPrice = parsePrice(getValue(row, "listPrice"));
+    const listPrice = parsePrice(getValue(row, "listPrice"), decimalFormat);
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
 
     if (!partNumber && !modelNumber && !description && listPrice == null && !warning) continue;
@@ -325,7 +339,11 @@ const parseSheet = (rows: unknown[][]): ParsedPriceListRow[] | null => {
   return parsed;
 };
 
-const parseWorkbook = (buffer: Buffer, columnMappings?: ColumnMapping[]): ParsedPriceListRow[] => {
+const parseWorkbook = (
+  buffer: Buffer,
+  columnMappings?: ColumnMapping[],
+  decimalFormat: PriceListDecimalFormat = DEFAULT_PRICE_LIST_DECIMAL_FORMAT,
+): ParsedPriceListRow[] => {
   try {
     const wb = XLSX.read(buffer, { type: "buffer" });
 
@@ -351,7 +369,12 @@ const parseWorkbook = (buffer: Buffer, columnMappings?: ColumnMapping[]): Parsed
               typeof columnMapping.headerRowIndex === "number" && columnMapping.headerRowIndex >= 0
                 ? columnMapping.headerRowIndex
                 : 0;
-            const parsed = parseSheetWithMapping(rows, headerRowIndex, columnMapping.columns ?? {});
+            const parsed = parseSheetWithMapping(
+              rows,
+              headerRowIndex,
+              columnMapping.columns ?? {},
+              decimalFormat,
+            );
             if (parsed.length > 0) {
               allParsed.push(...parsed);
             }
@@ -365,7 +388,7 @@ const parseWorkbook = (buffer: Buffer, columnMappings?: ColumnMapping[]): Parsed
       const sheet = wb.Sheets[sheetName];
       if (!sheet) continue;
       const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
-      const parsed = parseSheet(rows);
+      const parsed = parseSheet(rows, decimalFormat);
       if (parsed && parsed.length > 0) return parsed;
     }
   } catch (err) {
@@ -578,6 +601,7 @@ export async function POST(req: NextRequest) {
     const brandId = normalizeInt(formData.get("brandId"));
     const previousPriceListId = normalizeInt(formData.get("previousPriceListId"));
     const columnMappings = parseColumnMappings(formData.get("columnMappings"));
+    const decimalFormat = normalizePriceListDecimalFormat(formData.get("decimalFormat"));
 
     const errors: string[] = [];
     if (!name) errors.push("Price list name is required.");
@@ -598,7 +622,7 @@ export async function POST(req: NextRequest) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const parsedRows = parseWorkbook(buffer, columnMappings);
+    const parsedRows = parseWorkbook(buffer, columnMappings, decimalFormat);
     if (!parsedRows.length) {
       return NextResponse.json(
         {

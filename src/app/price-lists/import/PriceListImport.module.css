@@ -376,6 +376,72 @@
   color: #334155;
 }
 
+.previewSection {
+  margin-top: 16px;
+  border: 1px solid #d0d7e3;
+  border-radius: 12px;
+  padding: 12px;
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.previewHeading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.previewHint {
+  font-weight: 400;
+  color: #475569;
+  font-size: 0.8rem;
+}
+
+.previewTableWrapper {
+  margin-top: 8px;
+  overflow-x: auto;
+}
+
+.previewTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.previewTable th,
+.previewTable td {
+  border: 1px solid #e2e8f0;
+  padding: 6px 8px;
+  text-align: left;
+  color: #0f172a;
+  font-weight: 500;
+}
+
+.previewTable th {
+  background: #eff2ff;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.previewTable td {
+  background: #ffffff;
+}
+
+.previewListPrice {
+  font-weight: 700;
+  color: #1d4ed8;
+}
+
+.previewEmpty {
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
 .sheetToggle {
   display: inline-flex;
   align-items: center;

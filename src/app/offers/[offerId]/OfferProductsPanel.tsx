@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useMemo, useCallback, useState, useRef, useEffect } from 'react';
-import { useContext } from 'react';
 import type {
   CellValueChangedEvent,
   ColDef,
@@ -42,7 +41,6 @@ import { showToastMessage } from '../../../lib/toast';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
 import { priceListStatusClassRules } from '../../../lib/priceListStatus';
-import { GridQuickSearchContext } from '../../components/GridQuickSearchProvider';
 import MatchRequestedProductsModal, {
   type RequestedProductMatchEntry,
 } from './products/MatchRequestedProductsModal';
@@ -124,6 +122,16 @@ const REQUESTED_DISPLAY_FIELD_KEYS: RequestedDisplayFieldKey[] = [
   'RequestedDescription3',
   'RequestedQuantity',
 ];
+
+const REQUESTED_COLUMN_MIN_WIDTHS: Record<RequestedDisplayFieldKey, number> = {
+  RequestedBrand: 140,
+  RequestedModelNo: 160,
+  RequestedPartNo: 160,
+  RequestedDescription: 220,
+  RequestedDescription2: 220,
+  RequestedDescription3: 220,
+  RequestedQuantity: 100,
+};
 
 const REQUESTED_FIELD_LABELS: Record<RequestedFieldKey, string> = {
   RequestedItemNo: 'requested item number',
@@ -367,6 +375,9 @@ const buildRequestedProductMatchEntry = (
       (data as { RequestedQuantity?: unknown }).RequestedQuantity ?? null,
     ),
     details: detailEntries,
+    requestedBrand,
+    requestedModelNumber: requestedModel,
+    requestedPartNumber: requestedPart,
   };
 };
 
@@ -666,8 +677,6 @@ export default function OfferProductsPanel({
     if (endpoint) return endpoint;
     return buildEndpointForOffer(offerId);
   }, [endpoint, offerId]);
-  const quickSearchContext = useContext(GridQuickSearchContext);
-  const quickSearchActive = Boolean(quickSearchContext?.value?.trim());
   const addProductsEndpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
     [offerId],
@@ -729,6 +738,10 @@ export default function OfferProductsPanel({
   const headerSelectAllInFlightRef = useRef(false);
   const skipModelUpdateRef = useRef(false);
   const collapseSkipUntilRef = useRef<number | null>(null);
+  const autoSizeTimerRef = useRef<number | null>(null);
+  const autoSizeVirtualisationPendingRef = useRef(false);
+  const [forceColumnVirtualisationOff, setForceColumnVirtualisationOff] = useState(false);
+  const pendingContextMenuSelectionClearRef = useRef(false);
   const [matchAddProductOpen, setMatchAddProductOpen] = useState(false);
   const [matchAddedProductId, setMatchAddedProductId] = useState<number | null>(null);
   const clearMatchAddedProductId = useCallback(() => setMatchAddedProductId(null), []);
@@ -874,57 +887,120 @@ export default function OfferProductsPanel({
 
   const autoSizeExclusions = useMemo<string[]>(() => [
     'Description',
-    'RequestedItemNo',
     'RequestedDescription',
     'RequestedDescription2',
     'RequestedDescription3',
     'RequestedQuantity',
   ], []);
 
-  const autoSizeOfferColumns = useCallback(() => {
-    const run = () => {
-      const api = gridApiRef.current;
-      if (!api || api.isDestroyed?.()) return;
-      const displayed: Column[] | null =
-        typeof api.getAllDisplayedColumns === 'function'
-          ? api.getAllDisplayedColumns()
-          : null;
-      if (!displayed || displayed.length === 0) return;
-      const exclusions = new Set(autoSizeExclusions);
-      const columnsToSize = displayed.filter((column) => {
-        const colId =
-          typeof column.getColId === 'function'
-            ? column.getColId()
-            : typeof (column as { getId?: () => string }).getId === 'function'
-              ? (column as { getId?: () => string }).getId?.()
-              : null;
-        if (!colId) return true;
-        return !exclusions.has(colId);
-      });
-      if (columnsToSize.length === 0) return;
-      const columnIds = columnsToSize
-        .map((column) => {
-          if (typeof column.getColId === 'function') return column.getColId();
-          if (typeof (column as { getId?: () => string }).getId === 'function') {
-            return (column as { getId?: () => string }).getId?.();
-          }
-          return null;
-        })
-        .filter((id): id is string => typeof id === 'string' && id.length > 0);
-      if (columnIds.length === 0) return;
-      api.autoSizeColumns(columnIds, false);
-    };
+  const actualColumnIds = useMemo(() => [
+    'BrandName',
+    'PartNumber',
+    'ModelNumber',
+    'Description',
+    'ListPrice',
+    'CustomerDiscount',
+    'NetUnitPrice',
+    'Quantity',
+    'TotalPrice',
+    'TotalNet',
+    'Warranty',
+    'TelmacoDiscount',
+    'NetCost',
+    'Margin',
+    'GrossProfit',
+    'TotalCost',
+  ], []);
 
-    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(run);
-    } else {
-      setTimeout(run, 0);
+const getAllColumnsForApi = (api: GridApi<Record<string, unknown>> | null): Column[] => {
+  if (!api) return [];
+  const typedApi = api as GridApi<Record<string, unknown>> & { getAllColumns?: () => Column[] | null };
+  const allColumns = typeof typedApi.getAllColumns === 'function' ? typedApi.getAllColumns() : null;
+  if (Array.isArray(allColumns) && allColumns.length > 0) return allColumns;
+  const columns = typeof api.getColumns === 'function' ? api.getColumns() : null;
+  if (Array.isArray(columns) && columns.length > 0) return columns;
+  const displayed = typeof api.getAllDisplayedColumns === 'function' ? api.getAllDisplayedColumns() : null;
+  return displayed ?? [];
+};
+
+const autoSizeActualColumns = useCallback((api: GridApi<Record<string, unknown>> | null) => {
+  if (!api) return;
+  try {
+    const displayed = getAllColumnsForApi(api);
+    const ids = displayed
+      .map((column: Column) => getColumnId(column))
+      .filter((id): id is string => typeof id === 'string' && actualColumnIds.includes(id));
+    if (ids.length === 0) return;
+    api.autoSizeColumns(ids, false);
+    } catch {
+      /* noop */
     }
-  }, [autoSizeExclusions]);
+  }, [actualColumnIds]);
 
-  const triggerAutoSize = useCallback(() => {
+const getColumnId = (column: Column): string | null => {
+  if (typeof column.getColId === 'function') return column.getColId();
+  if (typeof column.getId === 'function') return column.getId();
+  return null;
+};
+
+const autoSizeOfferColumns = useCallback(() => {
+  const api = gridApiRef.current;
+  if (!api || api.isDestroyed?.()) return;
+
+  const run = () => {
+    if (api.isDestroyed?.()) return;
+    const displayed = getAllColumnsForApi(api);
+    if (!displayed || displayed.length === 0) return;
+    const exclusions = new Set(autoSizeExclusions);
+    const columnsToSize = displayed.filter((column: Column) => {
+      const colId = getColumnId(column);
+      if (!colId) return true;
+      return !exclusions.has(colId);
+    });
+    if (columnsToSize.length === 0) return;
+    const columnIds = columnsToSize
+      .map((column: Column) => getColumnId(column))
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (columnIds.length > 0) {
+      api.autoSizeColumns(columnIds, false);
+    }
+    autoSizeActualColumns(api);
+  };
+
+  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(run);
+  } else {
+    setTimeout(run, 0);
+  }
+}, [autoSizeExclusions, autoSizeActualColumns]);
+
+const scheduleAutoSize = useCallback(() => {
+  if (typeof window === 'undefined') {
     autoSizeOfferColumns();
-  }, [autoSizeOfferColumns]);
+    return;
+  }
+  if (!forceColumnVirtualisationOff && !autoSizeVirtualisationPendingRef.current) {
+    autoSizeVirtualisationPendingRef.current = true;
+    setForceColumnVirtualisationOff(true);
+  }
+  if (autoSizeTimerRef.current != null) {
+    window.clearTimeout(autoSizeTimerRef.current);
+  }
+  autoSizeTimerRef.current = window.setTimeout(() => {
+    autoSizeTimerRef.current = null;
+    autoSizeOfferColumns();
+    if (autoSizeVirtualisationPendingRef.current) {
+      window.setTimeout(() => {
+        autoSizeVirtualisationPendingRef.current = false;
+        setForceColumnVirtualisationOff(false);
+      }, 0);
+    }
+  }, 100);
+}, [autoSizeOfferColumns, forceColumnVirtualisationOff]);
+
+const triggerAutoSize = useCallback(() => {
+  scheduleAutoSize();
+}, [scheduleAutoSize]);
 
   useEffect(() => {
     if (!requestedColumnsReady) return;
@@ -970,6 +1046,17 @@ export default function OfferProductsPanel({
     triggerAutoSize();
   }, [requestedColumnVisibility, requestedColumnsReady, requestedItemNoVisible, triggerAutoSize, showRequestedColumns]);
 
+  useEffect(() => {
+    if (!showRequestedColumns) return;
+    if (typeof window === 'undefined') return;
+    const timer = window.setTimeout(() => {
+      triggerAutoSize();
+    }, 100);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [showRequestedColumns, triggerAutoSize]);
+
   const handleGridResponse = useCallback((response: GridResponse | null) => {
     lastRowCountRef.current = response?.rowCount ?? null;
     const hasRows = Boolean(response?.rowCount && response.rowCount > 0);
@@ -995,10 +1082,10 @@ export default function OfferProductsPanel({
       && (Boolean(response?.requestedColumns?.RequestedItemNo) || hasRequestedItemInRows);
     setRequestedItemNoVisible(shouldShowRequestedItemNo);
     updateCategoryAncestors();
-    if (!quickSearchActive) {
-      triggerAutoSize();
+    if (hasRows) {
+      scheduleAutoSize();
     }
-  }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, quickSearchActive, updateCategoryAncestors, triggerAutoSize]);
+  }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, scheduleAutoSize, updateCategoryAncestors]);
 
   const handleServerRequest = useCallback((request: ServerRequestWithQuickFilter) => {
     lastServerRequestRef.current = request;
@@ -1712,7 +1799,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       field,
       headerName,
       filter: 'agTextColumnFilter',
-      minWidth: isDescription ? 280 : 140,
       headerClass: styles.requestedHeader,
       cellClassRules: requestedCellClassRules,
       editable: (params: { data?: Record<string, unknown> | null }) =>
@@ -1736,6 +1822,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         (data as Record<string, unknown>)[field] = normalized;
         return true;
       },
+      minWidth: REQUESTED_COLUMN_MIN_WIDTHS[field] ?? 120,
     };
     if (isDescription) {
       column.width = 320;
@@ -1767,6 +1854,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         (data as Record<string, unknown>).RequestedQuantity = normalizeRequestedQuantityValue(newValue);
         return true;
       },
+      minWidth: REQUESTED_COLUMN_MIN_WIDTHS.RequestedQuantity,
     },
   };
 }, [requestedCellClassRules]);
@@ -1889,13 +1977,16 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       {
         field: 'Description',
         headerName: 'Description',
-        minWidth: 280,
         width: 320,
         filter: 'agTextColumnFilter',
-        valueGetter: ({ data }) => {
-          const row = data as Record<string, unknown> | null | undefined;
-          const manual = normalizeDescriptionValue(row?.ProductDescription ?? null);
-          if (manual != null) return manual;
+      valueGetter: ({ data }) => {
+        const row = data as Record<string, unknown> | null | undefined;
+        if (isRequestedRow(row)) return '';
+        const manual = normalizeDescriptionValue(row?.ProductDescription ?? null);
+        if (manual != null) return manual;
+        if (!isOfferProductCategory(row) && !isOfferProductProduct(row) && !isOfferProductComment(row)) {
+          return '';
+          }
           return normalizeDescriptionValue(row?.Description ?? null) ?? '';
         },
         valueSetter: ({ data, newValue }) => {
@@ -2109,6 +2200,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
   }, [processedRequestedMatches, requestedMatchQueue.length]);
 
+  useEffect(() => () => {
+    if (typeof window !== 'undefined' && autoSizeTimerRef.current != null) {
+      window.clearTimeout(autoSizeTimerRef.current);
+    }
+  }, []);
+
   useEffect(() => {
     applyCollapsedRowHeights();
   }, [collapsedCategoryPaths, applyCollapsedRowHeights]);
@@ -2148,6 +2245,31 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     const requestedNodes = nodes.filter((node) => isRequestedRow(node?.data ?? null));
     if (requestedNodes.length === 0) return;
 
+    try {
+      gridApiRef.current?.deselectAll?.();
+    } catch {
+      /* noop */
+    }
+    setGridRowDeletionContextMenuSelectionSnapshot(gridApiRef.current, []);
+    pendingContextMenuSelectionClearRef.current = true;
+
+    const finalizeSelection = () => {
+      requestedNodes.forEach((node) => {
+        try {
+          node?.setSelected?.(false);
+        } catch {
+          /* noop */
+        }
+      });
+      setGridRowDeletionContextMenuSelectionSnapshot(gridApiRef.current, []);
+      pendingContextMenuSelectionClearRef.current = true;
+      try {
+        gridApiRef.current?.deselectAll?.();
+      } catch {
+        /* noop */
+      }
+    };
+
     const updates: Array<Record<string, unknown>> = [];
     let categoriesAdded = 0;
     let productsAdded = 0;
@@ -2157,216 +2279,206 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     let lastAssignedCategoryOrdinal: string | null = null;
     const productChildCounters = new Map<string, number>();
 
-    for (const node of requestedNodes) {
-      const data = node?.data ?? null;
-      if (!data || typeof data !== 'object') continue;
-      const offerDetailId = normalizeOfferDetailId((data as { OfferDetailID?: unknown }).OfferDetailID ?? null);
-      if (offerDetailId == null) continue;
+    try {
+      for (const node of requestedNodes) {
+        const data = node?.data ?? null;
+        if (!data || typeof data !== 'object') continue;
+        const offerDetailId = normalizeOfferDetailId((data as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+        if (offerDetailId == null) continue;
 
-      const lookupInfo = buildRequestedLookupInfo(data);
-      const hasRequestedIdentifiers = Boolean(lookupInfo.partNumber || lookupInfo.modelNumber);
-      const requestedDescriptionPrimary = normalizeDescriptionValue(
-        (data as { RequestedDescription?: unknown }).RequestedDescription ?? null,
-      );
-      const requestedDescriptionPrimaryRaw = getExactTextValue(
-        (data as { RequestedDescription?: unknown }).RequestedDescription ?? null,
-      );
-      const requestedDescriptionSecondary = normalizeDescriptionValue(
-        (data as { RequestedDescription2?: unknown }).RequestedDescription2 ?? null,
-      );
-      const requestedDescriptionSecondaryRaw = getExactTextValue(
-        (data as { RequestedDescription2?: unknown }).RequestedDescription2 ?? null,
-      );
-      const requestedDescriptionTertiary = normalizeDescriptionValue(
-        (data as { RequestedDescription3?: unknown }).RequestedDescription3 ?? null,
-      );
-      const requestedDescriptionTertiaryRaw = getExactTextValue(
-        (data as { RequestedDescription3?: unknown }).RequestedDescription3 ?? null,
-      );
-      const descriptionOverrideRaw = getExactTextValue(
-        (data as { Description?: unknown }).Description ?? null,
-      );
-      const requestedTree = normalizeRequestedItemNoValue((data as { RequestedItemNo?: unknown }).RequestedItemNo ?? null);
-      const treeOrderingRaw = (data as { TreeOrdering?: unknown }).TreeOrdering;
-      let treeOrderingValue = requestedTree || (typeof treeOrderingRaw === 'string'
-        ? treeOrderingRaw.trim()
-        : null);
-      const requestedDescriptionValue = requestedDescriptionPrimary ?? requestedDescriptionSecondary ?? requestedDescriptionTertiary;
-      const descriptionOverride = normalizeDescriptionValue(descriptionOverrideRaw);
-      const normalizedDescriptionValues = getNormalizedRequestedDescriptionValues(data);
-      const hasSingleDescriptionOnly = normalizedDescriptionValues.length > 0
-        && new Set(normalizedDescriptionValues).size === 1;
-      const requestedQuantityValue = normalizeRequestedQuantityValue(
-        (data as { RequestedQuantity?: unknown }).RequestedQuantity ?? null,
-      );
-      const actualQuantityValue = coerceNumber((data as { Quantity?: unknown }).Quantity ?? null);
-      const hasRequestedQuantity = requestedQuantityValue != null && !Object.is(requestedQuantityValue, 0);
-      const hasActualQuantity = actualQuantityValue != null && !Object.is(actualQuantityValue, 0);
-      const hasQuantity = hasRequestedQuantity || hasActualQuantity;
-      const shouldPromoteToCategory = (
-        !hasRequestedIdentifiers
-        && hasSingleDescriptionOnly
-        && !hasQuantity
-      );
-      if (shouldPromoteToCategory) {
-        const categoryDescription = requestedDescriptionValue ?? descriptionOverride ?? null;
-        const payloadEntry: Record<string, unknown> = {
-          OfferDetailID: offerDetailId,
-          IsCategory: 1,
-        };
-        if (!treeOrderingValue) {
-          sequentialCategoryCount += 1;
-          treeOrderingValue = String(baseRootCategoryCount + sequentialCategoryCount);
-        }
-        lastAssignedCategoryOrdinal = treeOrderingValue;
-        productChildCounters.set(treeOrderingValue, 0);
-        if (categoryDescription != null) {
-          payloadEntry.Description = categoryDescription;
-        }
-        if (treeOrderingValue != null) {
-          payloadEntry.TreeOrdering = treeOrderingValue;
-          payloadEntry.RequestedItemNo = treeOrderingValue;
-        }
-        if (requestedDescriptionPrimary != null) {
-          payloadEntry.RequestedDescription = requestedDescriptionPrimary;
-        }
-        if (requestedDescriptionSecondary != null) {
-          payloadEntry.RequestedDescription2 = requestedDescriptionSecondary;
-        }
-        if (requestedDescriptionTertiary != null) {
-          payloadEntry.RequestedDescription3 = requestedDescriptionTertiary;
-        }
-        updates.push(payloadEntry);
-        promoteNodeToCategory(node, treeOrderingValue ?? null, categoryDescription);
-        categoriesAdded += 1;
-        continue;
-      }
-
-      if (!treeOrderingValue && lastAssignedCategoryOrdinal) {
-        const nextChildIndex = (productChildCounters.get(lastAssignedCategoryOrdinal) ?? 0) + 1;
-        productChildCounters.set(lastAssignedCategoryOrdinal, nextChildIndex);
-        treeOrderingValue = `${lastAssignedCategoryOrdinal}.${nextChildIndex}`;
-      }
-
-      if (!hasRequestedIdentifiers) {
-        unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
-        continue;
-      }
-
-      try {
-        const productId = await resolveProductIdFromRequestedInfo(lookupInfo);
-        if (productId == null) {
-          unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
-          continue;
-        }
-        const parentCategoryId = normalizeOfferDetailId(
-          (data as { ParentOfferDetailID?: unknown }).ParentOfferDetailID ?? null,
+        const lookupInfo = buildRequestedLookupInfo(data);
+        const hasRequestedIdentifiers = Boolean(lookupInfo.partNumber || lookupInfo.modelNumber);
+        const requestedDescriptionPrimary = normalizeDescriptionValue(
+          (data as { RequestedDescription?: unknown }).RequestedDescription ?? null,
         );
-        const assigned = await assignRequestedRowToProduct(offerDetailId, productId, parentCategoryId);
-        if (!assigned) {
+        const requestedDescriptionSecondary = normalizeDescriptionValue(
+          (data as { RequestedDescription2?: unknown }).RequestedDescription2 ?? null,
+        );
+        const requestedDescriptionTertiary = normalizeDescriptionValue(
+          (data as { RequestedDescription3?: unknown }).RequestedDescription3 ?? null,
+        );
+        const descriptionOverrideRaw = getExactTextValue(
+          (data as { Description?: unknown }).Description ?? null,
+        );
+        const requestedTree = normalizeRequestedItemNoValue((data as { RequestedItemNo?: unknown }).RequestedItemNo ?? null);
+        const treeOrderingRaw = (data as { TreeOrdering?: unknown }).TreeOrdering;
+        let treeOrderingValue = requestedTree || (typeof treeOrderingRaw === 'string'
+          ? treeOrderingRaw.trim()
+          : null);
+        const requestedDescriptionValue = requestedDescriptionPrimary ?? requestedDescriptionSecondary ?? requestedDescriptionTertiary;
+        const descriptionOverride = normalizeDescriptionValue(descriptionOverrideRaw);
+        const normalizedDescriptionValues = getNormalizedRequestedDescriptionValues(data);
+        const hasSingleDescriptionOnly = normalizedDescriptionValues.length > 0
+          && new Set(normalizedDescriptionValues).size === 1;
+        const requestedQuantityValue = normalizeRequestedQuantityValue(
+          (data as { RequestedQuantity?: unknown }).RequestedQuantity ?? null,
+        );
+        const actualQuantityValue = coerceNumber((data as { Quantity?: unknown }).Quantity ?? null);
+        const hasRequestedQuantity = requestedQuantityValue != null && !Object.is(requestedQuantityValue, 0);
+        const hasActualQuantity = actualQuantityValue != null && !Object.is(actualQuantityValue, 0);
+        const hasQuantity = hasRequestedQuantity || hasActualQuantity;
+        const shouldPromoteToCategory = (
+          !hasRequestedIdentifiers
+          && hasSingleDescriptionOnly
+          && !hasQuantity
+        );
+        if (shouldPromoteToCategory) {
+          const categoryDescription = requestedDescriptionValue ?? descriptionOverride ?? null;
+          const payloadEntry: Record<string, unknown> = {
+            OfferDetailID: offerDetailId,
+            IsCategory: 1,
+          };
+          if (!treeOrderingValue) {
+            sequentialCategoryCount += 1;
+            treeOrderingValue = String(baseRootCategoryCount + sequentialCategoryCount);
+          }
+          lastAssignedCategoryOrdinal = treeOrderingValue;
+          productChildCounters.set(treeOrderingValue, 0);
+          if (categoryDescription != null) {
+            payloadEntry.Description = categoryDescription;
+          }
+          if (treeOrderingValue != null) {
+            payloadEntry.TreeOrdering = treeOrderingValue;
+            payloadEntry.RequestedItemNo = treeOrderingValue;
+          }
+          if (requestedDescriptionPrimary != null) {
+            payloadEntry.RequestedDescription = requestedDescriptionPrimary;
+          }
+          if (requestedDescriptionSecondary != null) {
+            payloadEntry.RequestedDescription2 = requestedDescriptionSecondary;
+          }
+          if (requestedDescriptionTertiary != null) {
+            payloadEntry.RequestedDescription3 = requestedDescriptionTertiary;
+          }
+          updates.push(payloadEntry);
+          promoteNodeToCategory(node, treeOrderingValue ?? null, categoryDescription);
+          categoriesAdded += 1;
+          continue;
+        }
+
+        if (!treeOrderingValue && lastAssignedCategoryOrdinal) {
+          const nextChildIndex = (productChildCounters.get(lastAssignedCategoryOrdinal) ?? 0) + 1;
+          productChildCounters.set(lastAssignedCategoryOrdinal, nextChildIndex);
+          treeOrderingValue = `${lastAssignedCategoryOrdinal}.${nextChildIndex}`;
+        }
+
+        if (!hasRequestedIdentifiers) {
           unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
           continue;
         }
-        const productMeta = await fetchProductSummary(productId);
+
+        try {
+          const productId = await resolveProductIdFromRequestedInfo(lookupInfo);
+          if (productId == null) {
+            unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
+            continue;
+          }
+          const parentCategoryId = normalizeOfferDetailId(
+            (data as { ParentOfferDetailID?: unknown }).ParentOfferDetailID ?? null,
+          );
+          const assigned = await assignRequestedRowToProduct(offerDetailId, productId, parentCategoryId);
+          if (!assigned) {
+            unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
+            continue;
+          }
+          const productMeta = await fetchProductSummary(productId);
         const productDescription = productMeta?.Description ?? null;
-        const description = productDescription
-          ?? requestedDescriptionPrimaryRaw
-          ?? requestedDescriptionSecondaryRaw
-          ?? requestedDescriptionTertiaryRaw
-          ?? descriptionOverrideRaw
-          ?? null;
-        const requestedPartNumberRaw = getExactTextValue(
-          (data as { RequestedPartNo?: unknown }).RequestedPartNo ?? null,
-        );
-        const requestedModelNumberRaw = getExactTextValue(
-          (data as { RequestedModelNo?: unknown }).RequestedModelNo ?? null,
-        );
-        const requestedBrandRaw = getExactTextValue(
-          (data as { RequestedBrand?: unknown }).RequestedBrand ?? null,
-        );
-        const partNumber = requestedPartNumberRaw
-          ?? getExactTextValue((data as { PartNumber?: unknown }).PartNumber ?? null)
-          ?? productMeta?.PartNumber
-          ?? null;
-        const modelNumber = requestedModelNumberRaw
-          ?? getExactTextValue((data as { ModelNumber?: unknown }).ModelNumber ?? null)
-          ?? productMeta?.ModelNumber
-          ?? null;
-        const brandName = requestedBrandRaw
-          ?? getExactTextValue((data as { BrandName?: unknown }).BrandName ?? null)
-          ?? productMeta?.BrandName
-          ?? null;
-        const fallbackProductMeta: ProductSummary = {
-          ProductID: productId,
-          PartNumber: null,
-          ModelNumber: null,
-          BrandName: null,
-          Description: null,
-        };
-        const summary = productMeta ?? fallbackProductMeta;
-        promoteNodeToProduct(
-          node,
-          summary,
-          partNumber ?? null,
-          modelNumber ?? null,
-          brandName ?? null,
-          description ?? null,
-        );
-        productsAdded += 1;
-      } catch (err) {
-        console.error('Failed to populate requested row in offer', err);
-      }
-      continue;
-    }
-
-    if (updates.length > 0) {
-      try {
-        const res = await fetch(resolvedEndpoint, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ updates }),
-        });
-        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-        if (!res.ok || !payload?.ok) {
-          throw new Error(payload?.error ?? `Failed to populate requested rows (status ${res.status})`);
+        const description = productDescription ?? null;
+          const requestedPartNumberRaw = getExactTextValue(
+            (data as { RequestedPartNo?: unknown }).RequestedPartNo ?? null,
+          );
+          const requestedModelNumberRaw = getExactTextValue(
+            (data as { RequestedModelNo?: unknown }).RequestedModelNo ?? null,
+          );
+          const requestedBrandRaw = getExactTextValue(
+            (data as { RequestedBrand?: unknown }).RequestedBrand ?? null,
+          );
+          const partNumber = requestedPartNumberRaw
+            ?? getExactTextValue((data as { PartNumber?: unknown }).PartNumber ?? null)
+            ?? productMeta?.PartNumber
+            ?? null;
+          const modelNumber = requestedModelNumberRaw
+            ?? getExactTextValue((data as { ModelNumber?: unknown }).ModelNumber ?? null)
+            ?? productMeta?.ModelNumber
+            ?? null;
+          const brandName = requestedBrandRaw
+            ?? getExactTextValue((data as { BrandName?: unknown }).BrandName ?? null)
+            ?? productMeta?.BrandName
+            ?? null;
+          const fallbackProductMeta: ProductSummary = {
+            ProductID: productId,
+            PartNumber: null,
+            ModelNumber: null,
+            BrandName: null,
+            Description: null,
+          };
+          const summary = productMeta ?? fallbackProductMeta;
+          promoteNodeToProduct(
+            node,
+            summary,
+            partNumber ?? null,
+            modelNumber ?? null,
+            brandName ?? null,
+            description ?? null,
+          );
+          productsAdded += 1;
+        } catch (err) {
+          console.error('Failed to populate requested row in offer', err);
         }
-      } catch (err) {
-        console.error('Failed to populate requested rows', err);
-        showToastMessage('Unable to populate the offer with requested rows. Please try again.', 'error');
+        continue;
+      }
+
+      if (updates.length > 0) {
+        try {
+          const res = await fetch(resolvedEndpoint, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates }),
+          });
+          const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+          if (!res.ok || !payload?.ok) {
+            throw new Error(payload?.error ?? `Failed to populate requested rows (status ${res.status})`);
+          }
+        } catch (err) {
+          console.error('Failed to populate requested rows', err);
+          showToastMessage('Unable to populate the offer with requested rows. Please try again.', 'error');
+          return;
+        }
+      }
+
+      const manualMatchesRequired = unmatchedRequestedRows.length > 0;
+      if (manualMatchesRequired) {
+        setRequestedMatchQueue((prev) => [...prev, ...unmatchedRequestedRows]);
+      }
+      const parts: string[] = [];
+      if (categoriesAdded > 0) parts.push(`${categoriesAdded} categor${categoriesAdded === 1 ? 'y' : 'ies'}`);
+      if (productsAdded > 0) parts.push(`${productsAdded} product${productsAdded === 1 ? '' : 's'}`);
+      if (parts.length === 0) {
+        if (manualMatchesRequired) {
+          showToastMessage(
+            'Some requested products require manual matching. Please resolve them using the matcher.',
+            'info',
+          );
+        }
         return;
       }
-    }
-
-    const manualMatchesRequired = unmatchedRequestedRows.length > 0;
-    if (manualMatchesRequired) {
-      setRequestedMatchQueue((prev) => [...prev, ...unmatchedRequestedRows]);
-    }
-    const parts: string[] = [];
-    if (categoriesAdded > 0) parts.push(`${categoriesAdded} categor${categoriesAdded === 1 ? 'y' : 'ies'}`);
-    if (productsAdded > 0) parts.push(`${productsAdded} product${productsAdded === 1 ? '' : 's'}`);
-    if (parts.length === 0) {
+      showToastMessage(`Populated ${parts.join(' and ')} in the offer.`, 'success');
+      const shouldRefresh = updates.length > 0 || productsAdded > 0;
+      if (shouldRefresh) {
+        try {
+          window.requestAnimationFrame(() => refreshOfferProductGrid(null, { purge: true }));
+        } catch {
+          refreshOfferProductGrid(null, { purge: true });
+        }
+      }
       if (manualMatchesRequired) {
         showToastMessage(
           'Some requested products require manual matching. Please resolve them using the matcher.',
           'info',
         );
       }
-      return;
-    }
-    showToastMessage(`Populated ${parts.join(' and ')} in the offer.`, 'success');
-    const shouldRefresh = updates.length > 0 || productsAdded > 0;
-    if (shouldRefresh) {
-      try {
-        window.requestAnimationFrame(() => refreshOfferProductGrid(null, { purge: true }));
-      } catch {
-        refreshOfferProductGrid(null, { purge: true });
-      }
-    }
-    if (manualMatchesRequired) {
-      showToastMessage(
-        'Some requested products require manual matching. Please resolve them using the matcher.',
-        'info',
-      );
+    } finally {
+      finalizeSelection();
     }
   }, [assignRequestedRowToProduct, promoteNodeToCategory, promoteNodeToProduct, refreshOfferProductGrid, resolvedEndpoint]);
 
@@ -2417,6 +2529,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     advanceMatchQueue();
   }, [advanceMatchQueue, currentRequestedMatch]);
 
+  const handleManualSkipAll = useCallback(() => {
+    if (requestedMatchQueue.length === 0) return;
+    showToastMessage('Skipped all requested items.', 'info');
+    setRequestedMatchQueue([]);
+    setProcessedRequestedMatches(0);
+  }, [requestedMatchQueue.length]);
+
   const manualMatchTotal = processedRequestedMatches + requestedMatchQueue.length;
   const manualMatchPosition = currentRequestedMatch ? processedRequestedMatches + 1 : 0;
 
@@ -2425,9 +2544,19 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   ) => {
     const baseItems = productRowDeletion.getContextMenuItems(params) ?? [];
     const items = [...baseItems];
+    if (pendingContextMenuSelectionClearRef.current) {
+      pendingContextMenuSelectionClearRef.current = false;
+      setGridRowDeletionContextMenuSelectionSnapshot(params.api ?? null, []);
+    }
     const rowNode = params.node ?? null;
     const snapshotNodes = getContextMenuSelectionSnapshot(params.api ?? null);
-    const relevantNodes = snapshotNodes.length > 0
+    const requestedSelectionIds = snapshotNodes
+      .map((node) => normalizeOfferDetailId((node?.data as { OfferDetailID?: unknown })?.OfferDetailID ?? null));
+    const clickedRowId = normalizeOfferDetailId(
+      (rowNode?.data as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null,
+    );
+    const snapshotMatchesClick = clickedRowId != null && requestedSelectionIds.some((id) => id === clickedRowId);
+    const relevantNodes = snapshotNodes.length > 0 && (snapshotMatchesClick || !rowNode || !rowNode.data)
       ? snapshotNodes
       : rowNode && rowNode.data
         ? [rowNode as RowNode<Record<string, unknown>>]
@@ -2950,6 +3079,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             rowSelection="multiple"
             rowMultiSelectWithClick
             rowDeselection
+            suppressColumnVirtualisation={forceColumnVirtualisationOff}
             disableAutoSize
             cacheBlockSize={40}
           />
@@ -2974,14 +3104,15 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         </div>
       </div>
       {currentRequestedMatch ? (
-        <MatchRequestedProductsModal
-          entry={currentRequestedMatch}
-          position={manualMatchPosition}
-          total={manualMatchTotal}
-          onAssign={handleManualAssign}
-          onSkip={handleManualSkip}
-          onRequestAddProduct={openMatchAddProduct}
-          newProductId={matchAddedProductId}
+      <MatchRequestedProductsModal
+        entry={currentRequestedMatch}
+        position={manualMatchPosition}
+        total={manualMatchTotal}
+        onAssign={handleManualAssign}
+        onSkip={handleManualSkip}
+        onSkipAll={handleManualSkipAll}
+        onRequestAddProduct={openMatchAddProduct}
+        newProductId={matchAddedProductId}
           onClearNewProductId={clearMatchAddedProductId}
           onRequestPayloadConsumed={clearMatchAddedProductId}
         />
