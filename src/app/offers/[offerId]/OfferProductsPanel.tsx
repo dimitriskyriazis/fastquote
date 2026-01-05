@@ -175,24 +175,6 @@ const parseTreeOrderingPath = (value: unknown): number[] => {
     .filter((segment) => Number.isFinite(segment));
 };
 
-const compareTreeOrderingPaths = (a: number[], b: number[]) => {
-  if (a.length === 0 && b.length === 0) return 0;
-  if (a.length === 0) return 1;
-  if (b.length === 0) return -1;
-  const max = Math.max(a.length, b.length);
-  for (let idx = 0; idx < max; idx += 1) {
-    const hasA = idx < a.length;
-    const hasB = idx < b.length;
-    if (!hasA && !hasB) return 0;
-    if (!hasA) return -1;
-    if (!hasB) return 1;
-    const va = a[idx];
-    const vb = b[idx];
-    if (va !== vb) return va - vb;
-  }
-  return 0;
-};
-
 const formatTreeOrderingPath = (segments: number[]) => segments.join('.');
 
 const buildTreeOrderingKey = (segments: number[]) => segments.join('.');
@@ -398,25 +380,6 @@ const hasRequestedRowData = (row: Record<string, unknown> | null | undefined) =>
   const actualQuantity = coerceNumber((row as { Quantity?: unknown }).Quantity ?? null);
   if (actualQuantity != null && !Object.is(actualQuantity, 0)) return true;
   return false;
-};
-
-const isTruthyFlag = (value: unknown): boolean => {
-  if (value == null) return false;
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value === 1;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    return normalized === '1' || normalized === 'true' || normalized === 'yes';
-  }
-  return false;
-};
-
-const shouldSyncRequestedItemNo = (row: Record<string, unknown> | null | undefined) => {
-  if (!row) return false;
-  if (!hasRequestedRowData(row)) return false;
-  if (!isTruthyFlag((row as { IsCategory?: unknown }).IsCategory)) return false;
-  if (isTruthyFlag((row as { IsComment?: unknown }).IsComment)) return false;
-  return true;
 };
 
 const hasRequestedPseudoFields = (row: Record<string, unknown> | null | undefined) => {
