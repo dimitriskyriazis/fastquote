@@ -52,6 +52,7 @@ import { setGridRowDeletionContextMenuSelectionSnapshot } from '../../lib/gridRo
 import { useAuditUser } from './AuditUserProvider';
 import { GridQuickSearchContext } from './GridQuickSearchProvider';
 import { restoreCaretSelection } from '../hooks/useCaretKeeper';
+import { isOfferProductCategory } from '../../lib/offerProductRows';
 
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
@@ -319,6 +320,10 @@ type GapHoverState = {
   afterRowId: string | null;
   afterRowIndex: number | null;
   parentPath: number[];
+};
+
+const canDropIntoRow = (row: RowData | null) => {
+  return Boolean(isOfferProductCategory(row));
 };
 
 const PERSISTED_TREE_KEY = '__persistedTreeOrdering';
@@ -1573,8 +1578,10 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
       const top = rect.top;
       const bottom = top + rect.height;
       if (offsetY >= top + rowInset && offsetY <= bottom - rowInset) {
-        hoveredRow = rect;
-        break;
+        if (canDropIntoRow(rect.data)) {
+          hoveredRow = rect;
+          break;
+        }
       }
 
       const prevRow = rows[idx - 1] ?? null;
