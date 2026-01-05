@@ -269,6 +269,7 @@ type Props = {
   floatingFilter?: boolean;
   onHeaderSelectAllChange?: (selected: boolean, api: GridApi<RowData> | null) => void;
   onRequestPayloadConsumed?: () => void;
+  allowCellSelectionInPerformanceMode?: boolean;
 };
 
 type RowData = Record<string, unknown>;
@@ -614,7 +615,7 @@ export default function AgGridAll({
   columnStateNamespace = '',
   onResponse,
   disableAutoSize = false,
-  performanceMode,
+  performanceMode = true,
   allowQuickSearch = true,
   quickSearchValue,
   onServerRequest,
@@ -625,6 +626,7 @@ export default function AgGridAll({
   floatingFilter = true,
   onHeaderSelectAllChange,
   onRequestPayloadConsumed,
+  allowCellSelectionInPerformanceMode = performanceMode === true,
 }: Props) {
   useMutationCaret();
   const { handleEditingStart, handleEditingStop, requestRefresh } = useEditorFocusHandlers();
@@ -1987,7 +1989,7 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
           sideBar={sideBarDef}
           statusBar={{ statusPanels: [{ statusPanel: 'agAggregationComponent' }] }}
           suppressCellFocus={true}
-          cellSelection={!resolvedPerformanceMode}
+          cellSelection={!resolvedPerformanceMode || allowCellSelectionInPerformanceMode}
 
           // Charts OFF for now (to avoid the AgCharts module requirement)
           enableCharts={false}
