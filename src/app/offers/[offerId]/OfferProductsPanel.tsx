@@ -1102,74 +1102,6 @@ const triggerAutoSize = useCallback(() => {
     }
   }, [fetchAllRowsFromServer]);
 
-  const syncRequestedItemNumbers = useCallback((apiParam?: GridApi<Record<string, unknown>> | null) => {
-    const api = apiParam ?? gridApiRef.current;
-    if (!api) return;
-    const requestedEntries: Array<{
-      node: IRowNode<Record<string, unknown>>;
-      path: number[];
-      offerDetailId: number;
-    }> = [];
-    api.forEachNode((node) => {
-      const row = node.data ?? null;
-      if (!row) return;
-      if (!isRequestedRow(row)) return;
-      const offerDetailId = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
-      if (offerDetailId == null) return;
-      if (!shouldSyncRequestedItemNo(row)) return;
-      const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
-      requestedEntries.push({ node, path, offerDetailId });
-    });
-    if (requestedEntries.length === 0) return;
-    requestedEntries.sort((a, b) => compareTreeOrderingPaths(a.path, b.path));
-    const updates: Array<{ OfferDetailID: number; RequestedItemNo: string }> = [];
-    requestedEntries.forEach((entry, idx) => {
-      const targetNumber = entry.path.length > 0
-        ? formatTreeOrderingPath(entry.path)
-        : String(idx + 1);
-      const currentNumber = normalizeRequestedItemNoValue(entry.node.data?.RequestedItemNo ?? null) ?? '';
-      if (currentNumber === targetNumber) return;
-      updates.push({ OfferDetailID: entry.offerDetailId, RequestedItemNo: targetNumber });
-      try {
-        entry.node.setDataValue?.('RequestedItemNo', targetNumber);
-      } catch {
-        /* noop */
-      }
-    });
-    if (updates.length === 0) return;
-    const runUpdate = async () => {
-      try {
-        const res = await fetch(resolvedEndpoint, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ updates }),
-        });
-        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-        if (!res.ok || !payload?.ok) {
-          throw new Error(payload?.error ?? `Unable to update requested item numbers (status ${res.status})`);
-        }
-      } catch (err) {
-        console.error('Failed to update requested item numbers', err);
-        showToastMessage('Unable to sync requested item numbers. Please refresh the grid.', 'error');
-      }
-    };
-    void runUpdate();
-  }, [resolvedEndpoint]);
-
-  const handleRowsMoved = useCallback((api: GridApi<Record<string, unknown>>) => {
-    syncRequestedItemNumbers(api);
-    api.applyColumnState({
-      state: [{ colId: 'RequestedItemNo', sort: 'asc', sortIndex: 0 }],
-      defaultState: { sort: null },
-      applyOrder: false,
-    });
-    try {
-      api.refreshClientSideRowModel();
-    } catch {
-      /* noop */
-    }
-  }, [syncRequestedItemNumbers]);
-
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     gridApiRef.current = api;
     setRequestedColumnsReadyFlag(true);
@@ -1823,8 +1755,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 
   const treeColumn: ColDef = {
     field: 'TreeOrdering',
-    headerName: '#',
-    maxWidth: 90,
+    headerName: 'Item No',
     filter: 'agTextColumnFilter',
     type: 'numericColumn',
     comparator: compareTreeOrderingValues,
@@ -2153,11 +2084,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     if (refreshToken === 0) return;
     refreshOfferProductGrid(null, { refresh: false });
   }, [refreshOfferProductGrid, refreshToken]);
-
-  useEffect(() => {
-    if (refreshToken === 0) return;
-    syncRequestedItemNumbers();
-  }, [refreshToken, syncRequestedItemNumbers]);
 
   useEffect(() => {
     if (requestedMatchQueue.length === 0 && processedRequestedMatches !== 0) {
@@ -3040,7 +2966,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             onHeaderSelectAllChange={handleHeaderSelectAllChange}
             floatingFilter={false}
             rowGroupPanelShow="never"
-            onRowsMoved={handleRowsMoved}
             rowSelection="multiple"
             rowMultiSelectWithClick
             rowDeselection

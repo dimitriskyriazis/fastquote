@@ -350,7 +350,7 @@ export async function POST(
         request.input('__modifiedBy', sql.Int, audit.userId ?? null);
         chunk.forEach((row, chunkIdx) => {
           request.input(`tree_${chunkIdx}`, sql.NVarChar(255), row.treeOrdering);
-          request.input(`item_${chunkIdx}`, sql.NVarChar(255), row.itemNo ?? row.treeOrdering);
+          request.input(`item_${chunkIdx}`, sql.NVarChar(255), row.itemNo);
           request.input(`brand_${chunkIdx}`, sql.NVarChar(255), row.brand);
           request.input(`model_${chunkIdx}`, sql.NVarChar(255), row.modelNumber);
           request.input(`part_${chunkIdx}`, sql.NVarChar(255), row.partNumber);
@@ -434,7 +434,7 @@ export async function POST(
         if (unmatched.length) {
           rowsNeedingInsert.push(
             ...unmatched.map((row) => applyColumnLengthsToRow({
-              itemNo: row.RequestedItemNo ?? row.TreeOrdering ?? null,
+              itemNo: row.RequestedItemNo ?? null,
               treeOrdering: row.TreeOrdering ?? null,
               brand: row.RequestedBrand ?? null,
               modelNumber: row.RequestedModelNo ?? null,
@@ -488,7 +488,7 @@ export async function POST(
       chunk.forEach((row, chunkIdx) => {
         request.input(`tree_${chunkIdx}`, sql.NVarChar(255), row.resolvedTreeOrdering);
         request.input(`parent_${chunkIdx}`, sql.NVarChar(255), row.parentTreeOrdering);
-        request.input(`item_${chunkIdx}`, sql.NVarChar(255), row.itemNo ?? row.resolvedTreeOrdering);
+        request.input(`item_${chunkIdx}`, sql.NVarChar(255), row.itemNo);
         request.input(`brand_${chunkIdx}`, sql.NVarChar(255), row.brand);
         request.input(`model_${chunkIdx}`, sql.NVarChar(255), row.modelNumber);
         request.input(`part_${chunkIdx}`, sql.NVarChar(255), row.partNumber);

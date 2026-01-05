@@ -67,7 +67,7 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
 };
 
 const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string }> = [
-  { key: 'itemNo', label: 'Item No / Tree Ordering' },
+  { key: 'itemNo', label: 'Item No' },
   { key: 'brand', label: 'Brand' },
   { key: 'modelNumber', label: 'Model No' },
   { key: 'partNumber', label: 'Part No' },
@@ -623,7 +623,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
                 autoComplete="off"
                 value={pasteText}
                 onChange={(event) => handlePasteInput(event.target.value)}
-                placeholder="Item No / Tree Ordering	Brand	Model No	Part No	Description	Description 2	Description 3	Quantity"
+                placeholder="Item No Brand	Model No	Part No	Description	Description 2	Description 3	Quantity"
                 className={styles.pasteTextarea}
               />
             </div>
