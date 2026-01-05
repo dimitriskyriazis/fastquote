@@ -1782,8 +1782,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         resizable: false,
         sortable: false,
         filter: false,
-        maxWidth: 52,
-        minWidth: 40,
         width: 44,
         cellStyle: { padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' },
         cellRenderer: RowDragHandle,
@@ -2922,7 +2920,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             onModelUpdated={handleGridModelUpdated}
             onRowDoubleClicked={handleRowDoubleClicked}
             autoSizeExclusions={autoSizeExclusions}
-            enableColumnStatePersistence={false}
+            enableColumnStatePersistence
             onTotalsChange={handleTotalsChange}
             onResponse={handleGridResponse}
             onServerRequest={handleServerRequest}

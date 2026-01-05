@@ -46,7 +46,6 @@ export default function ProductHistoryMetaGrid({ partNumber, modelNumber, descri
         filter: false,
         sortable: false,
         flex: 1,
-        minWidth: 280,
       },
     ],
     [],

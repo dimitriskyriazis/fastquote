@@ -58,7 +58,6 @@ export default function ProductHistoryGrid({ rows }: Props) {
     floatingFilter: true,
     enableRowGroup: false,
     filterParams: { buttons: ['apply', 'clear'], closeOnApply: true },
-    minWidth: 80,
   }), []);
 
   const autoSizeAll = useCallback((api?: GridApi<HistoryRow> | null) => {
@@ -118,7 +117,7 @@ export default function ProductHistoryGrid({ rows }: Props) {
 
   const pricingCols = useMemo<ColDef[]>(() => [
     { field: 'OfferID', headerName: 'Offer ID', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 90, suppressHeaderMenuButton: true },
-    { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', width: 107, minWidth: 107, maxWidth: 107, suppressAutoSize: true, 
+    { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', width: 107, suppressAutoSize: true, 
       suppressHeaderMenuButton: true, valueFormatter: (p: ValueFormatterParams<HistoryRow>) => p.value ? new Date(p.value as string | number | Date).toLocaleDateString() : '' },
     { field: 'CustomerName', headerName: 'Customer', filter: 'agTextColumnFilter', width: 200, suppressHeaderMenuButton: true, enableRowGroup: true },
     { field: 'ListPrice', headerName: 'List Price', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: currencyFormatter, suppressHeaderMenuButton: true, enableRowGroup: true },

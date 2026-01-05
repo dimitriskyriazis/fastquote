@@ -200,8 +200,6 @@ export default function CustomersClient() {
         suppressMovable: true,
         suppressSizeToFit: true,
         suppressColumnsToolPanel: true,
-        maxWidth: 52,
-        minWidth: 44,
         width: 48,
         cellClass: styles.actionCellContainer,
         cellRenderer: ActionCell,
@@ -211,13 +209,12 @@ export default function CustomersClient() {
         headerName: "Customer",
         filter: "agTextColumnFilter",
         flex: 1,
-        minWidth: 200,
       },
       {
         field: "BrandName",
         headerName: "Brand",
         filter: "agTextColumnFilter",
-        minWidth: 160,
+        flex: 1,
       },
       {
         field: "IsParent",
@@ -236,14 +233,12 @@ export default function CustomersClient() {
           closeOnApply: true,
         },
         width: 130,
-        minWidth: 120,
       },
       {
         field: "ParentCustomer",
         headerName: "Parent Customer",
         filter: "agTextColumnFilter",
         enableRowGroup: true,
-        minWidth: 220,
         flex: 1,
       },
       {
@@ -251,7 +246,6 @@ export default function CustomersClient() {
         headerName: "Pricing Policy",
         filter: "agTextColumnFilter",
         enableRowGroup: true,
-        minWidth: 220,
         flex: 1,
       },
       {
@@ -259,7 +253,6 @@ export default function CustomersClient() {
         headerName: "Importance",
         filter: "agTextColumnFilter",
         enableRowGroup: true,
-        minWidth: 160,
       },
       {
         field: "Enabled",

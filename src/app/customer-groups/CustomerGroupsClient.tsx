@@ -120,7 +120,6 @@ export default function CustomerGroupsClient() {
         headerName: "Group Name",
         filter: "agTextColumnFilter",
         flex: 1,
-        minWidth: 220,
         editable: true,
       },
       {
@@ -153,7 +152,6 @@ export default function CustomerGroupsClient() {
         headerName: "Created On",
         filter: "agDateColumnFilter",
         valueFormatter: (params: ValueFormatterParams) => formatDateValue(params.value),
-        minWidth: 150,
         width: 160,
       },
     ],

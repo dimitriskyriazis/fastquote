@@ -203,7 +203,6 @@ export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
         field: 'Description',
         headerName: 'Category',
         flex: 1,
-        minWidth: 220,
         filter: 'agTextColumnFilter',
       },
     ],
@@ -212,19 +211,18 @@ export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
 
   const productColumns: ColDef[] = useMemo(
     () => [
-      { field: 'PartNumber', headerName: 'Part Number', filter: 'agTextColumnFilter', width: 170, minWidth: 140 },
+      { field: 'PartNumber', headerName: 'Part Number', filter: 'agTextColumnFilter', width: 170 },
       {
         field: 'Description',
         headerName: 'Description',
         flex: 1,
-        minWidth: 260,
         filter: 'agTextColumnFilter',
         suppressAutoSize: true,
         cellRenderer: DescriptionCellRenderer,
       },
-      { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter', width: 150, minWidth: 120 },
-      { field: 'ModelNumber', headerName: 'Model Number', filter: 'agTextColumnFilter', width: 150, minWidth: 130 },
-      { field: 'PriceListName', headerName: 'Price List', filter: 'agTextColumnFilter', width: 170, minWidth: 140 },
+      { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter', width: 150 },
+      { field: 'ModelNumber', headerName: 'Model Number', filter: 'agTextColumnFilter', width: 150 },
+      { field: 'PriceListName', headerName: 'Price List', filter: 'agTextColumnFilter', width: 170 },
       {
         field: 'ListPrice',
         headerName: 'List Price',

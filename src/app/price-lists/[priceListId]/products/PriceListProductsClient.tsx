@@ -100,7 +100,6 @@ export default function PriceListProductsClient({
       {
         colId: "__seq__",
         headerName: "#",
-        maxWidth: 80,
         width: 64,
         suppressMovable: true,
         suppressSizeToFit: true,
@@ -121,14 +120,12 @@ export default function PriceListProductsClient({
         headerName: "Product",
         filter: "agTextColumnFilter",
         flex: 1,
-        minWidth: 220,
       },
       {
         field: "PartNumber",
         headerName: "Part Number",
         filter: "agTextColumnFilter",
         width: 160,
-        minWidth: 140,
       },
       {
         field: "ListPrice",

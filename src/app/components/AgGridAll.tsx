@@ -341,6 +341,11 @@ type SavedColumnStateEntry = {
 };
 
 const sanitizeStorageSegment = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, '_');
+const COLUMN_STATE_DEBUG_ENABLED = process.env.NEXT_PUBLIC_AG_GRID_COLUMN_STATE_LOG === 'true';
+const logColumnStateDebug = (message: string, payload?: unknown) => {
+  if (!COLUMN_STATE_DEBUG_ENABLED || typeof console === 'undefined') return;
+  console.debug(`[AgGridAll][ColumnState] ${message}`, payload ?? null);
+};
 
 const safeStringify = (value: unknown): string => {
   try {
@@ -657,6 +662,8 @@ export default function AgGridAll({
   const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const pendingScrollRestoreTopRef = useRef<number | null>(null);
   const columnSaveTimerRef = useRef<number | null>(null);
+  const columnStateLoadedRef = useRef(false);
+  const [columnStateRevision, setColumnStateRevision] = useState(0);
   const [isGridReady, setIsGridReady] = useState(false);
   const { userId } = useAuditUser();
   const pathname = usePathname();
@@ -669,6 +676,9 @@ export default function AgGridAll({
     },
     [columnStateNamespace, endpoint, pathname, userId, shouldPersistColumnState],
   );
+  useEffect(() => {
+    columnStateLoadedRef.current = false;
+  }, [columnStateStorageKey]);
   const resolvedPerformanceMode = performanceMode !== false;
   const resolvedDisableAutoSize = disableAutoSize || resolvedPerformanceMode;
   const resolvedCacheBlockSize =
@@ -690,13 +700,54 @@ export default function AgGridAll({
         ? 2
         : 10;
   const shouldApplyMaxBlocksInCache = typeof getRowHeight !== 'function';
+  type ColumnDefinitionWithChildren = ColDef & { children?: ColDef[] };
+  const persistedColumnWidths = useMemo<Record<string, number>>(() => {
+    if (!shouldPersistColumnState || !columnStateStorageKey || typeof window === 'undefined') {
+      return {};
+    }
+    const revisionTrigger = columnStateRevision;
+    void revisionTrigger;
+    const persisted = readPersistedColumnState(columnStateStorageKey);
+    if (!persisted || persisted.length === 0) return {};
+    const widths: Record<string, number> = {};
+    persisted.forEach((entry) => {
+      if (!entry || typeof entry.colId !== 'string' || !entry.colId) return;
+      if (typeof entry.width !== 'number') return;
+      widths[entry.colId] = entry.width;
+    });
+    return widths;
+  }, [columnStateStorageKey, shouldPersistColumnState, columnStateRevision]);
+
   const resolvedColumnDefs = useMemo(() => {
-    if (!suppressRowGroup) return columnDefs;
-    return columnDefs.map((definition) => ({
-      ...definition,
-      enableRowGroup: false,
-    }));
-  }, [columnDefs, suppressRowGroup]);
+    const base = !suppressRowGroup
+      ? columnDefs
+      : columnDefs.map((definition) => ({
+          ...definition,
+          enableRowGroup: false,
+        }));
+    if (!shouldPersistColumnState || Object.keys(persistedColumnWidths).length === 0) {
+      return base;
+    }
+    const applyWidths = (definitions: ColumnDefinitionWithChildren[]): ColumnDefinitionWithChildren[] => definitions.map(
+      (definition) => {
+        const next: ColumnDefinitionWithChildren = { ...definition };
+        const colId = typeof next.colId === 'string'
+          ? next.colId
+          : typeof next.field === 'string'
+            ? next.field
+            : '';
+        if (colId && persistedColumnWidths[colId] != null) {
+          next.width = persistedColumnWidths[colId];
+        }
+        const children = definition.children;
+        if (Array.isArray(children) && children.length > 0) {
+          next.children = applyWidths(children);
+        }
+        return next;
+      },
+    );
+    return applyWidths(base);
+  }, [columnDefs, persistedColumnWidths, shouldPersistColumnState, suppressRowGroup]);
   const [gapHover, setGapHover] = useState<GapHoverState | null>(null);
   const [rowHover, setRowHover] = useState<RowHoverState | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -937,7 +988,9 @@ export default function AgGridAll({
     const api = gridRef.current?.api;
     if (!api || api.isDestroyed?.()) return;
     const nextState = collectPersistableColumnState(api.getColumnState());
+    logColumnStateDebug('persisting column state', { key: columnStateStorageKey, columns: nextState.length });
     writePersistedColumnState(columnStateStorageKey, nextState);
+    setColumnStateRevision((prev) => prev + 1);
   }, [columnStateStorageKey, shouldPersistColumnState]);
 
   const queuePersistColumnState = useCallback(() => {
@@ -953,6 +1006,7 @@ export default function AgGridAll({
 
   const applySavedColumnState = useCallback((api: GridApi<RowData>) => {
     if (!shouldPersistColumnState || !columnStateStorageKey) return;
+    if (columnStateLoadedRef.current) return;
     const persisted = readPersistedColumnState(columnStateStorageKey);
     if (!persisted || persisted.length === 0) return;
     const currentColumnIds = new Set(
@@ -972,7 +1026,9 @@ export default function AgGridAll({
       rowGroupIndex: entry.rowGroup ? entry.rowGroupIndex ?? 0 : undefined,
     }));
     try {
+      logColumnStateDebug('applying saved column state', { key: columnStateStorageKey, columns: sanitizedState.length });
       api.applyColumnState({ state: sanitizedState, applyOrder: true, defaultState: { hide: null } });
+      columnStateLoadedRef.current = true;
     } catch (err) {
       console.warn('Failed to apply saved column state', err);
     }
@@ -1058,10 +1114,7 @@ export default function AgGridAll({
 
   const handleColumnVisible = useCallback(() => {
     autoSizeColumns(undefined, true);
-    if (shouldPersistColumnState) {
-      queuePersistColumnState();
-    }
-  }, [autoSizeColumns, queuePersistColumnState, shouldPersistColumnState]);
+  }, [autoSizeColumns]);
 
   const handleFirstDataRendered = useCallback((event: FirstDataRenderedEvent) => {
     autoSizeColumns(event.api, true);
@@ -1372,6 +1425,9 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
 
   const handleModelUpdated = useCallback((event: ModelUpdatedEvent<RowData>) => {
     autoSizeColumns(event.api, true);
+    if (shouldPersistColumnState) {
+      applySavedColumnState(event.api);
+    }
     if (quickSearchRefreshRequestedRef.current) {
       quickSearchRefreshRequestedRef.current = false;
       stopQuickSearchFocusRetries();
@@ -1399,7 +1455,15 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
         }
       }
     }
-  }, [autoSizeColumns, getViewportElement, onModelUpdated, runQuickSearchFocus, stopQuickSearchFocusRetries]);
+  }, [
+    applySavedColumnState,
+    autoSizeColumns,
+    getViewportElement,
+    onModelUpdated,
+    runQuickSearchFocus,
+    shouldPersistColumnState,
+    stopQuickSearchFocusRetries,
+  ]);
 
   const mergedGetRowClass = useCallback((params: RowClassParams<RowData>) => {
     const parts: string[] = [];

@@ -249,8 +249,6 @@ export default function PriceListsClient() {
         suppressMovable: true,
         suppressSizeToFit: true,
         suppressColumnsToolPanel: true,
-        maxWidth: 52,
-        minWidth: 44,
         width: 48,
         cellClass: styles.actionCellContainer,
         cellRenderer: ActionCell,
@@ -263,7 +261,6 @@ export default function PriceListsClient() {
         filter: "agDateColumnFilter",
         valueFormatter: formatDateValue,
         width: 105,
-        minWidth: 105,
         suppressAutoSize: true,
       },
       {
@@ -272,7 +269,6 @@ export default function PriceListsClient() {
         filter: "agDateColumnFilter",
         valueFormatter: formatDateValue,
         width: 105,
-        minWidth: 105,
         suppressAutoSize: true,
       },
       {
@@ -297,7 +293,6 @@ export default function PriceListsClient() {
         headerName: "Supplier Comment",
         filter: "agTextColumnFilter",
         flex: 1,
-        minWidth: 220,
       },
     ],
     [ActionCell]
