@@ -163,9 +163,6 @@
   color: inherit;
 }
 
-.gridShell :global(.ag-cell) {
-  transition: background-color 140ms ease;
-}
 
 .gridShell :global(.ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell),
 .gridShell :global(.ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell) {
@@ -239,4 +236,7 @@
 :global(.ag-column-drop-vertical-title-bar),
 :global(.ag-column-drop-horizontal) {
   display: none !important;
+}
+.gridShell :global(.ag-cell) {
+  transition: background-color 140ms ease;
 }

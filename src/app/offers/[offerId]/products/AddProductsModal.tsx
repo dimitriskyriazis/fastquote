@@ -120,6 +120,7 @@ export default function AddProductsModal({
   const categoryApiRef = useRef<GridApi | null>(null);
   const productsApiRef = useRef<GridApi | null>(null);
   const requestedRowsFetchIdRef = useRef(0);
+  const requestedRowsCacheRef = useRef<Record<number, RequestedRow[]>>({});
 
   const categoryRequestPayload = useMemo(() => ({ action: 'categories' }), []);
   const productRequestPayload = useMemo(() => ({ action: 'products' }), []);
@@ -148,11 +149,22 @@ export default function AddProductsModal({
     [offerId],
   );
 
-  const fetchRequestedRows = useCallback(async (categoryId: number) => {
-    const fetchId = ++requestedRowsFetchIdRef.current;
-    setRequestedRowsLoading(true);
-    setRequestedRowsError(null);
-    try {
+  const fetchRequestedRows = useCallback(
+    async (categoryId: number, options?: { force?: boolean }) => {
+      const forceRefresh = Boolean(options?.force);
+      if (!forceRefresh) {
+        const cached = requestedRowsCacheRef.current[categoryId];
+        if (cached) {
+          setRequestedRows(cached);
+          setRequestedRowsError(null);
+          setRequestedRowsLoading(false);
+          return;
+        }
+      }
+      const fetchId = ++requestedRowsFetchIdRef.current;
+      setRequestedRowsLoading(true);
+      setRequestedRowsError(null);
+      try {
       const params = new URLSearchParams();
       params.set('categoryId', String(categoryId));
       const res = await fetch(
@@ -166,23 +178,27 @@ export default function AddProductsModal({
       if (!res.ok || !payload?.ok) {
         throw new Error(payload?.error ?? `Failed to load requested rows (status ${res.status})`);
       }
-      if (requestedRowsFetchIdRef.current !== fetchId) {
-        return;
+        if (requestedRowsFetchIdRef.current !== fetchId) {
+          return;
+        }
+        const rows = Array.isArray(payload.rows) ? payload.rows : [];
+        setRequestedRows(rows);
+        requestedRowsCacheRef.current[categoryId] = rows;
+      } catch (err) {
+        if (requestedRowsFetchIdRef.current !== fetchId) {
+          return;
+        }
+        console.error('Failed to load requested rows', err);
+        setRequestedRows([]);
+        setRequestedRowsError(err instanceof Error ? err.message : 'Unable to load requested rows.');
+      } finally {
+        if (requestedRowsFetchIdRef.current === fetchId) {
+          setRequestedRowsLoading(false);
+        }
       }
-      setRequestedRows(Array.isArray(payload.rows) ? payload.rows : []);
-    } catch (err) {
-      if (requestedRowsFetchIdRef.current !== fetchId) {
-        return;
-      }
-      console.error('Failed to load requested rows', err);
-      setRequestedRows([]);
-      setRequestedRowsError(err instanceof Error ? err.message : 'Unable to load requested rows.');
-    } finally {
-      if (requestedRowsFetchIdRef.current === fetchId) {
-        setRequestedRowsLoading(false);
-      }
-    }
-  }, [offerId]);
+    },
+    [offerId],
+  );
 
   useEffect(() => {
     setSelectedRequestedRowId(null);
@@ -222,7 +238,6 @@ export default function AddProductsModal({
         field: 'Description',
         headerName: 'Description',
         filter: 'agTextColumnFilter',
-        suppressAutoSize: true,
         cellRenderer: DescriptionCellRenderer,
       },
       { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter', width: 150 },
@@ -234,7 +249,6 @@ export default function AddProductsModal({
         filter: 'agNumberColumnFilter',
         type: 'numericColumn',
         valueFormatter: (params) => formatEuro(params.value),
-        width: 140,
         cellClassRules: priceListStatusClassRules(),
       },
       {
@@ -243,7 +257,6 @@ export default function AddProductsModal({
         filter: 'agNumberColumnFilter',
         type: 'numericColumn',
         valueFormatter: (params) => formatEuro(params.value),
-        width: 140,
       },
     ],
     [],
@@ -318,7 +331,7 @@ export default function AddProductsModal({
       );
       onAdded(addedCount);
       if (isAssigningRequestedRow && baseCategory != null) {
-        void fetchRequestedRows(baseCategory);
+        void fetchRequestedRows(baseCategory, { force: true });
       }
       setSelectedRequestedRowId(null);
       setSelectedProducts([]);

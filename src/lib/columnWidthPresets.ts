@@ -85,9 +85,10 @@ export const resolveColumnWidthAssignments = (
   }
   const resolved: Record<string, number> = {};
   Object.entries(merged).forEach(([colId, value]) => {
-    const width = typeof value === 'number'
-      ? value
-      : COLUMN_WIDTH_PRESETS[value];
+    const width =
+      typeof value === 'number'
+        ? COLUMN_WIDTH_PRESETS[String(value) as ColumnWidthPresetKey] ?? value
+        : COLUMN_WIDTH_PRESETS[value];
     if (typeof width === 'number' && Number.isFinite(width) && width > 0) {
       resolved[colId] = width;
     }

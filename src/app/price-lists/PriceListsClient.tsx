@@ -260,16 +260,12 @@ export default function PriceListsClient() {
         headerName: "Valid From",
         filter: "agDateColumnFilter",
         valueFormatter: formatDateValue,
-        width: 105,
-        suppressAutoSize: true,
       },
       {
         field: "ValidToDate",
         headerName: "Valid To",
         filter: "agDateColumnFilter",
         valueFormatter: formatDateValue,
-        width: 105,
-        suppressAutoSize: true,
       },
       {
         field: "Enabled",

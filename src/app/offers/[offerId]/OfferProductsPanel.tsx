@@ -13,7 +13,6 @@ import type {
   RowClassParams,
   RowDoubleClickedEvent,
   RowNode,
-  ServerSideRowSelectionState,
   ValueFormatterParams,
   ValueGetterParams,
   ValueSetterParams,
@@ -51,12 +50,6 @@ const decimalFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 2,
 });
 const DEFAULT_ROW_HEIGHT = 32;
-
-const hasServerSideSelectAll = (api: GridApi<Record<string, unknown>> | null) => {
-  if (!api || typeof api.getServerSideSelectionState !== 'function') return false;
-  const state = api.getServerSideSelectionState();
-  return Boolean(state && 'selectAll' in state && Boolean((state as ServerSideRowSelectionState).selectAll));
-};
 
 type GridRowNode = RowNode<Record<string, unknown>> | IRowNode<Record<string, unknown>>;
 
@@ -121,16 +114,6 @@ const REQUESTED_DISPLAY_FIELD_KEYS: RequestedDisplayFieldKey[] = [
   'RequestedDescription3',
   'RequestedQuantity',
 ];
-
-const REQUESTED_COLUMN_MIN_WIDTHS: Record<RequestedDisplayFieldKey, number> = {
-  RequestedBrand: 140,
-  RequestedModelNo: 160,
-  RequestedPartNo: 160,
-  RequestedDescription: 220,
-  RequestedDescription2: 220,
-  RequestedDescription3: 220,
-  RequestedQuantity: 100,
-};
 
 const REQUESTED_FIELD_LABELS: Record<RequestedFieldKey, string> = {
   RequestedItemNo: 'requested item number',
@@ -213,6 +196,14 @@ const resolveOfferProductTypeLabel = (row: Record<string, unknown> | null | unde
 
 const isRequestedRow = (row: Record<string, unknown> | null | undefined) =>
   Boolean((row as { __isRequestedRow?: number | null })?.__isRequestedRow === 1);
+
+const resolveRowDragLabel = (data: Record<string, unknown> | null | undefined) => {
+  if (!data) return '';
+  const normalize = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+  const brandName = normalize((data as { BrandName?: unknown }).BrandName);
+  const requestedBrand = normalize((data as { RequestedBrand?: unknown }).RequestedBrand);
+  return brandName || requestedBrand || '';
+};
 
 const isRequestedDescriptionField = (field: string | null | undefined): field is 'RequestedDescription' | 'RequestedDescription2' | 'RequestedDescription3' =>
   field === 'RequestedDescription' || field === 'RequestedDescription2' || field === 'RequestedDescription3';
@@ -719,7 +710,7 @@ export default function OfferProductsPanel({
   const treeOrderingRootMapRef = useRef<Map<string, number>>(new Map());
   const serverRowsRef = useRef<Array<Record<string, unknown>>>([]);
   const appliedRequestedColumnVisibilityRef = useRef<Record<RequestedDisplayFieldKey, boolean> | null>(null);
-  const appliedRequestedItemNoVisibleRef = useRef<boolean>(false);
+  const appliedRequestedItemNoVisibleRef = useRef<boolean | null>(null);
   const appliedShowRequestedColumnsRef = useRef<boolean | null>(null);
   const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
   const lastRowCountRef = useRef<number | null>(null);
@@ -871,14 +862,6 @@ export default function OfferProductsPanel({
     });
     setCategoryChildrenKnown((prev) => prev || next.size > 0);
   }, []);
-
-  const autoSizeExclusions = useMemo<string[]>(() => [
-    'Description',
-    'RequestedDescription',
-    'RequestedDescription2',
-    'RequestedDescription3',
-    'RequestedQuantity',
-  ], []);
 
   useEffect(() => {
     if (!requestedColumnsReady) return;
@@ -1307,171 +1290,6 @@ const RequestedItemNoCell = useCallback((params: ICellRendererParams<Record<stri
     );
   }, [hasCategoryChildren, isCategoryRowCollapsed, toggleCategoryCollapsed]);
 
-  // Row drag handle: starts native drag with row data (no visible selection)
-  const RowDragHandle = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
-    const sixDots = (
-      <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-        <circle cx="4" cy="3" r="1.5" fill="currentColor" />
-        <circle cx="10" cy="3" r="1.5" fill="currentColor" />
-        <circle cx="4" cy="7" r="1.5" fill="currentColor" />
-        <circle cx="10" cy="7" r="1.5" fill="currentColor" />
-        <circle cx="4" cy="11" r="1.5" fill="currentColor" />
-        <circle cx="10" cy="11" r="1.5" fill="currentColor" />
-      </svg>
-    );
-    const preventRangeSelection = (event: React.SyntheticEvent) => {
-      event.stopPropagation();
-    };
-
-    // Temporary elements/listeners used only during drag
-    let previewEl: HTMLElement | null = null; // 1x1 px canvas to hide native ghost
-    let overlayEl: HTMLElement | null = null; // in-window ghost that follows cursor
-    let cleanupListeners: (() => void) | null = null;
-    let dx = 0; // cursor offset within row at drag start
-    let dy = 0;
-    let dropCleanupHandler: (() => void) | null = null;
-
-    const cleanupDragArtifacts = () => {
-      if (cleanupListeners) {
-        cleanupListeners();
-        cleanupListeners = null;
-      }
-      document.documentElement.classList.remove('dragging');
-      if (previewEl && previewEl.parentNode) {
-        previewEl.parentNode.removeChild(previewEl);
-      }
-      previewEl = null;
-      if (overlayEl && overlayEl.parentNode) {
-        overlayEl.parentNode.removeChild(overlayEl);
-      }
-      overlayEl = null;
-      if (dropCleanupHandler && typeof window !== 'undefined') {
-        window.removeEventListener('fastquote-row-drop', dropCleanupHandler);
-      }
-      dropCleanupHandler = null;
-    };
-
-    const onDragStart = (e: React.DragEvent) => {
-      // Provide row identity/data for drop targets so TreeOrdering can be recomputed client-side
-      const resolvedRowIndex = typeof params.node?.rowIndex === 'number'
-        ? params.node.rowIndex
-        : null;
-
-      const isSelectAll = hasServerSideSelectAll(params.api ?? null);
-      const selectedNodes = isSelectAll
-        ? []
-        : (typeof params.api?.getSelectedNodes === 'function'
-          ? params.api.getSelectedNodes().map((node) => node.id ?? null).filter((id): id is string => typeof id === 'string' && id.length > 0)
-          : []);
-      if (params.node?.id) {
-        if (!selectedNodes.includes(params.node.id)) {
-          selectedNodes.push(params.node.id);
-        }
-      }
-      const payload = {
-        type: 'offer-product-row',
-        rowId: params.node?.id ?? null,
-        rowIndex: resolvedRowIndex,
-        data: params.data ?? null,
-        selectedRowIds: selectedNodes,
-      };
-      try {
-        e.dataTransfer.setData('application/x-fastquote-row+json', JSON.stringify(payload));
-      } catch { /* noop */ }
-      try {
-        e.dataTransfer.setData('text/plain', JSON.stringify(payload));
-      } catch { /* noop */ }
-      e.dataTransfer.effectAllowed = 'move';
-      // Hide the native OS drag ghost so we can render our own overlay inside the window only
-      const px = document.createElement('canvas');
-      px.width = 1; px.height = 1;
-      px.style.position = 'absolute';
-      px.style.top = '-10000px';
-      px.style.left = '-10000px';
-      document.body.appendChild(px);
-      previewEl = px;
-      try { e.dataTransfer.setDragImage(px, 0, 0); } catch { /* noop */ }
-
-      // Create an in-window overlay that mirrors the dragged row and follows the cursor
-      const handle = e.currentTarget as HTMLElement;
-      const rowEl = handle.closest('.ag-row') as HTMLElement | null;
-      if (rowEl) {
-        const rect = rowEl.getBoundingClientRect();
-        dx = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-        dy = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
-        const clone = rowEl.cloneNode(true) as HTMLElement;
-        clone.style.position = 'fixed';
-        clone.style.pointerEvents = 'none';
-        clone.style.top = '0';
-        clone.style.left = '0';
-        clone.style.width = `${rect.width}px`;
-        clone.style.height = `${rect.height}px`;
-        clone.style.transform = `translate(${e.clientX - dx}px, ${e.clientY - dy}px)`;
-        clone.style.zIndex = '999999';
-        clone.style.background = getComputedStyle(rowEl).backgroundColor || '#ffffff';
-        clone.style.boxShadow = '0 8px 24px rgba(15, 23, 42, 0.16)';
-        clone.classList.add('drag-overlay-row');
-        document.body.appendChild(clone);
-        overlayEl = clone;
-      }
-
-      // While dragging, mark the whole document as a valid drop target to avoid the OS "not-allowed" cursor
-      const handler: EventListener = (evt: Event) => {
-        const ev = evt as DragEvent;
-        ev.preventDefault();
-        try { if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'; } catch { /* noop */ }
-        if (overlayEl) {
-          const x = Math.max(0, ev.clientX - dx);
-          const y = Math.max(0, ev.clientY - dy);
-          overlayEl.style.transform = `translate(${x}px, ${y}px)`;
-        }
-      };
-      const opts: AddEventListenerOptions = { capture: true };
-      document.addEventListener('dragover', handler, opts);
-      document.addEventListener('dragenter', handler, opts);
-      window.addEventListener('dragover', handler, opts);
-      document.body.addEventListener('dragover', handler, opts);
-      cleanupListeners = () => {
-        document.removeEventListener('dragover', handler, opts);
-        document.removeEventListener('dragenter', handler, opts);
-        window.removeEventListener('dragover', handler, opts);
-        document.body.removeEventListener('dragover', handler, opts);
-      };
-      document.documentElement.classList.add('dragging');
-
-      if (typeof window !== 'undefined') {
-        dropCleanupHandler = () => {
-          cleanupDragArtifacts();
-        };
-        window.addEventListener('fastquote-row-drop', dropCleanupHandler);
-      }
-    };
-
-    return (
-      <div className={styles.dragCellWrapper} onMouseDownCapture={preventRangeSelection} onPointerDownCapture={preventRangeSelection}>
-        <button
-          type="button"
-          aria-label="Drag row"
-          title="Drag row"
-          className={styles.dragButton}
-          draggable
-          onDragStart={onDragStart}
-          onMouseDownCapture={preventRangeSelection}
-          onPointerDownCapture={preventRangeSelection}
-          onDragEnd={(e) => {
-            e.stopPropagation();
-            cleanupDragArtifacts();
-          }}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
-          onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
-          onMouseDown={(e) => { e.stopPropagation(); }}
-        >
-          {sixDots}
-        </button>
-      </div>
-    );
-  }, []);
-
 const PartNumberCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     const rawValue = params.value;
     if (rawValue == null) return '';
@@ -1630,11 +1448,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         (data as Record<string, unknown>)[field] = normalized;
         return true;
       },
-      width: REQUESTED_COLUMN_MIN_WIDTHS[field] ?? 120,
     };
-    if (isDescription) {
-      column.width = 320;
-    }
     return column;
   };
 
@@ -1662,7 +1476,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         (data as Record<string, unknown>).RequestedQuantity = normalizeRequestedQuantityValue(newValue);
         return true;
       },
-      width: REQUESTED_COLUMN_MIN_WIDTHS.RequestedQuantity,
     },
   };
 }, [requestedCellClassRules]);
@@ -1685,6 +1498,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     singleClickEdit: manualMode,
     cellRenderer: TreeOrderingCell,
     cellClass: ['offer-products-tree-ordering-cell', ACTUAL_COLUMN_GLOBAL_CLASS],
+    rowDrag: true,
     valueGetter: ({ data }) => {
       const row = data as {
         __isRequestedRow?: number | null;
@@ -1692,16 +1506,15 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       } | null | undefined;
       const treeValue = row?.TreeOrdering;
       if (treeValue != null) {
-          return typeof treeValue === 'string' ? treeValue.trim() : String(treeValue);
-        }
-        return '';
-      },
-    };
+        return typeof treeValue === 'string' ? treeValue.trim() : String(treeValue);
+      }
+      return '';
+    },
+  };
 
     const requestedItemNoColumn: ColDef = {
       field: 'RequestedItemNo',
       headerName: 'Req. Item No',
-      width: 130,
       filter: 'agTextColumnFilter',
       headerClass: styles.requestedHeader,
       cellClassRules: requestedCellClassRules,
@@ -1737,8 +1550,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         sortable: false,
         filter: false,
         width: 44,
-        cellStyle: { padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' },
-        cellRenderer: RowDragHandle,
+        rowDrag: true,
         cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
       },
       {
@@ -1753,7 +1565,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       {
         field: 'BrandName',
         headerName: 'Brand',
-        width: 160,
         filter: 'agTextColumnFilter',
         cellClassRules: productAccentCellClassRules,
         cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
@@ -1761,7 +1572,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       {
         field: 'PartNumber',
         headerName: 'Part Number',
-        width: 180,
         filter: 'agTextColumnFilter',
         cellRenderer: PartNumberCell,
         cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
@@ -1769,14 +1579,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       {
         field: 'ModelNumber',
         headerName: 'Model Number',
-        width: 180,
         filter: 'agTextColumnFilter',
         cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
       },
       {
         field: 'Description',
         headerName: 'Description',
-        width: 320,
         filter: 'agTextColumnFilter',
       valueGetter: ({ data }) => {
         const row = data as Record<string, unknown> | null | undefined;
@@ -1809,7 +1617,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'ListPrice',
       headerName: 'List Price',
-      width: 140,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: (params) => {
@@ -1824,7 +1631,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'CustomerDiscount',
       headerName: 'Customer Discount',
-      width: 160,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
@@ -1835,7 +1641,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'NetUnitPrice',
       headerName: 'Net Unit Price',
-      width: 160,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
@@ -1846,7 +1651,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'Quantity',
       headerName: 'Qty',
-      width: 90,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
@@ -1857,7 +1661,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'TotalPrice',
       headerName: 'Total List Price',
-      width: 170,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueGetter: categoryTotalPriceGetter,
@@ -1872,7 +1675,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'TotalNet',
       headerName: 'Total Net',
-      width: 140,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueGetter: categoryTotalNetGetter,
@@ -1884,7 +1686,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'Warranty',
       headerName: 'Warranty',
-      width: 110,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: zeroBlankNumberFormatter,
@@ -1893,7 +1694,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'TelmacoDiscount',
       headerName: 'Telmaco Discount',
-      width: 160,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
@@ -1904,7 +1704,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'NetCost',
       headerName: 'Net Cost',
-      width: 130,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
@@ -1915,7 +1714,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'Margin',
       headerName: 'Margin',
-      width: 110,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
@@ -1926,7 +1724,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'GrossProfit',
       headerName: 'Gross Profit',
-      width: 150,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: euroFormatter,
@@ -1937,7 +1734,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     {
       field: 'TotalCost',
       headerName: 'Total Cost',
-      width: 140,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: euroFormatter,
@@ -1948,7 +1744,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     },
   ];
   }, [
-    RowDragHandle,
     PartNumberCell,
     manualMode,
     TreeOrderingCell,
@@ -2877,7 +2672,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             onGridReady={handleGridReady}
             onModelUpdated={handleGridModelUpdated}
             onRowDoubleClicked={handleRowDoubleClicked}
-            autoSizeExclusions={autoSizeExclusions}
             enableColumnStatePersistence
             onTotalsChange={handleTotalsChange}
             onResponse={handleGridResponse}
@@ -2888,8 +2682,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             rowSelection="multiple"
             rowMultiSelectWithClick
             rowDeselection
+            useAgGridRowDrag
             suppressColumnVirtualisation={false}
-            disableAutoSize
             cacheBlockSize={20}
             rowBuffer={5}
             maxBlocksInCache={2}

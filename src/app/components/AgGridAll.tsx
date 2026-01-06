@@ -7,7 +7,6 @@ import React, {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {
@@ -30,6 +29,7 @@ import {
   GridApi,
   GridOptions,
   GridReadyEvent,
+  IRowNode,
   RowNode,
   IServerSideDatasource,
   IServerSideGetRowsParams,
@@ -45,6 +45,7 @@ import {
   ServerSideRowSelectionState,
 } from 'ag-grid-community';
 import { AllEnterpriseModule, LicenseManager, ModuleRegistry } from 'ag-grid-enterprise';
+import { RowDragModule } from 'ag-grid-community';
 import { usePathname } from 'next/navigation';
 import { showToastMessage } from '../../lib/toast';
 import styles from './AgGridAll.module.css';
@@ -58,6 +59,7 @@ import { resolveColumnWidthAssignments, ColumnWidthAssignment } from '../../lib/
 
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
+const GRID_ROW_HEIGHT = 32;
 
 
 const resolveElementFromEventTarget = (target: EventTarget | null): Element | null => {
@@ -215,11 +217,11 @@ const useEditorFocusHandlers = () => {
 
 // Prevent double registration during HMR/StrictMode
 declare global {
-  var __AG_ALL_REGISTERED__: boolean | undefined;
+  var __AG_GRID_MODULES_REGISTERED__: boolean | undefined;
 }
-if (!globalThis.__AG_ALL_REGISTERED__) {
-  ModuleRegistry.registerModules([AllEnterpriseModule]); // Brings SSRM, filters, editors, panels, etc.
-  globalThis.__AG_ALL_REGISTERED__ = true;
+if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
+  ModuleRegistry.registerModules([AllEnterpriseModule, RowDragModule]); // Brings SSRM, filters, editors, panels, etc.
+  globalThis.__AG_GRID_MODULES_REGISTERED__ = true;
 }
 
 LicenseManager.setLicenseKey(process.env.NEXT_PUBLIC_AG_GRID_LICENSE || '');
@@ -274,6 +276,7 @@ type Props = {
   onHeaderSelectAllChange?: (selected: boolean, api: GridApi<RowData> | null) => void;
   onRequestPayloadConsumed?: () => void;
   allowCellSelectionInPerformanceMode?: boolean;
+  useAgGridRowDrag?: boolean;
 };
 
 type RowData = Record<string, unknown>;
@@ -382,34 +385,6 @@ type FilterDescriptor = {
   values?: unknown;
 };
 
-type DragPayload = {
-  type: 'offer-product-row';
-  rowId: string | null;
-  rowIndex: number | null;
-  data: RowData | null;
-  selectedRowIds?: Array<string | null>;
-};
-
-type RowHoverState = {
-  top: number;
-  height: number;
-  rowId: string | null;
-  rowIndex: number | null;
-  data: RowData | null;
-  path: number[];
-  parentPath: number[];
-};
-
-type GapHoverState = {
-  pos: number;
-  position: 'before' | 'after';
-  beforeRowId: string | null;
-  beforeRowIndex: number | null;
-  afterRowId: string | null;
-  afterRowIndex: number | null;
-  parentPath: number[];
-};
-
 const canDropIntoRow = (row: RowData | null) => {
   return Boolean(isOfferProductCategory(row));
 };
@@ -430,10 +405,10 @@ type SavedColumnStateEntry = {
 };
 
 const sanitizeStorageSegment = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, '_');
-const COLUMN_STATE_DEBUG_ENABLED = process.env.NEXT_PUBLIC_AG_GRID_COLUMN_STATE_LOG === 'true';
-const logColumnStateDebug = (message: string, payload?: unknown) => {
-  if (!COLUMN_STATE_DEBUG_ENABLED || typeof console === 'undefined') return;
-  console.debug(`[AgGridAll][ColumnState] ${message}`, payload ?? null);
+
+const logColumnStateDebug = (..._args: unknown[]) => {
+  // Intentionally left blank to avoid noisy logs.
+  void _args;
 };
 
 const safeStringify = (value: unknown): string => {
@@ -689,6 +664,7 @@ const reorderRowsByTreeOrdering = (api: GridApi<RowData>) => {
   }
 };
 const TREE_DEPENDENT_COLUMNS = ['TreeOrdering', 'BrandName', 'TotalPrice', 'TotalNet', 'TotalCost'];
+const ROW_DRAG_EDGE_THRESHOLD = 10;
 
 export default function AgGridAll({
   endpoint,
@@ -734,6 +710,7 @@ export default function AgGridAll({
   onHeaderSelectAllChange,
   onRequestPayloadConsumed,
   allowCellSelectionInPerformanceMode = performanceMode === true,
+  useAgGridRowDrag = false,
 }: Props) {
   useMutationCaret();
   const { handleEditingStart, handleEditingStop, requestRefresh } = useEditorFocusHandlers();
@@ -756,7 +733,8 @@ export default function AgGridAll({
   }, [requestRefresh]);
   const gridRef = useRef<AgGridReact<RowData> | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
-  const gridApiRef = useRef<GridApi<RowData> | null>(null);
+
+const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const pendingScrollRestoreTopRef = useRef<number | null>(null);
   const columnSaveTimerRef = useRef<number | null>(null);
   const columnStateLoadedRef = useRef(false);
@@ -873,9 +851,6 @@ export default function AgGridAll({
     );
     return applyWidths(baseWithDefaults);
   }, [columnDefs, persistedColumnWidths, shouldPersistColumnState, resolvedColumnWidthDefaults, suppressRowGroup]);
-  const [gapHover, setGapHover] = useState<GapHoverState | null>(null);
-  const [rowHover, setRowHover] = useState<RowHoverState | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingExternalRefreshRef = useRef<number | null>(null);
   const [contextMenuRowId, setContextMenuRowId] = useState<string | null>(null);
@@ -1276,17 +1251,66 @@ export default function AgGridAll({
 const requestPayloadRef = useRef(requestPayload);
 requestPayloadRef.current = requestPayload;
 const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
+  const getRowPath = useCallback((node: IRowNode<RowData> | null | undefined): number[] => {
+    if (!node) return [];
+    const data = node.data as { TreeOrdering?: string | null } | undefined;
+    return parseTreeOrderingPath(data?.TreeOrdering ?? null);
+  }, []);
 
-  const sharedGridOptions = useMemo(
-    () => ({
+  const getParentPath = useCallback((path: number[]) => {
+    return path.length > 0 ? path.slice(0, -1) : [];
+  }, []);
+
+  const deriveParentPathFromNeighbors = useCallback((
+    beforeNode: IRowNode<RowData> | null,
+    afterNode: IRowNode<RowData> | null,
+    position: 'before' | 'after',
+  ): number[] => {
+    const beforePath = beforeNode ? getRowPath(beforeNode) : null;
+    const afterPath = afterNode ? getRowPath(afterNode) : null;
+
+    if (!afterPath && position === 'after') {
+      return [];
+    }
+
+    if (beforePath && afterPath) {
+      const prefix = longestCommonPrefix(beforePath, afterPath);
+      const beforeIsPrefix = prefix.length === beforePath.length && afterPath.length > prefix.length;
+      const afterIsPrefix = prefix.length === afterPath.length && beforePath.length > prefix.length;
+      if (position === 'after' && beforeIsPrefix) {
+        return beforePath.slice();
+      }
+      if (position === 'before' && afterIsPrefix) {
+        return getParentPath(afterPath);
+      }
+      return prefix;
+    }
+
+    if (beforePath) {
+      return getParentPath(beforePath);
+    }
+
+    if (afterPath) {
+      return getParentPath(afterPath);
+    }
+
+    return [];
+  }, [getParentPath, getRowPath]);
+
+  const sharedGridOptions = useMemo(() => {
+    const options: GridOptions<RowData> = {
       cellSelection: {
         handle: {
           mode: 'range',
         },
       },
-    }) as unknown as GridOptions<RowData>,
-    [],
-  );
+    };
+    if (useAgGridRowDrag) {
+      options.rowDragMultiRow = false;
+      options.suppressMoveWhenRowDragging = true;
+    }
+    return options;
+  }, [useAgGridRowDrag]);
 
 const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     getRows: async (params: IServerSideGetRowsParams<RowData>) => {
@@ -1803,361 +1827,53 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     }
   }, [endpoint]);
 
-  const computeHoverState = useCallback((
-    clientY: number,
-  ): { row: RowHoverState | null; gap: GapHoverState | null; dragging: boolean } => {
-    const shell = shellRef.current;
-    const api = gridRef.current?.api;
-    if (!shell || !api) {
-      return { row: null, gap: null, dragging: false };
-    }
+  const deriveDropTargetContext = useCallback((event: RowDragEndEvent<RowData>): ReorderContext | null => {
+    const api = event.api;
+    const overNode = event.rowsDrop?.target ?? event.rowsDrop?.overNode ?? event.overNode ?? null;
+    if (!overNode) return null;
 
-    const rowElements = Array.from(shell.querySelectorAll<HTMLElement>('.ag-center-cols-container .ag-row'));
-    if (rowElements.length === 0) {
-      return { row: null, gap: null, dragging: false };
-    }
+    const rowTop = typeof overNode.rowTop === 'number' ? overNode.rowTop : 0;
+    const rowHeight = typeof overNode.rowHeight === 'number' ? overNode.rowHeight : GRID_ROW_HEIGHT;
+    const offset = event.y - rowTop;
+    const edgeBand = Math.min(ROW_DRAG_EDGE_THRESHOLD, Math.max(6, Math.round(rowHeight * 0.2)));
+    let position: 'before' | 'after' | 'inside' = 'after';
 
-    const shellRect = shell.getBoundingClientRect();
-    const offsetY = clientY - shellRect.top;
-    const rows: RowHoverState[] = rowElements
-      .map((rowEl) => {
-        const rowRect = rowEl.getBoundingClientRect();
-        const rowIndexAttr = rowEl.getAttribute('row-index');
-        const rowIndex = rowIndexAttr && rowIndexAttr.length > 0 ? Number.parseInt(rowIndexAttr, 10) : null;
-        const rowId = rowEl.getAttribute('row-id');
-        const node = rowId
-          ? api.getRowNode(rowId)
-          : (rowIndex != null ? api.getDisplayedRowAtIndex(rowIndex) : undefined);
-        const data = (node?.data as RowData | undefined) ?? null;
-        const path = node ? parseTreeOrderingPath((node.data as RowData | undefined)?.TreeOrdering) : [];
-        const parentPath = path.length > 0 ? path.slice(0, -1) : [];
-        return {
-          top: rowRect.top - shellRect.top,
-          height: rowRect.height,
-          rowId: rowId ?? null,
-          rowIndex,
-          data,
-          path,
-          parentPath,
-        } satisfies RowHoverState;
-      })
-      .filter((rect) => Number.isFinite(rect.top) && Number.isFinite(rect.height) && rect.height > 0)
-      .sort((a, b) => a.top - b.top);
-
-    if (rows.length === 0) {
-      return { row: null, gap: null, dragging: false };
-    }
-
-    const gapThreshold = 18;
-    const rowInset = 6;
-    let hoveredRow: RowHoverState | null = null;
-    type GapCandidate = {
-      pos: number;
-      distance: number;
-      position: 'before' | 'after';
-      before: RowHoverState | null;
-      after: RowHoverState | null;
-    };
-    let gapCandidate: GapCandidate | null = null;
-
-    for (let idx = 0; idx < rows.length; idx += 1) {
-      const rect = rows[idx];
-      const top = rect.top;
-      const bottom = top + rect.height;
-      if (offsetY >= top + rowInset && offsetY <= bottom - rowInset) {
-        if (canDropIntoRow(rect.data)) {
-          hoveredRow = rect;
-          break;
-        }
-      }
-
-      const prevRow = rows[idx - 1] ?? null;
-      const topDistance = Math.abs(offsetY - top);
-      if (topDistance <= gapThreshold && (!gapCandidate || topDistance < gapCandidate.distance)) {
-        gapCandidate = {
-          pos: top,
-          distance: topDistance,
-          position: 'before',
-          before: prevRow,
-          after: rect,
-        };
-      }
-
-      const bottomDistance = Math.abs(offsetY - bottom);
-      if (bottomDistance <= gapThreshold && (!gapCandidate || bottomDistance < gapCandidate.distance)) {
-        gapCandidate = {
-          pos: bottom,
-          distance: bottomDistance,
-          position: 'after',
-          before: rect,
-          after: rows[idx + 1] ?? null,
-        };
-      }
-
-      const next = rows[idx + 1];
-      if (next && offsetY > bottom && offsetY < next.top) {
-        const gapDistance = Math.min(offsetY - bottom, next.top - offsetY);
-        if (gapDistance <= gapThreshold && (!gapCandidate || gapDistance < gapCandidate.distance)) {
-          gapCandidate = {
-            pos: bottom,
-            distance: gapDistance,
-            position: 'after',
-            before: rect,
-            after: next,
-          };
-        }
-      }
-    }
-
-    if (hoveredRow) {
-      return { row: hoveredRow, gap: null, dragging: true };
-    }
-
-    if (gapCandidate) {
-      const deriveParentPath = () => {
-        const beforePath = gapCandidate.before?.path ?? null;
-        const afterPath = gapCandidate.after?.path ?? null;
-        // Special case: dropping after the very last row should append as a new root-level entry
-        // rather than being nested under the last row's parent.
-        if (!afterPath && gapCandidate.position === 'after') {
-          return [];
-        }
-        if (beforePath && afterPath) {
-          const prefix = longestCommonPrefix(beforePath, afterPath);
-          const beforeIsPrefix = prefix.length === beforePath.length && afterPath.length > prefix.length;
-          const afterIsPrefix = prefix.length === afterPath.length && beforePath.length > prefix.length;
-          if (gapCandidate.position === 'after' && beforeIsPrefix) {
-            return gapCandidate.before?.path.slice() ?? prefix;
-          }
-          if (gapCandidate.position === 'before' && afterIsPrefix) {
-            return gapCandidate.after?.parentPath.slice() ?? [];
-          }
-          return prefix;
-        }
-        if (beforePath) {
-          return gapCandidate.before?.parentPath.slice() ?? [];
-        }
-        if (afterPath) {
-          return gapCandidate.after?.parentPath.slice() ?? [];
-        }
-        return [];
-      };
-      return {
-        row: null,
-        gap: {
-          pos: gapCandidate.pos,
-          position: gapCandidate.position,
-          beforeRowId: gapCandidate.before?.rowId ?? null,
-          beforeRowIndex: gapCandidate.before?.rowIndex ?? null,
-          afterRowId: gapCandidate.after?.rowId ?? null,
-          afterRowIndex: gapCandidate.after?.rowIndex ?? null,
-          parentPath: deriveParentPath(),
-        },
-        dragging: true,
-      };
-    }
-
-    return { row: null, gap: null, dragging: false };
-  }, []);
-
-  const updateHoverFromPoint = useCallback((_clientX: number, clientY: number, fromDrag = false) => {
-    if (!fromDrag) return;
-    const { row, gap, dragging } = computeHoverState(clientY);
-    setRowHover(row);
-    setGapHover(gap);
-    setIsDragging(dragging);
-  }, [computeHoverState]);
-
-  const handleMouseLeave = useCallback(() => {
-    setGapHover(null);
-    setRowHover(null);
-    setIsDragging(false);
-  }, []);
-  const scrollDeltaRef = useRef(0);
-  const scrollAnimationRef = useRef<number | null>(null);
-
-  const runScrollAnimation = useCallback(() => {
-    const viewport = getViewportElement();
-    const delta = scrollDeltaRef.current;
-    if (viewport && delta !== 0) {
-      viewport.scrollTop = Math.min(
-        viewport.scrollHeight - viewport.clientHeight,
-        Math.max(0, viewport.scrollTop + delta),
-      );
-    }
-    scrollAnimationRef.current = null;
-  }, [getViewportElement]);
-
-  const scheduleScroll = useCallback(() => {
-    if (scrollAnimationRef.current != null || typeof window === 'undefined') return;
-    scrollAnimationRef.current = window.requestAnimationFrame(runScrollAnimation);
-  }, [runScrollAnimation]);
-
-  const autoScrollViewport = useCallback((clientY: number) => {
-    const viewport = getViewportElement();
-    if (!viewport) return;
-    const rect = viewport.getBoundingClientRect();
-    const zone = 48;
-    const step = 32;
-    if (clientY < rect.top + zone) {
-      scrollDeltaRef.current = -step;
-      scheduleScroll();
-    } else if (clientY > rect.bottom - zone) {
-      scrollDeltaRef.current = step;
-      scheduleScroll();
+    if (offset <= edgeBand) {
+      position = 'before';
+    } else if (offset >= rowHeight - edgeBand) {
+      position = 'after';
+    } else if (canDropIntoRow((overNode.data as RowData | undefined) ?? null)) {
+      position = 'inside';
     } else {
-      scrollDeltaRef.current = 0;
-    }
-  }, [getViewportElement, scheduleScroll]);
-
-  const allowDragOver = useCallback((e: React.DragEvent) => {
-    // Ensure no OS "not-allowed" cursor while dragging inside grid
-    e.preventDefault();
-  }, []);
-  const handleDragOver = useCallback((ev: React.DragEvent) => {
-    ev.preventDefault();
-    autoScrollViewport(ev.clientY);
-    updateHoverFromPoint(ev.clientX, ev.clientY, true);
-  }, [autoScrollViewport, updateHoverFromPoint]);
-  const handleDragLeave = useCallback((ev: React.DragEvent) => {
-    const shell = shellRef.current;
-    const nextTarget = ev.relatedTarget as Node | null;
-    if (shell) {
-      if (nextTarget && shell.contains(nextTarget)) {
-        return;
-      }
-      const rect = shell.getBoundingClientRect();
-      const insideX = ev.clientX >= rect.left && ev.clientX <= rect.right;
-      const insideY = ev.clientY >= rect.top && ev.clientY <= rect.bottom;
-      if (insideX && insideY) {
-        return;
-      }
-    }
-    setGapHover(null);
-    setRowHover(null);
-    setIsDragging(false);
-    scrollDeltaRef.current = 0;
-  }, []);
-
-  const handleDrop = useCallback((ev: React.DragEvent) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    const api = gridRef.current?.api;
-    if (!api) return;
-
-    const liveHover = computeHoverState(ev.clientY);
-    const gap = liveHover.gap ?? gapHover;
-    const hoveredRowTarget = liveHover.row ?? rowHover;
-    setGapHover(null);
-    setRowHover(null);
-    setIsDragging(false);
-
-    if (typeof window !== 'undefined') {
-      try {
-        window.dispatchEvent(new CustomEvent('fastquote-row-drop'));
-      } catch {
-        /* noop */
-      }
+      position = offset < rowHeight / 2 ? 'before' : 'after';
     }
 
-    if (!gap && !hoveredRowTarget) {
-      return;
+    if (position === 'inside') {
+      return {
+        parentPath: getRowPath(overNode),
+        position: 'after',
+        beforeId: null,
+        afterId: null,
+      };
     }
 
-    const rawPayload = ev.dataTransfer?.getData('application/x-fastquote-row+json')
-      || ev.dataTransfer?.getData('text/plain');
-    if (!rawPayload) return;
+    const effectiveIndex = typeof overNode.rowIndex === 'number'
+      ? overNode.rowIndex
+      : event.overIndex;
+    const beforeNode = position === 'before'
+      ? (effectiveIndex > 0 ? api.getDisplayedRowAtIndex(effectiveIndex - 1) ?? null : null)
+      : overNode;
+    const afterNode = position === 'before'
+      ? overNode
+      : (effectiveIndex >= 0 ? api.getDisplayedRowAtIndex(effectiveIndex + 1) ?? null : null);
 
-    let payload: DragPayload | null = null;
-    try {
-      payload = JSON.parse(rawPayload) as DragPayload;
-    } catch {
-      payload = null;
-    }
-    if (!payload || payload.type !== 'offer-product-row') return;
-
-    const selectedRowIds = Array.isArray(payload.selectedRowIds)
-      ? payload.selectedRowIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
-      : [];
-
-    const resolveRowIndex = (rowId: string): number => {
-      const node = api.getRowNode(rowId);
-      const idx = node?.rowIndex;
-      return typeof idx === 'number' && Number.isFinite(idx) ? idx : Number.MAX_SAFE_INTEGER;
+    return {
+      parentPath: deriveParentPathFromNeighbors(beforeNode, afterNode, position),
+      position,
+      beforeId: beforeNode?.id ?? null,
+      afterId: afterNode?.id ?? null,
     };
-
-    const uniqueIds: string[] = [];
-    const seen = new Set<string>();
-    [...selectedRowIds, payload.rowId].forEach((rowId) => {
-      if (!rowId) return;
-      if (seen.has(rowId)) return;
-      seen.add(rowId);
-      uniqueIds.push(rowId);
-    });
-
-    const orderedSourceIds = uniqueIds.sort((a, b) => resolveRowIndex(a) - resolveRowIndex(b));
-    if (orderedSourceIds.length === 0) return;
-
-    const primarySourceId = orderedSourceIds[0];
-
-    const targetContext = (() => {
-      if (hoveredRowTarget) {
-        return {
-          parentPath: hoveredRowTarget.path.slice(),
-          beforeRowId: null,
-          beforeRowIndex: null,
-          afterRowId: null,
-          afterRowIndex: null,
-          position: 'after' as const,
-        };
-      }
-      if (gap) {
-        return {
-          parentPath: Array.isArray(gap.parentPath) ? gap.parentPath.slice() : [],
-          beforeRowId: gap.beforeRowId,
-          beforeRowIndex: gap.beforeRowIndex,
-          afterRowId: gap.afterRowId,
-          afterRowIndex: gap.afterRowIndex,
-          position: gap.position,
-        };
-      }
-      return null;
-    })();
-    if (!targetContext) return;
-
-    const reorderContext: ReorderContext = {
-      sourceId: primarySourceId,
-      sourceIds: orderedSourceIds.length > 1 ? orderedSourceIds : undefined,
-      parentPath: targetContext.parentPath,
-      position: targetContext.position,
-      beforeId: targetContext.beforeRowId,
-      afterId: targetContext.afterRowId,
-    };
-
-    const executeReorder = async () => {
-      try {
-        await reorderRowOnServer(reorderContext);
-        const viewport = getViewportElement();
-        if (viewport) {
-          pendingScrollRestoreTopRef.current = viewport.scrollTop;
-        }
-        scrollDeltaRef.current = 0;
-        refreshServerSideData(api, { purge: false });
-        scheduleDeselectAllRows(api);
-      } catch (err) {
-        console.error('Failed to reorder rows', err);
-        showToastMessage('Unable to reorder rows. Refreshing data…', 'error');
-        const viewport = getViewportElement();
-        if (viewport) {
-          pendingScrollRestoreTopRef.current = viewport.scrollTop;
-        }
-        scrollDeltaRef.current = 0;
-        refreshServerSideData(api, { purge: false });
-        scheduleDeselectAllRows(api);
-      }
-    };
-    void executeReorder();
-  }, [gapHover, rowHover, computeHoverState, reorderRowOnServer, getViewportElement]);
+  }, [deriveParentPathFromNeighbors, getRowPath]);
 
   const handleRowDoubleClick = useCallback((event: RowDoubleClickedEvent<RowData>) => {
     if (typeof externalRowDoubleClickHandler === 'function') {
@@ -2209,10 +1925,75 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
   }, [externalSelectionChangedHandler, hasServerSideSelectAll]);
 
   const handleRowDragEnd = useCallback((event: RowDragEndEvent<RowData>) => {
-    if (typeof onRowsMoved === 'function') {
-      onRowsMoved(event.api);
+    if (!useAgGridRowDrag) {
+      if (typeof onRowsMoved === 'function') {
+        onRowsMoved(event.api);
+      }
+      return;
     }
-  }, [onRowsMoved]);
+
+    const api = event.api;
+    const rawNodes = Array.isArray(event.nodes) && event.nodes.length > 0
+      ? event.nodes
+      : (event.node ? [event.node] : []);
+    const orderedNodes = rawNodes
+      .filter((node): node is IRowNode<RowData> => Boolean(node))
+      .slice()
+      .sort((a, b) => {
+        const aIndex = typeof a.rowIndex === 'number' ? a.rowIndex : Number.MAX_SAFE_INTEGER;
+        const bIndex = typeof b.rowIndex === 'number' ? b.rowIndex : Number.MAX_SAFE_INTEGER;
+        return aIndex - bIndex;
+      });
+    const sourceIds = orderedNodes
+      .map((node) => node.id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (sourceIds.length === 0) {
+      if (typeof onRowsMoved === 'function') {
+        onRowsMoved(api);
+      }
+      return;
+    }
+
+    const targetContext = deriveDropTargetContext(event);
+    if (!targetContext) {
+      if (typeof onRowsMoved === 'function') {
+        onRowsMoved(api);
+      }
+      return;
+    }
+
+    const reorderContext: ReorderContext = {
+      ...targetContext,
+      sourceId: sourceIds[0],
+      sourceIds: sourceIds.length > 1 ? sourceIds : undefined,
+    };
+
+    const executeReorder = async () => {
+      try {
+        await reorderRowOnServer(reorderContext);
+        const viewport = getViewportElement();
+        if (viewport) {
+          pendingScrollRestoreTopRef.current = viewport.scrollTop;
+        }
+        refreshServerSideData(api, { purge: false });
+        scheduleDeselectAllRows(api);
+      } catch (err) {
+        console.error('Failed to reorder rows', err);
+        showToastMessage('Unable to reorder rows. Refreshing data™??', 'error');
+        const viewport = getViewportElement();
+        if (viewport) {
+          pendingScrollRestoreTopRef.current = viewport.scrollTop;
+        }
+        refreshServerSideData(api, { purge: false });
+        scheduleDeselectAllRows(api);
+      }
+    };
+    void executeReorder();
+
+    if (typeof onRowsMoved === 'function') {
+      onRowsMoved(api);
+    }
+  }, [deriveDropTargetContext, getViewportElement, onRowsMoved, reorderRowOnServer, useAgGridRowDrag]);
 
   useEffect(() => {
     const api = gridApiRef.current ?? gridRef.current?.api ?? null;
@@ -2232,30 +2013,12 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     requestRefresh(() => api.refreshCells({ force: true }));
   }, [contextMenuRowId, requestRefresh]);
 
-  const rowOverlayStyle: CSSProperties = {
-    top: rowHover ? rowHover.top : -9999,
-    height: rowHover ? rowHover.height : 0,
-    opacity: isDragging && rowHover ? 1 : 0,
-  };
-
-  const gapOverlayStyle: CSSProperties = {
-    top: gapHover?.pos ?? -9999,
-    opacity: isDragging && gapHover ? 1 : 0,
-  };
-
   return (
     <div className={styles.container}>
       <div
         className={`ag-theme-quartz ${styles.gridShell}`}
         data-ag-grid-size="compact"
         ref={shellRef}
-        onMouseLeave={handleMouseLeave}
-        onDragOverCapture={allowDragOver}
-        onDragEnterCapture={allowDragOver}
-        onDragOver={handleDragOver}
-        onDragEnter={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
       >
         <AgGridReact
           gridOptions={sharedGridOptions}
@@ -2316,14 +2079,6 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
           onColumnResized={shouldPersistColumnState ? queuePersistColumnState : undefined}
           onColumnRowGroupChanged={handleColumnRowGroupChanged}
         />
-        {/* Row hover overlay */}
-        <div
-          className={styles.rowHoverOverlay}
-          data-active={rowHover ? 'true' : 'false'}
-          style={rowOverlayStyle}
-        />
-        {/* Gap hover overlay */}
-        <div className={styles.gapHoverLine} style={gapOverlayStyle} />
       </div>
     </div>
   );
