@@ -2925,7 +2925,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             onResponse={handleGridResponse}
             onServerRequest={handleServerRequest}
             onHeaderSelectAllChange={handleHeaderSelectAllChange}
-            floatingFilter={false}
+            floatingFilter
             rowGroupPanelShow="never"
             rowSelection="multiple"
             rowMultiSelectWithClick

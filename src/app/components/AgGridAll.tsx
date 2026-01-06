@@ -275,6 +275,91 @@ type Props = {
 
 type RowData = Record<string, unknown>;
 
+type ColumnFilterModel = {
+  filterType: 'text' | 'number' | 'date' | 'set' | string;
+  type?: string;
+  filter?: unknown;
+  values?: unknown;
+  dateFrom?: string;
+};
+
+const coerceToString = (value: unknown): string | null => {
+  if (value == null) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+  return String(value);
+};
+
+const toFilterDateString = (value: unknown): string | null => {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().split('T')[0];
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  return null;
+};
+
+const buildFilterModelForColumnValue = (colDef: ColDef | null | undefined, value: unknown): ColumnFilterModel | null => {
+  if (!colDef || colDef.filter === false) return null;
+  if (value == null) return null;
+  const filterSetting = typeof colDef.filter === 'string' ? colDef.filter : 'agTextColumnFilter';
+  switch (filterSetting) {
+    case 'agSetColumnFilter': {
+      const stringValue = coerceToString(value);
+      if (stringValue == null) return null;
+      return { filterType: 'set', values: [stringValue] };
+    }
+    case 'agNumberColumnFilter': {
+      const trimmed = String(value).trim();
+      if (trimmed.length === 0) return null;
+      const numericValue = Number(trimmed);
+      if (!Number.isFinite(numericValue)) return null;
+      return { filterType: 'number', type: 'equals', filter: numericValue };
+    }
+    case 'agDateColumnFilter': {
+      const dateValue = toFilterDateString(value);
+      if (!dateValue) return null;
+      return { filterType: 'date', type: 'equals', dateFrom: dateValue };
+    }
+    default: {
+      const stringValue = coerceToString(value);
+      if (stringValue == null) return null;
+      return { filterType: 'text', type: 'equals', filter: stringValue };
+    }
+  }
+};
+
+const createFilterByMenuItem = (params: GetContextMenuItemsParams<RowData>): MenuItemDef<RowData> | null => {
+  const column = params.column;
+  const api = params.api;
+  if (!column) return null;
+  const colId = column.getColId();
+  if (!colId || !api) return null;
+  const model = buildFilterModelForColumnValue(column.getColDef(), params.value);
+  if (!model) return null;
+  return {
+    name: 'Filter By',
+    icon: `
+      <span class="fastquote-menu-icon fastquote-menu-icon--filter" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 4h14l-5.5 5.5v5l-3-1.5v-3.5L3 4z" />
+        </svg>
+      </span>
+    `,
+    action: () => {
+      const existingModel = api.getFilterModel() as Record<string, ColumnFilterModel> | null;
+      const nextModel = { ...(existingModel ?? {}) };
+      nextModel[colId] = model;
+      api.setFilterModel(nextModel);
+    },
+  };
+};
+
 export type ServerRequestWithQuickFilter = IServerSideGetRowsParams<RowData>["request"] & {
   quickFilterText?: string | null;
 };
@@ -1362,14 +1447,46 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
         };
       }) as Array<DefaultMenuItem | MenuItemDef<RowData>>;
     const defaultItems = Array.isArray(params.defaultItems) ? params.defaultItems : [];
-    if (typeof getContextMenuItems !== 'function') {
-      return wrapActions(defaultItems);
+    const resolveMenuItems = () => {
+      if (typeof getContextMenuItems !== 'function') {
+        return defaultItems;
+      }
+      const result = getContextMenuItems(params);
+      if (Array.isArray(result)) {
+        return result;
+      }
+      if (result) {
+        return [result];
+      }
+      return defaultItems;
+    };
+
+    const menuItems = resolveMenuItems();
+    const filterByItem = createFilterByMenuItem(params);
+
+    if (!filterByItem) {
+      return wrapActions(menuItems);
     }
-    const result = getContextMenuItems(params);
-    if (!result || (Array.isArray(result) && result.length === 0)) {
-      return wrapActions(defaultItems);
+
+    const isExportMenuItem = (
+      item: MenuItemDef<RowData> | DefaultMenuItem | string,
+    ): item is DefaultMenuItem | MenuItemDef<RowData> => {
+      if (item === 'export') return true;
+      if (typeof item === 'object' && item && typeof item.name === 'string') {
+        return item.name.toLowerCase() === 'export';
+      }
+      return false;
+    };
+
+    const itemsWithFilter = [...menuItems];
+    const exportIndex = itemsWithFilter.findIndex((item) => isExportMenuItem(item));
+    if (exportIndex >= 0) {
+      itemsWithFilter.splice(exportIndex, 0, filterByItem);
+    } else {
+      itemsWithFilter.unshift(filterByItem);
     }
-    return Array.isArray(result) ? wrapActions(result) : result;
+
+    return wrapActions(itemsWithFilter);
   }, [clearContextMenuRow, getContextMenuItems]);
 
   const handleColumnRowGroupChanged = () => {
