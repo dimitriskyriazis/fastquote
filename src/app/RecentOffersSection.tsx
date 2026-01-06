@@ -1,7 +1,7 @@
-"use client";
+'use client';
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuditUser } from "./components/AuditUserProvider";
 import { loadRecentOffers, type RecentOfferSummary } from "./lib/recentOffers";
 import styles from "./page.module.css";
@@ -41,27 +41,42 @@ export default function RecentOffersSection() {
   const [descriptionOverrides, setDescriptionOverrides] = useState<Record<string, string>>({});
   const { userId } = useAuditUser();
 
+  const refreshRecentOffers = useCallback(
+    async (signal?: AbortSignal) => {
+      if (typeof window === "undefined") return;
+      try {
+        const entries = sortRecentOffers(await loadRecentOffers());
+        if (signal?.aborted) return;
+        setRecentOffers(entries);
+        setDescriptionOverrides({});
+      } catch (err) {
+        console.error("Failed to load recent offers", err);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
+    const abortController = new AbortController();
     const timeout = window.setTimeout(() => {
-      setRecentOffers(sortRecentOffers(loadRecentOffers(userId)));
-      setDescriptionOverrides({});
+      void refreshRecentOffers(abortController.signal);
     }, 0);
     return () => {
       window.clearTimeout(timeout);
+      abortController.abort();
     };
-  }, [userId]);
+  }, [refreshRecentOffers, userId]);
 
   useEffect(() => {
     const handleStorage = () => {
-      const updated = sortRecentOffers(loadRecentOffers(userId));
-      setRecentOffers(updated);
+      void refreshRecentOffers();
     };
 
     window.addEventListener("storage", handleStorage);
     return () => {
       window.removeEventListener("storage", handleStorage);
     };
-  }, [userId]);
+  }, [refreshRecentOffers]);
 
   useEffect(() => {
     if (recentOffers.length === 0) return;

@@ -7,7 +7,6 @@ import { GridQuickSearchProvider } from '../../../components/GridQuickSearchProv
 import OfferProductsPanel from '../OfferProductsPanel';
 import { showToastMessage } from '../../../../lib/toast';
 import { addRecentOffer } from '../../../lib/recentOffers';
-import { useAuditUser } from '../../../components/AuditUserProvider';
 import layoutStyles from '../../offersDetail.module.css';
 import pageHeaderStyles from '../../../components/PageHeader.module.css';
 import toolbarStyles from './ClientProductsPage.module.css';
@@ -49,15 +48,14 @@ const buttonVariantClass: Record<AddActionType, string> = {
 };
 
 export default function ClientProductsPage({ offerId, headingText }: Props) {
-  const { userId } = useAuditUser();
   useEffect(() => {
-    addRecentOffer({
+    void addRecentOffer({
       id: offerId,
       label: headingText,
       description: headingText.replace(/ - Products$/i, '').trim(),
       title: headingText.replace(/ - Products$/i, '').trim(),
-    }, userId);
-  }, [offerId, headingText, userId]);
+    });
+  }, [offerId, headingText]);
 
   const [manualMode, setManualMode] = useState(false);
   const [pendingAction, setPendingAction] = useState<CreatableActionType | null>(null);

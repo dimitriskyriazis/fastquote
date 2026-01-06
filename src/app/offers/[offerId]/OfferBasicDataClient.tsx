@@ -14,7 +14,6 @@ import type {
 } from './OfferBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
 import { addRecentOffer, buildRecentOfferLabel } from '../../lib/recentOffers';
-import { useAuditUser } from '../../components/AuditUserProvider';
 
 type Props = {
   offerId: string;
@@ -218,7 +217,6 @@ const resolveFieldValue = (record: OfferBasicRecord, def: FieldDefinition) =>
   (typeof def.resolveValue === 'function' ? def.resolveValue(record) : record[def.recordKey]) ?? null;
 
 export default function OfferBasicDataClient({ offerId, record, contacts, statuses, pricingPolicies, markets, users, calcMethodFormulas }: Props) {
-  const { userId } = useAuditUser();
 
   const contactOptions = useMemo(() => {
     const sortedContacts = sortContacts(contacts);
@@ -260,14 +258,14 @@ export default function OfferBasicDataClient({ offerId, record, contacts, status
       title: trimmedTitle,
       description: trimmedDescription,
     });
-    addRecentOffer({
+    void addRecentOffer({
       id: offerId,
       label,
       customerName: record.CustomerName ?? null,
       description: trimmedDescription || null,
       title: trimmedTitle || null,
-    }, userId);
-  }, [offerId, record.CustomerName, record.Description, record.Title, userId]);
+    });
+  }, [offerId, record.CustomerName, record.Description, record.Title]);
 
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
   useEffect(() => {
