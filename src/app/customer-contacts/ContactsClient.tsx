@@ -310,14 +310,13 @@ export default function ContactsClient({ statuses, importances, customers, title
         field: "LastName",
         headerName: "Last Name",
         filter: "agTextColumnFilter",
-        flex: 1,
         editable: true,
       },
       {
         field: "FirstName",
         headerName: "First Name",
         filter: "agTextColumnFilter",
-        flex: 1,
+
         editable: true,
       },
       {
@@ -331,14 +330,13 @@ export default function ContactsClient({ statuses, importances, customers, title
         headerName: "Customer",
         filter: "agTextColumnFilter",
         enableRowGroup: true,
-        flex: 1,
+  
         editable: true,
       },
       {
         field: "Email",
         headerName: "Email",
         filter: "agTextColumnFilter",
-        flex: 1,
         editable: true,
       },
       {

@@ -13,6 +13,7 @@ type Props = {
   offerId: string;
   onClose: () => void;
   onAdded: (inserted: number) => void;
+  showRequestedColumns?: boolean;
 };
 
 type CategoryRow = {
@@ -49,14 +50,14 @@ type RequestedRow = {
   RequestedQuantity: number | null;
 };
 
-const resolveRequestedRowLabel = (row: RequestedRow): string => {
+const resolveRequestedRowLabel = (row: RequestedRow, showRequestedItemNo: boolean): string => {
   const candidates = [
     row.RequestedDescription,
     row.RequestedDescription2,
     row.RequestedPartNo,
     row.RequestedModelNo,
     row.RequestedBrand,
-    row.RequestedItemNo,
+    ...(showRequestedItemNo ? [row.RequestedItemNo] : []),
     row.TreeOrdering,
   ];
   for (const candidate of candidates) {
@@ -102,7 +103,13 @@ const DescriptionCellRenderer = ({ value }: { value?: unknown }) => {
   );
 };
 
-export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
+export default function AddProductsModal({
+  offerId,
+  onClose,
+  onAdded,
+  showRequestedColumns = true,
+}: Props) {
+  const showRequestedItemNo = Boolean(showRequestedColumns);
   const [selectedCategory, setSelectedCategory] = useState<CategoryRow | null>(null);
   const [selectedProducts, setSelectedProducts] = useState<ProductRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -202,7 +209,6 @@ export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
       {
         field: 'Description',
         headerName: 'Category',
-        flex: 1,
         filter: 'agTextColumnFilter',
       },
     ],
@@ -215,7 +221,6 @@ export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
       {
         field: 'Description',
         headerName: 'Description',
-        flex: 1,
         filter: 'agTextColumnFilter',
         suppressAutoSize: true,
         cellRenderer: DescriptionCellRenderer,
@@ -404,7 +409,7 @@ export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
                     const isSelected = selectedRequestedRowId === row.OfferDetailID;
                     const metaParts: string[] = [];
                     if (row.TreeOrdering) metaParts.push(`Tree ${row.TreeOrdering}`);
-                    if (row.RequestedItemNo) metaParts.push(`Item ${row.RequestedItemNo}`);
+                    if (row.RequestedItemNo && showRequestedItemNo) metaParts.push(`Item ${row.RequestedItemNo}`);
                     if (row.RequestedQuantity != null) metaParts.push(`Qty ${row.RequestedQuantity}`);
                     return (
                       <button
@@ -416,7 +421,9 @@ export default function AddProductsModal({ offerId, onClose, onAdded }: Props) {
                           setSelectedRequestedRowId((prev) => (prev === row.OfferDetailID ? null : row.OfferDetailID));
                         }}
                       >
-                        <div className={styles.requestedRowLabel}>{resolveRequestedRowLabel(row)}</div>
+                        <div className={styles.requestedRowLabel}>
+                          {resolveRequestedRowLabel(row, showRequestedItemNo)}
+                        </div>
                         <div className={styles.requestedRowMeta}>
                           {metaParts.map((item) => (
                             <span key={item} className={styles.requestedRowMetaItem}>{item}</span>

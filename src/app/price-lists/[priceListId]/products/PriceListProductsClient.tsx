@@ -119,7 +119,6 @@ export default function PriceListProductsClient({
         field: "Description",
         headerName: "Product",
         filter: "agTextColumnFilter",
-        flex: 1,
       },
       {
         field: "PartNumber",

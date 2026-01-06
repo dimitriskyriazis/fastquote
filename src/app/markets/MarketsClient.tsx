@@ -218,7 +218,6 @@ export default function MarketsClient({ salesDivisions }: Props) {
         field: "Name",
         headerName: "Market",
         filter: "agTextColumnFilter",
-        flex: 1,
         editable: true,
       },
       {
@@ -226,7 +225,6 @@ export default function MarketsClient({ salesDivisions }: Props) {
         headerName: "Sales Division",
         filter: "agTextColumnFilter",
         enableRowGroup: true,
-        flex: 1,
         editable: true,
         cellEditor: "agSelectCellEditor",
         cellEditorParams: {

@@ -11,7 +11,6 @@ export const productGridColumnDefs: ColDef[] = [
     field: 'ModelNumber',
     headerName: 'Model Number',
     filter: 'agTextColumnFilter',
-    flex: 1,
   },
   {
     field: 'PartNumber',
@@ -51,7 +50,6 @@ export const productGridColumnDefs: ColDef[] = [
     field: 'WebLink',
     headerName: 'Web link',
     filter: 'agTextColumnFilter',
-    flex: 1,
   },
 ];
 

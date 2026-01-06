@@ -291,8 +291,7 @@ export default function PriceListsClient() {
       {
         field: "SupplierComment",
         headerName: "Supplier Comment",
-        filter: "agTextColumnFilter",
-        flex: 1,
+        filter: "agTextColumnFilter"
       },
     ],
     [ActionCell]

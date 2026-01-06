@@ -1,14 +1,12 @@
 'use client';
 
-import React, { useMemo, useCallback, useRef, useEffect } from 'react';
+import React, { useMemo, useCallback } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import { AllEnterpriseModule, ModuleRegistry } from 'ag-grid-enterprise';
 import type {
   ColDef,
-  GridApi,
-  FirstDataRenderedEvent,
   ValueFormatterParams,
-  Column,
+  GridApi,
 } from 'ag-grid-community';
 import styles from './ProductHistory.module.css';
 
@@ -49,7 +47,6 @@ const percentFormatter = (params: { value?: unknown }) => {
 };
 
 export default function ProductHistoryGrid({ rows }: Props) {
-  const gridApiRef = useRef<GridApi<HistoryRow> | null>(null);
 
   const defaultColDef = useMemo<ColDef>(() => ({
     resizable: true,
@@ -60,60 +57,13 @@ export default function ProductHistoryGrid({ rows }: Props) {
     filterParams: { buttons: ['apply', 'clear'], closeOnApply: true },
   }), []);
 
-  const autoSizeAll = useCallback((api?: GridApi<HistoryRow> | null) => {
-    const gridApi = api ?? gridApiRef.current;
-    if (!gridApi || gridApi.isDestroyed?.()) return;
-    const resize = () => {
-      if (gridApi.isDestroyed?.()) return;
-      const displayed: Column[] | null = typeof gridApi.getAllDisplayedColumns === 'function'
-        ? gridApi.getAllDisplayedColumns()
-        : null;
-      if (!displayed || displayed.length === 0) return;
-      const exclusions = new Set<string>(['ProductDescription']);
-      const columnsToSize = displayed.filter((col: Column) => {
-        const colId = typeof col.getColId === 'function'
-          ? col.getColId()
-          : (typeof (col as { getId?: () => string }).getId === 'function'
-            ? (col as { getId?: () => string }).getId?.()
-            : null);
-        if (!colId) return true;
-        return !exclusions.has(colId);
-      });
-      if (columnsToSize.length === 0) return;
-      const columnIds = columnsToSize
-        .map((col: Column) => {
-          if (typeof col.getColId === 'function') return col.getColId();
-          if (typeof (col as { getId?: () => string }).getId === 'function') return (col as { getId?: () => string }).getId?.();
-          return null;
-        })
-        .filter((id: unknown): id is string => typeof id === 'string' && (id as string).length > 0);
-      if (columnIds.length === 0) return;
-      gridApi.autoSizeColumns(columnIds, false);
-    };
-    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(resize);
-    } else {
-      setTimeout(resize, 0);
-    }
-  }, []);
-
   const handleGridReady = useCallback((params: { api: GridApi<HistoryRow> }) => {
-    gridApiRef.current = params.api;
-    autoSizeAll(params.api);
     try {
       params.api.closeToolPanel();
     } catch {
       /* ignore */
     }
-  }, [autoSizeAll]);
-
-  const handleFirstDataRendered = useCallback((event: FirstDataRenderedEvent<HistoryRow>) => {
-    autoSizeAll(event.api);
-  }, [autoSizeAll]);
-
-  useEffect(() => {
-    autoSizeAll();
-  }, [autoSizeAll]);
+  }, []);
 
   const pricingCols = useMemo<ColDef[]>(() => [
     { field: 'OfferID', headerName: 'Offer ID', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 90, suppressHeaderMenuButton: true },
@@ -151,7 +101,6 @@ export default function ProductHistoryGrid({ rows }: Props) {
           pivotMode={false}
           rowModelType="clientSide"
           onGridReady={handleGridReady}
-          onFirstDataRendered={handleFirstDataRendered}
         />
       </div>
     </div>

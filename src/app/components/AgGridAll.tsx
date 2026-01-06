@@ -54,6 +54,7 @@ import { useAuditUser } from './AuditUserProvider';
 import { GridQuickSearchContext } from './GridQuickSearchProvider';
 import { restoreCaretSelection } from '../hooks/useCaretKeeper';
 import { isOfferProductCategory } from '../../lib/offerProductRows';
+import { resolveColumnWidthAssignments, ColumnWidthAssignment } from '../../lib/columnWidthPresets';
 
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
@@ -232,6 +233,7 @@ export type GridTotals = {
 type Props = {
   endpoint: string;
   columnDefs: ColDef[];
+  columnWidthDefaults?: Record<string, ColumnWidthAssignment>;
   defaultColDef?: ColDef;
   manualMode?: boolean;
   requestPayload?: Record<string, unknown> | null;
@@ -424,6 +426,7 @@ type SavedColumnStateEntry = {
   flex?: number | null;
   rowGroup?: boolean;
   rowGroupIndex?: number | null;
+  hide?: boolean;
 };
 
 const sanitizeStorageSegment = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -467,6 +470,7 @@ const collectPersistableColumnState = (state: ColumnState[]): SavedColumnStateEn
           typeof entry.rowGroupIndex === 'number' && Number.isFinite(entry.rowGroupIndex)
             ? entry.rowGroupIndex
             : undefined,
+        hide: typeof entry.hide === 'boolean' ? entry.hide : undefined,
       };
     })
     .filter((entry) => typeof entry.colId === 'string' && entry.colId.length > 0);
@@ -504,6 +508,12 @@ const readPersistedColumnState = (key: string): SavedColumnStateEntry[] | null =
         const idx = (candidate as { rowGroupIndex?: number }).rowGroupIndex;
         entry.rowGroupIndex =
           typeof idx === 'number' && Number.isFinite(idx) ? idx : undefined;
+      }
+      if ('hide' in candidate) {
+        const hideFlag = (candidate as { hide?: unknown }).hide;
+        if (typeof hideFlag === 'boolean') {
+          entry.hide = hideFlag;
+        }
       }
       entries.push(entry);
     }
@@ -683,6 +693,7 @@ const TREE_DEPENDENT_COLUMNS = ['TreeOrdering', 'BrandName', 'TotalPrice', 'Tota
 export default function AgGridAll({
   endpoint,
   columnDefs,
+  columnWidthDefaults = {},
   defaultColDef,
   manualMode = false,
   requestPayload = null,
@@ -786,6 +797,10 @@ export default function AgGridAll({
         ? 2
         : 10;
   const shouldApplyMaxBlocksInCache = typeof getRowHeight !== 'function';
+  const resolvedColumnWidthDefaults = useMemo(
+    () => resolveColumnWidthAssignments(columnWidthDefaults),
+    [columnWidthDefaults],
+  );
   type ColumnDefinitionWithChildren = ColDef & { children?: ColDef[] };
   const persistedColumnWidths = useMemo<Record<string, number>>(() => {
     if (!shouldPersistColumnState || !columnStateStorageKey || typeof window === 'undefined') {
@@ -811,8 +826,32 @@ export default function AgGridAll({
           ...definition,
           enableRowGroup: false,
         }));
+    const applyDefaults = (definitions: ColumnDefinitionWithChildren[]): ColumnDefinitionWithChildren[] => definitions.map(
+      (definition) => {
+        const next: ColumnDefinitionWithChildren = { ...definition };
+        const colId = typeof next.colId === 'string'
+          ? next.colId
+          : typeof next.field === 'string'
+            ? next.field
+            : '';
+        if (colId && resolvedColumnWidthDefaults[colId] != null) {
+          const currentWidth = typeof next.width === 'number' && Number.isFinite(next.width)
+            ? next.width
+            : null;
+          if (currentWidth == null) {
+            next.width = resolvedColumnWidthDefaults[colId];
+          }
+        }
+        const children = definition.children;
+        if (Array.isArray(children) && children.length > 0) {
+          next.children = applyDefaults(children);
+        }
+        return next;
+      },
+    );
+    const baseWithDefaults = applyDefaults(base);
     if (!shouldPersistColumnState || Object.keys(persistedColumnWidths).length === 0) {
-      return base;
+      return baseWithDefaults;
     }
     const applyWidths = (definitions: ColumnDefinitionWithChildren[]): ColumnDefinitionWithChildren[] => definitions.map(
       (definition) => {
@@ -832,8 +871,8 @@ export default function AgGridAll({
         return next;
       },
     );
-    return applyWidths(base);
-  }, [columnDefs, persistedColumnWidths, shouldPersistColumnState, suppressRowGroup]);
+    return applyWidths(baseWithDefaults);
+  }, [columnDefs, persistedColumnWidths, shouldPersistColumnState, resolvedColumnWidthDefaults, suppressRowGroup]);
   const [gapHover, setGapHover] = useState<GapHoverState | null>(null);
   const [rowHover, setRowHover] = useState<RowHoverState | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -1110,6 +1149,7 @@ export default function AgGridAll({
       pinned: entry.pinned ?? undefined,
       rowGroup: entry.rowGroup ?? undefined,
       rowGroupIndex: entry.rowGroup ? entry.rowGroupIndex ?? 0 : undefined,
+      hide: typeof entry.hide === 'boolean' ? entry.hide : undefined,
     }));
     try {
       logColumnStateDebug('applying saved column state', { key: columnStateStorageKey, columns: sanitizedState.length });
@@ -1200,7 +1240,10 @@ export default function AgGridAll({
 
   const handleColumnVisible = useCallback(() => {
     autoSizeColumns(undefined, true);
-  }, [autoSizeColumns]);
+    if (shouldPersistColumnState) {
+      queuePersistColumnState();
+    }
+  }, [autoSizeColumns, queuePersistColumnState, shouldPersistColumnState]);
 
   const handleFirstDataRendered = useCallback((event: FirstDataRenderedEvent) => {
     autoSizeColumns(event.api, true);
@@ -1498,6 +1541,36 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     if (!colId) {
       return params.defaultItems;
     }
+    const api = params.api;
+    const visibleColumns = api?.getAllDisplayedColumns() ?? [];
+    const currentIndex = visibleColumns.findIndex((col: Column) => col.getColId() === colId);
+    const columnDef = column.getColDef();
+    const allowMove =
+      !!api
+      && typeof api.moveColumns === 'function'
+      && !columnDef?.suppressMovable
+      && !columnDef?.lockPosition
+      && currentIndex >= 0
+      && visibleColumns.length > 1;
+
+    const moveColumnToIndex = (index: number) => {
+      if (!api || !allowMove) return;
+      const clamped = Math.max(0, Math.min(visibleColumns.length - 1, index));
+      if (clamped === currentIndex) return;
+      api.moveColumns([colId], clamped);
+    };
+
+    const moveLeftItem: MenuItemDef<RowData> = {
+      name: 'Move Column Left',
+      disabled: !allowMove || currentIndex <= 0,
+      action: () => moveColumnToIndex(currentIndex - 1),
+    };
+    const moveRightItem: MenuItemDef<RowData> = {
+      name: 'Move Column Right',
+      disabled: !allowMove || currentIndex < 0 || currentIndex >= visibleColumns.length - 1,
+      action: () => moveColumnToIndex(currentIndex + 1),
+    };
+
     const hideColumnItem: MenuItemDef<RowData> = {
       name: 'Hide Column',
       icon: `
@@ -1510,13 +1583,15 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
       `,
       action: () => params.api.setColumnsVisible([colId], false),
     };
+
     const defaults = params.defaultItems ?? [];
     const items: Array<MenuItemDef<RowData> | DefaultMenuItem> = [...defaults];
     const targetIndex = items.findIndex(
       (item) => item === 'columnChooser' || item === 'resetColumns',
     );
     const insertionIndex = targetIndex >= 0 ? targetIndex : items.length;
-    items.splice(insertionIndex, 0, hideColumnItem);
+    const extraItems = allowMove ? [moveLeftItem, moveRightItem, hideColumnItem] : [hideColumnItem];
+    items.splice(insertionIndex, 0, ...extraItems);
     return items;
   }, []);
 

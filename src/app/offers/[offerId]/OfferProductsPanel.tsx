@@ -636,7 +636,6 @@ export default function OfferProductsPanel({
 }: Props) {
   const router = useRouter();
   useEffect(() => {
-    deferInitialAutoSizeRef.current = true;
     deferInitialHeavyWorkRef.current = true;
   }, [offerId]);
   const resolvedEndpoint = useMemo(() => {
@@ -725,13 +724,10 @@ export default function OfferProductsPanel({
   const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
   const lastRowCountRef = useRef<number | null>(null);
   const lastRequestStartRef = useRef<number | null>(null);
-  const deferInitialAutoSizeRef = useRef(true);
   const deferInitialHeavyWorkRef = useRef(true);
   const headerSelectAllInFlightRef = useRef(false);
   const skipModelUpdateRef = useRef(false);
   const collapseSkipUntilRef = useRef<number | null>(null);
-  const autoSizeTimerRef = useRef<number | null>(null);
-  // auto-size disabled; keep virtualization always on for performance
   const pendingContextMenuSelectionClearRef = useRef(false);
   const [matchAddProductOpen, setMatchAddProductOpen] = useState(false);
   const [matchAddedProductId, setMatchAddedProductId] = useState<number | null>(null);
@@ -884,16 +880,6 @@ export default function OfferProductsPanel({
     'RequestedQuantity',
   ], []);
 
-  // auto-size disabled; no column sizing helpers needed
-
-const scheduleAutoSize = useCallback(() => {
-  /* auto-size disabled for performance */
-}, []);
-
-const triggerAutoSize = useCallback(() => {
-  scheduleAutoSize();
-}, [scheduleAutoSize]);
-
   useEffect(() => {
     if (!requestedColumnsReady) return;
     const api = gridApiRef.current;
@@ -935,19 +921,7 @@ const triggerAutoSize = useCallback(() => {
     appliedRequestedColumnVisibilityRef.current = { ...effectiveVisibility };
     appliedRequestedItemNoVisibleRef.current = effectiveItemNoVisible;
     appliedShowRequestedColumnsRef.current = showRequestedColumns;
-    triggerAutoSize();
-  }, [requestedColumnVisibility, requestedColumnsReady, requestedItemNoVisible, triggerAutoSize, showRequestedColumns]);
-
-  useEffect(() => {
-    if (!showRequestedColumns) return;
-    if (typeof window === 'undefined') return;
-    const timer = window.setTimeout(() => {
-      triggerAutoSize();
-    }, 100);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [showRequestedColumns, triggerAutoSize]);
+  }, [requestedColumnVisibility, requestedColumnsReady, requestedItemNoVisible, showRequestedColumns]);
 
   const handleGridResponse = useCallback((response: GridResponse | null) => {
     lastRowCountRef.current = response?.rowCount ?? null;
@@ -986,14 +960,7 @@ const triggerAutoSize = useCallback(() => {
       deferInitialHeavyWorkRef.current = false;
       runHeavyUpdates();
     }
-    if (hasRows) {
-      if (deferInitialAutoSizeRef.current) {
-        deferInitialAutoSizeRef.current = false;
-      } else {
-        scheduleAutoSize();
-      }
-    }
-  }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, scheduleAutoSize, updateCategoryAncestors]);
+  }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, updateCategoryAncestors]);
 
   const handleServerRequest = useCallback((request: ServerRequestWithQuickFilter) => {
     lastRequestStartRef.current = performance.now();
@@ -1163,9 +1130,8 @@ const triggerAutoSize = useCallback(() => {
       return;
     }
     updateCategoryAncestors();
-    triggerAutoSize();
     applyCollapsedRowHeights();
-  }, [updateCategoryAncestors, triggerAutoSize, applyCollapsedRowHeights]);
+  }, [updateCategoryAncestors, applyCollapsedRowHeights]);
 
   const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!isOfferProductCategory(row)) return;
@@ -1571,6 +1537,7 @@ const ACTUAL_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--actual';
     node: GridRowNode | null,
     treeOrdering: string | null,
     description: string | null,
+    requestedItemNo: string | null = null,
   ) => {
     if (!node) return;
     try {
@@ -1586,9 +1553,9 @@ const ACTUAL_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--actual';
         /* noop */
       }
     }
-    if (treeOrdering != null) {
+    if (requestedItemNo != null) {
       try {
-        node.setDataValue('RequestedItemNo', treeOrdering);
+        node.setDataValue('RequestedItemNo', requestedItemNo);
       } catch {
         /* noop */
       }
@@ -1705,15 +1672,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
       const baseColDef = requestedColumnDefsMap[key];
       if (!baseColDef) return;
-      const columnVisible = showRequestedColumns && requestedColumnVisibility[key];
-      requestedColumns.push({
-        ...baseColDef,
-        hide: !columnVisible,
-        suppressSizeToFit: !columnVisible,
-      });
-      if (!columnVisible && baseColDef.flex) {
-        requestedColumns[requestedColumns.length - 1].flex = undefined;
-      }
+      requestedColumns.push({ ...baseColDef });
     });
 
   const treeColumn: ColDef = {
@@ -1756,17 +1715,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         (data as Record<string, unknown>).RequestedItemNo = normalized;
         return true;
       },
-      hide: !showRequestedColumns || !requestedItemNoVisible,
-      suppressSizeToFit: !showRequestedColumns || !requestedItemNoVisible,
       valueGetter: ({ data }) => {
         if (!data) return '';
         const requestedItemNo = normalizeRequestedItemNoValue(
           (data as Record<string, unknown>).RequestedItemNo ?? null,
         );
-        if (requestedItemNo != null) return requestedItemNo;
-        if (!isRequestedRow(data as Record<string, unknown> | null)) return '';
-        const treeOrdering = (data as Record<string, unknown>).TreeOrdering;
-        return treeOrdering != null ? formatDisplayTreeOrdering(treeOrdering) : '';
+        return requestedItemNo ?? '';
       },
       cellRenderer: RequestedItemNoCell,
     };
@@ -1999,12 +1953,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     manualMode,
     TreeOrderingCell,
     requestedColumnDefsMap,
-    requestedColumnVisibility,
-    requestedItemNoVisible,
     RequestedItemNoCell,
     requestedCellClassRules,
-    formatDisplayTreeOrdering,
-    showRequestedColumns,
   ]);
 
   const refreshOfferProductGrid = useCallback((api: GridApi<Record<string, unknown>> | null, options?: { refresh?: boolean; purge?: boolean }) => {
@@ -2051,12 +2001,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       setProcessedRequestedMatches(0);
     }
   }, [processedRequestedMatches, requestedMatchQueue.length]);
-
-  useEffect(() => () => {
-    if (typeof window !== 'undefined' && autoSizeTimerRef.current != null) {
-      window.clearTimeout(autoSizeTimerRef.current);
-    }
-  }, []);
 
   useEffect(() => {
     applyCollapsedRowHeights();
@@ -2191,7 +2135,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           }
           if (treeOrderingValue != null) {
             payloadEntry.TreeOrdering = treeOrderingValue;
-            payloadEntry.RequestedItemNo = treeOrderingValue;
+            if (requestedTree != null) {
+              payloadEntry.RequestedItemNo = requestedTree;
+            }
           }
           if (requestedDescriptionPrimary != null) {
             payloadEntry.RequestedDescription = requestedDescriptionPrimary;
@@ -2203,7 +2149,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             payloadEntry.RequestedDescription3 = requestedDescriptionTertiary;
           }
           updates.push(payloadEntry);
-          promoteNodeToCategory(node, treeOrderingValue ?? null, categoryDescription);
+          promoteNodeToCategory(
+            node,
+            treeOrderingValue ?? null,
+            categoryDescription,
+            requestedTree,
+          );
           categoriesAdded += 1;
           continue;
         }
@@ -2498,7 +2449,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           const treeOrderingValue = requestedTree || (typeof treeOrderingRaw === 'string'
             ? treeOrderingRaw.trim()
             : null);
-          promoteNodeToCategory(rowNode, treeOrderingValue ?? null, descriptionValue ?? null);
+          promoteNodeToCategory(
+            rowNode,
+            treeOrderingValue ?? null,
+            descriptionValue ?? null,
+            requestedTree,
+          );
           try {
             const payloadEntry: Record<string, unknown> = {
               OfferDetailID: offerDetailId,
@@ -2509,7 +2465,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             }
             if (treeOrderingValue != null) {
               payloadEntry.TreeOrdering = treeOrderingValue;
-              payloadEntry.RequestedItemNo = treeOrderingValue;
+              if (requestedTree != null) {
+                payloadEntry.RequestedItemNo = requestedTree;
+              }
             }
             if (requestedDescriptionPrimary != null) {
               payloadEntry.RequestedDescription = requestedDescriptionPrimary;

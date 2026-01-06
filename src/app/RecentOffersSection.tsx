@@ -4,16 +4,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useAuditUser } from "./components/AuditUserProvider";
 import { loadRecentOffers, type RecentOfferSummary } from "./lib/recentOffers";
+import { formatDateTime } from "./lib/formatDateTime";
 import styles from "./page.module.css";
-
-const formatOpenedAt = (value: string) => {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Unknown time";
-  return date.toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-};
 
 const sortRecentOffers = (items: RecentOfferSummary[]) =>
   [...items].sort((a, b) => {
@@ -155,7 +147,7 @@ export default function RecentOffersSection() {
               >
                 <p className={styles.cardLabel}>{descriptionOnly}</p>
                 <div className={styles.cardMetaRow}>
-                  <span className={styles.cardDate}>{formatOpenedAt(offer.openedAt)}</span>
+                  <span className={styles.cardDate}>{formatDateTime(offer.openedAt)}</span>
                   <span className={styles.cardId}>Offer {offer.id}</span>
                 </div>
               </Link>

@@ -119,7 +119,6 @@ export default function CustomerGroupsClient() {
         field: "Name",
         headerName: "Group Name",
         filter: "agTextColumnFilter",
-        flex: 1,
         editable: true,
       },
       {

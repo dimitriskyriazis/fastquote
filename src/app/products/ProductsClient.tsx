@@ -87,7 +87,6 @@ export default function ProductsClient() {
       field: "ModelNumber",
       headerName: "Model",
       filter: "agTextColumnFilter",
-      flex: 1,
     },
     {
       field: "PartNumber",
@@ -127,7 +126,6 @@ export default function ProductsClient() {
       field: "WebLink",
       headerName: "Web link",
       filter: "agTextColumnFilter",
-      flex: 1,
     },
   ], []);
 

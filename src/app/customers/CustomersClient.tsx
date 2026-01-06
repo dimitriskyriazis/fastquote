@@ -208,13 +208,11 @@ export default function CustomersClient() {
         field: "CustomerName",
         headerName: "Customer",
         filter: "agTextColumnFilter",
-        flex: 1,
       },
       {
         field: "BrandName",
         headerName: "Brand",
         filter: "agTextColumnFilter",
-        flex: 1,
       },
       {
         field: "IsParent",
@@ -239,14 +237,12 @@ export default function CustomersClient() {
         headerName: "Parent Customer",
         filter: "agTextColumnFilter",
         enableRowGroup: true,
-        flex: 1,
       },
       {
         field: "PricingPolicy",
         headerName: "Pricing Policy",
         filter: "agTextColumnFilter",
         enableRowGroup: true,
-        flex: 1,
       },
       {
         field: "Importance",

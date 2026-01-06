@@ -72,6 +72,7 @@ type OfferRow = {
   OfferVersion: number | null;
   Enabled: boolean | number | null;
   OfferDate: string | null;
+  ModifiedOn: string | null;
 };
 
 type OfferRowWithCount = OfferRow & { __totalCount: number | bigint | null };
@@ -94,6 +95,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferVersion: 'dbo.Offer.OfferVersion',
   Enabled: 'dbo.Offer.Enabled',
   OfferDate: 'dbo.Offer.OfferDate',
+  ModifiedOn: 'dbo.Offer.ModifiedOn',
 };
 const QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
 
@@ -315,7 +317,8 @@ export async function POST(req: NextRequest) {
         dbo.Offer.OfferContact,
         dbo.Offer.OfferVersion,
         dbo.Offer.Enabled,
-        dbo.Offer.OfferDate
+        dbo.Offer.OfferDate,
+        dbo.Offer.ModifiedOn
     `;
 
     const from = `

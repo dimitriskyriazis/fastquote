@@ -224,7 +224,12 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
               showRequestedColumns={showRequestedColumns}
             />
             {showAddProductModal ? (
-              <AddProductsModal offerId={offerId} onAdded={handleProductsAdded} onClose={handleCloseModal} />
+            <AddProductsModal
+              offerId={offerId}
+              onAdded={handleProductsAdded}
+              onClose={handleCloseModal}
+              showRequestedColumns={showRequestedColumns}
+            />
             ) : null}
             {showRequestedModal ? (
               <AddRequestedProductsModal

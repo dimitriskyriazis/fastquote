@@ -79,13 +79,11 @@ export default function CustomerContactsClient({ customerId, customerName }: Pro
         field: "LastName",
         headerName: "Last Name",
         filter: "agTextColumnFilter",
-        flex: 1,
       },
       {
         field: "FirstName",
         headerName: "First Name",
         filter: "agTextColumnFilter",
-        flex: 1,
       },
       {
         field: "Position",
@@ -96,13 +94,11 @@ export default function CustomerContactsClient({ customerId, customerName }: Pro
         field: "Email",
         headerName: "Email",
         filter: "agTextColumnFilter",
-        flex: 1,
       },
       {
         field: "SecondEmail",
         headerName: "Second Email",
         filter: "agTextColumnFilter",
-        flex: 1,
       },
       {
         field: "Phone",

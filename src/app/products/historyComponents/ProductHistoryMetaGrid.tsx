@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useMemo, useCallback, useRef, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import { AllEnterpriseModule, ModuleRegistry } from 'ag-grid-enterprise';
-import type { ColDef, GridApi, FirstDataRenderedEvent, Column } from 'ag-grid-community';
+import type { ColDef } from 'ag-grid-community';
 import styles from './ProductHistory.module.css';
 
 declare global {
@@ -23,7 +23,6 @@ type Props = {
 };
 
 export default function ProductHistoryMetaGrid({ partNumber, modelNumber, description }: Props) {
-  const gridApiRef = useRef<GridApi | null>(null);
 
   const rowData = useMemo(
     () => [
@@ -45,7 +44,6 @@ export default function ProductHistoryMetaGrid({ partNumber, modelNumber, descri
         headerName: 'Description',
         filter: false,
         sortable: false,
-        flex: 1,
       },
     ],
     [],
@@ -64,39 +62,6 @@ export default function ProductHistoryMetaGrid({ partNumber, modelNumber, descri
     [],
   );
 
-  const autoSizeAll = useCallback((api?: GridApi | null) => {
-    const gridApi = api ?? gridApiRef.current;
-    if (!gridApi || gridApi.isDestroyed?.()) return;
-    const resize = () => {
-      if (gridApi.isDestroyed?.()) return;
-      const displayed: Column[] | null = gridApi.getAllDisplayedColumns?.() ?? null;
-      if (!displayed || displayed.length === 0) return;
-      const columnIds = displayed
-        .map((col) => col.getColId?.())
-        .filter((id): id is string => typeof id === 'string' && id.length > 0);
-      if (columnIds.length === 0) return;
-      gridApi.autoSizeColumns(columnIds, false);
-    };
-    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(resize);
-    } else {
-      setTimeout(resize, 0);
-    }
-  }, []);
-
-  const handleGridReady = useCallback((params: { api: GridApi }) => {
-    gridApiRef.current = params.api;
-    autoSizeAll(params.api);
-  }, [autoSizeAll]);
-
-  const handleFirstDataRendered = useCallback((event: FirstDataRenderedEvent) => {
-    autoSizeAll(event.api);
-  }, [autoSizeAll]);
-
-  useEffect(() => {
-    autoSizeAll();
-  }, [autoSizeAll]);
-
   return (
     <div className={`${styles.metaGridContainer} ${styles.bandedRows} offer-products-grid`}>
       <div className={`ag-theme-quartz ${styles.metaGridShell}`} data-ag-grid-size="compact">
@@ -114,8 +79,6 @@ export default function ProductHistoryMetaGrid({ partNumber, modelNumber, descri
           suppressMovableColumns
           suppressDragLeaveHidesColumns
           suppressPaginationPanel
-          onGridReady={handleGridReady}
-          onFirstDataRendered={handleFirstDataRendered}
         />
       </div>
     </div>
