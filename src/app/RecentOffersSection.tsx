@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useAuditUser } from "./components/AuditUserProvider";
 import { loadRecentOffers, type RecentOfferSummary } from "./lib/recentOffers";
 import styles from "./page.module.css";
 
@@ -38,19 +39,21 @@ const looksLikeOfferIdPlaceholder = (text: string, offerId: string) => {
 export default function RecentOffersSection() {
   const [recentOffers, setRecentOffers] = useState<RecentOfferSummary[]>([]);
   const [descriptionOverrides, setDescriptionOverrides] = useState<Record<string, string>>({});
+  const { userId } = useAuditUser();
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
-      setRecentOffers(sortRecentOffers(loadRecentOffers()));
+      setRecentOffers(sortRecentOffers(loadRecentOffers(userId)));
+      setDescriptionOverrides({});
     }, 0);
     return () => {
       window.clearTimeout(timeout);
     };
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     const handleStorage = () => {
-      const updated = sortRecentOffers(loadRecentOffers());
+      const updated = sortRecentOffers(loadRecentOffers(userId));
       setRecentOffers(updated);
     };
 
@@ -58,7 +61,7 @@ export default function RecentOffersSection() {
     return () => {
       window.removeEventListener("storage", handleStorage);
     };
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     if (recentOffers.length === 0) return;

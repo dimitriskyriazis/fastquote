@@ -7,7 +7,8 @@ export type RecentOfferSummary = {
   openedAt: string;
 };
 
-const STORAGE_KEY = 'fastquote.recentOffers';
+const STORAGE_KEY_PREFIX = 'fastquote.recentOffers';
+const STORAGE_KEY_DEFAULT_USER = 'anon';
 const MAX_ENTRIES = 6;
 export const RECENT_OFFERS_MAX = MAX_ENTRIES;
 
@@ -34,22 +35,35 @@ const parseStoredValue = (raw: string | null): RecentOfferSummary[] => {
   }
 };
 
-const persistRecentOffers = (entries: RecentOfferSummary[]) => {
+const resolveStorageKey = (userId?: string | null) => {
+  const trimmed = typeof userId === 'string' ? userId.trim() : '';
+  const normalized = trimmed.length > 0 ? trimmed : STORAGE_KEY_DEFAULT_USER;
+  return `${STORAGE_KEY_PREFIX}:${normalized}`;
+};
+
+const persistEntries = (entries: RecentOfferSummary[], key: string) => {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    window.localStorage.setItem(key, JSON.stringify(entries));
   } catch {
     /* ignore */
   }
 };
 
-export function loadRecentOffers(): RecentOfferSummary[] {
+const loadEntries = (key: string) => {
   if (typeof window === 'undefined') return [];
-  return parseStoredValue(window.localStorage.getItem(STORAGE_KEY));
+  return parseStoredValue(window.localStorage.getItem(key));
+};
+
+export function loadRecentOffers(userId?: string | null): RecentOfferSummary[] {
+  if (typeof window === 'undefined') return [];
+  const key = resolveStorageKey(userId);
+  return loadEntries(key);
 }
 
 export function addRecentOffer(
   entry: Omit<RecentOfferSummary, 'openedAt'> & { openedAt?: string },
+  userId?: string | null,
 ) {
   if (typeof window === 'undefined') return;
   const normalized: RecentOfferSummary = {
@@ -60,12 +74,13 @@ export function addRecentOffer(
     title: entry.title?.trim() ?? null,
     openedAt: entry.openedAt ?? new Date().toISOString(),
   };
-  const current = loadRecentOffers();
+  const key = resolveStorageKey(userId);
+  const current = loadEntries(key);
   const next = [normalized, ...current.filter((item) => item.id !== normalized.id)].slice(
     0,
     MAX_ENTRIES,
   );
-  persistRecentOffers(next);
+  persistEntries(next, key);
 }
 
 export function buildRecentOfferLabel(
@@ -76,7 +91,7 @@ export function buildRecentOfferLabel(
     typeof value === 'string' ? value.trim() : value ? String(value).trim() : '';
   const description = normalize(source.description);
   const title = normalize(source.title);
-  if (description && title) return `${description} – ${title}`;
+  if (description && title) return `${description} ™?? ${title}`;
   if (description) return description;
   if (title) return title;
   return fallback;
