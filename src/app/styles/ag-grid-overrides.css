@@ -244,12 +244,8 @@
   justify-content: center;
   width: 16px;
   height: 16px;
-}
-
-.fastquote-menu-icon svg {
-  display: block;
-  width: 14px;
-  height: 14px;
+  line-height: 0;
+  vertical-align: middle;
 }
 
 .fastquote-menu-icon--danger {
@@ -269,7 +265,16 @@
 }
 
 .fastquote-menu-icon--filter {
-  color: #0f172a;
+  color: #000000;
+}
+
+.fastquote-menu-icon--hide {
+  color: #000000;
+}
+
+.offer-products-grid .ag-header-cell,
+.offer-products-grid .ag-header-group-cell {
+  cursor: pointer !important;
 }
 
 .dragging,

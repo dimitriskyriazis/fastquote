@@ -24,6 +24,7 @@ import {
   FilterChangedEvent,
   FirstDataRenderedEvent,
   GetContextMenuItems,
+  GetMainMenuItems,
   GetContextMenuItemsParams,
   GetRowIdParams,
   GridApi,
@@ -1221,9 +1222,8 @@ export default function AgGridAll({
       resizable: true,
       filter: true,
       floatingFilter,
-      // Hide header menu icon and disable header menu on right-click
+      // Hide header menu icon (right-click still shows menu)
       suppressHeaderMenuButton: true,
-      suppressHeaderContextMenu: true,
       width: 100,
       ...defaultColDef,
       filterParams: mergedFilterParams,
@@ -1488,6 +1488,37 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
 
     return wrapActions(itemsWithFilter);
   }, [clearContextMenuRow, getContextMenuItems]);
+
+  const headerMenuItemsHandler = useCallback<GetMainMenuItems<RowData>>((params) => {
+    const column = params.column;
+    if (!column) {
+      return params.defaultItems;
+    }
+    const colId = column.getColId();
+    if (!colId) {
+      return params.defaultItems;
+    }
+    const hideColumnItem: MenuItemDef<RowData> = {
+      name: 'Hide Column',
+      icon: `
+        <span class="fastquote-menu-icon fastquote-menu-icon--hide" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 8c1.333-2 4-4 7-4s5.667 2 7 4c-1.333 2-4 4-7 4s-5.667-2-7-4z" />
+            <path d="M4 12l12-8" />
+          </svg>
+        </span>
+      `,
+      action: () => params.api.setColumnsVisible([colId], false),
+    };
+    const defaults = params.defaultItems ?? [];
+    const items: Array<MenuItemDef<RowData> | DefaultMenuItem> = [...defaults];
+    const targetIndex = items.findIndex(
+      (item) => item === 'columnChooser' || item === 'resetColumns',
+    );
+    const insertionIndex = targetIndex >= 0 ? targetIndex : items.length;
+    items.splice(insertionIndex, 0, hideColumnItem);
+    return items;
+  }, []);
 
   const handleColumnRowGroupChanged = () => {
     autoSizeColumns(undefined, true);
@@ -2158,6 +2189,7 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
           defaultColDef={dcd}
           getRowId={getRowId}
           getRowClass={mergedGetRowClass}
+          getMainMenuItems={headerMenuItemsHandler}
           getContextMenuItems={getContextMenuItems ? contextMenuItemsHandler : undefined}
           onFirstDataRendered={handleFirstDataRendered}
           onCellContextMenu={handleCellContextMenu}
