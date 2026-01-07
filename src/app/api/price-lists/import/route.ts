@@ -45,8 +45,13 @@ const HEADER_SYNONYMS: Record<HeaderColumnKey, string[]> = {
   warning: ["warning"],
 };
 
-//const UPLOAD_ROOT = path.join("C:", "Users", "dim.kyriazis", "PriceLists");
-const UPLOAD_ROOT = path.join("C:", "Users", "dimik", "PriceLists");
+//telquoteweb
+const UPLOAD_ROOT = path.join("C:", "Users", "dim.kyriazis", "PriceLists");
+
+//dimlaptop
+//const UPLOAD_ROOT = path.join("C:", "Users", "dimik", "PriceLists");
+
+//dimtelmacopc
 // const UPLOAD_ROOT = path.join("C:", "inetpub", "wwwroot", "Telmaco", "PriceListUploads");
 
 type SqlTypeLike = unknown;

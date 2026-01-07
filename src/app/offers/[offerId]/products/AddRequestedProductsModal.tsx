@@ -9,9 +9,13 @@ import React, {
   type ChangeEvent,
   type DragEvent,
 } from 'react';
-import * as XLSX from 'xlsx';
+import type * as XLSXTypes from 'xlsx';
 import styles from './AddRequestedProductsModal.module.css';
 import { showToastMessage } from '../../../../lib/toast';
+
+type XlsxModule = typeof import('xlsx');
+
+const loadXlsx = () => import('xlsx');
 
 type Props = {
   offerId: string;
@@ -194,12 +198,12 @@ const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: numbe
   return enrichSheet(baseSheet);
 };
 
-const analyzeWorkbook = (workbook: XLSX.WorkBook): SheetMapping[] => {
+const analyzeWorkbook = (workbook: XLSXTypes.WorkBook, xlsx: XlsxModule): SheetMapping[] => {
   const sheets: SheetMapping[] = [];
   for (const sheetName of workbook.SheetNames ?? []) {
     const sheet = workbook.Sheets?.[sheetName];
     if (!sheet) continue;
-    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
+    const rows = xlsx.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
     if (!Array.isArray(rows)) continue;
     sheets.push(analyzeSheet(sheetName, rows, sheets.length, sheets.length === 0));
   }
@@ -365,12 +369,13 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
     });
 
     nextFile.arrayBuffer()
-      .then((buffer) => {
+      .then(async (buffer) => {
         if (runId !== validationRunId.current) return;
         let sheets: SheetMapping[] = [];
         try {
-          const workbook = XLSX.read(buffer, { type: 'array' });
-          sheets = analyzeWorkbook(workbook);
+          const xlsx = await loadXlsx();
+          const workbook = xlsx.read(buffer, { type: 'array' });
+          sheets = analyzeWorkbook(workbook, xlsx);
         } catch (err) {
           console.error('Failed to parse workbook', err);
           sheets = [];

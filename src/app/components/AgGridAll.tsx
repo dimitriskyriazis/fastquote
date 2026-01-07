@@ -18,7 +18,10 @@ import {
   ColumnPinnedType,
   ColumnState,
   ColDef,
+  ColumnApiModule,
   ContextMenuVisibleChangedEvent,
+  CellStyleModule,
+  DateFilterModule,
   DefaultMenuItem,
   FilterChangedEvent,
   FirstDataRenderedEvent,
@@ -35,19 +38,43 @@ import {
   IServerSideGetRowsParams,
   MenuItemDef,
   ModelUpdatedEvent,
+  NumberFilterModule,
   RowClassParams,
+  RowStyleModule,
   RowDoubleClickedEvent,
   RowDragEnterEvent,
   RowDragEndEvent,
+  RowDragModule,
   RowDragMoveEvent,
   RowHeightParams,
+  RowSelectionModule,
   RowSelectionOptions,
   SelectionChangedEvent,
-  SortChangedEvent,
   ServerSideRowSelectionState,
+  SelectEditorModule,
+  SortChangedEvent,
+  TextEditorModule,
+  TextFilterModule,
+  EventApiModule,
+  ModuleRegistry,
 } from 'ag-grid-community';
-import { AllEnterpriseModule, LicenseManager, ModuleRegistry } from 'ag-grid-enterprise';
-import { RowDragModule } from 'ag-grid-community';
+import {
+  AggregationModule,
+  CellSelectionModule,
+  ColumnMenuModule,
+  ColumnsToolPanelModule,
+  ContextMenuModule,
+  FiltersToolPanelModule,
+  LicenseManager,
+  MenuModule,
+  RowGroupingModule,
+  RowGroupingPanelModule,
+  ServerSideRowModelApiModule,
+  ServerSideRowModelModule,
+  SetFilterModule,
+  SideBarModule,
+  StatusBarModule,
+} from 'ag-grid-enterprise';
 import { usePathname } from 'next/navigation';
 import { showToastMessage } from '../../lib/toast';
 import styles from './AgGridAll.module.css';
@@ -223,7 +250,33 @@ declare global {
   var __AG_GRID_MODULES_REGISTERED__: boolean | undefined;
 }
 if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
-  ModuleRegistry.registerModules([AllEnterpriseModule, RowDragModule]); // Brings SSRM, filters, editors, panels, etc.
+  ModuleRegistry.registerModules([
+    ServerSideRowModelModule,
+    ServerSideRowModelApiModule,
+    RowGroupingModule,
+    RowGroupingPanelModule,
+    ColumnsToolPanelModule,
+    FiltersToolPanelModule,
+    SideBarModule,
+    StatusBarModule,
+    AggregationModule,
+    MenuModule,
+    ColumnMenuModule,
+    ContextMenuModule,
+    SetFilterModule,
+    CellSelectionModule,
+    TextFilterModule,
+    NumberFilterModule,
+    DateFilterModule,
+    TextEditorModule,
+    SelectEditorModule,
+    RowSelectionModule,
+    RowDragModule,
+    EventApiModule,
+    ColumnApiModule,
+    RowStyleModule,
+    CellStyleModule,
+  ]);
   globalThis.__AG_GRID_MODULES_REGISTERED__ = true;
 }
 
@@ -1896,9 +1949,10 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     const api = gridRef.current?.api;
     if (!api || api.isDestroyed?.()) return;
     applySavedColumnState(api);
-    const hasTreeOrderingColumn = api
-      .getColumnState()
-      .some((entry) => entry.colId === 'TreeOrdering');
+    const columnState = typeof api.getColumnState === 'function' ? api.getColumnState() : [];
+    const hasTreeOrderingColumn = Array.isArray(columnState)
+      ? columnState.some((entry) => entry.colId === 'TreeOrdering')
+      : false;
     if (!hasTreeOrderingColumn) return;
     api.applyColumnState({
       state: [{ colId: 'TreeOrdering', sort: 'asc', sortIndex: 0 }],

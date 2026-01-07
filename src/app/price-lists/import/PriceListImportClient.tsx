@@ -12,7 +12,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import * as XLSX from "xlsx";
+import type * as XLSXTypes from "xlsx";
 import type { DropdownOption } from "../../../lib/dropdownOptions";
 import { showToastMessage } from "../../../lib/toast";
 import layoutStyles from "../priceListDetail.module.css";
@@ -25,6 +25,10 @@ import {
   PRICE_LIST_DECIMAL_FORMAT_OPTIONS,
   type PriceListDecimalFormat,
 } from "../../../lib/priceListDecimalFormats";
+
+type XlsxModule = typeof import("xlsx");
+
+const loadXlsx = () => import("xlsx");
 
 export type PreviousPriceListOption = DropdownOption & {
   brandId: number | null;
@@ -347,12 +351,12 @@ const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: numbe
   };
 };
 
-const analyzeWorkbook = (workbook: XLSX.WorkBook): SheetMapping[] => {
+const analyzeWorkbook = (workbook: XLSXTypes.WorkBook, xlsx: XlsxModule): SheetMapping[] => {
   const sheets: SheetMapping[] = [];
   for (const sheetName of workbook.SheetNames ?? []) {
     const sheet = workbook.Sheets?.[sheetName];
     if (!sheet) continue;
-    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
+    const rows = xlsx.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
     if (!Array.isArray(rows)) continue;
     sheets.push(analyzeSheet(sheetName, rows, sheets.length, sheets.length === 0));
   }
@@ -400,8 +404,9 @@ const evaluateSelection = (sheets: SheetMapping[], activeSheetIndex: number) => 
 const validateFileStructure = async (uploadFile: File): Promise<FileValidation> => {
   try {
     const buffer = await uploadFile.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: "array" });
-    const sheets = analyzeWorkbook(workbook);
+    const xlsx = await loadXlsx();
+    const workbook = xlsx.read(buffer, { type: "array" });
+    const sheets = analyzeWorkbook(workbook, xlsx);
 
     if (sheets.length === 0) {
       return {
