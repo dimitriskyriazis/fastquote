@@ -197,14 +197,6 @@ const resolveOfferProductTypeLabel = (row: Record<string, unknown> | null | unde
 const isRequestedRow = (row: Record<string, unknown> | null | undefined) =>
   Boolean((row as { __isRequestedRow?: number | null })?.__isRequestedRow === 1);
 
-const resolveRowDragLabel = (data: Record<string, unknown> | null | undefined) => {
-  if (!data) return '';
-  const normalize = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
-  const brandName = normalize((data as { BrandName?: unknown }).BrandName);
-  const requestedBrand = normalize((data as { RequestedBrand?: unknown }).RequestedBrand);
-  return brandName || requestedBrand || '';
-};
-
 const isRequestedDescriptionField = (field: string | null | undefined): field is 'RequestedDescription' | 'RequestedDescription2' | 'RequestedDescription3' =>
   field === 'RequestedDescription' || field === 'RequestedDescription2' || field === 'RequestedDescription3';
 
@@ -1408,6 +1400,7 @@ const ACTUAL_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--actual';
       node.setDataValue('PartNumber', partNumber ?? null);
       node.setDataValue('ModelNumber', modelNumber ?? null);
       node.setDataValue('BrandName', brandName ?? null);
+      node.setDataValue('ProductDescription', description ?? null);
       node.setDataValue('Description', description ?? null);
     } catch {
       /* noop */
@@ -1586,13 +1579,21 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         field: 'Description',
         headerName: 'Description',
         filter: 'agTextColumnFilter',
-      valueGetter: ({ data }) => {
-        const row = data as Record<string, unknown> | null | undefined;
-        if (isRequestedRow(row)) return '';
-        const manual = normalizeDescriptionValue(row?.ProductDescription ?? null);
-        if (manual != null) return manual;
-        if (!isOfferProductCategory(row) && !isOfferProductProduct(row) && !isOfferProductComment(row)) {
-          return '';
+        valueGetter: ({ data }) => {
+          const row = data as Record<string, unknown> | null | undefined;
+          const rawProductId = (row as { ProductID?: unknown } | null | undefined)?.ProductID ?? null;
+          const hasProductId =
+            typeof rawProductId === 'number'
+              ? Number.isFinite(rawProductId)
+              : typeof rawProductId === 'string'
+                ? rawProductId.trim().length > 0
+                : false;
+          const isAssignedProduct = isOfferProductProduct(row) || hasProductId;
+          if (isRequestedRow(row) && !isAssignedProduct) return '';
+          const manual = normalizeDescriptionValue(row?.ProductDescription ?? null);
+          if (manual != null) return manual;
+          if (!isOfferProductCategory(row) && !isOfferProductProduct(row) && !isOfferProductComment(row)) {
+            return '';
           }
           return normalizeDescriptionValue(row?.Description ?? null) ?? '';
         },
@@ -1980,8 +1981,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             continue;
           }
           const productMeta = await fetchProductSummary(productId);
-        const productDescription = productMeta?.Description ?? null;
-        const description = productDescription ?? null;
+          const productDescription = normalizeDescriptionValue(productMeta?.Description ?? null);
+          const description = productDescription ?? requestedDescriptionValue ?? descriptionOverride ?? null;
           const requestedPartNumberRaw = getExactTextValue(
             (data as { RequestedPartNo?: unknown }).RequestedPartNo ?? null,
           );

@@ -37,7 +37,9 @@ import {
   ModelUpdatedEvent,
   RowClassParams,
   RowDoubleClickedEvent,
+  RowDragEnterEvent,
   RowDragEndEvent,
+  RowDragMoveEvent,
   RowHeightParams,
   RowSelectionOptions,
   SelectionChangedEvent,
@@ -60,6 +62,7 @@ import { resolveColumnWidthAssignments, ColumnWidthAssignment } from '../../lib/
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
 const GRID_ROW_HEIGHT = 32;
+const DEBUG_ROW_DRAG = false;
 
 
 const resolveElementFromEventTarget = (target: EventTarget | null): Element | null => {
@@ -281,6 +284,11 @@ type Props = {
 
 type RowData = Record<string, unknown>;
 
+type RowDropIndicator = {
+  rowId: string;
+  position: 'before' | 'after' | 'inside';
+};
+
 type ColumnFilterModel = {
   filterType: 'text' | 'number' | 'date' | 'set' | string;
   type?: string;
@@ -307,6 +315,31 @@ const toFilterDateString = (value: unknown): string | null => {
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
   }
+  return null;
+};
+
+const normalizeDragTextValue = (value: unknown): string | null => {
+  if (value == null) return null;
+  const raw = typeof value === 'string' ? value : String(value);
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const truncateDragText = (value: string, max = 80): string => {
+  if (value.length <= max) return value;
+  return `${value.slice(0, Math.max(0, max - 3))}...`;
+};
+
+const getDragRowDescription = (data: RowData | null | undefined): string | null => {
+  if (!data) return null;
+  const description = normalizeDragTextValue((data as { Description?: unknown }).Description);
+  if (description) return description;
+  const requested = normalizeDragTextValue((data as { RequestedDescription?: unknown }).RequestedDescription);
+  if (requested) return requested;
+  const requested2 = normalizeDragTextValue((data as { RequestedDescription2?: unknown }).RequestedDescription2);
+  if (requested2) return requested2;
+  const requested3 = normalizeDragTextValue((data as { RequestedDescription3?: unknown }).RequestedDescription3);
+  if (requested3) return requested3;
   return null;
 };
 
@@ -539,6 +572,15 @@ const normalizeAggregateValue = (value: unknown): number => {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+};
+
+const logRowDragDebug = (label: string, details: Record<string, unknown>) => {
+  if (!DEBUG_ROW_DRAG) return;
+  try {
+    console.log(`[AgGridAll] ${label}`, details);
+  } catch {
+    /* noop */
+  }
 };
 
 const parseTotalsPayload = (payload: unknown): GridTotals | null => {
@@ -854,6 +896,35 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingExternalRefreshRef = useRef<number | null>(null);
   const [contextMenuRowId, setContextMenuRowId] = useState<string | null>(null);
+  const dropIndicatorRef = useRef<RowDropIndicator | null>(null);
+  const dropIndicatorFrameRef = useRef<number | null>(null);
+  const lastDragNodeRef = useRef<IRowNode<RowData> | null>(null);
+  const lastDragInspectRef = useRef(0);
+  const lastDragInspectKeyRef = useRef('');
+  const captureDragDomState = useCallback((label: string) => {
+    if (!DEBUG_ROW_DRAG) return;
+    if (label !== 'rowDragEnd') return;
+    const shell = shellRef.current;
+    if (!shell) return;
+    const rows = Array.from(
+      shell.querySelectorAll<HTMLElement>(
+        '.ag-row--drop-before, .ag-row--drop-after, .ag-row--drop-inside, .ag-row-highlight-above, .ag-row-highlight-below, .ag-row-highlight-inside, .ag-row-dragging',
+      ),
+    );
+    const rowState = rows.map((row) => ({
+      rowId: row.getAttribute('row-id') ?? null,
+      classes: Array.from(row.classList).filter((name) =>
+        name.startsWith('ag-row--drop')
+        || name.startsWith('ag-row-highlight-')
+        || name === 'ag-row-dragging',
+      ),
+    }));
+    const ghosts = Array.from(document.querySelectorAll<HTMLElement>('.ag-dnd-ghost')).map((ghost) => ({
+      text: ghost.textContent?.trim() ?? '',
+      className: ghost.className,
+    }));
+    logRowDragDebug(label, { rowState, ghosts, serialized: JSON.stringify({ rowState, ghosts }) });
+  }, []);
   const quickSearchFilterRef = useRef("");
   const quickSearchEnabled = allowQuickSearch !== false;
   const quickSearchContext = useContext(GridQuickSearchContext);
@@ -935,6 +1006,76 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
       clearContextMenuRow();
     }
   }, [clearContextMenuRow]);
+
+  const clearDropIndicatorDom = useCallback(() => {
+    const shell = shellRef.current;
+    if (!shell) return;
+    const rows = Array.from(
+      shell.querySelectorAll<HTMLElement>(
+        '.ag-row--drop-before, .ag-row--drop-after, .ag-row--drop-inside, .ag-row-highlight-above, .ag-row-highlight-below, .ag-row-highlight-inside, .ag-row-dragging',
+      ),
+    );
+    rows.forEach((row) => {
+      row.classList.remove('ag-row--drop-before', 'ag-row--drop-after', 'ag-row--drop-inside');
+      row.classList.remove('ag-row-highlight-above', 'ag-row-highlight-below', 'ag-row-highlight-inside');
+      row.classList.remove('ag-row-dragging');
+    });
+  }, []);
+
+  const clearDragGhostDom = useCallback(() => {
+    if (typeof document === 'undefined') return;
+    const ghosts = Array.from(document.querySelectorAll<HTMLElement>('.ag-dnd-ghost'));
+    ghosts.forEach((ghost) => ghost.remove());
+  }, []);
+
+  const updateDropIndicatorDom = useCallback(() => {
+    clearDropIndicatorDom();
+    const shell = shellRef.current;
+    if (!shell) return;
+    const indicator = dropIndicatorRef.current;
+    if (!indicator) return;
+    const className =
+      indicator.position === 'before'
+        ? 'ag-row--drop-before'
+        : indicator.position === 'after'
+          ? 'ag-row--drop-after'
+          : 'ag-row--drop-inside';
+    const targets = Array.from(shell.querySelectorAll<HTMLElement>(`.ag-row[row-id="${indicator.rowId}"]`));
+    targets.forEach((row) => row.classList.add(className));
+  }, [clearDropIndicatorDom]);
+
+  const scheduleDropIndicatorUpdate = useCallback(() => {
+    if (dropIndicatorFrameRef.current != null) return;
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      dropIndicatorFrameRef.current = window.requestAnimationFrame(() => {
+        dropIndicatorFrameRef.current = null;
+        updateDropIndicatorDom();
+      });
+    } else {
+      updateDropIndicatorDom();
+    }
+  }, [updateDropIndicatorDom]);
+
+  const setDropIndicator = useCallback((indicator: RowDropIndicator | null) => {
+    const current = dropIndicatorRef.current;
+    if (!indicator && !current) return;
+    if (indicator && current && indicator.rowId === current.rowId && indicator.position === current.position) {
+      return;
+    }
+    dropIndicatorRef.current = indicator;
+    scheduleDropIndicatorUpdate();
+  }, [scheduleDropIndicatorUpdate]);
+
+  const clearDropIndicator = useCallback(() => {
+    dropIndicatorRef.current = null;
+    if (dropIndicatorFrameRef.current != null) {
+      if (typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(dropIndicatorFrameRef.current);
+      }
+      dropIndicatorFrameRef.current = null;
+    }
+    clearDropIndicatorDom();
+  }, [clearDropIndicatorDom]);
 
   useEffect(() => {
     if (typeof onHeaderSelectAllChange !== 'function') return;
@@ -1305,9 +1446,31 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
         },
       },
     };
-    if (useAgGridRowDrag) {
-      options.rowDragMultiRow = false;
-      options.suppressMoveWhenRowDragging = true;
+      if (useAgGridRowDrag) {
+        options.rowDragMultiRow = true;
+        options.suppressMoveWhenRowDragging = true;
+        options.rowDragText = (params: { rowNodes?: Array<IRowNode<RowData>>; rowNode?: IRowNode<RowData> }) => {
+          const nodes = Array.isArray(params.rowNodes) ? params.rowNodes : [];
+          const rowNode = params.rowNode ?? lastDragNodeRef.current ?? null;
+          const hasRowNode = rowNode
+            ? nodes.some((node) => node?.id != null && node.id === rowNode.id)
+            : false;
+          const effectiveNodes = nodes.length > 0 && hasRowNode
+            ? nodes
+            : rowNode
+              ? [rowNode]
+              : nodes;
+          const count = effectiveNodes.length > 0 ? effectiveNodes.length : 1;
+          const primaryNode = effectiveNodes[0] ?? rowNode ?? null;
+          const description = getDragRowDescription(primaryNode?.data as RowData | null);
+          if (count === 1) {
+            return description ? truncateDragText(description) : 'Move 1 row';
+          }
+        if (description) {
+          return `Move ${count} items: ${truncateDragText(description)}`;
+        }
+        return `Move ${count} items`;
+      };
     }
     return options;
   }, [useAgGridRowDrag]);
@@ -1875,6 +2038,68 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     };
   }, [deriveParentPathFromNeighbors, getRowPath]);
 
+  const resolveDropIndicator = useCallback((event: RowDragMoveEvent<RowData>): RowDropIndicator | null => {
+    const overNode = event.overNode ?? null;
+    const rowId = overNode?.id ?? null;
+    if (!overNode || !rowId) return null;
+    const rowTop = typeof overNode.rowTop === 'number' ? overNode.rowTop : 0;
+    const rowHeight = typeof overNode.rowHeight === 'number' ? overNode.rowHeight : GRID_ROW_HEIGHT;
+    const pointerY = typeof event.y === 'number' ? event.y : rowTop;
+    const offset = pointerY - rowTop;
+    const edgeBand = Math.min(ROW_DRAG_EDGE_THRESHOLD, Math.max(6, Math.round(rowHeight * 0.2)));
+    let position: 'before' | 'after' | 'inside' = 'after';
+
+    if (offset <= edgeBand) {
+      position = 'before';
+    } else if (offset >= rowHeight - edgeBand) {
+      position = 'after';
+    } else if (canDropIntoRow((overNode.data as RowData | undefined) ?? null)) {
+      position = 'inside';
+    } else {
+      position = offset < rowHeight / 2 ? 'before' : 'after';
+    }
+
+    return { rowId, position };
+  }, []);
+
+  const handleRowDragMove = useCallback((event: RowDragMoveEvent<RowData>) => {
+    if (!useAgGridRowDrag) return;
+    lastDragNodeRef.current = event.node ?? lastDragNodeRef.current;
+    setDropIndicator(resolveDropIndicator(event));
+    captureDragDomState('rowDragMove');
+    if (DEBUG_ROW_DRAG) {
+      const now = Date.now();
+      if (now - lastDragInspectRef.current > 200) {
+        lastDragInspectRef.current = now;
+        const dragEvent = event.event;
+        if (dragEvent) {
+          const el = document.elementFromPoint(dragEvent.clientX, dragEvent.clientY);
+          const rowEl = el?.closest?.('.ag-row') as HTMLElement | null;
+          const key = `${el?.tagName ?? 'null'}:${el?.className ?? ''}:${rowEl?.getAttribute?.('row-id') ?? ''}`;
+          if (key !== lastDragInspectKeyRef.current) {
+            lastDragInspectKeyRef.current = key;
+            logRowDragDebug('rowDragInspect', {
+              point: { x: dragEvent.clientX, y: dragEvent.clientY },
+              element: el ? { tag: el.tagName, className: el.className } : null,
+              row: rowEl ? { rowId: rowEl.getAttribute('row-id'), className: rowEl.className } : null,
+            });
+          }
+        }
+      }
+    }
+  }, [captureDragDomState, resolveDropIndicator, setDropIndicator, useAgGridRowDrag]);
+
+  const handleRowDragEnter = useCallback((event: RowDragEnterEvent<RowData>) => {
+    if (!useAgGridRowDrag) return;
+    clearDropIndicator();
+    lastDragNodeRef.current = event.node ?? lastDragNodeRef.current;
+  }, [clearDropIndicator, useAgGridRowDrag]);
+
+  const handleRowDragLeave = useCallback(() => {
+    clearDropIndicator();
+    captureDragDomState('rowDragLeave');
+  }, [captureDragDomState, clearDropIndicator]);
+
   const handleRowDoubleClick = useCallback((event: RowDoubleClickedEvent<RowData>) => {
     if (typeof externalRowDoubleClickHandler === 'function') {
       externalRowDoubleClickHandler(event);
@@ -1925,6 +2150,10 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
   }, [externalSelectionChangedHandler, hasServerSideSelectAll]);
 
   const handleRowDragEnd = useCallback((event: RowDragEndEvent<RowData>) => {
+    lastDragNodeRef.current = null;
+    clearDropIndicator();
+    clearDragGhostDom();
+    captureDragDomState('rowDragEnd');
     if (!useAgGridRowDrag) {
       if (typeof onRowsMoved === 'function') {
         onRowsMoved(event.api);
@@ -1993,7 +2222,105 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     if (typeof onRowsMoved === 'function') {
       onRowsMoved(api);
     }
-  }, [deriveDropTargetContext, getViewportElement, onRowsMoved, reorderRowOnServer, useAgGridRowDrag]);
+  }, [
+    clearDropIndicator,
+    captureDragDomState,
+    clearDragGhostDom,
+    deriveDropTargetContext,
+    getViewportElement,
+    onRowsMoved,
+    reorderRowOnServer,
+    useAgGridRowDrag,
+  ]);
+
+  useEffect(() => {
+    if (!useAgGridRowDrag) return;
+    if (typeof window === 'undefined') return;
+    const handleDragEnd = () => {
+      clearDropIndicator();
+    };
+    window.addEventListener('mouseup', handleDragEnd);
+    window.addEventListener('dragend', handleDragEnd);
+    window.addEventListener('touchend', handleDragEnd);
+    return () => {
+      window.removeEventListener('mouseup', handleDragEnd);
+      window.removeEventListener('dragend', handleDragEnd);
+      window.removeEventListener('touchend', handleDragEnd);
+    };
+  }, [clearDropIndicator, useAgGridRowDrag]);
+
+  useEffect(() => {
+    if (!DEBUG_ROW_DRAG) return;
+    if (typeof window === 'undefined') return;
+    const win = window as Window & { __dumpRowGapState?: () => unknown };
+    win.__dumpRowGapState = () => {
+      const shell = shellRef.current;
+      if (!shell) return null;
+      const rows = Array.from(shell.querySelectorAll<HTMLElement>('.ag-row'));
+      const hiddenRows = rows
+        .map((row) => {
+          const style = window.getComputedStyle(row);
+          const opacity = Number.parseFloat(style.opacity || '1');
+          const visibility = style.visibility || 'visible';
+          const display = style.display || 'block';
+          if (opacity >= 0.1 && visibility !== 'hidden' && display !== 'none') {
+            return null;
+          }
+          return {
+            rowId: row.getAttribute('row-id'),
+            className: row.className,
+            opacity,
+            visibility,
+            display,
+            height: Math.round(row.getBoundingClientRect().height),
+          };
+        })
+        .filter((row): row is NonNullable<typeof row> => Boolean(row));
+      const emptyRows = rows
+        .map((row) => {
+          const text = row.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+          if (text.length > 0) return null;
+          return {
+            rowId: row.getAttribute('row-id'),
+            className: row.className,
+            height: Math.round(row.getBoundingClientRect().height),
+          };
+        })
+        .filter((row): row is NonNullable<typeof row> => Boolean(row));
+      const rowInfo = rows
+        .map((row) => {
+          const rect = row.getBoundingClientRect();
+          return {
+            rowId: row.getAttribute('row-id'),
+            top: Math.round(rect.top),
+            height: Math.round(rect.height),
+            className: row.className,
+            inlineTop: row.style.top,
+            inlineTransform: row.style.transform,
+          };
+        })
+        .sort((a, b) => a.top - b.top);
+      const gaps: Array<{
+        delta: number;
+        before: (typeof rowInfo)[number];
+        after: (typeof rowInfo)[number];
+      }> = [];
+      for (let idx = 1; idx < rowInfo.length; idx += 1) {
+        const prev = rowInfo[idx - 1];
+        const next = rowInfo[idx];
+        const delta = next.top - prev.top;
+        if (delta > GRID_ROW_HEIGHT + 2) {
+          gaps.push({ delta, before: prev, after: next });
+        }
+      }
+      const payload = { rowCount: rowInfo.length, gaps, hiddenRows, emptyRows };
+      logRowDragDebug('rowGapDump', payload as Record<string, unknown>);
+      return payload;
+    };
+    return () => {
+      delete win.__dumpRowGapState;
+    };
+  }, []);
 
   useEffect(() => {
     const api = gridApiRef.current ?? gridRef.current?.api ?? null;
@@ -2068,7 +2395,10 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
           onSortChanged={handleSortChanged}
           onModelUpdated={handleModelUpdated}
           onRowDoubleClicked={handleRowDoubleClick}
+          onRowDragEnter={handleRowDragEnter}
           onRowDragEnd={handleRowDragEnd}
+          onRowDragMove={handleRowDragMove}
+          onRowDragLeave={handleRowDragLeave}
           onCellValueChanged={handleCellValueChanged}
           onSelectionChanged={handleSelectionChanged}
           onCellEditingStarted={handleEditingStart}

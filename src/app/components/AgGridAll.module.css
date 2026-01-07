@@ -163,6 +163,19 @@
   color: inherit;
 }
 
+.gridShell :global(.ag-row--drop-before) {
+  box-shadow: 0 -2px 0 0 var(--row-drop-line, rgba(37, 99, 235, 0.85));
+}
+
+.gridShell :global(.ag-row--drop-after) {
+  box-shadow: 0 2px 0 0 var(--row-drop-line, rgba(37, 99, 235, 0.85));
+  border-bottom-color: transparent !important;
+}
+
+.gridShell :global(.ag-row--drop-inside .ag-cell) {
+  background-color: rgba(59, 130, 246, 0.12) !important;
+}
+
 
 .gridShell :global(.ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell),
 .gridShell :global(.ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell) {
