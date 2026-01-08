@@ -77,6 +77,15 @@ type OfferRow = {
 
 type OfferRowWithCount = OfferRow & { __totalCount: number | bigint | null };
 
+const LATEST_MODIFIED_EXPRESSION = `
+  CASE
+    WHEN offerDetailsStats.DetailsModifiedOn IS NULL THEN dbo.Offer.ModifiedOn
+    WHEN dbo.Offer.ModifiedOn IS NULL THEN offerDetailsStats.DetailsModifiedOn
+    WHEN offerDetailsStats.DetailsModifiedOn > dbo.Offer.ModifiedOn THEN offerDetailsStats.DetailsModifiedOn
+    ELSE dbo.Offer.ModifiedOn
+  END
+`.trim();
+
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   Description: 'dbo.Offer.Description',
   Title: 'dbo.Offer.Title',
@@ -95,7 +104,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferVersion: 'dbo.Offer.OfferVersion',
   Enabled: 'dbo.Offer.Enabled',
   OfferDate: 'dbo.Offer.OfferDate',
-  ModifiedOn: 'dbo.Offer.ModifiedOn',
+  ModifiedOn: LATEST_MODIFIED_EXPRESSION,
 };
 const QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
 
@@ -318,7 +327,7 @@ export async function POST(req: NextRequest) {
         dbo.Offer.OfferVersion,
         dbo.Offer.Enabled,
         dbo.Offer.OfferDate,
-        dbo.Offer.ModifiedOn
+        ${LATEST_MODIFIED_EXPRESSION} AS ModifiedOn
     `;
 
     const from = `
@@ -330,6 +339,11 @@ export async function POST(req: NextRequest) {
         INNER JOIN dbo.SalesDivision ON dbo.Offer.SalesDivitionID = dbo.SalesDivision.ID
         INNER JOIN dbo.AspNetUsers ON dbo.Offer.SalesPersonId = dbo.AspNetUsers.Id
         INNER JOIN dbo.OfferStatus ON dbo.Offer.StatusID = dbo.OfferStatus.ID
+        OUTER APPLY (
+          SELECT MAX(od.ModifiedOn) AS DetailsModifiedOn
+          FROM dbo.OfferDetails od
+          WHERE od.OfferID = dbo.Offer.ID
+        ) AS offerDetailsStats
     `;
 
     const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);

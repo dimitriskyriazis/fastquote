@@ -20,6 +20,7 @@ import { useActionMenuPosition } from '../components/useActionMenuPosition';
 import { GridRowDeletion } from '../../lib/gridRowDeletion';
 import PageHeader from '../components/PageHeader';
 import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
+import { formatDateTime } from '../lib/formatDateTime';
 
 const formatEnabledValue = (value: unknown) => {
   if (value === 1 || value === true || value === 'true') return 'Yes';
@@ -135,6 +136,11 @@ export default function OffersClient() {
 
   return `${day}/${month}/${year}`;
 };
+
+  const formatLastModifiedValue = (value: unknown): string => {
+    if (!value) return '';
+    return formatDateTime(value as string | Date);
+  };
 
   const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     // A small React component for the action menu
@@ -288,6 +294,12 @@ export default function OffersClient() {
     { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
     { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', valueFormatter: (params) => formatDateDMY(params.value)},
+    {
+      field: 'ModifiedOn',
+      headerName: 'Last Modified',
+      filter: 'agDateColumnFilter',
+      valueFormatter: (params) => formatLastModifiedValue(params.value),
+    },
     { field: 'OfferVersion', headerName: 'Offer Version', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     {
       field: 'Enabled',

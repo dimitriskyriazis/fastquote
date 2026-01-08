@@ -61,6 +61,7 @@ import {
 import {
   AggregationModule,
   CellSelectionModule,
+  ClipboardModule,
   ColumnMenuModule,
   ColumnsToolPanelModule,
   ContextMenuModule,
@@ -263,6 +264,7 @@ if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
     MenuModule,
     ColumnMenuModule,
     ContextMenuModule,
+    ClipboardModule,
     SetFilterModule,
     CellSelectionModule,
     TextFilterModule,
