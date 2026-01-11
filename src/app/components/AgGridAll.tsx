@@ -155,7 +155,7 @@ const scheduleDeselectAllRows = (api?: GridApi<RowData> | null) => {
 
 const focusEditingInput = (editor?: HTMLElement | null) => {
   const input =
-    (editor?.querySelector < HTMLInputElement | HTMLTextAreaElement >('input, textarea') ?? null) ??
+    editor?.querySelector<HTMLInputElement | HTMLTextAreaElement>('input, textarea') ??
     document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
       '.ag-cell-edit-wrapper input, .ag-cell-edit-wrapper textarea, .ag-cell-editing input, .ag-cell-editing textarea',
     );
@@ -490,14 +490,11 @@ type SavedColumnStateEntry = {
   rowGroup?: boolean;
   rowGroupIndex?: number | null;
   hide?: boolean;
+  order?: number;
 };
 
 const sanitizeStorageSegment = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, '_');
 
-const logColumnStateDebug = (..._args: unknown[]) => {
-  // Intentionally left blank to avoid noisy logs.
-  void _args;
-};
 
 const safeStringify = (value: unknown): string => {
   try {
@@ -516,7 +513,12 @@ const buildGridColumnStateStorageKey = (endpoint: string, userId: string, contex
   return `${GRID_COLUMN_STATE_STORAGE_PREFIX}:${normalizedUser}:${endpointPart}:${contextPart}`;
 };
 
-const collectPersistableColumnState = (state: ColumnState[]): SavedColumnStateEntry[] =>
+type ColumnOrderMap = Map<string, number>;
+
+const collectPersistableColumnState = (
+  state: ColumnState[],
+  columnOrderMap?: ColumnOrderMap,
+): SavedColumnStateEntry[] =>
   state
     .map((entry) => {
       const width =
@@ -534,6 +536,12 @@ const collectPersistableColumnState = (state: ColumnState[]): SavedColumnStateEn
             ? entry.rowGroupIndex
             : undefined,
         hide: typeof entry.hide === 'boolean' ? entry.hide : undefined,
+        order: (() => {
+          const id = entry.colId ?? '';
+          if (!id || !columnOrderMap) return undefined;
+          const value = columnOrderMap.get(id);
+          return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+        })(),
       };
     })
     .filter((entry) => typeof entry.colId === 'string' && entry.colId.length > 0);
@@ -577,6 +585,11 @@ const readPersistedColumnState = (key: string): SavedColumnStateEntry[] | null =
         if (typeof hideFlag === 'boolean') {
           entry.hide = hideFlag;
         }
+      }
+      if ('order' in candidate) {
+        const orderValue = (candidate as { order?: number }).order;
+        entry.order =
+          typeof orderValue === 'number' && Number.isFinite(orderValue) ? orderValue : undefined;
       }
       entries.push(entry);
     }
@@ -835,7 +848,6 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const pendingScrollRestoreTopRef = useRef<number | null>(null);
   const columnSaveTimerRef = useRef<number | null>(null);
   const columnStateLoadedRef = useRef(false);
-  const [columnStateRevision, setColumnStateRevision] = useState(0);
   const [isGridReady, setIsGridReady] = useState(false);
   const { userId } = useAuditUser();
   const pathname = usePathname();
@@ -881,8 +893,6 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
     if (!shouldPersistColumnState || !columnStateStorageKey || typeof window === 'undefined') {
       return {};
     }
-    const revisionTrigger = columnStateRevision;
-    void revisionTrigger;
     const persisted = readPersistedColumnState(columnStateStorageKey);
     if (!persisted || persisted.length === 0) return {};
     const widths: Record<string, number> = {};
@@ -892,7 +902,7 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
       widths[entry.colId] = entry.width;
     });
     return widths;
-  }, [columnStateStorageKey, shouldPersistColumnState, columnStateRevision]);
+  }, [columnStateStorageKey, shouldPersistColumnState]);
 
   const resolvedColumnDefs = useMemo(() => {
     const base = !suppressRowGroup
@@ -1279,18 +1289,164 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
 
   useEffect(() => stopQuickSearchFocusRetries, [stopQuickSearchFocusRetries]);
 
+  const applySavedColumnState = useCallback((api: GridApi<RowData>) => {
+    if (!shouldPersistColumnState || !columnStateStorageKey) return;
+    if (columnStateLoadedRef.current) return;
+    const persisted = readPersistedColumnState(columnStateStorageKey);
+    if (!persisted || persisted.length === 0) {
+      columnStateLoadedRef.current = true;
+      return;
+    }
+    
+    // Create a map of persisted state by colId for quick lookup
+    const persistedMap = new Map<string, SavedColumnStateEntry>();
+    persisted.forEach((entry) => {
+      if (entry.colId) {
+        persistedMap.set(entry.colId, entry);
+      }
+    });
+    
+    // Get current column state for properties
+    const currentState = api.getColumnState();
+    if (!currentState || currentState.length === 0) {
+      columnStateLoadedRef.current = true;
+      return;
+    }
+    
+    // Build a map of persisted order
+    const orderMap = new Map<string, number>();
+    persisted.forEach((entry) => {
+      if (entry.colId && typeof entry.order === 'number' && Number.isFinite(entry.order)) {
+        orderMap.set(entry.colId, entry.order);
+      }
+    });
+    
+    // Apply other properties (width, hide, etc.) without reordering
+    const stateToApply = currentState.map((entry) => {
+      const persistedEntry = persistedMap.get(entry.colId ?? '');
+      if (!persistedEntry) return entry;
+      return {
+        ...entry,
+        width: persistedEntry.width ?? entry.width,
+        flex: persistedEntry.flex ?? entry.flex,
+        pinned: persistedEntry.pinned ?? entry.pinned,
+        rowGroup: persistedEntry.rowGroup ?? entry.rowGroup,
+        rowGroupIndex: persistedEntry.rowGroupIndex ?? entry.rowGroupIndex,
+        hide: typeof persistedEntry.hide === 'boolean' ? persistedEntry.hide : entry.hide,
+      };
+    });
+    
+    try {
+      // Apply properties first (without order)
+      api.applyColumnState({ state: stateToApply, applyOrder: false, defaultState: { hide: null } });
+      
+      // Now apply column order using moveColumns API
+      // Use requestAnimationFrame to ensure grid is ready
+      if (typeof api.moveColumns === 'function' && orderMap.size > 0) {
+        const applyOrder = () => {
+          // Get current displayed columns after applying state
+          let currentDisplayed = typeof api.getAllDisplayedColumns === 'function' 
+            ? api.getAllDisplayedColumns() 
+            : [];
+          
+          if (currentDisplayed.length === 0) return;
+          
+          // Create desired order array: columns with saved order first, then others
+          const columnsWithOrder: Array<{ colId: string; order: number; column: Column }> = [];
+          const columnsWithoutOrder: Array<{ colId: string; column: Column }> = [];
+          
+          currentDisplayed.forEach((column) => {
+            const colId = typeof column.getColId === 'function' ? column.getColId() : '';
+            if (!colId) return;
+            
+            const order = orderMap.get(colId);
+            if (typeof order === 'number' && Number.isFinite(order)) {
+              columnsWithOrder.push({ colId, order, column });
+            } else {
+              columnsWithoutOrder.push({ colId, column });
+            }
+          });
+          
+          // Sort columns with order by their saved order
+          columnsWithOrder.sort((a, b) => a.order - b.order);
+          
+          // Build the desired order: ordered columns first, then unordered ones
+          const desiredOrder = [
+            ...columnsWithOrder.map(item => item.column),
+            ...columnsWithoutOrder.map(item => item.column),
+          ];
+          
+          // Move columns to their correct positions
+          // Move from right to left (highest index to lowest) to avoid index shifting
+          for (let targetIndex = desiredOrder.length - 1; targetIndex >= 0; targetIndex--) {
+            const targetColumn = desiredOrder[targetIndex];
+            if (!targetColumn) continue;
+            
+            const targetColId = typeof targetColumn.getColId === 'function' ? targetColumn.getColId() : '';
+            if (!targetColId) continue;
+            
+            // Refresh to get current positions after previous moves
+            currentDisplayed = typeof api.getAllDisplayedColumns === 'function' 
+              ? api.getAllDisplayedColumns() 
+              : [];
+            
+            // Find current position
+            const currentIndex = currentDisplayed.findIndex((col) => {
+              const id = typeof col.getColId === 'function' ? col.getColId() : '';
+              return id === targetColId;
+            });
+            
+            // Only move if not already in correct position
+            if (currentIndex >= 0 && currentIndex !== targetIndex) {
+              try {
+                api.moveColumns([targetColId], targetIndex);
+              } catch (err) {
+                console.warn(`Failed to move column ${targetColId} to position ${targetIndex}`, err);
+              }
+            }
+          }
+        };
+        
+        // Use requestAnimationFrame to ensure grid is ready
+        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+          window.requestAnimationFrame(applyOrder);
+        } else {
+          applyOrder();
+        }
+      }
+      
+      columnStateLoadedRef.current = true;
+    } catch (err) {
+      console.warn('Failed to apply saved column state', err);
+      columnStateLoadedRef.current = true;
+    }
+  }, [columnStateStorageKey, shouldPersistColumnState]);
+
   const persistColumnState = useCallback(() => {
     if (!shouldPersistColumnState || !columnStateStorageKey) return;
     const api = gridRef.current?.api;
     if (!api || api.isDestroyed?.()) return;
-    const nextState = collectPersistableColumnState(api.getColumnState());
-    logColumnStateDebug('persisting column state', { key: columnStateStorageKey, columns: nextState.length });
+    const displayedColumns =
+      typeof api.getAllDisplayedColumns === 'function' ? api.getAllDisplayedColumns() : [];
+    const columnOrderMap: ColumnOrderMap = new Map();
+    displayedColumns.forEach((column, index) => {
+      const colId =
+        typeof column.getColId === 'function'
+          ? column.getColId()
+          : typeof (column as { getId?: () => string }).getId === 'function'
+            ? (column as { getId?: () => string }).getId?.()
+            : null;
+      if (typeof colId === 'string' && colId.length > 0) {
+        columnOrderMap.set(colId, index);
+      }
+    });
+    const nextState = collectPersistableColumnState(api.getColumnState(), columnOrderMap);
     writePersistedColumnState(columnStateStorageKey, nextState);
-    setColumnStateRevision((prev) => prev + 1);
   }, [columnStateStorageKey, shouldPersistColumnState]);
 
   const queuePersistColumnState = useCallback(() => {
     if (!shouldPersistColumnState || typeof window === 'undefined') return;
+    if (!columnStateLoadedRef.current) return;
     if (columnSaveTimerRef.current) {
       window.clearTimeout(columnSaveTimerRef.current);
     }
@@ -1299,37 +1455,6 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
       persistColumnState();
     }, 200);
   }, [persistColumnState, shouldPersistColumnState]);
-
-  const applySavedColumnState = useCallback((api: GridApi<RowData>) => {
-    if (!shouldPersistColumnState || !columnStateStorageKey) return;
-    if (columnStateLoadedRef.current) return;
-    const persisted = readPersistedColumnState(columnStateStorageKey);
-    if (!persisted || persisted.length === 0) return;
-    const currentColumnIds = new Set(
-      api
-        .getColumnState()
-        .map((entry) => entry.colId ?? '')
-        .filter((colId): colId is string => typeof colId === 'string' && colId.length > 0),
-    );
-    const filtered = persisted.filter((entry) => currentColumnIds.has(entry.colId));
-    if (filtered.length === 0) return;
-    const sanitizedState = filtered.map((entry) => ({
-      colId: entry.colId,
-      width: entry.width,
-      flex: entry.flex ?? undefined,
-      pinned: entry.pinned ?? undefined,
-      rowGroup: entry.rowGroup ?? undefined,
-      rowGroupIndex: entry.rowGroup ? entry.rowGroupIndex ?? 0 : undefined,
-      hide: typeof entry.hide === 'boolean' ? entry.hide : undefined,
-    }));
-    try {
-      logColumnStateDebug('applying saved column state', { key: columnStateStorageKey, columns: sanitizedState.length });
-      api.applyColumnState({ state: sanitizedState, applyOrder: true, defaultState: { hide: null } });
-      columnStateLoadedRef.current = true;
-    } catch (err) {
-      console.warn('Failed to apply saved column state', err);
-    }
-  }, [columnStateStorageKey, shouldPersistColumnState]);
 
   useEffect(() => () => {
     if (columnSaveTimerRef.current) {
@@ -1411,7 +1536,7 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
 
   const handleColumnVisible = useCallback(() => {
     autoSizeColumns(undefined, true);
-    if (shouldPersistColumnState) {
+    if (shouldPersistColumnState && columnStateLoadedRef.current) {
       queuePersistColumnState();
     }
   }, [autoSizeColumns, queuePersistColumnState, shouldPersistColumnState]);
@@ -1419,7 +1544,11 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const handleFirstDataRendered = useCallback((event: FirstDataRenderedEvent) => {
     autoSizeColumns(event.api, true);
     autoSizeCompletedRef.current = true;
-  }, [autoSizeColumns]);
+    // Ensure column order is applied after data is rendered
+    if (shouldPersistColumnState && !columnStateLoadedRef.current) {
+      applySavedColumnState(event.api);
+    }
+  }, [autoSizeColumns, shouldPersistColumnState, applySavedColumnState]);
 
   const dcd: ColDef = useMemo(() => {
     const baseFilterParams = {
@@ -1703,10 +1832,21 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     wrapGridApiRefreshers(e.api);
     gridApiRef.current.addEventListener('contextMenuVisibleChanged', handleContextMenuVisibleChanged);
     setIsGridReady(true);
+    
+    // Apply saved column state (including order) as early as possible
+    if (shouldPersistColumnState) {
+      // Use setTimeout to ensure columns are initialized
+      setTimeout(() => {
+        if (!e.api.isDestroyed?.()) {
+          applySavedColumnState(e.api);
+        }
+      }, 0);
+    }
+    
     if (typeof externalGridReadyHandler === 'function') {
       externalGridReadyHandler(e.api);
     }
-  }, [datasource, handleContextMenuVisibleChanged, externalGridReadyHandler, wrapGridApiRefreshers]);
+  }, [datasource, handleContextMenuVisibleChanged, externalGridReadyHandler, wrapGridApiRefreshers, shouldPersistColumnState, applySavedColumnState]);
   const contextMenuItemsHandler = useCallback<GetContextMenuItems<RowData>>((params) => {
     const wrapActions = (items: Array<MenuItemDef<RowData> | DefaultMenuItem | string>) =>
       items.map((item) => {
@@ -1959,7 +2099,7 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     api.applyColumnState({
       state: [{ colId: 'TreeOrdering', sort: 'asc', sortIndex: 0 }],
       defaultState: { sort: null },
-      applyOrder: true,
+      applyOrder: false,
     });
     if (!manualMode) {
       reorderRowsByTreeOrdering(api);

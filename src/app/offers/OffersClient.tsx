@@ -129,7 +129,6 @@ export default function OffersClient() {
   const date = new Date(value as string);
   if (Number.isNaN(date.getTime())) return '';
 
-  // dd/mm/yyyy
   const day = String(date.getDate()).padStart(2, '0');
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const year = date.getFullYear();
@@ -143,7 +142,6 @@ export default function OffersClient() {
   };
 
   const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
-    // A small React component for the action menu
     const ActionMenu: React.FC = () => {
       const [open, setOpen] = useState(false);
       const closeMenu = useCallback(() => setOpen(false), []);
@@ -180,8 +178,6 @@ export default function OffersClient() {
           <rect x="3" y="10.5" width="10" height="1.5" rx="0.75" fill="currentColor"/>
         </svg>
       );
-
-      // No native listeners needed; React capture handler on the button is sufficient
 
       return (
         <div
@@ -346,9 +342,7 @@ export default function OffersClient() {
                 columnDefs={columnDefs}
                 getContextMenuItems={offersContextMenuItems}
                 onGridReady={handleGridReady}
-                suppressRowGroup
-                rowGroupPanelShow="never"
-                suppressMovableColumns
+                rowGroupPanelShow="always"
                 rowSelection="multiple"
                 rowMultiSelectWithClick
                 rowDeselection

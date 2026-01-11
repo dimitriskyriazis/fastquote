@@ -47,7 +47,6 @@ type GridRequest = {
   sortModel?: Array<{ colId: string; sort: 'asc' | 'desc' }>;
   rowGroupCols?: Array<{ field?: string | null; colId?: string | null }>;
   groupKeys?: Array<string | null>;
-  // rowGroupCols, pivotCols, etc. available if enabling them later
 };
 
 type DeleteRequest = {
