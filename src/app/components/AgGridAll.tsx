@@ -90,7 +90,6 @@ import { resolveColumnWidthAssignments, ColumnWidthAssignment } from '../../lib/
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
 const GRID_ROW_HEIGHT = 32;
-const DEBUG_ROW_DRAG = false;
 
 
 const resolveElementFromEventTarget = (target: EventTarget | null): Element | null => {
@@ -642,15 +641,6 @@ const normalizeAggregateValue = (value: unknown): number => {
   return 0;
 };
 
-const logRowDragDebug = (label: string, details: Record<string, unknown>) => {
-  if (!DEBUG_ROW_DRAG) return;
-  try {
-    console.log(`[AgGridAll] ${label}`, details);
-  } catch {
-    /* noop */
-  }
-};
-
 const parseTotalsPayload = (payload: unknown): GridTotals | null => {
   if (!payload || typeof payload !== 'object') return null;
   const data = payload as { totalListPrice?: unknown; totalNetPrice?: unknown; totalCost?: unknown };
@@ -964,32 +954,6 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const dropIndicatorRef = useRef<RowDropIndicator | null>(null);
   const dropIndicatorFrameRef = useRef<number | null>(null);
   const lastDragNodeRef = useRef<IRowNode<RowData> | null>(null);
-  const lastDragInspectRef = useRef(0);
-  const lastDragInspectKeyRef = useRef('');
-  const captureDragDomState = useCallback((label: string) => {
-    if (!DEBUG_ROW_DRAG) return;
-    if (label !== 'rowDragEnd') return;
-    const shell = shellRef.current;
-    if (!shell) return;
-    const rows = Array.from(
-      shell.querySelectorAll<HTMLElement>(
-        '.ag-row--drop-before, .ag-row--drop-after, .ag-row--drop-inside, .ag-row-highlight-above, .ag-row-highlight-below, .ag-row-highlight-inside, .ag-row-dragging',
-      ),
-    );
-    const rowState = rows.map((row) => ({
-      rowId: row.getAttribute('row-id') ?? null,
-      classes: Array.from(row.classList).filter((name) =>
-        name.startsWith('ag-row--drop')
-        || name.startsWith('ag-row-highlight-')
-        || name === 'ag-row-dragging',
-      ),
-    }));
-    const ghosts = Array.from(document.querySelectorAll<HTMLElement>('.ag-dnd-ghost')).map((ghost) => ({
-      text: ghost.textContent?.trim() ?? '',
-      className: ghost.className,
-    }));
-    logRowDragDebug(label, { rowState, ghosts, serialized: JSON.stringify({ rowState, ghosts }) });
-  }, []);
   const quickSearchFilterRef = useRef("");
   const quickSearchEnabled = allowQuickSearch !== false;
   const quickSearchContext = useContext(GridQuickSearchContext);
@@ -2262,28 +2226,7 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     if (!useAgGridRowDrag) return;
     lastDragNodeRef.current = event.node ?? lastDragNodeRef.current;
     setDropIndicator(resolveDropIndicator(event));
-    captureDragDomState('rowDragMove');
-    if (DEBUG_ROW_DRAG) {
-      const now = Date.now();
-      if (now - lastDragInspectRef.current > 200) {
-        lastDragInspectRef.current = now;
-        const dragEvent = event.event;
-        if (dragEvent) {
-          const el = document.elementFromPoint(dragEvent.clientX, dragEvent.clientY);
-          const rowEl = el?.closest?.('.ag-row') as HTMLElement | null;
-          const key = `${el?.tagName ?? 'null'}:${el?.className ?? ''}:${rowEl?.getAttribute?.('row-id') ?? ''}`;
-          if (key !== lastDragInspectKeyRef.current) {
-            lastDragInspectKeyRef.current = key;
-            logRowDragDebug('rowDragInspect', {
-              point: { x: dragEvent.clientX, y: dragEvent.clientY },
-              element: el ? { tag: el.tagName, className: el.className } : null,
-              row: rowEl ? { rowId: rowEl.getAttribute('row-id'), className: rowEl.className } : null,
-            });
-          }
-        }
-      }
-    }
-  }, [captureDragDomState, resolveDropIndicator, setDropIndicator, useAgGridRowDrag]);
+  }, [resolveDropIndicator, setDropIndicator, useAgGridRowDrag]);
 
   const handleRowDragEnter = useCallback((event: RowDragEnterEvent<RowData>) => {
     if (!useAgGridRowDrag) return;
@@ -2293,8 +2236,7 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
 
   const handleRowDragLeave = useCallback(() => {
     clearDropIndicator();
-    captureDragDomState('rowDragLeave');
-  }, [captureDragDomState, clearDropIndicator]);
+  }, [clearDropIndicator]);
 
   const handleRowDoubleClick = useCallback((event: RowDoubleClickedEvent<RowData>) => {
     if (typeof externalRowDoubleClickHandler === 'function') {
@@ -2349,7 +2291,6 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     lastDragNodeRef.current = null;
     clearDropIndicator();
     clearDragGhostDom();
-    captureDragDomState('rowDragEnd');
     if (!useAgGridRowDrag) {
       if (typeof onRowsMoved === 'function') {
         onRowsMoved(event.api);
@@ -2420,7 +2361,6 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     }
   }, [
     clearDropIndicator,
-    captureDragDomState,
     clearDragGhostDom,
     deriveDropTargetContext,
     getViewportElement,
@@ -2444,79 +2384,6 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
       window.removeEventListener('touchend', handleDragEnd);
     };
   }, [clearDropIndicator, useAgGridRowDrag]);
-
-  useEffect(() => {
-    if (!DEBUG_ROW_DRAG) return;
-    if (typeof window === 'undefined') return;
-    const win = window as Window & { __dumpRowGapState?: () => unknown };
-    win.__dumpRowGapState = () => {
-      const shell = shellRef.current;
-      if (!shell) return null;
-      const rows = Array.from(shell.querySelectorAll<HTMLElement>('.ag-row'));
-      const hiddenRows = rows
-        .map((row) => {
-          const style = window.getComputedStyle(row);
-          const opacity = Number.parseFloat(style.opacity || '1');
-          const visibility = style.visibility || 'visible';
-          const display = style.display || 'block';
-          if (opacity >= 0.1 && visibility !== 'hidden' && display !== 'none') {
-            return null;
-          }
-          return {
-            rowId: row.getAttribute('row-id'),
-            className: row.className,
-            opacity,
-            visibility,
-            display,
-            height: Math.round(row.getBoundingClientRect().height),
-          };
-        })
-        .filter((row): row is NonNullable<typeof row> => Boolean(row));
-      const emptyRows = rows
-        .map((row) => {
-          const text = row.textContent?.replace(/\s+/g, ' ').trim() ?? '';
-          if (text.length > 0) return null;
-          return {
-            rowId: row.getAttribute('row-id'),
-            className: row.className,
-            height: Math.round(row.getBoundingClientRect().height),
-          };
-        })
-        .filter((row): row is NonNullable<typeof row> => Boolean(row));
-      const rowInfo = rows
-        .map((row) => {
-          const rect = row.getBoundingClientRect();
-          return {
-            rowId: row.getAttribute('row-id'),
-            top: Math.round(rect.top),
-            height: Math.round(rect.height),
-            className: row.className,
-            inlineTop: row.style.top,
-            inlineTransform: row.style.transform,
-          };
-        })
-        .sort((a, b) => a.top - b.top);
-      const gaps: Array<{
-        delta: number;
-        before: (typeof rowInfo)[number];
-        after: (typeof rowInfo)[number];
-      }> = [];
-      for (let idx = 1; idx < rowInfo.length; idx += 1) {
-        const prev = rowInfo[idx - 1];
-        const next = rowInfo[idx];
-        const delta = next.top - prev.top;
-        if (delta > GRID_ROW_HEIGHT + 2) {
-          gaps.push({ delta, before: prev, after: next });
-        }
-      }
-      const payload = { rowCount: rowInfo.length, gaps, hiddenRows, emptyRows };
-      logRowDragDebug('rowGapDump', payload as Record<string, unknown>);
-      return payload;
-    };
-    return () => {
-      delete win.__dumpRowGapState;
-    };
-  }, []);
 
   useEffect(() => {
     const api = gridApiRef.current ?? gridRef.current?.api ?? null;

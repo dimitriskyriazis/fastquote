@@ -1481,17 +1481,16 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       requestedColumns.push({ ...baseColDef });
     });
 
-  const treeColumn: ColDef = {
-    field: 'TreeOrdering',
-    headerName: 'Item No',
-    filter: 'agTextColumnFilter',
-    type: 'numericColumn',
-    comparator: compareTreeOrderingValues,
-    editable: manualMode,
-    singleClickEdit: manualMode,
-    cellRenderer: TreeOrderingCell,
-    cellClass: ['offer-products-tree-ordering-cell', ACTUAL_COLUMN_GLOBAL_CLASS],
-    rowDrag: true,
+    const treeColumn: ColDef = {
+      field: 'TreeOrdering',
+      headerName: 'Item No',
+      filter: 'agTextColumnFilter',
+      type: 'numericColumn',
+      comparator: compareTreeOrderingValues,
+      editable: manualMode,
+      singleClickEdit: manualMode,
+      cellRenderer: TreeOrderingCell,
+      cellClass: ['offer-products-tree-ordering-cell', ACTUAL_COLUMN_GLOBAL_CLASS],
     valueGetter: ({ data }) => {
       const row = data as {
         __isRequestedRow?: number | null;
