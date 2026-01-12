@@ -12,7 +12,13 @@ const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
     </div>
   ),
 });
-import type { ColDef, ICellRendererParams, GetContextMenuItemsParams, GridApi } from 'ag-grid-community';
+import type {
+  ColDef,
+  ICellRendererParams,
+  GetContextMenuItemsParams,
+  GridApi,
+  MenuItemDef,
+} from 'ag-grid-community';
 import { createPortal } from 'react-dom';
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from '../components/actionMenuMarkers';
 import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from '../components/useActionMenuCoordinator';
@@ -21,12 +27,22 @@ import { GridRowDeletion } from '../../lib/gridRowDeletion';
 import PageHeader from '../components/PageHeader';
 import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
 import { formatDateTime } from '../lib/formatDateTime';
+import { showToastMessage } from '../../lib/toast';
 
 const formatEnabledValue = (value: unknown) => {
   if (value === 1 || value === true || value === 'true') return 'Yes';
   if (value === 0 || value === false || value === 'false') return 'No';
   return value == null ? '' : String(value);
 };
+
+const duplicateVersionMenuIcon = `
+  <span class="fastquote-menu-icon fastquote-menu-icon--copy" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 5h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
+      <path d="M7 7V5a2 2 0 0 1 2-2h6" />
+    </svg>
+  </span>
+`;
 
 const normalizeOfferIdValue = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isInteger(value)) return value;
@@ -88,6 +104,31 @@ export default function OffersClient() {
   const handleCreateOfferClick = useCallback(() => {
     router.push('/offers/create');
   }, [router]);
+  const handleCreateNewVersion = useCallback(async (offerId: number | null) => {
+    if (offerId == null) return;
+    const encodedId = encodeURIComponent(String(offerId));
+    try {
+      const response = await fetch(`/api/offers/${encodedId}/duplicate`, {
+        method: 'POST',
+      });
+      let payload: { ok?: boolean; error?: string; offerId?: number | string } | null = null;
+      try {
+        payload = (await response.json()) as { ok?: boolean; error?: string; offerId?: number | string };
+      } catch {
+        payload = null;
+      }
+      if (!response.ok || !payload?.ok || payload.offerId == null) {
+        const message = payload?.error ?? 'Unable to create new version';
+        showToastMessage(message, 'error');
+        return;
+      }
+      showToastMessage('Created new offer version', 'success');
+      router.push(`/offers/${encodeURIComponent(String(payload.offerId))}/basicdata`);
+    } catch (err) {
+      console.error('Failed to create offer version', err);
+      showToastMessage('Unable to create new version', 'error');
+    }
+  }, [router]);
 
   const handleViewMarketsClick = useCallback(() => {
     router.push('/markets');
@@ -118,9 +159,37 @@ export default function OffersClient() {
   );
 
   const offersContextMenuItems = useCallback(
-    (params: GetContextMenuItemsParams<Record<string, unknown>>) =>
-      offersRowDeletion.getContextMenuItems(params),
-    [offersRowDeletion],
+    (params: GetContextMenuItemsParams<Record<string, unknown>>) => {
+      const baseItems = offersRowDeletion.getContextMenuItems(params);
+      const items = Array.isArray(baseItems) ? [...baseItems] : [];
+      const clickedOfferId = normalizeOfferIdValue(
+        (params.node?.data as { offerId?: unknown } | null | undefined)?.offerId ?? null,
+      );
+      if (!clickedOfferId) {
+        return items;
+      }
+
+      const versionMenuItem: MenuItemDef<Record<string, unknown>> = {
+        name: 'Create new version',
+        icon: duplicateVersionMenuIcon,
+        action: () => {
+          void handleCreateNewVersion(clickedOfferId);
+        },
+      };
+
+      const separatorIndex = items.lastIndexOf('separator');
+      if (separatorIndex >= 0) {
+        items.splice(separatorIndex, 0, versionMenuItem);
+      } else {
+        if (items.length > 0 && items[items.length - 1] !== 'separator') {
+          items.push('separator');
+        }
+        items.push(versionMenuItem);
+      }
+
+      return items;
+    },
+    [offersRowDeletion, handleCreateNewVersion],
   );
 
   const formatDateDMY = (value: unknown): string => {

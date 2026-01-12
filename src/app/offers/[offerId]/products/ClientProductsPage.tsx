@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import PageHeader from '../../../components/PageHeader';
 import { GridQuickSearchProvider } from '../../../components/GridQuickSearchProvider';
@@ -60,6 +60,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [manualMode, setManualMode] = useState(false);
   const [pendingAction, setPendingAction] = useState<CreatableActionType | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
   const [showRequestedModal, setShowRequestedModal] = useState(false);
   const [showRequestedColumns, setShowRequestedColumns] = useState(true);
@@ -130,8 +131,46 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     setShowRequestedColumns((prev) => !prev);
   }, []);
 
+  const updatePricesEndpoint = useMemo(
+    () => `/api/offers/${encodeURIComponent(offerId)}/products/update-prices`,
+    [offerId],
+  );
+
+  const handleUpdatePrices = useCallback(async () => {
+    if (isUpdatingPrices) return;
+    setIsUpdatingPrices(true);
+    try {
+      const response = await fetch(updatePricesEndpoint, { method: 'POST' });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; updated?: number }
+        | null;
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? `Unable to update prices (status ${response.status})`);
+      }
+      const updatedCount = typeof payload?.updated === 'number' ? payload.updated : null;
+      const message = updatedCount == null
+        ? 'Updated offer prices'
+        : `Updated prices for ${updatedCount} product${updatedCount === 1 ? '' : 's'}`;
+      showToastMessage(message, 'success');
+      setRefreshToken((prev) => prev + 1);
+    } catch (err) {
+      console.error('Failed to update offer prices', err);
+      showToastMessage('Unable to update product prices. Please try again.', 'error');
+    } finally {
+      setIsUpdatingPrices(false);
+    }
+  }, [isUpdatingPrices, updatePricesEndpoint]);
+
   const headerRightControls = (
     <div className={toolbarStyles.topControls}>
+      <button
+        type="button"
+        className={`${toolbarStyles.button} ${toolbarStyles.buttonUpdatePrices} page-header-button`}
+        onClick={handleUpdatePrices}
+        disabled={isUpdatingPrices}
+      >
+        {isUpdatingPrices ? 'Updating prices…' : 'Update Prices'}
+      </button>
       <button
         type="button"
         className={manualToggleClass}

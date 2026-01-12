@@ -2134,6 +2134,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     setProcessedRequestedMatches(0);
   }, [requestedMatchQueue.length]);
 
+
   const manualMatchTotal = processedRequestedMatches + requestedMatchQueue.length;
   const manualMatchPosition = currentRequestedMatch ? processedRequestedMatches + 1 : 0;
 

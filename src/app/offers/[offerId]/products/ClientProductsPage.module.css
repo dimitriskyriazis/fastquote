@@ -75,6 +75,12 @@
   background-color: #ffffff;
 }
 
+.buttonUpdatePrices {
+  background-color: #faffaf;
+  color: #0f172a;
+  border-color: rgba(233, 218, 14, 0.4);
+}
+
 .buttonAddRequested {
   background-color: #fae5d1;
   color: #c2630b;
