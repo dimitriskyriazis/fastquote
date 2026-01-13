@@ -8,6 +8,7 @@ import OfferProductsPanel, { type OfferProductsPanelHandle } from '../OfferProdu
 import { showToastMessage } from '../../../../lib/toast';
 import { addRecentOffer } from '../../../lib/recentOffers';
 import LookupModal from '../../../components/LookupModal';
+import { useAuditUser } from '../../../components/AuditUserProvider';
 import layoutStyles from '../../offersDetail.module.css';
 import pageHeaderStyles from '../../../components/PageHeader.module.css';
 import toolbarStyles from './ClientProductsPage.module.css';
@@ -21,6 +22,8 @@ type Props = {
 type AddActionType = 'product' | 'category' | 'printable-comment' | 'non-printable-comment';
 type CreatableActionType = Exclude<AddActionType, 'product'>;
 type ProductsTableLayout = 'cust' | 'wCost' | 'wReq';
+
+const LAYOUT_STORAGE_PREFIX = 'fastquote-offer-products-layout';
 
 const tableLayoutLabels: Record<ProductsTableLayout, string> = {
   cust: 'Cust',
@@ -55,7 +58,28 @@ const buttonVariantClass: Record<AddActionType, string> = {
   'non-printable-comment': toolbarStyles.buttonNonPrintableComment,
 };
 
+const sanitizeStorageSegment = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+const buildLayoutStorageKey = (userId: string | null | undefined) => {
+  const normalizedUser = userId && userId.trim() ? userId.trim() : 'anon';
+  return `${LAYOUT_STORAGE_PREFIX}:${sanitizeStorageSegment(normalizedUser)}`;
+};
+
+const readPersistedLayout = (key: string | null): ProductsTableLayout | null => {
+  if (typeof window === 'undefined' || !key) return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === 'cust' || raw === 'wCost' || raw === 'wReq') {
+      return raw;
+    }
+  } catch {
+    /* noop */
+  }
+  return null;
+};
+
 export default function ClientProductsPage({ offerId, headingText }: Props) {
+  const { userId } = useAuditUser();
   useEffect(() => {
     void addRecentOffer({
       id: offerId,
@@ -74,11 +98,33 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [tableLayout, setTableLayout] = useState<ProductsTableLayout>('wReq');
   const [showSaveLayoutModal, setShowSaveLayoutModal] = useState(false);
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
+  const layoutStorageKey = useMemo(() => buildLayoutStorageKey(userId), [userId]);
+  const layoutLoadedRef = useRef<string | null>(null);
   const creationCountersRef = useRef<Record<CreatableActionType, number>>({
     category: 0,
     'printable-comment': 0,
     'non-printable-comment': 0,
   });
+
+  useEffect(() => {
+    if (!layoutStorageKey) return;
+    layoutLoadedRef.current = layoutStorageKey;
+    const persisted = readPersistedLayout(layoutStorageKey);
+    if (persisted) {
+      setTableLayout((current) => (current === persisted ? current : persisted));
+    }
+  }, [layoutStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !layoutStorageKey) return;
+    if (layoutLoadedRef.current !== layoutStorageKey) return;
+    try {
+      window.localStorage.setItem(layoutStorageKey, tableLayout);
+    } catch {
+      /* noop */
+    }
+  }, [layoutStorageKey, tableLayout]);
+
   const handleAddAction = useCallback(async (action: AddActionType) => {
     if (action === 'product') {
       setShowAddProductModal(true);

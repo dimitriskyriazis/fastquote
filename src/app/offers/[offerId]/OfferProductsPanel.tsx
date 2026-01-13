@@ -12,6 +12,7 @@ import type {
   MenuItemDef,
   RowClassParams,
   RowDoubleClickedEvent,
+  RowHeightParams,
   RowNode,
   ValueFormatterParams,
   ValueGetterParams,
@@ -952,17 +953,14 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     }
 
     try {
-      const hiddenKeys = keys.filter((key) => !effectiveVisibility[key]);
-      const visibleKeys = keys.filter((key) => effectiveVisibility[key]);
-      if (hiddenKeys.length > 0) {
-        api.setColumnsVisible(hiddenKeys, false);
+      const state: Array<{ colId: string; hide: boolean }> = keys.map((key) => ({
+        colId: key,
+        hide: !effectiveVisibility[key],
+      }));
+      if (itemNoVisibilityChanged || visibilityChanged) {
+        state.push({ colId: 'RequestedItemNo', hide: !effectiveItemNoVisible });
       }
-      if (visibleKeys.length > 0) {
-        api.setColumnsVisible(visibleKeys, true);
-      }
-      if (itemNoVisibilityChanged) {
-        api.setColumnsVisible(['RequestedItemNo'], effectiveItemNoVisible);
-      }
+      api.applyColumnState({ state, applyOrder: false });
     } catch {
       /* noop */
     }
@@ -987,7 +985,11 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
 
     const showCostAnalysis = tableLayout !== 'cust';
     try {
-      api.setColumnsVisible(COST_ANALYSIS_COLUMNS, showCostAnalysis);
+      const state = COST_ANALYSIS_COLUMNS.map((colId) => ({
+        colId,
+        hide: !showCostAnalysis,
+      }));
+      api.applyColumnState({ state, applyOrder: false });
     } catch {
       /* noop */
     }
@@ -1124,21 +1126,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       : [])
       .map((column) => (typeof column.getColId === 'function' ? column.getColId() : ''))
       .filter((colId) => colId);
-    const headerRow = document.querySelector('.offer-products-grid .ag-header-viewport .ag-header-row');
-    const headerOrder = headerRow
-      ? Array.from(headerRow.querySelectorAll<HTMLElement>('.ag-header-cell'))
-        .map((cell) => ({
-          id: cell.getAttribute('col-id') ?? '',
-          left: cell.getBoundingClientRect().left,
-        }))
-        .filter((entry) => entry.id)
-        .sort((a, b) => a.left - b.left)
-        .map((entry) => entry.id)
-      : [];
     const currentOrder = currentState
       .map((entry) => (typeof entry.colId === 'string' ? entry.colId : ''))
       .filter((colId) => colId);
-    const visibleOrderSource = headerOrder.length > 0 ? headerOrder : displayedOrder;
+    const visibleOrderSource = displayedOrder;
     const visibleSet = new Set(visibleOrderSource);
     const visibleQueue = visibleOrderSource.filter((colId) => currentOrder.includes(colId));
     const mergedOrder = currentOrder.map((colId) => (visibleSet.has(colId) ? visibleQueue.shift() ?? colId : colId));
@@ -1187,7 +1178,12 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     return DEFAULT_ROW_HEIGHT;
   }, [hasCollapsedAncestor]);
 
-  const applyCollapsedRowHeights = useCallback(() => {
+  const getRowHeight = useCallback(
+    (params: RowHeightParams<Record<string, unknown>>) => determineRowHeight(params.data ?? null),
+    [determineRowHeight],
+  );
+
+  const resetCollapsedRowHeights = useCallback(() => {
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return;
     const scrollApi = api as GridApi<Record<string, unknown>> & {
@@ -1198,42 +1194,19 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       typeof scrollApi.getHorizontalScrollPosition === 'function'
         ? scrollApi.getHorizontalScrollPosition()
         : null;
-    let heightChanged = false;
-    api.forEachNode((node) => {
-      if (!node) return;
-      const targetHeight = determineRowHeight(node.data ?? null);
-      if (typeof node.setRowHeight !== 'function') return;
-      const currentHeight =
-        typeof node.rowHeight === 'number' && Number.isFinite(node.rowHeight)
-          ? node.rowHeight
-          : undefined;
-      if (currentHeight === targetHeight) return;
-      try {
-        node.setRowHeight(targetHeight);
-        heightChanged = true;
-      } catch {
-        /* noop */
-      }
-    });
-    if (!heightChanged) {
-      if (savedHorizontalScroll != null && typeof scrollApi.setHorizontalScrollPosition === 'function') {
-        scrollApi.setHorizontalScrollPosition(savedHorizontalScroll);
-      }
-      return;
-    }
-    if (typeof api.onRowHeightChanged === 'function') {
-      api.onRowHeightChanged();
-    } else if (typeof api.resetRowHeights === 'function') {
+    if (typeof api.resetRowHeights === 'function') {
       try {
         api.resetRowHeights();
       } catch (err) {
         console.warn('Failed to reset row heights after collapsing categories', err);
       }
+    } else if (typeof api.onRowHeightChanged === 'function') {
+      api.onRowHeightChanged();
     }
     if (savedHorizontalScroll != null && typeof scrollApi.setHorizontalScrollPosition === 'function') {
       scrollApi.setHorizontalScrollPosition(savedHorizontalScroll);
     }
-  }, [determineRowHeight]);
+  }, []);
 
   const handleGridModelUpdated = useCallback(() => {
     if (skipModelUpdateRef.current) {
@@ -1245,8 +1218,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       return;
     }
     updateCategoryAncestors();
-    applyCollapsedRowHeights();
-  }, [updateCategoryAncestors, applyCollapsedRowHeights]);
+  }, [updateCategoryAncestors]);
 
   const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!isOfferProductCategory(row)) return;
@@ -1453,10 +1425,17 @@ const PartNumberCell = useCallback((params: ICellRendererParams<Record<string, u
   );
 }, []);
 
-const REQUESTED_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--requested';
-const ACTUAL_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--actual';
-const ACTUAL_NUMERIC_CELL_CLASS = [ACTUAL_COLUMN_GLOBAL_CLASS, 'ag-right-aligned'];
-const ACTUAL_NUMERIC_CELL_STYLE = { justifyContent: 'flex-end', textAlign: 'right' } as const;
+  const REQUESTED_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--requested';
+  const ACTUAL_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--actual';
+
+  const actualNumericCellClass = useMemo(
+    () => [ACTUAL_COLUMN_GLOBAL_CLASS, 'ag-right-aligned'],
+    [],
+  );
+  const actualNumericCellStyle = useMemo(
+    () => ({ justifyContent: 'flex-end', textAlign: 'right' } as const),
+    [],
+  );
 
   const requestedCellClassRules = useMemo(() => ({
     [styles.requestedColumnCell]: (params: { data?: Record<string, unknown> | null }) =>
@@ -1603,7 +1582,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       headerClass: [styles.requestedHeader, 'ag-right-aligned-header'],
       cellClassRules: requestedCellClassRules,
       cellClass: 'ag-right-aligned',
-      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
+      cellStyle: actualNumericCellStyle,
       editable: (params: { data?: Record<string, unknown> | null }) =>
         canEditRequestedField('RequestedQuantity', params.data ?? null),
       singleClickEdit: true,
@@ -1615,7 +1594,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       },
     },
   };
-}, [requestedCellClassRules]);
+}, [actualNumericCellStyle, requestedCellClassRules]);
 
   const productColumnDefs: ColDef[] = useMemo(() => {
     const requestedColumns: ColDef[] = [];
@@ -1771,8 +1750,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       cellClassRules: productPriceListClassRules,
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
-      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
-      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
+      cellClass: actualNumericCellClass,
+      cellStyle: actualNumericCellStyle,
     },
     {
       field: 'CustomerDiscount',
@@ -1783,8 +1762,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: percentageFormatter,
-      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
-      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
+      cellClass: actualNumericCellClass,
+      cellStyle: actualNumericCellStyle,
     },
     {
       field: 'NetUnitPrice',
@@ -1795,8 +1774,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: euroFormatter,
-      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
-      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
+      cellClass: actualNumericCellClass,
+      cellStyle: actualNumericCellStyle,
     },
     {
       field: 'Quantity',
@@ -1807,8 +1786,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: zeroBlankNumberFormatter,
-      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
-      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
+      cellClass: actualNumericCellClass,
+      cellStyle: actualNumericCellStyle,
     },
     {
       field: 'TotalPrice',
@@ -1823,8 +1802,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       },
       cellClassRules: totalPriceCellClassRules,
       editable: false,
-      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
-      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
+      cellClass: actualNumericCellClass,
+      cellStyle: actualNumericCellStyle,
     },
     {
       field: 'TotalNet',
@@ -1836,8 +1815,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       valueFormatter: euroFormatter,
       cellClassRules: productAccentCellClassRules,
       editable: false,
-      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
-      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
+      cellClass: actualNumericCellClass,
+      cellStyle: actualNumericCellStyle,
     },
     {
       field: 'Warranty',
@@ -1846,8 +1825,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       valueFormatter: zeroBlankNumberFormatter,
-      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
-      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
+      cellClass: actualNumericCellClass,
+      cellStyle: actualNumericCellStyle,
     },
     {
       field: 'TelmacoDiscount',
@@ -1858,8 +1837,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: percentageFormatter,
-      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
-      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
+      cellClass: actualNumericCellClass,
+      cellStyle: actualNumericCellStyle,
     },
     {
       field: 'NetCost',
@@ -1870,8 +1849,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: euroFormatter,
-      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
-      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
+      cellClass: actualNumericCellClass,
+      cellStyle: actualNumericCellStyle,
     },
     {
       field: 'Margin',
@@ -1882,8 +1861,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: percentageFormatter,
-      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
-      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
+      cellClass: actualNumericCellClass,
+      cellStyle: actualNumericCellStyle,
     },
     {
       field: 'GrossProfit',
@@ -1894,8 +1873,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       valueFormatter: euroFormatter,
       cellClassRules: productAccentCellClassRules,
       editable: false,
-      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
-      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
+      cellClass: actualNumericCellClass,
+      cellStyle: actualNumericCellStyle,
     },
       {
         field: 'TotalCost',
@@ -1907,8 +1886,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         valueGetter: categoryTotalCostGetter,
         cellClassRules: productAccentCellClassRules,
         editable: false,
-        cellClass: ACTUAL_NUMERIC_CELL_CLASS,
-        cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
+        cellClass: actualNumericCellClass,
+        cellStyle: actualNumericCellStyle,
       },
     ];
     if (!savedColumnOrder.length) {
@@ -1949,8 +1928,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
     return ordered;
   }, [
-    ACTUAL_NUMERIC_CELL_CLASS,
-    ACTUAL_NUMERIC_CELL_STYLE,
+    actualNumericCellClass,
+    actualNumericCellStyle,
     PartNumberCell,
     manualMode,
     TreeOrderingCell,
@@ -2007,8 +1986,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   }, [processedRequestedMatches, requestedMatchQueue.length]);
 
   useEffect(() => {
-    applyCollapsedRowHeights();
-  }, [collapsedCategoryPaths, applyCollapsedRowHeights]);
+    resetCollapsedRowHeights();
+  }, [collapsedCategoryPaths, resetCollapsedRowHeights]);
 
   useEffect(() => {
     const api = gridApiRef.current;
@@ -2891,6 +2870,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             onResponse={handleGridResponse}
             onServerRequest={handleServerRequest}
             onHeaderSelectAllChange={handleHeaderSelectAllChange}
+            getRowHeight={getRowHeight}
             floatingFilter
             rowGroupPanelShow="never"
             rowSelection="multiple"
