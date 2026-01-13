@@ -2682,8 +2682,7 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
           // Charts OFF for now (to avoid the AgCharts module requirement)
           enableCharts={false}
 
-          // Grouping/pivot flags are fine; without a license they’re ignored, not crashed
-          pivotMode={false}
+          // Grouping flags are fine; without a license they’re ignored, not crashed
           rowGroupPanelShow={rowGroupPanelShow}
           getRowHeight={getRowHeight}
           suppressColumnVirtualisation={suppressColumnVirtualisation}

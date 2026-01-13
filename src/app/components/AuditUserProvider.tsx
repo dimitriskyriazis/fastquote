@@ -16,6 +16,7 @@ const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365; // one year
 type AuditUser = {
   id: string;
   label: string;
+  windowsUserName?: string;
 };
 
 type AuditUserContextValue = {
@@ -66,6 +67,40 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
   const [users, setUsers] = useState<AuditUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const autoResolveAttemptedRef = useState(() => ({ value: false }))[0];
+
+  const normalizeWindowsIdentity = (value: string): string => {
+    return value.trim().replaceAll('/', '\\').toLowerCase();
+  };
+
+  const tryResolveWindowsIdentity = async (): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/whoami', { cache: 'no-store' });
+      const payload = (await res.json().catch(() => null)) as
+        | { ok?: boolean; username?: string; source?: string }
+        | null;
+      if (
+        res.ok &&
+        payload?.ok &&
+        payload.source === 'header' &&
+        typeof payload.username === 'string' &&
+        payload.username.trim()
+      ) {
+        return payload.username.trim();
+      }
+    } catch {
+      // ignore and fall back
+    }
+
+    try {
+      const res = await fetch('/whoami.aspx', { cache: 'no-store' });
+      if (!res.ok) return null;
+      const text = (await res.text()).trim();
+      return text ? text : null;
+    } catch {
+      return null;
+    }
+  };
 
   const refreshUsers = useCallback(async () => {
     setLoading(true);
@@ -74,7 +109,7 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
       const res = await fetch('/api/users');
       const payload = (await res.json().catch(() => null)) as {
         ok?: boolean;
-        users?: Array<{ id: number; userName: string | null }>;
+        users?: Array<{ id: number; userName: string | null; windowsUserName?: string | null }>;
         error?: string;
       } | null;
 
@@ -86,6 +121,7 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
         .map((user) => ({
           id: String(user.id),
           label: user.userName || '',
+          windowsUserName: user.windowsUserName ?? undefined,
         }))
         .filter((user) => Boolean(user.label));
       setUsers(mapped);
@@ -102,6 +138,36 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     void refreshUsers();
   }, [refreshUsers]);
 
+  const selectedUser = useMemo(
+    () => users.find((user) => user.id === userId) ?? null,
+    [userId, users],
+  );
+
+  useEffect(() => {
+    if (autoResolveAttemptedRef.value) return;
+    if (loading) return;
+    if (userId && selectedUser) return;
+    if (users.length === 0) return;
+
+    autoResolveAttemptedRef.value = true;
+
+    void (async () => {
+      const identity = await tryResolveWindowsIdentity();
+      if (!identity) return;
+
+      const normalized = normalizeWindowsIdentity(identity);
+      const match = users.find((user) => {
+        if (!user.windowsUserName) return false;
+        return normalizeWindowsIdentity(user.windowsUserName) === normalized;
+      });
+
+      if (match) {
+        writeCookieValue(match.id);
+        setUserId(match.id);
+      }
+    })();
+  }, [loading, userId, selectedUser, users, autoResolveAttemptedRef]);
+
   const saveUserId = useCallback((nextId: string) => {
     const normalized = normalizeInput(nextId);
     if (!normalized) return false;
@@ -114,11 +180,6 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     clearCookieValue();
     setUserId('');
   }, []);
-
-  const selectedUser = useMemo(
-    () => users.find((user) => user.id === userId) ?? null,
-    [userId, users],
-  );
 
   const value = useMemo(
     () => ({
