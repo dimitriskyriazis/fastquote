@@ -4,9 +4,10 @@ import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import Link from 'next/link';
 import PageHeader from '../../../components/PageHeader';
 import { GridQuickSearchProvider } from '../../../components/GridQuickSearchProvider';
-import OfferProductsPanel from '../OfferProductsPanel';
+import OfferProductsPanel, { type OfferProductsPanelHandle } from '../OfferProductsPanel';
 import { showToastMessage } from '../../../../lib/toast';
 import { addRecentOffer } from '../../../lib/recentOffers';
+import LookupModal from '../../../components/LookupModal';
 import layoutStyles from '../../offersDetail.module.css';
 import pageHeaderStyles from '../../../components/PageHeader.module.css';
 import toolbarStyles from './ClientProductsPage.module.css';
@@ -19,6 +20,13 @@ type Props = {
 
 type AddActionType = 'product' | 'category' | 'printable-comment' | 'non-printable-comment';
 type CreatableActionType = Exclude<AddActionType, 'product'>;
+type ProductsTableLayout = 'cust' | 'wCost' | 'wReq';
+
+const tableLayoutLabels: Record<ProductsTableLayout, string> = {
+  cust: 'Cust',
+  wCost: 'wCost',
+  wReq: 'wReq',
+};
 
 const addActionLabels: Record<AddActionType, string> = {
   product: 'Add Product',
@@ -63,7 +71,9 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
   const [showRequestedModal, setShowRequestedModal] = useState(false);
-  const [showRequestedColumns, setShowRequestedColumns] = useState(true);
+  const [tableLayout, setTableLayout] = useState<ProductsTableLayout>('wReq');
+  const [showSaveLayoutModal, setShowSaveLayoutModal] = useState(false);
+  const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
   const creationCountersRef = useRef<Record<CreatableActionType, number>>({
     category: 0,
     'printable-comment': 0,
@@ -127,9 +137,16 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     void result;
     setRefreshToken((prev) => prev + 1);
   }, []);
-  const handleToggleRequestedColumns = useCallback(() => {
-    setShowRequestedColumns((prev) => !prev);
+  const showRequestedColumns = tableLayout === 'wReq';
+  const handleSaveLayout = useCallback(() => {
+    setShowSaveLayoutModal(true);
   }, []);
+  const handleConfirmSaveLayout = useCallback(() => {
+    offerProductsPanelRef.current?.saveLayout();
+    setShowSaveLayoutModal(false);
+  }, []);
+  const handleCloseSaveLayoutModal = useCallback(() => setShowSaveLayoutModal(false), []);
+  const saveLayoutPromptLabel = tableLayoutLabels[tableLayout] ?? tableLayout;
 
   const updatePricesEndpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/update-prices`,
@@ -219,13 +236,30 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     </button>
   );
 
-  const requestedToggleButton = (
+  const layoutSelect = (
+    <select
+      className={`${toolbarStyles.layoutSelect} page-header-button`}
+      value={tableLayout}
+      onChange={(event) => setTableLayout(event.target.value as ProductsTableLayout)}
+      aria-label="Table layout"
+    >
+      <option value="cust">Cust</option>
+      <option value="wCost">wCost</option>
+      <option value="wReq">wReq</option>
+    </select>
+  );
+  const layoutSaveButton = (
     <button
       type="button"
-      className={`${toolbarStyles.button} ${toolbarStyles.buttonToggleRequested} page-header-button`}
-      onClick={handleToggleRequestedColumns}
+      className={`${toolbarStyles.layoutSaveButton} page-header-button`}
+      onClick={handleSaveLayout}
+      aria-label="Save layout"
     >
-      {showRequestedColumns ? 'Hide Requested' : 'Show Requested'}
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M5 4h10l4 4v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
+        <path d="M7 4v6h8V4" />
+        <path d="M7 18h10" />
+      </svg>
     </button>
   );
 
@@ -249,7 +283,8 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
             leftActions={
               <div className={toolbarStyles.leftRequestedRow}>
                 {addRequestedButton}
-                {requestedToggleButton}
+                {layoutSelect}
+                {layoutSaveButton}
               </div>
             }
             rightActions={addButtonGroup}
@@ -257,11 +292,28 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
             hideTitle
           >
             <OfferProductsPanel
+              ref={offerProductsPanelRef}
               offerId={offerId}
               manualMode={manualMode}
               refreshToken={refreshToken}
               showRequestedColumns={showRequestedColumns}
+              tableLayout={tableLayout}
             />
+            <LookupModal
+              open={showSaveLayoutModal}
+              title="Save layout"
+              onClose={handleCloseSaveLayoutModal}
+              onConfirm={handleConfirmSaveLayout}
+              confirmLabel="Yes"
+              cancelLabel="No"
+              confirmFirst
+              headerClassName={toolbarStyles.saveLayoutModalHeader}
+              titleClassName={toolbarStyles.saveLayoutModalTitle}
+              bodyClassName={toolbarStyles.saveLayoutModalBody}
+              footerClassName={toolbarStyles.saveLayoutModalFooter}
+            >
+              <p>Would you like to save this layout to {saveLayoutPromptLabel}?</p>
+            </LookupModal>
             {showAddProductModal ? (
             <AddProductsModal
               offerId={offerId}

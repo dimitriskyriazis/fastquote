@@ -175,11 +175,22 @@
   color: #0f172a;
 }
 
+.cancelButton:hover {
+  background: #e2e8f0;
+  border-color: rgba(15, 23, 42, 0.35);
+}
+
 .confirmButton {
   border: 1px solid #2563eb;
   background: #2563eb;
   color: #ffffff;
   box-shadow: 0 6px 12px rgba(37, 99, 235, 0.25);
+}
+
+.confirmButton:hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  box-shadow: 0 8px 16px rgba(29, 78, 216, 0.28);
 }
 
 .confirmButton:disabled {

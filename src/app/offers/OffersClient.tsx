@@ -206,7 +206,7 @@ export default function OffersClient() {
 };
 
   const formatLastModifiedValue = (value: unknown): string => {
-    if (!value) return '';
+    if (value == null || value === '') return '-';
     return formatDateTime(value as string | Date);
   };
 

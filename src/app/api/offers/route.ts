@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import type { Request as SqlRequest } from 'mssql';
 import { getPool } from '../../../lib/sql';
+import { resolveAuditUserId } from '../../../lib/auditTrail';
 import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from '../../../lib/gridFilters';
 
 type TextFilterModel = {
@@ -78,8 +79,13 @@ type OfferRowWithCount = OfferRow & { __totalCount: number | bigint | null };
 
 const LATEST_MODIFIED_EXPRESSION = `
   CASE
-    WHEN offerDetailsStats.DetailsModifiedOn IS NULL THEN dbo.Offer.ModifiedOn
+    WHEN offerDetailsStats.DetailsModifiedOn IS NULL THEN
+      CASE
+        WHEN dbo.Offer.ModifiedBy = @__auditUserId THEN dbo.Offer.ModifiedOn
+        ELSE NULL
+      END
     WHEN dbo.Offer.ModifiedOn IS NULL THEN offerDetailsStats.DetailsModifiedOn
+    WHEN dbo.Offer.ModifiedBy <> @__auditUserId THEN offerDetailsStats.DetailsModifiedOn
     WHEN offerDetailsStats.DetailsModifiedOn > dbo.Offer.ModifiedOn THEN offerDetailsStats.DetailsModifiedOn
     ELSE dbo.Offer.ModifiedOn
   END
@@ -300,6 +306,7 @@ const normalizeOfferId = (value: unknown): number | null => {
 export async function POST(req: NextRequest) {
   try {
     const requestPayload = await readGridRequest(req);
+    const auditUserId = resolveAuditUserId(req);
     const startRow = requestPayload.startRow ?? 0;
     const endRow = requestPayload.endRow ?? startRow + 100;
     const pageSize = Math.max(1, Math.min(1000, endRow - startRow));
@@ -342,6 +349,7 @@ export async function POST(req: NextRequest) {
           SELECT MAX(od.ModifiedOn) AS DetailsModifiedOn
           FROM dbo.OfferDetails od
           WHERE od.OfferID = dbo.Offer.ID
+            AND od.ModifiedBy = @__auditUserId
         ) AS offerDetailsStats
     `;
 
@@ -364,6 +372,7 @@ export async function POST(req: NextRequest) {
     const pool = await getPool();
     const bindParams = (request: SqlRequest, paramsList: QueryParam[]) => {
       paramsList.forEach((param) => request.input(param.key, param.value));
+      request.input('__auditUserId', sql.NVarChar(450), auditUserId ?? null);
       return request;
     };
 

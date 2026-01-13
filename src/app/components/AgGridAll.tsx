@@ -373,6 +373,9 @@ type Props = {
   suppressMovableColumns?: boolean;
   onTotalsChange?: (totals: GridTotals | null) => void;
   enableColumnStatePersistence?: boolean;
+  autoPersistColumnState?: boolean;
+  applyColumnStateOrder?: boolean;
+  maintainColumnOrder?: boolean;
   columnStateNamespace?: string;
   onResponse?: (response: GridResponse | null) => void;
   onRowsMoved?: (api: GridApi<RowData>) => void;
@@ -560,7 +563,7 @@ const safeStringify = (value: unknown): string => {
   }
 };
 
-const buildGridColumnStateStorageKey = (endpoint: string, userId: string, context: string): string => {
+export const buildGridColumnStateStorageKey = (endpoint: string, userId: string, context: string): string => {
   const normalizedEndpoint = sanitizeStorageSegment(endpoint || '');
   const normalizedUser = userId && userId.trim() ? userId.trim() : GRID_COLUMN_STATE_DEFAULT_USER;
   const normalizedContext = sanitizeStorageSegment(context || '');
@@ -571,7 +574,7 @@ const buildGridColumnStateStorageKey = (endpoint: string, userId: string, contex
 
 type ColumnOrderMap = Map<string, number>;
 
-const collectPersistableColumnState = (
+export const collectPersistableColumnState = (
   state: ColumnState[],
   columnOrderMap?: ColumnOrderMap,
 ): SavedColumnStateEntry[] =>
@@ -656,7 +659,7 @@ const readPersistedColumnState = (key: string): SavedColumnStateEntry[] | null =
   }
 };
 
-const writePersistedColumnState = (key: string, columns: SavedColumnStateEntry[]) => {
+export const writePersistedColumnState = (key: string, columns: SavedColumnStateEntry[]) => {
   if (typeof window === 'undefined' || !key) return;
   try {
     if (columns.length === 0) {
@@ -852,6 +855,9 @@ export default function AgGridAll({
   suppressColumnVirtualisation = false,
   suppressMovableColumns = false,
   enableColumnStatePersistence = true,
+  autoPersistColumnState = true,
+  applyColumnStateOrder = false,
+  maintainColumnOrder = false,
   columnStateNamespace = '',
   onResponse,
   disableAutoSize = false,
@@ -903,11 +909,11 @@ export default function AgGridAll({
     return params.length > 0 ? params : null;
   }, [gridRef]);
 
-  const handlePasteStart = useCallback((_: PasteStartEvent<RowData>) => {
+  const handlePasteStart = useCallback(() => {
     preservedRangeSelectionRef.current = captureCurrentRangeSelection();
   }, [captureCurrentRangeSelection]);
 
-  const handlePasteEnd = useCallback((_: PasteEndEvent<RowData>) => {
+  const handlePasteEnd = useCallback(() => {
     const api = gridRef.current?.api ?? null;
     if (!api) return;
     const ranges = preservedRangeSelectionRef.current;
@@ -950,6 +956,7 @@ export default function AgGridAll({
   const { userId } = useAuditUser();
   const pathname = usePathname();
   const shouldPersistColumnState = enableColumnStatePersistence !== false;
+  const shouldAutoPersistColumnState = shouldPersistColumnState && autoPersistColumnState !== false;
   const columnStateStorageKey = useMemo(
     () => {
       if (!shouldPersistColumnState) return '';
@@ -958,9 +965,11 @@ export default function AgGridAll({
     },
     [columnStateNamespace, endpoint, pathname, userId, shouldPersistColumnState],
   );
-  useEffect(() => {
+  const previousColumnStateKeyRef = useRef<string>('');
+  if (previousColumnStateKeyRef.current !== columnStateStorageKey) {
+    previousColumnStateKeyRef.current = columnStateStorageKey;
     columnStateLoadedRef.current = false;
-  }, [columnStateStorageKey]);
+  }
   const resolvedPerformanceMode = performanceMode !== false;
   const resolvedDisableAutoSize = disableAutoSize;
   const resolvedCacheBlockSize =
@@ -1058,7 +1067,7 @@ export default function AgGridAll({
   }, [columnDefs, persistedColumnWidths, shouldPersistColumnState, resolvedColumnWidthDefaults, suppressRowGroup]);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingExternalRefreshRef = useRef<number | null>(null);
-  const [contextMenuRowId, setContextMenuRowId] = useState<string | null>(null);
+  const contextMenuRowIdRef = useRef<string | null>(null);
   const dropIndicatorRef = useRef<RowDropIndicator | null>(null);
   const dropIndicatorFrameRef = useRef<number | null>(null);
   const lastDragNodeRef = useRef<IRowNode<RowData> | null>(null);
@@ -1123,10 +1132,21 @@ export default function AgGridAll({
     setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, selectedNodes ?? []);
   }, [hasServerSideSelectAll]);
 
+  const updateContextMenuRowClass = useCallback((rowId: string | null) => {
+    const shell = shellRef.current;
+    if (!shell) return;
+    const rows = Array.from(shell.querySelectorAll<HTMLElement>('.ag-row'));
+    rows.forEach((row) => row.classList.remove('ag-row--context-menu-active'));
+    if (!rowId) return;
+    const targets = Array.from(shell.querySelectorAll<HTMLElement>(`.ag-row[row-id="${rowId}"]`));
+    targets.forEach((row) => row.classList.add('ag-row--context-menu-active'));
+  }, []);
+
   const handleCellContextMenu = useCallback((event: CellContextMenuEvent<RowData>) => {
     captureSelectionSnapshot(event.api ?? null);
-    setContextMenuRowId(event.node?.id ?? null);
-  }, [captureSelectionSnapshot]);
+    contextMenuRowIdRef.current = event.node?.id ?? null;
+    updateContextMenuRowClass(contextMenuRowIdRef.current);
+  }, [captureSelectionSnapshot, updateContextMenuRowClass]);
 
   const handleCellMouseDown = useCallback((event: CellMouseDownEvent<RowData>) => {
     const domEvent = event.event;
@@ -1135,14 +1155,15 @@ export default function AgGridAll({
   }, [captureSelectionSnapshot]);
 
   const clearContextMenuRow = useCallback(() => {
-    setContextMenuRowId(null);
-  }, []);
+    contextMenuRowIdRef.current = null;
+    updateContextMenuRowClass(null);
+  }, [updateContextMenuRowClass]);
 
   const handleContextMenuVisibleChanged = useCallback((event: ContextMenuVisibleChangedEvent<RowData>) => {
     if (!event.visible) {
       clearContextMenuRow();
     }
-  }, [clearContextMenuRow]);
+  }, [clearContextMenuRow, clearSelectedCellValues]);
 
   const clearDropIndicatorDom = useCallback(() => {
     const shell = shellRef.current;
@@ -1253,6 +1274,9 @@ export default function AgGridAll({
       Boolean(element?.closest('.PageHeader-module__YnWxqa__headerSide'));
 
     const handleClick = (event: Event) => {
+      if (event instanceof MouseEvent && event.button === 2) {
+        return;
+      }
       const target = event.target ?? null;
       if (isActionMenuEventTarget(target)) return;
       const element = resolveElementFromEventTarget(target);
@@ -1265,6 +1289,7 @@ export default function AgGridAll({
       clearContextMenuRow();
     };
     const handleMouseDown = (event: MouseEvent) => {
+      if (event.button === 2) return;
       const element = resolveElementFromEventTarget(event.target ?? null);
       const clickedOnPageHeader = isPageHeaderArea(element);
       const clickedInsidePersistentArea = isSelectionPreservingTarget(element);
@@ -1432,9 +1457,47 @@ export default function AgGridAll({
     });
     
     try {
+      if (applyColumnStateOrder) {
+        const stateWithOrder = [...stateToApply];
+        const ordered = stateWithOrder
+          .map((entry) => ({
+            entry,
+            order: orderMap.get(entry.colId ?? ''),
+          }))
+          .filter(({ entry }) => entry.colId)
+          .sort((a, b) => {
+            const aOrder = typeof a.order === 'number' ? a.order : Number.POSITIVE_INFINITY;
+            const bOrder = typeof b.order === 'number' ? b.order : Number.POSITIVE_INFINITY;
+            return aOrder - bOrder;
+          })
+          .map(({ entry }) => entry);
+        api.applyColumnState({ state: ordered, applyOrder: true, defaultState: { hide: null } });
+        const orderedColIds = persisted
+          .filter((entry) => typeof entry.order === 'number' && Number.isFinite(entry.order))
+          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+          .map((entry) => entry.colId)
+          .filter((colId): colId is string => typeof colId === 'string' && colId.length > 0);
+        if (orderedColIds.length > 0 && typeof api.moveColumns === 'function') {
+          const applyOrder = () => {
+            try {
+              api.moveColumns(orderedColIds, 0);
+            } catch (err) {
+              console.warn('Failed to apply column order', err);
+            }
+          };
+          if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(applyOrder);
+          } else {
+            applyOrder();
+          }
+        }
+        columnStateLoadedRef.current = true;
+        return;
+      }
+
       // Apply properties first (without order)
       api.applyColumnState({ state: stateToApply, applyOrder: false, defaultState: { hide: null } });
-      
+
       // Now apply column order using moveColumns API
       // Use requestAnimationFrame to ensure grid is ready
       if (typeof api.moveColumns === 'function' && orderMap.size > 0) {
@@ -1443,17 +1506,17 @@ export default function AgGridAll({
           let currentDisplayed = typeof api.getAllDisplayedColumns === 'function' 
             ? api.getAllDisplayedColumns() 
             : [];
-          
+
           if (currentDisplayed.length === 0) return;
-          
+
           // Create desired order array: columns with saved order first, then others
           const columnsWithOrder: Array<{ colId: string; order: number; column: Column }> = [];
           const columnsWithoutOrder: Array<{ colId: string; column: Column }> = [];
-          
+
           currentDisplayed.forEach((column) => {
             const colId = typeof column.getColId === 'function' ? column.getColId() : '';
             if (!colId) return;
-            
+
             const order = orderMap.get(colId);
             if (typeof order === 'number' && Number.isFinite(order)) {
               columnsWithOrder.push({ colId, order, column });
@@ -1461,36 +1524,36 @@ export default function AgGridAll({
               columnsWithoutOrder.push({ colId, column });
             }
           });
-          
+
           // Sort columns with order by their saved order
           columnsWithOrder.sort((a, b) => a.order - b.order);
-          
+
           // Build the desired order: ordered columns first, then unordered ones
           const desiredOrder = [
             ...columnsWithOrder.map(item => item.column),
             ...columnsWithoutOrder.map(item => item.column),
           ];
-          
+
           // Move columns to their correct positions
           // Move from right to left (highest index to lowest) to avoid index shifting
           for (let targetIndex = desiredOrder.length - 1; targetIndex >= 0; targetIndex--) {
             const targetColumn = desiredOrder[targetIndex];
             if (!targetColumn) continue;
-            
+
             const targetColId = typeof targetColumn.getColId === 'function' ? targetColumn.getColId() : '';
             if (!targetColId) continue;
-            
+
             // Refresh to get current positions after previous moves
             currentDisplayed = typeof api.getAllDisplayedColumns === 'function' 
               ? api.getAllDisplayedColumns() 
               : [];
-            
+
             // Find current position
             const currentIndex = currentDisplayed.findIndex((col) => {
               const id = typeof col.getColId === 'function' ? col.getColId() : '';
               return id === targetColId;
             });
-            
+
             // Only move if not already in correct position
             if (currentIndex >= 0 && currentIndex !== targetIndex) {
               try {
@@ -1501,7 +1564,7 @@ export default function AgGridAll({
             }
           }
         };
-        
+
         // Use requestAnimationFrame to ensure grid is ready
         if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
           window.requestAnimationFrame(applyOrder);
@@ -1509,13 +1572,32 @@ export default function AgGridAll({
           applyOrder();
         }
       }
-      
+
       columnStateLoadedRef.current = true;
     } catch (err) {
       console.warn('Failed to apply saved column state', err);
       columnStateLoadedRef.current = true;
     }
-  }, [columnStateStorageKey, shouldPersistColumnState]);
+  }, [applyColumnStateOrder, columnStateStorageKey, shouldPersistColumnState]);
+
+  useEffect(() => {
+    if (!shouldPersistColumnState) return;
+    if (!columnStateStorageKey) return;
+    if (!isGridReady) return;
+    const api = gridApiRef.current ?? gridRef.current?.api ?? null;
+    if (!api || api.isDestroyed?.()) return;
+    if (columnStateLoadedRef.current) return;
+    if (typeof window === 'undefined') {
+      applySavedColumnState(api);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      if (api.isDestroyed?.()) return;
+      if (columnStateLoadedRef.current) return;
+      applySavedColumnState(api);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [applySavedColumnState, columnStateStorageKey, isGridReady, shouldPersistColumnState]);
 
   const persistColumnState = useCallback(() => {
     if (!shouldPersistColumnState || !columnStateStorageKey) return;
@@ -1540,7 +1622,7 @@ export default function AgGridAll({
   }, [columnStateStorageKey, shouldPersistColumnState]);
 
   const queuePersistColumnState = useCallback(() => {
-    if (!shouldPersistColumnState || typeof window === 'undefined') return;
+    if (!shouldAutoPersistColumnState || typeof window === 'undefined') return;
     if (!columnStateLoadedRef.current) return;
     if (columnSaveTimerRef.current) {
       window.clearTimeout(columnSaveTimerRef.current);
@@ -1549,7 +1631,7 @@ export default function AgGridAll({
       columnSaveTimerRef.current = null;
       persistColumnState();
     }, 200);
-  }, [persistColumnState, shouldPersistColumnState]);
+  }, [persistColumnState, shouldAutoPersistColumnState]);
 
   useEffect(() => () => {
     if (columnSaveTimerRef.current) {
@@ -1665,10 +1747,10 @@ export default function AgGridAll({
   );
 
   const handleColumnVisible = useCallback(() => {
-    if (shouldPersistColumnState && columnStateLoadedRef.current) {
+    if (shouldAutoPersistColumnState && columnStateLoadedRef.current) {
       queuePersistColumnState();
     }
-  }, [queuePersistColumnState, shouldPersistColumnState]);
+  }, [queuePersistColumnState, shouldAutoPersistColumnState]);
 
   const handleFirstDataRendered = useCallback((event: FirstDataRenderedEvent) => {
     // Ensure column order is applied after data is rendered
@@ -1758,6 +1840,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
         },
       },
       enableRangeSelection: true,
+      maintainColumnOrder,
     };
       if (useAgGridRowDrag) {
         options.rowDragMultiRow = true;
@@ -1786,7 +1869,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       };
     }
     return options;
-  }, [useAgGridRowDrag]);
+  }, [maintainColumnOrder, suppressMovableColumns, useAgGridRowDrag]);
 
 const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     getRows: async (params: IServerSideGetRowsParams<RowData>) => {
@@ -1967,6 +2050,9 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
       // Use setTimeout to ensure columns are initialized
       setTimeout(() => {
         if (!e.api.isDestroyed?.()) {
+          if (maintainColumnOrder) {
+            e.api.setGridOption('maintainColumnOrder', true);
+          }
           applySavedColumnState(e.api);
         }
       }, 0);
@@ -1975,7 +2061,7 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     if (typeof externalGridReadyHandler === 'function') {
       externalGridReadyHandler(e.api);
     }
-  }, [datasource, handleContextMenuVisibleChanged, externalGridReadyHandler, wrapGridApiRefreshers, shouldPersistColumnState, applySavedColumnState]);
+  }, [applySavedColumnState, datasource, externalGridReadyHandler, handleContextMenuVisibleChanged, maintainColumnOrder, shouldPersistColumnState, wrapGridApiRefreshers]);
   const contextMenuItemsHandler = useCallback<GetContextMenuItems<RowData>>((params) => {
     const autoSizeItems = resolveAutoSizeMenuItems(params);
     const wrapActions = (items: Array<MenuItemDef<RowData> | DefaultMenuItem | string>) =>
@@ -2119,18 +2205,6 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     // No automatic auto-size.
   };
 
-  // Apply/remove the context menu highlight directly on row elements so it always clears
-  useEffect(() => {
-    const shell = shellRef.current;
-    if (!shell) return;
-    const rows = Array.from(shell.querySelectorAll<HTMLElement>('.ag-row'));
-    rows.forEach((row) => row.classList.remove('ag-row--context-menu-active'));
-    if (!contextMenuRowId) return;
-    // Row IDs are set by ag-Grid as the row-id attribute (applies to pinned/center containers)
-    const targets = Array.from(shell.querySelectorAll<HTMLElement>(`.ag-row[row-id="${contextMenuRowId}"]`));
-    targets.forEach((row) => row.classList.add('ag-row--context-menu-active'));
-  }, [contextMenuRowId]);
-
   const handleFilterChanged = useCallback((event: FilterChangedEvent) => {
     const model = event.api.getFilterModel() as Record<string, FilterDescriptor> | null;
     if (!model) return;
@@ -2216,11 +2290,8 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
         parts.push(...result);
       }
     }
-    if (contextMenuRowId && params.node?.id === contextMenuRowId) {
-      parts.push('ag-row--context-menu-active');
-    }
     return parts.length === 0 ? undefined : parts;
-  }, [getRowClass, contextMenuRowId]);
+  }, [getRowClass]);
 
   useEffect(() => {
     if (!isGridReady || !shouldPersistColumnState) return;
@@ -2569,11 +2640,7 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     wrapGridApiRefreshers(gridApiRef.current);
   }, [wrapGridApiRefreshers]);
 
-  useEffect(() => {
-    const api = gridRef.current?.api;
-    if (!api || api.isDestroyed?.()) return;
-    requestRefresh(() => api.refreshCells({ force: true }));
-  }, [contextMenuRowId, requestRefresh]);
+  // No refresh needed for context-menu highlighting; handled via direct DOM class updates above.
 
   return (
     <div className={styles.container}>
@@ -2640,10 +2707,10 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
           onSelectionChanged={handleSelectionChanged}
           onCellEditingStarted={handleEditingStart}
           onCellEditingStopped={handleEditingStop}
-          onColumnMoved={shouldPersistColumnState ? queuePersistColumnState : undefined}
-          onColumnPinned={shouldPersistColumnState ? queuePersistColumnState : undefined}
+          onColumnMoved={shouldAutoPersistColumnState ? queuePersistColumnState : undefined}
+          onColumnPinned={shouldAutoPersistColumnState ? queuePersistColumnState : undefined}
           onColumnVisible={handleColumnVisible}
-          onColumnResized={shouldPersistColumnState ? queuePersistColumnState : undefined}
+          onColumnResized={shouldAutoPersistColumnState ? queuePersistColumnState : undefined}
           onColumnRowGroupChanged={handleColumnRowGroupChanged}
         />
       </div>

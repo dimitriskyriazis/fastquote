@@ -87,17 +87,95 @@
   border-color: rgba(163, 90, 22, 0.4);
 }
 
-.buttonToggleRequested {
-  background-color: #d2ffe0;
-  color: #0f513b;
-  border-color: rgba(23, 129, 80, 0.2);
-}
-
 .buttonCategory {
   background-color: rgb(187, 187, 187);
   color: #000000;
   border-color: rgba(122, 122, 122, 0.4);
 }
+
+.layoutSelect {
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  border-radius: 999px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+  color: #0f172a;
+  background-color: #f8fafc;
+  min-width: 60px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.layoutSelect:hover {
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.12);
+  transform: translateY(-1px);
+}
+
+.layoutSelect:focus-visible {
+  outline: none;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.12);
+  transform: translateY(-1px);
+}
+
+.layoutSaveButton {
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  border-radius: 999px;
+  padding: 8px 8px 8px 8px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+  color: #0f172a;
+  background-color: #f1f5f9;
+  min-width: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.layoutSaveButton:hover {
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.12);
+  transform: translateY(-1px);
+}
+
+.layoutSaveButton:focus-visible {
+  outline: none;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.12);
+  transform: translateY(-1px);
+}
+
+.saveLayoutModalHeader {
+  background: #ffffff;
+}
+
+.saveLayoutModalTitle {
+  text-transform: none;
+  letter-spacing: 0.01em;
+  font-size: 1.05rem;
+}
+
+.saveLayoutModalBody {
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.saveLayoutModalFooter {
+  justify-content: flex-end;
+}
+
 
 .buttonPrintableComment {
   background-color: #c1e6ff;

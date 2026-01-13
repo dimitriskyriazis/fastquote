@@ -17,6 +17,11 @@ type Props = {
   overlayStyle?: CSSProperties;
   cardClassName?: string;
   cardStyle?: CSSProperties;
+  headerClassName?: string;
+  titleClassName?: string;
+  bodyClassName?: string;
+  footerClassName?: string;
+  confirmFirst?: boolean;
 };
 
 export default function LookupModal({
@@ -33,6 +38,11 @@ export default function LookupModal({
   overlayStyle,
   cardClassName = '',
   cardStyle,
+  headerClassName = '',
+  titleClassName = '',
+  bodyClassName = '',
+  footerClassName = '',
+  confirmFirst = false,
 }: Props) {
   useEffect(() => {
     if (!open) return undefined;
@@ -78,8 +88,8 @@ export default function LookupModal({
         aria-label={title}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className={styles.header}>
-          <div className={styles.title}>{title}</div>
+        <div className={`${styles.header} ${headerClassName}`.trim()}>
+          <div className={`${styles.title} ${titleClassName}`.trim()}>{title}</div>
           <button
             type="button"
             className={styles.closeButton}
@@ -89,22 +99,40 @@ export default function LookupModal({
             ×
           </button>
         </div>
-        <div className={styles.body}>
+        <div className={`${styles.body} ${bodyClassName}`.trim()}>
           {children}
           {error ? <div className={styles.error}>{error}</div> : null}
         </div>
-        <div className={styles.footer}>
-          <button type="button" className={styles.cancelButton} onClick={onClose} disabled={saving}>
-            {cancelLabel}
-          </button>
-          <button
-            type="button"
-            className={styles.confirmButton}
-            onClick={onConfirm}
-            disabled={saving}
-          >
-            {saving ? 'Saving…' : confirmLabel}
-          </button>
+        <div className={`${styles.footer} ${footerClassName}`.trim()}>
+          {confirmFirst ? (
+            <>
+              <button
+                type="button"
+                className={styles.confirmButton}
+                onClick={onConfirm}
+                disabled={saving}
+              >
+                {saving ? 'Saving…' : confirmLabel}
+              </button>
+              <button type="button" className={styles.cancelButton} onClick={onClose} disabled={saving}>
+                {cancelLabel}
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className={styles.cancelButton} onClick={onClose} disabled={saving}>
+                {cancelLabel}
+              </button>
+              <button
+                type="button"
+                className={styles.confirmButton}
+                onClick={onConfirm}
+                disabled={saving}
+              >
+                {saving ? 'Saving…' : confirmLabel}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

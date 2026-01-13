@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useCallback, useState, useRef, useEffect } from 'react';
+import React, { useMemo, useCallback, useState, useRef, useEffect, useImperativeHandle } from 'react';
 import type {
   CellValueChangedEvent,
   ColDef,
@@ -26,6 +26,11 @@ import type {
   GridResponse,
   ServerRequestWithQuickFilter,
 } from '../../components/AgGridAll';
+import {
+  buildGridColumnStateStorageKey,
+  collectPersistableColumnState,
+  writePersistedColumnState,
+} from '../../components/AgGridAll';
 
 const AgGridAll = dynamic<AgGridAllProps>(() => import('../../components/AgGridAll'), {
   ssr: false,
@@ -43,6 +48,7 @@ import MatchRequestedProductsModal, {
   type RequestedProductMatchEntry,
 } from './products/MatchRequestedProductsModal';
 import AddProductModal from '../../products/AddProductModal';
+import { useAuditUser } from '../../components/AuditUserProvider';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const decimalFormatter = new Intl.NumberFormat('en-US', {
@@ -97,8 +103,8 @@ const zeroBlankNumberFormatter = ({ value }: FormatterParams) => {
 type RequestedFieldKey =
   | 'RequestedItemNo'
   | 'RequestedBrand'
-  | 'RequestedModelNo'
   | 'RequestedPartNo'
+  | 'RequestedModelNo'
   | 'RequestedDescription'
   | 'RequestedDescription2'
   | 'RequestedDescription3'
@@ -107,8 +113,8 @@ type RequestedFieldKey =
 type RequestedDisplayFieldKey = Exclude<RequestedFieldKey, 'RequestedItemNo'>;
 const REQUESTED_DISPLAY_FIELD_KEYS: RequestedDisplayFieldKey[] = [
   'RequestedBrand',
-  'RequestedModelNo',
   'RequestedPartNo',
+  'RequestedModelNo',
   'RequestedDescription',
   'RequestedDescription2',
   'RequestedDescription3',
@@ -118,8 +124,8 @@ const REQUESTED_DISPLAY_FIELD_KEYS: RequestedDisplayFieldKey[] = [
 const REQUESTED_FIELD_LABELS: Record<RequestedFieldKey, string> = {
   RequestedItemNo: 'requested item number',
   RequestedBrand: 'requested brand',
-  RequestedModelNo: 'requested model number',
   RequestedPartNo: 'requested part number',
+  RequestedModelNo: 'requested model number',
   RequestedDescription: 'requested description',
   RequestedDescription2: 'requested description 2',
   RequestedDescription3: 'requested description 3',
@@ -128,8 +134,8 @@ const REQUESTED_FIELD_LABELS: Record<RequestedFieldKey, string> = {
 const REQUESTED_FIELD_SET = new Set<RequestedFieldKey>([
   'RequestedItemNo',
   'RequestedBrand',
-  'RequestedModelNo',
   'RequestedPartNo',
+  'RequestedModelNo',
   'RequestedDescription',
   'RequestedDescription2',
   'RequestedDescription3',
@@ -588,6 +594,7 @@ const PRICING_FIELD_LABELS: Record<string, string> = {
 };
 
 const PRICING_EDITABLE_FIELDS = new Set(Object.keys(PRICING_FIELD_LABELS));
+const COST_ANALYSIS_COLUMNS = ['TelmacoDiscount', 'NetCost', 'Margin', 'GrossProfit', 'TotalCost'];
 
 const findDeleteMenuItemIndex = (
   items: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string>,
@@ -605,19 +612,26 @@ type Props = {
   manualMode?: boolean;
   refreshToken?: number;
   showRequestedColumns?: boolean;
+  tableLayout?: 'cust' | 'wCost' | 'wReq';
+};
+
+export type OfferProductsPanelHandle = {
+  saveLayout: () => boolean;
 };
 
 const buildEndpointForOffer = (offerId: string) =>
   `/api/offers/${encodeURIComponent(offerId)}/products`;
 
-export default function OfferProductsPanel({
+const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   offerId,
   endpoint,
   manualMode = false,
   refreshToken = 0,
   showRequestedColumns = true,
-}: Props) {
+  tableLayout = 'wReq',
+}: Props, ref) => {
   const router = useRouter();
+  const { userId } = useAuditUser();
   useEffect(() => {
     deferInitialHeavyWorkRef.current = true;
   }, [offerId]);
@@ -626,6 +640,56 @@ export default function OfferProductsPanel({
     return buildEndpointForOffer(offerId);
   }, [endpoint, offerId]);
   const dataEndpoint = resolvedEndpoint;
+  const columnStateNamespace = useMemo(
+    () => `offer-products-${tableLayout}`,
+    [tableLayout],
+  );
+  const columnStateStorageKey = useMemo(
+    () => buildGridColumnStateStorageKey(dataEndpoint, userId, columnStateNamespace),
+    [columnStateNamespace, dataEndpoint, userId],
+  );
+  const [savedColumnOrder, setSavedColumnOrder] = useState<string[]>([]);
+  const [savedHiddenMap, setSavedHiddenMap] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    if (typeof window === 'undefined' || !columnStateStorageKey) {
+      setSavedColumnOrder([]);
+      setSavedHiddenMap({});
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(columnStateStorageKey);
+      if (!raw) {
+        setSavedColumnOrder([]);
+        setSavedHiddenMap({});
+        return;
+      }
+      const parsed = JSON.parse(raw) as {
+        columns?: Array<{ colId?: unknown; order?: unknown; hide?: unknown }>;
+      } | null;
+      if (!parsed || !Array.isArray(parsed.columns)) {
+        setSavedColumnOrder([]);
+        setSavedHiddenMap({});
+        return;
+      }
+      const ordered = parsed.columns
+        .filter((entry) => typeof entry?.colId === 'string' && typeof entry?.order === 'number')
+        .sort((a, b) => (a.order as number) - (b.order as number))
+        .map((entry) => entry.colId as string);
+      const hidden: Record<string, boolean> = {};
+      parsed.columns.forEach((entry) => {
+        const colId = typeof entry?.colId === 'string' ? entry.colId : '';
+        if (!colId) return;
+        if (typeof entry?.hide === 'boolean') {
+          hidden[colId] = entry.hide;
+        }
+      });
+      setSavedColumnOrder(ordered);
+      setSavedHiddenMap(hidden);
+    } catch {
+      setSavedColumnOrder([]);
+      setSavedHiddenMap({});
+    }
+  }, [columnStateStorageKey]);
   useEffect(() => {
     warmupFetchedRef.current = false;
   }, [dataEndpoint]);
@@ -704,6 +768,7 @@ export default function OfferProductsPanel({
   const appliedRequestedColumnVisibilityRef = useRef<Record<RequestedDisplayFieldKey, boolean> | null>(null);
   const appliedRequestedItemNoVisibleRef = useRef<boolean | null>(null);
   const appliedShowRequestedColumnsRef = useRef<boolean | null>(null);
+  const appliedTableLayoutRef = useRef<'cust' | 'wCost' | 'wReq' | null>(null);
   const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
   const lastRowCountRef = useRef<number | null>(null);
   const lastRequestStartRef = useRef<number | null>(null);
@@ -865,8 +930,17 @@ export default function OfferProductsPanel({
       acc[key] = false;
       return acc;
     }, {} as Record<RequestedDisplayFieldKey, boolean>);
-    const effectiveVisibility = showRequestedColumns ? requestedColumnVisibility : forcedHiddenVisibility;
-    const effectiveItemNoVisible = showRequestedColumns ? requestedItemNoVisible : false;
+    const savedRequestedHidden = (key: string) => savedHiddenMap[key] === true;
+    const effectiveVisibility = showRequestedColumns
+      ? keys.reduce<Record<RequestedDisplayFieldKey, boolean>>((acc, key) => {
+        const baseVisible = requestedColumnVisibility[key];
+        acc[key] = Boolean(baseVisible) && !savedRequestedHidden(key);
+        return acc;
+      }, {} as Record<RequestedDisplayFieldKey, boolean>)
+      : forcedHiddenVisibility;
+    const effectiveItemNoVisible = showRequestedColumns
+      ? requestedItemNoVisible && !savedRequestedHidden('RequestedItemNo')
+      : false;
 
     const previousVisibility = appliedRequestedColumnVisibilityRef.current;
     const visibilityChanged = !previousVisibility
@@ -896,7 +970,30 @@ export default function OfferProductsPanel({
     appliedRequestedColumnVisibilityRef.current = { ...effectiveVisibility };
     appliedRequestedItemNoVisibleRef.current = effectiveItemNoVisible;
     appliedShowRequestedColumnsRef.current = showRequestedColumns;
-  }, [requestedColumnVisibility, requestedColumnsReady, requestedItemNoVisible, showRequestedColumns]);
+  }, [
+    columnStateStorageKey,
+    requestedColumnVisibility,
+    requestedColumnsReady,
+    requestedItemNoVisible,
+    savedHiddenMap,
+    showRequestedColumns,
+  ]);
+
+  useEffect(() => {
+    if (!requestedColumnsReady) return;
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    if (appliedTableLayoutRef.current === tableLayout) return;
+
+    const showCostAnalysis = tableLayout !== 'cust';
+    try {
+      api.setColumnsVisible(COST_ANALYSIS_COLUMNS, showCostAnalysis);
+    } catch {
+      /* noop */
+    }
+
+    appliedTableLayoutRef.current = tableLayout;
+  }, [requestedColumnsReady, tableLayout]);
 
   const handleGridResponse = useCallback((response: GridResponse | null) => {
     lastRowCountRef.current = response?.rowCount ?? null;
@@ -1011,6 +1108,49 @@ export default function OfferProductsPanel({
     gridApiRef.current = api;
     setRequestedColumnsReadyFlag(true);
   }, [setRequestedColumnsReadyFlag]);
+
+  const saveLayout = useCallback(() => {
+    if (typeof window === 'undefined') return false;
+    if (!columnStateStorageKey) return false;
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) {
+      showToastMessage('Unable to save layout. Please try again.', 'error');
+      return false;
+    }
+    const currentState = api.getColumnState();
+    const columnOrderMap = new Map<string, number>();
+    const displayedOrder = (typeof api.getAllDisplayedColumns === 'function'
+      ? api.getAllDisplayedColumns()
+      : [])
+      .map((column) => (typeof column.getColId === 'function' ? column.getColId() : ''))
+      .filter((colId) => colId);
+    const headerRow = document.querySelector('.offer-products-grid .ag-header-viewport .ag-header-row');
+    const headerOrder = headerRow
+      ? Array.from(headerRow.querySelectorAll<HTMLElement>('.ag-header-cell'))
+        .map((cell) => ({
+          id: cell.getAttribute('col-id') ?? '',
+          left: cell.getBoundingClientRect().left,
+        }))
+        .filter((entry) => entry.id)
+        .sort((a, b) => a.left - b.left)
+        .map((entry) => entry.id)
+      : [];
+    const currentOrder = currentState
+      .map((entry) => (typeof entry.colId === 'string' ? entry.colId : ''))
+      .filter((colId) => colId);
+    const visibleOrderSource = headerOrder.length > 0 ? headerOrder : displayedOrder;
+    const visibleSet = new Set(visibleOrderSource);
+    const visibleQueue = visibleOrderSource.filter((colId) => currentOrder.includes(colId));
+    const mergedOrder = currentOrder.map((colId) => (visibleSet.has(colId) ? visibleQueue.shift() ?? colId : colId));
+    mergedOrder.forEach((colId, index) => {
+      if (colId) columnOrderMap.set(colId, index);
+    });
+    const nextState = collectPersistableColumnState(currentState, columnOrderMap);
+    writePersistedColumnState(columnStateStorageKey, nextState);
+    showToastMessage('Layout saved', 'success');
+    return true;
+  }, [columnStateStorageKey]);
+  useImperativeHandle(ref, () => ({ saveLayout }), [saveLayout]);
 
   const isCategoryRowCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!row) return false;
@@ -1315,6 +1455,8 @@ const PartNumberCell = useCallback((params: ICellRendererParams<Record<string, u
 
 const REQUESTED_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--requested';
 const ACTUAL_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--actual';
+const ACTUAL_NUMERIC_CELL_CLASS = [ACTUAL_COLUMN_GLOBAL_CLASS, 'ag-right-aligned'];
+const ACTUAL_NUMERIC_CELL_STYLE = { justifyContent: 'flex-end', textAlign: 'right' } as const;
 
   const requestedCellClassRules = useMemo(() => ({
     [styles.requestedColumnCell]: (params: { data?: Record<string, unknown> | null }) =>
@@ -1447,8 +1589,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 
   return {
     RequestedBrand: buildTextRequestedColumn('RequestedBrand', 'Req. Brand'),
-    RequestedModelNo: buildTextRequestedColumn('RequestedModelNo', 'Req. Model Number'),
     RequestedPartNo: buildTextRequestedColumn('RequestedPartNo', 'Req. Part Number'),
+    RequestedModelNo: buildTextRequestedColumn('RequestedModelNo', 'Req. Model Number'),
     RequestedDescription: buildTextRequestedColumn('RequestedDescription', 'Req. Description'),
     RequestedDescription2: buildTextRequestedColumn('RequestedDescription2', 'Req. Description 2'),
     RequestedDescription3: buildTextRequestedColumn('RequestedDescription3', 'Req. Description 3'),
@@ -1458,8 +1600,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: zeroBlankNumberFormatter,
-      headerClass: styles.requestedHeader,
+      headerClass: [styles.requestedHeader, 'ag-right-aligned-header'],
       cellClassRules: requestedCellClassRules,
+      cellClass: 'ag-right-aligned',
+      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
       editable: (params: { data?: Record<string, unknown> | null }) =>
         canEditRequestedField('RequestedQuantity', params.data ?? null),
       singleClickEdit: true,
@@ -1530,7 +1674,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       cellRenderer: RequestedItemNoCell,
     };
 
-    return [
+    const baseColumns: ColDef[] = [
       {
         headerName: '',
         colId: '__row_drag__',
@@ -1619,6 +1763,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       headerName: 'List Price',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
       valueFormatter: (params) => {
         if (!isOfferProductCommentOrProduct(params.data ?? null)) return '';
         return euroFormatter(params);
@@ -1626,43 +1771,51 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       cellClassRules: productPriceListClassRules,
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
-      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
+      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
     },
     {
       field: 'CustomerDiscount',
       headerName: 'Customer Discount',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: percentageFormatter,
-      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
+      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
     },
     {
       field: 'NetUnitPrice',
       headerName: 'Net Unit Price',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: euroFormatter,
-      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
+      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
     },
     {
       field: 'Quantity',
       headerName: 'Qty',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: zeroBlankNumberFormatter,
-      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
+      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
     },
     {
       field: 'TotalPrice',
       headerName: 'Total List Price',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
       valueGetter: categoryTotalPriceGetter,
       valueFormatter: (params) => {
         if (!isOfferProductCommentOrProduct(params.data ?? null)) return '';
@@ -1670,86 +1823,142 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       },
       cellClassRules: totalPriceCellClassRules,
       editable: false,
-      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
+      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
     },
     {
       field: 'TotalNet',
       headerName: 'Total Net',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
       valueGetter: categoryTotalNetGetter,
       valueFormatter: euroFormatter,
       cellClassRules: productAccentCellClassRules,
       editable: false,
-      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
+      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
     },
     {
       field: 'Warranty',
       headerName: 'Warranty',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
       valueFormatter: zeroBlankNumberFormatter,
-      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
+      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
     },
     {
       field: 'TelmacoDiscount',
       headerName: 'Telmaco Discount',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: percentageFormatter,
-      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
+      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
     },
     {
       field: 'NetCost',
       headerName: 'Net Cost',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: euroFormatter,
-      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
+      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
     },
     {
       field: 'Margin',
       headerName: 'Margin',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       singleClickEdit: true,
       valueFormatter: percentageFormatter,
-      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
+      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
     },
     {
       field: 'GrossProfit',
       headerName: 'Gross Profit',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
       valueFormatter: euroFormatter,
       cellClassRules: productAccentCellClassRules,
       editable: false,
-      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+      cellClass: ACTUAL_NUMERIC_CELL_CLASS,
+      cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
     },
-    {
-      field: 'TotalCost',
-      headerName: 'Total Cost',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      valueFormatter: euroFormatter,
-      valueGetter: categoryTotalCostGetter,
-      cellClassRules: productAccentCellClassRules,
-      editable: false,
-      cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
-    },
-  ];
+      {
+        field: 'TotalCost',
+        headerName: 'Total Cost',
+        filter: 'agNumberColumnFilter',
+        type: 'numericColumn',
+        headerClass: 'ag-right-aligned-header',
+        valueFormatter: euroFormatter,
+        valueGetter: categoryTotalCostGetter,
+        cellClassRules: productAccentCellClassRules,
+        editable: false,
+        cellClass: ACTUAL_NUMERIC_CELL_CLASS,
+        cellStyle: ACTUAL_NUMERIC_CELL_STYLE,
+      },
+    ];
+    if (!savedColumnOrder.length) {
+      return baseColumns;
+    }
+    const columnMap = new Map<string, ColDef>();
+    baseColumns.forEach((column) => {
+      const id = typeof column.colId === 'string'
+        ? column.colId
+        : typeof column.field === 'string'
+          ? column.field
+          : '';
+      if (!id) return;
+      columnMap.set(id, column);
+    });
+    const ordered: ColDef[] = [];
+    savedColumnOrder.forEach((id) => {
+      const column = columnMap.get(id);
+      if (!column) return;
+      ordered.push(column);
+      columnMap.delete(id);
+    });
+    columnMap.forEach((column) => ordered.push(column));
+    if (Object.keys(savedHiddenMap).length > 0) {
+      return ordered.map((column) => {
+        const id = typeof column.colId === 'string'
+          ? column.colId
+          : typeof column.field === 'string'
+            ? column.field
+            : '';
+        if (!id) return column;
+        if (savedHiddenMap[id] == null) return column;
+        return {
+          ...column,
+          hide: savedHiddenMap[id],
+        };
+      });
+    }
+    return ordered;
   }, [
+    ACTUAL_NUMERIC_CELL_CLASS,
+    ACTUAL_NUMERIC_CELL_STYLE,
     PartNumberCell,
     manualMode,
     TreeOrderingCell,
     requestedColumnDefsMap,
     RequestedItemNoCell,
     requestedCellClassRules,
+    savedHiddenMap,
+    savedColumnOrder,
   ]);
 
   const refreshOfferProductGrid = useCallback((api: GridApi<Record<string, unknown>> | null, options?: { refresh?: boolean; purge?: boolean }) => {
@@ -2674,6 +2883,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             onModelUpdated={handleGridModelUpdated}
             onRowDoubleClicked={handleRowDoubleClicked}
             enableColumnStatePersistence
+            autoPersistColumnState={false}
+            applyColumnStateOrder
+            maintainColumnOrder
+            columnStateNamespace={columnStateNamespace}
             onTotalsChange={handleTotalsChange}
             onResponse={handleGridResponse}
             onServerRequest={handleServerRequest}
@@ -2730,4 +2943,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       />
     </>
   );
-}
+});
+
+OfferProductsPanel.displayName = 'OfferProductsPanel';
+
+export default React.memo(OfferProductsPanel);
