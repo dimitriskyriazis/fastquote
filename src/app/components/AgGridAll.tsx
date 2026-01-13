@@ -13,12 +13,15 @@ import {
   CellContextMenuEvent,
   CellEditingStartedEvent,
   CellMouseDownEvent,
+  CellRange,
+  CellRangeParams,
   CellValueChangedEvent,
   Column,
   ColumnPinnedType,
   ColumnState,
   ColDef,
   ColumnApiModule,
+  ColumnAutoSizeModule,
   ContextMenuVisibleChangedEvent,
   CellStyleModule,
   DateFilterModule,
@@ -34,6 +37,7 @@ import {
   GridReadyEvent,
   IRowNode,
   RowNode,
+  RowApiModule,
   IServerSideDatasource,
   IServerSideGetRowsParams,
   MenuItemDef,
@@ -42,10 +46,10 @@ import {
   RowClassParams,
   RowStyleModule,
   RowDoubleClickedEvent,
-  RowDragEnterEvent,
   RowDragEndEvent,
-  RowDragModule,
+  RowDragEnterEvent,
   RowDragMoveEvent,
+  RowDragModule,
   RowHeightParams,
   RowSelectionModule,
   RowSelectionOptions,
@@ -57,6 +61,8 @@ import {
   TextFilterModule,
   EventApiModule,
   ModuleRegistry,
+  PasteEndEvent,
+  PasteStartEvent,
 } from 'ag-grid-community';
 import {
   AggregationModule,
@@ -90,6 +96,55 @@ import { resolveColumnWidthAssignments, ColumnWidthAssignment } from '../../lib/
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
 const GRID_ROW_HEIGHT = 32;
+
+const resolveColumnId = (column: string | Column): string => (
+  typeof column === 'string' ? column : column.getColId()
+);
+
+const mapCellRangeToParams = (range: CellRange): CellRangeParams | null => {
+  if (!range?.columns?.length) return null;
+  const startRow = range.startRow;
+  const endRow = range.endRow;
+  if (startRow == null && endRow == null) return null;
+  return {
+    rowStartIndex: typeof startRow?.rowIndex === 'number' ? startRow.rowIndex : null,
+    rowStartPinned: startRow?.rowPinned ?? null,
+    rowEndIndex: typeof endRow?.rowIndex === 'number' ? endRow.rowIndex : null,
+    rowEndPinned: endRow?.rowPinned ?? null,
+    columns: range.columns.map(resolveColumnId),
+  };
+};
+
+const restoreCellRanges = (api: GridApi<RowData>, ranges: CellRangeParams[]) => {
+  if (!ranges?.length) return;
+  api.clearRangeSelection();
+  ranges.forEach((params) => {
+    if (params.columns?.length) {
+      api.addCellRange(params);
+    }
+  });
+  const firstRange = ranges[0];
+  const focusedRow = firstRange.rowStartIndex ?? firstRange.rowEndIndex;
+  const focusedColumn = firstRange.columns?.[0];
+  const focusedColumnId = focusedColumn
+    ? typeof focusedColumn === 'string'
+      ? focusedColumn
+      : focusedColumn.getColId()
+    : '';
+  if (
+    typeof focusedRow === 'number'
+    && focusedColumnId.length > 0
+  ) {
+    api.setFocusedCell(
+      focusedRow,
+      focusedColumnId,
+      firstRange.rowStartPinned ?? firstRange.rowEndPinned ?? undefined,
+    );
+  }
+};
+
+const isEditableColumnValue = (column: Column, node: IRowNode<RowData>) =>
+  column.isCellEditable(node) && !column.isSuppressPaste(node);
 
 
 const resolveElementFromEventTarget = (target: EventTarget | null): Element | null => {
@@ -275,8 +330,10 @@ if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
     RowDragModule,
     EventApiModule,
     ColumnApiModule,
+    ColumnAutoSizeModule,
     RowStyleModule,
     CellStyleModule,
+    RowApiModule,
   ]);
   globalThis.__AG_GRID_MODULES_REGISTERED__ = true;
 }
@@ -833,8 +890,59 @@ export default function AgGridAll({
   }, [requestRefresh]);
   const gridRef = useRef<AgGridReact<RowData> | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const preservedRangeSelectionRef = useRef<CellRangeParams[] | null>(null);
 
-const gridApiRef = useRef<GridApi<RowData> | null>(null);
+  const captureCurrentRangeSelection = useCallback(() => {
+    const api = gridRef.current?.api ?? null;
+    if (!api) return null;
+    const ranges = api.getCellRanges();
+    if (!ranges?.length) return null;
+    const params = ranges
+      .map((range) => mapCellRangeToParams(range))
+      .filter((value): value is CellRangeParams => value !== null);
+    return params.length > 0 ? params : null;
+  }, [gridRef]);
+
+  const handlePasteStart = useCallback((_: PasteStartEvent<RowData>) => {
+    preservedRangeSelectionRef.current = captureCurrentRangeSelection();
+  }, [captureCurrentRangeSelection]);
+
+  const handlePasteEnd = useCallback((_: PasteEndEvent<RowData>) => {
+    const api = gridRef.current?.api ?? null;
+    if (!api) return;
+    const ranges = preservedRangeSelectionRef.current;
+    if (!ranges?.length) return;
+    restoreCellRanges(api, ranges);
+  }, [gridRef]);
+
+  const clearSelectedCellValues = useCallback(() => {
+    const api = gridRef.current?.api ?? null;
+    if (!api) return;
+    const ranges = api.getCellRanges();
+    if (!ranges?.length) return;
+    ranges.forEach((range) => {
+      if (!range.columns?.length) return;
+      const startRow = range.startRow ?? range.endRow;
+      const endRow = range.endRow ?? range.startRow;
+      if (!startRow || !endRow) return;
+      if (startRow.rowPinned || endRow.rowPinned) return;
+      const rowStartIndex = Math.min(startRow.rowIndex, endRow.rowIndex);
+      const rowEndIndex = Math.max(startRow.rowIndex, endRow.rowIndex);
+      for (let rowIndex = rowStartIndex; rowIndex <= rowEndIndex; rowIndex += 1) {
+        const node = api.getDisplayedRowAtIndex(rowIndex);
+        if (!node) continue;
+        range.columns.forEach((column) => {
+          if (!isEditableColumnValue(column, node)) return;
+          const colDef = column.getColDef();
+          const colKey = colDef?.field ?? column.getColId();
+          if (!colKey) return;
+          node.setDataValue(colKey, null);
+        });
+      }
+    });
+  }, [gridRef]);
+
+  const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const pendingScrollRestoreTopRef = useRef<number | null>(null);
   const columnSaveTimerRef = useRef<number | null>(null);
   const columnStateLoadedRef = useRef(false);
@@ -854,7 +962,7 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
     columnStateLoadedRef.current = false;
   }, [columnStateStorageKey]);
   const resolvedPerformanceMode = performanceMode !== false;
-  const resolvedDisableAutoSize = disableAutoSize || resolvedPerformanceMode;
+  const resolvedDisableAutoSize = disableAutoSize;
   const resolvedCacheBlockSize =
     typeof cacheBlockSize === 'number' && Number.isFinite(cacheBlockSize) && cacheBlockSize > 0
       ? Math.floor(cacheBlockSize)
@@ -1181,7 +1289,19 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         clearContextMenuRow();
+        return;
       }
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+      const element = resolveElementFromEventTarget(event.target ?? null);
+      if (!element?.closest('.ag-root')) return;
+      if (element.closest('input, textarea, [contenteditable="true"]')) return;
+      const api = gridRef.current?.api ?? null;
+      if (!api) return;
+      const ranges = api.getCellRanges();
+      if (!ranges?.length) return;
+      event.preventDefault();
+      event.stopPropagation();
+      clearSelectedCellValues();
     };
     document.addEventListener('click', handleClick, true);
     document.addEventListener('mousedown', handleClick, true);
@@ -1205,8 +1325,19 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
       captureSelectionSnapshot(gridRef.current?.api ?? null);
     };
     shell.addEventListener('mousedown', handleMouseDownCapture, true);
+    const handlePaste = (event: ClipboardEvent) => {
+      if (!event.clipboardData) return;
+      const element = resolveElementFromEventTarget(event.target ?? null);
+      if (!element?.closest('.ag-root')) return;
+      event.preventDefault();
+      const api = gridRef.current?.api ?? null;
+      if (!api || typeof api.pasteFromClipboard !== 'function') return;
+      api.pasteFromClipboard();
+    };
+    shell.addEventListener('paste', handlePaste);
     return () => {
       shell.removeEventListener('mousedown', handleMouseDownCapture, true);
+      shell.removeEventListener('paste', handlePaste);
     };
   }, [captureSelectionSnapshot]);
 
@@ -1498,21 +1629,53 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
     }
   }, [resolvedDisableAutoSize, runAutoSize]);
 
+  const resolveAutoSizeMenuItems = useCallback(
+    (params: { api?: GridApi<RowData> | null; column?: Column | null }) => {
+      if (resolvedDisableAutoSize) return [];
+      const api = params.api ?? null;
+      if (!api) return [];
+      const exclusions = new Set(autoSizeExclusions ?? []);
+      const displayed = typeof api.getAllDisplayedColumns === 'function' ? api.getAllDisplayedColumns() : [];
+      const visibleColumns = displayed.filter((col) => {
+        const colId = typeof col.getColId === 'function' ? col.getColId() : null;
+        return !colId || !exclusions.has(colId);
+      });
+      const canAutoSizeAny = visibleColumns.length > 0;
+      const colId = params.column?.getColId();
+      const canAutoSizeColumn = Boolean(colId) && !exclusions.has(colId as string);
+      const items: MenuItemDef<RowData>[] = [];
+      if (colId) {
+        items.push({
+          name: 'Auto Size Column',
+          disabled: !canAutoSizeColumn,
+          action: () => {
+            if (!canAutoSizeColumn) return;
+            api.autoSizeColumns([colId], false);
+          },
+        });
+      }
+      items.push({
+        name: 'Auto Size All Columns',
+        disabled: !canAutoSizeAny,
+        action: () => autoSizeColumns(api, true),
+      });
+      return items;
+    },
+    [autoSizeColumns, autoSizeExclusions, resolvedDisableAutoSize],
+  );
+
   const handleColumnVisible = useCallback(() => {
-    autoSizeColumns(undefined, true);
     if (shouldPersistColumnState && columnStateLoadedRef.current) {
       queuePersistColumnState();
     }
-  }, [autoSizeColumns, queuePersistColumnState, shouldPersistColumnState]);
+  }, [queuePersistColumnState, shouldPersistColumnState]);
 
   const handleFirstDataRendered = useCallback((event: FirstDataRenderedEvent) => {
-    autoSizeColumns(event.api, true);
-    autoSizeCompletedRef.current = true;
     // Ensure column order is applied after data is rendered
     if (shouldPersistColumnState && !columnStateLoadedRef.current) {
       applySavedColumnState(event.api);
     }
-  }, [autoSizeColumns, shouldPersistColumnState, applySavedColumnState]);
+  }, [shouldPersistColumnState, applySavedColumnState]);
 
   const dcd: ColDef = useMemo(() => {
     const baseFilterParams = {
@@ -1527,6 +1690,7 @@ const gridApiRef = useRef<GridApi<RowData> | null>(null);
     return {
       sortable: true,
       resizable: true,
+      suppressAutoSize: false,
       filter: true,
       floatingFilter,
       // Hide header menu icon (right-click still shows menu)
@@ -1593,6 +1757,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           mode: 'range',
         },
       },
+      enableRangeSelection: true,
     };
       if (useAgGridRowDrag) {
         options.rowDragMultiRow = true;
@@ -1812,6 +1977,7 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     }
   }, [datasource, handleContextMenuVisibleChanged, externalGridReadyHandler, wrapGridApiRefreshers, shouldPersistColumnState, applySavedColumnState]);
   const contextMenuItemsHandler = useCallback<GetContextMenuItems<RowData>>((params) => {
+    const autoSizeItems = resolveAutoSizeMenuItems(params);
     const wrapActions = (items: Array<MenuItemDef<RowData> | DefaultMenuItem | string>) =>
       items.map((item) => {
         if (typeof item === 'string') return item as DefaultMenuItem;
@@ -1854,7 +2020,8 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     const filterByItem = createFilterByMenuItem(params);
 
     if (!filterByItem) {
-      return wrapActions(menuItems);
+      const itemsWithAutoSize = autoSizeItems.length > 0 ? [...autoSizeItems, ...menuItems] : menuItems;
+      return wrapActions(itemsWithAutoSize);
     }
 
     const isExportMenuItem = (
@@ -1875,8 +2042,14 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
       itemsWithFilter.unshift(filterByItem);
     }
 
+    if (autoSizeItems.length > 0) {
+      const insertionIndex = filterByItem ? itemsWithFilter.indexOf(filterByItem) + 1 : 0;
+      const safeIndex = Math.max(0, Math.min(itemsWithFilter.length, insertionIndex));
+      itemsWithFilter.splice(safeIndex, 0, ...autoSizeItems);
+    }
+
     return wrapActions(itemsWithFilter);
-  }, [clearContextMenuRow, getContextMenuItems]);
+  }, [clearContextMenuRow, getContextMenuItems, resolveAutoSizeMenuItems]);
 
   const headerMenuItemsHandler = useCallback<GetMainMenuItems<RowData>>((params) => {
     const column = params.column;
@@ -1931,7 +2104,8 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     };
 
     const defaults = params.defaultItems ?? [];
-    const items: Array<MenuItemDef<RowData> | DefaultMenuItem> = [...defaults];
+    const autoSizeItems = resolveAutoSizeMenuItems({ api, column });
+    const items: Array<MenuItemDef<RowData> | DefaultMenuItem> = [...autoSizeItems, ...defaults];
     const targetIndex = items.findIndex(
       (item) => item === 'columnChooser' || item === 'resetColumns',
     );
@@ -1939,10 +2113,10 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     const extraItems = allowMove ? [moveLeftItem, moveRightItem, hideColumnItem] : [hideColumnItem];
     items.splice(insertionIndex, 0, ...extraItems);
     return items;
-  }, []);
+  }, [resolveAutoSizeMenuItems]);
 
   const handleColumnRowGroupChanged = () => {
-    autoSizeColumns(undefined, true);
+    // No automatic auto-size.
   };
 
   // Apply/remove the context menu highlight directly on row elements so it always clears
@@ -1993,7 +2167,6 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
   }, []);
 
   const handleModelUpdated = useCallback((event: ModelUpdatedEvent<RowData>) => {
-    autoSizeColumns(event.api, true);
     if (shouldPersistColumnState) {
       applySavedColumnState(event.api);
     }
@@ -2026,7 +2199,6 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     }
   }, [
     applySavedColumnState,
-    autoSizeColumns,
     getViewportElement,
     onModelUpdated,
     runQuickSearchFocus,
@@ -2418,7 +2590,7 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
           getRowId={getRowId}
           getRowClass={mergedGetRowClass}
           getMainMenuItems={headerMenuItemsHandler}
-          getContextMenuItems={getContextMenuItems ? contextMenuItemsHandler : undefined}
+          getContextMenuItems={contextMenuItemsHandler}
           onFirstDataRendered={handleFirstDataRendered}
           onCellContextMenu={handleCellContextMenu}
           onCellMouseDown={handleCellMouseDown}
@@ -2462,6 +2634,8 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
           onRowDragEnd={handleRowDragEnd}
           onRowDragMove={handleRowDragMove}
           onRowDragLeave={handleRowDragLeave}
+          onPasteStart={handlePasteStart}
+          onPasteEnd={handlePasteEnd}
           onCellValueChanged={handleCellValueChanged}
           onSelectionChanged={handleSelectionChanged}
           onCellEditingStarted={handleEditingStart}

@@ -76,48 +76,46 @@
 }
 
 .buttonUpdatePrices {
-  background-color: #faffaf;
+  background-color: #ebd4ff;
   color: #0f172a;
-  border-color: rgba(233, 218, 14, 0.4);
+  border-color: rgba(109, 14, 233, 0.4);
 }
 
 .buttonAddRequested {
-  background-color: #fae5d1;
+  background-color: #ffe0c3;
   color: #c2630b;
   border-color: rgba(163, 90, 22, 0.4);
 }
 
 .buttonToggleRequested {
-  background-color: #f0fdf4;
+  background-color: #d2ffe0;
   color: #0f513b;
   border-color: rgba(23, 129, 80, 0.2);
 }
 
 .buttonCategory {
-  background-color: rgb(220, 220, 220);
+  background-color: rgb(187, 187, 187);
+  color: #000000;
+  border-color: rgba(122, 122, 122, 0.4);
 }
 
 .buttonPrintableComment {
-  background-color: #e0f2fe;
+  background-color: #c1e6ff;
   color: #000000;
   border-color: rgba(7, 89, 133, 0.4);
 }
 
 .buttonNonPrintableComment {
-  background-color: #fee2e2;
+  background-color: #ffcaca;
   color: #000000;
   border-color: rgba(127, 29, 29, 0.4);
 }
 
 .manualToggle {
   border: 1px solid rgba(15, 23, 42, 0.15);
-  background: #e5e7eb;
+  background: #ffffff;
   color: #0f172a;
   transition: background-color 140ms ease, color 140ms ease;
-}
-
-.manualToggle:hover {
-  background: #d1d5db;
 }
 
 .manualToggleActive {

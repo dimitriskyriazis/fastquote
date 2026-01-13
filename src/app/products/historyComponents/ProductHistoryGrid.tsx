@@ -97,7 +97,6 @@ export default function ProductHistoryGrid({ rows }: Props) {
           headerHeight={38}
           statusBar={{ statusPanels: [{ statusPanel: 'agAggregationComponent' }] }}
           enableCharts={false}
-          pivotMode={false}
           rowModelType="clientSide"
           onGridReady={handleGridReady}
         />
