@@ -1794,6 +1794,12 @@ export default function AgGridAll({
     };
   }, [defaultColDef, floatingFilter]);
 
+  const autoGroupColumnDef = useMemo<ColDef>(() => ({
+    width: 210,
+    resizable: true,
+    suppressAutoSize: true,
+  }), []);
+
 const requestPayloadRef = useRef(requestPayload);
 requestPayloadRef.current = requestPayload;
 const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
@@ -2648,6 +2654,7 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
           ref={gridRef}
           columnDefs={resolvedColumnDefs}
           defaultColDef={dcd}
+          autoGroupColumnDef={autoGroupColumnDef}
           getRowId={getRowId}
           getRowClass={mergedGetRowClass}
           getMainMenuItems={headerMenuItemsHandler}

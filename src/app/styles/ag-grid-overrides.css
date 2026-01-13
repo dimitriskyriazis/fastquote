@@ -20,6 +20,13 @@
   -webkit-text-fill-color: currentColor !important;
 }
 
+.ag-theme-quartz .ag-input-field input[type="checkbox"],
+.ag-theme-quartz .ag-input-field input[type="radio"],
+.ag-theme-quartz .ag-checkbox-input,
+.ag-theme-quartz .ag-toggle-button-input {
+  cursor: pointer !important;
+}
+
 .ag-theme-quartz .ag-cell-edit-wrapper,
 .ag-theme-quartz .ag-cell-edit-wrapper *,
 .ag-theme-quartz .ag-cell-content,
