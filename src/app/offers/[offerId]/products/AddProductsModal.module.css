@@ -211,7 +211,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding-top: 12px;
+  padding-top: 10px;
   border-top: 1px solid #e2e8f0;
   flex: 1;
   min-height: 0;
@@ -227,7 +227,7 @@
 .requestedList {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -236,8 +236,8 @@
 
 .requestedRow {
   border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 10px 12px;
+  border-radius: 8px;
+  padding: 6px 10px;
   background: #ffffff;
   text-align: left;
   cursor: pointer;
@@ -254,34 +254,36 @@
 }
 
 .requestedRowLabel {
-  font-weight: 600;
+  font-weight: 500;
+  font-size: 0.875rem;
   color: #0f172a;
   text-align: left;
+  line-height: 1.3;
 }
 
 .requestedRowMeta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 4px;
-  font-size: 0.85rem;
+  gap: 4px;
+  margin-top: 3px;
+  font-size: 0.75rem;
   color: #475569;
 }
 
 .requestedRowMetaItem {
   background: #e2e8f0;
   color: #0f172a;
-  padding: 2px 8px;
+  padding: 1px 6px;
   border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: 0.7rem;
+  font-weight: 500;
 }
 
 .requestedRowEmpty {
   border: 1px dashed #cbd5f5;
-  border-radius: 12px;
-  padding: 12px;
-  font-size: 0.9rem;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 0.8rem;
   color: #64748b;
   background: #ffffff;
   text-align: center;
@@ -293,4 +295,23 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+.splitViewContainer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+}
+
+.splitViewCard {
+  background: #ffffff;
+  border-radius: 8px;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
 }

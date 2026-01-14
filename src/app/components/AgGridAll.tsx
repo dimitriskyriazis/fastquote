@@ -427,6 +427,7 @@ type Props = {
   onRequestPayloadConsumed?: () => void;
   allowCellSelectionInPerformanceMode?: boolean;
   useAgGridRowDrag?: boolean;
+  suppressSideBar?: boolean;
 };
 
 type RowData = Record<string, unknown>;
@@ -907,6 +908,7 @@ export default function AgGridAll({
   onRequestPayloadConsumed,
   allowCellSelectionInPerformanceMode = performanceMode === true,
   useAgGridRowDrag = false,
+  suppressSideBar = false,
 }: Props) {
   useMutationCaret();
   const { handleEditingStart, handleEditingStop, requestRefresh } = useEditorFocusHandlers();
@@ -2094,7 +2096,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       mode: 'singleRow',
       checkboxes: false,
       enableSelectionWithoutKeys: allowMultiselectClick,
-      enableClickSelection: allowDeselection,
+      enableClickSelection: clickSelectionEnabled || allowDeselection,
     };
   }, [
     rowSelection,
@@ -2105,9 +2107,12 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     isServerSideRowModel,
   ]);
 
-  const sideBarDef = useMemo(() => ({
-    toolPanels: ['columns', 'filters'],
-  }), []);
+  const sideBarDef = useMemo(() => {
+    if (suppressSideBar) return false;
+    return {
+      toolPanels: ['columns', 'filters'],
+    };
+  }, [suppressSideBar]);
 
   const getRowId = useCallback((params: GetRowIdParams<RowData>) => {
     const data = params.data as Record<string, unknown> | undefined;
@@ -2746,6 +2751,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       <div
         className={`ag-theme-quartz ${styles.gridShell}`}
         data-ag-grid-size="compact"
+        data-suppress-sidebar={suppressSideBar}
         ref={shellRef}
       >
         <AgGridReact

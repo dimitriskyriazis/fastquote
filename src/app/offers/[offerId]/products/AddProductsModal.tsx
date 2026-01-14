@@ -14,6 +14,7 @@ type Props = {
   onClose: () => void;
   onAdded: (inserted: number) => void;
   showRequestedColumns?: boolean;
+  splitViewMode?: boolean;
 };
 
 type CategoryRow = {
@@ -108,6 +109,7 @@ export default function AddProductsModal({
   onClose,
   onAdded,
   showRequestedColumns = true,
+  splitViewMode = false,
 }: Props) {
   const showRequestedItemNo = Boolean(showRequestedColumns);
   const [selectedCategory, setSelectedCategory] = useState<CategoryRow | null>(null);
@@ -218,7 +220,7 @@ export default function AddProductsModal({
       {
         field: 'TreeOrdering',
         headerName: '#',
-        width: 90,
+        width: 50,
         filter: 'agTextColumnFilter',
         sortingOrder: ['asc', 'desc', null],
       },
@@ -353,6 +355,145 @@ export default function AddProductsModal({
 
   const selectedCategoryLabel = selectedCategory?.Description?.trim() || selectedCategory?.TreeOrdering || 'None';
 
+  if (splitViewMode) {
+    return (
+      <div className={styles.splitViewContainer} role="dialog" aria-label="Add products to offer">
+        <div className={styles.splitViewCard}>
+          <div className={styles.header}>
+          <div>
+            <div className={styles.title}>Add Products</div>
+            <div className={styles.subtitle}>Choose a category and pick products to append.</div>
+          </div>
+          <div className={styles.headerActions}>
+            <button
+              type="button"
+              className={styles.primaryButton}
+              onClick={handleAddProducts}
+              disabled={submitting}
+            >
+              Add {selectedProducts.length > 0 ? `(${selectedProducts.length})` : ''}
+            </button>
+            <button type="button" className={styles.ghostButton} onClick={onClose} disabled={submitting}>
+              Close
+            </button>
+          </div>
+        </div>
+
+        <div className={styles.body}>
+          <section className={`${styles.section} ${styles.splitPane}`}>
+            <div className={`${styles.sectionInner} ${styles.categoriesColumn}`}>
+              <div className={styles.sectionHeader}>
+                <div>
+                  <div className={styles.sectionTitle}>Categories</div>
+                  <div className={styles.selectedBadge}>
+                    Selected: <span className={styles.selectedValue}>{selectedCategoryLabel}</span>
+                  </div>
+                </div>
+              </div>
+              <div className={styles.categoryGridShell}>
+                <AgGridAll
+                  endpoint={endpoint}
+                  columnDefs={categoryColumns}
+                  defaultColDef={defaultColDef}
+                  requestPayload={categoryRequestPayload}
+                  rowSelection="single"
+                  rowDeselection
+                  allowRowClickSelection
+                  onSelectionChanged={handleCategorySelection as (rows: Record<string, unknown>[], api: GridApi) => void}
+                  rowGroupPanelShow="never"
+                  autoSizeExclusions={['Description']}
+                  suppressSideBar
+                  onGridReady={(api) => { categoryApiRef.current = api; }}
+                />
+              </div>
+            <div 
+              className={styles.requestedSection}
+              data-fastquote-keep-selection="true"
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className={styles.requestedSectionHeader}>
+                <div>
+                  <div className={styles.sectionTitle}>Requested Items</div>
+                </div>
+              </div>
+              <div className={styles.requestedList}>
+                {!selectedCategory ? (
+                  <div className={styles.requestedRowEmpty}>Select a category to view its requested items.</div>
+                ) : requestedRowsLoading ? (
+                  <div className={styles.requestedRowEmpty}>Loading requested rows…</div>
+                ) : requestedRowsError ? (
+                  <div className={styles.requestedRowEmpty}>{requestedRowsError}</div>
+                ) : requestedRows.length === 0 ? (
+                  <div className={styles.requestedRowEmpty}>No requested items found for this category.</div>
+                ) : (
+                  requestedRows.map((row) => {
+                    const isSelected = selectedRequestedRowId === row.OfferDetailID;
+                    const metaParts: string[] = [];
+                    if (row.TreeOrdering) metaParts.push(`Tree ${row.TreeOrdering}`);
+                    if (row.RequestedItemNo && showRequestedItemNo) metaParts.push(`Item ${row.RequestedItemNo}`);
+                    if (row.RequestedQuantity != null) metaParts.push(`Qty ${row.RequestedQuantity}`);
+                    return (
+                      <button
+                        type="button"
+                        key={row.OfferDetailID}
+                        className={`${styles.requestedRow} ${isSelected ? styles.requestedRowSelected : ''}`}
+                        aria-pressed={isSelected}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          setSelectedRequestedRowId((prev) => (prev === row.OfferDetailID ? null : row.OfferDetailID));
+                        }}
+                      >
+                        <div className={styles.requestedRowLabel}>
+                          {resolveRequestedRowLabel(row, showRequestedItemNo)}
+                        </div>
+                        <div className={styles.requestedRowMeta}>
+                          {metaParts.map((item) => (
+                            <span key={item} className={styles.requestedRowMetaItem}>{item}</span>
+                          ))}
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+            </div>
+
+            <div className={`${styles.sectionInner} ${styles.productsColumn}`}>
+              <div className={styles.sectionHeader}>
+                <div>
+                  <div className={styles.sectionTitle}>Products (multi-select)</div>
+                </div>
+                <div className={styles.selectedBadge}>
+                  Selected products: <span className={styles.selectedValue}>{selectedProducts.length}</span>
+                </div>
+              </div>
+              <div className={`${styles.productsGridShell} offer-products-grid`}>
+                <AgGridAll
+                  endpoint={endpoint}
+                  columnDefs={productColumns}
+                  defaultColDef={defaultColDef}
+                  requestPayload={productRequestPayload}
+                  rowSelection="multiple"
+                  rowMultiSelectWithClick
+                  rowDeselection
+                  allowRowClickSelection
+                  rowGroupPanelShow="never"
+                  onSelectionChanged={handleProductSelection as (rows: Record<string, unknown>[], api: GridApi) => void}
+                  autoSizeExclusions={['Description']}
+                  onGridReady={(api) => { productsApiRef.current = api; }}
+                />
+              </div>
+            </div>
+          </section>
+        </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={styles.overlay} role="dialog" aria-modal="true" aria-label="Add products to offer">
       <div className={styles.card}>
@@ -381,11 +522,10 @@ export default function AddProductsModal({
             <div className={`${styles.sectionInner} ${styles.categoriesColumn}`}>
               <div className={styles.sectionHeader}>
                 <div>
-                  <div className={styles.sectionTitle}>Categories (select one or none)</div>
-                  <div className={styles.sectionHint}>Showing current offer categories.</div>
-                </div>
-                <div className={styles.selectedBadge}>
-                  Selected: <span className={styles.selectedValue}>{selectedCategoryLabel}</span>
+                  <div className={styles.sectionTitle}>Categories</div>
+                  <div className={styles.selectedBadge}>
+                    Selected: <span className={styles.selectedValue}>{selectedCategoryLabel}</span>
+                  </div>
                 </div>
               </div>
               <div className={styles.categoryGridShell}>
@@ -395,17 +535,24 @@ export default function AddProductsModal({
                   defaultColDef={defaultColDef}
                   requestPayload={categoryRequestPayload}
                   rowSelection="single"
+                  rowDeselection
+                  allowRowClickSelection
                   onSelectionChanged={handleCategorySelection as (rows: Record<string, unknown>[], api: GridApi) => void}
                   rowGroupPanelShow="never"
                   autoSizeExclusions={['Description']}
+                  suppressSideBar
                   onGridReady={(api) => { categoryApiRef.current = api; }}
                 />
               </div>
-            <div className={styles.requestedSection}>
+            <div 
+              className={styles.requestedSection}
+              data-fastquote-keep-selection="true"
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
               <div className={styles.requestedSectionHeader}>
                 <div>
                   <div className={styles.sectionTitle}>Requested Items</div>
-                  <div className={styles.sectionHint}>Select a requested row to fill it with the chosen product.</div>
                 </div>
               </div>
               <div className={styles.requestedList}>
@@ -430,7 +577,9 @@ export default function AddProductsModal({
                         key={row.OfferDetailID}
                         className={`${styles.requestedRow} ${isSelected ? styles.requestedRowSelected : ''}`}
                         aria-pressed={isSelected}
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
                           setSelectedRequestedRowId((prev) => (prev === row.OfferDetailID ? null : row.OfferDetailID));
                         }}
                       >
@@ -454,7 +603,6 @@ export default function AddProductsModal({
               <div className={styles.sectionHeader}>
                 <div>
                   <div className={styles.sectionTitle}>Products (multi-select)</div>
-                  <div className={styles.sectionHint}>Filter and select products to add. List price colors show price list status.</div>
                 </div>
                 <div className={styles.selectedBadge}>
                   Selected products: <span className={styles.selectedValue}>{selectedProducts.length}</span>
@@ -468,6 +616,8 @@ export default function AddProductsModal({
                   requestPayload={productRequestPayload}
                   rowSelection="multiple"
                   rowMultiSelectWithClick
+                  rowDeselection
+                  allowRowClickSelection
                   rowGroupPanelShow="never"
                   onSelectionChanged={handleProductSelection as (rows: Record<string, unknown>[], api: GridApi) => void}
                   autoSizeExclusions={['Description']}

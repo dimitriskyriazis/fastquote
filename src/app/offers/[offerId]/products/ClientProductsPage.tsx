@@ -32,7 +32,7 @@ const tableLayoutLabels: Record<ProductsTableLayout, string> = {
 };
 
 const addActionLabels: Record<AddActionType, string> = {
-  product: 'Add Product',
+  product: 'Add Products',
   category: 'Add Category',
   'printable-comment': 'Add Printable Comment',
   'non-printable-comment': 'Add Non Printable Comment',
@@ -337,14 +337,38 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
             className={pageHeaderStyles.headerRowBottom}
             hideTitle
           >
-            <OfferProductsPanel
-              ref={offerProductsPanelRef}
-              offerId={offerId}
-              manualMode={manualMode}
-              refreshToken={refreshToken}
-              showRequestedColumns={showRequestedColumns}
-              tableLayout={tableLayout}
-            />
+            {showAddProductModal ? (
+              <div className={toolbarStyles.splitLayout}>
+                <div className={toolbarStyles.splitLeft}>
+                  <OfferProductsPanel
+                    ref={offerProductsPanelRef}
+                    offerId={offerId}
+                    manualMode={manualMode}
+                    refreshToken={refreshToken}
+                    showRequestedColumns={showRequestedColumns}
+                    tableLayout={tableLayout}
+                  />
+                </div>
+                <div className={toolbarStyles.splitRight}>
+                  <AddProductsModal
+                    offerId={offerId}
+                    onAdded={handleProductsAdded}
+                    onClose={handleCloseModal}
+                    showRequestedColumns={showRequestedColumns}
+                    splitViewMode
+                  />
+                </div>
+              </div>
+            ) : (
+              <OfferProductsPanel
+                ref={offerProductsPanelRef}
+                offerId={offerId}
+                manualMode={manualMode}
+                refreshToken={refreshToken}
+                showRequestedColumns={showRequestedColumns}
+                tableLayout={tableLayout}
+              />
+            )}
             <LookupModal
               open={showSaveLayoutModal}
               title="Save layout"
@@ -360,14 +384,6 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
             >
               <p>Would you like to save this layout to {saveLayoutPromptLabel}?</p>
             </LookupModal>
-            {showAddProductModal ? (
-            <AddProductsModal
-              offerId={offerId}
-              onAdded={handleProductsAdded}
-              onClose={handleCloseModal}
-              showRequestedColumns={showRequestedColumns}
-            />
-            ) : null}
             {showRequestedModal ? (
               <AddRequestedProductsModal
                 offerId={offerId}

@@ -39,7 +39,7 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   RequestedQuantity: 1,
   TreeOrdering: 1,
   ListPrice: 2,
-  UnitPrice: 1,
+  UnitPrice: 2,
   CustomerDiscount: 1,
   NetUnitPrice: 1,
   Quantity: 1,

@@ -253,3 +253,15 @@
 .gridShell :global(.ag-cell) {
   transition: background-color 140ms ease;
 }
+
+.gridShell[data-suppress-sidebar="true"] :global(.ag-side-bar),
+.gridShell[data-suppress-sidebar="true"] :global(.ag-side-panel) {
+  display: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+}
+
+.gridShell[data-suppress-sidebar="true"] :global(.ag-body-viewport-wrapper) {
+  width: 100% !important;
+}
