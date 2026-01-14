@@ -184,12 +184,22 @@ const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: numbe
   const columns = baseColumns.filter((column) => columnHasValue(rows, headerRow, column.index));
   const suggestions = buildSuggestions(columns);
   const includeHeaderRow = Object.values(suggestions).some((match) => match.length > 0);
+  
+  // Auto-select the first suggestion for each column if available
+  const selection: Partial<Record<HeaderColumnKey, number | null>> = {};
+  COLUMN_DISPLAY.forEach((column) => {
+    const columnSuggestions = suggestions[column.key];
+    if (columnSuggestions.length > 0) {
+      selection[column.key] = columnSuggestions[0].index;
+    }
+  });
+  
   const baseSheet: SheetMapping = {
     name: sheetName || `Sheet ${fallbackIndex + 1}`,
     headerRowIndex,
     columns,
     suggestions,
-    selection: {},
+    selection,
     rowCount: 0,
     enabled,
     includeHeaderRow,

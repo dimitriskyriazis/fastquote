@@ -326,6 +326,16 @@ const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: numbe
   const headerRow = Array.isArray(rows[headerRowIndex]) ? rows[headerRowIndex] : [];
   const columns = buildColumns(headerRow);
   const suggestions = buildSuggestions(columns);
+  
+  // Auto-select the first suggestion for each column if available
+  const selection: Partial<Record<HeaderColumnKey, number | null>> = {};
+  COLUMN_DISPLAY.forEach((column) => {
+    const columnSuggestions = suggestions[column.key];
+    if (columnSuggestions.length > 0) {
+      selection[column.key] = columnSuggestions[0].index;
+    }
+  });
+  
   const dataRows = rows.slice(headerRowIndex + 1, headerRowIndex + 501);
   const rowCount = dataRows.filter((row) => Array.isArray(row) && row.some(hasCellValue)).length;
   const previewRows = dataRows
@@ -344,7 +354,7 @@ const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: numbe
     headerRowIndex,
     columns,
     suggestions,
-    selection: {},
+    selection,
     rowCount,
     enabled,
     previewRows,
@@ -456,7 +466,7 @@ export default function PriceListImportClient({
     pricingPolicyRuleId: "",
     responsibleUserId: "",
     supplierId: "",
-    hasDuty: null,
+    hasDuty: false,
     currencyId: "",
     countryId: "",
     validFromDate: "",

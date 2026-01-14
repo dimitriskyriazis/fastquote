@@ -651,6 +651,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   );
   const [savedColumnOrder, setSavedColumnOrder] = useState<string[]>([]);
   const [savedHiddenMap, setSavedHiddenMap] = useState<Record<string, boolean>>({});
+  const pricingToastDedupRef = useRef<Map<string, number>>(new Map());
   useEffect(() => {
     if (typeof window === 'undefined' || !columnStateStorageKey) {
       setSavedColumnOrder([]);
@@ -1000,7 +1001,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const handleGridResponse = useCallback((response: GridResponse | null) => {
     lastRowCountRef.current = response?.rowCount ?? null;
     const hasRows = Boolean(response?.rowCount && response.rowCount > 0);
-    serverRowsRef.current = Array.isArray(response?.rows) ? response.rows : [];
+    serverRowsRef.current = response && Array.isArray(response.rows) ? response.rows : [];
     const shouldResetRoots = response?.request?.startRow === 0;
     rebuildTreeOrderingRootMap(response?.rows as Array<Record<string, unknown>> | undefined, shouldResetRoots);
     const requestColumnVisibility: Partial<Record<RequestedDisplayFieldKey, boolean>> = {};
@@ -1543,7 +1544,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       cellClassRules: requestedCellClassRules,
       editable: (params: { data?: Record<string, unknown> | null }) =>
         canEditRequestedField(field, params.data ?? null),
-      singleClickEdit: true,
       cellEditor: 'agTextCellEditor',
       valueGetter: (params: ValueGetterParams<Record<string, unknown>, unknown>) => {
         const row = params.data ?? null;
@@ -1585,7 +1585,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       cellStyle: actualNumericCellStyle,
       editable: (params: { data?: Record<string, unknown> | null }) =>
         canEditRequestedField('RequestedQuantity', params.data ?? null),
-      singleClickEdit: true,
       cellEditor: 'agTextCellEditor',
       valueSetter: ({ data, newValue }: ValueSetterParams<Record<string, unknown>, unknown>) => {
         if (!data) return false;
@@ -1611,7 +1610,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       type: 'numericColumn',
       comparator: compareTreeOrderingValues,
       editable: manualMode,
-      singleClickEdit: manualMode,
       cellRenderer: TreeOrderingCell,
       cellClass: ['offer-products-tree-ordering-cell', ACTUAL_COLUMN_GLOBAL_CLASS],
     valueGetter: ({ data }) => {
@@ -1635,7 +1633,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       cellClassRules: requestedCellClassRules,
       editable: (params: { data?: Record<string, unknown> | null }) =>
         canEditRequestedField('RequestedItemNo', params.data ?? null),
-      singleClickEdit: true,
       cellEditor: 'agTextCellEditor',
       valueSetter: ({ data, newValue }: ValueSetterParams<Record<string, unknown>, unknown>) => {
         if (!data) return false;
@@ -1734,7 +1731,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             || isOfferProductProduct(row)
           );
         },
-        singleClickEdit: true,
         cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
       },
     {
@@ -1749,7 +1745,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       },
       cellClassRules: productPriceListClassRules,
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      singleClickEdit: true,
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
     },
@@ -1760,7 +1755,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      singleClickEdit: true,
       valueFormatter: percentageFormatter,
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
@@ -1772,7 +1766,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      singleClickEdit: true,
       valueFormatter: euroFormatter,
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
@@ -1784,7 +1777,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      singleClickEdit: true,
       valueFormatter: zeroBlankNumberFormatter,
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
@@ -1835,7 +1827,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      singleClickEdit: true,
       valueFormatter: percentageFormatter,
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
@@ -1847,7 +1838,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      singleClickEdit: true,
       valueFormatter: euroFormatter,
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
@@ -1859,7 +1849,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      singleClickEdit: true,
       valueFormatter: percentageFormatter,
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
@@ -2784,7 +2773,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       return;
     }
 
-    const normalizedNewValue = coerceNumber(event.newValue);
+    let normalizedNewValue = coerceNumber(event.newValue);
+    if (source === 'delete' && normalizedNewValue == null) {
+      normalizedNewValue = 0;
+    }
+    if (normalizedNewValue == null && String(event.newValue ?? '').trim() === '') {
+      normalizedNewValue = 0;
+    }
     if (normalizedNewValue == null || !Number.isFinite(normalizedNewValue)) {
       showToastMessage(`Please enter a valid ${label.toLowerCase()}.`, 'error');
       try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
@@ -2816,7 +2811,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update ${label} (status ${res.status})`);
         }
-        showToastMessage(`${label} updated`, 'success');
+        const toastKey = `${offerDetailId}:${field}:${String(normalizedNewValue)}`;
+        const now = Date.now();
+        const lastShown = pricingToastDedupRef.current.get(toastKey) ?? 0;
+        if (now - lastShown > 800) {
+          pricingToastDedupRef.current.set(toastKey, now);
+          showToastMessage(`${label} updated`, 'success');
+        }
         recalcProductTotals(event);
         refreshCategoryAggregates(event.api);
       } catch (err) {
@@ -2928,3 +2929,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 OfferProductsPanel.displayName = 'OfferProductsPanel';
 
 export default React.memo(OfferProductsPanel);
+
+
+
+

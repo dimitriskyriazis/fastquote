@@ -51,6 +51,8 @@ import {
   RowDragMoveEvent,
   RowDragModule,
   RowHeightParams,
+  CellSelectionOptions,
+  RangeHandleOptions,
   RowSelectionModule,
   RowSelectionOptions,
   SelectionChangedEvent,
@@ -94,6 +96,7 @@ import { resolveColumnWidthAssignments, ColumnWidthAssignment } from '../../lib/
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
 const GRID_ROW_HEIGHT = 32;
+const RANGE_HANDLE_OPTIONS: RangeHandleOptions = { mode: 'range' };
 
 const resolveColumnId = (column: string | Column): string => (
   typeof column === 'string' ? column : column.getColId()
@@ -144,6 +147,19 @@ const restoreCellRanges = (api: GridApi<RowData>, ranges: CellRangeParams[]) => 
 const isEditableColumnValue = (column: Column, node: IRowNode<RowData>) =>
   column.isCellEditable(node) && !column.isSuppressPaste(node);
 
+const isNumericColumnDef = (colDef?: ColDef | null): boolean => {
+  if (!colDef) return false;
+  const type = colDef.type;
+  if (type === 'numericColumn') return true;
+  if (Array.isArray(type) && type.includes('numericColumn')) return true;
+  return colDef.filter === 'agNumberColumnFilter';
+};
+
+const shouldZeroOnDelete = (colDef?: ColDef | null): boolean => {
+  const field = colDef?.field ?? '';
+  if (!field) return false;
+  return /(price|cost)/i.test(field) || isNumericColumnDef(colDef);
+};
 
 const resolveElementFromEventTarget = (target: EventTarget | null): Element | null => {
   let current: EventTarget | null = target;
@@ -205,16 +221,6 @@ const scheduleDeselectAllRows = (api?: GridApi<RowData> | null) => {
   }, 0);
 };
 
-const focusEditingInput = (editor?: HTMLElement | null) => {
-  const input =
-    editor?.querySelector<HTMLInputElement | HTMLTextAreaElement>('input, textarea') ??
-    document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
-      '.ag-cell-edit-wrapper input, .ag-cell-edit-wrapper textarea, .ag-cell-editing input, .ag-cell-editing textarea',
-    );
-  if (!input) return;
-  restoreCaretSelection(input);
-};
-
 const QUICK_SEARCH_REFRESH_DEBOUNCE_MS = 220;
 
 const useMutationCaret = () => {
@@ -253,7 +259,10 @@ const useMutationCaret = () => {
   }, []);
 };
 
-const focusFromEvent = (api: GridApi<RowData>, column: Column | null) => {
+const resolveEditingInputFromEvent = (
+  api: GridApi<RowData>,
+  column: Column | null,
+): HTMLInputElement | HTMLTextAreaElement | null => {
   const editors = typeof api.getCellEditorInstances === 'function'
     ? api.getCellEditorInstances({
         columns: column ? [column] : undefined,
@@ -264,7 +273,19 @@ const focusFromEvent = (api: GridApi<RowData>, column: Column | null) => {
     editorInstance && typeof editorInstance.getGui === 'function'
       ? editorInstance.getGui()
       : null;
-  focusEditingInput(editorGui);
+  return (
+    editorGui?.querySelector<HTMLInputElement | HTMLTextAreaElement>('input, textarea') ??
+    document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+      '.ag-cell-edit-wrapper input, .ag-cell-edit-wrapper textarea, .ag-cell-editing input, .ag-cell-editing textarea',
+    ) ??
+    null
+  );
+};
+
+const focusFromEvent = (api: GridApi<RowData>, column: Column | null) => {
+  const input = resolveEditingInputFromEvent(api, column);
+  if (!input) return;
+  restoreCaretSelection(input);
 };
 
 const useEditorFocusHandlers = () => {
@@ -280,6 +301,20 @@ const useEditorFocusHandlers = () => {
   const handleEditingStart = useCallback((event: CellEditingStartedEvent<RowData>) => {
     editingActiveRef.current = true;
     focusFromEvent(event.api, event.column);
+
+    if (!isNumericColumnDef(event.colDef)) return;
+
+    const clearNumericZero = () => {
+      const input = resolveEditingInputFromEvent(event.api, event.column);
+      if (!input || input.value !== '0') return;
+      input.value = '';
+    };
+
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(clearNumericZero);
+    } else {
+      setTimeout(clearNumericZero, 0);
+    }
   }, []);
 
   const handleEditingStop = useCallback(() => {
@@ -919,8 +954,8 @@ export default function AgGridAll({
     restoreCellRanges(api, ranges);
   }, [gridRef]);
 
-  const clearSelectedCellValues = useCallback(() => {
-    const api = gridRef.current?.api ?? null;
+  const clearSelectedCellValues = useCallback((apiOverride?: GridApi<RowData> | null) => {
+    const api = apiOverride ?? gridRef.current?.api ?? null;
     if (!api) return;
     const ranges = api.getCellRanges();
     if (!ranges?.length) return;
@@ -940,11 +975,33 @@ export default function AgGridAll({
           const colDef = column.getColDef();
           const colKey = colDef?.field ?? column.getColId();
           if (!colKey) return;
-          node.setDataValue(colKey, null);
+          const nextValue = shouldZeroOnDelete(colDef) ? 0 : null;
+          node.setDataValue(colKey, nextValue, 'delete');
         });
       }
     });
   }, [gridRef]);
+
+  const deleteSelectionValues = useCallback((apiOverride?: GridApi<RowData> | null) => {
+    const api = apiOverride ?? gridRef.current?.api ?? null;
+    if (!api) return;
+    const ranges = api.getCellRanges();
+    if (!ranges?.length) {
+      const focused = typeof api.getFocusedCell === 'function' ? api.getFocusedCell() : null;
+      if (!focused?.column || typeof focused.rowIndex !== 'number') return;
+      const node = api.getDisplayedRowAtIndex(focused.rowIndex);
+      if (!node) return;
+      const column = focused.column;
+      if (!isEditableColumnValue(column, node)) return;
+      const colDef = column.getColDef();
+      const colKey = colDef?.field ?? column.getColId();
+      if (!colKey) return;
+      const nextValue = shouldZeroOnDelete(colDef) ? 0 : null;
+      node.setDataValue(colKey, nextValue, 'delete');
+      return;
+    }
+    clearSelectedCellValues(api);
+  }, [clearSelectedCellValues, gridRef]);
 
   const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const pendingScrollRestoreTopRef = useRef<number | null>(null);
@@ -995,6 +1052,12 @@ export default function AgGridAll({
     () => resolveColumnWidthAssignments(columnWidthDefaults),
     [columnWidthDefaults],
   );
+  const cellSelectionEnabled = !resolvedPerformanceMode || allowCellSelectionInPerformanceMode;
+  const cellSelectionConfig = useMemo<CellSelectionOptions<RowData> | false>(() => (
+    cellSelectionEnabled
+      ? { handle: RANGE_HANDLE_OPTIONS }
+      : false
+  ), [cellSelectionEnabled]);
   type ColumnDefinitionWithChildren = ColDef & { children?: ColDef[] };
   const persistedColumnWidths = useMemo<Record<string, number>>(() => {
     if (!shouldPersistColumnState || !columnStateStorageKey || typeof window === 'undefined') {
@@ -1033,6 +1096,9 @@ export default function AgGridAll({
           if (currentWidth == null) {
             next.width = resolvedColumnWidthDefaults[colId];
           }
+        }
+        if (next.singleClickEdit) {
+          next.singleClickEdit = false;
         }
         const children = definition.children;
         if (Array.isArray(children) && children.length > 0) {
@@ -1319,14 +1385,33 @@ export default function AgGridAll({
       if (event.key !== 'Delete' && event.key !== 'Backspace') return;
       const element = resolveElementFromEventTarget(event.target ?? null);
       if (!element?.closest('.ag-root')) return;
-      if (element.closest('input, textarea, [contenteditable="true"]')) return;
       const api = gridRef.current?.api ?? null;
       if (!api) return;
-      const ranges = api.getCellRanges();
-      if (!ranges?.length) return;
+      const isEditingCell = Boolean(element.closest('.ag-cell-editing'));
+      const isFormField = Boolean(element.closest('input, textarea, [contenteditable="true"]'));
+      if (isEditingCell) {
+        const focused = typeof api.getFocusedCell === 'function' ? api.getFocusedCell() : null;
+        if (!focused?.column || typeof focused.rowIndex !== 'number') return;
+        const node = api.getDisplayedRowAtIndex(focused.rowIndex);
+        if (!node) return;
+        const column = focused.column;
+        if (!isEditableColumnValue(column, node)) return;
+        const colDef = column.getColDef();
+        const colKey = colDef?.field ?? column.getColId();
+        if (!colKey) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof api.stopEditing === 'function') {
+          api.stopEditing(true);
+        }
+        const nextValue = shouldZeroOnDelete(colDef) ? 0 : null;
+        node.setDataValue(colKey, nextValue, 'delete');
+        return;
+      }
+      if (isFormField) return;
       event.preventDefault();
       event.stopPropagation();
-      clearSelectedCellValues();
+      deleteSelectionValues(api);
     };
     document.addEventListener('click', handleClick, true);
     document.addEventListener('mousedown', handleClick, true);
@@ -1338,7 +1423,7 @@ export default function AgGridAll({
       document.removeEventListener('mousedown', handleMouseDown, true);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [clearContextMenuRow, clearSelectedCellValues]);
+  }, [clearContextMenuRow, deleteSelectionValues]);
 
   useEffect(() => {
     const shell = shellRef.current;
@@ -1354,6 +1439,7 @@ export default function AgGridAll({
       if (!event.clipboardData) return;
       const element = resolveElementFromEventTarget(event.target ?? null);
       if (!element?.closest('.ag-root')) return;
+      if (element.closest('input, textarea, [contenteditable="true"], .ag-filter, .ag-floating-filter')) return;
       event.preventDefault();
       const api = gridRef.current?.api ?? null;
       if (!api || typeof api.pasteFromClipboard !== 'function') return;
@@ -1851,34 +1937,29 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 
   const sharedGridOptions = useMemo(() => {
     const options: GridOptions<RowData> = {
-      cellSelection: {
-        handle: {
-          mode: 'range',
-        },
-      },
       enableRangeSelection: true,
       maintainColumnOrder,
     };
-      if (useAgGridRowDrag) {
-        options.rowDragMultiRow = true;
-        options.suppressMoveWhenRowDragging = true;
-        options.rowDragText = (params: { rowNodes?: Array<IRowNode<RowData>>; rowNode?: IRowNode<RowData> }) => {
-          const nodes = Array.isArray(params.rowNodes) ? params.rowNodes : [];
-          const rowNode = params.rowNode ?? lastDragNodeRef.current ?? null;
-          const hasRowNode = rowNode
-            ? nodes.some((node) => node?.id != null && node.id === rowNode.id)
-            : false;
-          const effectiveNodes = nodes.length > 0 && hasRowNode
-            ? nodes
-            : rowNode
-              ? [rowNode]
-              : nodes;
-          const count = effectiveNodes.length > 0 ? effectiveNodes.length : 1;
-          const primaryNode = effectiveNodes[0] ?? rowNode ?? null;
-          const description = getDragRowDescription(primaryNode?.data as RowData | null);
-          if (count === 1) {
-            return description ? truncateDragText(description) : 'Move 1 row';
-          }
+    if (useAgGridRowDrag) {
+      options.rowDragMultiRow = true;
+      options.suppressMoveWhenRowDragging = true;
+      options.rowDragText = (params: { rowNodes?: Array<IRowNode<RowData>>; rowNode?: IRowNode<RowData> }) => {
+        const nodes = Array.isArray(params.rowNodes) ? params.rowNodes : [];
+        const rowNode = params.rowNode ?? lastDragNodeRef.current ?? null;
+        const hasRowNode = rowNode
+          ? nodes.some((node) => node?.id != null && node.id === rowNode.id)
+          : false;
+        const effectiveNodes = nodes.length > 0 && hasRowNode
+          ? nodes
+          : rowNode
+            ? [rowNode]
+            : nodes;
+        const count = effectiveNodes.length > 0 ? effectiveNodes.length : 1;
+        const primaryNode = effectiveNodes[0] ?? rowNode ?? null;
+        const description = getDragRowDescription(primaryNode?.data as RowData | null);
+        if (count === 1) {
+          return description ? truncateDragText(description) : 'Move 1 row';
+        }
         if (description) {
           return `Move ${count} items: ${truncateDragText(description)}`;
         }
@@ -1888,7 +1969,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     return options;
   }, [maintainColumnOrder, useAgGridRowDrag]);
 
-const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
+  const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     getRows: async (params: IServerSideGetRowsParams<RowData>) => {
       try {
         const payload = requestPayloadRef.current && typeof requestPayloadRef.current === 'object'
@@ -2108,11 +2189,29 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     };
 
     const menuItems = resolveMenuItems();
+    const deleteMenuItem: MenuItemDef<RowData> = {
+      name: 'Delete',
+      action: (actionParams) => {
+        deleteSelectionValues(actionParams.api ?? null);
+      },
+    };
+    const replaceDeleteItem = (
+      items: Array<MenuItemDef<RowData> | DefaultMenuItem | string>,
+    ): Array<MenuItemDef<RowData> | DefaultMenuItem | string> => (
+      items.map((item) => {
+        if (item === 'delete') return deleteMenuItem;
+        if (typeof item === 'object' && item && typeof item.name === 'string') {
+          const normalized = item.name.trim().toLowerCase();
+          if (normalized === 'delete') return deleteMenuItem;
+        }
+        return item;
+      })
+    );
     const filterByItem = hasRowNode ? createFilterByMenuItem(params) : null;
 
     if (!filterByItem) {
       const itemsWithAutoSize = autoSizeItems.length > 0 ? [...autoSizeItems, ...menuItems] : menuItems;
-      return wrapActions(itemsWithAutoSize);
+      return wrapActions(replaceDeleteItem(itemsWithAutoSize));
     }
 
     const isExportMenuItem = (
@@ -2139,8 +2238,8 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
       itemsWithFilter.splice(safeIndex, 0, ...autoSizeItems);
     }
 
-    return wrapActions(itemsWithFilter);
-  }, [clearContextMenuRow, getContextMenuItems, resolveAutoSizeMenuItems]);
+    return wrapActions(replaceDeleteItem(itemsWithFilter));
+  }, [clearContextMenuRow, deleteSelectionValues, getContextMenuItems, resolveAutoSizeMenuItems]);
 
   const headerMenuItemsHandler = useCallback<GetMainMenuItems<RowData>>((params) => {
     const column = params.column;
@@ -2676,8 +2775,8 @@ const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
           // Enterprise UX
           sideBar={sideBarDef}
           statusBar={{ statusPanels: [{ statusPanel: 'agAggregationComponent' }] }}
-          suppressCellFocus={true}
-          cellSelection={!resolvedPerformanceMode || allowCellSelectionInPerformanceMode}
+          suppressCellFocus={!cellSelectionEnabled}
+          cellSelection={cellSelectionConfig}
 
           // Charts OFF for now (to avoid the AgCharts module requirement)
           enableCharts={false}
