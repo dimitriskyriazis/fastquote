@@ -357,7 +357,12 @@ export default function AddProductsModal({
 
   if (splitViewMode) {
     return (
-      <div className={styles.splitViewContainer} role="dialog" aria-label="Add products to offer">
+      <div 
+        className={styles.splitViewContainer} 
+        role="dialog" 
+        aria-label="Add products to offer"
+        data-fastquote-keep-selection="true"
+      >
         <div className={styles.splitViewCard}>
           <div className={styles.header}>
           <div>
@@ -470,7 +475,10 @@ export default function AddProductsModal({
                   Selected products: <span className={styles.selectedValue}>{selectedProducts.length}</span>
                 </div>
               </div>
-              <div className={`${styles.productsGridShell} offer-products-grid`}>
+              <div 
+                className={`${styles.productsGridShell} offer-products-grid`}
+                data-fastquote-keep-selection="true"
+              >
                 <AgGridAll
                   endpoint={endpoint}
                   columnDefs={productColumns}
@@ -495,7 +503,13 @@ export default function AddProductsModal({
   }
 
   return (
-    <div className={styles.overlay} role="dialog" aria-modal="true" aria-label="Add products to offer">
+    <div 
+      className={styles.overlay} 
+      role="dialog" 
+      aria-modal="true" 
+      aria-label="Add products to offer"
+      data-fastquote-keep-selection="true"
+    >
       <div className={styles.card}>
         <div className={styles.header}>
           <div>
@@ -608,7 +622,10 @@ export default function AddProductsModal({
                   Selected products: <span className={styles.selectedValue}>{selectedProducts.length}</span>
                 </div>
               </div>
-              <div className={`${styles.productsGridShell} offer-products-grid`}>
+              <div 
+                className={`${styles.productsGridShell} offer-products-grid`}
+                data-fastquote-keep-selection="true"
+              >
                 <AgGridAll
                   endpoint={endpoint}
                   columnDefs={productColumns}

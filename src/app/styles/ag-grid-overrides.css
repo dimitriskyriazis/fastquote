@@ -8,19 +8,19 @@
   cursor: text !important;
 }
 
-.ag-theme-quartz .ag-cell.ag-cell-focus {
+.ag-theme-quartz .ag-cell.ag-cell-focus:not(.ag-cell-editing) {
   outline: none;
-  cursor: text !important;
+  cursor: default !important;
 }
 
-.ag-theme-quartz .ag-cell input,
-.ag-theme-quartz .ag-cell textarea,
+.ag-theme-quartz .ag-cell.ag-cell-editing input,
+.ag-theme-quartz .ag-cell.ag-cell-editing textarea,
+.ag-theme-quartz .ag-cell.ag-cell-editing .ag-cell-edit-input,
 .ag-theme-quartz .ag-input-field input,
-.ag-theme-quartz .ag-input-field textarea,
-.ag-theme-quartz .ag-cell-edit-input {
+.ag-theme-quartz .ag-input-field textarea {
   caret-color: currentColor !important;
   color: inherit;
-  cursor: text;
+  cursor: text !important;
   -webkit-text-fill-color: currentColor !important;
 }
 

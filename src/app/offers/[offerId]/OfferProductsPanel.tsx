@@ -2325,15 +2325,39 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       setGridRowDeletionContextMenuSelectionSnapshot(params.api ?? null, []);
     }
     const rowNode = params.node ?? null;
+    
+    // Check if server-side select-all is active
+    const api = params.api ?? null;
+    const isSelectAllActive = api && typeof api.getServerSideSelectionState === 'function'
+      ? (() => {
+          const state = api.getServerSideSelectionState();
+          return Boolean(state && 'selectAll' in state && Boolean((state as { selectAll?: boolean }).selectAll));
+        })()
+      : false;
+    
+    // Get current actual selection from the grid API
+    const currentSelectedNodes = !isSelectAllActive && api && typeof api.getSelectedNodes === 'function'
+      ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
+      : [];
+    
     const snapshotNodes = getContextMenuSelectionSnapshot(params.api ?? null);
-    const requestedSelectionIds = snapshotNodes
+    
+    // Use current selection if available, otherwise fall back to snapshot
+    // If snapshot exists but current selection is different (was cleared), use current selection
+    const hasCurrentSelection = currentSelectedNodes.length > 0;
+    const hasSnapshotSelection = snapshotNodes.length > 0;
+    const shouldUseCurrentSelection = hasCurrentSelection || (!hasSnapshotSelection && !isSelectAllActive);
+    
+    const nodesToConsider = shouldUseCurrentSelection ? currentSelectedNodes : snapshotNodes;
+    
+    const requestedSelectionIds = nodesToConsider
       .map((node) => normalizeOfferDetailId((node?.data as { OfferDetailID?: unknown })?.OfferDetailID ?? null));
     const clickedRowId = normalizeOfferDetailId(
       (rowNode?.data as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null,
     );
     const snapshotMatchesClick = clickedRowId != null && requestedSelectionIds.some((id) => id === clickedRowId);
-    const relevantNodes = snapshotNodes.length > 0 && (snapshotMatchesClick || !rowNode || !rowNode.data)
-      ? snapshotNodes
+    const relevantNodes = nodesToConsider.length > 0 && (snapshotMatchesClick || !rowNode || !rowNode.data)
+      ? nodesToConsider
       : rowNode && rowNode.data
         ? [rowNode as RowNode<Record<string, unknown>>]
         : [];

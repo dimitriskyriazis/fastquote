@@ -252,6 +252,54 @@
 }
 .gridShell :global(.ag-cell) {
   transition: background-color 140ms ease;
+  cursor: default !important;
+}
+
+/* Ensure arrow cursor for all cell states except editing */
+.gridShell :global(.ag-cell:hover),
+.gridShell :global(.ag-cell:focus),
+.gridShell :global(.ag-cell.ag-cell-focus),
+.gridShell :global(.ag-cell.ag-cell-range-selected),
+.gridShell :global(.ag-cell.ag-cell-range-single-cell),
+.gridShell :global(.ag-row:hover .ag-cell),
+.gridShell :global(.ag-row.ag-row-hover .ag-cell),
+.gridShell :global(.ag-row.ag-row-selected .ag-cell:not(.ag-cell-editing)),
+.gridShell :global(.ag-row.ag-row-range-selected .ag-cell:not(.ag-cell-editing)) {
+  cursor: default !important;
+}
+
+/* Only show text cursor when cell is actually being edited */
+.gridShell :global(.ag-cell.ag-cell-editing) {
+  cursor: text !important;
+}
+
+.gridShell :global(.ag-cell.ag-cell-editing input),
+.gridShell :global(.ag-cell.ag-cell-editing textarea),
+.gridShell :global(.ag-cell.ag-cell-editing .ag-text-cell-editor),
+.gridShell :global(.ag-cell.ag-cell-editing .ag-text-cell-editor input) {
+  cursor: text !important;
+}
+
+/* Hide range handle and disable resize cursor */
+.gridShell :global(.ag-range-handle),
+.gridShell :global(.ag-range-handle-selected),
+.gridShell :global(.ag-range-selection-handle),
+.gridShell :global(.ag-range-controller),
+.gridShell :global(.ag-range-selection-handle-container) {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  opacity: 0 !important;
+}
+
+.gridShell :global(.ag-cell.ag-range-selected),
+.gridShell :global(.ag-cell.ag-cell-range-selected),
+.gridShell :global(.ag-cell.ag-range-single-cell),
+.gridShell :global(.ag-cell.ag-range-selected:hover),
+.gridShell :global(.ag-cell.ag-cell-range-selected:hover),
+.gridShell :global(.ag-cell.ag-range-single-cell:hover) {
+  cursor: default !important;
+  background-color: transparent !important;
 }
 
 .gridShell[data-suppress-sidebar="true"] :global(.ag-side-bar),

@@ -52,7 +52,6 @@ import {
   RowDragModule,
   RowHeightParams,
   CellSelectionOptions,
-  RangeHandleOptions,
   RowSelectionModule,
   RowSelectionOptions,
   SelectionChangedEvent,
@@ -96,7 +95,6 @@ import { resolveColumnWidthAssignments, ColumnWidthAssignment } from '../../lib/
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
 const GRID_ROW_HEIGHT = 32;
-const RANGE_HANDLE_OPTIONS: RangeHandleOptions = { mode: 'range' };
 
 const resolveColumnId = (column: string | Column): string => (
   typeof column === 'string' ? column : column.getColId()
@@ -181,8 +179,19 @@ const isActionMenuEventTarget = (target: EventTarget | null): boolean => {
   return Boolean(element?.closest(ACTION_MENU_SELECTOR));
 };
 
-const isSelectionPreservingTarget = (target: Element | null) =>
-  Boolean(target?.closest(PRESERVE_SELECTION_SELECTOR));
+const isSelectionPreservingTarget = (target: Element | null) => {
+  if (!target) return false;
+  // Check if the element itself or any ancestor has the preserve selection attribute
+  const preservingElement = target.closest(PRESERVE_SELECTION_SELECTOR);
+  if (preservingElement) return true;
+  // Also check if the element is inside any AG Grid within a preserving area
+  const agRoot = target.closest('.ag-root-wrapper');
+  if (agRoot) {
+    const preservingContainer = agRoot.closest(PRESERVE_SELECTION_SELECTOR);
+    if (preservingContainer) return true;
+  }
+  return false;
+};
 
 const collectFieldIdsFromDefs = (defs: ColDef[] | null | undefined): string[] => {
   if (!defs) return [];
@@ -1057,7 +1066,7 @@ export default function AgGridAll({
   const cellSelectionEnabled = !resolvedPerformanceMode || allowCellSelectionInPerformanceMode;
   const cellSelectionConfig = useMemo<CellSelectionOptions<RowData> | false>(() => (
     cellSelectionEnabled
-      ? { handle: RANGE_HANDLE_OPTIONS }
+      ? {} // Range handle disabled - no handle property
       : false
   ), [cellSelectionEnabled]);
   type ColumnDefinitionWithChildren = ColDef & { children?: ColDef[] };
@@ -1340,6 +1349,26 @@ export default function AgGridAll({
     const getCurrentGridApi = () => gridApiRef.current ?? gridRef.current?.api ?? null;
     const isPageHeaderArea = (element: Element | null) =>
       Boolean(element?.closest('.PageHeader-module__YnWxqa__headerSide'));
+    
+    // Check if click is inside THIS grid's shell
+    const isClickInsideThisGrid = (element: Element | null) => {
+      if (!element) return false;
+      const shell = shellRef.current;
+      if (!shell) return false;
+      
+      // Check if element is inside the shell or inside the AG Grid root wrapper within this shell
+      if (shell.contains(element)) {
+        return true;
+      }
+      
+      // Also check if element is inside any .ag-root-wrapper that's inside this shell
+      const rootWrapper = shell.querySelector('.ag-root-wrapper');
+      if (rootWrapper && rootWrapper.contains(element)) {
+        return true;
+      }
+      
+      return false;
+    };
 
     const handleClick = (event: Event) => {
       if (event instanceof MouseEvent && event.button === 2) {
@@ -1348,10 +1377,27 @@ export default function AgGridAll({
       const target = event.target ?? null;
       if (isActionMenuEventTarget(target)) return;
       const element = resolveElementFromEventTarget(target);
-      const clickedInsideShell = Boolean(element?.closest('.ag-root-wrapper'));
+      const clickedInsideThisGrid = isClickInsideThisGrid(element);
       const clickedOnPageHeader = isPageHeaderArea(element);
       const clickedInsidePersistentArea = isSelectionPreservingTarget(element);
-      if ((!clickedInsideShell && !clickedInsidePersistentArea) || clickedOnPageHeader) {
+      
+      const clickedOnSelectionElement = Boolean(
+        element?.closest('.ag-selection-checkbox') ||
+        element?.closest('input[type="checkbox"]') ||
+        element?.closest('.ag-row') ||
+        element?.closest('.ag-cell')
+      );
+      
+      const shouldPreserveSelection = clickedInsideThisGrid || clickedInsidePersistentArea || clickedOnSelectionElement || rowSelection === 'multiple';
+      
+      if (shouldPreserveSelection) {
+        clearContextMenuRow();
+        return;
+      }
+      
+      if (clickedOnPageHeader) {
+        scheduleDeselectAllRows(getCurrentGridApi());
+      } else if (!clickedInsideThisGrid && !clickedInsidePersistentArea) {
         scheduleDeselectAllRows(getCurrentGridApi());
       }
       clearContextMenuRow();
@@ -1359,24 +1405,33 @@ export default function AgGridAll({
     const handleMouseDown = (event: MouseEvent) => {
       if (event.button === 2) return;
       const element = resolveElementFromEventTarget(event.target ?? null);
+      const clickedInsideThisGrid = isClickInsideThisGrid(element);
       const clickedOnPageHeader = isPageHeaderArea(element);
       const clickedInsidePersistentArea = isSelectionPreservingTarget(element);
+      
+      // Don't deselect if clicking inside THIS grid's shell, selection-preserving area, or on selection elements
+      // Also don't deselect if this grid has row selection enabled
+      const clickedOnSelectionElement = Boolean(
+        element?.closest('.ag-row') ||
+        element?.closest('.ag-cell') ||
+        element?.closest('.ag-header') ||
+        element?.closest('.ag-selection-checkbox') ||
+        element?.closest('input[type="checkbox"]')
+      );
+      
+      const shouldPreserveSelection = clickedInsideThisGrid || clickedInsidePersistentArea || clickedOnSelectionElement || rowSelection === 'multiple';
+      
+      if (shouldPreserveSelection) {
+        return;
+      }
+      
       if (!element || clickedOnPageHeader) {
         if (!clickedInsidePersistentArea) {
           scheduleDeselectAllRows(getCurrentGridApi());
         }
         return;
       }
-      if (clickedInsidePersistentArea) {
-        return;
-      }
-      if (
-        element.closest('.ag-row') ||
-        element.closest('.ag-cell') ||
-        element.closest('.ag-header')
-      ) {
-        return;
-      }
+      
       scheduleDeselectAllRows(getCurrentGridApi());
     };
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1425,7 +1480,7 @@ export default function AgGridAll({
       document.removeEventListener('mousedown', handleMouseDown, true);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [clearContextMenuRow, deleteSelectionValues]);
+  }, [clearContextMenuRow, deleteSelectionValues, rowSelection]);
 
   useEffect(() => {
     const shell = shellRef.current;
@@ -1867,6 +1922,9 @@ export default function AgGridAll({
     const mergedFilterParams = typeof incomingFilterParams === 'object' && incomingFilterParams !== null
       ? { ...baseFilterParams, ...incomingFilterParams }
       : baseFilterParams;
+
+    // Note: CSS handles cursor styling (arrow for single clicks, text for editing cells)
+    // We pass through cellStyle from defaultColDef without modification
 
     return {
       sortable: true,
@@ -2609,30 +2667,54 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 
   const handleSelectionChanged = useCallback((event: SelectionChangedEvent<RowData>) => {
     if (typeof externalSelectionChangedHandler !== 'function') return;
-    const isSelectAll = hasServerSideSelectAll(event.api ?? null);
+    const api = event.api;
+    if (!api) {
+      externalSelectionChangedHandler([], api);
+      return;
+    }
+    
     let rows: RowData[] = [];
-    if (!isSelectAll) {
-      try {
-        rows = typeof event.api.getSelectedRows === 'function' ? event.api.getSelectedRows() : [];
-      } catch (err) {
-        console.warn('Failed to read selected rows', err);
-        rows = [];
-      }
-    }
-    externalSelectionChangedHandler(rows ?? [], event.api);
     let selectedNodes: Array<RowNode<RowData>> = [];
-    if (!isSelectAll) {
-      try {
-        selectedNodes = typeof event.api.getSelectedNodes === 'function'
-          ? (event.api.getSelectedNodes() as Array<RowNode<RowData>>)
-          : [];
-      } catch (err) {
-        console.warn('Failed to read selected nodes', err);
-        selectedNodes = [];
+    
+    try {
+      const collectedNodes: Array<IRowNode<RowData>> = [];
+      if (typeof api.forEachNode === 'function') {
+        api.forEachNode((node) => {
+          if (node.isSelected()) {
+            collectedNodes.push(node);
+          }
+        });
       }
+      
+      const directNodes = typeof api.getSelectedNodes === 'function'
+        ? (api.getSelectedNodes() as Array<RowNode<RowData>>)
+        : [];
+      
+      if (collectedNodes.length >= directNodes.length) {
+        selectedNodes = collectedNodes as Array<RowNode<RowData>>;
+      } else {
+        selectedNodes = directNodes;
+      }
+      
+      rows = selectedNodes
+        .map((node) => node.data)
+        .filter((data): data is RowData => data != null);
+      
+      if (rows.length === 0) {
+        const fallbackRows = typeof api.getSelectedRows === 'function' ? api.getSelectedRows() : [];
+        if (fallbackRows.length > 0) {
+          rows = fallbackRows;
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to read selected rows/nodes', err);
+      rows = [];
+      selectedNodes = [];
     }
-    setGridRowDeletionContextMenuSelectionSnapshot(event.api ?? null, selectedNodes ?? []);
-  }, [externalSelectionChangedHandler, hasServerSideSelectAll]);
+    
+    externalSelectionChangedHandler(rows ?? [], api);
+    setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, selectedNodes ?? []);
+  }, [externalSelectionChangedHandler]);
 
   const handleRowDragEnd = useCallback((event: RowDragEndEvent<RowData>) => {
     lastDragNodeRef.current = null;
