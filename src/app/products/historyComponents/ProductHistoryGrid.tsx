@@ -67,7 +67,17 @@ export default function ProductHistoryGrid({ rows }: Props) {
 
   const pricingCols = useMemo<ColDef[]>(() => [
     { field: 'OfferID', headerName: 'Offer ID', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 90, suppressHeaderMenuButton: true },
-    { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', suppressHeaderMenuButton: true, valueFormatter: (p: ValueFormatterParams<HistoryRow>) => p.value ? new Date(p.value as string | number | Date).toLocaleDateString() : '' },
+    { 
+      field: 'OfferDate', 
+      headerName: 'Offer Date', 
+      filter: 'agDateColumnFilter', 
+      suppressHeaderMenuButton: true, 
+      valueFormatter: (p: ValueFormatterParams<HistoryRow>) => p.value ? new Date(p.value as string | number | Date).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }) : '', 
+      filterParams: { 
+        browserDatePicker: false, 
+        minValidYear: 2000,
+      } 
+    },
     { field: 'CustomerName', headerName: 'Customer', filter: 'agTextColumnFilter', width: 200, suppressHeaderMenuButton: true, enableRowGroup: true },
     { field: 'ListPrice', headerName: 'List Price', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: currencyFormatter, suppressHeaderMenuButton: true, enableRowGroup: true },
     { field: 'CustomerDiscount', headerName: 'Customer Discount', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: percentFormatter, suppressHeaderMenuButton: true, enableRowGroup: true },

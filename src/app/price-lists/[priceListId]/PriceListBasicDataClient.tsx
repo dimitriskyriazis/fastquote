@@ -9,6 +9,7 @@ import type {
   PricingPoliciesByBrand,
 } from './PriceListBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
+import UKDatePicker from '../../components/DatePicker';
 
 type Props = {
   priceListId: string;
@@ -182,7 +183,7 @@ const buildFieldDefinitions = (
 
 const formatDisplayValue = (value: unknown) => {
   if (value === null || value === undefined) return '—';
-  if (value instanceof Date) return value.toLocaleDateString();
+  if (value instanceof Date) return value.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
   if (typeof value === 'string') {
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : '—';
@@ -195,6 +196,7 @@ const formatDateInputValue = (value: Date | string | null | undefined) => {
   if (!value) return '';
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return '';
+  // Return ISO format (YYYY-MM-DD) for date inputs - required for type="date"
   return date.toISOString().slice(0, 10);
 };
 
@@ -207,6 +209,7 @@ const normalizeValueForApi = (value: string, type?: 'string' | 'number' | 'date'
     return Number.isFinite(parsed) ? parsed : null;
   }
   if (type === 'date') {
+    // For type="date" inputs, value is already in ISO format (YYYY-MM-DD)
     const parsed = new Date(trimmed);
     if (Number.isNaN(parsed.getTime())) return null;
     return parsed.toISOString();
@@ -401,6 +404,19 @@ export default function PriceListBasicDataClient({
           placeholder={placeholder}
           onChange={(event) => handleValueChange(def.id, event.target.value)}
           onBlur={() => handleBlur(def)}
+        />
+      );
+    }
+
+    if (def.inputType === 'date' || def.valueType === 'date') {
+      return (
+        <UKDatePicker
+          value={value}
+          onChange={(newValue) => handleValueChange(def.id, newValue)}
+          placeholder="DD/MM/YYYY"
+          className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
+          disabled={pending}
+          required
         />
       );
     }

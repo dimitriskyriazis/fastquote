@@ -235,7 +235,7 @@ const buildFieldDefinitions = (
 
 const formatDisplayValue = (value: unknown) => {
   if (value === null || value === undefined) return '—';
-  if (value instanceof Date) return value.toLocaleDateString();
+  if (value instanceof Date) return value.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
   if (typeof value === 'string') {
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : '—';

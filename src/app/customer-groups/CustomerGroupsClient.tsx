@@ -151,6 +151,10 @@ export default function CustomerGroupsClient() {
         headerName: "Created On",
         filter: "agDateColumnFilter",
         valueFormatter: (params: ValueFormatterParams) => formatDateValue(params.value),
+        filterParams: { 
+          browserDatePicker: false, 
+          minValidYear: 2000,
+        },
         width: 160,
       },
     ],

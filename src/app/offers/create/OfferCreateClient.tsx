@@ -9,6 +9,7 @@ import styles from './OfferCreateClient.module.css';
 import lookupStyles from '../../components/LookupModal.module.css';
 import LookupModal from '../../components/LookupModal';
 import lookupButtonStyles from '../../components/LookupAddButton.module.css';
+import UKDatePicker from '../../components/DatePicker';
 
 type SectionKey = 'general' | 'info' | 'commercial' | 'code' | 'dates';
 
@@ -703,17 +704,15 @@ export default function OfferCreateClient({
     if (field.type === 'date') {
       return (
         <div className={styles.controlStack}>
-          <input
-            autoComplete="off"
-            id={fieldId}
-            name={field.id}
-            className={panelStyles.fieldControl}
-            type="date"
+          <UKDatePicker
             value={value}
-            disabled={disabled}
-            onChange={(event) => {
-              handleChange(field.id as keyof FormValues, event.target.value);
+            onChange={(newValue) => {
+              handleChange(field.id as keyof FormValues, newValue);
             }}
+            placeholder="DD/MM/YYYY"
+            className={panelStyles.fieldControl}
+            disabled={disabled}
+            required={field.required}
           />
           {error ? <div className={styles.fieldError}>{error}</div> : null}
         </div>

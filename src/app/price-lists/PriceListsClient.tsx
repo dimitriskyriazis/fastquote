@@ -260,12 +260,20 @@ export default function PriceListsClient() {
         headerName: "Valid From",
         filter: "agDateColumnFilter",
         valueFormatter: formatDateValue,
+        filterParams: { 
+          browserDatePicker: false, 
+          minValidYear: 2000,
+        },
       },
       {
         field: "ValidToDate",
         headerName: "Valid To",
         filter: "agDateColumnFilter",
         valueFormatter: formatDateValue,
+        filterParams: { 
+          browserDatePicker: false, 
+          minValidYear: 2000,
+        },
       },
       {
         field: "Enabled",

@@ -14,6 +14,7 @@ import type {
 } from './OfferBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
 import { addRecentOffer, buildRecentOfferLabel } from '../../lib/recentOffers';
+import UKDatePicker from '../../components/DatePicker';
 
 type Props = {
   offerId: string;
@@ -173,7 +174,7 @@ const buildFieldDefinitions = (
 
 const formatDisplayValue = (value: unknown) => {
   if (value === null || value === undefined) return '—';
-  if (value instanceof Date) return value.toLocaleDateString();
+  if (value instanceof Date) return value.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
   if (typeof value === 'string') {
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : '—';
@@ -537,6 +538,19 @@ const renderFieldControl = (
           placeholder={placeholder}
           onChange={(event) => handleValueChange(def.id, event.target.value)}
           onBlur={() => handleBlur(def)}
+        />
+      );
+    }
+
+    if (def.inputType === 'date' || def.valueType === 'date') {
+      return (
+        <UKDatePicker
+          value={values[def.id] ?? ''}
+          onChange={(newValue) => handleValueChange(def.id, newValue)}
+          placeholder="DD/MM/YYYY"
+          className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
+          disabled={pending}
+          required={def.required}
         />
       );
     }

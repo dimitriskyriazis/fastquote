@@ -358,12 +358,25 @@ export default function OffersClient() {
     {field: 'Comments',  headerName: 'Comments', filter: 'agTextColumnFilter'},
     { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
-    { field: 'OfferDate', headerName: 'Offer Date', filter: 'agDateColumnFilter', valueFormatter: (params) => formatDateDMY(params.value)},
+    { 
+      field: 'OfferDate', 
+      headerName: 'Offer Date', 
+      filter: 'agDateColumnFilter', 
+      valueFormatter: (params) => formatDateDMY(params.value), 
+      filterParams: { 
+        browserDatePicker: false, 
+        minValidYear: 2000,
+      }
+    },
     {
       field: 'ModifiedOn',
       headerName: 'Last Modified',
       filter: 'agDateColumnFilter',
       valueFormatter: (params) => formatLastModifiedValue(params.value),
+      filterParams: { 
+        browserDatePicker: false, 
+        minValidYear: 2000,
+      },
     },
     { field: 'OfferVersion', headerName: 'Offer Version', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     {

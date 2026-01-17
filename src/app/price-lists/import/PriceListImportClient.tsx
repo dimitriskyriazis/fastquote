@@ -21,6 +21,7 @@ import lookupStyles from "../../components/LookupModal.module.css";
 import LookupModal from "../../components/LookupModal";
 import lookupButtonStyles from "../../components/LookupAddButton.module.css";
 import type { PricingPolicyRuleOption } from "../../../lib/lookupTypes";
+import UKDatePicker from "../../components/DatePicker";
 import {
   PRICE_LIST_DECIMAL_FORMAT_OPTIONS,
   type PriceListDecimalFormat,
@@ -253,6 +254,7 @@ const REQUIRED_FIELDS: Array<keyof FormValues> = [
 const normalizeDate = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed) return null;
+  // For type="date" inputs, value is already in ISO format (YYYY-MM-DD)
   const parsed = new Date(trimmed);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
@@ -999,6 +1001,7 @@ export default function PriceListImportClient({
       formData.append("hasDuty", values.hasDuty ? "1" : "0");
       formData.append("currencyId", values.currencyId);
       if (values.countryId) formData.append("countryId", values.countryId);
+      // Values are already in ISO format (YYYY-MM-DD) from type="date" inputs
       formData.append("validFromDate", values.validFromDate);
       formData.append("validToDate", values.validToDate);
       formData.append("comments", values.comments);
@@ -1241,24 +1244,24 @@ export default function PriceListImportClient({
                   <span className={styles.label}>
                     Valid From <span className={styles.requiredMark}>*</span>
                   </span>
-                  <input
-                    autoComplete="off"
-                    type="date"
-                    className={styles.input}
+                  <UKDatePicker
                     value={values.validFromDate}
-                    onChange={(e) => updateField("validFromDate", e.target.value)}
+                    onChange={(value) => updateField("validFromDate", value)}
+                    placeholder="DD/MM/YYYY"
+                    className={styles.input}
+                    required
                   />
                 </label>
                 <label className={styles.field}>
                   <span className={styles.label}>
                     Valid To <span className={styles.requiredMark}>*</span>
                   </span>
-                  <input
-                    autoComplete="off"
-                    type="date"
-                    className={styles.input}
+                  <UKDatePicker
                     value={values.validToDate}
-                    onChange={(e) => updateField("validToDate", e.target.value)}
+                    onChange={(value) => updateField("validToDate", value)}
+                    placeholder="DD/MM/YYYY"
+                    className={styles.input}
+                    required
                   />
                 </label>
               </div>

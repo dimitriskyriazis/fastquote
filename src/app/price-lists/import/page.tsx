@@ -143,7 +143,7 @@ async function fetchPreviousPriceLists(): Promise<PreviousPriceListOption[]> {
     const formatDate = (value: Date | string | null | undefined) => {
       if (!value) return null;
       const date = value instanceof Date ? value : new Date(value);
-      return Number.isNaN(date.getTime()) ? null : date.toLocaleDateString("en-GB");
+      return Number.isNaN(date.getTime()) ? null : date.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
     };
 
     return (result.recordset ?? [])

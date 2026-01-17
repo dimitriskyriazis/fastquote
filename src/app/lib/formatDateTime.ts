@@ -8,5 +8,5 @@ export function formatDateTime(value?: string | Date | null) {
   if (value == null) return "Unknown time";
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "Unknown time";
-  return date.toLocaleString(undefined, DATE_TIME_FORMAT_OPTIONS);
+  return date.toLocaleString("en-GB", DATE_TIME_FORMAT_OPTIONS);
 }
