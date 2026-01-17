@@ -1484,37 +1484,150 @@ export default function AgGridAll({
   }, [clearDropIndicatorDom]);
 
   useEffect(() => {
-    if (typeof onHeaderSelectAllChange !== 'function') return;
+    // Wait for grid to be ready
+    if (!isGridReady) return;
+    
     const shell = shellRef.current;
     if (!shell) return;
+    
+    // Use gridApiRef which is set in onGridReady
+    const api = gridApiRef.current ?? gridRef.current?.api ?? null;
+    if (!api) return;
+    
     let headerCheckbox: HTMLInputElement | null = null;
-    const handleCheckboxChange = () => {
-      if (!headerCheckbox) return;
-      onHeaderSelectAllChange(headerCheckbox.checked, gridRef.current?.api ?? null);
+    let isHandling = false;
+    
+    const handleCheckboxClick = (event: MouseEvent) => {
+      if (!headerCheckbox || isHandling) return;
+      
+      // Prevent AG Grid's default handler first
+      event.stopPropagation();
+      event.preventDefault();
+      
+      // Check the actual selection state to determine what to do
+      // Don't rely on checkbox state as it might be out of sync
+      const selectedCount = typeof api.getSelectedNodes === 'function' 
+        ? api.getSelectedNodes().length 
+        : 0;
+      let hasServerSideSelectAll = false;
+      if (typeof api.getServerSideSelectionState === 'function') {
+        const state = api.getServerSideSelectionState();
+        hasServerSideSelectAll = Boolean(
+          state && 
+          'selectAll' in state && 
+          (state as ServerSideRowSelectionState).selectAll
+        );
+      }
+      
+      // Determine if we should select or deselect based on actual selection state
+      // If there are selected nodes or server-side selectAll is true, we should deselect
+      // Otherwise, we should select
+      const shouldSelect = selectedCount === 0 && !hasServerSideSelectAll;
+      const isChecked = shouldSelect;
+      
+      // Process the selection/deselection
+      isHandling = true;
+      
+      // Update checkbox visual state to match our decision
+      headerCheckbox.checked = isChecked;
+      
+      // Select/deselect all visible nodes directly
+      // This works with both client-side and server-side row models
+      // For server-side models, we select visible nodes rather than using selectAll: true
+      // because getSelectedNodes() doesn't work properly with selectAll: true
+      if (isChecked) {
+        // First, clear any server-side selectAll state that AG Grid might have set
+        // This prevents conflicts between server-side selection and node-based selection
+        if (typeof api.setServerSideSelectionState === 'function') {
+          try {
+            api.setServerSideSelectionState({
+              selectAll: false,
+              toggledNodes: [],
+            });
+          } catch {
+            // Ignore errors
+          }
+        }
+        
+        // Select all visible nodes
+        if (typeof api.forEachNode === 'function') {
+          api.forEachNode((node) => {
+            if (node.selectable !== false && !node.isRowPinned()) {
+              node.setSelected(true);
+            }
+          });
+        } else if (typeof api.selectAll === 'function') {
+          // Fallback for client-side models
+          api.selectAll();
+        }
+      } else {
+        // First clear server-side selection state to prevent conflicts
+        if (typeof api.setServerSideSelectionState === 'function') {
+          try {
+            api.setServerSideSelectionState({
+              selectAll: false,
+              toggledNodes: [],
+            });
+          } catch {
+            // Ignore errors when clearing server-side state
+          }
+        }
+        
+        // Deselect all nodes
+        if (typeof api.deselectAll === 'function') {
+          api.deselectAll();
+        }
+        
+        // Also manually deselect all visible nodes to ensure they're cleared
+        if (typeof api.forEachNode === 'function') {
+          api.forEachNode((node) => {
+            if (node.selectable !== false && !node.isRowPinned() && node.isSelected()) {
+              node.setSelected(false);
+            }
+          });
+        }
+      }
+      // Call the callback if provided
+      if (typeof onHeaderSelectAllChange === 'function') {
+        setTimeout(() => {
+          onHeaderSelectAllChange(isChecked, api);
+          isHandling = false;
+        }, 0);
+      } else {
+        isHandling = false;
+      }
     };
 
     const attachHeaderCheckbox = () => {
       const nextCheckbox = shell.querySelector<HTMLInputElement>('.ag-header-select-all input[type="checkbox"]');
       if (headerCheckbox === nextCheckbox) return;
       if (headerCheckbox) {
-        headerCheckbox.removeEventListener('change', handleCheckboxChange);
+        headerCheckbox.removeEventListener('click', handleCheckboxClick, true);
       }
       headerCheckbox = nextCheckbox;
       if (headerCheckbox) {
-        headerCheckbox.addEventListener('change', handleCheckboxChange);
+        // Listen to click event in capture phase to intercept before AG Grid
+        headerCheckbox.addEventListener('click', handleCheckboxClick, true);
       }
     };
 
     attachHeaderCheckbox();
     const observer = new MutationObserver(attachHeaderCheckbox);
     observer.observe(shell, { childList: true, subtree: true });
+    
+    // Also try attaching after a short delay in case checkbox appears later
+    const delayedAttach = setTimeout(() => {
+      attachHeaderCheckbox();
+    }, 100);
+    
     return () => {
+      clearTimeout(delayedAttach);
       observer.disconnect();
       if (headerCheckbox) {
-        headerCheckbox.removeEventListener('change', handleCheckboxChange);
+        headerCheckbox.removeEventListener('click', handleCheckboxClick, true);
       }
     };
-  }, [onHeaderSelectAllChange]);
+  }, [isGridReady, onHeaderSelectAllChange]);
 
   // GLOBAL EVENT HANDLERS - Click, Keyboard, Paste
   useEffect(() => {
@@ -2398,7 +2511,6 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
   // ROW SELECTION CONFIGURATION
   const resolvedAllowRowClickSelection =
     typeof allowRowClickSelectionProp === 'boolean' ? allowRowClickSelectionProp : rowSelection !== 'multiple';
-  const isServerSideRowModel = true;
   const rowSelectionConfig = useMemo<RowSelectionOptions | undefined>(() => {
     if (!rowSelection) return undefined;
     const isMultiRow = rowSelection === 'multiple';
@@ -2414,11 +2526,9 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
         groupSelects: 'self',
         enableSelectionWithoutKeys: allowMultiselectClick,
         enableClickSelection: allowMultiselectClick || allowDeselection,
+        headerCheckbox: true,
+        selectAll: 'all', // 'filtered' is invalid for server-side row models
       };
-      if (!isServerSideRowModel) {
-        config.headerCheckbox = true;
-        config.selectAll = 'filtered';
-      }
       return config;
     }
 
@@ -2434,7 +2544,6 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     rowMultiSelectWithClick,
     resolvedAllowRowClickSelection,
     suppressRowClickSelection,
-    isServerSideRowModel,
   ]);
 
   const sideBarDef = useMemo(() => {

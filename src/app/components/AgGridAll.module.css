@@ -182,6 +182,75 @@
   background-color: #e5e7eb !important;
 }
 
+/* Preserve banded row colors when entire row is selected (these override the rule above) */
+.gridShell :global(.ag-row-odd.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell),
+.gridShell :global(.ag-row-odd.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell) {
+  background-color: #e0e3e8 !important; /* Darker version of #f4f6fb for odd rows */
+}
+
+.gridShell :global(.ag-row-even.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell),
+.gridShell :global(.ag-row-even.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell) {
+  background-color: #ededed !important; /* Darker version of #ffffff for even rows */
+}
+
+/* Override banded row colors for offer-products-grid (it doesn't have banded rows) */
+:global(.offer-products-grid) .gridShell :global(.ag-row-odd.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row-odd.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row-even.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row-even.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell) {
+  background-color: #e5e7eb !important; /* Use base color for offer-products-grid (no banded rows) */
+}
+
+/* Preserve price list cell colors when row is selected - make them darker like the row background */
+/* Active price list: darker green */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-active),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-active),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-active),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-active) {
+  background-color: #8fdfa8 !important; /* Darker version of #b7ffcf */
+}
+
+/* Expiring price list: darker yellow */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expiring),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expiring),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expiring),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expiring) {
+  background-color: #e6d87a !important; /* Darker version of #fff8a5 */
+}
+
+/* Expired price list: darker red */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expired),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expired),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expired),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expired) {
+  background-color: #df9f9f !important; /* Darker version of #ffcfcf */
+}
+
+/* Preserve price list cell colors when row is hovered - make them darker like the hover background */
+/* Active price list: darker green on hover */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-active),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active),
+:global(.offer-products-grid) .gridShell :global(.ag-row:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-active),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active) {
+  background-color: #9fe5b8 !important; /* Slightly darker version of #b7ffcf for hover */
+}
+
+/* Expiring price list: darker yellow on hover */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-expiring),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring),
+:global(.offer-products-grid) .gridShell :global(.ag-row:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-expiring),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring) {
+  background-color: #f0e88f !important; /* Slightly darker version of #fff8a5 for hover */
+}
+
+/* Expired price list: darker red on hover */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-expired),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired),
+:global(.offer-products-grid) .gridShell :global(.ag-row:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-expired),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired) {
+  background-color: #e7afaf !important; /* Slightly darker version of #ffcfcf for hover */
+}
+
 .gridShell :global(.offer-row--printable-comment:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell) {
   background-color: #bde0ff !important;
 }
@@ -192,6 +261,27 @@
 
 .gridShell :global(.offer-row--category:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell) {
   background-color: #c5c9d0 !important;
+}
+
+/* Hover states for offer-products-grid rows (only when not selected) - using :hover pseudo-class */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell) {
+  background-color: #f5f5f5 !important;
+}
+
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-comment:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--printable-comment:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell) {
+  background-color: #cfe2f3 !important;
+}
+
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-comment:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--nonprintable-comment:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell) {
+  background-color: #fecaca !important;
+}
+
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--category:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--category:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell) {
+  background-color: #d4d4d4 !important;
 }
 
 .rowHoverOverlay {
@@ -300,6 +390,220 @@
 .gridShell :global(.ag-cell.ag-range-single-cell:hover) {
   cursor: default !important;
   background-color: transparent !important;
+}
+
+/* For offer-products-grid, preserve row-specific cell colors when range-selected */
+/* This must come after the banded row rules to take precedence */
+/* Product rows: white */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.ag-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.ag-cell-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.ag-range-single-cell:hover) {
+  cursor: default !important;
+  background-color: #ffffff !important; /* Keep product row color */
+}
+
+/* Printable comment rows: light blue */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-comment .ag-cell.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-comment .ag-cell.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-comment .ag-cell.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-comment .ag-cell.ag-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-comment .ag-cell.ag-cell-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-comment .ag-cell.ag-range-single-cell:hover) {
+  cursor: default !important;
+  background-color: #e0f2fe !important; /* Keep printable comment row color */
+}
+
+/* Non-printable comment rows: light red */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-comment .ag-cell.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-comment .ag-cell.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-comment .ag-cell.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-comment .ag-cell.ag-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-comment .ag-cell.ag-cell-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-comment .ag-cell.ag-range-single-cell:hover) {
+  cursor: default !important;
+  background-color: #fee2e2 !important; /* Keep non-printable comment row color */
+}
+
+/* Category rows: light gray */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--category .ag-cell.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--category .ag-cell.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--category .ag-cell.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--category .ag-cell.ag-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--category .ag-cell.ag-cell-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--category .ag-cell.ag-range-single-cell:hover) {
+  cursor: default !important;
+  background-color: rgb(220, 220, 220) !important; /* Keep category row color */
+}
+
+/* Default cells (rows without specific row class): white */
+:global(.offer-products-grid) .gridShell :global(.ag-row:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.ag-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.ag-cell-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.ag-range-single-cell:hover) {
+  cursor: default !important;
+  background-color: #ffffff !important; /* Default to white */
+}
+
+/* Preserve price list status cell colors when range-selected */
+/* These must be more specific than row-level rules - include row classes to override */
+/* Active price list: light green - override all row types */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-active.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-active.ag-cell-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-single-cell:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-active.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-active.ag-cell-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-single-cell:hover) {
+  background-color: #b7ffcf !important; /* Keep active price list color - override row colors */
+}
+
+/* Expiring price list: light yellow - override all row types */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-cell-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-single-cell:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-cell-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-single-cell:hover) {
+  background-color: #fff8a5 !important; /* Keep expiring price list color - override row colors */
+}
+
+/* Expired price list: light red - override all row types */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-expired.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-expired.ag-cell-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-single-cell:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-expired.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-expired.ag-cell-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-single-cell:hover) {
+  background-color: #ffcfcf !important; /* Keep expired price list color - override row colors */
+}
+
+/* Preserve price list status cell colors when row is selected AND cells are range-selected */
+/* These must be more specific than the row selected rules */
+/* Active price list with selected row - include row class for specificity */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-active.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-active.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-active.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-active.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-active.ag-range-single-cell) {
+  background-color: #b7ffcf !important; /* Keep active price list color even when row is selected */
+}
+
+/* Expiring price list with selected row */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-expiring.ag-range-single-cell) {
+  background-color: #fff8a5 !important; /* Keep expiring price list color even when row is selected */
+}
+
+/* Expired price list with selected row */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-expired.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-expired.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-expired.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-expired.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected .ag-cell.offer-products-grid__cell--pricelist-expired.ag-range-single-cell) {
+  background-color: #ffcfcf !important; /* Keep expired price list color even when row is selected */
+}
+
+/* Preserve banded row colors (odd/even) when cells are range-selected */
+/* These rules override the transparent rule above for banded rows */
+.gridShell :global(.ag-row-odd .ag-cell.ag-range-selected),
+.gridShell :global(.ag-row-odd .ag-cell.ag-cell-range-selected),
+.gridShell :global(.ag-row-odd .ag-cell.ag-range-single-cell),
+.gridShell :global(.ag-row-odd .ag-cell.ag-range-selected:hover),
+.gridShell :global(.ag-row-odd .ag-cell.ag-cell-range-selected:hover),
+.gridShell :global(.ag-row-odd .ag-cell.ag-range-single-cell:hover) {
+  background-color: #e8ebf0 !important; /* Slightly darker version of #f4f6fb */
+}
+
+.gridShell :global(.ag-row-even .ag-cell.ag-range-selected),
+.gridShell :global(.ag-row-even .ag-cell.ag-cell-range-selected),
+.gridShell :global(.ag-row-even .ag-cell.ag-range-single-cell),
+.gridShell :global(.ag-row-even .ag-cell.ag-range-selected:hover),
+.gridShell :global(.ag-row-even .ag-cell.ag-cell-range-selected:hover),
+.gridShell :global(.ag-row-even .ag-cell.ag-range-single-cell:hover) {
+  background-color: #f5f5f5 !important; /* Slightly darker version of #ffffff */
+}
+
+
+/* Preserve banded row colors when row is selected AND cells are range-selected */
+.gridShell :global(.ag-row-odd.ag-row-selected .ag-cell.ag-range-selected),
+.gridShell :global(.ag-row-odd.ag-row-selected .ag-cell.ag-cell-range-selected),
+.gridShell :global(.ag-row-odd.ag-row-selected .ag-cell.ag-range-single-cell),
+.gridShell :global(.ag-row-odd.ag-row-range-selected .ag-cell.ag-range-selected),
+.gridShell :global(.ag-row-odd.ag-row-range-selected .ag-cell.ag-cell-range-selected),
+.gridShell :global(.ag-row-odd.ag-row-range-selected .ag-cell.ag-range-single-cell) {
+  background-color: #e0e3e8 !important; /* Darker version for selected odd rows */
+}
+
+.gridShell :global(.ag-row-even.ag-row-selected .ag-cell.ag-range-selected),
+.gridShell :global(.ag-row-even.ag-row-selected .ag-cell.ag-cell-range-selected),
+.gridShell :global(.ag-row-even.ag-row-selected .ag-cell.ag-range-single-cell),
+.gridShell :global(.ag-row-even.ag-row-range-selected .ag-cell.ag-range-selected),
+.gridShell :global(.ag-row-even.ag-row-range-selected .ag-cell.ag-cell-range-selected),
+.gridShell :global(.ag-row-even.ag-row-range-selected .ag-cell.ag-range-single-cell) {
+  background-color: #ededed !important; /* Darker version for selected even rows */
+}
+
+/* Override banded row colors for offer-products-grid when row is selected AND cells are range-selected */
+/* Keep the row selected color, not the banded row colors */
+:global(.offer-products-grid) .gridShell :global(.ag-row-odd.ag-row-selected .ag-cell.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row-odd.ag-row-selected .ag-cell.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row-odd.ag-row-selected .ag-cell.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row-odd.ag-row-range-selected .ag-cell.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row-odd.ag-row-range-selected .ag-cell.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row-odd.ag-row-range-selected .ag-cell.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row-even.ag-row-selected .ag-cell.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row-even.ag-row-selected .ag-cell.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row-even.ag-row-selected .ag-cell.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row-even.ag-row-range-selected .ag-cell.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row-even.ag-row-range-selected .ag-cell.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row-even.ag-row-range-selected .ag-cell.ag-range-single-cell) {
+  background-color: #e5e7eb !important; /* Use base selected color for offer-products-grid (no banded rows) */
 }
 
 .gridShell[data-suppress-sidebar="true"] :global(.ag-side-bar),

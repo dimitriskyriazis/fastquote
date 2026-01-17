@@ -301,12 +301,68 @@
   background-color: #e5e7eb !important;
 }
 
+/* Preserve price list cell colors when row is selected - make them darker like the row background */
+/* Active price list: darker green */
+.offer-products-grid .ag-row.offer-row--product.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-active,
+.offer-products-grid .ag-row.offer-row--product.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-active,
+.offer-products-grid .ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-active,
+.offer-products-grid .ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-active {
+  background-color: #8fdfa8 !important; /* Darker version of #b7ffcf */
+}
+
+/* Expiring price list: darker yellow */
+.offer-products-grid .ag-row.offer-row--product.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expiring,
+.offer-products-grid .ag-row.offer-row--product.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expiring,
+.offer-products-grid .ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expiring,
+.offer-products-grid .ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expiring {
+  background-color: #e6d87a !important; /* Darker version of #fff8a5 */
+}
+
+/* Expired price list: darker red */
+.offer-products-grid .ag-row.offer-row--product.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expired,
+.offer-products-grid .ag-row.offer-row--product.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expired,
+.offer-products-grid .ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expired,
+.offer-products-grid .ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-expired {
+  background-color: #df9f9f !important; /* Darker version of #ffcfcf */
+}
+
+/* Preserve price list cell colors when row is hovered - make them darker like the hover background */
+/* Active price list: darker green on hover */
+.offer-products-grid .ag-row.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-active,
+.offer-products-grid .ag-row-hover.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active,
+.offer-products-grid .ag-row:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-active,
+.offer-products-grid .ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active {
+  background-color: #9fe5b8 !important; /* Slightly darker version of #b7ffcf for hover */
+}
+
+/* Expiring price list: darker yellow on hover */
+.offer-products-grid .ag-row.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-expiring,
+.offer-products-grid .ag-row-hover.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring,
+.offer-products-grid .ag-row:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-expiring,
+.offer-products-grid .ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring {
+  background-color: #f0e88f !important; /* Slightly darker version of #fff8a5 for hover */
+}
+
+/* Expired price list: darker red on hover */
+.offer-products-grid .ag-row.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-expired,
+.offer-products-grid .ag-row-hover.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired,
+.offer-products-grid .ag-row:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-expired,
+.offer-products-grid .ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired {
+  background-color: #e7afaf !important; /* Slightly darker version of #ffcfcf for hover */
+}
+
 .offer-products-grid .offer-row--printable-comment .ag-cell {
   background-color: #e0f2fe !important;
 }
 
 .offer-products-grid .offer-row--printable-comment:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell {
   background-color: #bde0ff !important;
+}
+
+/* Hover state for printable comments (only when not selected) - using :hover pseudo-class */
+.offer-products-grid .ag-row.offer-row--printable-comment:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell,
+.offer-products-grid .ag-row-hover.offer-row--printable-comment:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell {
+  background-color: #cfe2f3 !important;
 }
 
 .offer-products-grid .offer-row--nonprintable-comment .ag-cell {
@@ -317,6 +373,12 @@
   background-color: #ffb7b7 !important;
 }
 
+/* Hover state for non-printable comments (only when not selected) - using :hover pseudo-class */
+.offer-products-grid .ag-row.offer-row--nonprintable-comment:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell,
+.offer-products-grid .ag-row-hover.offer-row--nonprintable-comment:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell {
+  background-color: #fecaca !important;
+}
+
 .offer-products-grid .offer-row--product .ag-cell {
   background-color: #ffffff !important;
 }
@@ -325,6 +387,12 @@
 .offer-products-grid .offer-row--product.ag-row-range-selected .ag-cell,
 .offer-products-grid .offer-row--product.ag-row--context-menu-active .ag-cell {
   background-color: #e5e7eb !important;
+}
+
+/* Hover state for product rows (only when not selected) - using :hover pseudo-class */
+.offer-products-grid .ag-row.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell,
+.offer-products-grid .ag-row-hover.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell {
+  background-color: #f5f5f5 !important;
 }
 
 .offer-products-grid .offer-row--category .ag-cell {
@@ -339,6 +407,12 @@
 .offer-products-grid .offer-row--category.ag-row-range-selected .ag-cell,
 .offer-products-grid .offer-row--category.ag-row--context-menu-active .ag-cell {
   background-color: #c5c9d0 !important;
+}
+
+/* Hover state for category rows (only when not selected) - using :hover pseudo-class */
+.offer-products-grid .ag-row.offer-row--category:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell,
+.offer-products-grid .ag-row-hover.offer-row--category:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell {
+  background-color: #d4d4d4 !important;
 }
 
 .offer-products-grid .offer-row--category-descendant-collapsed,

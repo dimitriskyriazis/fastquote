@@ -775,7 +775,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const lastRowCountRef = useRef<number | null>(null);
   const lastRequestStartRef = useRef<number | null>(null);
   const deferInitialHeavyWorkRef = useRef(true);
-  const headerSelectAllInFlightRef = useRef(false);
   const skipModelUpdateRef = useRef(false);
   const collapseSkipUntilRef = useRef<number | null>(null);
   const pendingContextMenuSelectionClearRef = useRef(false);
@@ -1041,128 +1040,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     lastRequestStartRef.current = performance.now();
     lastServerRequestRef.current = request;
   }, []);
-
-  const fetchAllRowsFromServer = useCallback(async () => {
-    const templateRequest = lastServerRequestRef.current ?? {};
-    const limit = 1000;
-    const accumulated: Array<Record<string, unknown>> = [];
-    let startRow = 0;
-    let totalCount = typeof lastRowCountRef.current === 'number' && Number.isFinite(lastRowCountRef.current)
-      ? lastRowCountRef.current
-      : Number.POSITIVE_INFINITY;
-
-    while (startRow < totalCount) {
-      const payload = {
-        request: {
-          ...templateRequest,
-          startRow,
-          endRow: startRow + limit,
-        },
-      };
-      const res = await fetch(dataEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = (await res.json().catch(() => null)) as GridResponse | null;
-      if (!res.ok || !data) {
-        throw new Error(data?.error ?? `Failed to fetch rows (status ${res.status})`);
-      }
-      const rows = Array.isArray(data.rows) ? data.rows : [];
-      if (rows.length === 0) break;
-      accumulated.push(...rows);
-      if (typeof data.rowCount === 'number' && Number.isFinite(data.rowCount)) {
-        totalCount = data.rowCount;
-      }
-      if (accumulated.length >= totalCount) break;
-      startRow = accumulated.length;
-    }
-
-    return accumulated;
-  }, [dataEndpoint]);
-
-  const handleHeaderSelectAllChange = useCallback(async (
-    selected: boolean,
-    api: GridApi<Record<string, unknown>> | null,
-  ) => {
-    if (!api) return;
-    
-    if (!selected) {
-      // Deselect all
-      try {
-        if (typeof api.deselectAll === 'function') {
-          api.deselectAll();
-        }
-      } catch (err) {
-        console.warn('Failed to deselect all', err);
-      }
-      setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, []);
-      return;
-    }
-    
-    if (headerSelectAllInFlightRef.current) return;
-    headerSelectAllInFlightRef.current = true;
-    
-    try {
-      // Select all displayed nodes immediately (synchronously)
-      try {
-        if (typeof api.forEachNode === 'function') {
-          api.forEachNode((node) => {
-            if (node.data && !node.isSelected()) {
-              node.setSelected(true); // select the node
-            }
-          });
-        }
-      } catch (err) {
-        console.warn('Failed to select displayed nodes', err);
-      }
-      
-      // Also select after a short delay to catch any nodes that might load
-      requestAnimationFrame(() => {
-        try {
-          if (typeof api.forEachNode === 'function') {
-            api.forEachNode((node) => {
-              if (node.data && !node.isSelected()) {
-                node.setSelected(true);
-              }
-            });
-          }
-        } catch (err) {
-          console.warn('Failed to select displayed nodes in RAF', err);
-        }
-      });
-      
-      // Fetch all rows for context menu snapshot
-      const rows = await fetchAllRowsFromServer();
-      if (rows.length === 0) {
-        setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, []);
-        return;
-      }
-      const nodes = rows.map((data) => ({ data } as RowNode<Record<string, unknown>>));
-      setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, nodes);
-      
-      // After nodes are fetched, ensure all displayed nodes are selected again
-      // This handles the case where new rows might have loaded
-      setTimeout(() => {
-        try {
-          if (typeof api.forEachNode === 'function') {
-            api.forEachNode((node) => {
-              if (node.data && !node.isSelected()) {
-                node.setSelected(true); // select the node
-              }
-            });
-          }
-        } catch (err) {
-          console.warn('Failed to select all displayed nodes after fetch', err);
-        }
-      }, 200);
-    } catch (err) {
-      console.error('Failed to load all rows for selection', err);
-      showToastMessage('Unable to select all rows. Please try again.', 'error');
-    } finally {
-      headerSelectAllInFlightRef.current = false;
-    }
-  }, [fetchAllRowsFromServer]);
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     gridApiRef.current = api;
@@ -2951,7 +2828,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             onTotalsChange={handleTotalsChange}
             onResponse={handleGridResponse}
             onServerRequest={handleServerRequest}
-            onHeaderSelectAllChange={handleHeaderSelectAllChange}
             getRowHeight={getRowHeight}
             floatingFilter
             rowGroupPanelShow="never"
