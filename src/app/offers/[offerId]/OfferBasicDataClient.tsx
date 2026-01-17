@@ -15,6 +15,9 @@ import type {
 import { showToastMessage } from '../../../lib/toast';
 import { addRecentOffer, buildRecentOfferLabel } from '../../lib/recentOffers';
 import UKDatePicker from '../../components/DatePicker';
+import { formatDisplayValue } from '../../lib/formatDisplayValue';
+import { normalizeValueForApi } from '../../lib/normalizeValueForApi';
+import { formatDateInputValue } from '../../lib/formatDateInputValue';
 
 type Props = {
   offerId: string;
@@ -172,38 +175,6 @@ const buildFieldDefinitions = (
   { id: 'delivery', label: 'Delivery', section: 'dates', recordKey: 'Delivery', updateField: 'Delivery', inputType: 'date', valueType: 'date' },
 ];
 
-const formatDisplayValue = (value: unknown) => {
-  if (value === null || value === undefined) return '—';
-  if (value instanceof Date) return value.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : '—';
-  }
-  return String(value);
-};
-
-const formatDateInputValue = (value: Date | string | null | undefined) => {
-  if (!value) return '';
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toISOString().slice(0, 10);
-};
-
-const normalizeValueForApi = (value: string, type?: 'string' | 'number' | 'date') => {
-  if (value == null) return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (type === 'number') {
-    const parsed = Number(trimmed);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  if (type === 'date') {
-    const parsed = new Date(trimmed);
-    if (Number.isNaN(parsed.getTime())) return null;
-    return parsed.toISOString();
-  }
-  return trimmed;
-};
 
 const formatInitialValue = (record: OfferBasicRecord, def: FieldDefinition) => {
   const raw = record[def.recordKey];

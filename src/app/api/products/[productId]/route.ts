@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool } from '../../../../lib/sql';
+import { getRequestId } from '../../../../lib/requestId';
+import { handleApiError, createErrorResponse } from '../../../../lib/errorHandler';
+import { logger } from '../../../../lib/logger';
+import { resolveAuditUserId } from '../../../../lib/auditTrail';
 
 const normalizeProductId = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
@@ -15,15 +19,26 @@ export async function GET(
   req: NextRequest,
   context: { params: Promise<{ productId: string }> },
 ) {
+  const requestId = getRequestId(req);
+  const userId = resolveAuditUserId(req);
   const { productId } = await context.params;
+  
   try {
     const normalized = normalizeProductId(productId);
     if (normalized == null) {
-      return NextResponse.json({ ok: false, error: 'Invalid product id' }, { status: 400 });
+      return createErrorResponse('Invalid product id', 400, {
+        requestId,
+        endpoint: `/api/products/${productId}`,
+        method: 'GET',
+        userId,
+      });
     }
+    
     const pool = await getPool();
     const request = pool.request();
+    request.timeout = 30000;
     request.input('productId', sql.Int, normalized);
+    
     const result = await request.query<{
       ProductID: number;
       PartNumber: string | null;
@@ -41,14 +56,32 @@ export async function GET(
       LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
       WHERE p.ID = @productId
     `);
+    
     const row = result.recordset?.[0] ?? null;
     if (!row) {
-      return NextResponse.json({ ok: false, error: 'Product not found' }, { status: 404 });
+      return createErrorResponse('Product not found', 404, {
+        requestId,
+        endpoint: `/api/products/${productId}`,
+        method: 'GET',
+        userId,
+      });
     }
+    
+    logger.info('Product fetched successfully', {
+      requestId,
+      endpoint: `/api/products/${productId}`,
+      method: 'GET',
+      userId,
+      productId: normalized,
+    });
+    
     return NextResponse.json({ ok: true, product: row });
   } catch (err) {
-    console.error('Failed to fetch product summary', err);
-    const message = err instanceof Error ? err.message : 'Server error';
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    return handleApiError(err, {
+      requestId,
+      endpoint: `/api/products/${productId}`,
+      method: 'GET',
+      userId,
+    });
   }
 }

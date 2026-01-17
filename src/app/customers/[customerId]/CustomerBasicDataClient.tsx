@@ -15,6 +15,9 @@ import type {
   CustomerCityOption,
 } from './CustomerBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
+import { formatDisplayValue } from '../../lib/formatDisplayValue';
+import { normalizeValueForApi } from '../../lib/normalizeValueForApi';
+import { formatDateInputValue } from '../../lib/formatDateInputValue';
 
 type Props = {
   customerId: string;
@@ -233,32 +236,6 @@ const buildFieldDefinitions = (
   },
 ];
 
-const formatDisplayValue = (value: unknown) => {
-  if (value === null || value === undefined) return '—';
-  if (value instanceof Date) return value.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : '—';
-  }
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  return String(value);
-};
-
-const normalizeValueForApi = (value: string, type?: 'string' | 'number' | 'date') => {
-  if (value == null) return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (type === 'number') {
-    const parsed = Number(trimmed);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  if (type === 'date') {
-    const parsed = new Date(trimmed);
-    if (Number.isNaN(parsed.getTime())) return null;
-    return parsed.toISOString();
-  }
-  return trimmed;
-};
 
 const parseDateValue = (value: unknown): Date | null => {
   if (value instanceof Date) {
@@ -274,16 +251,14 @@ const parseDateValue = (value: unknown): Date | null => {
 const formatInitialValue = (record: CustomerBasicRecord, def: FieldDefinition) => {
   const raw = record[def.recordKey];
   if (def.inputType === 'date' || def.valueType === 'date') {
-    if (!raw) return '';
-    const parsedDate = parseDateValue(raw);
-    return parsedDate ? parsedDate.toISOString().slice(0, 10) : '';
+    return formatDateInputValue(raw as Date | string | null | undefined);
   }
   if (raw === null || raw === undefined) return '';
   if (typeof raw === 'string') return raw;
   if (typeof raw === 'number') return String(raw);
   if (typeof raw === 'boolean') return raw ? '1' : '0';
   const fallbackDate = parseDateValue(raw);
-  if (fallbackDate) return fallbackDate.toISOString();
+  if (fallbackDate) return formatDateInputValue(fallbackDate);
   return String(raw);
 };
 

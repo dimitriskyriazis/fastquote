@@ -8,6 +8,7 @@ import {
   type RawDropdownRow,
 } from "../../../lib/dropdownOptions";
 import type { PricingPolicyRuleOption } from "../../../lib/lookupTypes";
+import { formatDateUK } from "../../lib/formatDateTime";
 
 type PriceListLookupRow = RawDropdownRow & {
   BrandID?: number | null;
@@ -142,8 +143,8 @@ async function fetchPreviousPriceLists(): Promise<PreviousPriceListOption[]> {
 
     const formatDate = (value: Date | string | null | undefined) => {
       if (!value) return null;
-      const date = value instanceof Date ? value : new Date(value);
-      return Number.isNaN(date.getTime()) ? null : date.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
+      const formatted = formatDateUK(value);
+      return formatted === "" ? null : formatted;
     };
 
     return (result.recordset ?? [])

@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
+import { getRequestId } from "../../../../lib/requestId";
+import { handleApiError, createErrorResponse } from "../../../../lib/errorHandler";
+import { logger } from "../../../../lib/logger";
 
 type CreateProductPayload = {
   brandId?: unknown;
@@ -47,11 +50,19 @@ const normalizeBool = (value: unknown): boolean => {
 };
 
 export async function POST(req: NextRequest) {
+  const requestId = getRequestId(req);
+  const userId = resolveAuditUserId(req);
+  
   try {
     const body = (await req.json().catch(() => null)) as CreateProductPayload | null;
     const brandId = normalizeNumber(body?.brandId ?? null);
     if (brandId == null) {
-      return NextResponse.json({ ok: false, error: "Brand is required" }, { status: 400 });
+      return createErrorResponse("Brand is required", 400, {
+        requestId,
+        endpoint: "/api/products/create",
+        method: "POST",
+        userId,
+      });
     }
 
     const modelNumber = normalizeString(body?.modelNumber, 255);
@@ -68,6 +79,7 @@ export async function POST(req: NextRequest) {
 
     const pool = await getPool();
     const request = pool.request();
+    request.timeout = 30000;
     request.input("BrandID", sql.Int, brandId);
     request.input("ModelNumber", sql.NVarChar(255), modelNumber);
     request.input("PartNumber", sql.NVarChar(255), partNumber);
@@ -125,10 +137,21 @@ export async function POST(req: NextRequest) {
       throw new Error("Failed to create product");
     }
 
+    logger.info("Product created successfully", {
+      requestId,
+      endpoint: "/api/products/create",
+      method: "POST",
+      userId,
+      productId,
+    });
+
     return NextResponse.json({ ok: true, productId });
   } catch (err) {
-    console.error("Failed to create product", err);
-    const message = err instanceof Error ? err.message : "Server error";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    return handleApiError(err, {
+      requestId,
+      endpoint: "/api/products/create",
+      method: "POST",
+      userId,
+    });
   }
 }

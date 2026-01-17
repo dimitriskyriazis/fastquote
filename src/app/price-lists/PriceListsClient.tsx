@@ -19,6 +19,8 @@ import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import styles from "./PriceListsClient.module.css";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import Link from "next/link";
+import { formatDateUK } from "../lib/formatDateTime";
+import { formatBooleanValue } from "../lib/formatBooleanValue";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -28,21 +30,6 @@ const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
     </div>
   ),
 });
-
-const formatDateValue = (params: ValueFormatterParams) => {
-  const raw = params.value;
-  if (!raw) return "";
-  const date = new Date(raw as string);
-  return Number.isNaN(date.getTime())
-    ? String(raw)
-    : date.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
-};
-
-const formatEnabledValue = (value: unknown) => {
-  if (value === 1 || value === true || value === "true") return "Yes";
-  if (value === 0 || value === false || value === "false") return "No";
-  return value == null ? "" : String(value);
-};
 
 const normalizePriceListIdValue = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isInteger(value)) return value;
@@ -259,7 +246,7 @@ export default function PriceListsClient() {
         field: "ValidFromDate",
         headerName: "Valid From",
         filter: "agDateColumnFilter",
-        valueFormatter: formatDateValue,
+        valueFormatter: (params: ValueFormatterParams) => formatDateUK(params.value),
         filterParams: { 
           browserDatePicker: false, 
           minValidYear: 2000,
@@ -269,7 +256,7 @@ export default function PriceListsClient() {
         field: "ValidToDate",
         headerName: "Valid To",
         filter: "agDateColumnFilter",
-        valueFormatter: formatDateValue,
+        valueFormatter: (params: ValueFormatterParams) => formatDateUK(params.value),
         filterParams: { 
           browserDatePicker: false, 
           minValidYear: 2000,
@@ -279,10 +266,10 @@ export default function PriceListsClient() {
         field: "Enabled",
         headerName: "Enabled",
         filter: "agSetColumnFilter",
-        valueFormatter: (params) => formatEnabledValue(params.value),
+        valueFormatter: (params) => formatBooleanValue(params.value),
         filterParams: {
           values: ["true", "false"],
-          valueFormatter: (params: { value?: unknown }) => formatEnabledValue(params.value),
+          valueFormatter: (params: { value?: unknown }) => formatBooleanValue(params.value),
           comparator: (a: string, b: string) => {
             if (a === b) return 0;
             return a === "true" ? -1 : 1;

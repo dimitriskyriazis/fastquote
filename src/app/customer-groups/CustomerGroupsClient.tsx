@@ -23,6 +23,9 @@ import {
   GroupFormValues,
   validateGroupForm,
 } from "./groupModalHelpers";
+import { formatBooleanValue } from "../lib/formatBooleanValue";
+import { normalizeBoolean } from "../../lib/normalizeBoolean";
+import { formatDateUK } from "../lib/formatDateTime";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -33,17 +36,6 @@ const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ),
 });
 
-const formatBooleanValue = (value: unknown) => {
-  if (value === 1 || value === true || value === "true") return "Yes";
-  if (value === 0 || value === false || value === "false") return "No";
-  return value == null ? "" : String(value);
-};
-
-const normalizeEnabledInput = (value: unknown): boolean => {
-  if (value === 1 || value === true || value === "true" || value === "Yes") return true;
-  if (value === 0 || value === false || value === "false" || value === "No") return false;
-  return false;
-};
 
 const normalizeGroupId = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
@@ -69,12 +61,6 @@ const resolveGroupLabel = (
   return name.length > 0 ? name : fallback;
 };
 
-const formatDateValue = (value: unknown) => {
-  if (!value) return "";
-  const date = new Date(value as string);
-  if (Number.isNaN(date.getTime())) return String(value ?? "");
-  return date.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
-};
 
 const GROUP_FIELD_LABELS: Record<string, string> = {
   Name: "Group name",
@@ -142,7 +128,7 @@ export default function CustomerGroupsClient() {
         cellEditorParams: { values: enabledOptions },
         valueSetter: (params) => {
           params.data = params.data ?? {};
-          (params.data as Record<string, unknown>).Enabled = normalizeEnabledInput(params.newValue);
+          (params.data as Record<string, unknown>).Enabled = normalizeBoolean(params.newValue);
           return true;
         },
       },
@@ -150,7 +136,7 @@ export default function CustomerGroupsClient() {
         field: "CreatedOn",
         headerName: "Created On",
         filter: "agDateColumnFilter",
-        valueFormatter: (params: ValueFormatterParams) => formatDateValue(params.value),
+        valueFormatter: (params: ValueFormatterParams) => formatDateUK(params.value),
         filterParams: { 
           browserDatePicker: false, 
           minValidYear: 2000,
@@ -210,7 +196,7 @@ export default function CustomerGroupsClient() {
     };
     const value =
       field === "Enabled"
-        ? normalizeEnabledInput(
+        ? normalizeBoolean(
             (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
           )
         : normalizeTextValue(event.newValue);

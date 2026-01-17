@@ -25,6 +25,8 @@ import {
 } from "./marketModalHelpers";
 import { useAddModal } from "../lib/useAddModal";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import { formatBooleanValue } from "../lib/formatBooleanValue";
+import { normalizeBoolean } from "../../lib/normalizeBoolean";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -75,17 +77,6 @@ const resolveEnabledState = (value: unknown): boolean | null => {
   return null;
 };
 
-const formatBooleanValue = (value: unknown) => {
-  const state = resolveEnabledState(value);
-  if (state === true) return "Yes";
-  if (state === false) return "No";
-  return "";
-};
-
-const normalizeEnabledInput = (value: unknown): boolean => {
-  const state = resolveEnabledState(value);
-  return state === true;
-};
 
 const normalizeMarketId = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
@@ -260,7 +251,7 @@ export default function MarketsClient({ salesDivisions }: Props) {
         },
         valueSetter: (params) => {
           params.data = params.data ?? {};
-          (params.data as Record<string, unknown>).Enabled = normalizeEnabledInput(params.newValue);
+          (params.data as Record<string, unknown>).Enabled = normalizeBoolean(params.newValue);
           return true;
         },
       },
@@ -290,7 +281,7 @@ export default function MarketsClient({ salesDivisions }: Props) {
     };
     const value =
       field === "Enabled"
-        ? normalizeEnabledInput(
+        ? normalizeBoolean(
             (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
           )
         : normalizeTextValue(event.newValue);

@@ -20,6 +20,8 @@ import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { useAddModal } from "../lib/useAddModal";
 import type { DropdownOption } from "../../lib/dropdownOptions";
 import type { CustomerDropdownOption } from "../customers/[customerId]/CustomerBasicDataTypes";
+import { formatBooleanValue } from "../lib/formatBooleanValue";
+import { normalizeBoolean } from "../../lib/normalizeBoolean";
 import {
   createContact,
   ContactFormValues,
@@ -64,14 +66,6 @@ const resolveEnabledState = (value: unknown): boolean | null => {
   return null;
 };
 
-const formatBooleanValue = (value: unknown) => {
-  const state = resolveEnabledState(value);
-  if (state === true) return "Yes";
-  if (state === false) return "No";
-  return "";
-};
-
-const normalizeEnabledInput = (value: unknown): boolean => resolveEnabledState(value) === true;
 
 const normalizeContactId = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
@@ -403,7 +397,7 @@ export default function ContactsClient({ statuses, importances, customers, title
         cellEditorParams: { values: enabledOptions },
         valueSetter: (params) => {
           params.data = params.data ?? {};
-          (params.data as Record<string, unknown>).Enabled = normalizeEnabledInput(params.newValue);
+          (params.data as Record<string, unknown>).Enabled = normalizeBoolean(params.newValue);
           return true;
         },
       },
@@ -460,7 +454,7 @@ export default function ContactsClient({ statuses, importances, customers, title
     };
     let value: unknown;
     if (field === "Enabled") {
-      value = normalizeEnabledInput(
+      value = normalizeBoolean(
         (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
       );
     } else if (field === "EmailStatus" || field === "SecondEmailStatus") {

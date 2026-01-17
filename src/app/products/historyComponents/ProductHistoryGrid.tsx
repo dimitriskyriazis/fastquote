@@ -9,6 +9,7 @@ import type {
   GridApi,
 } from 'ag-grid-community';
 import styles from './ProductHistory.module.css';
+import { formatDateUK } from '../../lib/formatDateTime';
 
 declare global {
   var __FASTQUOTE_HISTORY_AG__: boolean | undefined;
@@ -72,7 +73,7 @@ export default function ProductHistoryGrid({ rows }: Props) {
       headerName: 'Offer Date', 
       filter: 'agDateColumnFilter', 
       suppressHeaderMenuButton: true, 
-      valueFormatter: (p: ValueFormatterParams<HistoryRow>) => p.value ? new Date(p.value as string | number | Date).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }) : '', 
+      valueFormatter: (p: ValueFormatterParams<HistoryRow>) => p.value ? formatDateUK(p.value) : '', 
       filterParams: { 
         browserDatePicker: false, 
         minValidYear: 2000,

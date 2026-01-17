@@ -8,6 +8,7 @@ import { GridRowDeletion } from "../../../../lib/gridRowDeletion";
 import styles from "./CustomerContactsClient.module.css";
 import PageHeader from "../../../components/PageHeader";
 import { GridQuickSearchProvider } from "../../../components/GridQuickSearchProvider";
+import { formatBooleanValue } from "../../../lib/formatBooleanValue";
 
 const AgGridAll = dynamic(() => import("../../../components/AgGridAll"), {
   ssr: false,
@@ -18,11 +19,6 @@ const AgGridAll = dynamic(() => import("../../../components/AgGridAll"), {
   ),
 });
 
-const formatBooleanValue = (value: unknown) => {
-  if (value === 1 || value === true || value === "true") return "Yes";
-  if (value === 0 || value === false || value === "false") return "No";
-  return value == null ? "" : String(value);
-};
 
 const normalizeContactId = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);

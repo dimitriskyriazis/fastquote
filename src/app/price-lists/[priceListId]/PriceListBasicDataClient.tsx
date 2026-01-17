@@ -10,6 +10,9 @@ import type {
 } from './PriceListBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
 import UKDatePicker from '../../components/DatePicker';
+import { formatDisplayValue } from '../../lib/formatDisplayValue';
+import { normalizeValueForApi } from '../../lib/normalizeValueForApi';
+import { formatDateInputValue } from '../../lib/formatDateInputValue';
 
 type Props = {
   priceListId: string;
@@ -181,41 +184,6 @@ const buildFieldDefinitions = (
   },
 ];
 
-const formatDisplayValue = (value: unknown) => {
-  if (value === null || value === undefined) return '—';
-  if (value instanceof Date) return value.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : '—';
-  }
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  return String(value);
-};
-
-const formatDateInputValue = (value: Date | string | null | undefined) => {
-  if (!value) return '';
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  // Return ISO format (YYYY-MM-DD) for date inputs - required for type="date"
-  return date.toISOString().slice(0, 10);
-};
-
-const normalizeValueForApi = (value: string, type?: 'string' | 'number' | 'date') => {
-  if (value == null) return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (type === 'number') {
-    const parsed = Number(trimmed);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  if (type === 'date') {
-    // For type="date" inputs, value is already in ISO format (YYYY-MM-DD)
-    const parsed = new Date(trimmed);
-    if (Number.isNaN(parsed.getTime())) return null;
-    return parsed.toISOString();
-  }
-  return trimmed;
-};
 
 const formatInitialValue = (record: PriceListBasicRecord, def: FieldDefinition) => {
   const raw = typeof def.resolveValue === 'function' ? def.resolveValue(record) : record[def.recordKey];

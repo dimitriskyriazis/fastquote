@@ -11,6 +11,7 @@ const config: SqlConnectionConfig = {
   password: process.env.SQLSERVER_PASSWORD!,
   options: { encrypt: false },
   pool: { max: 10, min: 1, idleTimeoutMillis: 30000 },
+  requestTimeout: Number(process.env.SQLSERVER_REQUEST_TIMEOUT || 30000), // 30 seconds default
 };
 
 type SqlFactoryWithPrecisionScale = (precision?: number, scale?: number) => {
