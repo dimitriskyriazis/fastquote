@@ -13,7 +13,7 @@ function generateRequestId(): string {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
 }
 
-export function getRequestId(req?: NextRequest | Request): string {
+export async function getRequestId(req?: NextRequest | Request): Promise<string> {
   if (req && req instanceof Request) {
     const headerId = req.headers.get(REQUEST_ID_HEADER);
     if (headerId && headerId.trim()) {
@@ -22,7 +22,7 @@ export function getRequestId(req?: NextRequest | Request): string {
   }
   
   try {
-    const headersList = headers();
+    const headersList = await headers();
     const headerId = headersList.get(REQUEST_ID_HEADER);
     if (headerId && headerId.trim()) {
       return headerId.trim();

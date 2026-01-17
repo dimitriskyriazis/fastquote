@@ -60,13 +60,6 @@ const CONTACT_FIELD_LABELS: Record<string, string> = {
   Enabled: "Enabled",
 };
 
-const resolveEnabledState = (value: unknown): boolean | null => {
-  if (value === 1 || value === true || value === "true" || value === "Yes") return true;
-  if (value === 0 || value === false || value === "false" || value === "No") return false;
-  return null;
-};
-
-
 const normalizeContactId = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
   if (typeof value === "string" && value.trim().length > 0) {

@@ -26,11 +26,11 @@ export function sanitizeError(error: unknown, options: ErrorHandlerOptions = {})
   return 'An unexpected error occurred';
 }
 
-export function handleApiError(
+export async function handleApiError(
   error: unknown,
   options: ErrorHandlerOptions = {},
-): NextResponse {
-  const requestId = options.requestId ?? getRequestId();
+): Promise<NextResponse> {
+  const requestId = options.requestId ?? await getRequestId();
   const sanitizedMessage = sanitizeError(error, options);
   
   const context: LogContext = {
@@ -60,12 +60,12 @@ export function handleApiError(
   );
 }
 
-export function createErrorResponse(
+export async function createErrorResponse(
   message: string,
   status: number = 500,
   options: ErrorHandlerOptions = {},
-): NextResponse {
-  const requestId = options.requestId ?? getRequestId();
+): Promise<NextResponse> {
+  const requestId = options.requestId ?? await getRequestId();
   
   const context: LogContext = {
     requestId,

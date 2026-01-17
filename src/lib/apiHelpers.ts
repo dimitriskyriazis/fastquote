@@ -12,13 +12,13 @@ export type ApiHandlerContext = {
   method: string;
 };
 
-export function createApiContext(
+export async function createApiContext(
   req: NextRequest,
   endpoint: string,
   method: string = req.method,
-): ApiHandlerContext {
+): Promise<ApiHandlerContext> {
   return {
-    requestId: getRequestId(req),
+    requestId: await getRequestId(req),
     userId: resolveAuditUserId(req),
     endpoint,
     method,
@@ -44,11 +44,11 @@ export function logApiSuccess(context: ApiHandlerContext, message?: string, extr
   });
 }
 
-export function handleApiErrorResponse(
+export async function handleApiErrorResponse(
   error: unknown,
   context: ApiHandlerContext,
-): NextResponse {
-  return handleApiError(error, {
+): Promise<NextResponse> {
+  return await handleApiError(error, {
     requestId: context.requestId,
     endpoint: context.endpoint,
     method: context.method,
@@ -56,12 +56,12 @@ export function handleApiErrorResponse(
   });
 }
 
-export function createErrorResponseWithContext(
+export async function createErrorResponseWithContext(
   message: string,
   status: number,
   context: ApiHandlerContext,
-): NextResponse {
-  return createErrorResponse(message, status, {
+): Promise<NextResponse> {
+  return await createErrorResponse(message, status, {
     requestId: context.requestId,
     endpoint: context.endpoint,
     method: context.method,

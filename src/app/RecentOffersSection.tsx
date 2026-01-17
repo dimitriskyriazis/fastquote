@@ -142,7 +142,7 @@ export default function RecentOffersSection() {
             return (
               <Link
                 key={offer.id}
-                href={`/offers/${encodedId}/basicdata`}
+                href={`/offers/${encodedId}/products`}
                 className={styles.recentOfferCard}
               >
                 <p className={styles.cardLabel}>{descriptionOnly}</p>

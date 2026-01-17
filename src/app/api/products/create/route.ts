@@ -50,14 +50,14 @@ const normalizeBool = (value: unknown): boolean => {
 };
 
 export async function POST(req: NextRequest) {
-  const requestId = getRequestId(req);
+  const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
   
   try {
     const body = (await req.json().catch(() => null)) as CreateProductPayload | null;
     const brandId = normalizeNumber(body?.brandId ?? null);
     if (brandId == null) {
-      return createErrorResponse("Brand is required", 400, {
+      return await createErrorResponse("Brand is required", 400, {
         requestId,
         endpoint: "/api/products/create",
         method: "POST",
@@ -147,7 +147,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, productId });
   } catch (err) {
-    return handleApiError(err, {
+    return await handleApiError(err, {
       requestId,
       endpoint: "/api/products/create",
       method: "POST",

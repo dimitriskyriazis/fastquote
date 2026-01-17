@@ -581,6 +581,8 @@ const canDropIntoRow = (row: RowData | null) => {
 
 const PERSISTED_TREE_KEY = '__persistedTreeOrdering';
 const GRID_COLUMN_STATE_STORAGE_PREFIX = 'fastquote-grid-column-state';
+const GRID_FILTER_STATE_STORAGE_PREFIX = 'fastquote-grid-filter-state';
+const GRID_SORT_STATE_STORAGE_PREFIX = 'fastquote-grid-sort-state';
 const GRID_COLUMN_STATE_DEFAULT_USER = 'anon';
 const AUTO_SIZE_MIN_INTERVAL_MS = 400;
 
@@ -712,6 +714,87 @@ export const writePersistedColumnState = (key: string, columns: SavedColumnState
     window.localStorage.setItem(key, JSON.stringify({ columns }));
   } catch (err) {
     console.warn('Failed to save column state', err);
+  }
+};
+
+export const buildGridFilterStateStorageKey = (endpoint: string, userId: string, context: string): string => {
+  const normalizedEndpoint = sanitizeStorageSegment(endpoint || '');
+  const normalizedUser = userId && userId.trim() ? userId.trim() : GRID_COLUMN_STATE_DEFAULT_USER;
+  const normalizedContext = sanitizeStorageSegment(context || '');
+  const endpointPart = normalizedEndpoint || 'grid';
+  const contextPart = normalizedContext || 'grid';
+  return `${GRID_FILTER_STATE_STORAGE_PREFIX}:${normalizedUser}:${endpointPart}:${contextPart}`;
+};
+
+export const buildGridSortStateStorageKey = (endpoint: string, userId: string, context: string): string => {
+  const normalizedEndpoint = sanitizeStorageSegment(endpoint || '');
+  const normalizedUser = userId && userId.trim() ? userId.trim() : GRID_COLUMN_STATE_DEFAULT_USER;
+  const normalizedContext = sanitizeStorageSegment(context || '');
+  const endpointPart = normalizedEndpoint || 'grid';
+  const contextPart = normalizedContext || 'grid';
+  return `${GRID_SORT_STATE_STORAGE_PREFIX}:${normalizedUser}:${endpointPart}:${contextPart}`;
+};
+
+const readPersistedFilterModel = (key: string): Record<string, FilterDescriptor> | null => {
+  if (typeof window === 'undefined' || !key) return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.filterModel !== 'object' || parsed.filterModel === null) return null;
+    return parsed.filterModel as Record<string, FilterDescriptor>;
+  } catch (err) {
+    console.warn('Failed to read saved filter model', err);
+    return null;
+  }
+};
+
+const writePersistedFilterModel = (key: string, filterModel: Record<string, FilterDescriptor> | null) => {
+  if (typeof window === 'undefined' || !key) return;
+  try {
+    if (!filterModel || Object.keys(filterModel).length === 0) {
+      window.localStorage.removeItem(key);
+      return;
+    }
+    window.localStorage.setItem(key, JSON.stringify({ filterModel }));
+  } catch (err) {
+    console.warn('Failed to save filter model', err);
+  }
+};
+
+const readPersistedSortModel = (key: string): { colId: string; sort: 'asc' | 'desc' }[] | null => {
+  if (typeof window === 'undefined' || !key) return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.sortModel)) return null;
+    const sortModel: { colId: string; sort: 'asc' | 'desc' }[] = [];
+    for (const entry of parsed.sortModel) {
+      if (!entry || typeof entry !== 'object') continue;
+      const colId = typeof entry.colId === 'string' ? entry.colId : '';
+      const sort = entry.sort === 'asc' || entry.sort === 'desc' ? entry.sort : null;
+      if (colId && sort) {
+        sortModel.push({ colId, sort });
+      }
+    }
+    return sortModel.length > 0 ? sortModel : null;
+  } catch (err) {
+    console.warn('Failed to read saved sort model', err);
+    return null;
+  }
+};
+
+const writePersistedSortModel = (key: string, sortModel: { colId: string; sort: 'asc' | 'desc' }[] | null) => {
+  if (typeof window === 'undefined' || !key) return;
+  try {
+    if (!sortModel || sortModel.length === 0) {
+      window.localStorage.removeItem(key);
+      return;
+    }
+    window.localStorage.setItem(key, JSON.stringify({ sortModel }));
+  } catch (err) {
+    console.warn('Failed to save sort model', err);
   }
 };
 
@@ -1018,6 +1101,10 @@ export default function AgGridAll({
   const pendingScrollRestoreTopRef = useRef<number | null>(null);
   const columnSaveTimerRef = useRef<number | null>(null);
   const columnStateLoadedRef = useRef(false);
+  const filterStateLoadedRef = useRef(false);
+  const sortStateLoadedRef = useRef(false);
+  const filterStateRestoringRef = useRef(false);
+  const sortStateRestoringRef = useRef(false);
   const firstDataRenderedRef = useRef(false);
   const [isGridReady, setIsGridReady] = useState(false);
   const { userId } = useAuditUser();
@@ -1032,11 +1119,31 @@ export default function AgGridAll({
     },
     [columnStateNamespace, endpoint, pathname, userId, shouldPersistColumnState],
   );
+  const filterStateStorageKey = useMemo(
+    () => {
+      if (!shouldPersistColumnState) return '';
+      const context = columnStateNamespace || pathname || '';
+      return buildGridFilterStateStorageKey(endpoint, userId, context ?? '');
+    },
+    [columnStateNamespace, endpoint, pathname, userId, shouldPersistColumnState],
+  );
+  const sortStateStorageKey = useMemo(
+    () => {
+      if (!shouldPersistColumnState) return '';
+      const context = columnStateNamespace || pathname || '';
+      return buildGridSortStateStorageKey(endpoint, userId, context ?? '');
+    },
+    [columnStateNamespace, endpoint, pathname, userId, shouldPersistColumnState],
+  );
   const previousColumnStateKeyRef = useRef<string>('');
   if (previousColumnStateKeyRef.current !== columnStateStorageKey) {
     previousColumnStateKeyRef.current = columnStateStorageKey;
     columnStateLoadedRef.current = false;
     firstDataRenderedRef.current = false;
+    filterStateLoadedRef.current = false;
+    sortStateLoadedRef.current = false;
+    filterStateRestoringRef.current = false;
+    sortStateRestoringRef.current = false;
   }
   const resolvedPerformanceMode = performanceMode !== false;
   const resolvedDisableAutoSize = disableAutoSize;
@@ -1734,6 +1841,96 @@ export default function AgGridAll({
     applySavedColumnState(api);
   }, [applySavedColumnState, columnStateStorageKey, isGridReady, shouldPersistColumnState]);
 
+  const applySavedFilterModel = useCallback((api: GridApi<RowData>) => {
+    if (!shouldPersistColumnState || !filterStateStorageKey) return;
+    if (filterStateLoadedRef.current) return;
+    const persisted = readPersistedFilterModel(filterStateStorageKey);
+    // Mark as loaded first so persistence can work after restoration
+    filterStateLoadedRef.current = true;
+    if (!persisted || Object.keys(persisted).length === 0) {
+      return;
+    }
+    try {
+      filterStateRestoringRef.current = true;
+      // Use setTimeout with a longer delay to ensure server-side datasource is ready
+      setTimeout(() => {
+        if (api.isDestroyed?.()) {
+          filterStateRestoringRef.current = false;
+          return;
+        }
+        api.setFilterModel(persisted);
+        // Refresh server-side data to ensure filtered results are loaded
+        // Note: The onFilterChanged event will also be triggered by setFilterModel,
+        // which should handle the refresh, but we'll do it here too to be safe
+        setTimeout(() => {
+          if (api.isDestroyed?.()) {
+            filterStateRestoringRef.current = false;
+            return;
+          }
+          // Ensure server-side data is refreshed with the filter
+          // Use purge: true to clear cache and reload with filters
+          refreshServerSideData(api, { purge: true });
+          filterStateRestoringRef.current = false;
+        }, 100);
+      }, 200);
+    } catch (err) {
+      filterStateRestoringRef.current = false;
+      console.warn('Failed to apply saved filter model', err);
+    }
+  }, [filterStateStorageKey, shouldPersistColumnState]);
+
+  const applySavedSortModel = useCallback((api: GridApi<RowData>) => {
+    if (!shouldPersistColumnState || !sortStateStorageKey) return;
+    if (sortStateLoadedRef.current) return;
+    const persisted = readPersistedSortModel(sortStateStorageKey);
+    // Mark as loaded first so persistence can work after restoration
+    sortStateLoadedRef.current = true;
+    if (!persisted || persisted.length === 0) {
+      return;
+    }
+    try {
+      sortStateRestoringRef.current = true;
+      // Use applyColumnState to set sort since setSortModel may not work with server-side row model
+      api.applyColumnState({
+        state: persisted.map((entry, index) => ({
+          colId: entry.colId,
+          sort: entry.sort,
+          sortIndex: index,
+        })),
+        defaultState: { sort: null },
+      });
+      // Defer clearing the restoring flag to ensure event handlers have completed
+      setTimeout(() => {
+        sortStateRestoringRef.current = false;
+      }, 0);
+    } catch (err) {
+      sortStateRestoringRef.current = false;
+      console.warn('Failed to apply saved sort model', err);
+    }
+  }, [sortStateStorageKey, shouldPersistColumnState]);
+
+  useEffect(() => {
+    if (!shouldPersistColumnState) return;
+    if (!filterStateStorageKey) return;
+    if (!isGridReady) return;
+    const api = gridApiRef.current ?? gridRef.current?.api ?? null;
+    if (!api || api.isDestroyed?.()) return;
+    if (!firstDataRenderedRef.current) return;
+    if (filterStateLoadedRef.current) return;
+    applySavedFilterModel(api);
+  }, [applySavedFilterModel, filterStateStorageKey, isGridReady, shouldPersistColumnState]);
+
+  useEffect(() => {
+    if (!shouldPersistColumnState) return;
+    if (!sortStateStorageKey) return;
+    if (!isGridReady) return;
+    const api = gridApiRef.current ?? gridRef.current?.api ?? null;
+    if (!api || api.isDestroyed?.()) return;
+    if (!firstDataRenderedRef.current) return;
+    if (sortStateLoadedRef.current) return;
+    applySavedSortModel(api);
+  }, [applySavedSortModel, sortStateStorageKey, isGridReady, shouldPersistColumnState]);
+
   const persistColumnState = useCallback(() => {
     if (!shouldPersistColumnState || !columnStateStorageKey) return;
     const api = gridRef.current?.api;
@@ -2190,6 +2387,35 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 
   const onGridReady = useCallback((e: GridReadyEvent) => {
     e.api.setGridOption('serverSideDatasource', datasource);
+    
+    // Apply saved filters and sort AFTER setting datasource but BEFORE first data load
+    // Use requestAnimationFrame to ensure columns are initialized, then apply filters/sort
+    if (shouldPersistColumnState) {
+      const applySavedStates = () => {
+        if (e.api.isDestroyed?.()) return;
+        // Apply filters first, then sort
+        if (!filterStateLoadedRef.current && filterStateStorageKey) {
+          const persisted = readPersistedFilterModel(filterStateStorageKey);
+          if (persisted && Object.keys(persisted).length > 0) {
+            filterStateLoadedRef.current = true;
+            filterStateRestoringRef.current = true;
+            e.api.setFilterModel(persisted);
+            setTimeout(() => {
+              filterStateRestoringRef.current = false;
+            }, 0);
+          }
+        }
+        if (!sortStateLoadedRef.current && sortStateStorageKey) {
+          applySavedSortModel(e.api);
+        }
+      };
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(applySavedStates);
+      } else {
+        setTimeout(applySavedStates, 0);
+      }
+    }
+    
     e.api.setSideBarVisible(true);
     e.api.closeToolPanel();
     if (pendingExternalRefreshRef.current != null) {
@@ -2209,7 +2435,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     if (typeof externalGridReadyHandler === 'function') {
       externalGridReadyHandler(e.api);
     }
-  }, [datasource, externalGridReadyHandler, handleContextMenuVisibleChanged, wrapGridApiRefreshers]);
+  }, [datasource, externalGridReadyHandler, handleContextMenuVisibleChanged, wrapGridApiRefreshers, shouldPersistColumnState, filterStateStorageKey, sortStateStorageKey, applySavedSortModel]);
   const contextMenuItemsHandler = useCallback<GetContextMenuItems<RowData>>((params) => {
     const hasRowNode = Boolean(params.node);
     const autoSizeItems = hasRowNode ? resolveAutoSizeMenuItems(params) : [];
@@ -2374,7 +2600,13 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 
   const handleFilterChanged = useCallback((event: FilterChangedEvent) => {
     const model = event.api.getFilterModel() as Record<string, FilterDescriptor> | null;
-    if (!model) return;
+    if (!model) {
+      // Persist empty filter model when filters are cleared (skip during restoration)
+      if (!filterStateRestoringRef.current && filterStateStorageKey) {
+        writePersistedFilterModel(filterStateStorageKey, null);
+      }
+      return;
+    }
 
     const nextModel: Record<string, FilterDescriptor> = { ...model };
     let mutated = false;
@@ -2394,7 +2626,14 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     if (mutated) {
       event.api.setFilterModel(nextModel);
     }
-  }, []);
+
+    // Persist filter model (skip during restoration)
+    if (!filterStateRestoringRef.current && filterStateStorageKey) {
+      const finalModel = mutated ? nextModel : model;
+      const modelToSave = Object.keys(finalModel).length > 0 ? finalModel : null;
+      writePersistedFilterModel(filterStateStorageKey, modelToSave);
+    }
+  }, [filterStateStorageKey]);
 
   const getViewportElement = useCallback(() => {
     const shell = shellRef.current;
@@ -2405,7 +2644,34 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
   const handleSortChanged = useCallback((event: SortChangedEvent<RowData>) => {
     // Keep rows visible for responsiveness while requesting the sorted data set from the server
     refreshServerSideData(event.api, { purge: false });
-  }, []);
+
+    // Persist sort model (skip during restoration)
+    // Use getColumnState to get sort since getSortModel may not work with server-side row model
+    if (!sortStateRestoringRef.current && sortStateStorageKey) {
+      setTimeout(() => {
+        if (sortStateRestoringRef.current) return; // Don't save if we're restoring
+        const columnState = event.api.getColumnState();
+        const sortModel: { colId: string; sort: 'asc' | 'desc' }[] = [];
+        if (columnState && Array.isArray(columnState)) {
+          columnState.forEach((col) => {
+            if (col.sort && (col.sort === 'asc' || col.sort === 'desc') && col.colId) {
+              sortModel.push({ colId: col.colId, sort: col.sort });
+            }
+          });
+          // Sort by sortIndex to maintain order
+          sortModel.sort((a, b) => {
+            const aState = columnState.find((c) => c.colId === a.colId);
+            const bState = columnState.find((c) => c.colId === b.colId);
+            const aIndex = typeof aState?.sortIndex === 'number' ? aState.sortIndex : 999;
+            const bIndex = typeof bState?.sortIndex === 'number' ? bState.sortIndex : 999;
+            return aIndex - bIndex;
+          });
+        }
+        const modelToSave = sortModel.length > 0 ? sortModel : null;
+        writePersistedSortModel(sortStateStorageKey, modelToSave);
+      }, 0);
+    }
+  }, [sortStateStorageKey]);
 
   const handleModelUpdated = useCallback((event: ModelUpdatedEvent<RowData>) => {
     if (quickSearchRefreshRequestedRef.current) {

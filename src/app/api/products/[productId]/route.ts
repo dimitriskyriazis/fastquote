@@ -19,14 +19,14 @@ export async function GET(
   req: NextRequest,
   context: { params: Promise<{ productId: string }> },
 ) {
-  const requestId = getRequestId(req);
+  const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
   const { productId } = await context.params;
   
   try {
     const normalized = normalizeProductId(productId);
     if (normalized == null) {
-      return createErrorResponse('Invalid product id', 400, {
+      return await createErrorResponse('Invalid product id', 400, {
         requestId,
         endpoint: `/api/products/${productId}`,
         method: 'GET',
@@ -59,7 +59,7 @@ export async function GET(
     
     const row = result.recordset?.[0] ?? null;
     if (!row) {
-      return createErrorResponse('Product not found', 404, {
+      return await createErrorResponse('Product not found', 404, {
         requestId,
         endpoint: `/api/products/${productId}`,
         method: 'GET',
@@ -77,7 +77,7 @@ export async function GET(
     
     return NextResponse.json({ ok: true, product: row });
   } catch (err) {
-    return handleApiError(err, {
+    return await handleApiError(err, {
       requestId,
       endpoint: `/api/products/${productId}`,
       method: 'GET',

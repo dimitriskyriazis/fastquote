@@ -4,7 +4,7 @@ import { logger } from '../../../lib/logger';
 import { getRequestId } from '../../../lib/requestId';
 
 export async function GET() {
-  const requestId = getRequestId();
+  const requestId = await getRequestId();
   const startTime = Date.now();
 
   try {

@@ -7,6 +7,7 @@ declare module 'mssql' {
     password: string;
     options?: {
       encrypt?: boolean;
+      requestTimeout?: number;
     };
     pool?: {
       max?: number;
@@ -38,6 +39,7 @@ declare module 'mssql' {
   export class Request {
     constructor();
     constructor(transaction: Transaction);
+    timeout?: number;
     input(name: string, value: unknown): Request;
     input(name: string, type: unknown, value: unknown): Request;
     query<T = unknown>(query: string): Promise<IResult<T>>;

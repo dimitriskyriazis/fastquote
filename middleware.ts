@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getRequestId, setRequestIdHeader } from './src/lib/requestId';
 import { logger } from './src/lib/logger';
 
-export function middleware(request: NextRequest) {
-  const requestId = getRequestId(request);
+export async function middleware(request: NextRequest) {
+  const requestId = await getRequestId(request);
   const response = NextResponse.next();
   setRequestIdHeader(response, requestId);
 
