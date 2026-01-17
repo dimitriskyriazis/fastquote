@@ -26,6 +26,7 @@ import {
   PRICE_LIST_DECIMAL_FORMAT_OPTIONS,
   type PriceListDecimalFormat,
 } from "../../../lib/priceListDecimalFormats";
+import { useAuditUser } from "../../components/AuditUserProvider";
 
 type XlsxModule = typeof import("xlsx");
 
@@ -461,6 +462,7 @@ export default function PriceListImportClient({
   calcMethodFormulas,
 }: Props) {
   const router = useRouter();
+  const { userId: currentUserId } = useAuditUser();
   const [values, setValues] = useState<FormValues>({
     name: "",
     brandId: "",
@@ -527,6 +529,13 @@ export default function PriceListImportClient({
         : calcMethodFormulas[0].value,
     );
   }, [calcMethodFormulas]);
+
+  // Automatically select current user as responsible user
+  useEffect(() => {
+    if (currentUserId && !values.responsibleUserId) {
+      setValues((prev) => ({ ...prev, responsibleUserId: currentUserId }));
+    }
+  }, [currentUserId, values.responsibleUserId]);
 
   const parseDecimalInput = (value: string): number | null => {
     const trimmed = value.trim().replace(",", ".");
