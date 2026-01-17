@@ -287,8 +287,8 @@ const parseSheetWithMapping = (
   for (let rIdx = safeHeaderRowIndex + 1; rIdx < rows.length; rIdx += 1) {
     const row = rows[rIdx];
     if (!Array.isArray(row)) continue;
-    const partNumber = normalizeCellString(getValue(row, "partNumber"));
-    const modelNumber = normalizeCellString(getValue(row, "modelNumber"));
+    const partNumber = normalizeCellString(getValue(row, "partNumber"), 50);
+    const modelNumber = normalizeCellString(getValue(row, "modelNumber"), 50);
     const description = normalizeCellString(getValue(row, "description"), 2000);
     const listPrice = parsePrice(getValue(row, "listPrice"), decimalFormat);
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
@@ -323,8 +323,8 @@ const parseSheet = (rows: unknown[][], decimalFormat: PriceListDecimalFormat): P
   for (let rIdx = headerRowIndex + 1; rIdx < rows.length; rIdx += 1) {
     const row = rows[rIdx];
     if (!Array.isArray(row)) continue;
-    const partNumber = normalizeCellString(getValue(row, "partNumber"));
-    const modelNumber = normalizeCellString(getValue(row, "modelNumber"));
+    const partNumber = normalizeCellString(getValue(row, "partNumber"), 50);
+    const modelNumber = normalizeCellString(getValue(row, "modelNumber"), 50);
     const description = normalizeCellString(getValue(row, "description"), 2000);
     const listPrice = parsePrice(getValue(row, "listPrice"), decimalFormat);
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
