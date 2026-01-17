@@ -1058,16 +1058,44 @@ export async function POST(
       }
       : { totalListPrice: 0, totalNetPrice: 0, totalCost: 0 };
 
-    const aggregateRow = recordset[0] ?? null;
+    // Query requested columns separately without filters to determine visibility
+    // This ensures requested columns remain visible even when filters result in no rows
+    const requestedColumnsQuery = `
+      SELECT
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedItemNo,
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedBrand)), '') IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedBrand,
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedModelNo)), '') IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedModelNo,
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedPartNo,
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedDescription,
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedDescription2,
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedDescription3,
+        MAX(CASE WHEN od.RequestedQuantity IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedQuantity
+      FROM dbo.OfferDetails od
+      WHERE od.OfferID = @__id
+    `;
+    const requestedColumnsRequest = pool.request();
+    requestedColumnsRequest.input('__id', sql.Int, idValue);
+    const requestedColumnsResult = await requestedColumnsRequest.query<{
+      __hasRequestedItemNo?: number | bigint | null;
+      __hasRequestedBrand?: number | bigint | null;
+      __hasRequestedModelNo?: number | bigint | null;
+      __hasRequestedPartNo?: number | bigint | null;
+      __hasRequestedDescription?: number | bigint | null;
+      __hasRequestedDescription2?: number | bigint | null;
+      __hasRequestedDescription3?: number | bigint | null;
+      __hasRequestedQuantity?: number | bigint | null;
+    }>(requestedColumnsQuery);
+    const requestedColumnsRow = requestedColumnsResult.recordset?.[0] ?? null;
+
     const requestedColumns: RequestedColumns = {
-      RequestedItemNo: normalizeAggregateFlag(aggregateRow?.__hasRequestedItemNo ?? 0),
-      RequestedBrand: normalizeAggregateFlag(aggregateRow?.__hasRequestedBrand ?? 0),
-      RequestedModelNo: normalizeAggregateFlag(aggregateRow?.__hasRequestedModelNo ?? 0),
-      RequestedPartNo: normalizeAggregateFlag(aggregateRow?.__hasRequestedPartNo ?? 0),
-      RequestedDescription: normalizeAggregateFlag(aggregateRow?.__hasRequestedDescription ?? 0),
-      RequestedDescription2: normalizeAggregateFlag(aggregateRow?.__hasRequestedDescription2 ?? 0),
-      RequestedDescription3: normalizeAggregateFlag(aggregateRow?.__hasRequestedDescription3 ?? 0),
-      RequestedQuantity: normalizeAggregateFlag(aggregateRow?.__hasRequestedQuantity ?? 0),
+      RequestedItemNo: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedItemNo ?? 0),
+      RequestedBrand: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedBrand ?? 0),
+      RequestedModelNo: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedModelNo ?? 0),
+      RequestedPartNo: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedPartNo ?? 0),
+      RequestedDescription: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedDescription ?? 0),
+      RequestedDescription2: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedDescription2 ?? 0),
+      RequestedDescription3: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedDescription3 ?? 0),
+      RequestedQuantity: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedQuantity ?? 0),
     };
 
     const rows: ProductRow[] = recordset.map(row => {
