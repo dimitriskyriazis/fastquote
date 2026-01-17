@@ -1085,13 +1085,54 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     selected: boolean,
     api: GridApi<Record<string, unknown>> | null,
   ) => {
+    if (!api) return;
+    
     if (!selected) {
+      // Deselect all
+      try {
+        if (typeof api.deselectAll === 'function') {
+          api.deselectAll();
+        }
+      } catch (err) {
+        console.warn('Failed to deselect all', err);
+      }
       setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, []);
       return;
     }
+    
     if (headerSelectAllInFlightRef.current) return;
     headerSelectAllInFlightRef.current = true;
+    
     try {
+      // Select all displayed nodes immediately (synchronously)
+      try {
+        if (typeof api.forEachNode === 'function') {
+          api.forEachNode((node) => {
+            if (node.data && !node.isSelected()) {
+              node.setSelected(true); // select the node
+            }
+          });
+        }
+      } catch (err) {
+        console.warn('Failed to select displayed nodes', err);
+      }
+      
+      // Also select after a short delay to catch any nodes that might load
+      requestAnimationFrame(() => {
+        try {
+          if (typeof api.forEachNode === 'function') {
+            api.forEachNode((node) => {
+              if (node.data && !node.isSelected()) {
+                node.setSelected(true);
+              }
+            });
+          }
+        } catch (err) {
+          console.warn('Failed to select displayed nodes in RAF', err);
+        }
+      });
+      
+      // Fetch all rows for context menu snapshot
       const rows = await fetchAllRowsFromServer();
       if (rows.length === 0) {
         setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, []);
@@ -1099,6 +1140,22 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       }
       const nodes = rows.map((data) => ({ data } as RowNode<Record<string, unknown>>));
       setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, nodes);
+      
+      // After nodes are fetched, ensure all displayed nodes are selected again
+      // This handles the case where new rows might have loaded
+      setTimeout(() => {
+        try {
+          if (typeof api.forEachNode === 'function') {
+            api.forEachNode((node) => {
+              if (node.data && !node.isSelected()) {
+                node.setSelected(true); // select the node
+              }
+            });
+          }
+        } catch (err) {
+          console.warn('Failed to select all displayed nodes after fetch', err);
+        }
+      }, 200);
     } catch (err) {
       console.error('Failed to load all rows for selection', err);
       showToastMessage('Unable to select all rows. Please try again.', 'error');
