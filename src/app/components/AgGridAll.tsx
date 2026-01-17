@@ -1362,6 +1362,11 @@ export default function AgGridAll({
       row.classList.remove('ag-row-highlight-above', 'ag-row-highlight-below', 'ag-row-highlight-inside');
       row.classList.remove('ag-row-dragging');
     });
+    // Remove top drop line element if it exists
+    const topDropLine = shell.querySelector<HTMLElement>('.ag-drop-line-top');
+    if (topDropLine) {
+      topDropLine.remove();
+    }
   }, []);
 
   const clearDragGhostDom = useCallback(() => {
@@ -1384,6 +1389,41 @@ export default function AgGridAll({
           : 'ag-row--drop-inside';
     const targets = Array.from(shell.querySelectorAll<HTMLElement>(`.ag-row[row-id="${indicator.rowId}"]`));
     targets.forEach((row) => row.classList.add(className));
+
+    // If position is "before", check if this row is at the top and add top drop line
+    if (indicator.position === 'before' && targets.length > 0) {
+      const targetRow = targets[0];
+      const viewport = shell.querySelector<HTMLElement>('.ag-center-cols-viewport, .ag-body-viewport');
+      if (viewport && targetRow) {
+        const viewportRect = viewport.getBoundingClientRect();
+        const rowRect = targetRow.getBoundingClientRect();
+        // Check if row is at or near the top of the viewport (within 3px tolerance)
+        const isAtTop = rowRect.top <= viewportRect.top + 3;
+
+        if (isAtTop) {
+          // Create or update the top drop line element
+          let topDropLine = shell.querySelector<HTMLElement>('.ag-drop-line-top');
+          if (!topDropLine) {
+            topDropLine = document.createElement('div');
+            topDropLine.className = 'ag-drop-line-top';
+            topDropLine.style.cssText = `
+              position: absolute;
+              left: 0;
+              right: 0;
+              height: 2px;
+              background: var(--row-drop-line, rgba(37, 99, 235, 0.85));
+              pointer-events: none;
+              z-index: 1002;
+            `;
+            shell.appendChild(topDropLine);
+          }
+          // Position it at the top of the viewport relative to the shell
+          const viewportTop = viewport.getBoundingClientRect().top;
+          const shellTop = shell.getBoundingClientRect().top;
+          topDropLine.style.top = `${viewportTop - shellTop}px`;
+        }
+      }
+    }
   }, [clearDropIndicatorDom]);
 
   const scheduleDropIndicatorUpdate = useCallback(() => {
