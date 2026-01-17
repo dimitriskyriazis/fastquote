@@ -3,15 +3,6 @@
 import React, { useMemo, useCallback, useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import styles from './OffersClient.module.css';
-const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
-  ssr: false,
-  loading: () => (
-    <div className={styles.loading}>
-      Loading grid…
-    </div>
-  ),
-});
 import type {
   ColDef,
   ICellRendererParams,
@@ -28,6 +19,16 @@ import PageHeader from '../components/PageHeader';
 import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
 import { formatDateTime } from '../lib/formatDateTime';
 import { showToastMessage } from '../../lib/toast';
+import styles from './OffersClient.module.css';
+
+const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
+  ssr: false,
+  loading: () => (
+    <div className={styles.loading}>
+      Loading grid…
+    </div>
+  ),
+});
 
 const formatEnabledValue = (value: unknown) => {
   if (value === 1 || value === true || value === 'true') return 'Yes';

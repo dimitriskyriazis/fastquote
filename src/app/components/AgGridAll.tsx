@@ -92,10 +92,12 @@ import { restoreCaretSelection } from '../hooks/useCaretKeeper';
 import { isOfferProductCategory } from '../../lib/offerProductRows';
 import { resolveColumnWidthAssignments, ColumnWidthAssignment } from '../../lib/columnWidthPresets';
 
+// CONSTANTS
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
 const GRID_ROW_HEIGHT = 32;
 
+// UTILITY FUNCTIONS - Column & Cell Operations
 const resolveColumnId = (column: string | Column): string => (
   typeof column === 'string' ? column : column.getColId()
 );
@@ -212,6 +214,7 @@ const collectFieldIdsFromDefs = (defs: ColDef[] | null | undefined): string[] =>
   return fields;
 };
 
+// UTILITY FUNCTIONS - Selection Management
 const scheduleDeselectAllRows = (api?: GridApi<RowData> | null) => {
   if (!api || typeof api.deselectAll !== 'function') return;
   setTimeout(() => {
@@ -232,6 +235,7 @@ const scheduleDeselectAllRows = (api?: GridApi<RowData> | null) => {
 
 const QUICK_SEARCH_REFRESH_DEBOUNCE_MS = 220;
 
+// HOOKS - Caret & Editor Focus Management
 const useMutationCaret = () => {
   useEffect(() => {
     const handleNodes = (nodes: NodeList) => {
@@ -342,6 +346,7 @@ const useEditorFocusHandlers = () => {
   return { handleEditingStart, handleEditingStop, requestRefresh };
 };
 
+// AG GRID MODULE REGISTRATION
 // Prevent double registration during HMR/StrictMode
 declare global {
   var __AG_GRID_MODULES_REGISTERED__: boolean | undefined;
@@ -382,6 +387,7 @@ if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
 
 LicenseManager.setLicenseKey(process.env.NEXT_PUBLIC_AG_GRID_LICENSE || '');
 
+// TYPE DEFINITIONS
 export type GridTotals = {
   totalListPrice: number;
   totalNetPrice: number;
@@ -454,6 +460,7 @@ type ColumnFilterModel = {
   dateFrom?: string;
 };
 
+// UTILITY FUNCTIONS - Data Transformation & Filtering
 const coerceToString = (value: unknown): string | null => {
   if (value == null) return null;
   if (typeof value === 'string') return value;
@@ -579,6 +586,7 @@ const canDropIntoRow = (row: RowData | null) => {
   return Boolean(isOfferProductCategory(row));
 };
 
+// COLUMN STATE PERSISTENCE - Constants & Storage Keys
 const PERSISTED_TREE_KEY = '__persistedTreeOrdering';
 const GRID_COLUMN_STATE_STORAGE_PREFIX = 'fastquote-grid-column-state';
 const GRID_FILTER_STATE_STORAGE_PREFIX = 'fastquote-grid-filter-state';
@@ -798,6 +806,7 @@ const writePersistedSortModel = (key: string, sortModel: { colId: string; sort: 
   }
 };
 
+// UTILITY FUNCTIONS - Tree Ordering Management
 const normalizeTreeOrderingValue = (value: unknown): string | null => {
   if (value == null) return null;
   if (typeof value === 'string') {
@@ -930,6 +939,7 @@ const GUARDED_SET_FILTERS = new Map<string, string[]>([
   ['IsParent', ['true', 'false']],
 ]);
 
+// UTILITY FUNCTIONS - Server-Side Data & Row Management
 const reorderRowsByTreeOrdering = (api: GridApi<RowData>) => {
   if (typeof api.applyServerSideTransaction !== 'function') return;
   const entries: Array<{ data: RowData; path: number[] }> = [];
@@ -952,6 +962,7 @@ const reorderRowsByTreeOrdering = (api: GridApi<RowData>) => {
 const TREE_DEPENDENT_COLUMNS = ['TreeOrdering', 'BrandName', 'TotalPrice', 'TotalNet', 'TotalCost'];
 const ROW_DRAG_EDGE_THRESHOLD = 10;
 
+// MAIN COMPONENT - AgGridAll
 export default function AgGridAll({
   endpoint,
   columnDefs,
@@ -1002,8 +1013,11 @@ export default function AgGridAll({
   useAgGridRowDrag = false,
   suppressSideBar = false,
 }: Props) {
+  // Initialize editor focus management hooks
   useMutationCaret();
   const { handleEditingStart, handleEditingStop, requestRefresh } = useEditorFocusHandlers();
+
+  // REFS - Grid References & State Tracking
   const wrapGridApiRefreshers = useCallback((api: GridApi<RowData> | null) => {
     if (!api || typeof requestRefresh !== 'function') return;
     const wrap = (method: 'refreshCells' | 'refreshServerSide' | 'redrawRows') => {
@@ -1025,6 +1039,7 @@ export default function AgGridAll({
   const shellRef = useRef<HTMLDivElement | null>(null);
   const preservedRangeSelectionRef = useRef<CellRangeParams[] | null>(null);
 
+  // CELL SELECTION & PASTE HANDLING
   const captureCurrentRangeSelection = useCallback(() => {
     const api = gridRef.current?.api ?? null;
     if (!api) return null;
@@ -1109,6 +1124,8 @@ export default function AgGridAll({
   const [isGridReady, setIsGridReady] = useState(false);
   const { userId } = useAuditUser();
   const pathname = usePathname();
+
+  // COLUMN STATE PERSISTENCE - Storage Keys & Configuration
   const shouldPersistColumnState = enableColumnStatePersistence !== false;
   const shouldAutoPersistColumnState = shouldPersistColumnState && autoPersistColumnState !== false;
   const columnStateStorageKey = useMemo(
@@ -1147,6 +1164,8 @@ export default function AgGridAll({
   }
   const resolvedPerformanceMode = performanceMode !== false;
   const resolvedDisableAutoSize = disableAutoSize;
+
+  // PERFORMANCE & CACHING CONFIGURATION
   const resolvedCacheBlockSize =
     typeof cacheBlockSize === 'number' && Number.isFinite(cacheBlockSize) && cacheBlockSize > 0
       ? Math.floor(cacheBlockSize)
@@ -1176,6 +1195,8 @@ export default function AgGridAll({
       ? {} // Range handle disabled - no handle property
       : false
   ), [cellSelectionEnabled]);
+
+  // COLUMN DEFINITIONS - Processing & Width Management
   type ColumnDefinitionWithChildren = ColDef & { children?: ColDef[] };
   const persistedColumnWidths = useMemo<Record<string, number>>(() => {
     if (!shouldPersistColumnState || !columnStateStorageKey || typeof window === 'undefined') {
@@ -1255,6 +1276,7 @@ export default function AgGridAll({
   const dropIndicatorRef = useRef<RowDropIndicator | null>(null);
   const dropIndicatorFrameRef = useRef<number | null>(null);
   const lastDragNodeRef = useRef<IRowNode<RowData> | null>(null);
+  // QUICK SEARCH - Configuration & State
   const quickSearchFilterRef = useRef("");
   const quickSearchEnabled = allowQuickSearch !== false;
   const quickSearchContext = useContext(GridQuickSearchContext);
@@ -1299,6 +1321,7 @@ export default function AgGridAll({
     attempt();
   }, [runQuickSearchFocus]);
 
+  // CONTEXT MENU - Row Highlighting & Selection Snapshot
   const hasServerSideSelectAll = useCallback((api?: GridApi<RowData> | null) => {
     if (!api || typeof api.getServerSideSelectionState !== 'function') return false;
     const state = api.getServerSideSelectionState();
@@ -1349,6 +1372,7 @@ export default function AgGridAll({
     }
   }, [clearContextMenuRow]);
 
+  // ROW DRAG & DROP - Drop Indicator Management
   const clearDropIndicatorDom = useCallback(() => {
     const shell = shellRef.current;
     if (!shell) return;
@@ -1492,6 +1516,7 @@ export default function AgGridAll({
     };
   }, [onHeaderSelectAllChange]);
 
+  // GLOBAL EVENT HANDLERS - Click, Keyboard, Paste
   useEffect(() => {
     const getCurrentGridApi = () => gridApiRef.current ?? gridRef.current?.api ?? null;
     const isPageHeaderArea = (element: Element | null) =>
@@ -1699,6 +1724,7 @@ export default function AgGridAll({
 
   useEffect(() => stopQuickSearchFocusRetries, [stopQuickSearchFocusRetries]);
 
+  // COLUMN STATE PERSISTENCE - Apply Saved State
   const applySavedColumnState = useCallback((api: GridApi<RowData>) => {
     if (!shouldPersistColumnState || !columnStateStorageKey) return;
     if (columnStateLoadedRef.current) return;
@@ -1881,6 +1907,7 @@ export default function AgGridAll({
     applySavedColumnState(api);
   }, [applySavedColumnState, columnStateStorageKey, isGridReady, shouldPersistColumnState]);
 
+  // FILTER & SORT STATE PERSISTENCE
   const applySavedFilterModel = useCallback((api: GridApi<RowData>) => {
     if (!shouldPersistColumnState || !filterStateStorageKey) return;
     if (filterStateLoadedRef.current) return;
@@ -1971,6 +1998,7 @@ export default function AgGridAll({
     applySavedSortModel(api);
   }, [applySavedSortModel, sortStateStorageKey, isGridReady, shouldPersistColumnState]);
 
+  // COLUMN STATE PERSISTENCE - Save State
   const persistColumnState = useCallback(() => {
     if (!shouldPersistColumnState || !columnStateStorageKey) return;
     const api = gridRef.current?.api;
@@ -2057,6 +2085,7 @@ export default function AgGridAll({
     gridApi.autoSizeColumns(columnIds, false);
   }, [autoSizeExclusions]);
 
+  // AUTO-SIZE COLUMNS - Implementation & Menu Items
   const autoSizeColumns = useCallback((api?: GridApi<RowData> | null, force = false) => {
     if (resolvedDisableAutoSize) return;
     if (!force && !autoSizeAllowedRef.current) return;
@@ -2133,6 +2162,7 @@ export default function AgGridAll({
     queuePersistColumnState();
   }, [queuePersistColumnState, shouldAutoPersistColumnState]);
 
+  // GRID CONFIGURATION - Default Column Def & Auto Group Column Def
   const handleFirstDataRendered = useCallback((event: FirstDataRenderedEvent) => {
     firstDataRenderedRef.current = true;
     autoSizeAllowedRef.current = true;
@@ -2183,9 +2213,12 @@ export default function AgGridAll({
     suppressAutoSize: true,
   }), []);
 
+  // SERVER-SIDE DATASOURCE - Request Payload & Cache Management
 const requestPayloadRef = useRef(requestPayload);
 requestPayloadRef.current = requestPayload;
 const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
+
+  // TREE ORDERING - Path Calculation & Parent Path Derivation
   const getRowPath = useCallback((node: IRowNode<RowData> | null | undefined): number[] => {
     if (!node) return [];
     const data = node.data as { TreeOrdering?: string | null } | undefined;
@@ -2266,6 +2299,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     return options;
   }, [maintainColumnOrder, useAgGridRowDrag]);
 
+  // SERVER-SIDE DATASOURCE - Implementation
   const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     getRows: async (params: IServerSideGetRowsParams<RowData>) => {
       try {
@@ -2361,6 +2395,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     resolvedColumnDefs,
   ]);
 
+  // ROW SELECTION CONFIGURATION
   const resolvedAllowRowClickSelection =
     typeof allowRowClickSelectionProp === 'boolean' ? allowRowClickSelectionProp : rowSelection !== 'multiple';
   const isServerSideRowModel = true;
@@ -2409,6 +2444,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     };
   }, [suppressSideBar]);
 
+  // GRID CONFIGURATION - Sidebar, Row ID, & Menu Handlers
   const getRowId = useCallback((params: GetRowIdParams<RowData>) => {
     const data = params.data as Record<string, unknown> | undefined;
     if (!data) return `row_${Date.now()}_${Math.random()}`;
@@ -2425,6 +2461,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     return `row_${Date.now()}_${Math.random()}`;
   }, []);
 
+  // GRID EVENT HANDLERS - Grid Ready, Context Menu, Headers
   const onGridReady = useCallback((e: GridReadyEvent) => {
     e.api.setGridOption('serverSideDatasource', datasource);
     
@@ -2476,6 +2513,8 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       externalGridReadyHandler(e.api);
     }
   }, [datasource, externalGridReadyHandler, handleContextMenuVisibleChanged, wrapGridApiRefreshers, shouldPersistColumnState, filterStateStorageKey, sortStateStorageKey, applySavedSortModel]);
+
+  // MENU HANDLERS - Context Menu & Header Menu
   const contextMenuItemsHandler = useCallback<GetContextMenuItems<RowData>>((params) => {
     const hasRowNode = Boolean(params.node);
     const autoSizeItems = hasRowNode ? resolveAutoSizeMenuItems(params) : [];
@@ -2638,6 +2677,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     // No automatic auto-size.
   };
 
+  // GRID EVENT HANDLERS - Filter, Sort, Model Updates
   const handleFilterChanged = useCallback((event: FilterChangedEvent) => {
     const model = event.api.getFilterModel() as Record<string, FilterDescriptor> | null;
     if (!model) {
@@ -2781,6 +2821,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     }
   }, [isGridReady, manualMode, shouldPersistColumnState]);
 
+  // EFFECTS - Tree Ordering, Refresh Token, Lifecycle
   useEffect(() => {
     if (refreshToken === 0) return;
     const api = gridRef.current?.api;
@@ -2792,6 +2833,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     requestRefresh(() => refreshServerSideData(api));
   }, [refreshToken, requestRefresh]);
 
+  // TREE ORDERING - Persistence & Server Reordering
   const persistTreeOrderingChanges = useCallback(() => {
     const runSave = async () => {
       const api = gridRef.current?.api;
@@ -2909,6 +2951,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     };
   }, [deriveParentPathFromNeighbors, getRowPath]);
 
+  // ROW DRAG & DROP - Drop Indicator & Drag Handlers
   const resolveDropIndicator = useCallback((event: RowDragMoveEvent<RowData>): RowDropIndicator | null => {
     const overNode = event.overNode ?? null;
     const rowId = overNode?.id ?? null;
@@ -2949,6 +2992,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     clearDropIndicator();
   }, [clearDropIndicator]);
 
+  // GRID EVENT HANDLERS - Row & Cell Value Changes
   const handleRowDoubleClick = useCallback((event: RowDoubleClickedEvent<RowData>) => {
     if (typeof externalRowDoubleClickHandler === 'function') {
       externalRowDoubleClickHandler(event);
@@ -3120,6 +3164,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     };
   }, [clearDropIndicator, useAgGridRowDrag]);
 
+  // EFFECTS - Row Drag, Context Menu Cleanup, API Refresh Wrapping
   useEffect(() => {
     const api = gridApiRef.current ?? gridRef.current?.api ?? null;
     return () => {
@@ -3132,8 +3177,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     wrapGridApiRefreshers(gridApiRef.current);
   }, [wrapGridApiRefreshers]);
 
-  // No refresh needed for context-menu highlighting; handled via direct DOM class updates above.
-
+  // RENDER - AgGridReact Component with All Props
   return (
     <div className={styles.container}>
       <div
