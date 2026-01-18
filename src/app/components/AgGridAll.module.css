@@ -324,15 +324,15 @@
   transition: opacity 140ms ease;
 }
 
-.gridShell :global(.ag-column-drop-wrapper),
-.gridShell :global(.ag-column-drop),
-.gridShell :global(.ag-column-drop-cell),
-.gridShell :global(.ag-column-drop-cell-button),
-.gridShell :global(.ag-column-drop-vertical),
-.gridShell :global(.ag-column-drop-empty-message),
-.gridShell :global(.ag-column-drop-vertical-empty-message),
-.gridShell :global(.ag-column-drop-vertical-title-bar),
-.gridShell :global(.ag-column-drop-horizontal) {
+.gridShell:not([data-allow-column-drop="true"]) :global(.ag-column-drop-wrapper),
+.gridShell:not([data-allow-column-drop="true"]) :global(.ag-column-drop),
+.gridShell:not([data-allow-column-drop="true"]) :global(.ag-column-drop-cell),
+.gridShell:not([data-allow-column-drop="true"]) :global(.ag-column-drop-cell-button),
+.gridShell:not([data-allow-column-drop="true"]) :global(.ag-column-drop-vertical),
+.gridShell:not([data-allow-column-drop="true"]) :global(.ag-column-drop-empty-message),
+.gridShell:not([data-allow-column-drop="true"]) :global(.ag-column-drop-vertical-empty-message),
+.gridShell:not([data-allow-column-drop="true"]) :global(.ag-column-drop-vertical-title-bar),
+.gridShell:not([data-allow-column-drop="true"]) :global(.ag-column-drop-horizontal) {
   display: none !important;
 }
 
@@ -347,6 +347,29 @@
 :global(.ag-column-drop-horizontal) {
   display: none !important;
 }
+/* Re-enable pivot/row-group drop zones when explicitly allowed */
+.gridShell[data-allow-column-drop="true"] :global(.ag-column-drop-wrapper),
+.gridShell[data-allow-column-drop="true"] :global(.ag-column-drop),
+.gridShell[data-allow-column-drop="true"] :global(.ag-column-drop-cell),
+.gridShell[data-allow-column-drop="true"] :global(.ag-column-drop-cell-button),
+.gridShell[data-allow-column-drop="true"] :global(.ag-column-drop-vertical),
+.gridShell[data-allow-column-drop="true"] :global(.ag-column-drop-empty-message),
+.gridShell[data-allow-column-drop="true"] :global(.ag-column-drop-vertical-empty-message),
+.gridShell[data-allow-column-drop="true"] :global(.ag-column-drop-vertical-title-bar),
+.gridShell[data-allow-column-drop="true"] :global(.ag-column-drop-horizontal) {
+  display: flex !important;
+}
+
+.gridShell[data-allow-column-drop="true"] :global(.ag-column-drop-cell),
+.gridShell[data-allow-column-drop="true"] :global(.ag-column-drop-cell-button) {
+  display: inline-flex !important;
+}
+
+.gridShell[data-allow-column-drop="true"] :global(.ag-column-drop-empty-message),
+.gridShell[data-allow-column-drop="true"] :global(.ag-column-drop-vertical-empty-message) {
+  display: block !important;
+}
+
 .gridShell :global(.ag-cell) {
   transition: background-color 140ms ease;
   cursor: default !important;

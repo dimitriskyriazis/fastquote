@@ -49,6 +49,8 @@ type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel;
 type GridRequest = {
   startRow?: number;
   endRow?: number;
+  allRows?: boolean;
+  view?: 'grid' | 'pivot';
   filterModel?: Record<string, KnownFilterModel> | null;
   quickFilterText?: string | null;
   sortModel?: Array<{ colId: string; sort: 'asc' | 'desc' }>;
@@ -66,6 +68,16 @@ const TREE_ORDERING_HIERARCHY_EXPRESSION = `
     ELSE TRY_CONVERT(hierarchyid, CONCAT('/', REPLACE(${TREE_ORDERING_RAW_EXPRESSION}, '.', '/'), '/'))
   END
 `;
+
+const TREE_ORDERING_ROOT_EXPRESSION = `
+  CASE
+    WHEN ${TREE_ORDERING_RAW_EXPRESSION} IS NULL THEN NULL
+    WHEN CHARINDEX('.', ${TREE_ORDERING_RAW_EXPRESSION}) > 0 THEN LEFT(${TREE_ORDERING_RAW_EXPRESSION}, CHARINDEX('.', ${TREE_ORDERING_RAW_EXPRESSION}) - 1)
+    ELSE ${TREE_ORDERING_RAW_EXPRESSION}
+  END
+`;
+
+const ALL_ROWS_LIMIT = 20000;
 
 type ProductRow = {
   ProductID: number | null;
@@ -235,6 +247,7 @@ const SELECT_FIELD_EXPRESSIONS: Record<string, string> = {
   ...COLUMN_EXPRESSIONS,
   ProductID: 'od.ProductID',
   ProductDescription: 'od.ProductDescription',
+  CategoryName: `NULLIF(LTRIM(RTRIM(cat.ProductDescription)), '')`,
 };
 
 const ORDER_EXPRESSION_OVERRIDES: Record<string, string | string[]> = {
@@ -985,13 +998,21 @@ export async function POST(
 
     const pool = await getPool();
     const gridRequest = body?.request ?? {};
+    const allRows = gridRequest.allRows === true;
+    const view = gridRequest.view === 'pivot' ? 'pivot' : 'grid';
     const startRow = gridRequest.startRow ?? 0;
     const endRow = gridRequest.endRow ?? startRow + 100;
     const windowSize = endRow > startRow ? endRow - startRow : 100;
-    const pageSize = Math.max(1, Math.min(1000, windowSize));
-    const offset = Math.max(0, startRow);
+    const pageSize = allRows ? ALL_ROWS_LIMIT : Math.max(1, Math.min(1000, windowSize));
+    const offset = allRows ? 0 : Math.max(0, startRow);
     const { clauses, params: filterParams } = buildFilterClauses(gridRequest.filterModel);
-    const whereClauses = [`od.OfferID = @__id`, ...clauses];
+    const viewClauses = view === 'pivot'
+      ? [
+          'ISNULL(od.IsCategory, 0) = 0',
+          'od.ProductID IS NOT NULL',
+        ]
+      : [];
+    const whereClauses = [`od.OfferID = @__id`, ...viewClauses, ...clauses];
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
     const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, PRODUCTS_QUICK_FILTER_COLUMNS);
     const combinedWhereSql = mergeWhereClauses(whereSql, quickFilterClause.clause);
@@ -1033,6 +1054,10 @@ export async function POST(
           MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription3,
           MAX(CASE WHEN od.RequestedQuantity IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedQuantity
         FROM dbo.OfferDetails od
+          LEFT OUTER JOIN dbo.OfferDetails cat
+            ON cat.OfferID = od.OfferID
+            AND ISNULL(cat.IsCategory, 0) = 1
+            AND NULLIF(LTRIM(RTRIM(cat.TreeOrdering)), '') = ${TREE_ORDERING_ROOT_EXPRESSION}
           LEFT OUTER JOIN dbo.Products p ON od.ProductID = p.ID
           LEFT OUTER JOIN dbo.Brands b ON p.BrandID = b.ID
           LEFT OUTER JOIN dbo.PriceLists pl ON od.PriceListID = pl.ID
@@ -1050,6 +1075,18 @@ export async function POST(
     const result = await sqlRequest.query<ProductRowWithCount>(query);
     const recordset = result.recordset ?? [];
     const rowCount = recordset.length > 0 ? Number(recordset[0].__totalCount ?? 0) : 0;
+
+    if (allRows && rowCount > ALL_ROWS_LIMIT) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Too many rows (${rowCount}) to load all at once. Please filter first, or increase ALL_ROWS_LIMIT.`,
+          rows: [],
+          rowCount,
+        },
+        { status: 413 },
+      );
+    }
     const totals: OfferProductTotals = recordset.length > 0
       ? {
         totalListPrice: normalizeAggregateValue(recordset[0].__sumTotalPrice ?? 0),

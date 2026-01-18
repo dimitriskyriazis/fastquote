@@ -63,6 +63,7 @@ import {
   TextFilterModule,
   EventApiModule,
   ModuleRegistry,
+  ColumnPivotModeChangedEvent,
 } from 'ag-grid-community';
 import {
   AggregationModule,
@@ -400,6 +401,8 @@ type Props = {
   columnDefs: ColDef[];
   columnWidthDefaults?: Record<string, ColumnWidthAssignment>;
   defaultColDef?: ColDef;
+  enablePivotMode?: boolean;
+  onPivotModeChanged?: (enabled: boolean, api: GridApi<RowData>) => void;
   manualMode?: boolean;
   requestPayload?: Record<string, unknown> | null;
   rowSelection?: 'single' | 'multiple';
@@ -969,6 +972,8 @@ export default function AgGridAll({
   columnDefs,
   columnWidthDefaults = {},
   defaultColDef,
+  enablePivotMode = false,
+  onPivotModeChanged,
   manualMode = false,
   requestPayload = null,
   rowSelection,
@@ -2356,9 +2361,16 @@ export default function AgGridAll({
       suppressHeaderMenuButton: true,
       width: 100,
       ...defaultColDef,
+      ...(enablePivotMode
+        ? {
+            enableRowGroup: true,
+            enableValue: true,
+            enablePivot: true,
+          }
+        : null),
       filterParams: mergedFilterParams,
     };
-  }, [defaultColDef, floatingFilter]);
+  }, [defaultColDef, enablePivotMode, floatingFilter]);
 
   const autoGroupColumnDef = useMemo<ColDef>(() => ({
     width: 210,
@@ -2662,6 +2674,19 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       externalGridReadyHandler(e.api);
     }
   }, [datasource, externalGridReadyHandler, handleContextMenuVisibleChanged, wrapGridApiRefreshers, shouldPersistColumnState, filterStateStorageKey, sortStateStorageKey, applySavedSortModel]);
+
+  const handleColumnPivotModeChanged = useCallback((event: ColumnPivotModeChangedEvent<RowData>) => {
+    const api = event.api ?? gridApiRef.current ?? gridRef.current?.api ?? null;
+    if (!api || api.isDestroyed?.()) return;
+    const enabled = typeof api.isPivotMode === 'function'
+      ? api.isPivotMode()
+      : typeof api.getGridOption === 'function'
+        ? Boolean(api.getGridOption('pivotMode'))
+        : false;
+    if (typeof onPivotModeChanged === 'function') {
+      onPivotModeChanged(enabled, api);
+    }
+  }, [onPivotModeChanged]);
 
   // MENU HANDLERS - Context Menu & Header Menu
   const contextMenuItemsHandler = useCallback<GetContextMenuItems<RowData>>((params) => {
@@ -3436,6 +3461,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           onColumnVisible={handleColumnVisible}
           onColumnResized={handleColumnResized}
           onColumnRowGroupChanged={handleColumnRowGroupChanged}
+          onColumnPivotModeChanged={handleColumnPivotModeChanged}
         />
       </div>
     </div>

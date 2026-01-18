@@ -614,6 +614,7 @@ type Props = {
   refreshToken?: number;
   showRequestedColumns?: boolean;
   tableLayout?: 'cust' | 'wCost' | 'wReq';
+  onRequestPivot?: () => void;
 };
 
 export type OfferProductsPanelHandle = {
@@ -630,6 +631,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   refreshToken = 0,
   showRequestedColumns = true,
   tableLayout = 'wReq',
+  onRequestPivot,
 }: Props, ref) => {
   const router = useRouter();
   const { userId } = useAuditUser();
@@ -1045,6 +1047,21 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     gridApiRef.current = api;
     setRequestedColumnsReadyFlag(true);
   }, [setRequestedColumnsReadyFlag]);
+
+  const handlePivotModeChanged = useCallback((enabled: boolean) => {
+    if (!enabled) return;
+    // Pivoting is handled in a separate (client-side) pivot view.
+    // We trigger it via the built-in Pivot Mode toggle from the Columns tool panel.
+    onRequestPivot?.();
+
+    // Immediately turn pivot mode back off on the SSRM grid to avoid triggering server-side pivot requests.
+    const api = gridApiRef.current;
+    try {
+      api?.setGridOption?.('pivotMode', false);
+    } catch {
+      /* noop */
+    }
+  }, [onRequestPivot]);
 
   const saveLayout = useCallback(() => {
     if (typeof window === 'undefined') return false;
@@ -2812,6 +2829,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             endpoint={dataEndpoint}
             columnDefs={productColumnDefs}
             defaultColDef={defaultColDef}
+            enablePivotMode
+            onPivotModeChanged={handlePivotModeChanged}
             manualMode={manualMode}
             getRowClass={getRowClass}
             getContextMenuItems={productContextMenuItems}

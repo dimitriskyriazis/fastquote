@@ -5,6 +5,7 @@ import Link from 'next/link';
 import PageHeader from '../../../components/PageHeader';
 import { GridQuickSearchProvider } from '../../../components/GridQuickSearchProvider';
 import OfferProductsPanel, { type OfferProductsPanelHandle } from '../OfferProductsPanel';
+import OfferProductsPivotPanel from './OfferProductsPivotPanel';
 import { showToastMessage } from '../../../../lib/toast';
 import { addRecentOffer } from '../../../lib/recentOffers';
 import LookupModal from '../../../components/LookupModal';
@@ -97,6 +98,8 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [showRequestedModal, setShowRequestedModal] = useState(false);
   const [tableLayout, setTableLayout] = useState<ProductsTableLayout>('wReq');
   const [showSaveLayoutModal, setShowSaveLayoutModal] = useState(false);
+  const [pivotView, setPivotView] = useState(false);
+  const [pivotLayout, setPivotLayout] = useState<'category' | 'brand' | 'categoryBrand' | 'discount'>('category');
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
   const layoutStorageKey = useMemo(() => buildLayoutStorageKey(userId), [userId]);
   const layoutLoadedRef = useRef<string | null>(null);
@@ -234,13 +237,15 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
       >
         {isUpdatingPrices ? 'Updating prices…' : 'Update Prices'}
       </button>
-      <button
-        type="button"
-        className={manualToggleClass}
-        onClick={() => setManualMode((prev) => !prev)}
-      >
-        Manual Mode
-      </button>
+      {pivotView ? null : (
+        <button
+          type="button"
+          className={manualToggleClass}
+          onClick={() => setManualMode((prev) => !prev)}
+        >
+          Manual Mode
+        </button>
+      )}
       <Link
         href={`/offers/${encodeURIComponent(offerId)}/basicdata`}
         className={`${layoutStyles.headerActionButton} page-header-button`}
@@ -300,6 +305,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
       className={`${toolbarStyles.layoutSaveButton} page-header-button`}
       onClick={handleSaveLayout}
       aria-label="Save layout"
+      disabled={pivotView}
     >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M5 4h10l4 4v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
@@ -308,6 +314,20 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
       </svg>
     </button>
   );
+
+  const pivotLayoutSelect = pivotView ? (
+    <select
+      className={`${toolbarStyles.layoutSelect} ${toolbarStyles.pivotLayoutSelect} page-header-button`}
+      value={pivotLayout}
+      onChange={(event) => setPivotLayout(event.target.value as typeof pivotLayout)}
+      aria-label="Pivot layout"
+    >
+      <option value="category">Pivot: Category</option>
+      <option value="brand">Pivot: Brand</option>
+      <option value="categoryBrand">Pivot: Category × Brand</option>
+      <option value="discount">Pivot: Discounts</option>
+    </select>
+  ) : null;
 
   return (
     <main className={layoutStyles.page}>
@@ -328,47 +348,64 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
             title={headingText}
             leftActions={
               <div className={toolbarStyles.leftRequestedRow}>
-                {addRequestedButton}
-                {layoutSelect}
-                {layoutSaveButton}
+                {pivotView ? (
+                  pivotLayoutSelect
+                ) : (
+                  <>
+                    {addRequestedButton}
+                    {layoutSelect}
+                    {layoutSaveButton}
+                  </>
+                )}
               </div>
             }
-            rightActions={addButtonGroup}
+            rightActions={pivotView ? null : addButtonGroup}
             className={pageHeaderStyles.headerRowBottom}
             hideTitle
           >
-            {showAddProductModal ? (
-              <div className={toolbarStyles.splitLayout}>
-                <div className={toolbarStyles.splitLeft}>
-                  <OfferProductsPanel
-                    ref={offerProductsPanelRef}
-                    offerId={offerId}
-                    manualMode={manualMode}
-                    refreshToken={refreshToken}
-                    showRequestedColumns={showRequestedColumns}
-                    tableLayout={tableLayout}
-                  />
+            <div className={toolbarStyles.contentArea}>
+              {pivotView ? (
+                <OfferProductsPivotPanel
+                  offerId={offerId}
+                  refreshToken={refreshToken}
+                  layout={pivotLayout}
+                  onExitPivot={() => setPivotView(false)}
+                />
+              ) : showAddProductModal ? (
+                <div className={toolbarStyles.splitLayout}>
+                  <div className={toolbarStyles.splitLeft}>
+                    <OfferProductsPanel
+                      ref={offerProductsPanelRef}
+                      offerId={offerId}
+                      manualMode={manualMode}
+                      refreshToken={refreshToken}
+                      showRequestedColumns={showRequestedColumns}
+                      tableLayout={tableLayout}
+                      onRequestPivot={() => setPivotView(true)}
+                    />
+                  </div>
+                  <div className={toolbarStyles.splitRight}>
+                    <AddProductsModal
+                      offerId={offerId}
+                      onAdded={handleProductsAdded}
+                      onClose={handleCloseModal}
+                      showRequestedColumns={showRequestedColumns}
+                      splitViewMode
+                    />
+                  </div>
                 </div>
-                <div className={toolbarStyles.splitRight}>
-                  <AddProductsModal
-                    offerId={offerId}
-                    onAdded={handleProductsAdded}
-                    onClose={handleCloseModal}
-                    showRequestedColumns={showRequestedColumns}
-                    splitViewMode
-                  />
-                </div>
-              </div>
-            ) : (
-              <OfferProductsPanel
-                ref={offerProductsPanelRef}
-                offerId={offerId}
-                manualMode={manualMode}
-                refreshToken={refreshToken}
-                showRequestedColumns={showRequestedColumns}
-                tableLayout={tableLayout}
-              />
-            )}
+              ) : (
+                <OfferProductsPanel
+                  ref={offerProductsPanelRef}
+                  offerId={offerId}
+                  manualMode={manualMode}
+                  refreshToken={refreshToken}
+                  showRequestedColumns={showRequestedColumns}
+                  tableLayout={tableLayout}
+                  onRequestPivot={() => setPivotView(true)}
+                />
+              )}
+            </div>
             <LookupModal
               open={showSaveLayoutModal}
               title="Save layout"
