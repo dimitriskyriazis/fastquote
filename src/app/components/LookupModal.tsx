@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, type CSSProperties } from 'react';
+import { useEffect, useState, useCallback, type CSSProperties } from 'react';
 import styles from './LookupModal.module.css';
 
 type Props = {
@@ -44,6 +44,19 @@ export default function LookupModal({
   footerClassName = '',
   confirmFirst = false,
 }: Props) {
+  const [showValidation, setShowValidation] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setShowValidation(false);
+    }
+  }, [open]);
+
+  const handleConfirm = useCallback(() => {
+    setShowValidation(true);
+    onConfirm();
+  }, [onConfirm]);
+
   useEffect(() => {
     if (!open) return undefined;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -86,6 +99,7 @@ export default function LookupModal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        data-show-validation={showValidation ? 'true' : 'false'}
         onClick={(event) => event.stopPropagation()}
       >
         <div className={`${styles.header} ${headerClassName}`.trim()}>
@@ -109,7 +123,7 @@ export default function LookupModal({
               <button
                 type="button"
                 className={styles.confirmButton}
-                onClick={onConfirm}
+                onClick={handleConfirm}
                 disabled={saving}
               >
                 {saving ? 'Saving…' : confirmLabel}
@@ -126,7 +140,7 @@ export default function LookupModal({
               <button
                 type="button"
                 className={styles.confirmButton}
-                onClick={onConfirm}
+                onClick={handleConfirm}
                 disabled={saving}
               >
                 {saving ? 'Saving…' : confirmLabel}

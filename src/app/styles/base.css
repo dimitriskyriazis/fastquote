@@ -88,6 +88,31 @@ select {
   caret-color: currentColor;
 }
 
+/* Shared validation styling: drive this via aria-invalid or native :invalid.
+   Add `noValidate` to forms so browser bubbles ("required") don't block our handlers. */
+input[aria-invalid="true"],
+textarea[aria-invalid="true"],
+select[aria-invalid="true"] {
+  border-color: #dc2626 !important;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.18) !important;
+  background: #fffafa !important;
+}
+
+:where([data-show-validation="true"]) input:invalid,
+:where([data-show-validation="true"]) textarea:invalid,
+:where([data-show-validation="true"]) select:invalid {
+  border-color: #dc2626 !important;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.18) !important;
+  background: #fffafa !important;
+}
+
+/* Non-form elements that should show an invalid outline (drop zones, read-only placeholders, etc.) */
+.fastquote-invalid-outline {
+  border-color: #dc2626 !important;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.14) !important;
+  background: #fffafa !important;
+}
+
 
 .page-header-button {
   border-radius: 999px;

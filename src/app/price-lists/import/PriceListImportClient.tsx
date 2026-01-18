@@ -486,6 +486,7 @@ export default function PriceListImportClient({
   const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [brandText, setBrandText] = useState("");
   const [brandError, setBrandError] = useState<string | null>(null);
   const [showBrandList, setShowBrandList] = useState(false);
@@ -833,6 +834,12 @@ export default function PriceListImportClient({
     [fileValidation.activeSheetIndex, fileValidation.sheets],
   );
 
+  const invalidDateRange = useMemo(() => {
+    const from = normalizeDate(values.validFromDate);
+    const to = normalizeDate(values.validToDate);
+    return Boolean(from && to && from > to);
+  }, [values.validFromDate, values.validToDate]);
+
   const previewColumns = useMemo<PreviewColumn[]>(() => {
     if (!activeSheet) return [];
     return PREVIEW_COLUMN_KEYS.map((key) => {
@@ -947,6 +954,7 @@ export default function PriceListImportClient({
   const handleSubmit = useCallback(async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    setShowValidationErrors(true);
 
     const missing: string[] = [];
     REQUIRED_FIELDS.forEach((field) => {
@@ -1094,7 +1102,13 @@ export default function PriceListImportClient({
       </div>
 
       <section className={styles.card}>
-        <form className={styles.form} onSubmit={handleSubmit} autoComplete="off">
+        <form
+          className={styles.form}
+          onSubmit={handleSubmit}
+          autoComplete="off"
+          noValidate
+          data-show-validation={showValidationErrors ? "true" : "false"}
+        >
           <div className={styles.formGrid}>
             <div className={styles.fieldStack}>
               <div className={styles.sectionHeading}>Price List Details</div>
@@ -1107,6 +1121,7 @@ export default function PriceListImportClient({
                     autoComplete="off"
                     className={styles.input}
                     value={values.name}
+                    required
                     onChange={(e) => updateField("name", e.target.value)}
                   />
                 </label>
@@ -1118,6 +1133,7 @@ export default function PriceListImportClient({
                     autoComplete="off"
                     className={`${styles.input} ${styles.comboInput}`}
                     value={brandText}
+                    aria-invalid={showValidationErrors && !values.brandId.trim()}
                     placeholder="Type to filter brands"
                     onChange={(e) => handleBrandInputChange(e.target.value)}
                     onFocus={(e) => {
@@ -1162,6 +1178,7 @@ export default function PriceListImportClient({
                   <select
                     className={styles.input}
                     value={values.pricingPolicyId}
+                    required
                     onChange={(e) => updateField("pricingPolicyId", e.target.value)}
                   >
                     <option value="">Select pricing policy</option>
@@ -1200,6 +1217,7 @@ export default function PriceListImportClient({
                   <select
                     className={styles.input}
                     value={values.responsibleUserId}
+                    required
                     onChange={(e) => updateField("responsibleUserId", e.target.value)}
                   >
                     <option value="">Select responsible user</option>
@@ -1213,6 +1231,7 @@ export default function PriceListImportClient({
                   <select
                     className={styles.input}
                     value={values.supplierId}
+                    required
                     onChange={(e) => updateField("supplierId", e.target.value)}
                   >
                     <option value="">Select supplier</option>
@@ -1229,6 +1248,7 @@ export default function PriceListImportClient({
                   <select
                     className={styles.input}
                     value={values.currencyId}
+                    required
                     onChange={(e) => updateField("currencyId", e.target.value)}
                   >
                     <option value="">Select currency</option>
@@ -1258,6 +1278,7 @@ export default function PriceListImportClient({
                     onChange={(value) => updateField("validFromDate", value)}
                     placeholder="DD/MM/YYYY"
                     className={styles.input}
+                    invalid={showValidationErrors && invalidDateRange}
                     required
                   />
                 </label>
@@ -1270,6 +1291,7 @@ export default function PriceListImportClient({
                     onChange={(value) => updateField("validToDate", value)}
                     placeholder="DD/MM/YYYY"
                     className={styles.input}
+                    invalid={showValidationErrors && invalidDateRange}
                     required
                   />
                 </label>
@@ -1358,7 +1380,7 @@ export default function PriceListImportClient({
             </div>
             <div className={styles.uploadCard}>
               <label
-                className={`${styles.uploadArea} ${isDragging ? styles.uploadAreaDragging : ""}`}
+                className={`${styles.uploadArea} ${showValidationErrors && !file ? 'fastquote-invalid-outline' : ''} ${isDragging ? styles.uploadAreaDragging : ""}`}
                 onDragOver={handleDragOver}
                 onDragEnter={handleDragOver}
                 onDragLeave={handleDragLeave}
@@ -1485,6 +1507,7 @@ export default function PriceListImportClient({
                                     </span>
                                     <select
                                       className={styles.input}
+                                      required={Boolean(column.required)}
                                       value={selectionValue}
                                       onChange={(e) =>
                                         updateColumnSelection(
@@ -1623,6 +1646,7 @@ export default function PriceListImportClient({
             id="import-pricing-policy-name"
             className={lookupStyles.fieldControl}
             value={newPricingPolicyName}
+            required
             onChange={(event) => setNewPricingPolicyName(event.target.value)}
           />
         </div>
@@ -1634,6 +1658,7 @@ export default function PriceListImportClient({
             id="import-pricing-policy-calc"
             className={lookupStyles.fieldControl}
             value={newPricingPolicyCalcMethod}
+            required
             onChange={(event) => setNewPricingPolicyCalcMethod(event.target.value)}
           >
             <option value="">Select calc method formula</option>
@@ -1676,6 +1701,7 @@ export default function PriceListImportClient({
             id="import-rule-name"
             className={lookupStyles.fieldControl}
             value={newRuleName}
+            required
             onChange={(event) => setNewRuleName(event.target.value)}
           />
         </div>
@@ -1687,6 +1713,7 @@ export default function PriceListImportClient({
             id="import-rule-pricing-policy"
             className={lookupStyles.fieldControl}
             value={newRulePricingPolicyId}
+            required
             onChange={(event) => setNewRulePricingPolicyId(event.target.value)}
           >
             <option value="">Select pricing policy</option>
@@ -1705,6 +1732,7 @@ export default function PriceListImportClient({
             id="import-rule-brand"
             className={lookupStyles.fieldControl}
             value={newRuleBrandId}
+            required
             onChange={(event) => setNewRuleBrandId(event.target.value)}
           >
             <option value="">Select brand</option>
@@ -1723,6 +1751,7 @@ export default function PriceListImportClient({
             id="import-rule-telmaco"
             className={lookupStyles.fieldControl}
             value={newRuleTelmaco}
+            required
             onChange={(event) => setNewRuleTelmaco(event.target.value)}
           />
         </div>
@@ -1734,6 +1763,7 @@ export default function PriceListImportClient({
             id="import-rule-customer"
             className={lookupStyles.fieldControl}
             value={newRuleCustomer}
+            required
             onChange={(event) => setNewRuleCustomer(event.target.value)}
           />
         </div>

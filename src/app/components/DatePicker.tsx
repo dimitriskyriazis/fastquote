@@ -16,30 +16,28 @@ type DatePickerProps = {
   className?: string;
   disabled?: boolean;
   required?: boolean;
+  invalid?: boolean;
   minDate?: Date;
   maxDate?: Date;
 };
 
-const CustomInput = forwardRef<HTMLInputElement, {
+type CustomInputProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type' | 'value'> & {
   value?: string;
-  onClick?: () => void;
-  placeholder?: string;
-  className?: string;
-  disabled?: boolean;
-  required?: boolean;
-}>(({ value, onClick, placeholder, className, disabled, required }, ref) => (
+};
+
+const CustomInput = forwardRef<HTMLInputElement, CustomInputProps>((props, ref) => {
+  const { value, className, ...rest } = props;
+  return (
   <input
     ref={ref}
     type="text"
-    value={value}
-    onClick={onClick}
-    placeholder={placeholder}
+    value={value ?? ''}
     className={className}
-    disabled={disabled}
-    required={required}
     readOnly
+    {...rest}
   />
-));
+  );
+});
 
 CustomInput.displayName = 'CustomInput';
 
@@ -50,6 +48,7 @@ export default function UKDatePicker({
   className,
   disabled = false,
   required = false,
+  invalid = false,
   minDate,
   maxDate,
 }: DatePickerProps) {
@@ -81,7 +80,14 @@ export default function UKDatePicker({
       required={required}
       minDate={minDate}
       maxDate={maxDate}
-      customInput={<CustomInput required={required} disabled={disabled} placeholder={placeholder} />}
+      customInput={(
+        <CustomInput
+          required={required}
+          disabled={disabled}
+          placeholder={placeholder}
+          aria-invalid={invalid || undefined}
+        />
+      )}
       showYearDropdown
       showMonthDropdown
       dropdownMode="select"

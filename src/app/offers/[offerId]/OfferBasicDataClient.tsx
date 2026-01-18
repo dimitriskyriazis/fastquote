@@ -640,6 +640,7 @@ const renderFieldControl = (
             id="offer-basic-pricing-policy-name"
             className={lookupStyles.fieldControl}
             value={newPricingPolicyName}
+            required
             onChange={(event) => setNewPricingPolicyName(event.target.value)}
           />
         </div>
@@ -651,6 +652,7 @@ const renderFieldControl = (
             id="offer-basic-pricing-policy-calc"
             className={lookupStyles.fieldControl}
             value={newPricingPolicyCalcMethod}
+            required
             onChange={(event) => setNewPricingPolicyCalcMethod(event.target.value)}
           >
             <option value="">Select calc method formula</option>

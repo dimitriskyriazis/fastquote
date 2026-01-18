@@ -174,6 +174,8 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
     }
   }, [form, onAdded, onClose]);
 
+  const isModelOrPartInvalid = formError === 'Please provide a part number or model number.';
+
   const brandOptions = lookups?.brands ?? [];
   const typeOptions = lookups?.types ?? [];
   const categoryOptions = lookups?.categories ?? [];
@@ -202,6 +204,7 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
             id="product-brand"
             className={lookupStyles.fieldControl}
             value={form.brandId}
+            required
             onChange={(event) => updateFormField('brandId', event.target.value)}
             disabled={lookupsLoading}
           >
@@ -277,6 +280,7 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
           <input
             id="product-model"
             className={lookupStyles.fieldControl}
+            aria-invalid={isModelOrPartInvalid}
             value={form.modelNumber}
             onChange={(event) => updateFormField('modelNumber', event.target.value)}
           />
@@ -288,6 +292,7 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
           <input
             id="product-part"
             className={lookupStyles.fieldControl}
+            aria-invalid={isModelOrPartInvalid}
             value={form.partNumber}
             onChange={(event) => updateFormField('partNumber', event.target.value)}
           />
@@ -326,6 +331,7 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
             className={lookupStyles.fieldControl}
             rows={3}
             value={form.description}
+            required
             onChange={(event) => updateFormField('description', event.target.value)}
           />
         </div>

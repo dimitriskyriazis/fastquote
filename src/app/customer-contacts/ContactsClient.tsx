@@ -578,6 +578,7 @@ export default function ContactsClient({ statuses, importances, customers, title
                 autoComplete="off"
                 className={`${styles.fieldControl} ${styles.comboInput}`}
                 value={customerText}
+                aria-invalid={Boolean(contactError) && !(contactForm.customerId ?? "").trim()}
                 placeholder="Type to search customers"
                 onFocus={handleCustomerInputFocus}
                 onBlur={handleCustomerInputBlur}
@@ -616,6 +617,7 @@ export default function ContactsClient({ statuses, importances, customers, title
                 id="contact-title"
                 className={styles.fieldControl}
                 value={contactForm.titleId}
+                required
                 onChange={(event) => setContactField("titleId", event.target.value)}
               >
                 <option value="">Select title...</option>
@@ -634,6 +636,7 @@ export default function ContactsClient({ statuses, importances, customers, title
               id="contact-last-name"
               className={styles.fieldControl}
               value={contactForm.lastName}
+              required
               onChange={(event) => setContactField("lastName", event.target.value)}
             />
           </div>
@@ -645,6 +648,7 @@ export default function ContactsClient({ statuses, importances, customers, title
               id="contact-first-name"
               className={styles.fieldControl}
               value={contactForm.firstName}
+              required
               onChange={(event) => setContactField("firstName", event.target.value)}
             />
           </div>
@@ -667,6 +671,7 @@ export default function ContactsClient({ statuses, importances, customers, title
               id="contact-importance"
               className={styles.fieldControl}
               value={contactForm.importance}
+              required
               onChange={(event) => setContactField("importance", event.target.value)}
             >
               <option value="">Select importance...</option>
@@ -789,6 +794,7 @@ export default function ContactsClient({ statuses, importances, customers, title
             id="new-title-name"
             className={lookupStyles.fieldControl}
             value={newTitleName}
+            required
             onChange={(event) => setNewTitleName(event.target.value)}
           />
         </div>

@@ -136,6 +136,13 @@
   position: relative;
 }
 
+/* Validation / missing required data (global class to avoid CSS-module hashing issues) */
+.gridShell :global(.ag-cell.fastquote-invalid-cell) {
+  background-color: rgba(248, 113, 113, 0.32) !important;
+  /* Strong red outline without layout shift */
+  box-shadow: inset 0 0 0 2px rgba(220, 38, 38, 0.95) !important;
+}
+
 .gridShell :global(.ag-header-cell[col-id="agSelectionColumn"]),
 .gridShell :global(.ag-cell[col-id="agSelectionColumn"]) {
   width: 0 !important;

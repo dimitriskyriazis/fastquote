@@ -956,6 +956,7 @@ export default function CustomerBasicDataClient({
             id="customer-pricing-policy-name"
             className={lookupStyles.fieldControl}
             value={newPricingPolicyName}
+            required
             onChange={(event) => setNewPricingPolicyName(event.target.value)}
           />
         </div>
@@ -967,6 +968,7 @@ export default function CustomerBasicDataClient({
             id="customer-pricing-policy-calc"
             className={lookupStyles.fieldControl}
             value={newPricingPolicyCalcMethod}
+            required
             onChange={(event) => setNewPricingPolicyCalcMethod(event.target.value)}
           >
             <option value="">Select calc method formula</option>
@@ -1012,6 +1014,7 @@ export default function CustomerBasicDataClient({
             id="customer-country-name"
             className={lookupStyles.fieldControl}
             value={newCountryName}
+            required
             onChange={(event) => setNewCountryName(event.target.value)}
           />
         </div>
@@ -1050,6 +1053,7 @@ export default function CustomerBasicDataClient({
             id="customer-city-name"
             className={lookupStyles.fieldControl}
             value={newCityName}
+            required
             onChange={(event) => setNewCityName(event.target.value)}
           />
         </div>
@@ -1061,6 +1065,7 @@ export default function CustomerBasicDataClient({
             id="customer-city-country"
             className={lookupStyles.fieldControl}
             value={newCityCountryId}
+            required
             onChange={(event) => setNewCityCountryId(event.target.value)}
           >
             <option value="">Select country</option>

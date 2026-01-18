@@ -581,6 +581,8 @@ export default function OfferCreateClient({
     const value = values[field.id as keyof FormValues];
     const error = fieldErrors[field.id as keyof FormValues];
     const disabled = field.readOnly || (field.dependsOnCustomer && !values.customerId) || submitting;
+    const invalid = Boolean(error);
+    const showErrorText = typeof error === 'string' && error.length > 0 && error !== 'Required';
 
     if (field.id === 'customerId') {
       const filtered = customerText.trim()
@@ -597,6 +599,7 @@ export default function OfferCreateClient({
             autoComplete="off"
             id={fieldId}
             className={`${panelStyles.fieldControl} ${styles.comboInput}`}
+            aria-invalid={invalid}
             value={customerText}
             disabled={submitting}
             placeholder="Type to filter customers"
@@ -625,7 +628,7 @@ export default function OfferCreateClient({
               ))}
             </div>
           ) : null}
-          {error ? <div className={styles.fieldError}>{error}</div> : null}
+          {showErrorText ? <div className={styles.fieldError}>{error}</div> : null}
         </div>
       );
     }
@@ -645,7 +648,7 @@ export default function OfferCreateClient({
       return (
         <div className={styles.controlStack}>
           {isDisabled && dependsOnCustomer ? (
-            <div className={panelStyles.fieldReadonly}>
+            <div className={`${panelStyles.fieldReadonly} ${invalid ? 'fastquote-invalid-outline' : ''}`}>
               {placeholder}
             </div>
           ) : (
@@ -653,8 +656,10 @@ export default function OfferCreateClient({
               id={fieldId}
               name={field.id}
               className={panelStyles.fieldControl}
+              aria-invalid={invalid}
               value={value}
               disabled={isDisabled}
+              required={field.required}
               onChange={(event) => {
                 const newValue = event.target.value;
                 handleChange(field.id as keyof FormValues, newValue);
@@ -677,7 +682,7 @@ export default function OfferCreateClient({
                   : contactLoadError || (contactOptions.length === 0 ? 'No contacts found yet for this customer.' : null)}
             </div>
           ) : null}
-          {error ? <div className={styles.fieldError}>{error}</div> : null}
+          {showErrorText ? <div className={styles.fieldError}>{error}</div> : null}
         </div>
       );
     }
@@ -690,13 +695,15 @@ export default function OfferCreateClient({
             id={fieldId}
             name={field.id}
             className={`${panelStyles.fieldControl} ${panelStyles.fieldControlMultiline}`}
+            aria-invalid={invalid}
             value={value}
             disabled={disabled}
+            required={field.required}
             onChange={(event) => {
               handleChange(field.id as keyof FormValues, event.target.value);
             }}
           />
-          {error ? <div className={styles.fieldError}>{error}</div> : null}
+          {showErrorText ? <div className={styles.fieldError}>{error}</div> : null}
         </div>
       );
     }
@@ -713,8 +720,9 @@ export default function OfferCreateClient({
             className={panelStyles.fieldControl}
             disabled={disabled}
             required={field.required}
+            invalid={invalid}
           />
-          {error ? <div className={styles.fieldError}>{error}</div> : null}
+          {showErrorText ? <div className={styles.fieldError}>{error}</div> : null}
         </div>
       );
     }
@@ -726,15 +734,17 @@ export default function OfferCreateClient({
           id={fieldId}
           name={field.id}
           className={panelStyles.fieldControl}
+          aria-invalid={invalid}
           type={field.inputType ?? 'text'}
           value={value}
           disabled={disabled}
+          required={field.required}
           onChange={(event) => {
             handleChange(field.id as keyof FormValues, event.target.value);
           }}
           readOnly={field.readOnly}
         />
-        {error ? <div className={styles.fieldError}>{error}</div> : null}
+        {showErrorText ? <div className={styles.fieldError}>{error}</div> : null}
       </div>
     );
   };
@@ -786,7 +796,14 @@ export default function OfferCreateClient({
 
   return (
     <>
-      <form id={formId} className={styles.form} onSubmit={handleSubmit} autoComplete="off">
+      <form
+        id={formId}
+        className={styles.form}
+        onSubmit={handleSubmit}
+        autoComplete="off"
+        noValidate
+        data-show-validation={Object.keys(fieldErrors).length > 0 ? 'true' : 'false'}
+      >
         <section className={panelStyles.panel}>
           <div className={`${panelStyles.section} ${panelStyles.sectionCard} ${panelStyles.generalSection}`}>
             <div className={panelStyles.sectionHeading}>{SECTION_METADATA.general.title}</div>
@@ -827,6 +844,7 @@ export default function OfferCreateClient({
             id="offer-pricing-policy-name"
             className={lookupStyles.fieldControl}
             value={newPricingPolicyName}
+            required
             onChange={(event) => setNewPricingPolicyName(event.target.value)}
           />
         </div>
@@ -838,6 +856,7 @@ export default function OfferCreateClient({
             id="offer-pricing-policy-calc"
             className={lookupStyles.fieldControl}
             value={newPricingPolicyCalcMethod}
+            required
             onChange={(event) => setNewPricingPolicyCalcMethod(event.target.value)}
           >
             <option value="">Select calc method formula</option>

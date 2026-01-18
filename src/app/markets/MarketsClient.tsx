@@ -360,6 +360,7 @@ export default function MarketsClient({ salesDivisions }: Props) {
               id="market-name"
               className={styles.fieldControl}
               value={marketForm.name}
+              required
               onChange={(event) => setMarketField("name", event.target.value)}
             />
           </div>

@@ -29,3 +29,19 @@
   align-items: center;
   gap: 4px;
 }
+
+.fieldHeaderWithLookup {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 0;
+}
+
+.lookupButtonRaised {
+  flex: 0 0 auto;
+}
+
+.pricingPolicyNudgeUp {
+  transform: translateY(-10px);
+}

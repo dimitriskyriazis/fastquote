@@ -313,6 +313,7 @@ export default function CustomerGroupsClient() {
               id="group-name"
               className={styles.fieldControl}
               value={groupForm.name}
+              required
               onChange={(event) => setGroupField("name", event.target.value)}
             />
           </div>

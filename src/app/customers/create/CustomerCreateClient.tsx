@@ -283,6 +283,10 @@ export default function CustomerCreateClient({
         next[field.id] = '1';
         return;
       }
+      if (field.id === 'importance') {
+        next[field.id] = field.options?.[0]?.value ?? '';
+        return;
+      }
       next[field.id] = '';
     });
     return next;
@@ -577,23 +581,23 @@ export default function CustomerCreateClient({
     (fieldId: string) => {
       if (fieldId === 'pricingPolicy') {
         return (
-        <button
-          type="button"
-          className={lookupButtonStyles.lookupAddButton}
-          onClick={openPricingPolicyModal}
-          disabled={calcMethodFormulas.length === 0 || pricingPolicySaving}
-        >
-            Add Pricing Policy
+          <button
+            type="button"
+            className={lookupButtonStyles.lookupAddButton}
+            onClick={openPricingPolicyModal}
+            disabled={calcMethodFormulas.length === 0 || pricingPolicySaving}
+          >
+            Add new
           </button>
         );
       }
       if (fieldId === 'country') {
         return (
-        <button
-          type="button"
-          className={lookupButtonStyles.lookupAddButton}
-          onClick={openCountryModal}
-          disabled={countrySaving}
+          <button
+            type="button"
+            className={lookupButtonStyles.lookupAddButton}
+            onClick={openCountryModal}
+            disabled={countrySaving}
           >
             Add Country
           </button>
@@ -601,11 +605,11 @@ export default function CustomerCreateClient({
       }
       if (fieldId === 'city') {
         return (
-        <button
-          type="button"
-          className={lookupButtonStyles.lookupAddButton}
-          onClick={openCityModal}
-          disabled={citySaving || countryOptions.length === 0}
+          <button
+            type="button"
+            className={lookupButtonStyles.lookupAddButton}
+            onClick={openCityModal}
+            disabled={citySaving || countryOptions.length === 0}
           >
             Add City
           </button>
@@ -629,6 +633,7 @@ export default function CustomerCreateClient({
     const value = values[field.id] ?? '';
     const fieldError = errors[field.id];
     const hasError = Boolean(fieldError);
+    const showErrorText = typeof fieldError === 'string' && fieldError.length > 0 && fieldError !== 'Required';
     const className = `${panelStyles.fieldControl} ${hasError ? panelStyles.fieldControlError : ''}`;
 
     if (field.type === 'select') {
@@ -641,6 +646,7 @@ export default function CustomerCreateClient({
             : 'No cities available'
         : 'Select...';
       const isDisabled = field.dependsOnCountry ? !selectedCountryId : false;
+      const showEmptyOption = field.id !== 'importance' || options.length === 0;
 
       return (
         <>
@@ -650,9 +656,11 @@ export default function CustomerCreateClient({
             className={className}
             value={value}
             disabled={isDisabled}
+            required={Boolean(field.required)}
+            aria-invalid={hasError}
             onChange={(event) => handleChange(field.id, event.target.value)}
           >
-            <option value="">{placeholder}</option>
+            {showEmptyOption ? <option value="">{placeholder}</option> : null}
             {options.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -668,7 +676,7 @@ export default function CustomerCreateClient({
                   : null}
             </div>
           ) : null}
-          {fieldError ? <div className={styles.fieldError}>{fieldError}</div> : null}
+          {showErrorText ? <div className={styles.fieldError}>{fieldError}</div> : null}
         </>
       );
     }
@@ -682,9 +690,11 @@ export default function CustomerCreateClient({
             className={`${className} ${panelStyles.fieldControlMultiline}`}
             value={value}
             placeholder={field.placeholder}
+            required={Boolean(field.required)}
+            aria-invalid={hasError}
             onChange={(event) => handleChange(field.id, event.target.value)}
           />
-          {fieldError ? <div className={styles.fieldError}>{fieldError}</div> : null}
+          {showErrorText ? <div className={styles.fieldError}>{fieldError}</div> : null}
         </>
       );
     }
@@ -698,9 +708,11 @@ export default function CustomerCreateClient({
           type={field.inputType ?? 'text'}
           value={value}
           placeholder={field.placeholder}
+          required={Boolean(field.required)}
+          aria-invalid={hasError}
           onChange={(event) => handleChange(field.id, event.target.value)}
         />
-        {fieldError ? <div className={styles.fieldError}>{fieldError}</div> : null}
+        {showErrorText ? <div className={styles.fieldError}>{fieldError}</div> : null}
       </>
     );
   };
@@ -721,17 +733,29 @@ export default function CustomerCreateClient({
                 : field.span === -1
                   ? panelStyles.fieldFull
                   : '';
+            const lookupButton = renderLookupAddButton(field.id);
+            const hasLookupButton = Boolean(lookupButton);
+            const pricingPolicyNudgeClass = field.id === 'pricingPolicy' ? styles.pricingPolicyNudgeUp : '';
             return (
-              <div key={field.id} className={`${panelStyles.fieldBlock} ${spanClass}`}>
-                <label className={panelStyles.fieldLabel} htmlFor={`customer-create-${field.id}`}>
-                  <div className={styles.labelRow}>
+              <div key={field.id} className={`${panelStyles.fieldBlock} ${spanClass} ${pricingPolicyNudgeClass}`}>
+                {hasLookupButton ? (
+                  <div className={styles.fieldHeaderWithLookup}>
+                    <label className={panelStyles.fieldLabel} htmlFor={`customer-create-${field.id}`}>
+                      <div className={styles.labelText}>
+                        {field.label}
+                        {field.required ? <span className={styles.requiredMark}>*</span> : null}
+                      </div>
+                    </label>
+                    <div className={styles.lookupButtonRaised}>{lookupButton}</div>
+                  </div>
+                ) : (
+                  <label className={panelStyles.fieldLabel} htmlFor={`customer-create-${field.id}`}>
                     <div className={styles.labelText}>
                       {field.label}
                       {field.required ? <span className={styles.requiredMark}>*</span> : null}
                     </div>
-                    {renderLookupAddButton(field.id)}
-                  </div>
-                </label>
+                  </label>
+                )}
                 {renderFieldControl(field)}
                 {field.hint ? <div className={panelStyles.inlineHint}>{field.hint}</div> : null}
               </div>
@@ -746,7 +770,14 @@ export default function CustomerCreateClient({
 
   return (
     <>
-      <form id={formId} className={styles.form} onSubmit={handleSubmit} autoComplete="off">
+      <form
+        id={formId}
+        className={styles.form}
+        onSubmit={handleSubmit}
+        autoComplete="off"
+        noValidate
+        data-show-validation={Object.keys(errors).length > 0 ? 'true' : 'false'}
+      >
         <section className={panelStyles.panel}>
           {renderSectionCard('general')}
           <div className={panelStyles.sectionsGrid}>
@@ -771,6 +802,7 @@ export default function CustomerCreateClient({
             id="new-pricing-policy-name"
             className={lookupStyles.fieldControl}
             value={newPricingPolicyName}
+            required
             onChange={(event) => setNewPricingPolicyName(event.target.value)}
           />
         </div>
@@ -782,6 +814,7 @@ export default function CustomerCreateClient({
             id="new-pricing-policy-calc"
             className={lookupStyles.fieldControl}
             value={newPricingPolicyCalcMethod}
+            required
             onChange={(event) => setNewPricingPolicyCalcMethod(event.target.value)}
           >
             <option value="">Select calc method formula</option>
@@ -827,6 +860,7 @@ export default function CustomerCreateClient({
             id="new-country-name"
             className={lookupStyles.fieldControl}
             value={newCountryName}
+            required
             onChange={(event) => setNewCountryName(event.target.value)}
           />
         </div>
@@ -865,6 +899,7 @@ export default function CustomerCreateClient({
             id="new-city-name"
             className={lookupStyles.fieldControl}
             value={newCityName}
+            required
             onChange={(event) => setNewCityName(event.target.value)}
           />
         </div>
@@ -876,6 +911,7 @@ export default function CustomerCreateClient({
             id="new-city-country"
             className={lookupStyles.fieldControl}
             value={newCityCountryId}
+            required
             onChange={(event) => setNewCityCountryId(event.target.value)}
           >
             <option value="">Select country</option>

@@ -12,6 +12,7 @@ import { AgGridReact } from 'ag-grid-react';
 import {
   CellContextMenuEvent,
   CellEditingStartedEvent,
+  CellClassParams,
   CellMouseDownEvent,
   CellRange,
   CellRangeParams,
@@ -1198,6 +1199,19 @@ export default function AgGridAll({
 
   // COLUMN DEFINITIONS - Processing & Width Management
   type ColumnDefinitionWithChildren = ColDef & { children?: ColDef[] };
+  const invalidCellKeysRef = useRef<Set<string>>(new Set());
+  const makeInvalidCellKey = useCallback((rowId: string, colId: string) => `${rowId}::${colId}`, []);
+  const invalidCellClassName = 'fastquote-invalid-cell';
+  const isInvalidCell = useCallback((params: CellClassParams<RowData>) => {
+    const rowId = params.node?.id ?? null;
+    const colId =
+      params.column?.getColId?.()
+      ?? (typeof params.colDef?.colId === 'string' ? params.colDef.colId : null)
+      ?? (typeof params.colDef?.field === 'string' ? params.colDef.field : null);
+    if (!rowId || !colId) return false;
+    return invalidCellKeysRef.current.has(makeInvalidCellKey(String(rowId), String(colId)));
+  }, [makeInvalidCellKey]);
+
   const persistedColumnWidths = useMemo<Record<string, number>>(() => {
     if (!shouldPersistColumnState || !columnStateStorageKey || typeof window === 'undefined') {
       return {};
@@ -1220,6 +1234,24 @@ export default function AgGridAll({
           ...definition,
           enableRowGroup: false,
         }));
+    const attachValidationClassRules = (definitions: ColumnDefinitionWithChildren[]): ColumnDefinitionWithChildren[] => (
+      definitions.map((definition) => {
+        const next: ColumnDefinitionWithChildren = { ...definition };
+        const existingRules =
+          typeof next.cellClassRules === 'object' && next.cellClassRules !== null
+            ? next.cellClassRules
+            : {};
+        next.cellClassRules = {
+          ...existingRules,
+          [invalidCellClassName]: isInvalidCell,
+        };
+        const children = definition.children;
+        if (Array.isArray(children) && children.length > 0) {
+          next.children = attachValidationClassRules(children);
+        }
+        return next;
+      })
+    );
     const applyDefaults = (definitions: ColumnDefinitionWithChildren[]): ColumnDefinitionWithChildren[] => definitions.map(
       (definition) => {
         const next: ColumnDefinitionWithChildren = { ...definition };
@@ -1246,7 +1278,7 @@ export default function AgGridAll({
         return next;
       },
     );
-    const baseWithDefaults = applyDefaults(base);
+    const baseWithDefaults = applyDefaults(attachValidationClassRules(base));
     if (!shouldPersistColumnState || Object.keys(persistedColumnWidths).length === 0) {
       return baseWithDefaults;
     }
@@ -1269,7 +1301,15 @@ export default function AgGridAll({
       },
     );
     return applyWidths(baseWithDefaults);
-  }, [columnDefs, persistedColumnWidths, shouldPersistColumnState, resolvedColumnWidthDefaults, suppressRowGroup]);
+  }, [
+    columnDefs,
+    invalidCellClassName,
+    isInvalidCell,
+    persistedColumnWidths,
+    shouldPersistColumnState,
+    resolvedColumnWidthDefaults,
+    suppressRowGroup,
+  ]);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingExternalRefreshRef = useRef<number | null>(null);
   const contextMenuRowIdRef = useRef<string | null>(null);
@@ -2949,6 +2989,16 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       if (!api) return;
       const updates = collectTreeOrderingUpdates(api);
       if (updates.length === 0) return;
+      const invalid = updates.filter((entry) => normalizeTreeOrderingValue(entry.TreeOrdering) == null);
+      if (invalid.length > 0) {
+        invalid.forEach((entry) => {
+          const rowId = String(entry.OfferDetailID);
+          invalidCellKeysRef.current.add(makeInvalidCellKey(rowId, 'TreeOrdering'));
+        });
+        requestRefresh(() => api.refreshCells({ columns: ['TreeOrdering'], force: true }));
+        showToastMessage('Item No is required. Please fill the missing cells highlighted in red.', 'error');
+        return;
+      }
       try {
         const res = await fetch(endpoint, {
           method: 'PUT',
@@ -2968,6 +3018,22 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       } catch (err) {
         console.error('Failed to persist tree ordering', err);
         showToastMessage('Unable to save tree ordering. Reloading data…', 'error');
+        try {
+          api.forEachNode((node) => {
+            const rowId = node?.id ? String(node.id) : null;
+            if (!rowId) return;
+            const currentOrdering = normalizeTreeOrderingValue((node.data as { TreeOrdering?: unknown } | null | undefined)?.TreeOrdering ?? null);
+            const key = makeInvalidCellKey(rowId, 'TreeOrdering');
+            if (currentOrdering == null) {
+              invalidCellKeysRef.current.add(key);
+            } else {
+              invalidCellKeysRef.current.delete(key);
+            }
+          });
+          requestRefresh(() => api.refreshCells({ columns: ['TreeOrdering'], force: true }));
+        } catch {
+          /* noop */
+        }
         refreshServerSideData(api, { purge: false });
         throw err;
       }
@@ -2975,7 +3041,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     const chained = saveQueueRef.current.then(() => runSave());
     saveQueueRef.current = chained.catch(() => {});
     return chained;
-  }, [endpoint]);
+  }, [endpoint, makeInvalidCellKey, requestRefresh]);
 
   type ReorderContext = {
     sourceId?: string | null;
@@ -3110,6 +3176,18 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 
   const handleCellValueChanged = useCallback((event: CellValueChangedEvent<RowData>) => {
     if (manualMode && event.colDef.field === 'TreeOrdering') {
+      const rowId = event.node?.id ? String(event.node.id) : null;
+      const normalized = normalizeTreeOrderingValue(event.newValue ?? null);
+      if (rowId) {
+        const key = makeInvalidCellKey(rowId, 'TreeOrdering');
+        if (normalized == null) {
+          invalidCellKeysRef.current.add(key);
+          requestRefresh(() => event.api.refreshCells({ rowNodes: [event.node], columns: ['TreeOrdering'], force: true }));
+          showToastMessage('Item No is required.', 'error');
+          return;
+        }
+        invalidCellKeysRef.current.delete(key);
+      }
       event.api.applyColumnState({
         state: [{ colId: 'TreeOrdering', sort: 'asc', sortIndex: 0 }],
         defaultState: { sort: null },
@@ -3122,7 +3200,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     if (typeof externalCellValueChangeHandler === 'function') {
       externalCellValueChangeHandler(event);
     }
-  }, [manualMode, persistTreeOrderingChanges, externalCellValueChangeHandler, requestRefresh]);
+  }, [externalCellValueChangeHandler, makeInvalidCellKey, manualMode, persistTreeOrderingChanges, requestRefresh]);
 
   const handleSelectionChanged = useCallback((event: SelectionChangedEvent<RowData>) => {
     if (typeof externalSelectionChangedHandler !== 'function') return;
