@@ -524,14 +524,16 @@ request.input('__modifiedBy', sql.Int, auditUserId);
         0 AS WarrantyValue,
         price.PriceListID,
         price.PriceListItemID,
-        price.ListPrice
+        price.ListPrice,
+        price.CostPrice
       FROM ProvidedProducts p
         INNER JOIN dbo.Products pr ON pr.ID = p.ProductID
         OUTER APPLY (
           SELECT TOP (1)
             pli.ID AS PriceListItemID,
             pli.PriceListID,
-            pli.ListPrice
+            pli.ListPrice,
+            pli.CostPrice
           FROM dbo.PriceListItems pli
             INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
           WHERE pli.ProductID = p.ProductID
@@ -601,10 +603,10 @@ request.input('__modifiedBy', sql.Int, auditUserId);
       CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
       COALESCE(discounts.TelmacoDiscountPercentage, 0),
       COALESCE(discounts.CustomerDiscountPercentage, 0),
-      CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
+      COALESCE(p.CostPrice, p.ListPrice),
       0,
       0,
-      CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
+      CASE WHEN COALESCE(p.CostPrice, p.ListPrice) IS NULL THEN NULL ELSE COALESCE(p.CostPrice, p.ListPrice) END,
       p.PriceListID,
       p.PriceListItemID,
       SYSUTCDATETIME(),
@@ -703,13 +705,15 @@ async function handleAssignProductToRequestedRow(
         0 AS WarrantyValue,
         price.PriceListID,
         price.PriceListItemID,
-        price.ListPrice
+        price.ListPrice,
+        price.CostPrice
       FROM dbo.Products pr
       OUTER APPLY (
         SELECT TOP (1)
           pli.ID AS PriceListItemID,
           pli.PriceListID,
-          pli.ListPrice
+          pli.ListPrice,
+          pli.CostPrice
         FROM dbo.PriceListItems pli
           INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         WHERE pli.ProductID = pr.ID
@@ -744,10 +748,10 @@ async function handleAssignProductToRequestedRow(
       od.TotalNet = CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
       od.TelmacoDiscount = COALESCE(discounts.TelmacoDiscountPercentage, 0),
       od.CustomerDiscount = COALESCE(discounts.CustomerDiscountPercentage, 0),
-      od.NetCost = CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
+      od.NetCost = COALESCE(p.CostPrice, p.ListPrice),
       od.Margin = 0,
       od.GrossProfit = 0,
-      od.TotalCost = CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
+      od.TotalCost = CASE WHEN COALESCE(p.CostPrice, p.ListPrice) IS NULL THEN NULL ELSE COALESCE(p.CostPrice, p.ListPrice) END,
       od.PriceListID = p.PriceListID,
       od.PriceListItemID = p.PriceListItemID,
       od.ModifiedOn = SYSUTCDATETIME(),

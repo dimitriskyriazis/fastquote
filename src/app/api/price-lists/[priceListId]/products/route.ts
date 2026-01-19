@@ -61,6 +61,7 @@ type PriceListProductRow = {
   ProductID: number | null;
   Description: string | null;
   ListPrice: string | number | null;
+  CostPrice: string | number | null;
   Warning: string | number | boolean | null;
   Enabled: boolean | number | null;
   PartNumber: string | null;
@@ -78,6 +79,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Description: "dbo.Products.Description",
   ModelNumber: "dbo.Products.ModelNumber",
   ListPrice: "dbo.PriceListItems.ListPrice",
+  CostPrice: "dbo.PriceListItems.CostPrice",
   Warning: "dbo.PriceListItems.Warning",
   Enabled: "dbo.PriceListItems.Enabled",
   PartNumber: "dbo.Products.PartNumber",
@@ -250,6 +252,7 @@ export async function POST(
         dbo.Products.Description,
         dbo.Products.ModelNumber,
         dbo.PriceListItems.ListPrice,
+        dbo.PriceListItems.CostPrice,
         dbo.PriceListItems.Warning,
         dbo.PriceListItems.Enabled,
         dbo.Products.PartNumber,
@@ -323,7 +326,7 @@ export async function DELETE(
       body = null;
     }
 
-    const rawIds = Array.isArray(body?.PriceListItemIDs) ? body.PriceListItemIDs : [];
+    const rawIds = Array.isArray(body?.PriceListItemIDs) ? (body?.PriceListItemIDs ?? []) : [];
     const normalizedIds = Array.from(
       new Set(
         rawIds

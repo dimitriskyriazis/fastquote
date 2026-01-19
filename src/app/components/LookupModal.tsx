@@ -46,11 +46,10 @@ export default function LookupModal({
 }: Props) {
   const [showValidation, setShowValidation] = useState(false);
 
-  useEffect(() => {
-    if (!open) {
-      setShowValidation(false);
-    }
-  }, [open]);
+  const handleClose = useCallback(() => {
+    setShowValidation(false);
+    onClose();
+  }, [onClose]);
 
   const handleConfirm = useCallback(() => {
     setShowValidation(true);
@@ -62,7 +61,7 @@ export default function LookupModal({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onClose();
+        handleClose();
         return;
       }
       if (event.key === 'Backspace') {
@@ -79,7 +78,7 @@ export default function LookupModal({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [open, onClose]);
+  }, [open, handleClose]);
 
   if (!open) return null;
 
@@ -89,7 +88,7 @@ export default function LookupModal({
       style={overlayStyle}
       onClick={(event) => {
         if (event.currentTarget === event.target) {
-          onClose();
+          handleClose();
         }
       }}
     >
@@ -108,7 +107,7 @@ export default function LookupModal({
             type="button"
             className={styles.closeButton}
             aria-label="Close dialog"
-            onClick={onClose}
+            onClick={handleClose}
           >
             ×
           </button>
@@ -134,7 +133,7 @@ export default function LookupModal({
             </>
           ) : (
             <>
-              <button type="button" className={styles.cancelButton} onClick={onClose} disabled={saving}>
+              <button type="button" className={styles.cancelButton} onClick={handleClose} disabled={saving}>
                 {cancelLabel}
               </button>
               <button

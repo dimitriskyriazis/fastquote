@@ -19,6 +19,7 @@ type ParsedPriceListRow = {
   modelNumber: string | null;
   description: string | null;
   listPrice: number | null;
+  costPrice: number | null;
   warning: string | null;
 };
 
@@ -29,7 +30,7 @@ type ProductRow = {
   BrandID: number | null;
 };
 
-type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "warning";
+type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning";
 
 type ColumnMapping = {
   sheetName: string | null;
@@ -42,6 +43,7 @@ const HEADER_SYNONYMS: Record<HeaderColumnKey, string[]> = {
   modelNumber: ["modelnumber", "model number", "modelno", "model no"],
   description: ["name", "description"],
   listPrice: ["listprice", "list price", "price"],
+  costPrice: ["costprice", "cost price", "cost"],
   warning: ["warning"],
 };
 
@@ -291,9 +293,10 @@ const parseSheetWithMapping = (
     const modelNumber = normalizeCellString(getValue(row, "modelNumber"), 50);
     const description = normalizeCellString(getValue(row, "description"), 2000);
     const listPrice = parsePrice(getValue(row, "listPrice"), decimalFormat);
+    const costPrice = parsePrice(getValue(row, "costPrice"), decimalFormat);
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
 
-    if (!partNumber && !modelNumber && !description && listPrice == null && !warning) continue;
+    if (!partNumber && !modelNumber && !description && listPrice == null && costPrice == null && !warning) continue;
     if (!partNumber || !description || listPrice == null) continue;
 
     parsed.push({
@@ -301,6 +304,7 @@ const parseSheetWithMapping = (
       modelNumber,
       description,
       listPrice,
+      costPrice,
       warning,
     });
   }
@@ -327,9 +331,10 @@ const parseSheet = (rows: unknown[][], decimalFormat: PriceListDecimalFormat): P
     const modelNumber = normalizeCellString(getValue(row, "modelNumber"), 50);
     const description = normalizeCellString(getValue(row, "description"), 2000);
     const listPrice = parsePrice(getValue(row, "listPrice"), decimalFormat);
+    const costPrice = parsePrice(getValue(row, "costPrice"), decimalFormat);
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
 
-    if (!partNumber && !modelNumber && !description && listPrice == null && !warning) continue;
+    if (!partNumber && !modelNumber && !description && listPrice == null && costPrice == null && !warning) continue;
     if (!partNumber || !description || listPrice == null) continue;
 
     parsed.push({
@@ -337,6 +342,7 @@ const parseSheet = (rows: unknown[][], decimalFormat: PriceListDecimalFormat): P
       modelNumber,
       description,
       listPrice,
+      costPrice,
       warning,
     });
   }
@@ -551,8 +557,10 @@ const insertPriceListItem = async (
   request.input("PriceListID", sql.Int, priceListId);
   request.input("ProductID", sql.Int, productId);
   const listPrice = row.listPrice == null ? undefined : Number(row.listPrice);
+  const costPrice = row.costPrice == null ? undefined : Number(row.costPrice);
   const decimalType = getDecimalType();
   request.input("ListPrice", decimalType, listPrice);
+  request.input("CostPrice", decimalType, costPrice);
   request.input("Warning", sql.NVarChar(1000), row.warning);
   request.input("CreatedBy", sql.NVarChar(450), auditUserId);
   request.input("ModifiedBy", sql.NVarChar(450), auditUserId);
@@ -562,6 +570,7 @@ const insertPriceListItem = async (
       PriceListID,
       ProductID,
       ListPrice,
+      CostPrice,
       Warning,
       Enabled,
       CreatedOn,
@@ -573,6 +582,7 @@ const insertPriceListItem = async (
       @PriceListID,
       @ProductID,
       @ListPrice,
+      @CostPrice,
       @Warning,
       1,
       SYSUTCDATETIME(),

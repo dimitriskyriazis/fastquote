@@ -67,7 +67,7 @@ type FormValues = {
   decimalFormat: PriceListDecimalFormat;
 };
 
-type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "warning";
+type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning";
 
 const columnKeywords: Record<HeaderColumnKey, string[]> = {
   partNumber: [
@@ -162,6 +162,16 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "χονδρικη",
   ],
 
+  costPrice: [
+    "costprice",
+    "cost price",
+    "cost",
+    "κόστος",
+    "κοστος",
+    "τιμή κόστους",
+    "τιμη κοστους",
+  ],
+
   warning: [
     "warn",
     "note",
@@ -190,6 +200,7 @@ const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string; required?: bo
   { key: "modelNumber", label: "Model Number (optional)", required: false },
   { key: "description", label: "Name / Description", required: true },
   { key: "listPrice", label: "List Price", required: true },
+  { key: "costPrice", label: "Cost Price (optional)", required: false },
   { key: "warning", label: "Warning (optional)", required: false },
 ];
 
@@ -198,6 +209,7 @@ const PREVIEW_COLUMN_KEYS: HeaderColumnKey[] = [
   "modelNumber",
   "description",
   "listPrice",
+  "costPrice",
   "warning",
 ];
 
@@ -320,6 +332,7 @@ const buildSuggestions = (columns: ColumnOption[]) => {
     modelNumber: makeSuggestions("modelNumber"),
     description: makeSuggestions("description"),
     listPrice: makeSuggestions("listPrice"),
+    costPrice: makeSuggestions("costPrice"),
     warning: makeSuggestions("warning"),
   };
 };
@@ -400,6 +413,7 @@ const evaluateSelection = (sheets: SheetMapping[], activeSheetIndex: number) => 
     modelNumber: selection.modelNumber != null,
     description: selection.description != null,
     listPrice: selection.listPrice != null,
+    costPrice: selection.costPrice != null,
     warning: selection.warning != null,
   };
 
@@ -1039,6 +1053,7 @@ export default function PriceListImportClient({
           modelNumber: sheet.selection.modelNumber ?? null,
           description: sheet.selection.description ?? null,
           listPrice: sheet.selection.listPrice ?? null,
+          costPrice: sheet.selection.costPrice ?? null,
           warning: sheet.selection.warning ?? null,
         },
       }));

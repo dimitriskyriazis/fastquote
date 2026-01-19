@@ -61,11 +61,12 @@ export async function POST(
         [NetUnitPrice] = price.ListPrice,
         [TotalPrice] = CASE WHEN price.ListPrice IS NULL OR od.Quantity IS NULL THEN NULL ELSE price.ListPrice * od.Quantity END,
         [TotalNet] = CASE WHEN price.ListPrice IS NULL OR od.Quantity IS NULL THEN NULL ELSE price.ListPrice * od.Quantity END,
-        [NetCost] = price.ListPrice,
+        [NetCost] = COALESCE(price.CostPrice, price.ListPrice),
         [TelmacoDiscount] = discounts.TelmacoDiscountPercentage,
         [CustomerDiscount] = discounts.CustomerDiscountPercentage,
         [Margin] = 0,
         [GrossProfit] = 0,
+        [TotalCost] = CASE WHEN COALESCE(price.CostPrice, price.ListPrice) IS NULL OR od.Quantity IS NULL THEN NULL ELSE COALESCE(price.CostPrice, price.ListPrice) * od.Quantity END,
         [ModifiedOn] = SYSUTCDATETIME(),
         [ModifiedBy] = @modifiedBy
       FROM dbo.OfferDetails od
@@ -74,7 +75,8 @@ export async function POST(
         SELECT TOP (1)
           pli.PriceListID,
           pli.ID AS PriceListItemID,
-          pli.ListPrice
+          pli.ListPrice,
+          pli.CostPrice
         FROM dbo.PriceListItems pli
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         WHERE pli.ProductID = od.ProductID
