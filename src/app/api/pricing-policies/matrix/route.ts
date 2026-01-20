@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { Request as SqlRequest } from "mssql";
 import { getPool, sql } from "../../../../lib/sql";
 import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from "../../../../lib/gridFilters";
+import { resolveAuditUserId } from "../../../../lib/auditTrail";
 
 type TextFilterModel = {
   filterType: "text";
@@ -20,6 +21,13 @@ type GridRequest = {
 
 type MatrixRequestBody = {
   request?: GridRequest | null;
+};
+
+type MatrixUpdateBody = {
+  brandId?: unknown;
+  pricingPolicyId?: unknown;
+  field?: unknown;
+  value?: unknown;
 };
 
 type BrandRow = {
@@ -46,6 +54,17 @@ const BRAND_COLUMN_EXPRESSIONS: Record<string, string> = {
 };
 
 const QUICK_FILTER_COLUMNS = ["dbo.Brands.Name", "dbo.Brands.ID"];
+
+const normalizeInt = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) return Math.trunc(parsed);
+  }
+  return null;
+};
 
 async function readGridRequest(req: NextRequest): Promise<GridRequest> {
   try {
@@ -110,6 +129,108 @@ const normalizeNumeric = (value: unknown): number | null => {
   }
   return null;
 };
+
+const normalizeUpdateField = (value: unknown): "telmaco" | "customer" | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed === "telmaco") return "telmaco";
+  if (trimmed === "customer") return "customer";
+  return null;
+};
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const payload = (await req.json().catch(() => null)) as MatrixUpdateBody | null;
+    const brandId = normalizeInt(payload?.brandId);
+    if (brandId == null) {
+      return NextResponse.json({ ok: false, error: "Brand is required" }, { status: 400 });
+    }
+    const pricingPolicyId = normalizeInt(payload?.pricingPolicyId);
+    if (pricingPolicyId == null) {
+      return NextResponse.json({ ok: false, error: "Pricing policy is required" }, { status: 400 });
+    }
+    const field = normalizeUpdateField(payload?.field);
+    if (!field) {
+      return NextResponse.json({ ok: false, error: "Field is required" }, { status: 400 });
+    }
+    const value = normalizeNumeric(payload?.value);
+    if (value == null) {
+      return NextResponse.json({ ok: false, error: "Value is required" }, { status: 400 });
+    }
+
+    const pool = await getPool();
+
+    const existsReq = pool.request();
+    existsReq.input("__brandId", sql.Int, brandId);
+    existsReq.input("__pricingPolicyId", sql.Int, pricingPolicyId);
+    const existsRes = await existsReq.query<{ count: number | bigint | null }>(`
+      SELECT COUNT_BIG(1) AS count
+      FROM dbo.PricingPolicyRules
+      WHERE BrandID = @__brandId
+        AND PricingPolicyID = @__pricingPolicyId
+    `);
+    const count = Number(existsRes.recordset?.[0]?.count ?? 0);
+    if (!Number.isFinite(count) || count <= 0) {
+      return NextResponse.json(
+        { ok: false, error: "No pricing policy rules found for this brand/policy." },
+        { status: 404 },
+      );
+    }
+
+    const auditUserId = resolveAuditUserId(req);
+
+    const columnCheck = await pool
+      .request()
+      .query<{ count: number }>(`
+        SELECT COUNT(*) AS count
+        FROM sys.columns
+        WHERE object_id = OBJECT_ID(N'dbo.PricingPolicyRules')
+          AND name = 'ModifiedBy';
+      `);
+    const hasModifiedBy = (columnCheck.recordset?.[0]?.count ?? 0) > 0;
+
+    const discountColumn =
+      field === "telmaco" ? "TelmacoDiscountPercentage" : "CustomerDiscountPercentage";
+    const modifiedByClause = hasModifiedBy ? ", ModifiedBy = @__userId" : "";
+
+    const updateSql = `
+      DECLARE @CurrentMin NUMERIC(18, 6);
+      SELECT @CurrentMin = MIN(ppr.[${discountColumn}])
+      FROM dbo.PricingPolicyRules ppr
+      WHERE ppr.BrandID = @__brandId
+        AND ppr.PricingPolicyID = @__pricingPolicyId;
+
+      IF @CurrentMin IS NULL
+      BEGIN
+        THROW 50000, 'Unable to resolve current minimum discount for this brand/policy.', 1;
+      END
+
+      UPDATE dbo.PricingPolicyRules
+      SET [${discountColumn}] = @__value,
+          ModifiedOn = SYSUTCDATETIME()
+          ${modifiedByClause}
+      WHERE BrandID = @__brandId
+        AND PricingPolicyID = @__pricingPolicyId
+        AND ([${discountColumn}] < @__value OR [${discountColumn}] = @CurrentMin);
+
+      SELECT @@ROWCOUNT AS UpdatedCount;
+    `;
+
+    const updateReq = pool.request();
+    updateReq.input("__brandId", sql.Int, brandId);
+    updateReq.input("__pricingPolicyId", sql.Int, pricingPolicyId);
+    updateReq.input("__value", sql.TYPES.Numeric(9, 6), value);
+    updateReq.input("__userId", sql.NVarChar(450), auditUserId ?? null);
+
+    const updateRes = await updateReq.query<{ UpdatedCount: number | null }>(updateSql);
+    const updatedCount = updateRes.recordset?.[0]?.UpdatedCount ?? 0;
+    return NextResponse.json({ ok: true, updatedCount });
+  } catch (err) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -189,7 +310,10 @@ export async function POST(req: NextRequest) {
     `);
     const grandAggRows = grandRes.recordset ?? [];
 
-    const policiesByBrand = new Map<number, Record<string, { minTelmaco: number | null; minCustomer: number | null }>>();
+    const policiesByBrand = new Map<
+      number,
+      Record<string, { telmacoDiscount: number | null; customerDiscount: number | null }>
+    >();
     ruleAggRows.forEach((row) => {
       const brandId = row.BrandID;
       const policyId = row.PricingPolicyID;
@@ -197,8 +321,8 @@ export async function POST(req: NextRequest) {
       const key = String(policyId);
       const map = policiesByBrand.get(brandId) ?? {};
       map[key] = {
-        minTelmaco: normalizeNumeric(row.MinTelmaco),
-        minCustomer: normalizeNumeric(row.MinCustomer),
+        telmacoDiscount: normalizeNumeric(row.MinTelmaco),
+        customerDiscount: normalizeNumeric(row.MinCustomer),
       };
       policiesByBrand.set(brandId, map);
     });
@@ -207,42 +331,46 @@ export async function POST(req: NextRequest) {
       const brandId = brand.BrandID;
       const policies = typeof brandId === "number" ? (policiesByBrand.get(brandId) ?? {}) : {};
       const telmacoValues = Object.values(policies)
-        .map((cell) => cell?.minTelmaco ?? null)
+        .map((cell) => cell?.telmacoDiscount ?? null)
         .filter((value): value is number => value != null && Number.isFinite(value));
       const customerValues = Object.values(policies)
-        .map((cell) => cell?.minCustomer ?? null)
+        .map((cell) => cell?.customerDiscount ?? null)
         .filter((value): value is number => value != null && Number.isFinite(value));
 
       return {
         BrandID: brand.BrandID,
         BrandName: brand.BrandName,
         policies,
-        totalMinTelmaco: telmacoValues.length > 0 ? Math.min(...telmacoValues) : null,
-        totalMinCustomer: customerValues.length > 0 ? Math.min(...customerValues) : null,
+        totalTelmacoDiscount: telmacoValues.length > 0 ? Math.min(...telmacoValues) : null,
+        totalCustomerDiscount: customerValues.length > 0 ? Math.min(...customerValues) : null,
       };
     });
 
-    const grandPolicies: Record<string, { minTelmaco: number | null; minCustomer: number | null }> = {};
+    const grandPolicies: Record<string, { telmacoDiscount: number | null; customerDiscount: number | null }> = {};
     const grandTelmacoValues: number[] = [];
     const grandCustomerValues: number[] = [];
     grandAggRows.forEach((row) => {
       const policyId = row.PricingPolicyID;
       if (policyId == null) return;
       const cell = {
-        minTelmaco: normalizeNumeric(row.MinTelmaco),
-        minCustomer: normalizeNumeric(row.MinCustomer),
+        telmacoDiscount: normalizeNumeric(row.MinTelmaco),
+        customerDiscount: normalizeNumeric(row.MinCustomer),
       };
       grandPolicies[String(policyId)] = cell;
-      if (cell.minTelmaco != null && Number.isFinite(cell.minTelmaco)) grandTelmacoValues.push(cell.minTelmaco);
-      if (cell.minCustomer != null && Number.isFinite(cell.minCustomer)) grandCustomerValues.push(cell.minCustomer);
+      if (cell.telmacoDiscount != null && Number.isFinite(cell.telmacoDiscount)) {
+        grandTelmacoValues.push(cell.telmacoDiscount);
+      }
+      if (cell.customerDiscount != null && Number.isFinite(cell.customerDiscount)) {
+        grandCustomerValues.push(cell.customerDiscount);
+      }
     });
 
     const grandTotalRow = {
       BrandID: null,
       BrandName: "Grand Total",
       policies: grandPolicies,
-      totalMinTelmaco: grandTelmacoValues.length > 0 ? Math.min(...grandTelmacoValues) : null,
-      totalMinCustomer: grandCustomerValues.length > 0 ? Math.min(...grandCustomerValues) : null,
+      totalTelmacoDiscount: grandTelmacoValues.length > 0 ? Math.min(...grandTelmacoValues) : null,
+      totalCustomerDiscount: grandCustomerValues.length > 0 ? Math.min(...grandCustomerValues) : null,
     };
 
     return NextResponse.json({ ok: true, rows, rowCount, grandTotal: grandTotalRow });
