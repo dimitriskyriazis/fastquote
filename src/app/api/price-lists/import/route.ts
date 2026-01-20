@@ -47,14 +47,16 @@ const HEADER_SYNONYMS: Record<HeaderColumnKey, string[]> = {
   warning: ["warning"],
 };
 
-//telquoteweb
-const UPLOAD_ROOT = path.join("C:", "Users", "dim.kyriazis", "PriceLists");
-
-//dimlaptop
-//const UPLOAD_ROOT = path.join("C:", "Users", "dimik", "PriceLists");
-
-//dimtelmacopc
-// const UPLOAD_ROOT = path.join("C:", "inetpub", "wwwroot", "Telmaco", "PriceListUploads");
+const requirePriceListUploadRoot = (): string => {
+  const raw = process.env.PRICELIST_UPLOAD_ROOT;
+  const value = typeof raw === "string" ? raw.trim() : "";
+  if (!value) {
+    throw new Error(
+      "Missing PRICELIST_UPLOAD_ROOT. Set it in your environment (e.g. .env.local) to an absolute directory path.",
+    );
+  }
+  return value;
+};
 
 type SqlTypeLike = unknown;
 
@@ -427,12 +429,13 @@ const formatTimestampFileName = (date: Date) => {
 };
 
 const saveUploadedFile = async (buffer: Buffer, originalName: string | null | undefined) => {
-  await fs.mkdir(UPLOAD_ROOT, { recursive: true });
+  const uploadRoot = requirePriceListUploadRoot();
+  await fs.mkdir(uploadRoot, { recursive: true });
   const timestamp = formatTimestampFileName(new Date());
   const ext = (typeof originalName === "string" && path.extname(originalName)) || ".xlsx";
   const safeExt = ext.trim() || ".xlsx";
   const fileName = `${timestamp}${safeExt}`;
-  const absolutePath = path.join(UPLOAD_ROOT, fileName);
+  const absolutePath = path.join(uploadRoot, fileName);
   await fs.writeFile(absolutePath, buffer);
   const relativePath = path.relative(process.cwd(), absolutePath);
   return { absolutePath, relativePath, fileName };
