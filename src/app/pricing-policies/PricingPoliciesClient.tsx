@@ -92,8 +92,7 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
               const row = params.data as MatrixRow | null | undefined;
               return row?.policies?.[policyId]?.minTelmaco ?? null;
             },
-            valueFormatter: discountFormatter,
-            width: 140,
+            width: 180,
           },
           {
             headerName: "Min of Customer Discount",
@@ -107,7 +106,7 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
               return row?.policies?.[policyId]?.minCustomer ?? null;
             },
             valueFormatter: discountFormatter,
-            width: 160,
+            width: 180,
           },
         ],
       };
@@ -133,20 +132,16 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
           {
             field: "totalMinTelmaco",
             headerName: "Total Min of Telmaco Discount",
-            pinned: "right",
-            lockPinned: true,
             sortable: false,
             filter: false,
             floatingFilter: false,
             type: "numericColumn",
             valueFormatter: discountFormatter,
-            width: 200,
+            width: 220,
           },
           {
             field: "totalMinCustomer",
             headerName: "Total Min of Customer Discount",
-            pinned: "right",
-            lockPinned: true,
             sortable: false,
             filter: false,
             floatingFilter: false,
