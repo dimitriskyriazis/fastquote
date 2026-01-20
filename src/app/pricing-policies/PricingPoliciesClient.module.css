@@ -1,0 +1,15 @@
+.page {
+  padding: 20px;
+}
+
+.gridFrame {
+  height: calc(100vh - 160px);
+  min-height: 480px;
+  width: 100%;
+}
+
+.loading {
+  padding: 20px;
+  color: rgba(255, 255, 255, 0.75);
+}
+

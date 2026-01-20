@@ -115,6 +115,34 @@ const navItems: NavItem[] = [
       </svg>
     ),
   },
+  {
+    label: "Pricing Policies",
+    href: "/pricing-policies",
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M4.5 6.5h15v11h-15z"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinejoin="round"
+          fill="none"
+        />
+        <path
+          d="M7.5 9h4.5M7.5 12h9M7.5 15h6"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
+        <path
+          d="M18.5 6.5V5.2a1.7 1.7 0 0 0-1.7-1.7H7.2A1.7 1.7 0 0 0 5.5 5.2v1.3"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          fill="none"
+        />
+      </svg>
+    ),
+  },
 ];
 
 export default function SideNav() {
