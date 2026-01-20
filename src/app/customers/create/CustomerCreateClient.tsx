@@ -224,6 +224,14 @@ type Props = {
 
 const requiredFieldIds = ['name', 'pricingPolicy', 'importance'];
 
+const resolveDefaultPricingPolicyId = (options: CustomerDropdownOption[]): string => {
+  const normalizedTarget = 'default pricing policy';
+  const byLabel = options.find((opt) => (opt.label ?? '').trim().toLowerCase() === normalizedTarget);
+  if (byLabel?.value) return byLabel.value;
+  const byValue = options.find((opt) => (opt.value ?? '').trim().toLowerCase() === normalizedTarget);
+  return byValue?.value ?? '';
+};
+
 export default function CustomerCreateClient({
   customerGroups,
   parentCustomers,
@@ -273,6 +281,7 @@ export default function CustomerCreateClient({
   );
 
   const initialValues = useMemo(() => {
+    const defaultPricingPolicyId = resolveDefaultPricingPolicyId(pricingPolicyOptions);
     const next: Record<string, string> = {};
     fieldDefinitions.forEach((field) => {
       if (field.id === 'isParent') {
@@ -287,10 +296,14 @@ export default function CustomerCreateClient({
         next[field.id] = field.options?.[0]?.value ?? '';
         return;
       }
+      if (field.id === 'pricingPolicy') {
+        next[field.id] = defaultPricingPolicyId;
+        return;
+      }
       next[field.id] = '';
     });
     return next;
-  }, [fieldDefinitions]);
+  }, [fieldDefinitions, pricingPolicyOptions]);
 
   const [values, setValues] = useState(initialValues);
 

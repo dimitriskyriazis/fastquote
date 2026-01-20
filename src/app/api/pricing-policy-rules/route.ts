@@ -62,10 +62,8 @@ export async function POST(req: NextRequest) {
     if (pricingPolicyId == null) {
       return NextResponse.json({ ok: false, error: 'Pricing policy is required' }, { status: 400 });
     }
+    // Brand is optional. When NULL, the rule applies to all brands (default rule).
     const brandId = normalizeInt(payload?.brandId);
-    if (brandId == null) {
-      return NextResponse.json({ ok: false, error: 'Brand is required' }, { status: 400 });
-    }
     const telmaco = normalizeDecimal(payload?.telmacoDiscountPercentage);
     if (telmaco == null) {
       return NextResponse.json(

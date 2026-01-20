@@ -17,6 +17,7 @@ import {
   CellRange,
   CellRangeParams,
   CellValueChangedEvent,
+  ColumnVisibleEvent,
   Column,
   ColumnPinnedType,
   ColumnState,
@@ -64,6 +65,7 @@ import {
   EventApiModule,
   ModuleRegistry,
   ColumnPivotModeChangedEvent,
+  CsvExportModule,
 } from 'ag-grid-community';
 import {
   AggregationModule,
@@ -82,6 +84,7 @@ import {
   SetFilterModule,
   SideBarModule,
   StatusBarModule,
+  ExcelExportModule,
 } from 'ag-grid-enterprise';
 import { usePathname } from 'next/navigation';
 import { showToastMessage } from '../../lib/toast';
@@ -368,6 +371,8 @@ if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
     ColumnMenuModule,
     ContextMenuModule,
     ClipboardModule,
+    CsvExportModule,
+    ExcelExportModule,
     SetFilterModule,
     CellSelectionModule,
     TextFilterModule,
@@ -2161,20 +2166,40 @@ export default function AgGridAll({
     if (!shouldPersistColumnState || !columnStateStorageKey) return;
     const api = gridRef.current?.api;
     if (!api || api.isDestroyed?.()) return;
-    const displayedColumns =
-      typeof api.getAllDisplayedColumns === 'function' ? api.getAllDisplayedColumns() : [];
     const columnOrderMap: ColumnOrderMap = new Map();
-    displayedColumns.forEach((column, index) => {
-      const colId =
-        typeof column.getColId === 'function'
-          ? column.getColId()
-          : typeof (column as { getId?: () => string }).getId === 'function'
-            ? (column as { getId?: () => string }).getId?.()
-            : null;
-      if (typeof colId === 'string' && colId.length > 0) {
-        columnOrderMap.set(colId, index);
-      }
-    });
+
+    // IMPORTANT:
+    // Use the *full* column order (visible + hidden). If we derive order only from displayed columns,
+    // hidden columns lose their position and will reappear in the wrong place when shown again.
+    const apiWithAllGridColumns = api as unknown as {
+      getAllGridColumns?: () => Column[];
+    };
+    const allGridColumns =
+      typeof apiWithAllGridColumns.getAllGridColumns === 'function'
+        ? apiWithAllGridColumns.getAllGridColumns()
+        : null;
+    if (Array.isArray(allGridColumns) && allGridColumns.length > 0) {
+      allGridColumns.forEach((column, index) => {
+        const colId =
+          typeof column?.getColId === 'function'
+            ? column.getColId()
+            : typeof (column as { getId?: () => string }).getId === 'function'
+              ? (column as { getId?: () => string }).getId?.()
+              : null;
+        if (typeof colId === 'string' && colId.length > 0) {
+          columnOrderMap.set(colId, index);
+        }
+      });
+    } else {
+      const fullState = typeof api.getColumnState === 'function' ? api.getColumnState() : [];
+      fullState.forEach((entry, index) => {
+        const colId = typeof entry?.colId === 'string' ? entry.colId : '';
+        if (colId) {
+          columnOrderMap.set(colId, index);
+        }
+      });
+    }
+
     const nextState = collectPersistableColumnState(api.getColumnState(), columnOrderMap);
     writePersistedColumnState(columnStateStorageKey, nextState);
   }, [columnStateStorageKey, shouldPersistColumnState]);
@@ -2308,11 +2333,67 @@ export default function AgGridAll({
     [autoSizeColumns, autoSizeExclusions, resolvedDisableAutoSize],
   );
 
-  const handleColumnVisible = useCallback(() => {
+  const handleColumnVisibleWithReorder = useCallback((event: ColumnVisibleEvent<RowData>) => {
+    // Persist hide/unhide toggles
     if (shouldAutoPersistColumnState && columnStateLoadedRef.current) {
       queuePersistColumnState();
     }
-  }, [queuePersistColumnState, shouldAutoPersistColumnState]);
+
+    // When a column is re-enabled (made visible), ensure it returns to its saved position.
+    // Without this, some hide/show flows can re-insert the column at the end of the visible list.
+    if (!columnStateLoadedRef.current) return;
+    if (!shouldPersistColumnState || !columnStateStorageKey) return;
+    if (!event?.visible) return; // only reposition on "show", not "hide"
+
+    const api = event.api;
+    if (!api || api.isDestroyed?.()) return;
+    if (typeof api.getAllDisplayedColumns !== 'function' || typeof api.moveColumns !== 'function') return;
+
+    const persisted = readPersistedColumnState(columnStateStorageKey);
+    if (!persisted || persisted.length === 0) return;
+
+    const orderMap = new Map<string, number>();
+    persisted.forEach((entry) => {
+      if (entry?.colId && typeof entry.order === 'number' && Number.isFinite(entry.order)) {
+        orderMap.set(entry.colId, entry.order);
+      }
+    });
+    if (orderMap.size === 0) return;
+
+    const displayed = api.getAllDisplayedColumns();
+    if (!Array.isArray(displayed) || displayed.length === 0) return;
+
+    const desired = [...displayed].sort((a, b) => {
+      const aId = typeof a?.getColId === 'function' ? a.getColId() : '';
+      const bId = typeof b?.getColId === 'function' ? b.getColId() : '';
+      const aOrder = orderMap.get(aId);
+      const bOrder = orderMap.get(bId);
+      const aVal = typeof aOrder === 'number' ? aOrder : Number.POSITIVE_INFINITY;
+      const bVal = typeof bOrder === 'number' ? bOrder : Number.POSITIVE_INFINITY;
+      return aVal - bVal;
+    });
+
+    // Move from right-to-left to minimize index shifts.
+    for (let targetIndex = desired.length - 1; targetIndex >= 0; targetIndex--) {
+      const col = desired[targetIndex];
+      const colId = typeof col?.getColId === 'function' ? col.getColId() : '';
+      if (!colId) continue;
+      const currentDisplayed = api.getAllDisplayedColumns();
+      const currentIndex = currentDisplayed.findIndex((c) => c.getColId() === colId);
+      if (currentIndex >= 0 && currentIndex !== targetIndex) {
+        try {
+          api.moveColumns([colId], targetIndex);
+        } catch {
+          /* noop */
+        }
+      }
+    }
+  }, [
+    columnStateStorageKey,
+    queuePersistColumnState,
+    shouldAutoPersistColumnState,
+    shouldPersistColumnState,
+  ]);
 
   const handleColumnResized = useCallback((event: { finished?: boolean }) => {
     if (!shouldAutoPersistColumnState || !columnStateLoadedRef.current) return;
@@ -3458,7 +3539,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           onCellEditingStopped={handleEditingStop}
           onColumnMoved={shouldAutoPersistColumnState ? queuePersistColumnState : undefined}
           onColumnPinned={shouldAutoPersistColumnState ? queuePersistColumnState : undefined}
-          onColumnVisible={handleColumnVisible}
+          onColumnVisible={handleColumnVisibleWithReorder}
           onColumnResized={handleColumnResized}
           onColumnRowGroupChanged={handleColumnRowGroupChanged}
           onColumnPivotModeChanged={handleColumnPivotModeChanged}

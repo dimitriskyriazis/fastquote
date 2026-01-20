@@ -436,12 +436,12 @@ async function handleAddProducts(
     }
   }
 
-const request = pool.request();
-request.input('__offerId', sql.Int, offerId);
-request.input('__categoryId', sql.Int, categoryId);
-request.input('__parentTree', sql.NVarChar(255), parentTreeOrdering);
-request.input('__createdBy', sql.Int, auditUserId);
-request.input('__modifiedBy', sql.Int, auditUserId);
+  const request = pool.request();
+  request.input('__offerId', sql.Int, offerId);
+  request.input('__categoryId', sql.Int, categoryId);
+  request.input('__parentTree', sql.NVarChar(255), parentTreeOrdering);
+  request.input('__createdBy', sql.Int, auditUserId);
+  request.input('__modifiedBy', sql.Int, auditUserId);
 
   const valueClauses: string[] = [];
   selections.forEach((entry, idx) => {
@@ -457,6 +457,11 @@ request.input('__modifiedBy', sql.Int, auditUserId);
   DECLARE @prefix NVARCHAR(260);
   DECLARE @targetSegments INT;
   DECLARE @maxChild INT;
+  DECLARE @pricingPolicyId INT;
+
+  SELECT @pricingPolicyId = o.PricingPolicyID
+  FROM dbo.Offer o
+  WHERE o.ID = @__offerId;
 
   IF @parentTree IS NULL
   BEGIN
@@ -501,50 +506,82 @@ request.input('__modifiedBy', sql.Int, auditUserId);
       WHERE od.OfferID = @__offerId
     );
 
+  DECLARE @ProvidedProducts TABLE (
+    ProductID INT NOT NULL,
+    Seq INT NOT NULL
+  );
 
-    WITH OfferContext AS (
-      SELECT
-        o.ID AS OfferID,
-        o.PricingPolicyID
-      FROM dbo.Offer o
-      WHERE o.ID = @__offerId
-    ),
-    ProvidedProducts AS (
-      SELECT DISTINCT v.ProductID, v.Seq
-      FROM (VALUES ${valueClauses.join(', ')}) AS v (ProductID, Seq)
-    ),
-    ProductData AS (
-      SELECT
-        p.ProductID,
-        p.Seq,
-        pr.Description,
-        pr.BrandID,
-        pr.PartNumber,
-        pr.ModelNumber,
-        0 AS WarrantyValue,
-        price.PriceListID,
-        price.PriceListItemID,
-        price.ListPrice,
-        price.CostPrice
-      FROM ProvidedProducts p
-        INNER JOIN dbo.Products pr ON pr.ID = p.ProductID
-        OUTER APPLY (
-          SELECT TOP (1)
-            pli.ID AS PriceListItemID,
-            pli.PriceListID,
-            pli.ListPrice,
-            pli.CostPrice
-          FROM dbo.PriceListItems pli
-            INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
-          WHERE pli.ProductID = p.ProductID
-            AND pl.Enabled = 1
-          ORDER BY
-            CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
-            pl.ValidToDate,
-            pl.ValidFromDate DESC,
-            pli.ID DESC
-        ) price
-    )
+  INSERT INTO @ProvidedProducts (ProductID, Seq)
+  SELECT DISTINCT v.ProductID, v.Seq
+  FROM (VALUES ${valueClauses.join(', ')}) AS v (ProductID, Seq);
+
+  DECLARE @ProductData TABLE (
+    ProductID INT NOT NULL,
+    Seq INT NOT NULL,
+    Description NVARCHAR(MAX) NULL,
+    BrandID INT NULL,
+    PartNumber NVARCHAR(255) NULL,
+    ModelNumber NVARCHAR(255) NULL,
+    WarrantyValue INT NOT NULL,
+    PriceListID INT NULL,
+    PriceListItemID INT NULL,
+    ListPrice DECIMAL(18, 4) NULL,
+    CostPrice DECIMAL(18, 4) NULL,
+    OtherCurrencyID INT NULL,
+    CurrencyCostModifier DECIMAL(18, 8) NULL
+  );
+
+  INSERT INTO @ProductData (
+    ProductID,
+    Seq,
+    Description,
+    BrandID,
+    PartNumber,
+    ModelNumber,
+    WarrantyValue,
+    PriceListID,
+    PriceListItemID,
+    ListPrice,
+    CostPrice,
+    OtherCurrencyID,
+    CurrencyCostModifier
+  )
+  SELECT
+    p.ProductID,
+    p.Seq,
+    pr.Description,
+    pr.BrandID,
+    pr.PartNumber,
+    pr.ModelNumber,
+    0 AS WarrantyValue,
+    price.PriceListID,
+    price.PriceListItemID,
+    price.ListPrice,
+    price.CostPrice,
+    price.OtherCurrencyID,
+    price.CurrencyCostModifier
+  FROM @ProvidedProducts p
+    INNER JOIN dbo.Products pr ON pr.ID = p.ProductID
+    OUTER APPLY (
+      SELECT TOP (1)
+        pli.ID AS PriceListItemID,
+        pli.PriceListID,
+        pli.ListPrice,
+        pli.CostPrice,
+        COALESCE(pl.CostCurrencyID, pl.CurrencyId) AS OtherCurrencyID,
+        COALESCE(pl.CurrencyCostModifier, 1) AS CurrencyCostModifier
+      FROM dbo.PriceListItems pli
+        INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
+      WHERE pli.ProductID = p.ProductID
+        AND pl.Enabled = 1
+      ORDER BY
+        CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
+        pl.ValidToDate,
+        pl.ValidFromDate DESC,
+        pli.ID DESC
+    ) price;
+
+  -- Pricing policy rules are optional: when no matching rule exists, discounts default to 0.
     INSERT INTO dbo.OfferDetails (
       OfferID,
       ParentOfferDetailID,
@@ -566,6 +603,9 @@ request.input('__modifiedBy', sql.Int, auditUserId);
       TotalNet,
       TelmacoDiscount,
       CustomerDiscount,
+      NetCostOtherCurrency,
+      OtherCurrencyID,
+      CurrencyCostModifier,
       NetCost,
       Margin,
       GrossProfit,
@@ -603,24 +643,26 @@ request.input('__modifiedBy', sql.Int, auditUserId);
       CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
       COALESCE(discounts.TelmacoDiscountPercentage, 0),
       COALESCE(discounts.CustomerDiscountPercentage, 0),
-      COALESCE(p.CostPrice, p.ListPrice),
+      p.CostPrice,
+      p.OtherCurrencyID,
+      p.CurrencyCostModifier,
+      COALESCE(p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
       0,
       0,
-      CASE WHEN COALESCE(p.CostPrice, p.ListPrice) IS NULL THEN NULL ELSE COALESCE(p.CostPrice, p.ListPrice) END,
+      CASE WHEN COALESCE(p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL THEN NULL ELSE COALESCE(p.CostPrice * p.CurrencyCostModifier, p.ListPrice) END,
       p.PriceListID,
       p.PriceListItemID,
       SYSUTCDATETIME(),
       @__createdBy,
       SYSUTCDATETIME(),
       @__modifiedBy
-    FROM ProductData p
-    CROSS JOIN OfferContext oc
+    FROM @ProductData p
     OUTER APPLY (
       SELECT TOP (1)
         ppr.TelmacoDiscountPercentage,
         ppr.CustomerDiscountPercentage
       FROM dbo.PricingPolicyRules ppr
-      WHERE ppr.PricingPolicyID = oc.PricingPolicyID
+      WHERE ppr.PricingPolicyID = @pricingPolicyId
         AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
       ORDER BY CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END, ppr.ID DESC
     ) AS discounts
@@ -690,42 +732,75 @@ async function handleAssignProductToRequestedRow(
   request.input('__modifiedBy', sql.Int, auditUserId);
 
   const query = `
-    WITH OfferContext AS (
-      SELECT o.ID AS OfferID, o.PricingPolicyID
-      FROM dbo.Offer o
-      WHERE o.ID = @__offerId
-    ),
-    ProductData AS (
-      SELECT
-        pr.ID AS ProductID,
-        pr.Description,
-        pr.BrandID,
-        pr.PartNumber,
-        pr.ModelNumber,
-        0 AS WarrantyValue,
-        price.PriceListID,
-        price.PriceListItemID,
-        price.ListPrice,
-        price.CostPrice
-      FROM dbo.Products pr
-      OUTER APPLY (
-        SELECT TOP (1)
-          pli.ID AS PriceListItemID,
-          pli.PriceListID,
-          pli.ListPrice,
-          pli.CostPrice
-        FROM dbo.PriceListItems pli
-          INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
-        WHERE pli.ProductID = pr.ID
-          AND pl.Enabled = 1
-        ORDER BY
-          CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
-          pl.ValidToDate,
-          pl.ValidFromDate DESC,
-          pli.ID DESC
-      ) price
-      WHERE pr.ID = @__productId
+    DECLARE @pricingPolicyId INT;
+
+    SELECT @pricingPolicyId = o.PricingPolicyID
+    FROM dbo.Offer o
+    WHERE o.ID = @__offerId;
+
+    DECLARE @ProductData TABLE (
+      ProductID INT NOT NULL,
+      Description NVARCHAR(MAX) NULL,
+      BrandID INT NULL,
+      PartNumber NVARCHAR(255) NULL,
+      ModelNumber NVARCHAR(255) NULL,
+      WarrantyValue INT NOT NULL,
+      PriceListID INT NULL,
+      PriceListItemID INT NULL,
+      ListPrice DECIMAL(18, 4) NULL,
+      CostPrice DECIMAL(18, 4) NULL,
+      OtherCurrencyID INT NULL,
+      CurrencyCostModifier DECIMAL(18, 8) NULL
+    );
+
+    INSERT INTO @ProductData (
+      ProductID,
+      Description,
+      BrandID,
+      PartNumber,
+      ModelNumber,
+      WarrantyValue,
+      PriceListID,
+      PriceListItemID,
+      ListPrice,
+      CostPrice,
+      OtherCurrencyID,
+      CurrencyCostModifier
     )
+    SELECT
+      pr.ID AS ProductID,
+      pr.Description,
+      pr.BrandID,
+      pr.PartNumber,
+      pr.ModelNumber,
+      0 AS WarrantyValue,
+      price.PriceListID,
+      price.PriceListItemID,
+      price.ListPrice,
+      price.CostPrice,
+      price.OtherCurrencyID,
+      price.CurrencyCostModifier
+    FROM dbo.Products pr
+    OUTER APPLY (
+      SELECT TOP (1)
+        pli.ID AS PriceListItemID,
+        pli.PriceListID,
+        pli.ListPrice,
+        pli.CostPrice,
+        COALESCE(pl.CostCurrencyID, pl.CurrencyId) AS OtherCurrencyID,
+        COALESCE(pl.CurrencyCostModifier, 1) AS CurrencyCostModifier
+      FROM dbo.PriceListItems pli
+        INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
+      WHERE pli.ProductID = pr.ID
+        AND pl.Enabled = 1
+      ORDER BY
+        CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
+        pl.ValidToDate,
+        pl.ValidFromDate DESC,
+        pli.ID DESC
+    ) price
+    WHERE pr.ID = @__productId;
+    -- Pricing policy rules are optional: when no matching rule exists, discounts default to 0.
     UPDATE od
     SET
       od.IsPrintable = NULL,
@@ -737,7 +812,6 @@ async function handleAssignProductToRequestedRow(
       od.ModelNumber = p.ModelNumber,
       od.ProductDescription = COALESCE(
         NULLIF(p.Description, ''),
-        NULLIF(od.RequestedDescription, ''),
         NULLIF(od.ProductDescription, '')
       ),
       od.Warranty = p.WarrantyValue,
@@ -748,23 +822,25 @@ async function handleAssignProductToRequestedRow(
       od.TotalNet = CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
       od.TelmacoDiscount = COALESCE(discounts.TelmacoDiscountPercentage, 0),
       od.CustomerDiscount = COALESCE(discounts.CustomerDiscountPercentage, 0),
-      od.NetCost = COALESCE(p.CostPrice, p.ListPrice),
+      od.NetCostOtherCurrency = p.CostPrice,
+      od.OtherCurrencyID = p.OtherCurrencyID,
+      od.CurrencyCostModifier = p.CurrencyCostModifier,
+      od.NetCost = COALESCE(p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
       od.Margin = 0,
       od.GrossProfit = 0,
-      od.TotalCost = CASE WHEN COALESCE(p.CostPrice, p.ListPrice) IS NULL THEN NULL ELSE COALESCE(p.CostPrice, p.ListPrice) END,
+      od.TotalCost = CASE WHEN COALESCE(p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL THEN NULL ELSE COALESCE(p.CostPrice * p.CurrencyCostModifier, p.ListPrice) END,
       od.PriceListID = p.PriceListID,
       od.PriceListItemID = p.PriceListItemID,
       od.ModifiedOn = SYSUTCDATETIME(),
       od.ModifiedBy = @__modifiedBy
     FROM dbo.OfferDetails od
-      CROSS JOIN OfferContext oc
-      CROSS JOIN ProductData p
+      CROSS JOIN @ProductData p
       OUTER APPLY (
         SELECT TOP (1)
           ppr.TelmacoDiscountPercentage,
           ppr.CustomerDiscountPercentage
         FROM dbo.PricingPolicyRules ppr
-        WHERE ppr.PricingPolicyID = oc.PricingPolicyID
+        WHERE ppr.PricingPolicyID = @pricingPolicyId
           AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
         ORDER BY CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END, ppr.ID DESC
       ) AS discounts
@@ -823,6 +899,11 @@ export async function POST(
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : 'Server error';
-    return NextResponse.json({ ok: false, error: message, rows: [], rowCount: 0 }, { status: 500 });
+    const errNumber =
+      err && typeof err === 'object' && 'number' in err && typeof (err as { number?: unknown }).number === 'number'
+        ? (err as { number: number }).number
+        : null;
+    const status = errNumber === 50000 ? 400 : 500;
+    return NextResponse.json({ ok: false, error: message, rows: [], rowCount: 0 }, { status });
   }
 }

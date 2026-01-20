@@ -93,6 +93,9 @@ DECLARE @SourceDetails TABLE (
   Warranty NVARCHAR(500) NULL,
   ListPrice DECIMAL(18,4) NULL,
   TelmacoDiscount DECIMAL(18,4) NULL,
+  NetCostOtherCurrency DECIMAL(18,4) NULL,
+  OtherCurrencyID INT NULL,
+  CurrencyCostModifier DECIMAL(18,4) NULL,
   NetCost DECIMAL(18,4) NULL,
   Margin DECIMAL(18,4) NULL,
   GrossProfit DECIMAL(18,4) NULL,
@@ -109,7 +112,7 @@ DECLARE @SourceDetails TABLE (
   RequestedQuantity DECIMAL(18,4) NULL
 );
 
-INSERT INTO @SourceDetails (Seq, OldId, ParentOfferDetailID, TreeOrdering, Ordering, IsPrintable, IsComment, IsCategory, ProductDescription, BrandID, PartNumber, ModelNumber, ProductID, Quantity, CustomerDiscount, NetUnitPrice, TotalPrice, TotalNet, Warranty, ListPrice, TelmacoDiscount, NetCost, Margin, GrossProfit, TotalCost, PriceListID, PriceListItemID, RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity)
+INSERT INTO @SourceDetails (Seq, OldId, ParentOfferDetailID, TreeOrdering, Ordering, IsPrintable, IsComment, IsCategory, ProductDescription, BrandID, PartNumber, ModelNumber, ProductID, Quantity, CustomerDiscount, NetUnitPrice, TotalPrice, TotalNet, Warranty, ListPrice, TelmacoDiscount, NetCostOtherCurrency, OtherCurrencyID, CurrencyCostModifier, NetCost, Margin, GrossProfit, TotalCost, PriceListID, PriceListItemID, RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity)
 SELECT
   ROW_NUMBER() OVER (ORDER BY od.ID),
   od.ID,
@@ -132,6 +135,9 @@ SELECT
   od.Warranty,
   od.ListPrice,
   od.TelmacoDiscount,
+  od.NetCostOtherCurrency,
+  od.OtherCurrencyID,
+  od.CurrencyCostModifier,
   od.NetCost,
   od.Margin,
   od.GrossProfit,
@@ -168,6 +174,9 @@ INSERT INTO dbo.OfferDetails (
   Warranty,
   ListPrice,
   TelmacoDiscount,
+  NetCostOtherCurrency,
+  OtherCurrencyID,
+  CurrencyCostModifier,
   NetCost,
   Margin,
   GrossProfit,
@@ -209,6 +218,9 @@ SELECT
   src.Warranty,
   src.ListPrice,
   src.TelmacoDiscount,
+  src.NetCostOtherCurrency,
+  src.OtherCurrencyID,
+  src.CurrencyCostModifier,
   src.NetCost,
   src.Margin,
   src.GrossProfit,

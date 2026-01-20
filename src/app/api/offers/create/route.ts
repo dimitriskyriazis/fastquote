@@ -164,6 +164,38 @@ export async function POST(req: NextRequest) {
 
     const pool = await getPool();
 
+    // Enforce that pricing policy exists and has at least one default rule (BrandID IS NULL).
+    // This guarantees discounts can be resolved for any product brand.
+    const policyExists = await pool.request()
+      .input('__ppid', sql.Int, pricingPolicyId)
+      .query<{ ID: number }>(`
+        SELECT TOP 1 ID
+        FROM dbo.PricingPolicies
+        WHERE ID = @__ppid
+          AND ISNULL(Enabled, 0) = 1
+      `);
+    if (!policyExists.recordset?.[0]?.ID) {
+      return NextResponse.json(
+        { ok: false, error: 'Selected pricing policy was not found or is disabled.' },
+        { status: 400 },
+      );
+    }
+    const defaultRuleCheck = await pool.request()
+      .input('__ppid', sql.Int, pricingPolicyId)
+      .query<{ cnt: number }>(`
+        SELECT COUNT(1) AS cnt
+        FROM dbo.PricingPolicyRules
+        WHERE PricingPolicyID = @__ppid
+          AND BrandID IS NULL
+      `);
+    const defaultRuleCount = defaultRuleCheck.recordset?.[0]?.cnt ?? 0;
+    if (defaultRuleCount <= 0) {
+      return NextResponse.json(
+        { ok: false, error: 'Selected pricing policy has no default rule (All brands). Please add one first.' },
+        { status: 400 },
+      );
+    }
+
     // Validate contact belongs to customer and capture a display name
     const contactLookup = await pool
       .request()

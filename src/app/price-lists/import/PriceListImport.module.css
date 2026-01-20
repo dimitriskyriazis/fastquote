@@ -100,6 +100,12 @@
   background: #ffffff;
 }
 
+.readonlyValue {
+  background: #f1f5f9;
+  cursor: default;
+  user-select: text;
+}
+
 .comboWrapper {
   position: relative;
   display: flex;

@@ -192,7 +192,17 @@ export default async function PriceListImportPage() {
       }),
     pool
       .request()
-      .query<RawDropdownRow>("SELECT ID, Name FROM dbo.Currencies ORDER BY Name")
+      .query<RawDropdownRow>(`
+        SELECT ID, Name
+        FROM dbo.Currencies
+        ORDER BY
+          CASE
+            WHEN Name = N'€' OR LOWER(Name) LIKE '%eur%' OR LOWER(Name) LIKE '%euro%' THEN 0
+            WHEN Name = N'$' OR LOWER(Name) LIKE '%usd%' OR LOWER(Name) LIKE '%dollar%' THEN 1
+            ELSE 2
+          END,
+          Name
+      `)
       .then((res) => toOptions(res.recordset))
       .catch((err) => {
         console.error("Failed to load currencies", err);

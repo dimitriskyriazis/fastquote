@@ -50,6 +50,8 @@ import MatchRequestedProductsModal, {
 } from './products/MatchRequestedProductsModal';
 import AddProductModal from '../../products/AddProductModal';
 import { useAuditUser } from '../../components/AuditUserProvider';
+import LookupModal from '../../components/LookupModal';
+import lookupStyles from '../../components/LookupModal.module.css';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const decimalFormatter = new Intl.NumberFormat('en-US', {
@@ -57,6 +59,9 @@ const decimalFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 2,
 });
 const DEFAULT_ROW_HEIGHT = 32;
+// AG Grid v34 warns if rowHeight is 0 (warning #23). Using 1 keeps collapsed
+// descendants effectively hidden while avoiding the warning.
+const COLLAPSED_ROW_HEIGHT = 1;
 
 type GridRowNode = RowNode<Record<string, unknown>> | IRowNode<Record<string, unknown>>;
 
@@ -589,13 +594,23 @@ const PRICING_FIELD_LABELS: Record<string, string> = {
   CustomerDiscount: 'Customer Discount',
   NetUnitPrice: 'Net Unit Price',
   TelmacoDiscount: 'Telmaco Discount',
+  NetCostOtherCurrency: 'Cost (Other Currency)',
+  CurrencyCostModifier: 'Cost Modifier',
   NetCost: 'Net Cost',
   Margin: 'Margin',
   ListPrice: 'List Price',
 };
 
 const PRICING_EDITABLE_FIELDS = new Set(Object.keys(PRICING_FIELD_LABELS));
-const COST_ANALYSIS_COLUMNS = ['TelmacoDiscount', 'NetCost', 'Margin', 'GrossProfit', 'TotalCost'];
+const COST_ANALYSIS_COLUMNS = [
+  'TelmacoDiscount',
+  'NetCostOtherCurrency',
+  'CurrencyCostModifier',
+  'NetCost',
+  'Margin',
+  'GrossProfit',
+  'TotalCost',
+];
 
 const findDeleteMenuItemIndex = (
   items: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string>,
@@ -651,47 +666,37 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     () => buildGridColumnStateStorageKey(dataEndpoint, userId, columnStateNamespace),
     [columnStateNamespace, dataEndpoint, userId],
   );
-  const [savedColumnOrder, setSavedColumnOrder] = useState<string[]>([]);
-  const [savedHiddenMap, setSavedHiddenMap] = useState<Record<string, boolean>>({});
   const pricingToastDedupRef = useRef<Map<string, number>>(new Map());
-  useEffect(() => {
+  const { savedColumnOrder, savedHiddenMap } = useMemo(() => {
     if (typeof window === 'undefined' || !columnStateStorageKey) {
-      setSavedColumnOrder([]);
-      setSavedHiddenMap({});
-      return;
+      return { savedColumnOrder: [] as string[], savedHiddenMap: {} as Record<string, boolean> };
     }
     try {
       const raw = window.localStorage.getItem(columnStateStorageKey);
       if (!raw) {
-        setSavedColumnOrder([]);
-        setSavedHiddenMap({});
-        return;
+        return { savedColumnOrder: [] as string[], savedHiddenMap: {} as Record<string, boolean> };
       }
       const parsed = JSON.parse(raw) as {
         columns?: Array<{ colId?: unknown; order?: unknown; hide?: unknown }>;
       } | null;
       if (!parsed || !Array.isArray(parsed.columns)) {
-        setSavedColumnOrder([]);
-        setSavedHiddenMap({});
-        return;
+        return { savedColumnOrder: [] as string[], savedHiddenMap: {} as Record<string, boolean> };
       }
-      const ordered = parsed.columns
+      const savedColumnOrder = parsed.columns
         .filter((entry) => typeof entry?.colId === 'string' && typeof entry?.order === 'number')
         .sort((a, b) => (a.order as number) - (b.order as number))
         .map((entry) => entry.colId as string);
-      const hidden: Record<string, boolean> = {};
+      const savedHiddenMap: Record<string, boolean> = {};
       parsed.columns.forEach((entry) => {
         const colId = typeof entry?.colId === 'string' ? entry.colId : '';
         if (!colId) return;
         if (typeof entry?.hide === 'boolean') {
-          hidden[colId] = entry.hide;
+          savedHiddenMap[colId] = entry.hide;
         }
       });
-      setSavedColumnOrder(ordered);
-      setSavedHiddenMap(hidden);
+      return { savedColumnOrder, savedHiddenMap };
     } catch {
-      setSavedColumnOrder([]);
-      setSavedHiddenMap({});
+      return { savedColumnOrder: [] as string[], savedHiddenMap: {} as Record<string, boolean> };
     }
   }, [columnStateStorageKey]);
   useEffect(() => {
@@ -783,6 +788,12 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [matchAddProductOpen, setMatchAddProductOpen] = useState(false);
   const [matchAddedProductId, setMatchAddedProductId] = useState<number | null>(null);
   const clearMatchAddedProductId = useCallback(() => setMatchAddedProductId(null), []);
+  const [brandBulkEditOpen, setBrandBulkEditOpen] = useState(false);
+  const [brandBulkEditField, setBrandBulkEditField] = useState<'CurrencyCostModifier' | 'Margin'>('CurrencyCostModifier');
+  const [brandBulkEditBrandName, setBrandBulkEditBrandName] = useState('');
+  const [brandBulkEditValue, setBrandBulkEditValue] = useState('');
+  const [brandBulkEditSaving, setBrandBulkEditSaving] = useState(false);
+  const [brandBulkEditError, setBrandBulkEditError] = useState<string | null>(null);
   const refreshScheduledRef = useRef(false);
   const pendingRefreshPurgeRef = useRef<boolean | null>(null);
   const rebuildTreeOrderingRootMap = useCallback((rows?: Array<Record<string, unknown>>, reset = false) => {
@@ -967,6 +978,32 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       /* noop */
     }
 
+    // AG Grid can sometimes drift hidden "Requested…" columns into unexpected positions.
+    // Always keep the full Requested block (visible + hidden) at the start (right after the
+    // drag handle) so it comes back in the correct place across all layouts.
+    if (typeof window !== 'undefined' && typeof api.getColumnState === 'function' && typeof api.moveColumns === 'function') {
+      const applyOrder = () => {
+        try {
+          const stateNow = api.getColumnState();
+          const currentOrder = Array.isArray(stateNow)
+            ? stateNow.map((entry) => (typeof entry?.colId === 'string' ? entry.colId : '')).filter((id) => id)
+            : [];
+          if (currentOrder.length === 0) return;
+          const dragIndex = currentOrder.indexOf('__row_drag__');
+          const anchorIndex = dragIndex >= 0 ? dragIndex + 1 : 0;
+
+          const desiredStartIds = ['ProductID', 'RequestedItemNo', ...keys, 'TreeOrdering'];
+          const toMove = desiredStartIds.filter((id) => currentOrder.includes(id));
+          if (toMove.length === 0) return;
+          api.moveColumns(toMove, anchorIndex);
+        } catch {
+          /* noop */
+        }
+      };
+      // Run twice to avoid races with internal column-state restoration.
+      window.requestAnimationFrame(() => window.requestAnimationFrame(applyOrder));
+    }
+
     appliedRequestedColumnVisibilityRef.current = { ...effectiveVisibility };
     appliedRequestedItemNoVisibleRef.current = effectiveItemNoVisible;
     appliedShowRequestedColumnsRef.current = showRequestedColumns;
@@ -1125,7 +1162,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const determineRowHeight = useCallback((row: Record<string, unknown> | null) => {
     const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
     if (path.length > 0 && hasCollapsedAncestor(path)) {
-      return 0;
+      return COLLAPSED_ROW_HEIGHT;
     }
     return DEFAULT_ROW_HEIGHT;
   }, [hasCollapsedAncestor]);
@@ -1830,9 +1867,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         cellStyle: actualNumericCellStyle,
       },
     ];
-    if (!savedColumnOrder.length) {
-      return baseColumns;
-    }
     const columnMap = new Map<string, ColDef>();
     baseColumns.forEach((column) => {
       const id = typeof column.colId === 'string'
@@ -1844,12 +1878,31 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       columnMap.set(id, column);
     });
     const ordered: ColDef[] = [];
-    savedColumnOrder.forEach((id) => {
+
+    // Keep Requested columns first (and in-order) across all layouts, even if hidden.
+    const fixedStartIds = [
+      '__row_drag__',
+      'ProductID',
+      'RequestedItemNo',
+      ...REQUESTED_DISPLAY_FIELD_KEYS,
+      'TreeOrdering',
+    ];
+    const fixedStartSet = new Set(fixedStartIds);
+    fixedStartIds.forEach((id) => {
       const column = columnMap.get(id);
       if (!column) return;
       ordered.push(column);
       columnMap.delete(id);
     });
+
+    savedColumnOrder
+      .filter((id) => !fixedStartSet.has(id))
+      .forEach((id) => {
+        const column = columnMap.get(id);
+        if (!column) return;
+        ordered.push(column);
+        columnMap.delete(id);
+      });
     columnMap.forEach((column) => ordered.push(column));
     if (Object.keys(savedHiddenMap).length > 0) {
       return ordered.map((column) => {
@@ -2109,7 +2162,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           }
           const productMeta = await fetchProductSummary(productId);
           const productDescription = normalizeDescriptionValue(productMeta?.Description ?? null);
-          const description = productDescription ?? requestedDescriptionValue ?? descriptionOverride ?? null;
+          const description = productDescription ?? descriptionOverride ?? null;
           const requestedPartNumberRaw = getExactTextValue(
             (data as { RequestedPartNo?: unknown }).RequestedPartNo ?? null,
           );
@@ -2266,6 +2319,126 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   const manualMatchTotal = processedRequestedMatches + requestedMatchQueue.length;
   const manualMatchPosition = currentRequestedMatch ? processedRequestedMatches + 1 : 0;
 
+  const openBrandBulkEdit = useCallback((
+    field: 'CurrencyCostModifier' | 'Margin',
+    brandName: string,
+    currentValue?: unknown,
+  ) => {
+    const normalizedBrand = brandName.trim();
+    if (!normalizedBrand) {
+      showToastMessage('Missing brand name for bulk edit.', 'error');
+      return;
+    }
+    setBrandBulkEditField(field);
+    setBrandBulkEditBrandName(normalizedBrand);
+    setBrandBulkEditError(null);
+    const numericCurrent = coerceNumber(currentValue);
+    if (field === 'CurrencyCostModifier') {
+      setBrandBulkEditValue(String(numericCurrent ?? 1));
+    } else {
+      setBrandBulkEditValue(String(numericCurrent ?? 0));
+    }
+    setBrandBulkEditOpen(true);
+  }, []);
+
+  const closeBrandBulkEdit = useCallback(() => {
+    if (brandBulkEditSaving) return;
+    setBrandBulkEditOpen(false);
+  }, [brandBulkEditSaving]);
+
+  const confirmBrandBulkEdit = useCallback(async () => {
+    if (brandBulkEditSaving) return;
+    const brandName = brandBulkEditBrandName.trim();
+    if (!brandName) {
+      setBrandBulkEditError('Brand is required.');
+      return;
+    }
+    const valueNumber = coerceNumber(brandBulkEditValue);
+    const label = brandBulkEditField === 'CurrencyCostModifier' ? 'Cost modifier' : 'Margin';
+    if (valueNumber == null || !Number.isFinite(valueNumber)) {
+      setBrandBulkEditError(`Please enter a valid ${label.toLowerCase()}.`);
+      return;
+    }
+    if (brandBulkEditField === 'CurrencyCostModifier' && !(valueNumber > 0)) {
+      setBrandBulkEditError('Cost modifier must be greater than 0.');
+      return;
+    }
+    if (brandBulkEditField === 'Margin' && Math.abs(valueNumber) >= 100) {
+      setBrandBulkEditError('Margin must be between -100 and 100.');
+      return;
+    }
+
+    setBrandBulkEditSaving(true);
+    setBrandBulkEditError(null);
+    try {
+      // Fetch all product rows for this brand (pivot view excludes categories and requested-only rows).
+      const res = await fetch(resolvedEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request: {
+            allRows: true,
+            view: 'pivot',
+            filterModel: {
+              BrandName: {
+                filterType: 'text',
+                type: 'equals',
+                filter: brandName,
+              },
+            },
+          },
+        }),
+      });
+      const payload = (await res.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; rows?: Array<Record<string, unknown>> }
+        | null;
+      if (!res.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? `Unable to load brand rows (status ${res.status})`);
+      }
+      const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+      const ids = rows
+        .map((row) => normalizeOfferDetailId((row as { OfferDetailID?: unknown })?.OfferDetailID ?? null))
+        .filter((id): id is number => id != null);
+      if (ids.length === 0) {
+        throw new Error('No product rows found for this brand.');
+      }
+
+      const chunkSize = 200;
+      for (let idx = 0; idx < ids.length; idx += chunkSize) {
+        const chunk = ids.slice(idx, idx + chunkSize);
+        const updates = chunk.map((OfferDetailID) => ({
+          OfferDetailID,
+          [brandBulkEditField]: valueNumber,
+        }));
+        const updateRes = await fetch(resolvedEndpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates }),
+        });
+        const updatePayload = (await updateRes.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!updateRes.ok || !updatePayload?.ok) {
+          throw new Error(updatePayload?.error ?? `Bulk update failed (status ${updateRes.status})`);
+        }
+      }
+
+      showToastMessage(`${label} updated for ${brandName} (${ids.length} items)`, 'success');
+      setBrandBulkEditOpen(false);
+      refreshOfferProductGrid(null, { purge: false });
+    } catch (err) {
+      console.error('Brand bulk edit failed', err);
+      setBrandBulkEditError(err instanceof Error ? err.message : 'Unable to apply changes.');
+    } finally {
+      setBrandBulkEditSaving(false);
+    }
+  }, [
+    brandBulkEditBrandName,
+    brandBulkEditField,
+    brandBulkEditSaving,
+    brandBulkEditValue,
+    refreshOfferProductGrid,
+    resolvedEndpoint,
+  ]);
+
   const productContextMenuItems = useCallback((
     params: GetContextMenuItemsParams<Record<string, unknown>>,
   ) => {
@@ -2366,7 +2539,47 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     const hasRequestedSelection = relevantNodes.some((node) => isRequestedRow(node?.data ?? null));
     const rowHasRequestedFields = hasRequestedPseudoFields(rowData);
 
-    const deleteIndexAfterHistory = findDeleteMenuItemIndex(items);
+    let deleteIndexAfterHistory = findDeleteMenuItemIndex(items);
+
+    const rowBrandName = typeof (rowData as { BrandName?: unknown } | null | undefined)?.BrandName === 'string'
+      ? String((rowData as { BrandName?: unknown }).BrandName).trim()
+      : '';
+    const canBulkEditBrand = rowBrandName.length > 0 && isOfferProductProduct(rowData);
+    if (canBulkEditBrand) {
+      const currentModifier = (rowData as { CurrencyCostModifier?: unknown }).CurrencyCostModifier ?? null;
+      const currentMargin = (rowData as { Margin?: unknown }).Margin ?? null;
+      const otherCurrencyName = typeof (rowData as { OtherCurrencyName?: unknown } | null | undefined)?.OtherCurrencyName === 'string'
+        ? String((rowData as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
+        : '';
+      const isEuroCostCurrency =
+        !otherCurrencyName ||
+        otherCurrencyName === '€' ||
+        otherCurrencyName.toLowerCase().includes('eur') ||
+        otherCurrencyName.toLowerCase().includes('euro');
+      const setModifierItem: MenuItemDef = {
+        name: 'Set cost modifier for this brand',
+        action: () => openBrandBulkEdit('CurrencyCostModifier', rowBrandName, currentModifier),
+      };
+      const setMarginItem: MenuItemDef = {
+        name: 'Set margin for this brand',
+        action: () => openBrandBulkEdit('Margin', rowBrandName, currentMargin),
+      };
+      const bulkItems: MenuItemDef[] = [];
+      if (!isEuroCostCurrency) {
+        bulkItems.push(setModifierItem);
+      }
+      bulkItems.push(setMarginItem);
+      const bulkMenu: MenuItemDef = {
+        name: 'Bulk edit brand',
+        subMenu: bulkItems,
+      };
+      if (deleteIndexAfterHistory >= 0) {
+        items.splice(deleteIndexAfterHistory, 0, bulkMenu);
+      } else {
+        items.push(bulkMenu);
+      }
+      deleteIndexAfterHistory = findDeleteMenuItemIndex(items);
+    }
 
     const offerDetailId = normalizeOfferDetailId((rowData as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null);
     const canMarkCategory = (
@@ -2499,6 +2712,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     populateRequestedRowsToOffer,
     promoteNodeToCategory,
     resolvedEndpoint,
+    openBrandBulkEdit,
   ]);
 
   const getCellEditorRawValue = (
@@ -2749,11 +2963,20 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
 
     let normalizedNewValue = coerceNumber(event.newValue);
-    if (source === 'delete' && normalizedNewValue == null) {
-      normalizedNewValue = 0;
-    }
-    if (normalizedNewValue == null && String(event.newValue ?? '').trim() === '') {
-      normalizedNewValue = 0;
+    if (field === 'CurrencyCostModifier') {
+      if (source === 'delete' && normalizedNewValue == null) {
+        normalizedNewValue = 1;
+      }
+      if (normalizedNewValue == null && String(event.newValue ?? '').trim() === '') {
+        normalizedNewValue = 1;
+      }
+    } else {
+      if (source === 'delete' && normalizedNewValue == null) {
+        normalizedNewValue = 0;
+      }
+      if (normalizedNewValue == null && String(event.newValue ?? '').trim() === '') {
+        normalizedNewValue = 0;
+      }
     }
     if (normalizedNewValue == null || !Number.isFinite(normalizedNewValue)) {
       showToastMessage(`Please enter a valid ${label.toLowerCase()}.`, 'error');
@@ -2764,6 +2987,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       showToastMessage('Margin must be between -100 and 100.', 'error');
       try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
       return;
+    }
+    if (field === 'CurrencyCostModifier') {
+      if (!Number.isFinite(normalizedNewValue) || !(normalizedNewValue > 0)) {
+        showToastMessage('Cost modifier must be greater than 0.', 'error');
+        try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
+        return;
+      }
     }
 
     const normalizedOldValue = coerceNumber(event.oldValue);
@@ -2795,6 +3025,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         }
         recalcProductTotals(event);
         refreshCategoryAggregates(event.api);
+        try {
+          refreshOfferProductGrid(event.api ?? null, { purge: false });
+        } catch {
+          /* noop */
+        }
       } catch (err) {
         console.error(`Failed to update ${label}`, err);
         showToastMessage(`Unable to update ${label}. Please try again.`, 'error');
@@ -2803,7 +3038,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     };
 
     void runUpdate();
-  }, [resolvedEndpoint]);
+  }, [refreshOfferProductGrid, resolvedEndpoint]);
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     handleDescriptionEdit(event);
@@ -2898,6 +3133,39 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         onAdded={handleMatchProductAdded}
         onClose={closeMatchAddProduct}
       />
+      <LookupModal
+        open={brandBulkEditOpen}
+        title={brandBulkEditField === 'CurrencyCostModifier' ? 'Bulk edit cost modifier by brand' : 'Bulk edit margin by brand'}
+        onClose={closeBrandBulkEdit}
+        onConfirm={confirmBrandBulkEdit}
+        confirmLabel="Apply"
+        saving={brandBulkEditSaving}
+        error={brandBulkEditError}
+      >
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="bulk-edit-brand-name">
+            Brand
+          </label>
+          <input
+            id="bulk-edit-brand-name"
+            className={lookupStyles.fieldControl}
+            value={brandBulkEditBrandName}
+            readOnly
+          />
+        </div>
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="bulk-edit-brand-value">
+            {brandBulkEditField === 'CurrencyCostModifier' ? 'Cost modifier' : 'Margin (%)'}
+          </label>
+          <input
+            id="bulk-edit-brand-value"
+            className={lookupStyles.fieldControl}
+            value={brandBulkEditValue}
+            inputMode="decimal"
+            onChange={(e) => setBrandBulkEditValue(e.target.value)}
+          />
+        </div>
+      </LookupModal>
     </>
   );
 });

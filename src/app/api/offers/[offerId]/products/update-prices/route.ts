@@ -46,6 +46,30 @@ export async function POST(
     request.input('modifiedBy', sql.NVarChar(450), auditUserId);
 
     const result = await request.query<{ updated: number }>(`
+      DECLARE @PricingPolicyID INT = (
+        SELECT TOP (1) o.PricingPolicyID
+        FROM dbo.Offer o
+        WHERE o.ID = @offerId
+      );
+      IF @PricingPolicyID IS NULL
+      BEGIN
+        THROW 50000, 'Offer has no pricing policy.', 1;
+      END;
+      IF EXISTS (
+        SELECT 1
+        FROM dbo.OfferDetails od
+        WHERE od.OfferID = @offerId
+          AND od.ProductID IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM dbo.PricingPolicyRules ppr
+            WHERE ppr.PricingPolicyID = @PricingPolicyID
+              AND (ppr.BrandID = od.BrandID OR ppr.BrandID IS NULL)
+          )
+      )
+      BEGIN
+        THROW 50000, 'Missing pricing policy rule for one or more brands in this offer. Please add a default (All brands) rule or brand-specific rules.', 1;
+      END;
       WITH OfferContext AS (
         SELECT
           o.ID AS OfferID,
@@ -61,12 +85,15 @@ export async function POST(
         [NetUnitPrice] = price.ListPrice,
         [TotalPrice] = CASE WHEN price.ListPrice IS NULL OR od.Quantity IS NULL THEN NULL ELSE price.ListPrice * od.Quantity END,
         [TotalNet] = CASE WHEN price.ListPrice IS NULL OR od.Quantity IS NULL THEN NULL ELSE price.ListPrice * od.Quantity END,
-        [NetCost] = COALESCE(price.CostPrice, price.ListPrice),
+        [NetCostOtherCurrency] = price.CostPrice,
+        [OtherCurrencyID] = price.OtherCurrencyID,
+        [CurrencyCostModifier] = price.CurrencyCostModifier,
+        [NetCost] = COALESCE(price.CostPrice * price.CurrencyCostModifier, price.ListPrice),
         [TelmacoDiscount] = discounts.TelmacoDiscountPercentage,
         [CustomerDiscount] = discounts.CustomerDiscountPercentage,
         [Margin] = 0,
         [GrossProfit] = 0,
-        [TotalCost] = CASE WHEN COALESCE(price.CostPrice, price.ListPrice) IS NULL OR od.Quantity IS NULL THEN NULL ELSE COALESCE(price.CostPrice, price.ListPrice) * od.Quantity END,
+        [TotalCost] = CASE WHEN COALESCE(price.CostPrice * price.CurrencyCostModifier, price.ListPrice) IS NULL OR od.Quantity IS NULL THEN NULL ELSE COALESCE(price.CostPrice * price.CurrencyCostModifier, price.ListPrice) * od.Quantity END,
         [ModifiedOn] = SYSUTCDATETIME(),
         [ModifiedBy] = @modifiedBy
       FROM dbo.OfferDetails od
@@ -76,7 +103,9 @@ export async function POST(
           pli.PriceListID,
           pli.ID AS PriceListItemID,
           pli.ListPrice,
-          pli.CostPrice
+          pli.CostPrice,
+          COALESCE(pl.CostCurrencyID, pl.CurrencyId) AS OtherCurrencyID,
+          COALESCE(pl.CurrencyCostModifier, 1) AS CurrencyCostModifier
         FROM dbo.PriceListItems pli
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         WHERE pli.ProductID = od.ProductID

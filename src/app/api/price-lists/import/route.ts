@@ -115,6 +115,17 @@ const normalizeInt = (value: unknown): number | null => {
   return null;
 };
 
+const normalizeDecimal = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const trimmed = value.trim().replace(",", ".");
+    if (!trimmed) return null;
+    const parsed = Number.parseFloat(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
 const normalizeBool = (value: unknown): boolean | null => {
   if (value === true || value === "true" || value === 1 || value === "1") return true;
   if (value === false || value === "false" || value === 0 || value === "0") return false;
@@ -609,7 +620,8 @@ export async function POST(req: NextRequest) {
     const responsibleUserId = normalizeUserId(formData.get("responsibleUserId"));
     const supplierId = normalizeInt(formData.get("supplierId"));
     const hasDuty = normalizeBool(formData.get("hasDuty"));
-    const currencyId = normalizeInt(formData.get("currencyId"));
+    const costCurrencyId = normalizeInt(formData.get("costCurrencyId"));
+    const currencyCostModifier = normalizeDecimal(formData.get("currencyCostModifier"));
     const countryId = normalizeInt(formData.get("countryId"));
     const validFromDate = normalizeDate(formData.get("validFromDate"));
     const validToDate = normalizeDate(formData.get("validToDate"));
@@ -624,9 +636,12 @@ export async function POST(req: NextRequest) {
     if (!pricingPolicyId) errors.push("Pricing policy is required.");
     if (!responsibleUserId) errors.push("Responsible user is required.");
     if (!supplierId) errors.push("Supplier is required.");
-    if (!currencyId) errors.push("Currency is required.");
     if (!validFromDate) errors.push("Valid from date is required.");
     if (!validToDate) errors.push("Valid to date is required.");
+
+    if (currencyCostModifier != null && currencyCostModifier <= 0) {
+      errors.push("Currency cost modifier must be greater than 0.");
+    }
 
     if (validFromDate && validToDate && validFromDate > validToDate) {
       errors.push("Valid from date cannot be after valid to date.");
@@ -651,6 +666,75 @@ export async function POST(req: NextRequest) {
 
     const auditUserId = resolveAuditUserId(req);
     const pool = await getPool();
+
+    // Currency is always EUR. Resolve the EUR currency ID from the database and ignore any incoming currencyId.
+    const eurLookup = await pool.request().query<{ ID: number; Name: string | null }>(`
+      SELECT TOP 1 ID, Name
+      FROM dbo.Currencies
+      ORDER BY
+        CASE
+          WHEN Name = N'€' THEN 0
+          WHEN LOWER(Name) LIKE '%eur%' THEN 1
+          WHEN LOWER(Name) LIKE '%euro%' THEN 2
+          ELSE 3
+        END,
+        Name
+    `);
+    const eurCurrencyId = eurLookup.recordset?.[0]?.ID ?? null;
+    if (!eurCurrencyId) {
+      return NextResponse.json(
+        { ok: false, error: 'EUR currency is not configured in dbo.Currencies (expected Name like "€" or "EUR").' },
+        { status: 400 },
+      );
+    }
+
+    // Enforce pricing policy rules exist for this policy (brand-specific or default).
+    // This ensures Telmaco/Customer discounts can be resolved later.
+    const policyRuleCheck = await pool.request()
+      .input('__ppid', sql.Int, pricingPolicyId)
+      .input('__brandId', sql.Int, brandId)
+      .query<{ cnt: number }>(`
+        SELECT COUNT(1) AS cnt
+        FROM dbo.PricingPolicyRules ppr
+        WHERE ppr.PricingPolicyID = @__ppid
+          AND (ppr.BrandID = @__brandId OR ppr.BrandID IS NULL)
+      `);
+    const applicableRuleCount = policyRuleCheck.recordset?.[0]?.cnt ?? 0;
+    if (applicableRuleCount <= 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'Selected pricing policy has no applicable rules for this brand. Create a default (All brands) rule or a brand-specific rule first.',
+        },
+        { status: 400 },
+      );
+    }
+
+    // If a specific rule is provided, validate it matches the selected pricing policy and brand (or is a default rule).
+    if (pricingPolicyRuleId != null) {
+      const ruleCheck = await pool.request()
+        .input('__ruleId', sql.Int, pricingPolicyRuleId)
+        .input('__ppid', sql.Int, pricingPolicyId)
+        .input('__brandId', sql.Int, brandId)
+        .query<{ cnt: number }>(`
+          SELECT COUNT(1) AS cnt
+          FROM dbo.PricingPolicyRules ppr
+          WHERE ppr.ID = @__ruleId
+            AND ppr.PricingPolicyID = @__ppid
+            AND (ppr.BrandID = @__brandId OR ppr.BrandID IS NULL)
+        `);
+      const validRuleCount = ruleCheck.recordset?.[0]?.cnt ?? 0;
+      if (validRuleCount <= 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: 'Selected pricing policy rule does not match the chosen pricing policy/brand.',
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     const existingProducts = await loadExistingProducts(pool, parsedRows);
 
     const byPartNumber = new Map<string, ProductRow>();
@@ -673,6 +757,11 @@ export async function POST(req: NextRequest) {
     await transaction.begin();
 
     try {
+      const resolvedCurrencyId = eurCurrencyId;
+      const resolvedCostCurrencyId = costCurrencyId ?? eurCurrencyId;
+      const resolvedCurrencyCostModifier =
+        resolvedCostCurrencyId === eurCurrencyId ? 1 : (currencyCostModifier ?? 1);
+
       const priceListRequest = createRequest(transaction);
       priceListRequest.input("Name", sql.NVarChar(255), name);
       priceListRequest.input("BrandID", sql.Int, brandId);
@@ -683,7 +772,9 @@ export async function POST(req: NextRequest) {
       priceListRequest.input("ResponsibleUserId", sql.NVarChar(450), responsibleUserId);
       priceListRequest.input("SupplierID", sql.Int, supplierId);
       priceListRequest.input("HasDuty", sql.Bit, hasDuty ?? false);
-      priceListRequest.input("CurrencyId", sql.Int, currencyId);
+      priceListRequest.input("CurrencyId", sql.Int, resolvedCurrencyId);
+      priceListRequest.input("CostCurrencyID", sql.Int, resolvedCostCurrencyId);
+      priceListRequest.input("CurrencyCostModifier", getDecimalType(), resolvedCurrencyCostModifier);
       priceListRequest.input("CountryId", sql.Int, countryId);
       priceListRequest.input("ValidFromDate", sql.DateTime2, validFromDate);
       priceListRequest.input("ValidToDate", sql.DateTime2, validToDate);
@@ -703,6 +794,8 @@ export async function POST(req: NextRequest) {
           SupplierID,
           HasDuty,
           CurrencyId,
+          CostCurrencyID,
+          CurrencyCostModifier,
           CountryId,
           ValidFromDate,
           ValidToDate,
@@ -726,6 +819,8 @@ export async function POST(req: NextRequest) {
           @SupplierID,
           @HasDuty,
           @CurrencyId,
+          @CostCurrencyID,
+          @CurrencyCostModifier,
           @CountryId,
           @ValidFromDate,
           @ValidToDate,

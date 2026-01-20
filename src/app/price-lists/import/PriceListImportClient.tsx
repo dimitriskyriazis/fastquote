@@ -57,7 +57,8 @@ type FormValues = {
   responsibleUserId: string;
   supplierId: string;
   hasDuty: boolean | null;
-  currencyId: string;
+  costCurrencyId: string;
+  currencyCostModifier: string;
   countryId: string;
   validFromDate: string;
   validToDate: string;
@@ -259,10 +260,17 @@ const REQUIRED_FIELDS: Array<keyof FormValues> = [
   "pricingPolicyId",
   "responsibleUserId",
   "supplierId",
-  "currencyId",
   "validFromDate",
   "validToDate",
 ];
+
+const resolveDefaultPricingPolicyId = (options: DropdownOption[]): string => {
+  const normalizedTarget = "default pricing policy";
+  const byLabel = options.find((opt) => (opt.label ?? "").trim().toLowerCase() === normalizedTarget);
+  if (byLabel?.value) return byLabel.value;
+  const byValue = options.find((opt) => (opt.value ?? "").trim().toLowerCase() === normalizedTarget);
+  return byValue?.value ?? "";
+};
 
 const normalizeDate = (value: string) => {
   const trimmed = value.trim();
@@ -337,20 +345,30 @@ const buildSuggestions = (columns: ColumnOption[]) => {
   };
 };
 
+const autoSelectUniqueSuggestions = (
+  suggestions: Record<HeaderColumnKey, ColumnOption[]>,
+): Partial<Record<HeaderColumnKey, number | null>> => {
+  const selection: Partial<Record<HeaderColumnKey, number | null>> = {};
+  const usedIndexes = new Set<number>();
+
+  COLUMN_DISPLAY.forEach((column) => {
+    const match = (suggestions[column.key] ?? []).find((opt) => !usedIndexes.has(opt.index));
+    if (!match) return;
+    selection[column.key] = match.index;
+    usedIndexes.add(match.index);
+  });
+
+  return selection;
+};
+
 const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: number, enabled: boolean): SheetMapping => {
   const headerRowIndex = detectHeaderRowIndex(rows);
   const headerRow = Array.isArray(rows[headerRowIndex]) ? rows[headerRowIndex] : [];
   const columns = buildColumns(headerRow);
   const suggestions = buildSuggestions(columns);
   
-  // Auto-select the first suggestion for each column if available
-  const selection: Partial<Record<HeaderColumnKey, number | null>> = {};
-  COLUMN_DISPLAY.forEach((column) => {
-    const columnSuggestions = suggestions[column.key];
-    if (columnSuggestions.length > 0) {
-      selection[column.key] = columnSuggestions[0].index;
-    }
-  });
+  // Auto-select suggested columns, but do not map the same source column twice.
+  const selection = autoSelectUniqueSuggestions(suggestions);
   
   const dataRows = rows.slice(headerRowIndex + 1, headerRowIndex + 501);
   const rowCount = dataRows.filter((row) => Array.isArray(row) && row.some(hasCellValue)).length;
@@ -477,15 +495,30 @@ export default function PriceListImportClient({
 }: Props) {
   const router = useRouter();
   const { userId: currentUserId } = useAuditUser();
-  const [values, setValues] = useState<FormValues>({
+  const euroCurrencyId = useMemo(() => {
+    const match =
+      currencies.find((c) => (c.label ?? "").trim() === "€") ??
+      currencies.find((c) => (c.label ?? "").toLowerCase().includes("eur")) ??
+      null;
+    return match?.value ?? "";
+  }, [currencies]);
+  const euroCurrencyLabel = "€";
+
+  const defaultPricingPolicyId = useMemo(
+    () => resolveDefaultPricingPolicyId(pricingPolicies),
+    [pricingPolicies],
+  );
+
+  const [values, setValues] = useState<FormValues>(() => ({
     name: "",
     brandId: "",
-    pricingPolicyId: "",
+    pricingPolicyId: defaultPricingPolicyId,
     pricingPolicyRuleId: "",
     responsibleUserId: "",
     supplierId: "",
     hasDuty: false,
-    currencyId: "",
+    costCurrencyId: euroCurrencyId,
+    currencyCostModifier: "1",
     countryId: "",
     validFromDate: "",
     validToDate: "",
@@ -493,7 +526,7 @@ export default function PriceListImportClient({
     supplierComments: "",
     previousPriceListId: "",
     decimalFormat: "dotDecimal",
-  });
+  }));
   const [file, setFile] = useState<File | null>(null);
   const [fileValidation, setFileValidation] = useState<FileValidation>(INITIAL_VALIDATION);
   const validationRunId = useRef(0);
@@ -551,6 +584,22 @@ export default function PriceListImportClient({
       setValues((prev) => ({ ...prev, responsibleUserId: currentUserId }));
     }
   }, [currentUserId, values.responsibleUserId]);
+
+  const isCostCurrencyEuro = !values.costCurrencyId || values.costCurrencyId === euroCurrencyId;
+
+  // Default cost currency to EUR when available.
+  useEffect(() => {
+    if (!euroCurrencyId) return;
+    if (values.costCurrencyId) return;
+    setValues((prev) => ({ ...prev, costCurrencyId: euroCurrencyId }));
+  }, [euroCurrencyId, values.costCurrencyId]);
+
+  // When cost currency is EUR (default), keep modifier at 1.
+  useEffect(() => {
+    if (!isCostCurrencyEuro) return;
+    if (values.currencyCostModifier === "1") return;
+    setValues((prev) => ({ ...prev, currencyCostModifier: "1" }));
+  }, [isCostCurrencyEuro, values.currencyCostModifier]);
 
   const parseDecimalInput = (value: string): number | null => {
     const trimmed = value.trim().replace(",", ".");
@@ -632,9 +681,9 @@ export default function PriceListImportClient({
       setPricingPolicyRuleError("Pricing policy is required");
       return;
     }
-    const brandId = Number(newRuleBrandId);
-    if (!brandId) {
-      setPricingPolicyRuleError("Brand is required");
+    const brandId = newRuleBrandId.trim() ? Number(newRuleBrandId) : null;
+    if (newRuleBrandId.trim() && !brandId) {
+      setPricingPolicyRuleError("Brand is invalid");
       return;
     }
     const telmacoValue = parseDecimalInput(newRuleTelmaco);
@@ -970,6 +1019,11 @@ export default function PriceListImportClient({
     setError(null);
     setShowValidationErrors(true);
 
+    if (!euroCurrencyId) {
+      setError('EUR currency is not configured. Please add "€" (EUR) in Currencies and try again.');
+      return;
+    }
+
     const missing: string[] = [];
     REQUIRED_FIELDS.forEach((field) => {
       const value = values[field];
@@ -1030,7 +1084,10 @@ export default function PriceListImportClient({
       formData.append("responsibleUserId", values.responsibleUserId);
       formData.append("supplierId", values.supplierId);
       formData.append("hasDuty", values.hasDuty ? "1" : "0");
-      formData.append("currencyId", values.currencyId);
+      // Currency is always EUR.
+      formData.append("currencyId", euroCurrencyId);
+      formData.append("costCurrencyId", values.costCurrencyId || euroCurrencyId);
+      formData.append("currencyCostModifier", isCostCurrencyEuro ? "1" : (values.currencyCostModifier || "1"));
       if (values.countryId) formData.append("countryId", values.countryId);
       // Values are already in ISO format (YYYY-MM-DD) from type="date" inputs
       formData.append("validFromDate", values.validFromDate);
@@ -1094,7 +1151,7 @@ export default function PriceListImportClient({
     } finally {
       setSubmitting(false);
     }
-  }, [file, fileValidation, router, values]);
+  }, [euroCurrencyId, file, fileValidation, isCostCurrencyEuro, router, values]);
 
   const renderOption = (option: DropdownOption) => (
     <option key={option.value} value={option.value}>
@@ -1102,9 +1159,11 @@ export default function PriceListImportClient({
     </option>
   );
 
-  const selectedDecimalFormatOption =
-    PRICE_LIST_DECIMAL_FORMAT_OPTIONS.find((option) => option.value === values.decimalFormat) ??
-    PRICE_LIST_DECIMAL_FORMAT_OPTIONS[0];
+  const costCurrencyOptions = useMemo(() => {
+    if (!euroCurrencyId) return currencies;
+    const rest = currencies.filter((c) => c.value !== euroCurrencyId);
+    return [{ value: euroCurrencyId, label: euroCurrencyLabel }, ...rest];
+  }, [currencies, euroCurrencyId]);
 
   return (
     <>
@@ -1181,16 +1240,17 @@ export default function PriceListImportClient({
               </div>
 
               <div className={styles.fieldRow}>
-                <label className={styles.field}>
+                <div className={styles.field}>
                   <div className={styles.lookupLabelRow}>
                     <div className={styles.labelText}>
-                      <span className={styles.label}>
+                      <label className={styles.label} htmlFor="import-pricing-policy">
                         Pricing Policy <span className={styles.requiredMark}>*</span>
-                      </span>
+                      </label>
                     </div>
                     {renderLookupAddButton('pricingPolicy')}
                   </div>
                   <select
+                    id="import-pricing-policy"
                     className={styles.input}
                     value={values.pricingPolicyId}
                     required
@@ -1199,15 +1259,18 @@ export default function PriceListImportClient({
                     <option value="">Select pricing policy</option>
                     {filteredPolicies.map(renderOption)}
                   </select>
-                </label>
-                <label className={styles.field}>
+                </div>
+                <div className={styles.field}>
                   <div className={styles.lookupLabelRow}>
                     <div className={styles.labelText}>
-                      <span className={styles.label}>Pricing Policy Rule</span>
+                      <label className={styles.label} htmlFor="import-pricing-policy-rule">
+                        Pricing Policy Rule
+                      </label>
                     </div>
                     {renderLookupAddButton('pricingPolicyRule')}
                   </div>
                   <select
+                    id="import-pricing-policy-rule"
                     className={styles.input}
                     value={values.pricingPolicyRuleId}
                     onChange={(e) => updateField("pricingPolicyRuleId", e.target.value)}
@@ -1216,12 +1279,10 @@ export default function PriceListImportClient({
                     {filteredRules.map((rule) => (
                       <option key={rule.value} value={rule.value}>
                         {rule.label}
-                        {rule.brandName ? ` • ${rule.brandName}` : ""}
-                        {rule.pricingPolicyName ? ` • ${rule.pricingPolicyName}` : ""}
                       </option>
                     ))}
                   </select>
-                </label>
+                </div>
               </div>
 
               <div className={styles.fieldRow}>
@@ -1257,20 +1318,6 @@ export default function PriceListImportClient({
 
               <div className={styles.fieldRow}>
                 <label className={styles.field}>
-                  <span className={styles.label}>
-                    Currency <span className={styles.requiredMark}>*</span>
-                  </span>
-                  <select
-                    className={styles.input}
-                    value={values.currencyId}
-                    required
-                    onChange={(e) => updateField("currencyId", e.target.value)}
-                  >
-                    <option value="">Select currency</option>
-                    {currencies.map(renderOption)}
-                  </select>
-                </label>
-                <label className={styles.field}>
                   <span className={styles.label}>Country</span>
                   <select
                     className={styles.input}
@@ -1281,6 +1328,39 @@ export default function PriceListImportClient({
                     {countries.map(renderOption)}
                   </select>
                 </label>
+                <label className={styles.field}>
+                  <span className={styles.label}>Cost Currency</span>
+                  <select
+                    className={styles.input}
+                    value={values.costCurrencyId}
+                    onChange={(e) => updateField("costCurrencyId", e.target.value)}
+                  >
+                    {costCurrencyOptions.map(renderOption)}
+                  </select>
+                  <span className={styles.helpText}>
+                    The cost price column is in this currency. Cost price is converted to € using the modifier.
+                  </span>
+                </label>
+              </div>
+
+              <div className={styles.fieldRow}>
+                <div className={styles.field} />
+                {!isCostCurrencyEuro ? (
+                  <label className={styles.field}>
+                    <span className={styles.label}>Currency Cost Modifier</span>
+                    <input
+                      autoComplete="off"
+                      className={styles.input}
+                      inputMode="decimal"
+                      placeholder="1"
+                      value={values.currencyCostModifier}
+                      onChange={(e) => updateField("currencyCostModifier", e.target.value)}
+                    />
+                    <span className={styles.helpText}>
+                      EUR cost = Cost Price × Modifier
+                    </span>
+                  </label>
+                ) : null}
               </div>
 
               <div className={styles.fieldRow}>
@@ -1389,9 +1469,6 @@ export default function PriceListImportClient({
                   </option>
                 ))}
               </select>
-              <span className={styles.helpText}>
-                {`Detected list prices should follow ${selectedDecimalFormatOption.label} formatting (${selectedDecimalFormatOption.description}). The app still displays numbers as 1,000.00.`}
-              </span>
             </div>
             <div className={styles.uploadCard}>
               <label
@@ -1411,7 +1488,7 @@ export default function PriceListImportClient({
                 <div className={styles.uploadText}>
                   <div className={styles.uploadTitle}>Drop your Excel file here</div>
                     <div className={styles.uploadSubtitle}>
-                      Required columns: Part Number/Part No, Name/Description, and List Price/Price (case insensitive). Model Number and Warning are optional. Use the dropdowns below to map the headers we find, even if the names are not exact.
+                      Required columns: Part Number, Name/Description, and List Price. Model Number, Cost Price and Warning are optional.
                     </div>
                     {file ? (
                       <div className={styles.selectedFile}>
@@ -1747,10 +1824,9 @@ export default function PriceListImportClient({
             id="import-rule-brand"
             className={lookupStyles.fieldControl}
             value={newRuleBrandId}
-            required
             onChange={(event) => setNewRuleBrandId(event.target.value)}
           >
-            <option value="">Select brand</option>
+            <option value="">All brands (default)</option>
             {brands.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -1792,7 +1868,7 @@ export default function PriceListImportClient({
             value={newRuleResponsibleUserId}
             onChange={(event) => setNewRuleResponsibleUserId(event.target.value)}
           >
-            <option value="">Select responsible user (optional)</option>
+            <option value="">Select responsible user </option>
             {users.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}

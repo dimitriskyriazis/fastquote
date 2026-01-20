@@ -20,7 +20,7 @@ type FieldConfig = {
   column: string;
   type: FieldType;
   length?: number;
-  sqlType: ISqlTypeFactory;
+  sqlType: ISqlTypeFactory | unknown;
 };
 
 type NormalizedUpdate = {
@@ -39,7 +39,12 @@ const FIELD_CONFIG: Record<PriceListBasicUpdateField, FieldConfig> = {
   BrandID: { column: "BrandID", type: "number", sqlType: sql.Int },
   CountryId: { column: "CountryId", type: "number", sqlType: sql.Int },
   SupplierID: { column: "SupplierID", type: "number", sqlType: sql.Int },
-  CurrencyId: { column: "CurrencyId", type: "number", sqlType: sql.Int },
+  CostCurrencyID: { column: "CostCurrencyID", type: "number", sqlType: sql.Int },
+  CurrencyCostModifier: {
+    column: "CurrencyCostModifier",
+    type: "number",
+    sqlType: (sql as unknown as { Decimal: (precision: number, scale: number) => unknown }).Decimal(18, 4),
+  },
   ResponsibleUserId: { column: "ResponsibleUserId", type: "string", sqlType: sql.NVarChar, length: 450 },
   Enabled: { column: "Enabled", type: "number", sqlType: sql.Bit },
   HasDuty: { column: "HasDuty", type: "number", sqlType: sql.Bit },
@@ -93,7 +98,7 @@ export async function PATCH(
       body = null;
     }
 
-    const updates = Array.isArray(body?.updates) ? body.updates : [];
+    const updates = body && Array.isArray(body.updates) ? body.updates : [];
     const normalizedUpdates: NormalizedUpdate[] = [];
 
     updates.forEach((entry) => {
@@ -109,12 +114,52 @@ export async function PATCH(
     }
 
     const pool = await getPool();
+
+    // Currency is always EUR. Resolve EUR currency ID (for enforcing cost modifier = 1 when cost currency is EUR/null).
+    const eurLookup = await pool.request().query<{ ID: number; Name: string | null }>(`
+      SELECT TOP 1 ID, Name
+      FROM dbo.Currencies
+      ORDER BY
+        CASE
+          WHEN Name = N'€' THEN 0
+          WHEN LOWER(Name) LIKE '%eur%' THEN 1
+          WHEN LOWER(Name) LIKE '%euro%' THEN 2
+          ELSE 3
+        END,
+        Name
+    `);
+    const eurCurrencyId = eurLookup.recordset?.[0]?.ID ?? null;
+
+    // Determine effective cost currency (incoming update or current DB value).
+    const incomingCostCurrency = normalizedUpdates.find((u) => u.field === "CostCurrencyID")?.value;
+    const currentRow = await pool
+      .request()
+      .input("__priceListId", sql.Int, parsedId)
+      .query<{ CostCurrencyID: number | null }>(`
+        SELECT TOP 1 CostCurrencyID
+        FROM dbo.PriceLists
+        WHERE ID = @__priceListId
+      `);
+    const currentCostCurrencyId = currentRow.recordset?.[0]?.CostCurrencyID ?? null;
+    const effectiveCostCurrencyId =
+      incomingCostCurrency !== undefined ? (incomingCostCurrency as number | null) : currentCostCurrencyId;
+    const isEuroCostCurrency =
+      effectiveCostCurrencyId == null || (eurCurrencyId != null && effectiveCostCurrencyId === eurCurrencyId);
+
+    const filteredUpdates = normalizedUpdates.filter((u) => {
+      if (u.field === "CurrencyCostModifier" && isEuroCostCurrency) return false;
+      return true;
+    });
+    if (filteredUpdates.length === 0) {
+      return NextResponse.json({ ok: false, error: "No valid updates provided" }, { status: 400 });
+    }
+
     const request = pool.request();
     request.input("__priceListId", sql.Int, parsedId);
 
     const setClauses: string[] = [];
 
-    normalizedUpdates.forEach((update, idx) => {
+    filteredUpdates.forEach((update, idx) => {
       const paramName = `field_${idx}`;
       const { config, value } = update;
       if (config.sqlType === sql.NVarChar) {
@@ -124,6 +169,10 @@ export async function PATCH(
       }
       setClauses.push(`[${config.column}] = @${paramName}`);
     });
+
+    if (isEuroCostCurrency) {
+      setClauses.push("[CurrencyCostModifier] = 1");
+    }
 
     const auditUserId = resolveAuditUserId(req);
     if (auditUserId) {
@@ -140,7 +189,7 @@ export async function PATCH(
     const result = await request.query(query);
     const rowsAffected = result.rowsAffected?.[0] ?? 0;
 
-    return NextResponse.json({ ok: true, updated: normalizedUpdates.length, rowsAffected });
+    return NextResponse.json({ ok: true, updated: filteredUpdates.length, rowsAffected });
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : "Server error";

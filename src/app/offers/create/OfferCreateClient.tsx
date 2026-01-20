@@ -118,6 +118,14 @@ const toNullableString = (value: string): string | null => {
   return trimmed ? trimmed : null;
 };
 
+const resolveDefaultPricingPolicyId = (options: DropdownOption[]): string => {
+  const normalizedTarget = 'default pricing policy';
+  const byLabel = options.find((opt) => (opt.label ?? '').trim().toLowerCase() === normalizedTarget);
+  if (byLabel?.value) return byLabel.value;
+  const byValue = options.find((opt) => (opt.value ?? '').trim().toLowerCase() === normalizedTarget);
+  return byValue?.value ?? '';
+};
+
 export default function OfferCreateClient({
   customers,
   statuses,
@@ -139,6 +147,11 @@ export default function OfferCreateClient({
   const lastCustomerRef = useRef<string>('');
   const listCloseTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  const defaultPricingPolicyId = useMemo(
+    () => resolveDefaultPricingPolicyId(pricingPolicies),
+    [pricingPolicies],
+  );
+
   const initialValues = useMemo<FormValues>(() => ({
     title: '',
     description: '',
@@ -152,7 +165,7 @@ export default function OfferCreateClient({
     customerId: '',
     contactId: '',
     statusId: '',
-    pricingPolicyId: '',
+    pricingPolicyId: defaultPricingPolicyId,
     marketId: '',
     salesDivisionId: '',
     salesCreationPersonId: defaultValues.suggestedUserId ?? '',
@@ -170,7 +183,7 @@ export default function OfferCreateClient({
     deliveryDue: '',
     delivery: '',
     offerDate: '',
-  }), [defaultValues]);
+  }), [defaultPricingPolicyId, defaultValues]);
 
   const [values, setValues] = useState<FormValues>(initialValues);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormValues, string>>>({});

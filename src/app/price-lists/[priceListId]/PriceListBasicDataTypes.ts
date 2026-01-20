@@ -17,6 +17,9 @@ export type PriceListBasicRecord = {
   SupplierName: string | null;
   CurrencyId: number | null;
   CurrencyName: string | null;
+  CostCurrencyID: number | null;
+  CostCurrencyName: string | null;
+  CurrencyCostModifier: number | null;
   ResponsibleUserId: string | null;
   ResponsibleUserName: string | null;
   HasDuty: boolean | number | null;
@@ -49,7 +52,8 @@ export type PriceListBasicUpdateField =
   | "BrandID"
   | "CountryId"
   | "SupplierID"
-  | "CurrencyId"
+  | "CostCurrencyID"
+  | "CurrencyCostModifier"
   | "ResponsibleUserId"
   | "Enabled"
   | "HasDuty";

@@ -394,7 +394,10 @@ export async function POST(
             RequestedDescription2 = payload.RequestedDescription2,
             RequestedDescription3 = payload.RequestedDescription3,
             RequestedQuantity = payload.RequestedQuantity,
-            ProductDescription = payload.ProductDescription,
+            ProductDescription = CASE
+              WHEN ISNULL(od.IsCategory, 0) = 1 THEN payload.ProductDescription
+              ELSE od.ProductDescription
+            END,
             ModifiedOn = SYSUTCDATETIME(),
             ModifiedBy = @__modifiedBy
           OUTPUT INSERTED.TreeOrdering INTO @updated(TreeOrdering)
@@ -568,7 +571,7 @@ export async function POST(
           1,
           0,
           payload.IsCategory,
-          payload.ProductDescription,
+          CASE WHEN payload.IsCategory = 1 THEN payload.ProductDescription ELSE NULL END,
           0,
           payload.RequestedItemNo,
           payload.RequestedBrand,

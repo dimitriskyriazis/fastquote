@@ -164,6 +164,22 @@ const buildSuggestions = (columns: ColumnOption[]) => {
   };
 };
 
+const autoSelectUniqueSuggestions = (
+  suggestions: Record<HeaderColumnKey, ColumnOption[]>,
+): Partial<Record<HeaderColumnKey, number | null>> => {
+  const selection: Partial<Record<HeaderColumnKey, number | null>> = {};
+  const usedIndexes = new Set<number>();
+
+  COLUMN_DISPLAY.forEach((column) => {
+    const match = (suggestions[column.key] ?? []).find((opt) => !usedIndexes.has(opt.index));
+    if (!match) return;
+    selection[column.key] = match.index;
+    usedIndexes.add(match.index);
+  });
+
+  return selection;
+};
+
 const columnHasValue = (rows: unknown[][], headerRow: unknown[], columnIndex: number) => {
   const headerCell = columnIndex < headerRow.length ? headerRow[columnIndex] : null;
   if (hasCellValue(headerCell)) return true;
@@ -185,14 +201,8 @@ const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: numbe
   const suggestions = buildSuggestions(columns);
   const includeHeaderRow = Object.values(suggestions).some((match) => match.length > 0);
   
-  // Auto-select the first suggestion for each column if available
-  const selection: Partial<Record<HeaderColumnKey, number | null>> = {};
-  COLUMN_DISPLAY.forEach((column) => {
-    const columnSuggestions = suggestions[column.key];
-    if (columnSuggestions.length > 0) {
-      selection[column.key] = columnSuggestions[0].index;
-    }
-  });
+  // Auto-select suggested columns, but do not map the same source column twice.
+  const selection = autoSelectUniqueSuggestions(suggestions);
   
   const baseSheet: SheetMapping = {
     name: sheetName || `Sheet ${fallbackIndex + 1}`,
@@ -557,7 +567,17 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
     onImported,
   ]);
 
-  const handleOverlayClick = useCallback(() => {
+  const overlayPointerDownOnOverlayRef = useRef(false);
+
+  const handleOverlayPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    overlayPointerDownOnOverlayRef.current = event.target === event.currentTarget;
+  }, []);
+
+  const handleOverlayClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const shouldClose =
+      overlayPointerDownOnOverlayRef.current && event.target === event.currentTarget;
+    overlayPointerDownOnOverlayRef.current = false;
+    if (!shouldClose) return;
     if (submitting) return;
     onClose();
   }, [onClose, submitting]);
@@ -587,12 +607,11 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
   const canSubmit = fileValidation.status === 'valid' && !submitting;
 
   return (
-    <div className={styles.overlay} onClick={handleOverlayClick}>
+    <div className={styles.overlay} onPointerDown={handleOverlayPointerDown} onClick={handleOverlayClick}>
       <div className={styles.card} role="dialog" aria-modal="true" aria-label="Add requested products" onClick={(event) => event.stopPropagation()}>
         <div className={styles.header}>
           <div className={styles.headerText}>
             <div className={styles.title}>Add Requested Products</div>
-            <div className={styles.subtitle}>Upload the customer request and map the columns to import them.</div>
           </div>
           <div className={styles.headerActions}>
             <button type="button" className={styles.ghostButton} onClick={onClose} disabled={submitting}>Cancel</button>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, type CSSProperties } from 'react';
+import { useEffect, useState, useCallback, useRef, type CSSProperties } from 'react';
 import styles from './LookupModal.module.css';
 
 type Props = {
@@ -45,6 +45,7 @@ export default function LookupModal({
   confirmFirst = false,
 }: Props) {
   const [showValidation, setShowValidation] = useState(false);
+  const overlayPointerDownOnOverlayRef = useRef(false);
 
   const handleClose = useCallback(() => {
     setShowValidation(false);
@@ -86,8 +87,14 @@ export default function LookupModal({
     <div
       className={`${styles.overlay} ${overlayClassName ?? ''}`.trim()}
       style={overlayStyle}
+      onPointerDown={(event) => {
+        overlayPointerDownOnOverlayRef.current = event.target === event.currentTarget;
+      }}
       onClick={(event) => {
-        if (event.currentTarget === event.target) {
+        const shouldClose =
+          overlayPointerDownOnOverlayRef.current && event.currentTarget === event.target;
+        overlayPointerDownOnOverlayRef.current = false;
+        if (shouldClose) {
           handleClose();
         }
       }}
