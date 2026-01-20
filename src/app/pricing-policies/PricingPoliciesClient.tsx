@@ -82,7 +82,7 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
         marryChildren: true,
         children: [
           {
-            headerName: "Telmaco Discount Min",
+            headerName: "Min of Telmaco Discount",
             colId: `pp_${policyId}_telmaco`,
             sortable: false,
             filter: false,
@@ -96,7 +96,7 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
             width: 140,
           },
           {
-            headerName: "Customer Discount Min",
+            headerName: "Min of Customer Discount",
             colId: `pp_${policyId}_customer`,
             sortable: false,
             filter: false,
