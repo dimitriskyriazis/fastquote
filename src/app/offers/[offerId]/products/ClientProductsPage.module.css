@@ -77,8 +77,14 @@
 
 .buttonUpdatePrices {
   background-color: #ebd4ff;
-  color: #0f172a;
+  color: #000000;
   border-color: rgba(109, 14, 233, 0.4);
+}
+
+.buttonPopulateOffer {
+  background-color: #b6fdfff1;
+  color: #000000;
+  border-color: rgba(0, 167, 189, 0.4);
 }
 
 .buttonAddRequested {

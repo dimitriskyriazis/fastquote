@@ -94,6 +94,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [pendingAction, setPendingAction] = useState<CreatableActionType | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
+  const [isPopulatingOffer, setIsPopulatingOffer] = useState(false);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
   const [showRequestedModal, setShowRequestedModal] = useState(false);
   const [tableLayout, setTableLayout] = useState<ProductsTableLayout>('wReq');
@@ -227,24 +228,49 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     }
   }, [isUpdatingPrices, updatePricesEndpoint]);
 
+  const handlePopulateOffer = useCallback(async () => {
+    if (isPopulatingOffer) return;
+    const panel = offerProductsPanelRef.current;
+    if (!panel) {
+      showToastMessage('Products grid is not ready yet.', 'error');
+      return;
+    }
+    setIsPopulatingOffer(true);
+    try {
+      await panel.populateOffer();
+    } finally {
+      setIsPopulatingOffer(false);
+    }
+  }, [isPopulatingOffer]);
+
   const headerRightControls = (
     <div className={toolbarStyles.topControls}>
-      <button
-        type="button"
-        className={`${toolbarStyles.button} ${toolbarStyles.buttonUpdatePrices} page-header-button`}
-        onClick={handleUpdatePrices}
-        disabled={isUpdatingPrices}
-      >
-        {isUpdatingPrices ? 'Updating prices…' : 'Update Prices'}
-      </button>
       {pivotView ? null : (
-        <button
-          type="button"
-          className={manualToggleClass}
-          onClick={() => setManualMode((prev) => !prev)}
-        >
-          Manual Mode
-        </button>
+        <>
+          <button
+            type="button"
+            className={`${toolbarStyles.button} ${toolbarStyles.buttonPopulateOffer} page-header-button`}
+            onClick={handlePopulateOffer}
+            disabled={isPopulatingOffer}
+          >
+            {isPopulatingOffer ? 'Populating…' : 'Populate Offer'}
+          </button>
+          <button
+            type="button"
+            className={`${toolbarStyles.button} ${toolbarStyles.buttonUpdatePrices} page-header-button`}
+            onClick={handleUpdatePrices}
+            disabled={isUpdatingPrices}
+          >
+            {isUpdatingPrices ? 'Updating prices…' : 'Update Prices'}
+          </button>
+          <button
+            type="button"
+            className={manualToggleClass}
+            onClick={() => setManualMode((prev) => !prev)}
+          >
+            Manual Mode
+          </button>
+        </>
       )}
       <Link
         href={`/offers/${encodeURIComponent(offerId)}/basicdata`}

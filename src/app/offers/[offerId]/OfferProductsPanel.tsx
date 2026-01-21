@@ -597,15 +597,6 @@ const categoryMenuIcon = `
   </span>
 `;
 
-const populateOfferMenuIcon = `
-  <span class="fastquote-menu-icon fastquote-menu-icon--copy" aria-hidden="true">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M7 5h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
-      <path d="M7 7V5a2 2 0 0 1 2-2h6" />
-    </svg>
-  </span>
-`;
-
 const productAccentCellClassRules = {
   'offer-products-grid__cell--product-accent': (params: { data?: Record<string, unknown> | null }) =>
     isOfferProductProduct(params.data),
@@ -664,6 +655,7 @@ type Props = {
 
 export type OfferProductsPanelHandle = {
   saveLayout: () => boolean;
+  populateOffer: () => Promise<void>;
 };
 
 const buildEndpointForOffer = (offerId: string) =>
@@ -1160,7 +1152,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     showToastMessage('Layout saved', 'success');
     return true;
   }, [columnStateStorageKey]);
-  useImperativeHandle(ref, () => ({ saveLayout }), [saveLayout]);
 
   const isCategoryRowCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!row) return false;
@@ -2345,6 +2336,59 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     setProcessedRequestedMatches(0);
   }, [requestedMatchQueue.length]);
 
+  const populateOfferBusyRef = useRef(false);
+  const populateOffer = useCallback(async () => {
+    if (populateOfferBusyRef.current) return;
+    populateOfferBusyRef.current = true;
+    try {
+      const api = gridApiRef.current;
+      if (!api || api.isDestroyed?.()) {
+        showToastMessage('Grid is not ready yet.', 'error');
+        return;
+      }
+
+      let requestedNodes: Array<RowNode<Record<string, unknown>>> = [];
+
+      // Prefer explicit selection when present.
+      try {
+        const selected = typeof api.getSelectedNodes === 'function'
+          ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
+          : [];
+        requestedNodes = selected.filter((node) => isRequestedRow(node?.data ?? null));
+      } catch {
+        /* noop */
+      }
+
+      // Fallback: if nothing is selected, populate from all currently-loaded requested rows.
+      if (requestedNodes.length === 0) {
+        try {
+          if (typeof api.forEachNode === 'function') {
+            const allRequested: Array<RowNode<Record<string, unknown>>> = [];
+            api.forEachNode((node) => {
+              if (isRequestedRow(node?.data ?? null)) {
+                allRequested.push(node as RowNode<Record<string, unknown>>);
+              }
+            });
+            requestedNodes = allRequested;
+          }
+        } catch {
+          /* noop */
+        }
+      }
+
+      if (requestedNodes.length === 0) {
+        showToastMessage('No requested rows found to populate.', 'info');
+        return;
+      }
+
+      await populateRequestedRowsToOffer(requestedNodes);
+    } finally {
+      populateOfferBusyRef.current = false;
+    }
+  }, [populateRequestedRowsToOffer]);
+
+  useImperativeHandle(ref, () => ({ saveLayout, populateOffer }), [saveLayout, populateOffer]);
+
 
   const manualMatchTotal = processedRequestedMatches + requestedMatchQueue.length;
   const manualMatchPosition = currentRequestedMatch ? processedRequestedMatches + 1 : 0;
@@ -2566,7 +2610,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
     }
 
-    const hasRequestedSelection = relevantNodes.some((node) => isRequestedRow(node?.data ?? null));
     const rowHasRequestedFields = hasRequestedPseudoFields(rowData);
 
     let deleteIndexAfterHistory = findDeleteMenuItemIndex(items);
@@ -2718,28 +2761,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
     }
 
-    if (hasRequestedSelection) {
-      const populateItem: MenuItemDef = {
-        name: 'Populate offer',
-        icon: populateOfferMenuIcon,
-        action: () => {
-          const nodesToCopy = relevantNodes.filter((node): node is RowNode<Record<string, unknown>> => Boolean(node && node.data));
-          void populateRequestedRowsToOffer(nodesToCopy);
-        },
-      };
-      if (deleteIndexAfterHistory >= 0) {
-        items.splice(deleteIndexAfterHistory, 0, populateItem);
-      } else {
-        items.push(populateItem);
-      }
-    }
-
     return items;
   }, [
     productRowDeletion,
     router,
     offerId,
-    populateRequestedRowsToOffer,
     promoteNodeToCategory,
     resolvedEndpoint,
     openBrandBulkEdit,
