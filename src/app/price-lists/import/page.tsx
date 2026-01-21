@@ -127,7 +127,7 @@ async function fetchPreviousPriceLists(): Promise<PreviousPriceListOption[]> {
   try {
     const pool = await getPool();
     const result = await pool.request().query<PriceListLookupRow>(`
-      SELECT TOP (50)
+      SELECT TOP (200)
         pl.ID,
         pl.Name,
         pl.BrandID,
@@ -138,7 +138,11 @@ async function fetchPreviousPriceLists(): Promise<PreviousPriceListOption[]> {
       FROM dbo.PriceLists AS pl
       LEFT JOIN dbo.Brands AS b ON pl.BrandID = b.ID
       WHERE pl.Enabled = 1
-      ORDER BY pl.ModifiedOn DESC, pl.ID DESC
+      ORDER BY
+        CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
+        pl.ValidToDate DESC,
+        pl.ModifiedOn DESC,
+        pl.ID DESC
     `);
 
     const formatDate = (value: Date | string | null | undefined) => {

@@ -176,3 +176,11 @@
 .requestedCategoryColumnCell {
   background: #d9dde3;
 }
+
+.redDataCell {
+  color: #dc2626;
+}
+
+.redDataCell :global(.ag-cell-value) {
+  color: #dc2626;
+}

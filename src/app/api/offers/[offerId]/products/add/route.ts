@@ -850,6 +850,11 @@ async function handleAssignProductToRequestedRow(
     -- Pricing policy rules are optional: when no matching rule exists, discounts default to 0.
     UPDATE od
     SET
+      od.TreeOrdering = CASE
+        WHEN NULLIF(LTRIM(RTRIM(ISNULL(od.TreeOrdering, ''))), '') IS NULL
+          THEN NULLIF(LTRIM(RTRIM(ISNULL(od.RequestedItemNo, ''))), '')
+        ELSE od.TreeOrdering
+      END,
       od.IsPrintable = NULL,
       od.IsComment = 0,
       od.IsCategory = 0,

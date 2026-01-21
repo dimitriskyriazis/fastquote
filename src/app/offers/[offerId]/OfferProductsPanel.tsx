@@ -429,11 +429,17 @@ const buildRequestedLookupInfo = (row: Record<string, unknown> | null | undefine
 const resolveProductIdFromRequestedInfo = async (info: RequestedLookupInfo): Promise<number | null> => {
   const { partNumber, modelNumber, brand } = info;
   if (!partNumber && !modelNumber) return null;
+  const normalizedBrand = brand
+    ? brand.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim()
+    : null;
+  const brandKey = normalizedBrand
+    ? normalizedBrand.replace(/\s+/g, '').toLowerCase()
+    : null;
   const params = new URLSearchParams();
   if (partNumber) params.set('partNumber', partNumber);
   if (modelNumber) params.set('modelNumber', modelNumber);
-  if (brand) params.set('brand', brand);
-  const cacheKey = `${partNumber ?? ''}|${modelNumber ?? ''}|${brand ?? ''}`;
+  if (normalizedBrand) params.set('brand', normalizedBrand);
+  const cacheKey = `${partNumber ?? ''}|${modelNumber ?? ''}|${brandKey ?? ''}`;
   if (requestedHistoryLookupCache.has(cacheKey)) {
     return requestedHistoryLookupCache.get(cacheKey) ?? null;
   }
@@ -1840,8 +1846,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: percentageFormatter,
-      cellClass: actualNumericCellClass,
-      cellStyle: actualNumericCellStyle,
+      cellClass: [...actualNumericCellClass, styles.redDataCell],
+      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
     },
     {
       field: 'NetCost',
@@ -1851,8 +1857,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: euroFormatter,
-      cellClass: actualNumericCellClass,
-      cellStyle: actualNumericCellStyle,
+      cellClass: [...actualNumericCellClass, styles.redDataCell],
+      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
     },
     {
       field: 'Margin',
@@ -1862,8 +1868,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: percentageFormatter,
-      cellClass: actualNumericCellClass,
-      cellStyle: actualNumericCellStyle,
+      cellClass: [...actualNumericCellClass, styles.redDataCell],
+      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
     },
     {
       field: 'GrossProfit',
@@ -1874,8 +1880,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       valueFormatter: euroFormatter,
       cellClassRules: productAccentCellClassRules,
       editable: false,
-      cellClass: actualNumericCellClass,
-      cellStyle: actualNumericCellStyle,
+      cellClass: [...actualNumericCellClass, styles.redDataCell],
+      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
     },
       {
         field: 'TotalCost',
@@ -1887,8 +1893,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         valueGetter: categoryTotalCostGetter,
         cellClassRules: productAccentCellClassRules,
         editable: false,
-        cellClass: actualNumericCellClass,
-        cellStyle: actualNumericCellStyle,
+        cellClass: [...actualNumericCellClass, styles.redDataCell],
+        cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
       },
     ];
     const columnMap = new Map<string, ColDef>();

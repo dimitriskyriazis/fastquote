@@ -1074,6 +1074,22 @@ export default function PriceListImportClient({
 
     setSubmitting(true);
     try {
+      const currentFile = file;
+      if (!currentFile) {
+        throw new Error("Please attach an Excel file.");
+      }
+
+      // On Windows, a file can become unreadable while it's open in another program (e.g. Excel),
+      // causing the browser upload stream to fail with a generic "Failed to fetch".
+      // Do a tiny read upfront so we can show a meaningful message.
+      try {
+        await currentFile.slice(0, 64 * 1024).arrayBuffer();
+      } catch {
+        throw new Error(
+          "Unable to read the selected file. It may be open in another program (e.g. Excel). Please close it and try again.",
+        );
+      }
+
       const formData = new FormData();
       formData.append("name", values.name);
       formData.append("brandId", values.brandId);
@@ -1099,7 +1115,7 @@ export default function PriceListImportClient({
       if (values.hasDuty !== null) {
         formData.append("hasDuty", values.hasDuty ? "1" : "0");
       }
-      formData.append("file", file as Blob);
+      formData.append("file", currentFile, currentFile.name);
       const columnMappings = selectedSheets.map((sheet) => ({
         sheetName: sheet.name,
         headerRowIndex: sheet.headerRowIndex,
@@ -1118,7 +1134,7 @@ export default function PriceListImportClient({
         method: "POST",
         body: formData,
       });
-      const payload = (await response.json()) as {
+      type ImportResponse = {
         ok?: boolean;
         error?: string;
         priceListId?: string | number;
@@ -1127,24 +1143,43 @@ export default function PriceListImportClient({
         skippedRows?: number;
         totalRows?: number;
       };
-      if (!response.ok || !payload?.ok) {
-        throw new Error(payload?.error || "Unable to import price list. Please try again.");
+      const raw = await response.text().catch(() => "");
+      const typedPayload: ImportResponse | null = (() => {
+        try {
+          return JSON.parse(raw) as ImportResponse;
+        } catch {
+          return null;
+        }
+      })();
+
+      if (!response.ok || !typedPayload?.ok) {
+        const serverError =
+          typedPayload?.error ||
+          (raw && raw.trim() ? raw.trim() : null) ||
+          "Unable to import price list. Please try again.";
+        throw new Error(serverError);
       }
 
       const summary = [
-        `Imported ${payload.totalRows ?? 0} rows`,
-        `${payload.createdProductCount ?? 0} new products`,
-        `${payload.matchedProductCount ?? 0} matched`,
-        `${payload.skippedRows ?? 0} skipped`,
+        `Imported ${typedPayload.totalRows ?? 0} rows`,
+        `${typedPayload.createdProductCount ?? 0} new products`,
+        `${typedPayload.matchedProductCount ?? 0} matched`,
+        `${typedPayload.skippedRows ?? 0} skipped`,
       ].join(" • ");
       showToastMessage(summary);
 
-      const targetId = payload.priceListId != null ? encodeURIComponent(String(payload.priceListId)) : null;
+      const targetId =
+        typedPayload.priceListId != null ? encodeURIComponent(String(typedPayload.priceListId)) : null;
       if (targetId) {
         router.push(`/price-lists/${targetId}/products`);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to import price list. Please try again.";
+      const rawMessage = err instanceof Error ? err.message : "";
+      const normalized = rawMessage.trim().toLowerCase();
+      const message =
+        normalized === "failed to fetch" || normalized.includes("networkerror")
+          ? "Upload failed. If the file is open in another program (e.g. Excel), close it and try again."
+          : rawMessage || "Unable to import price list. Please try again.";
       setError(message);
     } finally {
       setSubmitting(false);
