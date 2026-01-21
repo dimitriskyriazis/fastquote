@@ -6,6 +6,7 @@ import type { ColDef, GridApi } from 'ag-grid-community';
 import styles from './AddProductsModal.module.css';
 import { showToastMessage } from '../../../../lib/toast';
 import { priceListStatusClassRules } from '../../../../lib/priceListStatus';
+import { getUserNumberLocale } from '../../../../lib/localeNumber';
 
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), { ssr: false });
 
@@ -69,7 +70,7 @@ const resolveRequestedRowLabel = (row: RequestedRow, showRequestedItemNo: boolea
   return 'Requested item';
 };
 
-const currencyFormatter = new Intl.NumberFormat('en-US', {
+const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });

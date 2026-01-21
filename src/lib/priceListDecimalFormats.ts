@@ -28,12 +28,12 @@ export const PRICE_LIST_DECIMAL_FORMAT_OPTIONS: Array<{
   {
     value: "dotDecimal",
     label: "1,000.00",
-    description: "Comma thousands, dot decimals (English-style)",
+    description: "Comma thousands, dot decimals",
   },
   {
     value: "commaDecimal",
     label: "1.000,00",
-    description: "Dot thousands, comma decimals (European-style)",
+    description: "Dot thousands, comma decimals",
   },
 ];
 

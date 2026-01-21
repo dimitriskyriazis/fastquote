@@ -26,6 +26,7 @@ import {
   PRICE_LIST_DECIMAL_FORMAT_OPTIONS,
   type PriceListDecimalFormat,
 } from "../../../lib/priceListDecimalFormats";
+import { parseLocaleNumber } from "../../../lib/localeNumber";
 import { useAuditUser } from "../../components/AuditUserProvider";
 
 type XlsxModule = typeof import("xlsx");
@@ -602,10 +603,7 @@ export default function PriceListImportClient({
   }, [isCostCurrencyEuro, values.currencyCostModifier]);
 
   const parseDecimalInput = (value: string): number | null => {
-    const trimmed = value.trim().replace(",", ".");
-    if (!trimmed) return null;
-    const parsed = Number(trimmed);
-    return Number.isFinite(parsed) ? parsed : null;
+    return parseLocaleNumber(value);
   };
 
   const openPricingPolicyModal = useCallback(() => {
@@ -1455,7 +1453,7 @@ export default function PriceListImportClient({
           <div className={styles.fieldStack}>
             <div className={styles.sectionHeading}>Upload</div>
             <div className={styles.field}>
-              <span className={styles.label}>List price format</span>
+              <span className={styles.label}>Price list decimal format</span>
               <select
                 className={styles.input}
                 value={values.decimalFormat}
@@ -1540,7 +1538,7 @@ export default function PriceListImportClient({
                         </div>
                         <div className={styles.validationMessage}>
                           {fileValidation.message ??
-                            "Choose columns for Part Number, Name/Description, and List Price. Model Number is optional."}
+                            "Choose columns for the fields below."}
                           {activeSheet ? (
                             <span className={styles.validationHint}>
                               {`Detected ${activeSheet.columns.length} column${activeSheet.columns.length === 1 ? "" : "s"} in ${

@@ -79,7 +79,9 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Description: "dbo.Products.Description",
   ModelNumber: "dbo.Products.ModelNumber",
   ListPrice: "dbo.PriceListItems.ListPrice",
-  CostPrice: "dbo.PriceListItems.CostPrice",
+  // Display cost in EUR by applying the price list's currency cost modifier.
+  // PriceListItems.CostPrice stores the supplier cost in the price list's cost currency.
+  CostPrice: "(dbo.PriceListItems.CostPrice * COALESCE(pl.CurrencyCostModifier, 1))",
   Warning: "dbo.PriceListItems.Warning",
   Enabled: "dbo.PriceListItems.Enabled",
   PartNumber: "dbo.Products.PartNumber",
@@ -252,7 +254,7 @@ export async function POST(
         dbo.Products.Description,
         dbo.Products.ModelNumber,
         dbo.PriceListItems.ListPrice,
-        dbo.PriceListItems.CostPrice,
+        (dbo.PriceListItems.CostPrice * COALESCE(pl.CurrencyCostModifier, 1)) AS CostPrice,
         dbo.PriceListItems.Warning,
         dbo.PriceListItems.Enabled,
         dbo.Products.PartNumber,
@@ -262,6 +264,7 @@ export async function POST(
 
     const from = `
       FROM dbo.PriceListItems
+      INNER JOIN dbo.PriceLists pl ON dbo.PriceListItems.PriceListID = pl.ID
       INNER JOIN dbo.Products ON dbo.PriceListItems.ProductID = dbo.Products.ID
     `;
 

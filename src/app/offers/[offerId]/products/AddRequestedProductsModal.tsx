@@ -12,6 +12,7 @@ import React, {
 import type * as XLSXTypes from 'xlsx';
 import styles from './AddRequestedProductsModal.module.css';
 import { showToastMessage } from '../../../../lib/toast';
+import { parseLocaleNumber } from '../../../../lib/localeNumber';
 
 type XlsxModule = typeof import('xlsx');
 
@@ -264,11 +265,7 @@ const normalizeCellText = (value: unknown): string | null => {
 };
 
 const normalizeQuantityValue = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  const str = typeof value === 'string' ? value.trim() : '';
-  if (!str) return null;
-  const parsed = Number.parseFloat(str.replace(',', '.'));
-  return Number.isFinite(parsed) ? parsed : null;
+  return parseLocaleNumber(value);
 };
 
 const hasPayloadValues = (row: PayloadRow) => {

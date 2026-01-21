@@ -13,6 +13,7 @@ import type {
 import layoutStyles from "../../priceListDetail.module.css";
 import pageStyles from "./PriceListProductsPage.module.css";
 import { GridRowDeletion } from "../../../../lib/gridRowDeletion";
+import { getUserNumberLocale } from "../../../../lib/localeNumber";
 
 const AgGridAll = dynamic(() => import("../../../components/AgGridAll"), {
   ssr: false,
@@ -31,9 +32,14 @@ type PriceListProductRowGrid = {
   Description?: string | null;
   PartNumber?: string | null;
   ModelNumber?: string | null;
+  ListPrice?: string | number | null;
+  CostPrice?: string | number | null;
+  Warning?: string | number | boolean | null;
+  Enabled?: boolean | number | null;
+  PriceListID?: number | null;
 };
 
-const currencyFormatter = new Intl.NumberFormat("en-US", {
+const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
@@ -129,6 +135,14 @@ export default function PriceListProductsClient({
       {
         field: "ListPrice",
         headerName: "List Price",
+        filter: "agNumberColumnFilter",
+        valueFormatter: formatCurrency,
+        type: "numericColumn",
+        width: 140,
+      },
+      {
+        field: "CostPrice",
+        headerName: "Cost Price",
         filter: "agNumberColumnFilter",
         valueFormatter: formatCurrency,
         type: "numericColumn",

@@ -85,7 +85,7 @@ export default function ProductsClient() {
     },
     {
       field: "ModelNumber",
-      headerName: "Model",
+      headerName: "Model number",
       filter: "agTextColumnFilter",
     },
     {

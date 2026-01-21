@@ -15,6 +15,7 @@ import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import type { GridResponse } from "../components/AgGridAll";
 import styles from "./PricingPoliciesClient.module.css";
 import { showToastMessage } from "../../lib/toast";
+import { getUserNumberLocale, parseLocaleNumber } from "../../lib/localeNumber";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -36,11 +37,9 @@ type MatrixRow = {
   BrandID: number | null;
   BrandName: string | null;
   policies?: Record<string, PolicyCell | undefined> | null;
-  totalTelmacoDiscount?: number | null;
-  totalCustomerDiscount?: number | null;
 };
 
-const numberFormatter = new Intl.NumberFormat("en-US", {
+const numberFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 });
@@ -53,19 +52,7 @@ const discountFormatter = (params: ValueFormatterParams) => {
 };
 
 const parseDiscountInput = (value: unknown): number | null => {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const normalized = trimmed.replace(",", ".");
-    const parsed = Number(normalized);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  if (value == null) return null;
-  const coerced = String(value).trim();
-  if (!coerced) return null;
-  const parsed = Number(coerced.replace(",", "."));
-  return Number.isFinite(parsed) ? parsed : null;
+  return parseLocaleNumber(value);
 };
 
 const getOrCreatePolicyCell = (row: MatrixRow, policyId: string): PolicyCell => {
@@ -84,10 +71,48 @@ const normalizePricingPolicyName = (name: string): string => {
   return withoutPrefix || trimmed;
 };
 
+const isDefaultPricingPolicyName = (name: string): boolean => {
+  const normalized = normalizePricingPolicyName(name);
+  return /\bdefault\b/i.test(normalized);
+};
+
 export default function PricingPoliciesClient({ pricingPolicies }: Props) {
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const pendingGrandTotalRef = useRef<Record<string, unknown> | null>(null);
   const [refreshToken] = useState(0);
+
+  const orderedPricingPolicies = useMemo(() => {
+    const defaults = pricingPolicies.filter((policy) => isDefaultPricingPolicyName(policy.name));
+    const rest = pricingPolicies.filter((policy) => !isDefaultPricingPolicyName(policy.name));
+    return [...defaults, ...rest];
+  }, [pricingPolicies]);
+
+  const defaultPolicyId = useMemo(() => {
+    const firstDefault = orderedPricingPolicies.find((policy) => isDefaultPricingPolicyName(policy.name));
+    return firstDefault?.id ?? null;
+  }, [orderedPricingPolicies]);
+
+  const enforceDefaultPolicyFirst = useCallback((api: GridApi<Record<string, unknown>> | null) => {
+    if (!api) return;
+    if (defaultPolicyId == null) return;
+    const telmacoColId = `pp_${String(defaultPolicyId)}_telmaco`;
+    const customerColId = `pp_${String(defaultPolicyId)}_customer`;
+    try {
+      const displayed = typeof api.getAllDisplayedColumns === "function" ? api.getAllDisplayedColumns() : [];
+      const displayedIds = new Set(
+        displayed
+          .map((col) => (typeof col.getColId === "function" ? col.getColId() : ""))
+          .filter((id): id is string => typeof id === "string" && id.length > 0),
+      );
+      const idsToMove = [telmacoColId, customerColId].filter((id) => displayedIds.has(id));
+      if (idsToMove.length === 0) return;
+      if (typeof api.moveColumns === "function") {
+        api.moveColumns(idsToMove, 0);
+      }
+    } catch (err) {
+      console.warn("Failed to enforce default policy ordering", err);
+    }
+  }, [defaultPolicyId]);
 
   const applyGrandTotalRow = useCallback(() => {
     const api = gridApiRef.current;
@@ -104,15 +129,17 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
     (api: GridApi<Record<string, unknown>>) => {
       gridApiRef.current = api;
       applyGrandTotalRow();
+      enforceDefaultPolicyFirst(api);
     },
-    [applyGrandTotalRow],
+    [applyGrandTotalRow, enforceDefaultPolicyFirst],
   );
 
   const handleResponse = useCallback((response: GridResponse | null) => {
     const raw = response as (GridResponse & { grandTotal?: Record<string, unknown> | null }) | null;
     pendingGrandTotalRef.current = raw?.grandTotal ?? null;
     applyGrandTotalRow();
-  }, [applyGrandTotalRow]);
+    enforceDefaultPolicyFirst(gridApiRef.current);
+  }, [applyGrandTotalRow, enforceDefaultPolicyFirst]);
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const colId = event.column?.getColId?.() ?? event.colDef?.colId ?? "";
@@ -167,7 +194,7 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
   }, []);
 
   const columnDefs = useMemo<ColDef[]>(() => {
-    const policyGroups: ColDef[] = pricingPolicies.map((policy) => {
+    const policyGroups: ColDef[] = orderedPricingPolicies.map((policy) => {
       const policyId = String(policy.id);
       return {
         headerName: normalizePricingPolicyName(policy.name),
@@ -250,34 +277,8 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
         width: 165,
       },
       ...policyGroups,
-      {
-        headerName: "Totals",
-        marryChildren: true,
-        children: [
-          {
-            field: "totalTelmacoDiscount",
-            headerName: "Total Telmaco Discount",
-            sortable: false,
-            filter: false,
-            floatingFilter: false,
-            type: "numericColumn",
-            valueFormatter: discountFormatter,
-            width: 180,
-          },
-          {
-            field: "totalCustomerDiscount",
-            headerName: "Total Customer Discount",
-            sortable: false,
-            filter: false,
-            floatingFilter: false,
-            type: "numericColumn",
-            valueFormatter: discountFormatter,
-            width: 180,
-          },
-        ],
-      },
     ];
-  }, [pricingPolicies]);
+  }, [orderedPricingPolicies]);
 
   return (
     <main className={styles.page}>

@@ -45,6 +45,7 @@ import { showToastMessage } from '../../../lib/toast';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
 import { priceListStatusClassRules } from '../../../lib/priceListStatus';
+import { getUserNumberLocale } from '../../../lib/localeNumber';
 import MatchRequestedProductsModal, {
   type RequestedProductMatchEntry,
 } from './products/MatchRequestedProductsModal';
@@ -54,7 +55,7 @@ import LookupModal from '../../components/LookupModal';
 import lookupStyles from '../../components/LookupModal.module.css';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const decimalFormatter = new Intl.NumberFormat('en-US', {
+const decimalFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
@@ -65,18 +66,41 @@ const COLLAPSED_ROW_HEIGHT = 1;
 
 type GridRowNode = RowNode<Record<string, unknown>> | IRowNode<Record<string, unknown>>;
 
-const plainNumberFormatter = new Intl.NumberFormat('en-US', {
+const plainNumberFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 });
 
+const parseFlexibleNumber = (raw: string): number | null => {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const numericPortion = trimmed.replace(/[^\d.,+-]/g, '');
+  if (!numericPortion) return null;
+
+  const commaCount = (numericPortion.match(/,/g) ?? []).length;
+  const dotCount = (numericPortion.match(/\./g) ?? []).length;
+
+  let normalized = numericPortion;
+  if (commaCount > 0 && dotCount > 0) {
+    const lastComma = numericPortion.lastIndexOf(',');
+    const lastDot = numericPortion.lastIndexOf('.');
+    if (lastComma > lastDot) {
+      normalized = numericPortion.replace(/\./g, '').replace(/,/g, '.');
+    } else {
+      normalized = numericPortion.replace(/,/g, '');
+    }
+  } else if (commaCount > 0) {
+    normalized = numericPortion.replace(/,/g, '.');
+  }
+
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 const coerceNumber = (value: unknown) => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const parsed = Number.parseFloat(trimmed);
-    return Number.isFinite(parsed) ? parsed : null;
+    return parseFlexibleNumber(value);
   }
   return null;
 };

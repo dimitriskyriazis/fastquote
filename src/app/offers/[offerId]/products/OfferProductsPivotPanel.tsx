@@ -43,6 +43,7 @@ import { GridQuickSearchContext } from '../../../components/GridQuickSearchProvi
 import { showToastMessage } from '../../../../lib/toast';
 import gridStyles from '../../../components/AgGridAll.module.css';
 import panelStyles from '../OfferProductsPanel.module.css';
+import { getUserNumberLocale } from '../../../../lib/localeNumber';
 
 type RowData = Record<string, unknown>;
 
@@ -53,8 +54,8 @@ type Props = {
   layout: 'category' | 'brand' | 'categoryBrand' | 'discount';
 };
 
-const currencyFormatter = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const percentFormatter = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const percentFormatter = new Intl.NumberFormat(getUserNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const euroValueFormatter = ({ value }: ValueFormatterParams<RowData, unknown>) => {
   const num = typeof value === 'number' ? value : Number(value);
