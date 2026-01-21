@@ -638,18 +638,40 @@ async function handleAddProducts(
       p.WarrantyValue,
       1,
       p.ListPrice,
-      p.ListPrice,
+      computed.ComputedNetUnitPrice,
       CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
-      CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
+      computed.ComputedNetUnitPrice,
       COALESCE(discounts.TelmacoDiscountPercentage, 0),
       COALESCE(discounts.CustomerDiscountPercentage, 0),
       p.CostPrice,
       p.OtherCurrencyID,
       p.CurrencyCostModifier,
-      COALESCE(p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
-      0,
-      0,
-      CASE WHEN COALESCE(p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL THEN NULL ELSE COALESCE(p.CostPrice * p.CurrencyCostModifier, p.ListPrice) END,
+      COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
+      CASE
+        WHEN computed.ComputedNetUnitPrice IS NULL
+          OR computed.ComputedNetUnitPrice = 0
+          OR COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL
+          THEN NULL
+        ELSE ROUND(
+          (CAST(1 AS DECIMAL(18, 8))
+            - (CAST(COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) AS DECIMAL(18, 8))
+              / CAST(computed.ComputedNetUnitPrice AS DECIMAL(18, 8))
+            )
+          ) * 100,
+          4
+        )
+      END,
+      CASE
+        WHEN computed.ComputedNetUnitPrice IS NULL
+          OR COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL
+          THEN NULL
+        ELSE ROUND(
+          computed.ComputedNetUnitPrice
+          - COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
+          4
+        )
+      END,
+      COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
       p.PriceListID,
       p.PriceListItemID,
       SYSUTCDATETIME(),
@@ -666,6 +688,31 @@ async function handleAddProducts(
         AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
       ORDER BY CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END, ppr.ID DESC
     ) AS discounts
+    OUTER APPLY (
+      SELECT
+        CASE
+          WHEN p.ListPrice IS NULL THEN NULL
+          ELSE ROUND(
+            p.ListPrice
+            * (
+              CAST(1 AS DECIMAL(18, 8))
+              - (CAST(COALESCE(discounts.CustomerDiscountPercentage, 0) AS DECIMAL(18, 8)) / CAST(100 AS DECIMAL(18, 8)))
+            ),
+            4
+          )
+        END AS ComputedNetUnitPrice,
+        CASE
+          WHEN p.ListPrice IS NULL THEN NULL
+          ELSE ROUND(
+            p.ListPrice
+            * (
+              CAST(1 AS DECIMAL(18, 8))
+              - (CAST(COALESCE(discounts.TelmacoDiscountPercentage, 0) AS DECIMAL(18, 8)) / CAST(100 AS DECIMAL(18, 8)))
+            ),
+            4
+          )
+        END AS ComputedNetCost
+    ) AS computed
     ORDER BY p.Seq;
   `;
 
@@ -817,18 +864,40 @@ async function handleAssignProductToRequestedRow(
       od.Warranty = p.WarrantyValue,
       od.Quantity = 1,
       od.ListPrice = p.ListPrice,
-      od.NetUnitPrice = p.ListPrice,
+      od.NetUnitPrice = computed.ComputedNetUnitPrice,
       od.TotalPrice = CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
-      od.TotalNet = CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
+      od.TotalNet = computed.ComputedNetUnitPrice,
       od.TelmacoDiscount = COALESCE(discounts.TelmacoDiscountPercentage, 0),
       od.CustomerDiscount = COALESCE(discounts.CustomerDiscountPercentage, 0),
       od.NetCostOtherCurrency = p.CostPrice,
       od.OtherCurrencyID = p.OtherCurrencyID,
       od.CurrencyCostModifier = p.CurrencyCostModifier,
-      od.NetCost = COALESCE(p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
-      od.Margin = 0,
-      od.GrossProfit = 0,
-      od.TotalCost = CASE WHEN COALESCE(p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL THEN NULL ELSE COALESCE(p.CostPrice * p.CurrencyCostModifier, p.ListPrice) END,
+      od.NetCost = COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
+      od.Margin = CASE
+        WHEN computed.ComputedNetUnitPrice IS NULL
+          OR computed.ComputedNetUnitPrice = 0
+          OR COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL
+          THEN NULL
+        ELSE ROUND(
+          (CAST(1 AS DECIMAL(18, 8))
+            - (CAST(COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) AS DECIMAL(18, 8))
+              / CAST(computed.ComputedNetUnitPrice AS DECIMAL(18, 8))
+            )
+          ) * 100,
+          4
+        )
+      END,
+      od.GrossProfit = CASE
+        WHEN computed.ComputedNetUnitPrice IS NULL
+          OR COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL
+          THEN NULL
+        ELSE ROUND(
+          computed.ComputedNetUnitPrice
+          - COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
+          4
+        )
+      END,
+      od.TotalCost = COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
       od.PriceListID = p.PriceListID,
       od.PriceListItemID = p.PriceListItemID,
       od.ModifiedOn = SYSUTCDATETIME(),
@@ -844,6 +913,31 @@ async function handleAssignProductToRequestedRow(
           AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
         ORDER BY CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END, ppr.ID DESC
       ) AS discounts
+      OUTER APPLY (
+        SELECT
+          CASE
+            WHEN p.ListPrice IS NULL THEN NULL
+            ELSE ROUND(
+              p.ListPrice
+              * (
+                CAST(1 AS DECIMAL(18, 8))
+                - (CAST(COALESCE(discounts.CustomerDiscountPercentage, 0) AS DECIMAL(18, 8)) / CAST(100 AS DECIMAL(18, 8)))
+              ),
+              4
+            )
+          END AS ComputedNetUnitPrice,
+          CASE
+            WHEN p.ListPrice IS NULL THEN NULL
+            ELSE ROUND(
+              p.ListPrice
+              * (
+                CAST(1 AS DECIMAL(18, 8))
+                - (CAST(COALESCE(discounts.TelmacoDiscountPercentage, 0) AS DECIMAL(18, 8)) / CAST(100 AS DECIMAL(18, 8)))
+              ),
+              4
+            )
+          END AS ComputedNetCost
+      ) AS computed
     WHERE od.OfferID = @__offerId
       AND od.ID = @__rowId
       AND (

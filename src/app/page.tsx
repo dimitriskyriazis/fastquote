@@ -15,7 +15,7 @@ export default function Page() {
               and approvals that need attention, so you can manage deals and the surrounding tasks from the same dashboard.
             </p>
           </div>
-          <p className={`${styles.heroCaption} ${styles.signature}`}>Created by Dimitris Kyriazis</p>
+          <p className={`${styles.heroCaption} ${styles.signature}`}></p>
         </div>
         <div className={styles.heroImage}>
           <Image

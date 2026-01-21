@@ -82,18 +82,49 @@ export async function POST(
         [PriceListID] = price.PriceListID,
         [PriceListItemID] = price.PriceListItemID,
         [ListPrice] = price.ListPrice,
-        [NetUnitPrice] = price.ListPrice,
+        [NetUnitPrice] = computed.ComputedNetUnitPrice,
         [TotalPrice] = CASE WHEN price.ListPrice IS NULL OR od.Quantity IS NULL THEN NULL ELSE price.ListPrice * od.Quantity END,
-        [TotalNet] = CASE WHEN price.ListPrice IS NULL OR od.Quantity IS NULL THEN NULL ELSE price.ListPrice * od.Quantity END,
+        [TotalNet] = CASE WHEN computed.ComputedNetUnitPrice IS NULL OR od.Quantity IS NULL THEN NULL ELSE computed.ComputedNetUnitPrice * od.Quantity END,
         [NetCostOtherCurrency] = price.CostPrice,
         [OtherCurrencyID] = price.OtherCurrencyID,
         [CurrencyCostModifier] = price.CurrencyCostModifier,
-        [NetCost] = COALESCE(price.CostPrice * price.CurrencyCostModifier, price.ListPrice),
+        [NetCost] = COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice),
         [TelmacoDiscount] = discounts.TelmacoDiscountPercentage,
         [CustomerDiscount] = discounts.CustomerDiscountPercentage,
-        [Margin] = 0,
-        [GrossProfit] = 0,
-        [TotalCost] = CASE WHEN COALESCE(price.CostPrice * price.CurrencyCostModifier, price.ListPrice) IS NULL OR od.Quantity IS NULL THEN NULL ELSE COALESCE(price.CostPrice * price.CurrencyCostModifier, price.ListPrice) * od.Quantity END,
+        [Margin] = CASE
+          WHEN computed.ComputedNetUnitPrice IS NULL
+            OR computed.ComputedNetUnitPrice = 0
+            OR COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice) IS NULL
+            THEN NULL
+          ELSE ROUND(
+            (CAST(1 AS DECIMAL(18, 8))
+              - (CAST(COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice) AS DECIMAL(18, 8))
+                / CAST(computed.ComputedNetUnitPrice AS DECIMAL(18, 8))
+              )
+            ) * 100,
+            4
+          )
+        END,
+        [GrossProfit] = CASE
+          WHEN computed.ComputedNetUnitPrice IS NULL
+            OR COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice) IS NULL
+            OR od.Quantity IS NULL
+            THEN NULL
+          ELSE ROUND(
+            (computed.ComputedNetUnitPrice - COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice))
+            * od.Quantity,
+            4
+          )
+        END,
+        [TotalCost] = CASE
+          WHEN COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice) IS NULL
+            OR od.Quantity IS NULL
+            THEN NULL
+          ELSE ROUND(
+            COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice) * od.Quantity,
+            4
+          )
+        END,
         [ModifiedOn] = SYSUTCDATETIME(),
         [ModifiedBy] = @modifiedBy
       FROM dbo.OfferDetails od
@@ -127,6 +158,31 @@ export async function POST(
           CASE WHEN ppr.BrandID = od.BrandID THEN 0 ELSE 1 END,
           ppr.ID DESC
       ) discounts
+      OUTER APPLY (
+        SELECT
+          CASE
+            WHEN price.ListPrice IS NULL THEN NULL
+            ELSE ROUND(
+              price.ListPrice
+              * (
+                CAST(1 AS DECIMAL(18, 8))
+                - (CAST(COALESCE(discounts.CustomerDiscountPercentage, 0) AS DECIMAL(18, 8)) / CAST(100 AS DECIMAL(18, 8)))
+              ),
+              4
+            )
+          END AS ComputedNetUnitPrice,
+          CASE
+            WHEN price.ListPrice IS NULL THEN NULL
+            ELSE ROUND(
+              price.ListPrice
+              * (
+                CAST(1 AS DECIMAL(18, 8))
+                - (CAST(COALESCE(discounts.TelmacoDiscountPercentage, 0) AS DECIMAL(18, 8)) / CAST(100 AS DECIMAL(18, 8)))
+              ),
+              4
+            )
+          END AS ComputedNetCost
+      ) computed
       WHERE od.ProductID IS NOT NULL;
       SELECT @@ROWCOUNT AS updated;
     `);

@@ -74,6 +74,33 @@ const parseApiResponse = (value: unknown): RecentOfferSummary[] | null => {
   return normalized.length > 0 ? normalized : [];
 };
 
+const mergeRecentOffers = (
+  server: RecentOfferSummary[],
+  local: RecentOfferSummary[],
+): RecentOfferSummary[] => {
+  const byId = new Map<string, RecentOfferSummary>();
+  const score = (value: RecentOfferSummary) => {
+    const parsed = new Date(value.openedAt).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  // Prefer server values when openedAt ties, but never drop local-only entries.
+  for (const entry of [...local, ...server]) {
+    const existing = byId.get(entry.id);
+    if (!existing) {
+      byId.set(entry.id, entry);
+      continue;
+    }
+    if (score(entry) > score(existing)) {
+      byId.set(entry.id, entry);
+    }
+  }
+
+  return [...byId.values()]
+    .sort((a, b) => score(b) - score(a))
+    .slice(0, RECENT_OFFERS_MAX);
+};
+
 const fetchRecentOffersFromApi = async () => {
   const response = await fetch("/api/recent-offers", { cache: "no-store" });
   const payload = await response.json().catch(() => null);
@@ -81,8 +108,9 @@ const fetchRecentOffersFromApi = async () => {
   if (!response.ok || parsed === null) {
     throw new Error("Failed to load recent offers from server");
   }
-  persistLocalOffers(parsed);
-  return parsed;
+  const merged = mergeRecentOffers(parsed, loadLocalOffers());
+  persistLocalOffers(merged);
+  return merged;
 };
 
 export async function loadRecentOffers(): Promise<RecentOfferSummary[]> {
@@ -111,7 +139,8 @@ export async function addRecentOffer(
     if (!response.ok || parsed === null) {
       throw new Error("Failed to save recent offer");
     }
-    persistLocalOffers(parsed);
+    const merged = mergeRecentOffers(parsed, loadLocalOffers());
+    persistLocalOffers(merged);
     return;
   } catch (error) {
     console.error("Failed to persist recent offer to API, falling back to local storage", error);
