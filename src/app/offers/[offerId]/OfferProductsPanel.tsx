@@ -194,8 +194,6 @@ const parseTreeOrderingPath = (value: unknown): number[] => {
     .filter((segment) => Number.isFinite(segment));
 };
 
-const formatTreeOrderingPath = (segments: number[]) => segments.join('.');
-
 const buildTreeOrderingKey = (segments: number[]) => segments.join('.');
 
 const normalizeOfferDetailId = (value: unknown): number | null => {
@@ -680,19 +678,45 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     return buildEndpointForOffer(offerId);
   }, [endpoint, offerId]);
   const dataEndpoint = resolvedEndpoint;
+  // Persist Offer Products layouts globally (shared across all offers).
+  // Still separated per table layout via `columnStateNamespace`.
+  const persistenceEndpoint = '/api/offers/products';
   const columnStateNamespace = useMemo(
     () => `offer-products-${tableLayout}`,
     [tableLayout],
   );
   const columnStateStorageKey = useMemo(
-    () => buildGridColumnStateStorageKey(dataEndpoint, userId, columnStateNamespace),
-    [columnStateNamespace, dataEndpoint, userId],
+    () => buildGridColumnStateStorageKey(persistenceEndpoint, userId, columnStateNamespace),
+    [columnStateNamespace, persistenceEndpoint, userId],
   );
   const pricingToastDedupRef = useRef<Map<string, number>>(new Map());
   const { savedColumnOrder, savedHiddenMap } = useMemo(() => {
     if (typeof window === 'undefined' || !columnStateStorageKey) {
       return { savedColumnOrder: [] as string[], savedHiddenMap: {} as Record<string, boolean> };
     }
+
+    // If the audit user id is resolved after the page loads, the storage key changes from
+    // "anon" to the real user id. If we read before any migration happens, we’ll treat the
+    // new key as empty and re-render the grid with default column visibility/order (and
+    // AG Grid may also reset widths).
+    //
+    // Migrate the previous anon state forward before we read.
+    try {
+      const hasRealUser = typeof userId === 'string' && userId.trim().length > 0;
+      if (hasRealUser) {
+        const existing = window.localStorage.getItem(columnStateStorageKey);
+        if (!existing) {
+          const anonKey = buildGridColumnStateStorageKey(persistenceEndpoint, '', columnStateNamespace);
+          const anonRaw = window.localStorage.getItem(anonKey);
+          if (anonRaw) {
+            window.localStorage.setItem(columnStateStorageKey, anonRaw);
+          }
+        }
+      }
+    } catch {
+      /* noop */
+    }
+
     try {
       const raw = window.localStorage.getItem(columnStateStorageKey);
       if (!raw) {
@@ -720,7 +744,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     } catch {
       return { savedColumnOrder: [] as string[], savedHiddenMap: {} as Record<string, boolean> };
     }
-  }, [columnStateStorageKey]);
+  }, [columnStateNamespace, columnStateStorageKey, dataEndpoint, userId]);
   useEffect(() => {
     warmupFetchedRef.current = false;
   }, [dataEndpoint]);
@@ -832,17 +856,21 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     treeOrderingRootMapRef.current = map;
   }, []);
   const formatDisplayTreeOrdering = useCallback((value: unknown) => {
-    const path = parseTreeOrderingPath(value);
-    if (path.length === 0) return '';
-    const map = treeOrderingRootMapRef.current;
-    const key = String(path[0]);
-    let rootIndex = map.get(key);
-    if (rootIndex == null) {
-      rootIndex = map.size + 1;
-      map.set(key, rootIndex);
+    if (value == null) return '';
+    const trimmed = String(value).trim();
+    if (!trimmed) return '';
+
+    // Keep the root map updated (used elsewhere), but do not renumber the displayed value.
+    const path = parseTreeOrderingPath(trimmed);
+    if (path.length > 0) {
+      const map = treeOrderingRootMapRef.current;
+      const key = String(path[0]);
+      if (!map.has(key)) {
+        map.set(key, map.size + 1);
+      }
     }
-    const displayPath = [rootIndex, ...path.slice(1)];
-    return formatTreeOrderingPath(displayPath);
+
+    return trimmed;
   }, []);
 
   const applyRequestedColumnVisibility = useCallback((visibility: Partial<Record<RequestedDisplayFieldKey, boolean>> | null | undefined, replace = false) => {
@@ -1147,7 +1175,63 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     mergedOrder.forEach((colId, index) => {
       if (colId) columnOrderMap.set(colId, index);
     });
-    const nextState = collectPersistableColumnState(currentState, columnOrderMap);
+
+    // Some AG Grid configurations (and some column types) can yield column state entries
+    // without a reliable `width`, even though the UI is clearly showing custom widths.
+    // If we persist a layout without widths, the grid will fall back to default widths.
+    //
+    // To prevent that, we always fill missing widths from:
+    // - the live column actual widths (preferred)
+    // - the previously saved widths (fallback)
+    const existingWidthByColId = new Map<string, number>();
+    try {
+      const rawExisting = window.localStorage.getItem(columnStateStorageKey);
+      if (rawExisting) {
+        const parsedExisting = JSON.parse(rawExisting) as { columns?: Array<{ colId?: unknown; width?: unknown }> } | null;
+        if (parsedExisting && Array.isArray(parsedExisting.columns)) {
+          parsedExisting.columns.forEach((entry) => {
+            const colId = typeof entry?.colId === 'string' ? entry.colId : '';
+            const width = typeof entry?.width === 'number' ? entry.width : null;
+            if (colId && width != null && Number.isFinite(width) && width > 0) {
+              existingWidthByColId.set(colId, width);
+            }
+          });
+        }
+      }
+    } catch {
+      /* noop */
+    }
+
+    const actualWidthByColId = new Map<string, number>();
+    try {
+      const apiWithAllGridColumns = api as unknown as {
+        getAllGridColumns?: () => Array<{ getColId?: () => string; getActualWidth?: () => number }>;
+      };
+      const columns = typeof apiWithAllGridColumns.getAllGridColumns === 'function'
+        ? apiWithAllGridColumns.getAllGridColumns()
+        : (typeof api.getAllDisplayedColumns === 'function' ? api.getAllDisplayedColumns() : []);
+      if (Array.isArray(columns)) {
+        columns.forEach((column) => {
+          const colId = typeof column?.getColId === 'function' ? column.getColId() : '';
+          const width = typeof column?.getActualWidth === 'function' ? column.getActualWidth() : null;
+          if (colId && width != null && Number.isFinite(width) && width > 0) {
+            actualWidthByColId.set(colId, width);
+          }
+        });
+      }
+    } catch {
+      /* noop */
+    }
+
+    const nextState = collectPersistableColumnState(currentState, columnOrderMap).map((entry) => {
+      const widthCandidate = typeof entry.width === 'number' && Number.isFinite(entry.width) && entry.width > 0
+        ? entry.width
+        : actualWidthByColId.get(entry.colId) ?? existingWidthByColId.get(entry.colId);
+      if (widthCandidate != null && Number.isFinite(widthCandidate) && widthCandidate > 0) {
+        return { ...entry, width: widthCandidate };
+      }
+      return entry;
+    });
     writePersistedColumnState(columnStateStorageKey, nextState);
     showToastMessage('Layout saved', 'success');
     return true;
@@ -3118,6 +3202,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         <div className={`${styles.gridWrapper} offer-products-grid`}>
           <AgGridAll
             endpoint={dataEndpoint}
+            persistenceEndpoint={persistenceEndpoint}
             columnDefs={productColumnDefs}
             defaultColDef={defaultColDef}
             enablePivotMode

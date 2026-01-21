@@ -403,6 +403,9 @@ export type GridTotals = {
 
 type Props = {
   endpoint: string;
+  // Optional override used ONLY for persistence keys (column state/filter/sort).
+  // This lets pages share layouts across multiple endpoints (e.g. all offers).
+  persistenceEndpoint?: string;
   columnDefs: ColDef[];
   columnWidthDefaults?: Record<string, ColumnWidthAssignment>;
   defaultColDef?: ColDef;
@@ -974,6 +977,7 @@ const ROW_DRAG_EDGE_THRESHOLD = 10;
 // MAIN COMPONENT - AgGridAll
 export default function AgGridAll({
   endpoint,
+  persistenceEndpoint,
   columnDefs,
   columnWidthDefaults = {},
   defaultColDef,
@@ -1139,35 +1143,82 @@ export default function AgGridAll({
   // COLUMN STATE PERSISTENCE - Storage Keys & Configuration
   const shouldPersistColumnState = enableColumnStatePersistence !== false;
   const shouldAutoPersistColumnState = shouldPersistColumnState && autoPersistColumnState !== false;
+  const persistenceKeyBase = persistenceEndpoint ?? endpoint;
   const columnStateStorageKey = useMemo(
     () => {
       if (!shouldPersistColumnState) return '';
       const context = columnStateNamespace || pathname || '';
-      return buildGridColumnStateStorageKey(endpoint, userId, context ?? '');
+      return buildGridColumnStateStorageKey(persistenceKeyBase, userId, context ?? '');
     },
-    [columnStateNamespace, endpoint, pathname, userId, shouldPersistColumnState],
+    [columnStateNamespace, persistenceKeyBase, pathname, userId, shouldPersistColumnState],
   );
   const filterStateStorageKey = useMemo(
     () => {
       if (!shouldPersistColumnState) return '';
       const context = columnStateNamespace || pathname || '';
-      return buildGridFilterStateStorageKey(endpoint, userId, context ?? '');
+      return buildGridFilterStateStorageKey(persistenceKeyBase, userId, context ?? '');
     },
-    [columnStateNamespace, endpoint, pathname, userId, shouldPersistColumnState],
+    [columnStateNamespace, persistenceKeyBase, pathname, userId, shouldPersistColumnState],
   );
   const sortStateStorageKey = useMemo(
     () => {
       if (!shouldPersistColumnState) return '';
       const context = columnStateNamespace || pathname || '';
-      return buildGridSortStateStorageKey(endpoint, userId, context ?? '');
+      return buildGridSortStateStorageKey(persistenceKeyBase, userId, context ?? '');
     },
-    [columnStateNamespace, endpoint, pathname, userId, shouldPersistColumnState],
+    [columnStateNamespace, persistenceKeyBase, pathname, userId, shouldPersistColumnState],
   );
-  const previousColumnStateKeyRef = useRef<string>('');
-  if (previousColumnStateKeyRef.current !== columnStateStorageKey) {
+  const previousStorageKeysRef = useRef<{ column: string; filter: string; sort: string }>({
+    column: '',
+    filter: '',
+    sort: '',
+  });
+  const previousColumnStateKeyRef = useRef<string>(''); // legacy (kept for minimal changes)
+  if (previousStorageKeysRef.current.column !== columnStateStorageKey) {
+    const prev = previousStorageKeysRef.current;
+    const next = { column: columnStateStorageKey, filter: filterStateStorageKey, sort: sortStateStorageKey };
+
+    // If the userId changes from empty/"anon" to a resolved audit user id, the storage key changes.
+    // Without migration, the grid immediately falls back to defaults (widths/visibility/order) because
+    // it reads a *new* key with no saved state yet.
+    //
+    // We migrate the previous saved state forward when:
+    // - previous key belonged to "anon"
+    // - next key belongs to a real user id
+    // - next key does not already exist
+    const extractUserSegment = (key: string): string => {
+      const parts = String(key ?? '').split(':');
+      return parts.length >= 2 ? parts[1] ?? '' : '';
+    };
+    const migrateIfNeeded = (fromKey: string, toKey: string) => {
+      if (typeof window === 'undefined') return;
+      if (!fromKey || !toKey || fromKey === toKey) return;
+      const fromUser = extractUserSegment(fromKey);
+      const toUser = extractUserSegment(toKey);
+      if (!fromUser || !toUser) return;
+      if (fromUser !== GRID_COLUMN_STATE_DEFAULT_USER) return;
+      if (toUser === GRID_COLUMN_STATE_DEFAULT_USER) return;
+      try {
+        const existing = window.localStorage.getItem(toKey);
+        if (existing) return;
+        const raw = window.localStorage.getItem(fromKey);
+        if (!raw) return;
+        window.localStorage.setItem(toKey, raw);
+      } catch {
+        /* noop */
+      }
+    };
+
+    migrateIfNeeded(prev.column, next.column);
+    migrateIfNeeded(prev.filter, next.filter);
+    migrateIfNeeded(prev.sort, next.sort);
+
+    previousStorageKeysRef.current = next;
     previousColumnStateKeyRef.current = columnStateStorageKey;
     columnStateLoadedRef.current = false;
-    firstDataRenderedRef.current = false;
+    // IMPORTANT: do NOT reset `firstDataRenderedRef` here.
+    // The grid may have already rendered data; if we set this to false, the new persisted
+    // column state will never be applied (because the apply effect waits for firstDataRendered).
     filterStateLoadedRef.current = false;
     sortStateLoadedRef.current = false;
     filterStateRestoringRef.current = false;

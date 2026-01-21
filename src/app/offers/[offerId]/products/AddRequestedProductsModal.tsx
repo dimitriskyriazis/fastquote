@@ -63,11 +63,11 @@ type PayloadRow = {
 const columnKeywords: Record<HeaderColumnKey, string[]> = {
   itemNo: ['item', 'tree', 'ordering', '#', 'position'],
   brand: ['brand', 'maker', 'make', 'manufacturer', 'vendor'],
-  modelNumber: ['model', 'series', 'type', 'model#'],
-  partNumber: ['part', 'sku', 'code', 'p/n', 'article'],
-  description: ['description', 'desc', 'name', 'details', 'product', 'information', 'info', 'specs', 'specifications'],
-  description2: ['description', 'desc', 'name', 'details', 'product', 'information', 'info', 'specs', 'specifications'],
-  description3: ['description', 'desc', 'name', 'details', 'product', 'information', 'info', 'specs', 'specifications'],
+  modelNumber: ['model', 'series', 'model#'],
+  partNumber: ['part', 'sku', 'code', 'p/n', 'article', 'product'],
+  description: ['description', 'desc', 'name', 'details', 'information', 'info', 'specs', 'specifications'],
+  description2: ['description', 'desc', 'name', 'details', 'information', 'info', 'specs', 'specifications'],
+  description3: ['description', 'desc', 'name', 'details', 'information', 'info', 'specs', 'specifications'],
   quantity: ['qty', 'quantity', 'amount', 'pcs', 'pieces'],
 };
 

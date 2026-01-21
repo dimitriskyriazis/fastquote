@@ -102,6 +102,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [pivotView, setPivotView] = useState(false);
   const [pivotLayout, setPivotLayout] = useState<'category' | 'brand' | 'categoryBrand' | 'discount'>('category');
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
+  const handleRequestPivot = useCallback(() => setPivotView(true), []);
   const layoutStorageKey = useMemo(() => buildLayoutStorageKey(userId), [userId]);
   const layoutLoadedRef = useRef<string | null>(null);
   const creationCountersRef = useRef<Record<CreatableActionType, number>>({
@@ -407,7 +408,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
                       refreshToken={refreshToken}
                       showRequestedColumns={showRequestedColumns}
                       tableLayout={tableLayout}
-                      onRequestPivot={() => setPivotView(true)}
+                      onRequestPivot={handleRequestPivot}
                     />
                   </div>
                   <div className={toolbarStyles.splitRight}>
@@ -428,7 +429,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
                   refreshToken={refreshToken}
                   showRequestedColumns={showRequestedColumns}
                   tableLayout={tableLayout}
-                  onRequestPivot={() => setPivotView(true)}
+                  onRequestPivot={handleRequestPivot}
                 />
               )}
             </div>
