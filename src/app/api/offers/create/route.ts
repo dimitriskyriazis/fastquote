@@ -164,8 +164,10 @@ export async function POST(req: NextRequest) {
 
     const pool = await getPool();
 
-    // Enforce that pricing policy exists and has at least one default rule (BrandID IS NULL).
-    // This guarantees discounts can be resolved for any product brand.
+    // Enforce that pricing policy exists and has at least one rule.
+    // Brand-specific rules are allowed; a default (All brands) rule is recommended but not required
+    // at offer creation time. Missing rules for a specific brand will be enforced when adding
+    // products / recalculating prices.
     const policyExists = await pool.request()
       .input('__ppid', sql.Int, pricingPolicyId)
       .query<{ ID: number }>(`
@@ -180,18 +182,21 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    const defaultRuleCheck = await pool.request()
+    const anyRuleCheck = await pool.request()
       .input('__ppid', sql.Int, pricingPolicyId)
-      .query<{ cnt: number }>(`
+      .query<{ cnt: number | bigint | null }>(`
         SELECT COUNT(1) AS cnt
         FROM dbo.PricingPolicyRules
         WHERE PricingPolicyID = @__ppid
-          AND BrandID IS NULL
       `);
-    const defaultRuleCount = defaultRuleCheck.recordset?.[0]?.cnt ?? 0;
-    if (defaultRuleCount <= 0) {
+    const ruleCount = Number(anyRuleCheck.recordset?.[0]?.cnt ?? 0);
+    if (!Number.isFinite(ruleCount) || ruleCount <= 0) {
       return NextResponse.json(
-        { ok: false, error: 'Selected pricing policy has no default rule (All brands). Please add one first.' },
+        {
+          ok: false,
+          error:
+            'Selected pricing policy has no pricing rules. Please add a default (All brands) rule or brand-specific rules first.',
+        },
         { status: 400 },
       );
     }
