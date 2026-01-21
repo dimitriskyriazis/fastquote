@@ -143,6 +143,27 @@ export default function MatchRequestedProductsModal({
     [],
   );
 
+  const autoSelectTopProduct = useCallback((api: MatcherGridApi | null) => {
+    if (!api) return;
+    if (pendingSelectionProductIdRef.current != null) return;
+    try {
+      const selectedNodes =
+        typeof api.getSelectedNodes === 'function' ? (api.getSelectedNodes() as Array<RowNode<MatcherRowData>>) : [];
+      if (selectedNodes.length > 0) return;
+    } catch {
+      /* noop */
+    }
+    try {
+      const firstNode = (api as unknown as { getDisplayedRowAtIndex?: (idx: number) => MatcherRowNode | null })
+        .getDisplayedRowAtIndex?.(0);
+      if (!firstNode?.data) return;
+      firstNode.setSelected(true);
+      setSelectedProduct(firstNode.data as MatcherRowData);
+    } catch {
+      /* noop */
+    }
+  }, []);
+
   const handleAssignWithId = useCallback(async (productId: number) => {
     if (assigning) return;
     setAssigning(true);
@@ -179,42 +200,42 @@ export default function MatchRequestedProductsModal({
     void handleAssignWithId(productId);
   }, [handleAssignWithId]);
 
-    const trySelectPendingProduct = useCallback((api: MatcherGridApi) => {
-      const targetId = pendingSelectionProductIdRef.current;
-      if (targetId == null) return;
-      let found = false;
-      api.forEachNode((node) => {
-        if (found) return;
-        if (!node.data) return;
-        const candidateId = normalizeProductId((node.data as { ProductID?: unknown }).ProductID ?? null);
-        if (candidateId === targetId) {
-          const rowData = node.data as MatcherRowData;
-          node.setSelected(true);
-          setSelectedProduct(rowData);
-          const pinnedSetter = api.setPinnedTopRowData;
-          if (typeof pinnedSetter === 'function') {
-            try {
-              pinnedSetter([rowData]);
-            } catch {
-              /* noop */
-            }
+  const trySelectPendingProduct = useCallback((api: MatcherGridApi) => {
+    const targetId = pendingSelectionProductIdRef.current;
+    if (targetId == null) return;
+    let found = false;
+    api.forEachNode((node) => {
+      if (found) return;
+      if (!node.data) return;
+      const candidateId = normalizeProductId((node.data as { ProductID?: unknown }).ProductID ?? null);
+      if (candidateId === targetId) {
+        const rowData = node.data as MatcherRowData;
+        node.setSelected(true);
+        setSelectedProduct(rowData);
+        const pinnedSetter = api.setPinnedTopRowData;
+        if (typeof pinnedSetter === 'function') {
+          try {
+            pinnedSetter([rowData]);
+          } catch {
+            /* noop */
           }
-          const typedNode = node as MatcherRowNode;
-          const ensureVisible = typedNode.ensureVisible;
-          if (typeof ensureVisible === 'function') {
-            try {
-              ensureVisible.call(typedNode, { position: 'top' });
-            } catch {
-              /* noop */
-            }
-          }
-          found = true;
         }
-      });
-      if (found) {
-        pendingSelectionProductIdRef.current = null;
-        onClearNewProductId?.();
+        const typedNode = node as MatcherRowNode;
+        const ensureVisible = typedNode.ensureVisible;
+        if (typeof ensureVisible === 'function') {
+          try {
+            ensureVisible.call(typedNode, { position: 'top' });
+          } catch {
+            /* noop */
+          }
+        }
+        found = true;
       }
+    });
+    if (found) {
+      pendingSelectionProductIdRef.current = null;
+      onClearNewProductId?.();
+    }
   }, [onClearNewProductId]);
 
   useEffect(() => {
@@ -282,7 +303,8 @@ export default function MatchRequestedProductsModal({
     ensureProductSort();
     trySelectPendingProduct(api);
     applyRequestedFilterModel(api);
-  }, [ensureProductSort, trySelectPendingProduct, applyRequestedFilterModel]);
+    autoSelectTopProduct(api);
+  }, [applyRequestedFilterModel, autoSelectTopProduct, ensureProductSort, trySelectPendingProduct]);
 
   const handleGridModelUpdated = useCallback(() => {
     const api = productsApiRef.current;
@@ -290,10 +312,19 @@ export default function MatchRequestedProductsModal({
     ensureProductSort();
     trySelectPendingProduct(api);
     applyRequestedFilterModel(api);
-  }, [ensureProductSort, trySelectPendingProduct, applyRequestedFilterModel]);
+    autoSelectTopProduct(api);
+  }, [applyRequestedFilterModel, autoSelectTopProduct, ensureProductSort, trySelectPendingProduct]);
 
   useEffect(() => {
     hasAppliedRequestedFiltersRef.current = false;
+    // Prevent stale grid selection from a previous requested item.
+    try {
+      productsApiRef.current?.deselectAll?.();
+    } catch {
+      /* noop */
+    }
+    setSelectedProduct(null);
+    setAssigning(false);
   }, [entry.offerDetailId]);
 
   useEffect(() => {
@@ -301,9 +332,10 @@ export default function MatchRequestedProductsModal({
   }, [applyRequestedFilterModel]);
 
   useEffect(() => {
-    setSelectedProduct(null);
-    setAssigning(false);
-  }, [entry.offerDetailId]);
+    // If the grid already has data loaded for the new requested item,
+    // make sure we still have a deterministic selection.
+    autoSelectTopProduct(productsApiRef.current);
+  }, [autoSelectTopProduct, entry.offerDetailId]);
 
   const remaining = Math.max(0, total - position);
 
