@@ -744,7 +744,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     } catch {
       return { savedColumnOrder: [] as string[], savedHiddenMap: {} as Record<string, boolean> };
     }
-  }, [columnStateNamespace, columnStateStorageKey, dataEndpoint, userId]);
+  }, [columnStateNamespace, columnStateStorageKey, userId]);
   useEffect(() => {
     warmupFetchedRef.current = false;
   }, [dataEndpoint]);

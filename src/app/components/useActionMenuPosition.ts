@@ -15,7 +15,9 @@ type Result = {
 
 const MENU_SPACING = 6;
 const MINIMUM_TOP = 6;
+const MINIMUM_LEFT = 6;
 const BOTTOM_MARGIN = 12;
+const RIGHT_MARGIN = 12;
 
 export const useActionMenuPosition = (open: boolean): Result => {
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -53,6 +55,32 @@ export const useActionMenuPosition = (open: boolean): Result => {
       if (menuPos.top === aboveTop || menuPos.left !== rect.left) return;
        
       setMenuPos({ top: aboveTop, left: rect.left });
+  }, [open, menuPos]);
+
+  useLayoutEffect(() => {
+    if (!open || !menuPos) return;
+    const rect = buttonRef.current?.getBoundingClientRect();
+    const menuElement = menuRef.current;
+    if (!rect || !menuElement) return;
+    const menuWidth = menuElement.offsetWidth;
+    if (menuWidth === 0) return;
+    const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 0;
+    if (viewportWidth <= 0) return;
+
+    const maxLeft = Math.max(MINIMUM_LEFT, viewportWidth - RIGHT_MARGIN - menuWidth);
+    let nextLeft = menuPos.left;
+
+    // If it would overflow on the right, align to the button's right edge.
+    if (nextLeft + menuWidth > viewportWidth - RIGHT_MARGIN) {
+      nextLeft = rect.right - menuWidth;
+    }
+
+    // Clamp within viewport.
+    nextLeft = Math.min(maxLeft, Math.max(MINIMUM_LEFT, nextLeft));
+
+    if (nextLeft !== menuPos.left) {
+      setMenuPos({ top: menuPos.top, left: nextLeft });
+    }
   }, [open, menuPos]);
 
   return { buttonRef, menuRef, menuPos };

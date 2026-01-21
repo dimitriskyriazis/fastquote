@@ -424,6 +424,8 @@ type Props = {
   suppressRowGroup?: boolean;
   getRowClass?: (params: RowClassParams<RowData>) => string | string[] | undefined;
   getContextMenuItems?: (params: GetContextMenuItemsParams<RowData>) => Array<MenuItemDef<RowData> | DefaultMenuItem | string> | undefined;
+  getHeaderMenuItems?: GetMainMenuItems<RowData>;
+  suppressContextMenu?: boolean;
   onCellValueChanged?: (event: CellValueChangedEvent<RowData>) => void;
   onRowDoubleClicked?: (event: RowDoubleClickedEvent<RowData>) => void;
   getRowHeight?: (params: RowHeightParams<RowData>) => number | undefined;
@@ -998,6 +1000,8 @@ export default function AgGridAll({
   suppressRowGroup = false,
   getRowClass,
   getContextMenuItems,
+  getHeaderMenuItems,
+  suppressContextMenu = false,
   onCellValueChanged: externalCellValueChangeHandler,
   getRowHeight,
   onModelUpdated,
@@ -2967,9 +2971,12 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       action: () => params.api.setColumnsVisible([colId], false),
     };
 
-    const defaults = params.defaultItems ?? [];
+    const customDefaults =
+      typeof getHeaderMenuItems === 'function'
+        ? (getHeaderMenuItems(params) ?? params.defaultItems ?? [])
+        : (params.defaultItems ?? []);
     const autoSizeItems = resolveAutoSizeMenuItems({ api, column });
-    const items: Array<MenuItemDef<RowData> | DefaultMenuItem> = [...autoSizeItems, ...defaults];
+    const items: Array<MenuItemDef<RowData> | DefaultMenuItem> = [...autoSizeItems, ...customDefaults];
     const targetIndex = items.findIndex(
       (item) => item === 'columnChooser' || item === 'resetColumns',
     );
@@ -2977,7 +2984,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     const extraItems = allowMove ? [moveLeftItem, moveRightItem, hideColumnItem] : [hideColumnItem];
     items.splice(insertionIndex, 0, ...extraItems);
     return items;
-  }, [resolveAutoSizeMenuItems]);
+  }, [getHeaderMenuItems, resolveAutoSizeMenuItems]);
 
   const handleColumnRowGroupChanged = () => {
     // No automatic auto-size.
@@ -3540,6 +3547,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           getRowClass={mergedGetRowClass}
           getMainMenuItems={headerMenuItemsHandler}
           getContextMenuItems={contextMenuItemsHandler}
+          suppressContextMenu={suppressContextMenu}
           onFirstDataRendered={handleFirstDataRendered}
           onCellContextMenu={handleCellContextMenu}
           onCellMouseDown={handleCellMouseDown}

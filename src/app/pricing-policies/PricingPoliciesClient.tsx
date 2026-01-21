@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type {
   CellValueChangedEvent,
@@ -10,12 +10,19 @@ import type {
   ValueGetterParams,
   ValueSetterParams,
 } from "ag-grid-community";
+import { createPortal } from "react-dom";
 import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import type { GridResponse } from "../components/AgGridAll";
 import styles from "./PricingPoliciesClient.module.css";
+import { showConfirmDialog } from "../../lib/confirm";
 import { showToastMessage } from "../../lib/toast";
 import { getUserNumberLocale, parseLocaleNumber } from "../../lib/localeNumber";
+import LookupModal from "../components/LookupModal";
+import lookupStyles from "../components/LookupModal.module.css";
+import type { DropdownOption } from "../../lib/dropdownOptions";
+import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from "../components/useActionMenuCoordinator";
+import { useActionMenuPosition } from "../components/useActionMenuPosition";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -29,6 +36,7 @@ export type PricingPolicyColumn = {
 
 type Props = {
   pricingPolicies: PricingPolicyColumn[];
+  calcMethodFormulas: DropdownOption[];
 };
 
 type PolicyCell = { telmacoDiscount: number | null; customerDiscount: number | null };
@@ -55,6 +63,114 @@ const parseDiscountInput = (value: unknown): number | null => {
   return parseLocaleNumber(value);
 };
 
+const deletePricingPolicyMenuIcon = `
+  <span class="fastquote-menu-icon fastquote-menu-icon--danger" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 7L18.2 19.2C18.1 20.8 16.8 22 15.2 22H8.8C7.2 22 5.9 20.8 5.8 19.2L5 7" />
+      <path d="M10 11V17" />
+      <path d="M14 11V17" />
+      <path d="M4 7H20" />
+      <path d="M9 7V4.8C9 3.8 9.8 3 10.8 3H13.2C14.2 3 15 3.8 15 4.8V7" />
+    </svg>
+  </span>
+`;
+
+type PricingPolicyGroupHeaderParams = {
+  displayName?: string;
+  disabled?: boolean;
+  pricingPolicyId?: number;
+  onDelete?: (pricingPolicyId: number) => void;
+};
+
+function PricingPolicyGroupHeader({
+  displayName,
+  disabled = false,
+  pricingPolicyId,
+  onDelete,
+}: PricingPolicyGroupHeaderParams) {
+  const [open, setOpen] = useState(false);
+  const closeMenu = useCallback(() => setOpen(false), []);
+  const instanceId = useActionMenuCloseListener(closeMenu);
+  const { buttonRef, menuRef, menuPos } = useActionMenuPosition(open);
+
+  const preventRangeSelection = (event: React.SyntheticEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const canDelete =
+    !disabled && typeof pricingPolicyId === "number" && Number.isFinite(pricingPolicyId) && typeof onDelete === "function";
+
+  return (
+    <div className={styles.policyGroupHeader}>
+      <span className={styles.policyGroupTitle} title={displayName}>
+        {displayName}
+      </span>
+
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={styles.policyGroupMenuButton}
+        disabled={disabled}
+        title="Actions"
+        ref={buttonRef}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!open) {
+            dispatchActionMenuCloseEvent(instanceId);
+          }
+          setOpen((v) => !v);
+        }}
+        onMouseDownCapture={preventRangeSelection}
+        onPointerDownCapture={preventRangeSelection}
+        onContextMenuCapture={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+      >
+        ⋮
+      </button>
+
+      {open && menuPos
+        ? createPortal(
+            <div
+              role="menu"
+              className={styles.policyGroupMenu}
+              style={{ top: menuPos.top, left: menuPos.left }}
+              ref={menuRef}
+              onClick={(e) => e.stopPropagation()}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className={styles.policyGroupMenuItem}
+                disabled={!canDelete}
+                onClick={() => {
+                  setOpen(false);
+                  if (canDelete) onDelete(pricingPolicyId);
+                }}
+              >
+                <span
+                  className={styles.policyGroupMenuIcon}
+                  aria-hidden="true"
+                  dangerouslySetInnerHTML={{ __html: deletePricingPolicyMenuIcon }}
+                />
+                <span>Delete pricing policy</span>
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
+  );
+}
+
 const getOrCreatePolicyCell = (row: MatrixRow, policyId: string): PolicyCell => {
   row.policies = row.policies && typeof row.policies === "object" ? row.policies : {};
   const existing = row.policies[policyId];
@@ -76,21 +192,45 @@ const isDefaultPricingPolicyName = (name: string): boolean => {
   return /\bdefault\b/i.test(normalized);
 };
 
-export default function PricingPoliciesClient({ pricingPolicies }: Props) {
+export default function PricingPoliciesClient({ pricingPolicies, calcMethodFormulas }: Props) {
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const pendingGrandTotalRef = useRef<Record<string, unknown> | null>(null);
   const [refreshToken] = useState(0);
 
-  const orderedPricingPolicies = useMemo(() => {
-    const defaults = pricingPolicies.filter((policy) => isDefaultPricingPolicyName(policy.name));
-    const rest = pricingPolicies.filter((policy) => !isDefaultPricingPolicyName(policy.name));
-    return [...defaults, ...rest];
+  const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
+  useEffect(() => {
+    setLocalPricingPolicies(pricingPolicies);
   }, [pricingPolicies]);
+
+  const [isAddPricingPolicyOpen, setIsAddPricingPolicyOpen] = useState(false);
+  const [newPricingPolicyName, setNewPricingPolicyName] = useState("");
+  const [newPricingPolicyCalcMethodId, setNewPricingPolicyCalcMethodId] = useState("");
+  const [newPricingPolicyEnabled, setNewPricingPolicyEnabled] = useState(true);
+  const [pricingPolicySaving, setPricingPolicySaving] = useState(false);
+  const [pricingPolicyError, setPricingPolicyError] = useState<string | null>(null);
+  const [pricingPolicyDeleting, setPricingPolicyDeleting] = useState(false);
+
+  const orderedPricingPolicies = useMemo(() => {
+    const defaults = localPricingPolicies.filter((policy) => isDefaultPricingPolicyName(policy.name));
+    const rest = localPricingPolicies.filter((policy) => !isDefaultPricingPolicyName(policy.name));
+    return [...defaults, ...rest];
+  }, [localPricingPolicies]);
 
   const defaultPolicyId = useMemo(() => {
     const firstDefault = orderedPricingPolicies.find((policy) => isDefaultPricingPolicyName(policy.name));
     return firstDefault?.id ?? null;
   }, [orderedPricingPolicies]);
+
+  const openAddPricingPolicyModal = useCallback(
+    (calcMethodFormulas: DropdownOption[]) => {
+      setNewPricingPolicyName("");
+      setPricingPolicyError(null);
+      setNewPricingPolicyEnabled(true);
+      setNewPricingPolicyCalcMethodId(calcMethodFormulas[0]?.value ?? "");
+      setIsAddPricingPolicyOpen(true);
+    },
+    [],
+  );
 
   const enforceDefaultPolicyFirst = useCallback((api: GridApi<Record<string, unknown>> | null) => {
     if (!api) return;
@@ -193,12 +333,140 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
     void submit();
   }, []);
 
+  const deletePricingPolicy = useCallback(
+    async (pricingPolicyId: number) => {
+      if (!Number.isFinite(pricingPolicyId) || pricingPolicyId <= 0) return;
+      if (pricingPolicyDeleting || pricingPolicySaving) return;
+
+      const policyName =
+        localPricingPolicies.find((policy) => policy.id === pricingPolicyId)?.name ?? `#${pricingPolicyId}`;
+
+      const confirmed = await showConfirmDialog({
+        title: "Delete pricing policy",
+        message: `Delete pricing policy "${policyName}"? This will also delete all pricing policy rules. This action cannot be undone.`,
+        confirmLabel: "Delete pricing policy",
+        cancelLabel: "Keep pricing policy",
+        tone: "danger",
+      });
+      if (!confirmed) return;
+
+      setPricingPolicyDeleting(true);
+      try {
+        const response = await fetch("/api/pricing-policies", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pricingPolicyId }),
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { ok?: boolean; error?: string; deletedPolicies?: number; deletedRules?: number }
+          | null;
+        if (!response.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? "Unable to delete pricing policy");
+        }
+
+        setLocalPricingPolicies((prev) => prev.filter((policy) => policy.id !== pricingPolicyId));
+        showToastMessage("Pricing policy deleted", "success");
+
+        try {
+          gridApiRef.current?.refreshServerSide?.({ purge: true });
+        } catch {
+          /* noop */
+        }
+      } catch (err) {
+        console.error("Failed to delete pricing policy", err);
+        showToastMessage(err instanceof Error ? err.message : "Unable to delete pricing policy.", "error");
+      } finally {
+        setPricingPolicyDeleting(false);
+      }
+    },
+    [localPricingPolicies, pricingPolicyDeleting, pricingPolicySaving],
+  );
+
+
+  const handleCreatePricingPolicy = useCallback(
+    async (calcMethodFormulas: DropdownOption[]) => {
+      const trimmed = newPricingPolicyName.trim();
+      if (!trimmed) {
+        setPricingPolicyError("Name is required");
+        return;
+      }
+      if (!newPricingPolicyCalcMethodId) {
+        setPricingPolicyError("Calc method formula is required");
+        return;
+      }
+      setPricingPolicySaving(true);
+      setPricingPolicyError(null);
+      try {
+        const response = await fetch("/api/pricing-policies", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: trimmed,
+            enabled: newPricingPolicyEnabled,
+            calcMethodFormulasId: newPricingPolicyCalcMethodId,
+          }),
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { ok?: boolean; option?: DropdownOption; error?: string }
+          | null;
+        const option = payload?.option;
+        if (!response.ok || !payload?.ok || !option?.value) {
+          throw new Error(payload?.error ?? "Unable to add pricing policy");
+        }
+        const id = Number(option.value);
+        if (!Number.isFinite(id)) {
+          throw new Error("Server returned an invalid pricing policy ID");
+        }
+
+        setLocalPricingPolicies((prev) => {
+          if (prev.some((policy) => policy.id === id)) return prev;
+          return [...prev, { id, name: option.label }];
+        });
+        showToastMessage("Pricing policy added", "success");
+        setIsAddPricingPolicyOpen(false);
+
+        // Refresh rows so any downstream totals update.
+        gridApiRef.current?.refreshServerSide?.({ purge: true });
+      } catch (err) {
+        console.error("Failed to create pricing policy", err);
+        const message = err instanceof Error ? err.message : "Unable to add pricing policy";
+        setPricingPolicyError(message);
+        showToastMessage(message, "error");
+      } finally {
+        setPricingPolicySaving(false);
+        // Ensure current selection stays valid if formulas list changes.
+        setNewPricingPolicyCalcMethodId((prev) =>
+          calcMethodFormulas.some((option) => option.value === prev)
+            ? prev
+            : calcMethodFormulas[0]?.value ?? "",
+        );
+      }
+    },
+    [newPricingPolicyCalcMethodId, newPricingPolicyEnabled, newPricingPolicyName],
+  );
+
+  useEffect(() => {
+    setNewPricingPolicyCalcMethodId((prev) =>
+      calcMethodFormulas.some((option) => option.value === prev)
+        ? prev
+        : calcMethodFormulas[0]?.value ?? "",
+    );
+  }, [calcMethodFormulas]);
+
   const columnDefs = useMemo<ColDef[]>(() => {
     const policyGroups: ColDef[] = orderedPricingPolicies.map((policy) => {
       const policyId = String(policy.id);
       return {
         headerName: normalizePricingPolicyName(policy.name),
         marryChildren: true,
+        headerGroupComponent: PricingPolicyGroupHeader,
+        headerGroupComponentParams: {
+          disabled: pricingPolicyDeleting || pricingPolicySaving,
+          pricingPolicyId: policy.id,
+          onDelete: (id: number) => {
+            void deletePricingPolicy(id);
+          },
+        },
         children: [
           {
             headerName: "Telmaco Discount",
@@ -278,11 +546,24 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
       },
       ...policyGroups,
     ];
-  }, [orderedPricingPolicies]);
+  }, [deletePricingPolicy, orderedPricingPolicies, pricingPolicyDeleting, pricingPolicySaving]);
 
   return (
     <main className={styles.page}>
-      <PageHeader title="Pricing Policies">
+      <PageHeader
+        title="Pricing Policies"
+        rightActions={
+          <button
+            type="button"
+            className={`${styles.addButton} page-header-button`}
+            onClick={() => openAddPricingPolicyModal(calcMethodFormulas)}
+            disabled={pricingPolicySaving || calcMethodFormulas.length === 0}
+            title={calcMethodFormulas.length === 0 ? "No calc method formulas available" : "Add pricing policy"}
+          >
+            Add Pricing Policy
+          </button>
+        }
+      >
         <GridQuickSearchProvider>
           <div className={styles.gridFrame}>
             <AgGridAll
@@ -299,6 +580,58 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
           </div>
         </GridQuickSearchProvider>
       </PageHeader>
+      <LookupModal
+        open={isAddPricingPolicyOpen}
+        title="Add Pricing Policy"
+        onClose={() => setIsAddPricingPolicyOpen(false)}
+        onConfirm={() => void handleCreatePricingPolicy(calcMethodFormulas)}
+        confirmLabel="Create"
+        saving={pricingPolicySaving}
+        error={pricingPolicyError}
+      >
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="pricing-policy-name">
+            Name
+          </label>
+          <input
+            id="pricing-policy-name"
+            className={lookupStyles.fieldControl}
+            value={newPricingPolicyName}
+            required
+            onChange={(event) => setNewPricingPolicyName(event.target.value)}
+          />
+        </div>
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="pricing-policy-calc-method">
+            Calc method formula
+          </label>
+          <select
+            id="pricing-policy-calc-method"
+            className={lookupStyles.fieldControl}
+            value={newPricingPolicyCalcMethodId}
+            required
+            onChange={(event) => setNewPricingPolicyCalcMethodId(event.target.value)}
+          >
+            <option value="">Select calc method formula</option>
+            {calcMethodFormulas.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.checkboxLabel} htmlFor="pricing-policy-enabled">
+            <input
+              id="pricing-policy-enabled"
+              type="checkbox"
+              checked={newPricingPolicyEnabled}
+              onChange={(event) => setNewPricingPolicyEnabled(event.target.checked)}
+            />
+            Enabled
+          </label>
+        </div>
+      </LookupModal>
     </main>
   );
 }

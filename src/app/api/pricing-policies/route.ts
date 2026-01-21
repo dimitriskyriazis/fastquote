@@ -8,6 +8,12 @@ type CreatePricingPolicyBody = {
   calcMethodFormulasId?: unknown;
 };
 
+type DeletePricingPolicyBody = {
+  pricingPolicyId?: unknown;
+  pricingPolicyIds?: unknown;
+  ids?: unknown;
+};
+
 const normalizeString = (value: unknown, maxLength: number): string | null => {
   if (value == null) return null;
   if (typeof value === 'string') {
@@ -39,6 +45,14 @@ const normalizeInt = (value: unknown): number | null => {
     if (Number.isFinite(parsed)) return Math.trunc(parsed);
   }
   return null;
+};
+
+const normalizeIntArray = (value: unknown): number[] => {
+  if (!Array.isArray(value)) return [];
+  const ids = value
+    .map((entry) => normalizeInt(entry))
+    .filter((id): id is number => id != null && Number.isFinite(id) && id > 0);
+  return Array.from(new Set(ids));
 };
 
 export async function POST(req: NextRequest) {
@@ -89,6 +103,66 @@ export async function POST(req: NextRequest) {
     };
 
     return NextResponse.json({ ok: true, option });
+  } catch (err) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const payload = (await req.json().catch(() => null)) as DeletePricingPolicyBody | null;
+    const singleId = normalizeInt(payload?.pricingPolicyId);
+    const listIds = normalizeIntArray(payload?.pricingPolicyIds ?? payload?.ids);
+    const ids = singleId != null ? [singleId] : listIds;
+    if (!ids || ids.length === 0) {
+      return NextResponse.json({ ok: false, error: 'Pricing policy ID is required' }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    const request = pool.request();
+    const valuesSql = ids.map((_, idx) => `(@__id_${idx})`).join(', ');
+    ids.forEach((id, idx) => request.input(`__id_${idx}`, sql.Int, id));
+
+    const result = await request.query<{ deletedPolicies: number | null; deletedRules: number | null }>(`
+      BEGIN TRY
+        BEGIN TRAN;
+
+        DECLARE @Ids TABLE (ID INT PRIMARY KEY);
+        INSERT INTO @Ids (ID) VALUES ${valuesSql};
+
+        DECLARE @DeletedRules INT = 0;
+        DELETE r
+        FROM dbo.PricingPolicyRules AS r
+        INNER JOIN @Ids AS i ON i.ID = r.PricingPolicyID;
+        SET @DeletedRules = @@ROWCOUNT;
+
+        DECLARE @DeletedPolicies INT = 0;
+        DELETE p
+        FROM dbo.PricingPolicies AS p
+        INNER JOIN @Ids AS i ON i.ID = p.ID;
+        SET @DeletedPolicies = @@ROWCOUNT;
+
+        COMMIT;
+        SELECT @DeletedPolicies AS deletedPolicies, @DeletedRules AS deletedRules;
+      END TRY
+      BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK;
+        THROW;
+      END CATCH
+    `);
+
+    const deletedPolicies = Number(result.recordset?.[0]?.deletedPolicies ?? 0);
+    const deletedRules = Number(result.recordset?.[0]?.deletedRules ?? 0);
+    if (!Number.isFinite(deletedPolicies) || deletedPolicies <= 0) {
+      return NextResponse.json(
+        { ok: false, error: 'Pricing policy not found or could not be deleted' },
+        { status: 404 },
+      );
+    }
+
+    return NextResponse.json({ ok: true, deletedPolicies, deletedRules });
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : 'Server error';

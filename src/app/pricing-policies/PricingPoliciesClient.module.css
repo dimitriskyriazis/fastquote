@@ -8,8 +8,115 @@
   width: 100%;
 }
 
+.addButton {
+  border: 1px solid #d1d5db;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  color: #0f172a;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+}
+
+.addButton:active {
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.1);
+}
+
 .loading {
   padding: 20px;
   color: rgba(255, 255, 255, 0.75);
 }
 
+.policyGroupHeader {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.policyGroupTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.policyGroupMenuButton {
+  border: 1px solid rgba(15, 23, 42, 0.18);
+  background: transparent;
+  color: inherit;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  pointer-events: auto;
+}
+
+.policyGroupMenuButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.policyGroupMenuButton:not(:disabled):hover,
+.policyGroupMenuButton:not(:disabled):focus-visible {
+  background: rgba(15, 23, 42, 0.08);
+  outline: none;
+}
+
+.policyGroupMenu {
+  position: fixed;
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+  z-index: 9999;
+  overflow: hidden;
+}
+
+.policyGroupMenuItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  padding: 6px 6px 6px 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: "Segoe UI";
+  line-height: 1.2;
+  background: transparent;
+  color: #0f172a;
+  transition: background-color 120ms ease, color 120ms ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.policyGroupMenuItem:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.policyGroupMenuItem:hover:not(:disabled),
+.policyGroupMenuItem:focus-visible:not(:disabled) {
+  background: #e2e8f0;
+  outline: none;
+}
+
+.policyGroupMenuIcon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #b91c1c;
+  flex: 0 0 auto;
+}
+
+/* Also tint the svg if it uses currentColor */
+.policyGroupMenuIcon :global(svg) {
+  color: currentColor;
+}
