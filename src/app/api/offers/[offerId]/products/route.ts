@@ -1418,6 +1418,8 @@ export async function PATCH(
           OfferDetailID: id,
           ProductDescription: productDescription,
           Quantity: quantity,
+          // Treat both `ProductDescription` and legacy `Description` as a description update.
+          hasProductDescription: hasProductDescription || hasDescription,
           hasQuantity,
           hasCustomerDiscount,
           hasTelmacoDiscount,
@@ -1434,6 +1436,7 @@ export async function PATCH(
           hasRequestedPartNo,
           hasRequestedDescription,
           hasRequestedDescription2,
+          hasRequestedDescription3,
           hasRequestedQuantity,
           customerDiscount,
           telmacoDiscount,
