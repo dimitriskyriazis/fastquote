@@ -3,6 +3,7 @@ import sql, { ConnectionPool } from 'mssql';
 import { buildAuditContext, type AuditContext } from '../../../../../lib/auditTrail';
 import { getPool } from '../../../../../lib/sql';
 import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from '../../../../../lib/gridFilters';
+import { realtimeEvents } from '../../../../../lib/realtimeEvents';
 import {
   buildTreeFromRows,
   collectResequencedUpdates,
@@ -721,6 +722,22 @@ async function handleReorderRow(
 
   const updates = collectResequencedUpdates(roots);
   const rowsAffected = await persistTreeOrderingUpdates(pool, offerId, audit, updates);
+  
+  // Emit realtime event for row reordering
+  if (updates.length > 0) {
+    realtimeEvents.emit(
+      `offer:${offerId}:products`,
+      'rows-reordered',
+      {
+        updates: updates.map(u => ({
+          OfferDetailID: u.OfferDetailID,
+          TreeOrdering: u.TreeOrdering ?? '',
+        })),
+        updatedBy: audit.userId,
+      }
+    );
+  }
+  
   return NextResponse.json({ ok: true, updated: updates.length, rowsAffected });
 }
 
@@ -842,8 +859,34 @@ async function handleCreateRow(
     );
   `;
 
-  const result = await request.query(query);
+  const result = await request.query<{
+    OfferDetailID: number;
+    TreeOrdering: string | null;
+    IsComment: number | null;
+    IsPrintable: number | null;
+    ProductDescription: string | null;
+  }>(query);
   const inserted = Array.isArray(result.recordset) ? result.recordset[0] ?? null : null;
+  
+  // Emit realtime event for new row
+  if (inserted && inserted.OfferDetailID) {
+    realtimeEvents.emit(
+      `offer:${offerId}:products`,
+      'row-added',
+      {
+        row: {
+          OfferDetailID: inserted.OfferDetailID,
+          TreeOrdering: inserted.TreeOrdering,
+          Description: inserted.ProductDescription,
+          IsComment: inserted.IsComment,
+          IsPrintable: inserted.IsPrintable,
+          // Grid will fetch full row data when it receives this event
+        },
+        updatedBy: createdBy,
+      }
+    );
+  }
+  
   return NextResponse.json({
     ok: true,
     created: inserted ?? null,
@@ -2028,6 +2071,68 @@ export async function PATCH(
       affected += result.rowsAffected?.[0] ?? 0;
     }
 
+    // Emit realtime events for updated rows
+    if (normalizedUpdates.length > 0 && affected > 0) {
+      // Group updates by row to emit one event per row with all field changes
+      const updatesByRow = new Map<number, Array<{ field: string; value: unknown }>>();
+      
+      for (const update of normalizedUpdates) {
+        const rowId = update.OfferDetailID;
+        if (!updatesByRow.has(rowId)) {
+          updatesByRow.set(rowId, []);
+        }
+        
+        // Extract field name and value from update
+        const fieldMap: Record<string, string> = {
+          hasProductDescription: 'Description',
+          ProductDescription: 'Description',
+          hasQuantity: 'Quantity',
+          Quantity: 'Quantity',
+          hasCustomerDiscount: 'CustomerDiscount',
+          CustomerDiscount: 'CustomerDiscount',
+          hasTelmacoDiscount: 'TelmacoDiscount',
+          TelmacoDiscount: 'TelmacoDiscount',
+          hasNetUnitPrice: 'NetUnitPrice',
+          NetUnitPrice: 'NetUnitPrice',
+          hasListPrice: 'ListPrice',
+          ListPrice: 'ListPrice',
+          hasNetCost: 'NetCost',
+          NetCost: 'NetCost',
+          hasMargin: 'Margin',
+          Margin: 'Margin',
+        };
+        
+        // Find all updated fields
+        Object.keys(update).forEach((key) => {
+          if (key !== 'OfferDetailID' && key.startsWith('has') === false) {
+            const fieldName = fieldMap[key] || key;
+            const value = update[key as keyof typeof update];
+            if (value !== undefined && value !== null) {
+              updatesByRow.get(rowId)!.push({ field: fieldName, value });
+            }
+          }
+        });
+      }
+      
+      // Emit events for each updated row
+      updatesByRow.forEach((fields, rowId) => {
+        // Emit one event per field change for granular updates
+        fields.forEach(({ field, value }) => {
+          realtimeEvents.emit(
+            `offer:${offerId}:products`,
+            'cell-updated',
+            {
+              rowId,
+              OfferDetailID: rowId,
+              field,
+              value,
+              updatedBy: audit.userId,
+            }
+          );
+        });
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       updated: normalizedUpdates.length,
@@ -2121,6 +2226,21 @@ export async function DELETE(
       `;
       const result = await request.query(query);
       deleted += result.rowsAffected?.[0] ?? 0;
+    }
+
+    // Emit realtime events for deleted rows
+    if (normalizedIds.length > 0) {
+      for (const id of normalizedIds) {
+        realtimeEvents.emit(
+          `offer:${offerId}:products`,
+          'row-deleted',
+          {
+            OfferDetailID: id,
+            rowId: id,
+            updatedBy: audit.userId,
+          }
+        );
+      }
     }
 
     const resequenced = deleted > 0

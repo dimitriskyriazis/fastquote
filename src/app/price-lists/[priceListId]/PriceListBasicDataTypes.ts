@@ -50,6 +50,8 @@ export type PriceListBasicUpdateField =
   | "CountryId"
   | "SupplierID"
   | "CurrencyId"
+  | "CostCurrencyID"
+  | "CurrencyCostModifier"
   | "ResponsibleUserId"
   | "Enabled"
   | "HasDuty";

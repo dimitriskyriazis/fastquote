@@ -46,6 +46,7 @@ import { GridRowDeletion, getContextMenuSelectionSnapshot, setGridRowDeletionCon
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
 import { priceListStatusClassRules } from '../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
+import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
 import MatchRequestedProductsModal, {
   type RequestedProductMatchEntry,
 } from './products/MatchRequestedProductsModal';
@@ -1132,6 +1133,8 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     gridApiRef.current = api;
+    
+    // Real-time updates are handled by useRealtimeGridUpdates hook below
     setRequestedColumnsReadyFlag(true);
   }, [setRequestedColumnsReadyFlag]);
 
@@ -3195,6 +3198,15 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     if (value == null || !Number.isFinite(value)) return '—';
     return `${decimalFormatter.format(value)} %`;
   };
+
+  // Real-time updates for collaborative editing
+  // showNotifications: false - only the person making the edit sees toasts from their own actions
+  useRealtimeGridUpdates({
+    resource: `offer:${offerId}:products`,
+    gridApi: gridApiRef.current,
+    enabled: true,
+    showNotifications: false,
+  });
 
   return (
     <>

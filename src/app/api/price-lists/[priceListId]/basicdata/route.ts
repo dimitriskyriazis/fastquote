@@ -39,6 +39,7 @@ const FIELD_CONFIG: Record<PriceListBasicUpdateField, FieldConfig> = {
   BrandID: { column: "BrandID", type: "number", sqlType: sql.Int },
   CountryId: { column: "CountryId", type: "number", sqlType: sql.Int },
   SupplierID: { column: "SupplierID", type: "number", sqlType: sql.Int },
+  CurrencyId: { column: "CurrencyId", type: "number", sqlType: sql.Int },
   CostCurrencyID: { column: "CostCurrencyID", type: "number", sqlType: sql.Int },
   CurrencyCostModifier: {
     column: "CurrencyCostModifier",
