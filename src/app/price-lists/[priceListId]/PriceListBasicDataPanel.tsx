@@ -43,14 +43,11 @@ export async function fetchPriceListBasicRecord(priceListId: number) {
         s.Name AS SupplierName,
         pl.CurrencyId AS CurrencyId,
         cur.Name AS CurrencyName,
-        pl.CostCurrencyID AS CostCurrencyID,
-        costCur.Name AS CostCurrencyName,
-        pl.CurrencyCostModifier,
         pl.ResponsibleUserId,
         resp.UserName AS ResponsibleUserName,
         pl.HasDuty,
-        pl.PricingPolicyRuleID AS PricingPolicyRuleID,
-        pl.PricingPolicyID AS PricingPolicyID,
+        ppr.ID AS PricingPolicyRuleID,
+        ppr.PricingPolicyID,
         pp.Name AS PricingPolicyName,
         pl.ModifiedOn,
         pl.ModifiedBy AS ModifiedByUserId,
@@ -58,14 +55,15 @@ export async function fetchPriceListBasicRecord(priceListId: number) {
         modified.FullName AS ModifiedByFullName
       FROM dbo.PriceLists AS pl
       LEFT JOIN dbo.Brands AS b ON pl.BrandID = b.ID
-      LEFT JOIN dbo.PricingPolicies AS pp ON pl.PricingPolicyID = pp.ID
+      LEFT JOIN dbo.PricingPolicyRules AS ppr ON b.ID = ppr.BrandID
+      LEFT JOIN dbo.PricingPolicies AS pp ON ppr.PricingPolicyID = pp.ID
       LEFT JOIN dbo.Countries AS c ON pl.CountryId = c.ID
       LEFT JOIN dbo.Suppliers AS s ON pl.SupplierID = s.ID
       LEFT JOIN dbo.Currencies AS cur ON pl.CurrencyId = cur.ID
-      LEFT JOIN dbo.Currencies AS costCur ON pl.CostCurrencyID = costCur.ID
       LEFT JOIN dbo.AspNetUsers AS resp ON pl.ResponsibleUserId = resp.Id
       LEFT JOIN dbo.AspNetUsers AS modified ON pl.ModifiedBy = modified.Id
       WHERE pl.ID = @priceListId
+      ORDER BY pp.Name
     `);
     return result.recordset?.[0] ?? null;
   } catch (err) {
@@ -125,13 +123,7 @@ async function fetchCurrencies() {
     const result = await pool.request().query<LookupRow>(`
       SELECT ID, Name
       FROM dbo.Currencies
-      ORDER BY
-        CASE
-          WHEN Name = N'€' OR LOWER(Name) LIKE '%eur%' OR LOWER(Name) LIKE '%euro%' THEN 0
-          WHEN Name = N'$' OR LOWER(Name) LIKE '%usd%' OR LOWER(Name) LIKE '%dollar%' THEN 1
-          ELSE 2
-        END,
-        Name
+      ORDER BY Name
     `);
     return mapLookupRows(result.recordset);
   } catch (err) {

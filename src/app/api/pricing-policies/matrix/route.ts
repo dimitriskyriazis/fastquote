@@ -30,6 +30,10 @@ type MatrixUpdateBody = {
   value?: unknown;
 };
 
+type MatrixDeleteBody = {
+  brandId?: unknown;
+};
+
 type BrandRow = {
   __totalCount: number | bigint | null;
   BrandID: number | null;
@@ -225,6 +229,34 @@ export async function PATCH(req: NextRequest) {
     const updateRes = await updateReq.query<{ UpdatedCount: number | null }>(updateSql);
     const updatedCount = updateRes.recordset?.[0]?.UpdatedCount ?? 0;
     return NextResponse.json({ ok: true, updatedCount });
+  } catch (err) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const payload = (await req.json().catch(() => null)) as MatrixDeleteBody | null;
+    const brandId = normalizeInt(payload?.brandId);
+    if (brandId == null) {
+      return NextResponse.json({ ok: false, error: "Brand is required" }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    const delReq = pool.request();
+    delReq.input("__brandId", sql.Int, brandId);
+    const delRes = await delReq.query<{ DeletedCount: number }>(`
+      DECLARE @DeletedCount INT;
+      DELETE FROM dbo.PricingPolicyRules
+      WHERE BrandID = @__brandId;
+      SET @DeletedCount = @@ROWCOUNT;
+      SELECT @DeletedCount AS DeletedCount;
+    `);
+    const deletedCount = delRes.recordset?.[0]?.DeletedCount ?? 0;
+
+    return NextResponse.json({ ok: true, deletedCount });
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : "Server error";

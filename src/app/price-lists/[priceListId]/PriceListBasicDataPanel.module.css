@@ -107,8 +107,6 @@
   color: #0f172a;
   display: flex;
   align-items: center;
-  cursor: default;
-  user-select: text;
 }
 
 .fieldControlPending {

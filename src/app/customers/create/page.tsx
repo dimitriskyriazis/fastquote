@@ -54,16 +54,16 @@ export default async function Page() {
       </div>
       <div className={layoutStyles.pageBody}>
         <CustomerCreateClient
-        customerGroups={customerGroups}
-        parentCustomers={parentCustomers}
-        pricingPolicies={pricingPolicies}
-        importanceOptions={importanceOptions}
-        countries={countries}
-        cities={cities}
-        calcMethodFormulas={calcMethodFormulas}
-        formId={formId}
-      />
-    </div>
+          customerGroups={customerGroups}
+          parentCustomers={parentCustomers}
+          pricingPolicies={pricingPolicies}
+          importanceOptions={importanceOptions}
+          countries={countries}
+          cities={cities}
+          calcMethodFormulas={calcMethodFormulas}
+          formId={formId}
+        />
+      </div>
     </main>
   );
 }

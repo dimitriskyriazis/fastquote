@@ -140,11 +140,11 @@ const buildFieldDefinitions = (
     options: countries,
   },
   {
-    id: 'costCurrency',
-    label: 'Cost Currency',
+    id: 'currency',
+    label: 'Currency',
     section: 'associations',
-    recordKey: 'CostCurrencyID',
-    updateField: 'CostCurrencyID',
+    recordKey: 'CurrencyId',
+    updateField: 'CurrencyId',
     valueType: 'number',
     options: currencies,
   },
@@ -156,14 +156,6 @@ const buildFieldDefinitions = (
     updateField: 'ResponsibleUserId',
     datalistOptions: users,
     resolveValue: (rec) => rec.ResponsibleUserName ?? '',
-  },
-  {
-    id: 'currencyCostModifier',
-    label: 'Currency Cost Modifier',
-    section: 'associations',
-    recordKey: 'CurrencyCostModifier',
-    updateField: 'CurrencyCostModifier',
-    valueType: 'number',
   },
   {
     id: 'enabled',
@@ -219,14 +211,6 @@ export default function PriceListBasicDataClient({
   users,
   pricingPoliciesByBrand,
 }: Props) {
-  const euroCurrencyId = useMemo(() => {
-    const match =
-      currencies.find((c) => (c.label ?? '').trim() === '€') ??
-      currencies.find((c) => (c.label ?? '').toLowerCase().includes('eur')) ??
-      null;
-    return match?.value ?? '';
-  }, [currencies]);
-
   const fieldDefinitions = useMemo(
     () => buildFieldDefinitions(brands, countries, suppliers, currencies, users),
     [brands, countries, suppliers, currencies, users]
@@ -315,13 +299,6 @@ export default function PriceListBasicDataClient({
     },
     [saveField, values],
   );
-
-  const isEuroCostCurrency = useMemo(() => {
-    const selected = (values['costCurrency'] ?? '').trim();
-    if (!selected) return true; // null => same as currency (EUR)
-    if (!euroCurrencyId) return false;
-    return selected === euroCurrencyId;
-  }, [euroCurrencyId, values]);
 
   const renderFieldControl = (def: FieldDefinition) => {
     const isEditable = Boolean(def.updateField && !def.readOnly);
@@ -429,12 +406,7 @@ export default function PriceListBasicDataClient({
 
   const renderSectionCard = (sectionKey: SectionKey) => {
     const metadata = SECTION_METADATA[sectionKey];
-    const sectionFields = fieldDefinitions
-      .filter((field) => field.section === sectionKey)
-      .filter((field) => {
-        if (field.id === 'currencyCostModifier') return !isEuroCostCurrency;
-        return true;
-      });
+    const sectionFields = fieldDefinitions.filter((field) => field.section === sectionKey);
     if (sectionFields.length === 0 || !metadata) return null;
 
     const cardContent = (

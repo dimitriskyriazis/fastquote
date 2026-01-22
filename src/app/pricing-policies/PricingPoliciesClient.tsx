@@ -5,7 +5,9 @@ import dynamic from "next/dynamic";
 import type {
   CellValueChangedEvent,
   ColDef,
+  GetContextMenuItemsParams,
   GridApi,
+  MenuItemDef,
   ValueFormatterParams,
   ValueGetterParams,
   ValueSetterParams,
@@ -63,7 +65,7 @@ const parseDiscountInput = (value: unknown): number | null => {
   return parseLocaleNumber(value);
 };
 
-const deletePricingPolicyMenuIcon = `
+const deleteMenuIcon = `
   <span class="fastquote-menu-icon fastquote-menu-icon--danger" aria-hidden="true">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
       <path d="M19 7L18.2 19.2C18.1 20.8 16.8 22 15.2 22H8.8C7.2 22 5.9 20.8 5.8 19.2L5 7" />
@@ -159,7 +161,7 @@ function PricingPolicyGroupHeader({
                 <span
                   className={styles.policyGroupMenuIcon}
                   aria-hidden="true"
-                  dangerouslySetInnerHTML={{ __html: deletePricingPolicyMenuIcon }}
+                  dangerouslySetInnerHTML={{ __html: deleteMenuIcon }}
                 />
                 <span>Delete pricing policy</span>
               </button>
@@ -195,7 +197,6 @@ const isDefaultPricingPolicyName = (name: string): boolean => {
 export default function PricingPoliciesClient({ pricingPolicies, calcMethodFormulas }: Props) {
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const pendingGrandTotalRef = useRef<Record<string, unknown> | null>(null);
-  const [refreshToken] = useState(0);
 
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
   useEffect(() => {
@@ -209,6 +210,7 @@ export default function PricingPoliciesClient({ pricingPolicies, calcMethodFormu
   const [pricingPolicySaving, setPricingPolicySaving] = useState(false);
   const [pricingPolicyError, setPricingPolicyError] = useState<string | null>(null);
   const [pricingPolicyDeleting, setPricingPolicyDeleting] = useState(false);
+  const [brandDeleting, setBrandDeleting] = useState(false);
 
   const orderedPricingPolicies = useMemo(() => {
     const defaults = localPricingPolicies.filter((policy) => isDefaultPricingPolicyName(policy.name));
@@ -382,6 +384,77 @@ export default function PricingPoliciesClient({ pricingPolicies, calcMethodFormu
     [localPricingPolicies, pricingPolicyDeleting, pricingPolicySaving],
   );
 
+  const deleteBrand = useCallback(
+    async (brandId: number, brandName: string | null) => {
+      if (!Number.isFinite(brandId) || brandId <= 0) return;
+      if (brandDeleting || pricingPolicyDeleting || pricingPolicySaving) return;
+
+      const label = brandName?.trim() || `Brand #${brandId}`;
+      const confirmed = await showConfirmDialog({
+        title: "Delete brand",
+        message: `Remove "${label}" from pricing policies? All pricing policy rules for this brand will be deleted. This action cannot be undone.`,
+        confirmLabel: "Delete brand",
+        cancelLabel: "Keep brand",
+        tone: "danger",
+      });
+      if (!confirmed) return;
+
+      setBrandDeleting(true);
+      try {
+        const response = await fetch("/api/pricing-policies/matrix", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ brandId }),
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { ok?: boolean; error?: string; deletedCount?: number }
+          | null;
+        if (!response.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? "Unable to delete brand from pricing policies");
+        }
+        showToastMessage("Brand removed from pricing policies", "success");
+        try {
+          gridApiRef.current?.refreshServerSide?.({ purge: true });
+        } catch {
+          /* noop */
+        }
+      } catch (err) {
+        console.error("Failed to delete brand from pricing policies", err);
+        showToastMessage(
+          err instanceof Error ? err.message : "Unable to delete brand from pricing policies.",
+          "error",
+        );
+      } finally {
+        setBrandDeleting(false);
+      }
+    },
+    [brandDeleting, pricingPolicyDeleting, pricingPolicySaving],
+  );
+
+  const getContextMenuItems = useCallback(
+    (params: GetContextMenuItemsParams<Record<string, unknown>>): Array<MenuItemDef<Record<string, unknown>> | string> => {
+      const defaultItems = Array.isArray(params.defaultItems) ? params.defaultItems : [];
+      const colId = params.column?.getColId?.() ?? "";
+      if (colId !== "BrandName") return defaultItems;
+
+      const row = params.node?.data as MatrixRow | null | undefined;
+      if (!row || row.BrandID == null || !Number.isFinite(row.BrandID) || params.node?.rowPinned) {
+        return defaultItems;
+      }
+
+      const deleteBrandItem: MenuItemDef<Record<string, unknown>> = {
+        name: "Delete brand",
+        icon: deleteMenuIcon,
+        disabled: brandDeleting || pricingPolicyDeleting || pricingPolicySaving,
+        action: () => {
+          void deleteBrand(row.BrandID as number, row.BrandName ?? null);
+        },
+      };
+
+      return [...defaultItems, "separator", deleteBrandItem];
+    },
+    [brandDeleting, deleteBrand, pricingPolicyDeleting, pricingPolicySaving],
+  );
 
   const handleCreatePricingPolicy = useCallback(
     async (calcMethodFormulas: DropdownOption[]) => {
@@ -573,8 +646,8 @@ export default function PricingPoliciesClient({ pricingPolicies, calcMethodFormu
               onGridReady={handleGridReady}
               onCellValueChanged={handleCellEdit}
               onResponse={handleResponse}
+              getContextMenuItems={getContextMenuItems}
               disableAutoSize
-              refreshToken={refreshToken}
               floatingFilter={true}
             />
           </div>
