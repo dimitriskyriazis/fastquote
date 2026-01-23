@@ -91,6 +91,18 @@ function readGridRequest(body: GridRequestEnvelope): GridRequest {
   return { startRow: 0, endRow: 100 };
 }
 
+// Normalize part/model numbers by removing special characters
+const normalizePartModelNumber = (value: string): string => {
+  // Remove common special characters: dashes, underscores, spaces, periods, etc.
+  return value.replace(/[-_\s.]+/g, '');
+};
+
+// SQL function to normalize part/model numbers (removes special characters)
+const partModelNumberSql = (expr: string) => (
+  // Removes dashes, underscores, spaces, periods, and NBSP
+  `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(${expr}, N''))), N'-', N''), N'_', N''), N' ', N''), N'.', N''), NCHAR(160), N''), NCHAR(9), N'')`
+);
+
 const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpressions: Record<string, string>) => {
   if (!filterModel || Object.keys(filterModel).length === 0) {
     return { clauses: [] as string[], params: [] as QueryParam[] };
@@ -103,27 +115,72 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
     if (!fm) return;
     const paramBase = `${col}_${idx}`;
     const columnExpression = columnExpressions[col] ?? `[${col}]`;
+    const isPartNumber = col === 'PartNumber';
+    const isModelNumber = col === 'ModelNumber';
+    const isPartOrModel = isPartNumber || isModelNumber;
 
     switch (fm.filterType) {
       case 'text': {
         const type = fm.type;
         const value = String(fm.filter ?? '');
         if (!value) break;
+        
+        // Normalize the search value for part/model numbers
+        const normalizedVal = isPartOrModel ? normalizePartModelNumber(value) : value;
+        const searchVal = normalizedVal;
+        
+        // Get the other field for cross-search (PartNumber <-> ModelNumber)
+        const otherColumnExpression = isPartNumber 
+          ? columnExpressions['ModelNumber'] 
+          : isModelNumber 
+          ? columnExpressions['PartNumber'] 
+          : null;
+        
         if (type === 'equals') {
-          clauses.push(`${columnExpression} = @${paramBase}`);
-          params.push({ key: paramBase, value });
+          if (isPartOrModel && otherColumnExpression) {
+            // Cross-search: search both PartNumber and ModelNumber
+            clauses.push(`(${partModelNumberSql(columnExpression)} = @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} = @${paramBase})`);
+            params.push({ key: paramBase, value: searchVal });
+          } else {
+            const expr = isPartOrModel ? partModelNumberSql(columnExpression) : columnExpression;
+            clauses.push(`${expr} = @${paramBase}`);
+            params.push({ key: paramBase, value: searchVal });
+          }
         } else if (type === 'notEqual') {
-          clauses.push(`${columnExpression} <> @${paramBase}`);
-          params.push({ key: paramBase, value });
+          const expr = isPartOrModel ? partModelNumberSql(columnExpression) : columnExpression;
+          clauses.push(`${expr} <> @${paramBase}`);
+          params.push({ key: paramBase, value: searchVal });
         } else if (type === 'startsWith') {
-          clauses.push(`${columnExpression} LIKE @${paramBase}`);
-          params.push({ key: paramBase, value: `${value}%` });
+          if (isPartOrModel && otherColumnExpression) {
+            // Cross-search: search both PartNumber and ModelNumber
+            clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
+            params.push({ key: paramBase, value: `${searchVal}%` });
+          } else {
+            const expr = isPartOrModel ? partModelNumberSql(columnExpression) : columnExpression;
+            clauses.push(`${expr} LIKE @${paramBase}`);
+            params.push({ key: paramBase, value: `${searchVal}%` });
+          }
         } else if (type === 'endsWith') {
-          clauses.push(`${columnExpression} LIKE @${paramBase}`);
-          params.push({ key: paramBase, value: `%${value}` });
+          if (isPartOrModel && otherColumnExpression) {
+            // Cross-search: search both PartNumber and ModelNumber
+            clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
+            params.push({ key: paramBase, value: `%${searchVal}` });
+          } else {
+            const expr = isPartOrModel ? partModelNumberSql(columnExpression) : columnExpression;
+            clauses.push(`${expr} LIKE @${paramBase}`);
+            params.push({ key: paramBase, value: `%${searchVal}` });
+          }
         } else {
-          clauses.push(`${columnExpression} LIKE @${paramBase}`);
-          params.push({ key: paramBase, value: `%${value}%` });
+          // contains (default)
+          if (isPartOrModel && otherColumnExpression) {
+            // Cross-search: search both PartNumber and ModelNumber
+            clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
+            params.push({ key: paramBase, value: `%${searchVal}%` });
+          } else {
+            const expr = isPartOrModel ? partModelNumberSql(columnExpression) : columnExpression;
+            clauses.push(`${expr} LIKE @${paramBase}`);
+            params.push({ key: paramBase, value: `%${searchVal}%` });
+          }
         }
         break;
       }
