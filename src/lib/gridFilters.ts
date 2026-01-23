@@ -6,11 +6,19 @@ const normalizePartModelNumber = (value: string): string => {
   return value.replace(/[-_\s.]+/g, '').toUpperCase();
 };
 
-// SQL function to normalize part/model numbers (removes special characters)
-const partModelNumberSql = (expr: string) => (
-  // Removes dashes, underscores, spaces, periods, and NBSP, then converts to uppercase
-  `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(UPPER(LTRIM(RTRIM(ISNULL(${expr}, N'')))), N'-', N''), N'_', N''), N' ', N''), N'.', N''), NCHAR(160), N''), NCHAR(9), N'')`
-);
+// Helper to get the cleared column name for part/model numbers
+// Uses the existing PartNumberCleared and ModelNumberCleared columns for better performance
+const partModelNumberSql = (expr: string) => {
+  // Replace PartNumber/ModelNumber with their cleared versions
+  if (expr.includes('.PartNumber')) {
+    return `UPPER(ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, ''))`;
+  }
+  if (expr.includes('.ModelNumber')) {
+    return `UPPER(ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, ''))`;
+  }
+  // Fallback for edge cases
+  return `UPPER(ISNULL(${expr}, ''))`;
+};
 
 const buildColumnQuickFilterExpression = (expression: string) => {
   // Check if this is a PartNumber or ModelNumber column
