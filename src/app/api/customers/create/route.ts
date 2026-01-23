@@ -1,100 +1,85 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
+import { z } from 'zod';
 import { getPool } from '../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../lib/auditTrail';
+import { getRequestId } from '../../../../lib/requestId';
+import { handleApiError } from '../../../../lib/errorHandler';
+import { validateRequest, stringSchema, positiveIntSchema, emailSchema, urlSchema } from '../../../../lib/validation';
 
-type CreateCustomerRequestBody = {
-  name?: string | null;
-  brandName?: string | null;
-  taxId?: string | null;
-  taxOffice?: string | null;
-  profession?: string | null;
-  customerGroupId?: number | string | null;
-  activityCode?: string | null;
-  erpId?: string | null;
-  isParent?: number | string | null;
-  parentCustomerId?: number | string | null;
-  pricingPolicyId?: number | string | null;
-  importance?: string | null;
-  enabled?: number | string | null;
-  address?: string | null;
-  countryId?: number | string | null;
-  cityId?: number | string | null;
-  phone?: string | null;
-  email?: string | null;
-  webSite?: string | null;
-  notes?: string | null;
-};
-
-const normalizeString = (value: unknown, maxLength: number): string | null => {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
-  }
-  if (typeof value === 'number') {
-    const stringValue = String(value);
-    return stringValue.length > maxLength ? stringValue.slice(0, maxLength) : stringValue;
-  }
-  return null;
-};
-
-const normalizeInt = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isInteger(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isInteger(parsed)) return parsed;
-  }
-  return null;
-};
-
-const normalizeBoolean = (value: unknown): number | null => {
-  if (value === 1 || value === '1') return 1;
-  if (value === 0 || value === '0') return 0;
-  return null;
-};
+// Strict schema-based validation with rejection of unknown fields
+const createCustomerSchema = z.object({
+  name: stringSchema(512, 1).refine((val) => val !== null, {
+    message: 'Customer name is required',
+  }),
+  brandName: stringSchema(512),
+  taxId: stringSchema(128),
+  taxOffice: stringSchema(128),
+  profession: stringSchema(256),
+  customerGroupId: positiveIntSchema,
+  activityCode: stringSchema(128),
+  erpId: stringSchema(128),
+  isParent: z.union([z.literal(0), z.literal(1), z.boolean()]).transform((val) => {
+    if (typeof val === 'boolean') return val ? 1 : 0;
+    return val;
+  }).nullable().optional(),
+  parentCustomerId: positiveIntSchema,
+  pricingPolicyId: positiveIntSchema.refine((val) => val !== null && val !== undefined, {
+    message: 'Pricing policy is required',
+  }),
+  importance: stringSchema(128, 1).refine((val) => val !== null, {
+    message: 'Importance is required',
+  }),
+  enabled: z.union([z.literal(0), z.literal(1), z.boolean()]).transform((val) => {
+    if (typeof val === 'boolean') return val ? 1 : 0;
+    return val ?? 1;
+  }).optional().default(1),
+  address: stringSchema(2000),
+  countryId: positiveIntSchema,
+  cityId: positiveIntSchema,
+  phone: stringSchema(128),
+  email: emailSchema,
+  webSite: urlSchema,
+  notes: stringSchema(4000), // Max reasonable length for notes field
+}).strict(); // Reject unknown fields
 
 export async function POST(req: NextRequest) {
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
+
   try {
-    let body: CreateCustomerRequestBody | null = null;
-    try {
-      body = (await req.json()) as CreateCustomerRequestBody;
-    } catch {
-      body = null;
+    // Validate request body with strict schema
+    const validation = await validateRequest(req, createCustomerSchema, {
+      endpoint: '/api/customers/create',
+      method: 'POST',
+      rejectUnknownFields: true,
+    });
+
+    if (!validation.success) {
+      return validation.response;
     }
 
-    const name = normalizeString(body?.name, 512);
-    const brandName = normalizeString(body?.brandName, 512);
-    const taxId = normalizeString(body?.taxId, 128);
-    const taxOffice = normalizeString(body?.taxOffice, 128);
-    const profession = normalizeString(body?.profession, 256);
-    const customerGroupId = normalizeInt(body?.customerGroupId);
-    const activityCode = normalizeString(body?.activityCode, 128);
-    const erpId = normalizeString(body?.erpId, 128);
-    const isParent = normalizeBoolean(body?.isParent);
-    const parentCustomerId = normalizeInt(body?.parentCustomerId);
-    const pricingPolicyId = normalizeInt(body?.pricingPolicyId);
-    const importance = normalizeString(body?.importance, 128);
-    const enabled = normalizeBoolean(body?.enabled);
-    const address = normalizeString(body?.address, 2000);
-    const countryId = normalizeInt(body?.countryId);
-    const cityId = normalizeInt(body?.cityId);
-    const phone = normalizeString(body?.phone, 128);
-    const email = normalizeString(body?.email, 256);
-    const webSite = normalizeString(body?.webSite, 512);
-    const notes = normalizeString(body?.notes, sql.MAX);
-
-    const validationErrors: string[] = [];
-    if (!name) validationErrors.push('Customer name is required.');
-    if (!pricingPolicyId) validationErrors.push('Pricing policy is required.');
-    if (!importance) validationErrors.push('Importance is required.');
-
-    if (validationErrors.length > 0) {
-      return NextResponse.json(
-        { ok: false, error: validationErrors.join(' ') },
-        { status: 400 },
-      );
-    }
+    const body = validation.data;
+    const name = body.name!; // Validated as required
+    const brandName = body.brandName;
+    const taxId = body.taxId;
+    const taxOffice = body.taxOffice;
+    const profession = body.profession;
+    const customerGroupId = body.customerGroupId;
+    const activityCode = body.activityCode;
+    const erpId = body.erpId;
+    const isParent = body.isParent ?? 0;
+    const parentCustomerId = body.parentCustomerId;
+    const pricingPolicyId = body.pricingPolicyId!; // Validated as required
+    const importance = body.importance!; // Validated as required
+    const enabled = body.enabled ?? 1;
+    const address = body.address;
+    const countryId = body.countryId;
+    const cityId = body.cityId;
+    const phone = body.phone;
+    const email = body.email;
+    const webSite = body.webSite;
+    const notes = body.notes;
 
     const pool = await getPool();
 
@@ -217,9 +202,12 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ ok: true, customerId: createdId });
-  } catch (error) {
-    console.error(error);
-    const message = error instanceof Error ? error.message : 'Server error';
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  } catch (err) {
+    return await handleApiError(err, {
+      requestId,
+      endpoint: '/api/customers/create',
+      method: 'POST',
+      userId,
+    });
   }
 }

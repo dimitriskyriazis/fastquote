@@ -1,80 +1,58 @@
 import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
+import { z } from "zod";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { getRequestId } from "../../../../lib/requestId";
-import { handleApiError, createErrorResponse } from "../../../../lib/errorHandler";
+import { handleApiError } from "../../../../lib/errorHandler";
 import { logger } from "../../../../lib/logger";
+import { validateRequest, positiveIntSchema, stringSchema, urlSchema, partModelNumberSchema } from "../../../../lib/validation";
 
-type CreateProductPayload = {
-  brandId?: unknown;
-  modelNumber?: unknown;
-  partNumber?: unknown;
-  erpPartNumber?: unknown;
-  typeId?: unknown;
-  categoryId?: unknown;
-  subCategoryId?: unknown;
-  description?: unknown;
-  weblink?: unknown;
-  comments?: unknown;
-  enabled?: unknown;
-};
-
-const normalizeString = (value: unknown, maxLength = 2000): string | null => {
-  if (typeof value === "string" && value.trim()) {
-    const trimmed = value.trim();
-    return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    const text = String(value);
-    return text.length > maxLength ? text.slice(0, maxLength) : text;
-  }
-  return null;
-};
-
-const normalizeNumber = (value: unknown): number | null => {
-  if (typeof value === "number" && Number.isFinite(value) && Number.isInteger(value)) {
-    return value;
-  }
-  if (typeof value === "string" && value.trim().length > 0) {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isInteger(parsed)) return parsed;
-  }
-  return null;
-};
-
-const normalizeBool = (value: unknown): boolean => {
-  if (value === false || value === "false" || value === 0 || value === "0") return false;
-  if (value === true || value === "true" || value === 1 || value === "1") return true;
-  return Boolean(value);
-};
+// Strict schema-based validation with rejection of unknown fields
+const createProductSchema = z.object({
+  brandId: positiveIntSchema.refine((val) => val !== null && val !== undefined, {
+    message: "Brand is required",
+  }),
+  modelNumber: partModelNumberSchema(255),
+  partNumber: partModelNumberSchema(255),
+  erpPartNumber: partModelNumberSchema(255),
+  typeId: positiveIntSchema,
+  categoryId: positiveIntSchema,
+  subCategoryId: positiveIntSchema,
+  description: stringSchema(2000),
+  weblink: urlSchema,
+  comments: stringSchema(2000),
+  enabled: z.boolean().optional().default(true),
+}).strict(); // Reject unknown fields
 
 export async function POST(req: NextRequest) {
   const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
   
   try {
-    const body = (await req.json().catch(() => null)) as CreateProductPayload | null;
-    const brandId = normalizeNumber(body?.brandId ?? null);
-    if (brandId == null) {
-      return await createErrorResponse("Brand is required", 400, {
-        requestId,
-        endpoint: "/api/products/create",
-        method: "POST",
-        userId,
-      });
+    // Validate request body with strict schema
+    const validation = await validateRequest(req, createProductSchema, {
+      endpoint: "/api/products/create",
+      method: "POST",
+      rejectUnknownFields: true,
+    });
+
+    if (!validation.success) {
+      return validation.response;
     }
 
-    const modelNumber = normalizeString(body?.modelNumber, 255);
-    const partNumber = normalizeString(body?.partNumber, 255);
-    const erpPartNumber = normalizeString(body?.erpPartNumber, 255);
-    const description = normalizeString(body?.description, 2000);
-    const weblink = normalizeString(body?.weblink, 1000);
-    const comments = normalizeString(body?.comments, 2000);
-    const typeId = normalizeNumber(body?.typeId ?? null);
-    const categoryId = normalizeNumber(body?.categoryId ?? null);
-    const subCategoryId = normalizeNumber(body?.subCategoryId ?? null);
-    const enabled = body?.enabled === undefined ? true : normalizeBool(body.enabled);
+    const body = validation.data;
+    const brandId = body.brandId!; // Validated as required
+    const modelNumber = body.modelNumber;
+    const partNumber = body.partNumber;
+    const erpPartNumber = body.erpPartNumber;
+    const description = body.description;
+    const weblink = body.weblink;
+    const comments = body.comments;
+    const typeId = body.typeId;
+    const categoryId = body.categoryId;
+    const subCategoryId = body.subCategoryId;
+    const enabled = body.enabled ?? true;
     const auditUserId = resolveAuditUserId(req);
 
     const pool = await getPool();

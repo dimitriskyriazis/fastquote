@@ -1,19 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
+import { z } from 'zod';
 import { getPool } from '../../../../lib/sql';
 import { getRequestId } from '../../../../lib/requestId';
 import { handleApiError, createErrorResponse } from '../../../../lib/errorHandler';
 import { logger } from '../../../../lib/logger';
 import { resolveAuditUserId } from '../../../../lib/auditTrail';
+import { validateParams } from '../../../../lib/validation';
 
-const normalizeProductId = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
-};
+// Validate productId parameter
+const productIdParamsSchema = z.object({
+  productId: z.string().transform((val, ctx) => {
+    const parsed = Number.parseInt(val.trim(), 10);
+    if (Number.isNaN(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Product ID must be a positive integer',
+      });
+      return z.NEVER;
+    }
+    return parsed;
+  }),
+});
 
 export async function GET(
   req: NextRequest,
@@ -21,18 +29,21 @@ export async function GET(
 ) {
   const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
-  const { productId } = await context.params;
   
   try {
-    const normalized = normalizeProductId(productId);
-    if (normalized == null) {
-      return await createErrorResponse('Invalid product id', 400, {
-        requestId,
-        endpoint: `/api/products/${productId}`,
-        method: 'GET',
-        userId,
-      });
+    // Validate URL parameters
+    const paramsValidation = await validateParams(context.params, productIdParamsSchema, {
+      requestId,
+      endpoint: req.nextUrl.pathname,
+      method: 'GET',
+      userId,
+    });
+
+    if (!paramsValidation.success) {
+      return paramsValidation.response;
     }
+
+    const normalized = paramsValidation.data.productId;
     
     const pool = await getPool();
     const request = pool.request();
@@ -61,7 +72,7 @@ export async function GET(
     if (!row) {
       return await createErrorResponse('Product not found', 404, {
         requestId,
-        endpoint: `/api/products/${productId}`,
+        endpoint: `/api/products/${normalized}`,
         method: 'GET',
         userId,
       });
@@ -69,7 +80,7 @@ export async function GET(
     
     logger.info('Product fetched successfully', {
       requestId,
-      endpoint: `/api/products/${productId}`,
+      endpoint: `/api/products/${normalized}`,
       method: 'GET',
       userId,
       productId: normalized,
@@ -79,7 +90,7 @@ export async function GET(
   } catch (err) {
     return await handleApiError(err, {
       requestId,
-      endpoint: `/api/products/${productId}`,
+      endpoint: req.nextUrl.pathname,
       method: 'GET',
       userId,
     });
