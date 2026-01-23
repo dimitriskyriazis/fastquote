@@ -15,6 +15,7 @@ import pageHeaderStyles from '../../../components/PageHeader.module.css';
 import toolbarStyles from './ClientProductsPage.module.css';
 import AddProductsModal from './AddProductsModal';
 import AddRequestedProductsModal from './AddRequestedProductsModal';
+import AddProductModal from '../../../products/AddProductModal';
 type Props = {
   offerId: string;
   headingText: string;
@@ -97,6 +98,8 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [isPopulatingOffer, setIsPopulatingOffer] = useState(false);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
   const [showRequestedModal, setShowRequestedModal] = useState(false);
+  const [showAddProductFormModal, setShowAddProductFormModal] = useState(false);
+  const [newProductId, setNewProductId] = useState<number | null>(null);
   const [tableLayout, setTableLayout] = useState<ProductsTableLayout>('wReq');
   const [showSaveLayoutModal, setShowSaveLayoutModal] = useState(false);
   const [pivotView, setPivotView] = useState(false);
@@ -184,6 +187,9 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
 
   const handleCloseModal = useCallback(() => setShowAddProductModal(false), []);
   const handleCloseRequestedModal = useCallback(() => setShowRequestedModal(false), []);
+  const handleOpenAddProductForm = useCallback(() => setShowAddProductFormModal(true), []);
+  const handleCloseAddProductForm = useCallback(() => setShowAddProductFormModal(false), []);
+  const handleClearNewProductId = useCallback(() => setNewProductId(null), []);
   const handleRequestedImported = useCallback((result: { inserted?: number; updated?: number; total?: number }) => {
     void result;
     setRefreshToken((prev) => prev + 1);
@@ -418,6 +424,10 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
                       onClose={handleCloseModal}
                       showRequestedColumns={showRequestedColumns}
                       splitViewMode
+                      onRequestAddProduct={handleOpenAddProductForm}
+                      newProductId={newProductId}
+                      onClearNewProductId={handleClearNewProductId}
+                      onRequestPayloadConsumed={handleClearNewProductId}
                     />
                   </div>
                 </div>
@@ -455,6 +465,17 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
                 onImported={handleRequestedImported}
               />
             ) : null}
+            <AddProductModal
+              open={showAddProductFormModal}
+              onClose={handleCloseAddProductForm}
+              onAdded={(result) => {
+                if (result?.productId != null) {
+                  setNewProductId(result.productId);
+                }
+                handleCloseAddProductForm();
+                setRefreshToken((prev) => prev + 1);
+              }}
+            />
           </PageHeader>
         </GridQuickSearchProvider>
       </PageHeader>

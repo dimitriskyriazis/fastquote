@@ -86,6 +86,28 @@
   transform: translateY(-1px);
 }
 
+.secondaryButton {
+  background: #f8fafc;
+  color: #0f172a;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms ease, transform 120ms ease;
+}
+
+.secondaryButton:hover {
+  background: #e2e8f0;
+  transform: translateY(-1px);
+}
+
+.secondaryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .body {
   flex: 1;
   display: flex;

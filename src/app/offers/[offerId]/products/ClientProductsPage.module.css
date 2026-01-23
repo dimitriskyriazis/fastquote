@@ -22,6 +22,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  position: relative;
+  z-index: 2;
 }
 
 .addButtons {
@@ -51,6 +53,8 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
+  position: relative;
+  pointer-events: auto;
 }
 
 .button:hover {
@@ -85,6 +89,8 @@
   background-color: #b6fdfff1;
   color: #000000;
   border-color: rgba(0, 167, 189, 0.4);
+  position: relative;
+  z-index: 1;
 }
 
 .buttonAddRequested {

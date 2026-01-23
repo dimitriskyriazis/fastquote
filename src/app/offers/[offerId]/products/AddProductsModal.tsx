@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
-import type { ColDef, GridApi } from 'ag-grid-community';
+import type { ColDef, GridApi, RowNode } from 'ag-grid-community';
 import styles from './AddProductsModal.module.css';
 import { showToastMessage } from '../../../../lib/toast';
 import { priceListStatusClassRules } from '../../../../lib/priceListStatus';
@@ -16,6 +16,10 @@ type Props = {
   onAdded: (inserted: number) => void;
   showRequestedColumns?: boolean;
   splitViewMode?: boolean;
+  onRequestAddProduct?: () => void;
+  newProductId?: number | null;
+  onClearNewProductId?: () => void;
+  onRequestPayloadConsumed?: () => void;
 };
 
 type CategoryRow = {
@@ -82,6 +86,15 @@ const formatEuro = (value: unknown) => {
   return `${currencyFormatter.format(num)} €`;
 };
 
+const normalizeProductId = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
 const DescriptionCellRenderer = ({ value }: { value?: unknown }) => {
   const [expanded, setExpanded] = useState(false);
   const text = value == null ? '' : String(value);
@@ -105,12 +118,28 @@ const DescriptionCellRenderer = ({ value }: { value?: unknown }) => {
   );
 };
 
+type ProductsGridApi = GridApi & {
+  getSortModel?: () => Array<{ colId: string; sort: 'asc' | 'desc' }>;
+  setSortModel?: (model: Array<{ colId: string; sort: 'asc' | 'desc' }>) => void;
+  purgeServerSideCache?: () => void;
+  refreshServerSide?: (params?: { purge?: boolean }) => void;
+  setPinnedTopRowData?: (data: Record<string, unknown>[]) => void;
+};
+
+type ProductsRowNode = RowNode & {
+  ensureVisible?: (params?: { position?: 'top' | 'middle' | 'bottom' }) => void;
+};
+
 export default function AddProductsModal({
   offerId,
   onClose,
   onAdded,
   showRequestedColumns = true,
   splitViewMode = false,
+  onRequestAddProduct,
+  newProductId,
+  onClearNewProductId,
+  onRequestPayloadConsumed,
 }: Props) {
   const showRequestedItemNo = Boolean(showRequestedColumns);
   const [selectedCategory, setSelectedCategory] = useState<CategoryRow | null>(null);
@@ -121,12 +150,17 @@ export default function AddProductsModal({
   const [requestedRowsError, setRequestedRowsError] = useState<string | null>(null);
   const [selectedRequestedRowId, setSelectedRequestedRowId] = useState<number | null>(null);
   const categoryApiRef = useRef<GridApi | null>(null);
-  const productsApiRef = useRef<GridApi | null>(null);
+  const productsApiRef = useRef<ProductsGridApi | null>(null);
   const requestedRowsFetchIdRef = useRef(0);
   const requestedRowsCacheRef = useRef<Record<number, RequestedRow[]>>({});
+  const pendingSelectionProductIdRef = useRef<number | null>(null);
 
   const categoryRequestPayload = useMemo(() => ({ action: 'categories' }), []);
-  const productRequestPayload = useMemo(() => ({ action: 'products' }), []);
+  const productRequestPayload = useMemo(() => {
+    const payload: Record<string, unknown> = { action: 'products' };
+    if (newProductId != null) payload.newProductId = newProductId;
+    return payload;
+  }, [newProductId]);
 
   const handleCategorySelection = useCallback((rows: CategoryRow[]) => {
     setSelectedCategory(rows[0] ?? null);
@@ -354,6 +388,151 @@ export default function AddProductsModal({
     selectedRequestedRowId,
   ]);
 
+  const clearPinnedTopRow = useCallback(() => {
+    const api = productsApiRef.current;
+    if (!api) return;
+    const setter = api.setPinnedTopRowData;
+    if (typeof setter === 'function') {
+      try {
+        setter([]);
+      } catch {
+        /* noop */
+      }
+    }
+  }, []);
+
+  const refreshProductsGrid = useCallback(() => {
+    const api = productsApiRef.current;
+    if (!api) return;
+    const refreshFn = api.refreshServerSide;
+    if (typeof refreshFn === 'function') {
+      try {
+        refreshFn.call(api, { purge: true });
+        return;
+      } catch {
+        /* noop */
+      }
+    }
+    const purgeFn = api.purgeServerSideCache;
+    if (typeof purgeFn === 'function') {
+      try {
+        purgeFn.call(api);
+      } catch {
+        /* noop */
+      }
+    }
+  }, []);
+
+  const ensureProductSort = useCallback(() => {
+    const api = productsApiRef.current;
+    if (!api) return;
+    // Only set ProductID DESC sort if we have a newProductId to highlight
+    // Otherwise, let the default sort (PartNumber ASC) remain
+    if (newProductId == null) return;
+    const sortModelGetter = api.getSortModel;
+    const sortModel = typeof sortModelGetter === 'function' ? sortModelGetter() : [];
+    const hasProductIdDesc = sortModel.some(
+      (entry: { colId: string; sort: 'asc' | 'desc' }) => entry.colId === 'ProductID' && entry.sort === 'desc',
+    );
+    if (!hasProductIdDesc) {
+      const setter = api.setSortModel;
+      if (typeof setter === 'function') {
+        setter([{ colId: 'ProductID', sort: 'desc' }]);
+      }
+    }
+  }, [newProductId]);
+
+  const trySelectPendingProduct = useCallback((api: ProductsGridApi) => {
+    const targetId = pendingSelectionProductIdRef.current;
+    if (targetId == null) return;
+    let found = false;
+    api.forEachNode((node) => {
+      if (found) return;
+      if (!node.data) return;
+      const candidateId = normalizeProductId((node.data as { ProductID?: unknown }).ProductID ?? null);
+      if (candidateId === targetId) {
+        const rowData = node.data as Record<string, unknown>;
+        node.setSelected(true);
+        const pinnedSetter = api.setPinnedTopRowData;
+        if (typeof pinnedSetter === 'function') {
+          try {
+            pinnedSetter([rowData]);
+          } catch {
+            /* noop */
+          }
+        }
+        const typedNode = node as ProductsRowNode;
+        const ensureVisible = typedNode.ensureVisible;
+        if (typeof ensureVisible === 'function') {
+          try {
+            ensureVisible.call(typedNode, { position: 'top' });
+          } catch {
+            /* noop */
+          }
+        }
+        found = true;
+      }
+    });
+    if (found) {
+      pendingSelectionProductIdRef.current = null;
+      onClearNewProductId?.();
+    }
+  }, [onClearNewProductId]);
+
+  useEffect(() => {
+    if (newProductId == null) {
+      clearPinnedTopRow();
+      // Clear ProductID DESC sort when newProductId is cleared
+      const api = productsApiRef.current;
+      if (api) {
+        const sortModelGetter = api.getSortModel;
+        const sortModel = typeof sortModelGetter === 'function' ? sortModelGetter() : [];
+        const hasProductIdDesc = sortModel.some(
+          (entry: { colId: string; sort: 'asc' | 'desc' }) => entry.colId === 'ProductID' && entry.sort === 'desc',
+        );
+        if (hasProductIdDesc) {
+          // Remove ProductID DESC from sort, keep other sorts
+          const filteredSort = sortModel.filter(
+            (entry: { colId: string; sort: 'asc' | 'desc' }) => !(entry.colId === 'ProductID' && entry.sort === 'desc'),
+          );
+          const setter = api.setSortModel;
+          if (typeof setter === 'function') {
+            setter(filteredSort.length > 0 ? filteredSort : []);
+          }
+        }
+      }
+    }
+  }, [newProductId, clearPinnedTopRow]);
+
+  useEffect(() => () => {
+    clearPinnedTopRow();
+  }, [clearPinnedTopRow]);
+
+  useEffect(() => {
+    if (newProductId == null) return;
+    ensureProductSort();
+    pendingSelectionProductIdRef.current = newProductId;
+    const timer = window.setTimeout(() => {
+      refreshProductsGrid();
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [newProductId, ensureProductSort, refreshProductsGrid]);
+
+  const handleProductsGridReady = useCallback((api: GridApi) => {
+    productsApiRef.current = api as ProductsGridApi;
+    ensureProductSort();
+    trySelectPendingProduct(api as ProductsGridApi);
+  }, [ensureProductSort, trySelectPendingProduct]);
+
+  const handleProductsGridModelUpdated = useCallback(() => {
+    const api = productsApiRef.current;
+    if (!api) return;
+    ensureProductSort();
+    trySelectPendingProduct(api);
+  }, [ensureProductSort, trySelectPendingProduct]);
+
   const selectedCategoryLabel = selectedCategory?.Description?.trim() || selectedCategory?.TreeOrdering || 'None';
 
   if (splitViewMode) {
@@ -371,6 +550,16 @@ export default function AddProductsModal({
             <div className={styles.subtitle}>Choose a category and pick products to append.</div>
           </div>
           <div className={styles.headerActions}>
+            {onRequestAddProduct ? (
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                onClick={onRequestAddProduct}
+                disabled={submitting}
+              >
+                Add New product
+              </button>
+            ) : null}
             <button
               type="button"
               className={styles.primaryButton}
@@ -492,7 +681,9 @@ export default function AddProductsModal({
                   rowGroupPanelShow="never"
                   onSelectionChanged={handleProductSelection as (rows: Record<string, unknown>[], api: GridApi) => void}
                   autoSizeExclusions={['Description']}
-                  onGridReady={(api) => { productsApiRef.current = api; }}
+                  onGridReady={handleProductsGridReady}
+                  onModelUpdated={handleProductsGridModelUpdated}
+                  onRequestPayloadConsumed={onRequestPayloadConsumed}
                 />
               </div>
             </div>
@@ -518,6 +709,16 @@ export default function AddProductsModal({
             <div className={styles.subtitle}>Choose a category and pick products to append.</div>
           </div>
           <div className={styles.headerActions}>
+            {onRequestAddProduct ? (
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                onClick={onRequestAddProduct}
+                disabled={submitting}
+              >
+                Add product
+              </button>
+            ) : null}
             <button
               type="button"
               className={styles.primaryButton}
@@ -639,7 +840,9 @@ export default function AddProductsModal({
                   rowGroupPanelShow="never"
                   onSelectionChanged={handleProductSelection as (rows: Record<string, unknown>[], api: GridApi) => void}
                   autoSizeExclusions={['Description']}
-                  onGridReady={(api) => { productsApiRef.current = api; }}
+                  onGridReady={handleProductsGridReady}
+                  onModelUpdated={handleProductsGridModelUpdated}
+                  onRequestPayloadConsumed={onRequestPayloadConsumed}
                 />
               </div>
             </div>

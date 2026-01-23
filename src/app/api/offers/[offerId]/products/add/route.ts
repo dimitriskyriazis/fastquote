@@ -318,10 +318,11 @@ type ProductGridRow = {
 
 async function handleProductGrid(
   offerId: number,
-  body: GridRequestEnvelope,
+  body: GridRequestEnvelope & Record<string, unknown>,
 ) {
   void offerId; // offer context may be used later (pricing policies), keep signature
   const gridRequest = readGridRequest(body);
+  const highlightProductId = normalizeProductId(body?.newProductId ?? null);
   const startRow = gridRequest.startRow ?? 0;
   const endRow = gridRequest.endRow ?? startRow + 100;
   const windowSize = endRow > startRow ? endRow - startRow : 100;
@@ -329,6 +330,7 @@ async function handleProductGrid(
   const offset = Math.max(0, startRow);
 
   const columnExpressions: Record<string, string> = {
+    ProductID: 'bp.ProductID',
     PartNumber: 'bp.PartNumber',
     Description: 'bp.Description',
     ModelNumber: 'bp.ModelNumber',
@@ -345,17 +347,26 @@ async function handleProductGrid(
     ? `${whereSql} ${quickFilterClause.clause}`.trim()
     : whereSql;
   const combinedParams = [...params, ...quickFilterClause.params];
-  const orderSql = buildOrderSql(
+  // Default order: PartNumber ASC (not ProductID DESC to avoid showing all new products)
+  const defaultOrder = 'ORDER BY bp.PartNumber ASC';
+  const baseOrderSql = buildOrderSql(
     gridRequest.sortModel,
     columnExpressions,
-    'ORDER BY bp.PartNumber ASC',
+    defaultOrder,
   );
+  // If we have a highlightProductId, prioritize it at the top, then use the rest of the order
+  const orderSql = highlightProductId != null
+    ? baseOrderSql.replace(/^ORDER BY /i, 'ORDER BY CASE WHEN bp.ProductID = @__highlightProductId THEN 0 ELSE 1 END, ')
+    : baseOrderSql;
 
   const pool = await getPool();
   const request = pool.request();
   request.input('__offset', sql.Int, offset);
   request.input('__limit', sql.Int, pageSize);
   combinedParams.forEach((param) => request.input(param.key, param.value));
+  if (highlightProductId != null) {
+    request.input('__highlightProductId', sql.Int, highlightProductId);
+  }
 
   const query = `
     WITH BaseProducts AS (
