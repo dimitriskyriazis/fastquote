@@ -47,7 +47,6 @@ type ExistingOfferRecord = {
   Comments: string | null;
   ContactID: number | null;
   OfferContact: string | null;
-  DefaultCalcMethodFormulasID: string | null;
   ProjectID: number | null;
   PrintLevelGroupingID: number | null;
   CustomerRef: string | null;
@@ -299,7 +298,6 @@ export async function POST(
         Comments,
         ContactID,
         OfferContact,
-        DefaultCalcMethodFormulasID,
         ProjectID,
         PrintLevelGroupingID,
         CustomerRef,
@@ -370,7 +368,6 @@ export async function POST(
       insertRequest.input('Comments', sql.NVarChar(2000), existingOffer.Comments);
       insertRequest.input('ContactID', sql.Int, existingOffer.ContactID);
       insertRequest.input('OfferContact', sql.NVarChar(500), existingOffer.OfferContact);
-      insertRequest.input('DefaultCalcMethodFormulasID', sql.NVarChar(100), existingOffer.DefaultCalcMethodFormulasID);
       insertRequest.input('ProjectID', sql.Int, existingOffer.ProjectID);
       insertRequest.input('PrintLevelGroupingID', sql.Int, existingOffer.PrintLevelGroupingID);
       insertRequest.input('CustomerRef', sql.NVarChar(500), existingOffer.CustomerRef);
@@ -410,7 +407,6 @@ export async function POST(
           Comments,
           ContactID,
           OfferContact,
-          DefaultCalcMethodFormulasID,
           ProjectID,
           PrintLevelGroupingID,
           CustomerRef,
@@ -452,7 +448,6 @@ export async function POST(
           @Comments,
           @ContactID,
           @OfferContact,
-          @DefaultCalcMethodFormulasID,
           @ProjectID,
           @PrintLevelGroupingID,
           @CustomerRef,

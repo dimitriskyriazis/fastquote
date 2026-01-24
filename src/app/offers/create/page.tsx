@@ -122,28 +122,6 @@ async function fetchUsers() {
   }
 }
 
-async function fetchCalcMethodFormulas() {
-  try {
-    const pool = await getPool();
-    const result = await pool.request().query<LookupRow>(`
-      SELECT ID, Name
-      FROM dbo.CalcMethodFormulas
-      ORDER BY Name
-    `);
-    return mapOptions(result.recordset);
-  } catch (err) {
-    console.error('Failed to load calc method formulas', err);
-    return [];
-  }
-}
-
-const resolveDefaultCalcMethod = (options: DropdownOption[]) => {
-  const target = options.find((option) => option.label.trim().toLowerCase() === 'dr');
-  if (target) return target.value;
-  const valueMatch = options.find((option) => option.value.trim().toLowerCase() === 'dr');
-  return valueMatch?.value ?? '';
-};
-
 export default async function Page() {
   const requestHeaders = await headers();
   const requestCookies = await cookies();
@@ -159,7 +137,6 @@ export default async function Page() {
     markets,
     salesDivisions,
     users,
-    calcMethodFormulas,
   ] = await Promise.all([
     fetchCustomers(),
     fetchOfferStatuses(),
@@ -167,7 +144,6 @@ export default async function Page() {
     fetchMarkets(),
     fetchSalesDivisions(),
     fetchUsers(),
-    fetchCalcMethodFormulas(),
   ]);
 
   const fallbackUserId = getAuditFallbackUserId();
@@ -175,8 +151,6 @@ export default async function Page() {
     ? users.some((user) => user.value === fallbackUserId)
     : false;
   const suggestedUserId = loggedUserId ?? (hasFallbackUser ? fallbackUserId ?? '' : '');
-
-  const defaultCalcMethod = resolveDefaultCalcMethod(calcMethodFormulas) || 'DR';
 
   const formId = 'offer-create-form';
 
@@ -208,12 +182,10 @@ export default async function Page() {
           markets={markets}
           salesDivisions={salesDivisions}
           users={users}
-          calcMethodFormulas={calcMethodFormulas}
           defaultValues={{
             deliveryTime: '8 weeks',
             paymentTerms: 'Upon Agreement',
             offerValidity: '4 weeks',
-            defaultCalcMethodFormulasId: defaultCalcMethod,
             suggestedUserId,
           }}
           formId={formId}

@@ -151,12 +151,54 @@ export async function POST(
         SELECT TOP (1)
           ppr.TelmacoDiscountPercentage,
           ppr.CustomerDiscountPercentage
-        FROM dbo.PricingPolicyRules ppr
-        WHERE ppr.PricingPolicyID = oc.PricingPolicyID
-          AND (ppr.BrandID = od.BrandID OR ppr.BrandID IS NULL)
-        ORDER BY
-          CASE WHEN ppr.BrandID = od.BrandID THEN 0 ELSE 1 END,
-          ppr.ID DESC
+        FROM (
+          -- Priority 1: Use specific rule from PriceListPricingPolicy if PricingPolicyRuleID is set
+          SELECT TOP (1)
+            ppr.TelmacoDiscountPercentage,
+            ppr.CustomerDiscountPercentage,
+            1 AS Priority
+          FROM dbo.PriceListPricingPolicy plpp
+          INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyRuleID = ppr.ID
+          WHERE plpp.PriceListID = price.PriceListID
+            AND plpp.PricingPolicyID = oc.PricingPolicyID
+            AND plpp.PricingPolicyRuleID IS NOT NULL
+            AND (ppr.BrandID = od.BrandID OR ppr.BrandID IS NULL)
+          ORDER BY
+            CASE WHEN ppr.BrandID = od.BrandID THEN 0 ELSE 1 END,
+            ppr.ID DESC
+          
+          UNION ALL
+          
+          -- Priority 2: Use rules from policy specified in PriceListPricingPolicy
+          SELECT TOP (1)
+            ppr.TelmacoDiscountPercentage,
+            ppr.CustomerDiscountPercentage,
+            2 AS Priority
+          FROM dbo.PriceListPricingPolicy plpp
+          INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
+          WHERE plpp.PriceListID = price.PriceListID
+            AND plpp.PricingPolicyID = oc.PricingPolicyID
+            AND plpp.PricingPolicyRuleID IS NULL
+            AND (ppr.BrandID = od.BrandID OR ppr.BrandID IS NULL)
+          ORDER BY
+            CASE WHEN ppr.BrandID = od.BrandID THEN 0 ELSE 1 END,
+            ppr.ID DESC
+          
+          UNION ALL
+          
+          -- Priority 3: Fall back to Offer's PricingPolicyID
+          SELECT TOP (1)
+            ppr.TelmacoDiscountPercentage,
+            ppr.CustomerDiscountPercentage,
+            3 AS Priority
+          FROM dbo.PricingPolicyRules ppr
+          WHERE ppr.PricingPolicyID = oc.PricingPolicyID
+            AND (ppr.BrandID = od.BrandID OR ppr.BrandID IS NULL)
+          ORDER BY
+            CASE WHEN ppr.BrandID = od.BrandID THEN 0 ELSE 1 END,
+            ppr.ID DESC
+        ) ppr
+        ORDER BY ppr.Priority
       ) discounts
       OUTER APPLY (
         SELECT

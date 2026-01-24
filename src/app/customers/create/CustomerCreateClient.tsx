@@ -218,7 +218,6 @@ type Props = {
   importanceOptions: CustomerDropdownOption[];
   countries: CustomerDropdownOption[];
   cities: CustomerCityOption[];
-  calcMethodFormulas: DropdownOption[];
   formId?: string;
 };
 
@@ -239,7 +238,6 @@ export default function CustomerCreateClient({
   importanceOptions,
   countries,
   cities,
-  calcMethodFormulas,
   formId = 'customer-create-form',
 }: Props) {
   const router = useRouter();
@@ -251,9 +249,6 @@ export default function CustomerCreateClient({
   const [isAddPricingPolicyOpen, setIsAddPricingPolicyOpen] = useState(false);
   const [newPricingPolicyName, setNewPricingPolicyName] = useState('');
   const [newPricingPolicyEnabled, setNewPricingPolicyEnabled] = useState('1');
-  const [newPricingPolicyCalcMethod, setNewPricingPolicyCalcMethod] = useState(
-    calcMethodFormulas[0]?.value ?? '',
-  );
   const [pricingPolicySaving, setPricingPolicySaving] = useState(false);
   const [pricingPolicyError, setPricingPolicyError] = useState<string | null>(null);
   const [isAddCountryOpen, setIsAddCountryOpen] = useState(false);
@@ -323,17 +318,6 @@ export default function CustomerCreateClient({
     setCityOptions(cities);
   }, [cities]);
 
-  useEffect(() => {
-    if (calcMethodFormulas.length === 0) {
-      setNewPricingPolicyCalcMethod('');
-      return;
-    }
-    setNewPricingPolicyCalcMethod((prev) =>
-      calcMethodFormulas.some((option) => option.value === prev)
-        ? prev
-        : calcMethodFormulas[0].value,
-    );
-  }, [calcMethodFormulas]);
 
   const selectedCountryId = values.country ?? '';
 
@@ -443,18 +427,13 @@ export default function CustomerCreateClient({
     setNewPricingPolicyName('');
     setNewPricingPolicyEnabled('1');
     setPricingPolicyError(null);
-    setNewPricingPolicyCalcMethod(calcMethodFormulas[0]?.value ?? '');
     setIsAddPricingPolicyOpen(true);
-  }, [calcMethodFormulas]);
+  }, []);
 
   const handleCreatePricingPolicy = useCallback(async () => {
     const trimmedName = newPricingPolicyName.trim();
     if (!trimmedName) {
       setPricingPolicyError('Name is required');
-      return;
-    }
-    if (!newPricingPolicyCalcMethod) {
-      setPricingPolicyError('Calc method formula is required');
       return;
     }
     setPricingPolicySaving(true);
@@ -466,7 +445,6 @@ export default function CustomerCreateClient({
         body: JSON.stringify({
           name: trimmedName,
           enabled: newPricingPolicyEnabled === '1',
-          calcMethodFormulasId: newPricingPolicyCalcMethod,
         }),
       });
       const payload = (await response.json().catch(() => null)) as
@@ -487,7 +465,7 @@ export default function CustomerCreateClient({
     } finally {
       setPricingPolicySaving(false);
     }
-  }, [newPricingPolicyName, newPricingPolicyEnabled, newPricingPolicyCalcMethod]);
+  }, [newPricingPolicyName, newPricingPolicyEnabled]);
 
   const openCountryModal = useCallback(() => {
     setNewCountryName('');
@@ -598,7 +576,7 @@ export default function CustomerCreateClient({
             type="button"
             className={lookupButtonStyles.lookupAddButton}
             onClick={openPricingPolicyModal}
-            disabled={calcMethodFormulas.length === 0 || pricingPolicySaving}
+            disabled={pricingPolicySaving}
           >
             Add new
           </button>
@@ -631,7 +609,6 @@ export default function CustomerCreateClient({
       return null;
     },
     [
-      calcMethodFormulas,
       countryOptions.length,
       openCityModal,
       openCountryModal,
@@ -818,25 +795,6 @@ export default function CustomerCreateClient({
             required
             onChange={(event) => setNewPricingPolicyName(event.target.value)}
           />
-        </div>
-        <div className={lookupStyles.field}>
-          <label className={lookupStyles.fieldLabel} htmlFor="new-pricing-policy-calc">
-            Calc method formula
-          </label>
-          <select
-            id="new-pricing-policy-calc"
-            className={lookupStyles.fieldControl}
-            value={newPricingPolicyCalcMethod}
-            required
-            onChange={(event) => setNewPricingPolicyCalcMethod(event.target.value)}
-          >
-            <option value="">Select calc method formula</option>
-            {calcMethodFormulas.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
         </div>
         <div className={lookupStyles.field}>
           <label className={lookupStyles.fieldLabel} htmlFor="new-pricing-policy-enabled">

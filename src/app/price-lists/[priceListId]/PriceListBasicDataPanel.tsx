@@ -46,24 +46,21 @@ export async function fetchPriceListBasicRecord(priceListId: number) {
         pl.ResponsibleUserId,
         resp.UserName AS ResponsibleUserName,
         pl.HasDuty,
-        ppr.ID AS PricingPolicyRuleID,
-        ppr.PricingPolicyID,
-        pp.Name AS PricingPolicyName,
+        NULL AS PricingPolicyRuleID,
+        NULL AS PricingPolicyID,
+        NULL AS PricingPolicyName,
         pl.ModifiedOn,
         pl.ModifiedBy AS ModifiedByUserId,
         modified.UserName AS ModifiedByUserName,
         modified.FullName AS ModifiedByFullName
       FROM dbo.PriceLists AS pl
       LEFT JOIN dbo.Brands AS b ON pl.BrandID = b.ID
-      LEFT JOIN dbo.PricingPolicyRules AS ppr ON b.ID = ppr.BrandID
-      LEFT JOIN dbo.PricingPolicies AS pp ON ppr.PricingPolicyID = pp.ID
       LEFT JOIN dbo.Countries AS c ON pl.CountryId = c.ID
       LEFT JOIN dbo.Suppliers AS s ON pl.SupplierID = s.ID
       LEFT JOIN dbo.Currencies AS cur ON pl.CurrencyId = cur.ID
       LEFT JOIN dbo.AspNetUsers AS resp ON pl.ResponsibleUserId = resp.Id
       LEFT JOIN dbo.AspNetUsers AS modified ON pl.ModifiedBy = modified.Id
       WHERE pl.ID = @priceListId
-      ORDER BY pp.Name
     `);
     return result.recordset?.[0] ?? null;
   } catch (err) {
@@ -147,6 +144,52 @@ async function fetchUsers() {
   }
 }
 
+async function fetchAllPricingPolicies() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<LookupRow>(`
+      SELECT ID, Name
+      FROM dbo.PricingPolicies
+      ORDER BY Name
+    `);
+    return mapLookupRows(result.recordset);
+  } catch (err) {
+    console.error('Failed to load pricing policies', err);
+    return [];
+  }
+}
+
+type PricingPolicyRuleRow = {
+  ID: number;
+  Name: string | null;
+  PricingPolicyID: number | null;
+  BrandID: number | null;
+};
+
+async function fetchAllPricingPolicyRules() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<PricingPolicyRuleRow>(`
+      SELECT
+        ppr.ID,
+        ppr.Name,
+        ppr.PricingPolicyID,
+        ppr.BrandID
+      FROM dbo.PricingPolicyRules ppr
+      ORDER BY ppr.Name
+    `);
+    return (result.recordset ?? []).map((row) => ({
+      id: row.ID,
+      name: row.Name,
+      pricingPolicyId: row.PricingPolicyID,
+      brandId: row.BrandID,
+    }));
+  } catch (err) {
+    console.error('Failed to load pricing policy rules', err);
+    return [];
+  }
+}
+
 type PricingPolicyRow = {
   BrandID: number | null;
   PricingPolicyID: number | null;
@@ -190,6 +233,48 @@ async function fetchPricingPoliciesByBrand(): Promise<PricingPoliciesByBrand> {
   }
 }
 
+type PriceListPricingPolicyRow = {
+  ID: number;
+  PriceListID: number;
+  PricingPolicyID: number;
+  PricingPolicyName: string | null;
+  PricingPolicyRuleID: number | null;
+  PricingPolicyRuleName: string | null;
+};
+
+export async function fetchPriceListPricingPolicies(priceListId: number) {
+  try {
+    const pool = await getPool();
+    const request = pool.request();
+    request.input('priceListId', sql.Int, priceListId);
+    const result = await request.query<PriceListPricingPolicyRow>(`
+      SELECT
+        plpp.ID,
+        plpp.PriceListID,
+        plpp.PricingPolicyID,
+        pp.Name AS PricingPolicyName,
+        plpp.PricingPolicyRuleID,
+        ppr.Name AS PricingPolicyRuleName
+      FROM dbo.PriceListPricingPolicy AS plpp
+      INNER JOIN dbo.PricingPolicies AS pp ON plpp.PricingPolicyID = pp.ID
+      LEFT JOIN dbo.PricingPolicyRules AS ppr ON plpp.PricingPolicyRuleID = ppr.ID
+      WHERE plpp.PriceListID = @priceListId
+      ORDER BY pp.Name, ppr.Name
+    `);
+    return (result.recordset ?? []).map((row) => ({
+      id: row.ID,
+      priceListId: row.PriceListID,
+      pricingPolicyId: row.PricingPolicyID,
+      pricingPolicyName: row.PricingPolicyName,
+      pricingPolicyRuleId: row.PricingPolicyRuleID,
+      pricingPolicyRuleName: row.PricingPolicyRuleName,
+    }));
+  } catch (err) {
+    console.error('Failed to load price list pricing policies', err);
+    return [];
+  }
+}
+
 export default async function PriceListBasicDataPanel({ priceListId, initialRecord }: Props) {
   const decodedId = decodeURIComponent(priceListId);
   const numericId = Number(decodedId);
@@ -205,13 +290,16 @@ export default async function PriceListBasicDataPanel({ priceListId, initialReco
     );
   }
 
-  const [brands, countries, suppliers, currencies, users, pricingPoliciesByBrand] = await Promise.all([
+  const [brands, countries, suppliers, currencies, users, pricingPoliciesByBrand, priceListPricingPolicies, allPricingPolicies, allPricingPolicyRules] = await Promise.all([
     fetchBrands(),
     fetchCountries(),
     fetchSuppliers(),
     fetchCurrencies(),
     fetchUsers(),
     fetchPricingPoliciesByBrand(),
+    fetchPriceListPricingPolicies(numericId),
+    fetchAllPricingPolicies(),
+    fetchAllPricingPolicyRules(),
   ]);
 
   return (
@@ -224,6 +312,9 @@ export default async function PriceListBasicDataPanel({ priceListId, initialReco
       currencies={currencies}
       users={users}
       pricingPoliciesByBrand={pricingPoliciesByBrand}
+      priceListPricingPolicies={priceListPricingPolicies}
+      allPricingPolicies={allPricingPolicies}
+      allPricingPolicyRules={allPricingPolicyRules}
     />
   );
 }

@@ -1,0 +1,224 @@
+import { NextRequest, NextResponse } from 'next/server';
+import sql from 'mssql';
+import { getPool } from '../../../../../lib/sql';
+
+const normalizeInt = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
+};
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ priceListId: string }> },
+) {
+  try {
+    const { priceListId } = await params;
+    const normalizedId = decodeURIComponent(String(priceListId ?? '')).trim();
+    if (!normalizedId) {
+      return NextResponse.json({ ok: false, error: 'Missing id' }, { status: 400 });
+    }
+    const parsedId = Number(normalizedId);
+    if (!Number.isInteger(parsedId)) {
+      return NextResponse.json({ ok: false, error: 'Invalid id' }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    const request = pool.request();
+    request.input('priceListId', sql.Int, parsedId);
+    const result = await request.query<{
+      ID: number;
+      PriceListID: number;
+      PricingPolicyID: number;
+      PricingPolicyName: string | null;
+      PricingPolicyRuleID: number | null;
+      PricingPolicyRuleName: string | null;
+    }>(`
+      SELECT
+        plpp.ID,
+        plpp.PriceListID,
+        plpp.PricingPolicyID,
+        pp.Name AS PricingPolicyName,
+        plpp.PricingPolicyRuleID,
+        ppr.Name AS PricingPolicyRuleName
+      FROM dbo.PriceListPricingPolicy AS plpp
+      INNER JOIN dbo.PricingPolicies AS pp ON plpp.PricingPolicyID = pp.ID
+      LEFT JOIN dbo.PricingPolicyRules AS ppr ON plpp.PricingPolicyRuleID = ppr.ID
+      WHERE plpp.PriceListID = @priceListId
+      ORDER BY pp.Name, ppr.Name
+    `);
+
+    return NextResponse.json({
+      ok: true,
+      policies: (result.recordset ?? []).map((row) => ({
+        id: row.ID,
+        priceListId: row.PriceListID,
+        pricingPolicyId: row.PricingPolicyID,
+        pricingPolicyName: row.PricingPolicyName,
+        pricingPolicyRuleId: row.PricingPolicyRuleID,
+        pricingPolicyRuleName: row.PricingPolicyRuleName,
+      })),
+    });
+  } catch (err) {
+    console.error('Failed to fetch price list pricing policies', err);
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+type AddPricingPolicyBody = {
+  pricingPolicyId: number;
+  pricingPolicyRuleId?: number | null;
+};
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ priceListId: string }> },
+) {
+  try {
+    const { priceListId } = await params;
+    const normalizedId = decodeURIComponent(String(priceListId ?? '')).trim();
+    if (!normalizedId) {
+      return NextResponse.json({ ok: false, error: 'Missing id' }, { status: 400 });
+    }
+    const parsedId = Number(normalizedId);
+    if (!Number.isInteger(parsedId)) {
+      return NextResponse.json({ ok: false, error: 'Invalid id' }, { status: 400 });
+    }
+
+    const body = (await req.json().catch(() => null)) as AddPricingPolicyBody | null;
+    const pricingPolicyId = normalizeInt(body?.pricingPolicyId);
+    if (pricingPolicyId == null) {
+      return NextResponse.json({ ok: false, error: 'Pricing policy ID is required' }, { status: 400 });
+    }
+
+    const pricingPolicyRuleId = normalizeInt(body?.pricingPolicyRuleId ?? null);
+
+    const pool = await getPool();
+    const request = pool.request();
+    request.input('priceListId', sql.Int, parsedId);
+    request.input('pricingPolicyId', sql.Int, pricingPolicyId);
+    request.input('pricingPolicyRuleId', sql.Int, pricingPolicyRuleId);
+
+    const result = await request.query<{ ID: number }>(`
+      INSERT INTO dbo.PriceListPricingPolicy (
+        PriceListID,
+        PricingPolicyID,
+        PricingPolicyRuleID
+      )
+      OUTPUT INSERTED.ID
+      VALUES (@priceListId, @pricingPolicyId, @pricingPolicyRuleId);
+    `);
+
+    const inserted = result.recordset?.[0];
+    if (!inserted || inserted.ID == null) {
+      throw new Error('Unable to create price list pricing policy');
+    }
+
+    return NextResponse.json({ ok: true, id: inserted.ID });
+  } catch (err) {
+    console.error('Failed to add price list pricing policy', err);
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+type UpdatePricingPolicyBody = {
+  pricingPolicyId: number;
+  pricingPolicyRuleId?: number | null;
+};
+
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ priceListId: string }> },
+) {
+  try {
+    const { priceListId } = await params;
+    const normalizedId = decodeURIComponent(String(priceListId ?? '')).trim();
+    if (!normalizedId) {
+      return NextResponse.json({ ok: false, error: 'Missing id' }, { status: 400 });
+    }
+    const parsedId = Number(normalizedId);
+    if (!Number.isInteger(parsedId)) {
+      return NextResponse.json({ ok: false, error: 'Invalid id' }, { status: 400 });
+    }
+
+    const url = new URL(req.url);
+    const policyId = normalizeInt(url.searchParams.get('policyId'));
+    if (policyId == null) {
+      return NextResponse.json({ ok: false, error: 'Policy ID is required' }, { status: 400 });
+    }
+
+    const body = (await req.json().catch(() => null)) as UpdatePricingPolicyBody | null;
+    const pricingPolicyId = normalizeInt(body?.pricingPolicyId);
+    if (pricingPolicyId == null) {
+      return NextResponse.json({ ok: false, error: 'Pricing policy ID is required' }, { status: 400 });
+    }
+
+    const pricingPolicyRuleId = normalizeInt(body?.pricingPolicyRuleId ?? null);
+
+    const pool = await getPool();
+    const request = pool.request();
+    request.input('priceListId', sql.Int, parsedId);
+    request.input('policyId', sql.Int, policyId);
+    request.input('pricingPolicyId', sql.Int, pricingPolicyId);
+    request.input('pricingPolicyRuleId', sql.Int, pricingPolicyRuleId);
+
+    await request.query(`
+      UPDATE dbo.PriceListPricingPolicy
+      SET PricingPolicyID = @pricingPolicyId,
+          PricingPolicyRuleID = @pricingPolicyRuleId
+      WHERE PriceListID = @priceListId
+        AND ID = @policyId;
+    `);
+
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error('Failed to update price list pricing policy', err);
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ priceListId: string }> },
+) {
+  try {
+    const { priceListId } = await params;
+    const normalizedId = decodeURIComponent(String(priceListId ?? '')).trim();
+    if (!normalizedId) {
+      return NextResponse.json({ ok: false, error: 'Missing id' }, { status: 400 });
+    }
+    const parsedId = Number(normalizedId);
+    if (!Number.isInteger(parsedId)) {
+      return NextResponse.json({ ok: false, error: 'Invalid id' }, { status: 400 });
+    }
+
+    const url = new URL(req.url);
+    const policyId = normalizeInt(url.searchParams.get('policyId'));
+    if (policyId == null) {
+      return NextResponse.json({ ok: false, error: 'Policy ID is required' }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    const request = pool.request();
+    request.input('priceListId', sql.Int, parsedId);
+    request.input('policyId', sql.Int, policyId);
+
+    await request.query(`
+      DELETE FROM dbo.PriceListPricingPolicy
+      WHERE PriceListID = @priceListId
+        AND ID = @policyId;
+    `);
+
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error('Failed to delete price list pricing policy', err);
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}

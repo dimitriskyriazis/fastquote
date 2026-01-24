@@ -32,8 +32,6 @@ export type OfferBasicRecord = {
   ApprovalUserUserName: string | null;
   SalesPersonId: string | null;
   ApprovalUserId: string | null;
-  DefaultCalcMethodFormulasID: string | number | null;
-  DefaultCalcMethodFormulaName: string | null;
   ProjectID: number | null;
   CustomerRef: string | null;
   InitialRequest: Date | string | null;
@@ -76,7 +74,6 @@ export type OfferBasicUpdateField =
   | 'MarketID'
   | 'SalesPersonId'
   | 'ApprovalUserId'
-  | 'DefaultCalcMethodFormulasID'
   | 'ProjectID'
   | 'CustomerRef'
   | 'InitialRequest'

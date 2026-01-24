@@ -51,8 +51,6 @@ async function fetchOfferBasicRecord(offerId: number) {
         approver.UserName AS ApprovalUserUserName,
         o.SalesPersonId,
         o.ApprovalUserId,
-        o.DefaultCalcMethodFormulasID,
-        cmf.Name AS DefaultCalcMethodFormulaName,
         o.ProjectID,
         o.CustomerRef,
         o.InitialRequest,
@@ -78,7 +76,6 @@ async function fetchOfferBasicRecord(offerId: number) {
       LEFT JOIN dbo.AspNetUsers AS approver ON o.ApprovalUserId = approver.Id
       LEFT JOIN dbo.AspNetUsers AS modified ON o.ModifiedBy = modified.Id
       LEFT JOIN dbo.Contacts AS oc ON o.ContactID = oc.ID
-      LEFT JOIN dbo.CalcMethodFormulas AS cmf ON o.DefaultCalcMethodFormulasID = cmf.ID
       WHERE o.ID = @offerId
     `);
     return result.recordset?.[0] ?? null;
@@ -157,22 +154,6 @@ async function fetchAspNetUsers() {
   }
 }
 
-async function fetchCalcMethodFormulas() {
-  try {
-    const pool = await getPool();
-    const request = pool.request();
-    const result = await request.query<LookupRow>(`
-      SELECT ID, Name
-      FROM dbo.CalcMethodFormulas
-      ORDER BY Name
-    `);
-    return mapLookupRows(result.recordset);
-  } catch (err) {
-    console.error('Failed to load calc method formulas', err);
-    return [];
-  }
-}
-
 async function fetchCustomerContacts(customerId: number | null) {
   if (!customerId) return [];
   try {
@@ -223,14 +204,12 @@ export default async function OfferBasicDataPanel({ offerId }: Props) {
     pricingPolicies,
     markets,
     users,
-    calcMethodFormulas,
   ] = await Promise.all([
     fetchCustomerContacts(record.CustomerID ?? null),
     fetchOfferStatuses(),
     fetchPricingPolicies(),
     fetchMarkets(),
     fetchAspNetUsers(),
-    fetchCalcMethodFormulas(),
   ]);
 
   return (
@@ -242,7 +221,6 @@ export default async function OfferBasicDataPanel({ offerId }: Props) {
       pricingPolicies={pricingPolicies}
       markets={markets}
       users={users}
-      calcMethodFormulas={calcMethodFormulas}
     />
   );
 }

@@ -34,9 +34,6 @@ export const useActionMenuPosition = (open: boolean): Result => {
     }
     const rect = buttonRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const left = rect.left;
-    /* eslint-disable-next-line react-hooks/set-state-in-effect */
-    setMenuPos({ top: rect.bottom + MENU_SPACING, left });
   }, [open]);
 
   useLayoutEffect(() => {

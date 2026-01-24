@@ -74,21 +74,6 @@ export async function fetchCountries() {
   }
 }
 
-export async function fetchCalcMethodFormulas() {
-  try {
-    const pool = await getPool();
-    const result = await pool.request().query<LookupRow>(`
-      SELECT ID, Name
-      FROM dbo.CalcMethodFormulas
-      ORDER BY Name
-    `);
-    return mapLookupRows(result.recordset);
-  } catch (err) {
-    console.error('Failed to load calc method formulas', err);
-    return [];
-  }
-}
-
 export async function fetchCities(): Promise<CustomerCityOption[]> {
   try {
     const pool = await getPool();

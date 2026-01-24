@@ -38,7 +38,6 @@ export type PricingPolicyColumn = {
 
 type Props = {
   pricingPolicies: PricingPolicyColumn[];
-  calcMethodFormulas: DropdownOption[];
 };
 
 type PolicyCell = { telmacoDiscount: number | null; customerDiscount: number | null };
@@ -194,7 +193,7 @@ const isDefaultPricingPolicyName = (name: string): boolean => {
   return /\bdefault\b/i.test(normalized);
 };
 
-export default function PricingPoliciesClient({ pricingPolicies, calcMethodFormulas }: Props) {
+export default function PricingPoliciesClient({ pricingPolicies }: Props) {
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const pendingGrandTotalRef = useRef<Record<string, unknown> | null>(null);
 
@@ -205,7 +204,6 @@ export default function PricingPoliciesClient({ pricingPolicies, calcMethodFormu
 
   const [isAddPricingPolicyOpen, setIsAddPricingPolicyOpen] = useState(false);
   const [newPricingPolicyName, setNewPricingPolicyName] = useState("");
-  const [newPricingPolicyCalcMethodId, setNewPricingPolicyCalcMethodId] = useState("");
   const [newPricingPolicyEnabled, setNewPricingPolicyEnabled] = useState(true);
   const [pricingPolicySaving, setPricingPolicySaving] = useState(false);
   const [pricingPolicyError, setPricingPolicyError] = useState<string | null>(null);
@@ -223,16 +221,12 @@ export default function PricingPoliciesClient({ pricingPolicies, calcMethodFormu
     return firstDefault?.id ?? null;
   }, [orderedPricingPolicies]);
 
-  const openAddPricingPolicyModal = useCallback(
-    (calcMethodFormulas: DropdownOption[]) => {
-      setNewPricingPolicyName("");
-      setPricingPolicyError(null);
-      setNewPricingPolicyEnabled(true);
-      setNewPricingPolicyCalcMethodId(calcMethodFormulas[0]?.value ?? "");
-      setIsAddPricingPolicyOpen(true);
-    },
-    [],
-  );
+  const openAddPricingPolicyModal = useCallback(() => {
+    setNewPricingPolicyName("");
+    setPricingPolicyError(null);
+    setNewPricingPolicyEnabled(true);
+    setIsAddPricingPolicyOpen(true);
+  }, []);
 
   const enforceDefaultPolicyFirst = useCallback((api: GridApi<Record<string, unknown>> | null) => {
     if (!api) return;
@@ -456,75 +450,54 @@ export default function PricingPoliciesClient({ pricingPolicies, calcMethodFormu
     [brandDeleting, deleteBrand, pricingPolicyDeleting, pricingPolicySaving],
   );
 
-  const handleCreatePricingPolicy = useCallback(
-    async (calcMethodFormulas: DropdownOption[]) => {
-      const trimmed = newPricingPolicyName.trim();
-      if (!trimmed) {
-        setPricingPolicyError("Name is required");
-        return;
+  const handleCreatePricingPolicy = useCallback(async () => {
+    const trimmed = newPricingPolicyName.trim();
+    if (!trimmed) {
+      setPricingPolicyError("Name is required");
+      return;
+    }
+    setPricingPolicySaving(true);
+    setPricingPolicyError(null);
+    try {
+      const response = await fetch("/api/pricing-policies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trimmed,
+          enabled: newPricingPolicyEnabled,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; option?: DropdownOption; error?: string }
+        | null;
+      const option = payload?.option;
+      if (!response.ok || !payload?.ok || !option?.value) {
+        throw new Error(payload?.error ?? "Unable to add pricing policy");
       }
-      if (!newPricingPolicyCalcMethodId) {
-        setPricingPolicyError("Calc method formula is required");
-        return;
+      const id = Number(option.value);
+      if (!Number.isFinite(id)) {
+        throw new Error("Server returned an invalid pricing policy ID");
       }
-      setPricingPolicySaving(true);
-      setPricingPolicyError(null);
-      try {
-        const response = await fetch("/api/pricing-policies", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: trimmed,
-            enabled: newPricingPolicyEnabled,
-            calcMethodFormulasId: newPricingPolicyCalcMethodId,
-          }),
-        });
-        const payload = (await response.json().catch(() => null)) as
-          | { ok?: boolean; option?: DropdownOption; error?: string }
-          | null;
-        const option = payload?.option;
-        if (!response.ok || !payload?.ok || !option?.value) {
-          throw new Error(payload?.error ?? "Unable to add pricing policy");
-        }
-        const id = Number(option.value);
-        if (!Number.isFinite(id)) {
-          throw new Error("Server returned an invalid pricing policy ID");
-        }
 
-        setLocalPricingPolicies((prev) => {
-          if (prev.some((policy) => policy.id === id)) return prev;
-          return [...prev, { id, name: option.label }];
-        });
-        showToastMessage("Pricing policy added", "success");
-        setIsAddPricingPolicyOpen(false);
+      setLocalPricingPolicies((prev) => {
+        if (prev.some((policy) => policy.id === id)) return prev;
+        return [...prev, { id, name: option.label }];
+      });
+      showToastMessage("Pricing policy added", "success");
+      setIsAddPricingPolicyOpen(false);
 
-        // Refresh rows so any downstream totals update.
-        gridApiRef.current?.refreshServerSide?.({ purge: true });
-      } catch (err) {
-        console.error("Failed to create pricing policy", err);
-        const message = err instanceof Error ? err.message : "Unable to add pricing policy";
-        setPricingPolicyError(message);
-        showToastMessage(message, "error");
-      } finally {
-        setPricingPolicySaving(false);
-        // Ensure current selection stays valid if formulas list changes.
-        setNewPricingPolicyCalcMethodId((prev) =>
-          calcMethodFormulas.some((option) => option.value === prev)
-            ? prev
-            : calcMethodFormulas[0]?.value ?? "",
-        );
-      }
-    },
-    [newPricingPolicyCalcMethodId, newPricingPolicyEnabled, newPricingPolicyName],
-  );
+      // Refresh rows so any downstream totals update.
+      gridApiRef.current?.refreshServerSide?.({ purge: true });
+    } catch (err) {
+      console.error("Failed to create pricing policy", err);
+      const message = err instanceof Error ? err.message : "Unable to add pricing policy";
+      setPricingPolicyError(message);
+      showToastMessage(message, "error");
+    } finally {
+      setPricingPolicySaving(false);
+    }
+  }, [newPricingPolicyEnabled, newPricingPolicyName]);
 
-  useEffect(() => {
-    setNewPricingPolicyCalcMethodId((prev) =>
-      calcMethodFormulas.some((option) => option.value === prev)
-        ? prev
-        : calcMethodFormulas[0]?.value ?? "",
-    );
-  }, [calcMethodFormulas]);
 
   const columnDefs = useMemo<ColDef[]>(() => {
     const policyGroups: ColDef[] = orderedPricingPolicies.map((policy) => {
@@ -629,9 +602,9 @@ export default function PricingPoliciesClient({ pricingPolicies, calcMethodFormu
           <button
             type="button"
             className={`${styles.addButton} page-header-button`}
-            onClick={() => openAddPricingPolicyModal(calcMethodFormulas)}
-            disabled={pricingPolicySaving || calcMethodFormulas.length === 0}
-            title={calcMethodFormulas.length === 0 ? "No calc method formulas available" : "Add pricing policy"}
+            onClick={openAddPricingPolicyModal}
+            disabled={pricingPolicySaving}
+            title="Add pricing policy"
           >
             Add Pricing Policy
           </button>
@@ -657,7 +630,7 @@ export default function PricingPoliciesClient({ pricingPolicies, calcMethodFormu
         open={isAddPricingPolicyOpen}
         title="Add Pricing Policy"
         onClose={() => setIsAddPricingPolicyOpen(false)}
-        onConfirm={() => void handleCreatePricingPolicy(calcMethodFormulas)}
+        onConfirm={() => void handleCreatePricingPolicy()}
         confirmLabel="Create"
         saving={pricingPolicySaving}
         error={pricingPolicyError}
@@ -673,25 +646,6 @@ export default function PricingPoliciesClient({ pricingPolicies, calcMethodFormu
             required
             onChange={(event) => setNewPricingPolicyName(event.target.value)}
           />
-        </div>
-        <div className={lookupStyles.field}>
-          <label className={lookupStyles.fieldLabel} htmlFor="pricing-policy-calc-method">
-            Calc method formula
-          </label>
-          <select
-            id="pricing-policy-calc-method"
-            className={lookupStyles.fieldControl}
-            value={newPricingPolicyCalcMethodId}
-            required
-            onChange={(event) => setNewPricingPolicyCalcMethodId(event.target.value)}
-          >
-            <option value="">Select calc method formula</option>
-            {calcMethodFormulas.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
         </div>
         <div className={lookupStyles.field}>
           <label className={lookupStyles.checkboxLabel} htmlFor="pricing-policy-enabled">

@@ -7,6 +7,7 @@ import type {
   PriceListDropdownOption,
   PriceListBasicUpdateField,
   PricingPoliciesByBrand,
+  PriceListPricingPolicyEntry,
 } from './PriceListBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
 import UKDatePicker from '../../components/DatePicker';
@@ -23,6 +24,14 @@ type Props = {
   currencies: PriceListDropdownOption[];
   users: PriceListDropdownOption[];
   pricingPoliciesByBrand: PricingPoliciesByBrand;
+  priceListPricingPolicies: PriceListPricingPolicyEntry[];
+  allPricingPolicies: PriceListDropdownOption[];
+  allPricingPolicyRules: Array<{
+    id: number;
+    name: string | null;
+    pricingPolicyId: number | null;
+    brandId: number | null;
+  }>;
 };
 
 type SectionKey = 'general' | 'validity' | 'associations' | 'settings';
@@ -175,13 +184,6 @@ const buildFieldDefinitions = (
     valueType: 'number',
     options: BOOLEAN_OPTIONS,
   },
-  {
-    id: 'pricingPolicyName',
-    label: 'Primary Pricing Policy',
-    section: 'settings',
-    recordKey: 'PricingPolicyName',
-    readOnly: true,
-  },
 ];
 
 
@@ -209,8 +211,13 @@ export default function PriceListBasicDataClient({
   suppliers,
   currencies,
   users,
-  pricingPoliciesByBrand,
+  pricingPoliciesByBrand: _unused,
+  priceListPricingPolicies: initialPriceListPricingPolicies,
+  allPricingPolicies,
+  allPricingPolicyRules,
 }: Props) {
+  // Suppress unused variable warning - pricingPoliciesByBrand is part of Props but not used in this component
+  void _unused;
   const fieldDefinitions = useMemo(
     () => buildFieldDefinitions(brands, countries, suppliers, currencies, users),
     [brands, countries, suppliers, currencies, users]
@@ -234,6 +241,16 @@ export default function PriceListBasicDataClient({
   const [savedValues, setSavedValues] = useState(initialValues);
   const savedValuesRef = useRef(savedValues);
   savedValuesRef.current = savedValues;
+
+  const [priceListPricingPolicies, setPriceListPricingPolicies] = useState<PriceListPricingPolicyEntry[]>(
+    initialPriceListPricingPolicies,
+  );
+  const [isAddingPolicy, setIsAddingPolicy] = useState(false);
+  const [isSubmittingPolicy, setIsSubmittingPolicy] = useState(false);
+  const [editingPolicyId, setEditingPolicyId] = useState<number | null>(null);
+  const [newPolicyPricingPolicyId, setNewPolicyPricingPolicyId] = useState('');
+  const [newPolicyPricingPolicyRuleId, setNewPolicyPricingPolicyRuleId] = useState('');
+  const [deletingPolicyIds, setDeletingPolicyIds] = useState<Set<number>>(new Set());
 
   const handleValueChange = useCallback((fieldId: string, value: string) => {
     setValues((prev) => ({ ...prev, [fieldId]: value }));
@@ -299,6 +316,122 @@ export default function PriceListBasicDataClient({
     },
     [saveField, values],
   );
+
+  const handleAddPricingPolicy = useCallback(async () => {
+    const pricingPolicyId = Number.parseInt(newPolicyPricingPolicyId, 10);
+    if (!Number.isInteger(pricingPolicyId)) {
+      showToastMessage('Please select a pricing policy', 'error');
+      return;
+    }
+
+    const isEditing = editingPolicyId != null;
+    setIsSubmittingPolicy(true);
+    try {
+      const url = isEditing
+        ? `/api/price-lists/${encodeURIComponent(priceListId)}/pricing-policies?policyId=${editingPolicyId}`
+        : `/api/price-lists/${encodeURIComponent(priceListId)}/pricing-policies`;
+      const response = await fetch(url, {
+        method: isEditing ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pricingPolicyId,
+          pricingPolicyRuleId: newPolicyPricingPolicyRuleId ? Number.parseInt(newPolicyPricingPolicyRuleId, 10) : null,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; id?: number } | null;
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? `Failed to ${isEditing ? 'update' : 'add'} pricing policy`);
+      }
+
+      const policy = allPricingPolicies.find((p) => p.value === newPolicyPricingPolicyId);
+      const rule = newPolicyPricingPolicyRuleId
+        ? allPricingPolicyRules.find((r) => r.id === Number.parseInt(newPolicyPricingPolicyRuleId, 10))
+        : null;
+
+      if (isEditing) {
+        setPriceListPricingPolicies((prev) =>
+          prev.map((p) =>
+            p.id === editingPolicyId
+              ? {
+                  ...p,
+                  pricingPolicyId,
+                  pricingPolicyName: policy?.label ?? null,
+                  pricingPolicyRuleId: rule?.id ?? null,
+                  pricingPolicyRuleName: rule?.name ?? null,
+                }
+              : p
+          )
+        );
+        setEditingPolicyId(null);
+        showToastMessage('Pricing policy updated', 'success');
+      } else {
+        setPriceListPricingPolicies((prev) => [
+          ...prev,
+          {
+            id: payload.id!,
+            priceListId: Number(priceListId),
+            pricingPolicyId,
+            pricingPolicyName: policy?.label ?? null,
+            pricingPolicyRuleId: rule?.id ?? null,
+            pricingPolicyRuleName: rule?.name ?? null,
+          },
+        ]);
+        showToastMessage('Pricing policy added', 'success');
+      }
+      setNewPolicyPricingPolicyId('');
+      setNewPolicyPricingPolicyRuleId('');
+      setIsAddingPolicy(false);
+      setIsSubmittingPolicy(false);
+    } catch (err) {
+      console.error(`Failed to ${editingPolicyId != null ? 'update' : 'add'} pricing policy`, err);
+      showToastMessage(err instanceof Error ? err.message : `Unable to ${editingPolicyId != null ? 'update' : 'add'} pricing policy`, 'error');
+      setIsSubmittingPolicy(false);
+    }
+  }, [priceListId, newPolicyPricingPolicyId, newPolicyPricingPolicyRuleId, editingPolicyId, allPricingPolicies, allPricingPolicyRules]);
+
+  const handleEditPricingPolicy = useCallback((policy: PriceListPricingPolicyEntry) => {
+    setEditingPolicyId(policy.id);
+    setNewPolicyPricingPolicyId(String(policy.pricingPolicyId));
+    setNewPolicyPricingPolicyRuleId(policy.pricingPolicyRuleId ? String(policy.pricingPolicyRuleId) : '');
+    setIsAddingPolicy(true);
+  }, []);
+
+  const handleDeletePricingPolicy = useCallback(
+    async (policyId: number) => {
+      if (deletingPolicyIds.has(policyId) || isSubmittingPolicy) return;
+      setDeletingPolicyIds((prev) => new Set(prev).add(policyId));
+      try {
+        const response = await fetch(
+          `/api/price-lists/${encodeURIComponent(priceListId)}/pricing-policies?policyId=${policyId}`,
+          {
+            method: 'DELETE',
+          },
+        );
+        const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!response.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? 'Failed to delete pricing policy');
+        }
+        setPriceListPricingPolicies((prev) => prev.filter((p) => p.id !== policyId));
+        showToastMessage('Pricing policy removed', 'success');
+      } catch (err) {
+        console.error('Failed to delete pricing policy', err);
+        showToastMessage(err instanceof Error ? err.message : 'Unable to remove pricing policy', 'error');
+      } finally {
+        setDeletingPolicyIds((prev) => {
+          const next = new Set(prev);
+          next.delete(policyId);
+          return next;
+        });
+      }
+    },
+    [priceListId, deletingPolicyIds, isSubmittingPolicy],
+  );
+
+  const availableRulesForPolicy = useMemo(() => {
+    if (!newPolicyPricingPolicyId) return [];
+    const policyId = Number.parseInt(newPolicyPricingPolicyId, 10);
+    return allPricingPolicyRules.filter((rule) => rule.pricingPolicyId === policyId);
+  }, [newPolicyPricingPolicyId, allPricingPolicyRules]);
 
   const renderFieldControl = (def: FieldDefinition) => {
     const isEditable = Boolean(def.updateField && !def.readOnly);
@@ -429,36 +562,137 @@ export default function PriceListBasicDataClient({
       </>
     );
 
-    const brandField = fieldDefinitions.find((field) => field.id === 'brand');
-    const brandValueRaw = values[brandField?.id ?? 'brand'] ?? (record.BrandID != null ? String(record.BrandID) : '');
-    const brandValue = brandValueRaw.trim();
-    const policies = brandValue ? pricingPoliciesByBrand[brandValue] ?? [] : [];
-    const brandLabel =
-      brandValue && brandField?.options
-        ? brandField.options.find((option) => option.value === brandValue)?.label ?? ''
-        : '';
-
     return (
       <section key={sectionKey} className={`${styles.sectionCard} ${styles.detailSection}`}>
         {cardContent}
         {sectionKey === 'settings' ? (
           <div className={styles.chipListWrapper}>
             <div className={styles.chipListHeading}>Pricing Policies</div>
-            {brandValue ? (
-              policies.length > 0 ? (
-                <div className={styles.chipList}>
-                  {policies.map((policy) => (
-                    <span key={`${policy.brandId}-${policy.pricingPolicyId}`} className={styles.chip}>
-                      {policy.name ?? '—'}
+            {priceListPricingPolicies.length > 0 ? (
+              <div className={styles.chipList}>
+                {priceListPricingPolicies.map((policy) => {
+                  const isDeleting = deletingPolicyIds.has(policy.id);
+                  const policyLabel = policy.pricingPolicyName ?? '—';
+                  const ruleLabel = policy.pricingPolicyRuleName
+                    ? ` (Rule: ${policy.pricingPolicyRuleName})`
+                    : policy.pricingPolicyRuleId
+                      ? ` (Rule ID: ${policy.pricingPolicyRuleId})`
+                      : '';
+                  return (
+                    <span
+                      key={policy.id}
+                      className={`${styles.chip} ${isDeleting ? styles.chipDeleting : ''}`}
+                      title={`${policyLabel}${ruleLabel}`}
+                    >
+                      {policyLabel}
+                      {ruleLabel}
+                      {!isDeleting && (
+                        <>
+                          <button
+                            type="button"
+                            className={styles.chipEdit}
+                            onClick={() => handleEditPricingPolicy(policy)}
+                            aria-label={`Edit ${policyLabel}`}
+                            title="Edit"
+                          >
+                            ✎
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.chipDelete}
+                            onClick={() => void handleDeletePricingPolicy(policy.id)}
+                            aria-label={`Remove ${policyLabel}`}
+                            title="Delete"
+                          >
+                            ×
+                          </button>
+                        </>
+                      )}
                     </span>
-                  ))}
+                  );
+                })}
+              </div>
+            ) : (
+              <div className={styles.chipListEmpty}>No pricing policies configured.</div>
+            )}
+            <div className={styles.addPolicySection}>
+              {isAddingPolicy ? (
+                <div className={styles.addPolicyForm}>
+                  <select
+                    className={styles.fieldControl}
+                    value={newPolicyPricingPolicyId}
+                    onChange={(e) => {
+                      setNewPolicyPricingPolicyId(e.target.value);
+                      setNewPolicyPricingPolicyRuleId('');
+                    }}
+                  >
+                    <option value="">Select Pricing Policy...</option>
+                    {allPricingPolicies
+                      .filter(
+                        (p) => {
+                          if (editingPolicyId != null) {
+                            // When editing, show all policies (including the one being edited)
+                            return true;
+                          }
+                          // When adding, exclude policies that are already in the list
+                          return !priceListPricingPolicies.some((plp) => plp.pricingPolicyId === Number(p.value));
+                        }
+                      )
+                      .map((p) => (
+                        <option key={p.value} value={p.value}>
+                          {p.label}
+                        </option>
+                      ))}
+                  </select>
+                  {newPolicyPricingPolicyId && availableRulesForPolicy.length > 0 && (
+                    <select
+                      className={styles.fieldControl}
+                      value={newPolicyPricingPolicyRuleId}
+                      onChange={(e) => setNewPolicyPricingPolicyRuleId(e.target.value)}
+                    >
+                      <option value="">All rules (no specific rule)</option>
+                      {availableRulesForPolicy.map((rule) => (
+                        <option key={rule.id} value={String(rule.id)}>
+                          {rule.name ?? `Rule ${rule.id}`}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <div className={styles.addPolicyActions}>
+                    <button
+                      type="button"
+                      className={styles.buttonPrimary}
+                      onClick={() => void handleAddPricingPolicy()}
+                      disabled={!newPolicyPricingPolicyId || isSubmittingPolicy}
+                    >
+                      {editingPolicyId != null ? 'Update' : 'Add'}
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.buttonSecondary}
+                      onClick={() => {
+                        setIsAddingPolicy(false);
+                        setEditingPolicyId(null);
+                        setNewPolicyPricingPolicyId('');
+                        setNewPolicyPricingPolicyRuleId('');
+                      }}
+                      disabled={isSubmittingPolicy}
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               ) : (
-                <div className={styles.chipListEmpty}>No pricing policies for {brandLabel || 'this brand'}.</div>
-              )
-            ) : (
-              <div className={styles.chipListEmpty}>Select a brand to view pricing policies.</div>
-            )}
+                <button
+                  type="button"
+                  className={styles.buttonSecondary}
+                  onClick={() => setIsAddingPolicy(true)}
+                  disabled={allPricingPolicies.length === 0}
+                >
+                  + Add Pricing Policy
+                </button>
+              )}
+            </div>
           </div>
         ) : null}
       </section>

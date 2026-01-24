@@ -5,7 +5,6 @@ import { getPool } from '../../../lib/sql';
 type CreatePricingPolicyBody = {
   name?: unknown;
   enabled?: unknown;
-  calcMethodFormulasId?: unknown;
 };
 
 type DeletePricingPolicyBody = {
@@ -66,29 +65,20 @@ export async function POST(req: NextRequest) {
     if (enabled === null) {
       return NextResponse.json({ ok: false, error: 'Enabled value is required' }, { status: 400 });
     }
-    const calcMethodFormulasId = normalizeInt(payload?.calcMethodFormulasId);
-    if (calcMethodFormulasId == null) {
-      return NextResponse.json(
-        { ok: false, error: 'Calc method formula is required' },
-        { status: 400 },
-      );
-    }
 
     const pool = await getPool();
     const request = pool.request();
     request.input('__name', sql.NVarChar(512), name);
     request.input('__enabled', sql.Bit, enabled ? 1 : 0);
-    request.input('__calcId', sql.Int, calcMethodFormulasId);
 
     const result = await request.query<{ ID: number; Name: string | null }>(`
       DECLARE @Inserted TABLE (ID INT, Name NVARCHAR(512));
       INSERT INTO dbo.PricingPolicies (
         [Name],
-        [Enabled],
-        [CalcMethodFormulasID]
+        [Enabled]
       )
       OUTPUT INSERTED.ID, INSERTED.Name INTO @Inserted
-      VALUES (@__name, @__enabled, @__calcId);
+      VALUES (@__name, @__enabled);
       SELECT TOP 1 ID, Name FROM @Inserted;
     `);
 

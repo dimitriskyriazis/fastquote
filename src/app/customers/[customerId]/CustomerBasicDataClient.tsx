@@ -28,7 +28,6 @@ type Props = {
   importanceOptions: CustomerDropdownOption[];
   countries: CustomerDropdownOption[];
   cities: CustomerCityOption[];
-  calcMethodFormulas: DropdownOption[];
 };
 
 type SectionKey = 'general' | 'business' | 'location' | 'contact' | 'notes';
@@ -275,7 +274,6 @@ export default function CustomerBasicDataClient({
   importanceOptions,
   countries,
   cities,
-  calcMethodFormulas,
 }: Props) {
   const [pricingPolicyOptions, setPricingPolicyOptions] = useState(pricingPolicies);
   const [countryOptions, setCountryOptions] = useState(countries);
@@ -326,9 +324,6 @@ export default function CustomerBasicDataClient({
   const [isAddPricingPolicyOpen, setIsAddPricingPolicyOpen] = useState(false);
   const [newPricingPolicyName, setNewPricingPolicyName] = useState('');
   const [newPricingPolicyEnabled, setNewPricingPolicyEnabled] = useState('1');
-  const [newPricingPolicyCalcMethod, setNewPricingPolicyCalcMethod] = useState(
-    calcMethodFormulas[0]?.value ?? '',
-  );
   const [pricingPolicySaving, setPricingPolicySaving] = useState(false);
   const [pricingPolicyError, setPricingPolicyError] = useState<string | null>(null);
   const [isAddCountryOpen, setIsAddCountryOpen] = useState(false);
@@ -342,18 +337,6 @@ export default function CustomerBasicDataClient({
   const [newCityEnabled, setNewCityEnabled] = useState('1');
   const [citySaving, setCitySaving] = useState(false);
   const [cityError, setCityError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (calcMethodFormulas.length === 0) {
-      setNewPricingPolicyCalcMethod('');
-      return;
-    }
-    setNewPricingPolicyCalcMethod((prev) =>
-      calcMethodFormulas.some((option) => option.value === prev)
-        ? prev
-        : calcMethodFormulas[0].value,
-    );
-  }, [calcMethodFormulas]);
 
   const fieldDefinitions = useMemo(
     () =>
@@ -481,18 +464,13 @@ export default function CustomerBasicDataClient({
     setNewPricingPolicyName('');
     setNewPricingPolicyEnabled('1');
     setPricingPolicyError(null);
-    setNewPricingPolicyCalcMethod(calcMethodFormulas[0]?.value ?? '');
     setIsAddPricingPolicyOpen(true);
-  }, [calcMethodFormulas]);
+  }, []);
 
   const handleCreatePricingPolicy = useCallback(async () => {
     const trimmedName = newPricingPolicyName.trim();
     if (!trimmedName) {
       setPricingPolicyError('Name is required');
-      return;
-    }
-    if (!newPricingPolicyCalcMethod) {
-      setPricingPolicyError('Calc method formula is required');
       return;
     }
     setPricingPolicySaving(true);
@@ -504,7 +482,6 @@ export default function CustomerBasicDataClient({
         body: JSON.stringify({
           name: trimmedName,
           enabled: newPricingPolicyEnabled === '1',
-          calcMethodFormulasId: newPricingPolicyCalcMethod,
         }),
       });
       const payload = (await response.json().catch(() => null)) as
@@ -528,7 +505,6 @@ export default function CustomerBasicDataClient({
   }, [
     newPricingPolicyName,
     newPricingPolicyEnabled,
-    newPricingPolicyCalcMethod,
     setValues,
   ]);
 
@@ -641,7 +617,7 @@ export default function CustomerBasicDataClient({
             type="button"
             className={lookupButtonStyles.lookupAddButton}
             onClick={openPricingPolicyModal}
-            disabled={calcMethodFormulas.length === 0 || pricingPolicySaving}
+            disabled={pricingPolicySaving}
           >
             Add Pricing Policy
           </button>
@@ -674,7 +650,6 @@ export default function CustomerBasicDataClient({
       return null;
     },
     [
-      calcMethodFormulas,
       countryOptions.length,
       openCityModal,
       openCountryModal,
@@ -959,25 +934,6 @@ export default function CustomerBasicDataClient({
             required
             onChange={(event) => setNewPricingPolicyName(event.target.value)}
           />
-        </div>
-        <div className={lookupStyles.field}>
-          <label className={lookupStyles.fieldLabel} htmlFor="customer-pricing-policy-calc">
-            Calc method formula
-          </label>
-          <select
-            id="customer-pricing-policy-calc"
-            className={lookupStyles.fieldControl}
-            value={newPricingPolicyCalcMethod}
-            required
-            onChange={(event) => setNewPricingPolicyCalcMethod(event.target.value)}
-          >
-            <option value="">Select calc method formula</option>
-            {calcMethodFormulas.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
         </div>
         <div className={lookupStyles.field}>
           <label className={lookupStyles.fieldLabel} htmlFor="customer-pricing-policy-enabled">

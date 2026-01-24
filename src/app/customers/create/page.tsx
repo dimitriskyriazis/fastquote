@@ -8,7 +8,6 @@ import {
   fetchCustomers,
   fetchImportanceOptions,
   fetchPricingPolicies,
-  fetchCalcMethodFormulas,
 } from '../[customerId]/customerBasicDataLookups';
 
 export default async function Page() {
@@ -19,7 +18,6 @@ export default async function Page() {
     importanceOptions,
     countries,
     cities,
-    calcMethodFormulas,
   ] = await Promise.all([
     fetchCustomerGroups(),
     fetchCustomers(),
@@ -27,7 +25,6 @@ export default async function Page() {
     fetchImportanceOptions(),
     fetchCountries(),
     fetchCities(),
-    fetchCalcMethodFormulas(),
   ]);
 
   const formId = 'customer-create-form';
@@ -60,7 +57,6 @@ export default async function Page() {
           importanceOptions={importanceOptions}
           countries={countries}
           cities={cities}
-          calcMethodFormulas={calcMethodFormulas}
           formId={formId}
         />
       </div>

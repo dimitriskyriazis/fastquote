@@ -39,6 +39,15 @@ export type PriceListPricingPolicy = {
 
 export type PricingPoliciesByBrand = Record<string, PriceListPricingPolicy[]>;
 
+export type PriceListPricingPolicyEntry = {
+  id: number;
+  priceListId: number;
+  pricingPolicyId: number;
+  pricingPolicyName: string | null;
+  pricingPolicyRuleId: number | null;
+  pricingPolicyRuleName: string | null;
+};
+
 export type PriceListBasicUpdateField =
   | "Name"
   | "ValidFromDate"

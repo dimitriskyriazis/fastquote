@@ -19,7 +19,6 @@ import layoutStyles from "../priceListDetail.module.css";
 import styles from "./PriceListImport.module.css";
 import lookupStyles from "../../components/LookupModal.module.css";
 import LookupModal from "../../components/LookupModal";
-import lookupButtonStyles from "../../components/LookupAddButton.module.css";
 import type { PricingPolicyRuleOption } from "../../../lib/lookupTypes";
 import UKDatePicker from "../../components/DatePicker";
 import {
@@ -47,14 +46,17 @@ type Props = {
   pricingPolicyRules: PricingPolicyRuleOption[];
   users: DropdownOption[];
   previousPriceLists: PreviousPriceListOption[];
-  calcMethodFormulas: DropdownOption[];
+};
+
+type PricingPolicySelection = {
+  pricingPolicyId: number;
+  pricingPolicyRuleId: number | null;
 };
 
 type FormValues = {
   name: string;
   brandId: string;
-  pricingPolicyId: string;
-  pricingPolicyRuleId: string;
+  pricingPolicies: PricingPolicySelection[];
   responsibleUserId: string;
   supplierId: string;
   hasDuty: boolean | null;
@@ -258,20 +260,11 @@ const INITIAL_VALIDATION: FileValidation = {
 const REQUIRED_FIELDS: Array<keyof FormValues> = [
   "name",
   "brandId",
-  "pricingPolicyId",
   "responsibleUserId",
   "supplierId",
   "validFromDate",
   "validToDate",
 ];
-
-const resolveDefaultPricingPolicyId = (options: DropdownOption[]): string => {
-  const normalizedTarget = "default pricing policy";
-  const byLabel = options.find((opt) => (opt.label ?? "").trim().toLowerCase() === normalizedTarget);
-  if (byLabel?.value) return byLabel.value;
-  const byValue = options.find((opt) => (opt.value ?? "").trim().toLowerCase() === normalizedTarget);
-  return byValue?.value ?? "";
-};
 
 const normalizeDate = (value: string) => {
   const trimmed = value.trim();
@@ -492,7 +485,6 @@ export default function PriceListImportClient({
   pricingPolicyRules,
   users,
   previousPriceLists,
-  calcMethodFormulas,
 }: Props) {
   const router = useRouter();
   const { userId: currentUserId } = useAuditUser();
@@ -505,16 +497,10 @@ export default function PriceListImportClient({
   }, [currencies]);
   const euroCurrencyLabel = "€";
 
-  const defaultPricingPolicyId = useMemo(
-    () => resolveDefaultPricingPolicyId(pricingPolicies),
-    [pricingPolicies],
-  );
-
   const [values, setValues] = useState<FormValues>(() => ({
     name: "",
     brandId: "",
-    pricingPolicyId: defaultPricingPolicyId,
-    pricingPolicyRuleId: "",
+    pricingPolicies: [],
     responsibleUserId: "",
     supplierId: "",
     hasDuty: false,
@@ -528,6 +514,9 @@ export default function PriceListImportClient({
     previousPriceListId: "",
     decimalFormat: "dotDecimal",
   }));
+  const [isAddingPolicy, setIsAddingPolicy] = useState(false);
+  const [newPolicyPricingPolicyId, setNewPolicyPricingPolicyId] = useState("");
+  const [newPolicyPricingPolicyRuleId, setNewPolicyPricingPolicyRuleId] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [fileValidation, setFileValidation] = useState<FileValidation>(INITIAL_VALIDATION);
   const validationRunId = useRef(0);
@@ -540,14 +529,6 @@ export default function PriceListImportClient({
   const [showBrandList, setShowBrandList] = useState(false);
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
   const [localPricingPolicyRules, setLocalPricingPolicyRules] = useState(pricingPolicyRules);
-  const [isAddPricingPolicyOpen, setIsAddPricingPolicyOpen] = useState(false);
-  const [newPricingPolicyName, setNewPricingPolicyName] = useState("");
-  const [newPricingPolicyEnabled, setNewPricingPolicyEnabled] = useState("1");
-  const [newPricingPolicyCalcMethod, setNewPricingPolicyCalcMethod] = useState(
-    calcMethodFormulas[0]?.value ?? "",
-  );
-  const [pricingPolicySaving, setPricingPolicySaving] = useState(false);
-  const [pricingPolicyError, setPricingPolicyError] = useState<string | null>(null);
   const [isAddPricingPolicyRuleOpen, setIsAddPricingPolicyRuleOpen] = useState(false);
   const [newRuleName, setNewRuleName] = useState("");
   const [newRulePricingPolicyId, setNewRulePricingPolicyId] = useState("");
@@ -566,18 +547,6 @@ export default function PriceListImportClient({
   useEffect(() => {
     setLocalPricingPolicyRules(pricingPolicyRules);
   }, [pricingPolicyRules]);
-
-  useEffect(() => {
-    if (calcMethodFormulas.length === 0) {
-      setNewPricingPolicyCalcMethod("");
-      return;
-    }
-    setNewPricingPolicyCalcMethod((prev) =>
-      calcMethodFormulas.some((option) => option.value === prev)
-        ? prev
-        : calcMethodFormulas[0].value,
-    );
-  }, [calcMethodFormulas]);
 
   // Automatically select current user as responsible user
   useEffect(() => {
@@ -606,67 +575,6 @@ export default function PriceListImportClient({
     return parseLocaleNumber(value);
   };
 
-  const openPricingPolicyModal = useCallback(() => {
-    setNewPricingPolicyName("");
-    setNewPricingPolicyEnabled("1");
-    setPricingPolicyError(null);
-    setNewPricingPolicyCalcMethod(calcMethodFormulas[0]?.value ?? "");
-    setIsAddPricingPolicyOpen(true);
-  }, [calcMethodFormulas]);
-
-  const handleCreatePricingPolicy = useCallback(async () => {
-    const trimmed = newPricingPolicyName.trim();
-    if (!trimmed) {
-      setPricingPolicyError("Name is required");
-      return;
-    }
-    if (!newPricingPolicyCalcMethod) {
-      setPricingPolicyError("Calc method formula is required");
-      return;
-    }
-    setPricingPolicySaving(true);
-    setPricingPolicyError(null);
-    try {
-      const response = await fetch("/api/pricing-policies", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: trimmed,
-          enabled: newPricingPolicyEnabled === "1",
-          calcMethodFormulasId: newPricingPolicyCalcMethod,
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | { ok?: boolean; option?: DropdownOption; error?: string }
-        | null;
-      const option = payload?.option;
-      if (!response.ok || !payload?.ok || !option) {
-        throw new Error(payload?.error ?? "Unable to add pricing policy");
-      }
-      setLocalPricingPolicies((prev) => [...prev, option]);
-      setValues((prev) => ({ ...prev, pricingPolicyId: option.value }));
-      showToastMessage("Pricing policy added", "success");
-      setIsAddPricingPolicyOpen(false);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to add pricing policy";
-      setPricingPolicyError(message);
-      showToastMessage(message, "error");
-    } finally {
-      setPricingPolicySaving(false);
-    }
-  }, [newPricingPolicyName, newPricingPolicyEnabled, newPricingPolicyCalcMethod]);
-
-  const openPricingPolicyRuleModal = useCallback(() => {
-    setNewRuleName("");
-    setNewRulePricingPolicyId("");
-    setNewRuleBrandId("");
-    setNewRuleTelmaco("");
-    setNewRuleCustomer("");
-    setNewRuleResponsibleUserId("");
-    setNewRuleComments("");
-    setPricingPolicyRuleError(null);
-    setIsAddPricingPolicyRuleOpen(true);
-  }, []);
 
   const handleCreatePricingPolicyRule = useCallback(async () => {
     const trimmedName = newRuleName.trim();
@@ -739,37 +647,6 @@ export default function PriceListImportClient({
     newRuleComments,
   ]);
 
-  const renderLookupAddButton = useCallback(
-    (fieldId: string) => {
-      if (fieldId === "pricingPolicy") {
-        return (
-          <button
-            type="button"
-            className={lookupButtonStyles.lookupAddButton}
-            onClick={openPricingPolicyModal}
-            disabled={calcMethodFormulas.length === 0 || pricingPolicySaving}
-          >
-            Add Pricing Policy
-          </button>
-        );
-      }
-      if (fieldId === "pricingPolicyRule") {
-        return (
-          <button
-            type="button"
-            className={lookupButtonStyles.lookupAddButton}
-            onClick={openPricingPolicyRuleModal}
-            disabled={pricingPolicyRuleSaving}
-          >
-            Add Rule
-          </button>
-        );
-      }
-      return null;
-    },
-    [calcMethodFormulas, openPricingPolicyModal, openPricingPolicyRuleModal, pricingPolicySaving, pricingPolicyRuleSaving],
-  );
-
   const filteredRules = useMemo(() => {
     const rawBrand = values.brandId.trim();
     const brandId = rawBrand ? Number(rawBrand) : null;
@@ -814,28 +691,43 @@ export default function PriceListImportClient({
     });
   }, [brandText, brands]);
 
-  useEffect(() => {
-    const brandId = Number(values.brandId);
-    const selectedRule = localPricingPolicyRules.find(
-      (rule) => rule.value === values.pricingPolicyRuleId,
-    );
-    if (
-      selectedRule &&
-      brandId &&
-      selectedRule.brandId &&
-      selectedRule.brandId !== brandId
-    ) {
-      setValues((prev) => ({ ...prev, pricingPolicyRuleId: "" }));
+  const availableRulesForPolicy = useMemo(() => {
+    if (!newPolicyPricingPolicyId) return [];
+    const policyId = Number.parseInt(newPolicyPricingPolicyId, 10);
+    return localPricingPolicyRules.filter((rule) => rule.pricingPolicyId === policyId);
+  }, [newPolicyPricingPolicyId, localPricingPolicyRules]);
+
+  const handleAddPricingPolicy = useCallback(() => {
+    const pricingPolicyId = Number.parseInt(newPolicyPricingPolicyId, 10);
+    if (!Number.isInteger(pricingPolicyId)) {
+      showToastMessage("Please select a pricing policy", "error");
+      return;
     }
 
-    if (
-      values.pricingPolicyId &&
-      filteredPolicyIds.size > 0 &&
-      !filteredPolicyIds.has(values.pricingPolicyId)
-    ) {
-      setValues((prev) => ({ ...prev, pricingPolicyId: "" }));
-    }
-  }, [filteredPolicyIds, localPricingPolicyRules, values.brandId, values.pricingPolicyId, values.pricingPolicyRuleId]);
+    setValues((prev) => ({
+      ...prev,
+      pricingPolicies: [
+        ...prev.pricingPolicies,
+        {
+          pricingPolicyId,
+          pricingPolicyRuleId: newPolicyPricingPolicyRuleId ? Number.parseInt(newPolicyPricingPolicyRuleId, 10) : null,
+        },
+      ],
+    }));
+    setNewPolicyPricingPolicyId("");
+    setNewPolicyPricingPolicyRuleId("");
+    setIsAddingPolicy(false);
+  }, [newPolicyPricingPolicyId, newPolicyPricingPolicyRuleId]);
+
+  const handleRemovePricingPolicy = useCallback(
+    (index: number) => {
+      setValues((prev) => ({
+        ...prev,
+        pricingPolicies: prev.pricingPolicies.filter((_, i) => i !== index),
+      }));
+    },
+    [],
+  );
 
   const updateField = useCallback(<K extends keyof FormValues>(key: K, value: FormValues[K]) => {
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -1067,6 +959,11 @@ export default function PriceListImportClient({
       return;
     }
 
+    if (values.pricingPolicies.length === 0) {
+      setError("Please add at least one pricing policy.");
+      return;
+    }
+
     if (missing.length > 0) {
       setError("Please complete all required fields and attach the file.");
       return;
@@ -1090,11 +987,14 @@ export default function PriceListImportClient({
         );
       }
 
+      if (values.pricingPolicies.length === 0) {
+        throw new Error("At least one pricing policy is required.");
+      }
+
       const formData = new FormData();
       formData.append("name", values.name);
       formData.append("brandId", values.brandId);
-      formData.append("pricingPolicyId", values.pricingPolicyId);
-      if (values.pricingPolicyRuleId) formData.append("pricingPolicyRuleId", values.pricingPolicyRuleId);
+      formData.append("pricingPolicies", JSON.stringify(values.pricingPolicies));
       formData.append("responsibleUserId", values.responsibleUserId);
       formData.append("supplierId", values.supplierId);
       formData.append("hasDuty", values.hasDuty ? "1" : "0");
@@ -1273,48 +1173,111 @@ export default function PriceListImportClient({
               </div>
 
               <div className={styles.fieldRow}>
-                <div className={styles.field}>
+                <div className={styles.field} style={{ gridColumn: '1 / -1' }}>
                   <div className={styles.lookupLabelRow}>
                     <div className={styles.labelText}>
-                      <label className={styles.label} htmlFor="import-pricing-policy">
-                        Pricing Policy <span className={styles.requiredMark}>*</span>
+                      <label className={styles.label}>
+                        Pricing Policies <span className={styles.requiredMark}>*</span>
                       </label>
                     </div>
-                    {renderLookupAddButton('pricingPolicy')}
                   </div>
-                  <select
-                    id="import-pricing-policy"
-                    className={styles.input}
-                    value={values.pricingPolicyId}
-                    required
-                    onChange={(e) => updateField("pricingPolicyId", e.target.value)}
-                  >
-                    <option value="">Select pricing policy</option>
-                    {filteredPolicies.map(renderOption)}
-                  </select>
-                </div>
-                <div className={styles.field}>
-                  <div className={styles.lookupLabelRow}>
-                    <div className={styles.labelText}>
-                      <label className={styles.label} htmlFor="import-pricing-policy-rule">
-                        Pricing Policy Rule
-                      </label>
+                  {values.pricingPolicies.length > 0 ? (
+                    <div className={styles.chipList} style={{ marginBottom: '8px' }}>
+                      {values.pricingPolicies.map((policy, index) => {
+                        const policyOption = localPricingPolicies.find((p) => Number(p.value) === policy.pricingPolicyId);
+                        const ruleOption = policy.pricingPolicyRuleId
+                          ? localPricingPolicyRules.find((r) => Number(r.value) === policy.pricingPolicyRuleId)
+                          : null;
+                        const policyLabel = policyOption?.label ?? `Policy ${policy.pricingPolicyId}`;
+                        const ruleLabel = ruleOption
+                          ? ` (Rule: ${ruleOption.label})`
+                          : policy.pricingPolicyRuleId
+                            ? ` (Rule ID: ${policy.pricingPolicyRuleId})`
+                            : '';
+                        return (
+                          <span key={index} className={styles.chip}>
+                            {policyLabel}
+                            {ruleLabel}
+                            <button
+                              type="button"
+                              className={styles.chipDelete}
+                              onClick={() => handleRemovePricingPolicy(index)}
+                              aria-label={`Remove ${policyLabel}`}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        );
+                      })}
                     </div>
-                    {renderLookupAddButton('pricingPolicyRule')}
-                  </div>
-                  <select
-                    id="import-pricing-policy-rule"
-                    className={styles.input}
-                    value={values.pricingPolicyRuleId}
-                    onChange={(e) => updateField("pricingPolicyRuleId", e.target.value)}
-                  >
-                    <option value="">No rule</option>
-                    {filteredRules.map((rule) => (
-                      <option key={rule.value} value={rule.value}>
-                        {rule.label}
-                      </option>
-                    ))}
-                  </select>
+                  ) : (
+                    <div className={styles.chipListEmpty} style={{ marginBottom: '8px' }}>
+                      No pricing policies selected.
+                    </div>
+                  )}
+                  {isAddingPolicy ? (
+                    <div className={styles.addPolicyForm}>
+                      <select
+                        className={styles.input}
+                        value={newPolicyPricingPolicyId}
+                        onChange={(e) => {
+                          setNewPolicyPricingPolicyId(e.target.value);
+                          setNewPolicyPricingPolicyRuleId('');
+                        }}
+                      >
+                        <option value="">Select Pricing Policy...</option>
+                        {filteredPolicies
+                          .filter(
+                            (p) => !values.pricingPolicies.some((plp) => plp.pricingPolicyId === Number(p.value)),
+                          )
+                          .map(renderOption)}
+                      </select>
+                      {newPolicyPricingPolicyId && availableRulesForPolicy.length > 0 && (
+                        <select
+                          className={styles.input}
+                          value={newPolicyPricingPolicyRuleId}
+                          onChange={(e) => setNewPolicyPricingPolicyRuleId(e.target.value)}
+                        >
+                          <option value="">All rules (no specific rule)</option>
+                          {availableRulesForPolicy.map((rule) => (
+                            <option key={rule.value} value={rule.value}>
+                              {rule.label}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <div className={styles.addPolicyActions}>
+                        <button
+                          type="button"
+                          className={styles.buttonPrimary}
+                          onClick={handleAddPricingPolicy}
+                          disabled={!newPolicyPricingPolicyId}
+                        >
+                          Add
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.buttonSecondary}
+                          onClick={() => {
+                            setIsAddingPolicy(false);
+                            setNewPolicyPricingPolicyId('');
+                            setNewPolicyPricingPolicyRuleId('');
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.buttonSecondary}
+                      onClick={() => setIsAddingPolicy(true)}
+                      disabled={filteredPolicies.length === 0}
+                    >
+                      + Add Pricing Policy
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1754,61 +1717,6 @@ export default function PriceListImportClient({
         </form>
       </section>
     </main>
-      <LookupModal
-        open={isAddPricingPolicyOpen}
-        title="Add Pricing Policy"
-        onClose={() => setIsAddPricingPolicyOpen(false)}
-        onConfirm={handleCreatePricingPolicy}
-        confirmLabel="Create"
-        saving={pricingPolicySaving}
-        error={pricingPolicyError}
-      >
-        <div className={lookupStyles.field}>
-          <label className={lookupStyles.fieldLabel} htmlFor="import-pricing-policy-name">
-            Name
-          </label>
-          <input
-            id="import-pricing-policy-name"
-            className={lookupStyles.fieldControl}
-            value={newPricingPolicyName}
-            required
-            onChange={(event) => setNewPricingPolicyName(event.target.value)}
-          />
-        </div>
-        <div className={lookupStyles.field}>
-          <label className={lookupStyles.fieldLabel} htmlFor="import-pricing-policy-calc">
-            Calc method formula
-          </label>
-          <select
-            id="import-pricing-policy-calc"
-            className={lookupStyles.fieldControl}
-            value={newPricingPolicyCalcMethod}
-            required
-            onChange={(event) => setNewPricingPolicyCalcMethod(event.target.value)}
-          >
-            <option value="">Select calc method formula</option>
-            {calcMethodFormulas.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className={lookupStyles.field}>
-          <label className={lookupStyles.fieldLabel} htmlFor="import-pricing-policy-enabled">
-            Enabled
-          </label>
-          <select
-            id="import-pricing-policy-enabled"
-            className={lookupStyles.fieldControl}
-            value={newPricingPolicyEnabled}
-            onChange={(event) => setNewPricingPolicyEnabled(event.target.value)}
-          >
-            <option value="1">Yes</option>
-            <option value="0">No</option>
-          </select>
-        </div>
-      </LookupModal>
       <LookupModal
         open={isAddPricingPolicyRuleOpen}
         title="Add Pricing Policy Rule"

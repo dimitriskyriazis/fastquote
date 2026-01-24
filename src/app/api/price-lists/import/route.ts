@@ -618,8 +618,7 @@ export async function POST(req: NextRequest) {
     const name = normalizeString(formData.get("name"), 255);
     const comments = normalizeString(formData.get("comments"), 2000);
     const supplierComments = normalizeString(formData.get("supplierComments"), 2000);
-    const pricingPolicyId = normalizeInt(formData.get("pricingPolicyId"));
-    const pricingPolicyRuleId = normalizeInt(formData.get("pricingPolicyRuleId"));
+    const pricingPoliciesRaw = formData.get("pricingPolicies");
     const responsibleUserId = normalizeUserId(formData.get("responsibleUserId"));
     const supplierId = normalizeInt(formData.get("supplierId"));
     const hasDuty = normalizeBool(formData.get("hasDuty"));
@@ -633,10 +632,31 @@ export async function POST(req: NextRequest) {
     const columnMappings = parseColumnMappings(formData.get("columnMappings"));
     const decimalFormat = normalizePriceListDecimalFormat(formData.get("decimalFormat"));
 
+    const parsePricingPolicies = (value: unknown): Array<{ pricingPolicyId: number; pricingPolicyRuleId: number | null }> => {
+      if (typeof value !== "string") return [];
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        if (!Array.isArray(parsed)) return [];
+        return parsed
+          .map((entry) => {
+            if (typeof entry !== "object" || entry === null) return null;
+            const policyId = normalizeInt((entry as { pricingPolicyId?: unknown }).pricingPolicyId);
+            const ruleId = normalizeInt((entry as { pricingPolicyRuleId?: unknown }).pricingPolicyRuleId);
+            if (policyId == null) return null;
+            return { pricingPolicyId: policyId, pricingPolicyRuleId: ruleId };
+          })
+          .filter((val): val is { pricingPolicyId: number; pricingPolicyRuleId: number | null } => val !== null);
+      } catch {
+        return [];
+      }
+    };
+
+    const pricingPolicies = parsePricingPolicies(pricingPoliciesRaw);
+
     const errors: string[] = [];
     if (!name) errors.push("Price list name is required.");
     if (!brandId) errors.push("Brand is required.");
-    if (!pricingPolicyId) errors.push("Pricing policy is required.");
+    if (pricingPolicies.length === 0) errors.push("At least one pricing policy is required.");
     if (!responsibleUserId) errors.push("Responsible user is required.");
     if (!supplierId) errors.push("Supplier is required.");
     if (!validFromDate) errors.push("Valid from date is required.");
@@ -691,50 +711,52 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Enforce pricing policy rules exist for this policy (brand-specific or default).
-    // This ensures Telmaco/Customer discounts can be resolved later.
-    const policyRuleCheck = await pool.request()
-      .input('__ppid', sql.Int, pricingPolicyId)
-      .input('__brandId', sql.Int, brandId)
-      .query<{ cnt: number }>(`
-        SELECT COUNT(1) AS cnt
-        FROM dbo.PricingPolicyRules ppr
-        WHERE ppr.PricingPolicyID = @__ppid
-          AND (ppr.BrandID = @__brandId OR ppr.BrandID IS NULL)
-      `);
-    const applicableRuleCount = policyRuleCheck.recordset?.[0]?.cnt ?? 0;
-    if (applicableRuleCount <= 0) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: 'Selected pricing policy has no applicable rules for this brand. Create a default (All brands) rule or a brand-specific rule first.',
-        },
-        { status: 400 },
-      );
-    }
-
-    // If a specific rule is provided, validate it matches the selected pricing policy and brand (or is a default rule).
-    if (pricingPolicyRuleId != null) {
-      const ruleCheck = await pool.request()
-        .input('__ruleId', sql.Int, pricingPolicyRuleId)
-        .input('__ppid', sql.Int, pricingPolicyId)
-        .input('__brandId', sql.Int, brandId)
-        .query<{ cnt: number }>(`
-          SELECT COUNT(1) AS cnt
-          FROM dbo.PricingPolicyRules ppr
-          WHERE ppr.ID = @__ruleId
-            AND ppr.PricingPolicyID = @__ppid
-            AND (ppr.BrandID = @__brandId OR ppr.BrandID IS NULL)
-        `);
-      const validRuleCount = ruleCheck.recordset?.[0]?.cnt ?? 0;
-      if (validRuleCount <= 0) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: 'Selected pricing policy rule does not match the chosen pricing policy/brand.',
-          },
-          { status: 400 },
-        );
+    // Validate all pricing policies have applicable rules
+    for (const policy of pricingPolicies) {
+      if (policy.pricingPolicyRuleId != null) {
+        // Validate specific rule matches policy and brand
+        const ruleCheck = await pool.request()
+          .input('__ruleId', sql.Int, policy.pricingPolicyRuleId)
+          .input('__ppid', sql.Int, policy.pricingPolicyId)
+          .input('__brandId', sql.Int, brandId)
+          .query<{ cnt: number }>(`
+            SELECT COUNT(1) AS cnt
+            FROM dbo.PricingPolicyRules ppr
+            WHERE ppr.ID = @__ruleId
+              AND ppr.PricingPolicyID = @__ppid
+              AND (ppr.BrandID = @__brandId OR ppr.BrandID IS NULL)
+          `);
+        const validRuleCount = ruleCheck.recordset?.[0]?.cnt ?? 0;
+        if (validRuleCount <= 0) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: `Pricing policy rule ${policy.pricingPolicyRuleId} does not match policy ${policy.pricingPolicyId} and brand ${brandId}.`,
+            },
+            { status: 400 },
+          );
+        }
+      } else {
+        // Validate policy has applicable rules for this brand
+        const policyRuleCheck = await pool.request()
+          .input('__ppid', sql.Int, policy.pricingPolicyId)
+          .input('__brandId', sql.Int, brandId)
+          .query<{ cnt: number }>(`
+            SELECT COUNT(1) AS cnt
+            FROM dbo.PricingPolicyRules ppr
+            WHERE ppr.PricingPolicyID = @__ppid
+              AND (ppr.BrandID = @__brandId OR ppr.BrandID IS NULL)
+          `);
+        const applicableRuleCount = policyRuleCheck.recordset?.[0]?.cnt ?? 0;
+        if (applicableRuleCount <= 0) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: `Pricing policy ${policy.pricingPolicyId} has no applicable rules for brand ${brandId}. Create a default (All brands) rule or a brand-specific rule first.`,
+            },
+            { status: 400 },
+          );
+        }
       }
     }
 
@@ -770,8 +792,6 @@ export async function POST(req: NextRequest) {
       priceListRequest.input("BrandID", sql.Int, brandId);
       priceListRequest.input("Comments", sql.NVarChar(2000), comments);
       priceListRequest.input("SupplierComment", sql.NVarChar(2000), supplierComments);
-      priceListRequest.input("PricingPolicyID", sql.Int, pricingPolicyId);
-      priceListRequest.input("PricingPolicyRuleID", sql.Int, pricingPolicyRuleId);
       priceListRequest.input("ResponsibleUserId", sql.NVarChar(450), responsibleUserId);
       priceListRequest.input("SupplierID", sql.Int, supplierId);
       priceListRequest.input("HasDuty", sql.Bit, hasDuty ?? false);
@@ -791,8 +811,6 @@ export async function POST(req: NextRequest) {
           BrandID,
           Comments,
           SupplierComment,
-          PricingPolicyID,
-          PricingPolicyRuleID,
           ResponsibleUserId,
           SupplierID,
           HasDuty,
@@ -816,8 +834,6 @@ export async function POST(req: NextRequest) {
           @BrandID,
           @Comments,
           @SupplierComment,
-          @PricingPolicyID,
-          @PricingPolicyRuleID,
           @ResponsibleUserId,
           @SupplierID,
           @HasDuty,
@@ -840,6 +856,26 @@ export async function POST(req: NextRequest) {
       const priceListId =
         (insertPriceList.recordset?.[0] as { PriceListID?: number } | undefined)?.PriceListID ?? null;
       if (!priceListId) throw new Error("Failed to create price list");
+
+      // Create PriceListPricingPolicy entries for each pricing policy
+      for (const policy of pricingPolicies) {
+        const policyRequest = createRequest(transaction);
+        policyRequest.input("PriceListID", sql.Int, priceListId);
+        policyRequest.input("PricingPolicyID", sql.Int, policy.pricingPolicyId);
+        policyRequest.input("PricingPolicyRuleID", sql.Int, policy.pricingPolicyRuleId);
+        await policyRequest.query(`
+          INSERT INTO dbo.PriceListPricingPolicy (
+            PriceListID,
+            PricingPolicyID,
+            PricingPolicyRuleID
+          )
+          VALUES (
+            @PriceListID,
+            @PricingPolicyID,
+            @PricingPolicyRuleID
+          )
+        `);
+      }
 
       if (previousPriceListId) {
         const disableRequest = createRequest(transaction);

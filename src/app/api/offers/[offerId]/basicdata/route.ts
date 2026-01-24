@@ -46,7 +46,6 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   MarketID: { column: 'MarketID', type: 'number', sqlType: sql.Int },
   SalesPersonId: { column: 'SalesPersonId', type: 'string', sqlType: sql.NVarChar, length: 450 },
   ApprovalUserId: { column: 'ApprovalUserId', type: 'string', sqlType: sql.NVarChar, length: 450 },
-  DefaultCalcMethodFormulasID: { column: 'DefaultCalcMethodFormulasID', type: 'string', sqlType: sql.NVarChar, length: 100 },
   ProjectID: { column: 'ProjectID', type: 'number', sqlType: sql.Int },
   CustomerRef: { column: 'CustomerRef', type: 'string', sqlType: sql.NVarChar, length: 500 },
   InitialRequest: { column: 'InitialRequest', type: 'date', sqlType: sql.DateTime2 },

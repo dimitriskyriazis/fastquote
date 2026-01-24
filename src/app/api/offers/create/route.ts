@@ -18,7 +18,6 @@ type CreateOfferRequestBody = {
   salesCreationPersonId?: string | null;
   salesPersonId?: string | null;
   approvalUserId?: string | null;
-  defaultCalcMethodFormulasId?: string | number | null;
   installationSchedule?: string | null;
   closingNote?: string | null;
   introNote?: string | null;
@@ -116,7 +115,6 @@ export async function POST(req: NextRequest) {
     const closingNote = normalizeString(body?.closingNote, 2000);
     const introNote = normalizeString(body?.introNote, 2000);
     const telmacoNote = normalizeString(body?.telmacoNote, 2000);
-    const defaultCalcMethodFormulasId = normalizeString(body?.defaultCalcMethodFormulasId, 100);
     const approvalUserId = normalizeUserId(body?.approvalUserId);
 
   const auditUserId = resolveAuditUserId(req);
@@ -152,7 +150,6 @@ export async function POST(req: NextRequest) {
     if (!marketId) errors.push('Market is required.');
     if (!salesDivisionId) errors.push('Sales division is required.');
     if (!salesCreationPersonId) errors.push('Sales creation person is required.');
-    if (!defaultCalcMethodFormulasId) errors.push('Default calc method formula is required.');
     if (!salesPersonId) errors.push('Sales person is required.');
 
     if (errors.length > 0) {
@@ -259,7 +256,6 @@ export async function POST(req: NextRequest) {
     request.input('Comments', sql.NVarChar(2000), telmacoNote);
     request.input('ContactID', sql.Int, contactId);
     request.input('OfferContact', sql.NVarChar(500), offerContact);
-    request.input('DefaultCalcMethodFormulasID', sql.NVarChar(100), defaultCalcMethodFormulasId);
     request.input('ProjectID', sql.Int, projectId);
     request.input('PrintLevelGroupingID', sql.Int, 1);
     request.input('CustomerRef', sql.NVarChar(500), customerRef);
@@ -296,7 +292,6 @@ export async function POST(req: NextRequest) {
         Comments,
         ContactID,
         OfferContact,
-        DefaultCalcMethodFormulasID,
         ProjectID,
         PrintLevelGroupingID,
         CustomerRef,
@@ -337,7 +332,6 @@ export async function POST(req: NextRequest) {
         @Comments,
         @ContactID,
         @OfferContact,
-        @DefaultCalcMethodFormulasID,
         @ProjectID,
         @PrintLevelGroupingID,
         @CustomerRef,

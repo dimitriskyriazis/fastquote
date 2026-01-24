@@ -108,21 +108,6 @@ async function fetchUsers(): Promise<DropdownOption[]> {
   }
 }
 
-async function fetchCalcMethodFormulas(): Promise<DropdownOption[]> {
-  try {
-    const pool = await getPool();
-    const result = await pool.request().query<RawDropdownRow>(`
-      SELECT ID, Name
-      FROM dbo.CalcMethodFormulas
-      ORDER BY Name
-    `);
-    return toOptions(result.recordset);
-  } catch (err) {
-    console.error("Failed to load calc method formulas", err);
-    return [];
-  }
-}
-
 async function fetchPreviousPriceLists(): Promise<PreviousPriceListOption[]> {
   try {
     const pool = await getPool();
@@ -222,13 +207,12 @@ export default async function PriceListImportPage() {
       }),
   ]);
 
-  const [pricingPolicies, pricingPolicyRules, users, previousPriceLists, calcMethodFormulas] =
+  const [pricingPolicies, pricingPolicyRules, users, previousPriceLists] =
     await Promise.all([
       fetchPricingPolicies(),
       fetchPricingPolicyRules(),
       fetchUsers(),
       fetchPreviousPriceLists(),
-      fetchCalcMethodFormulas(),
     ]);
 
   return (
@@ -241,7 +225,6 @@ export default async function PriceListImportPage() {
       pricingPolicyRules={pricingPolicyRules}
       users={users}
       previousPriceLists={previousPriceLists}
-      calcMethodFormulas={calcMethodFormulas}
     />
   );
 }
