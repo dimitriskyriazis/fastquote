@@ -1,5 +1,6 @@
 import PricingPoliciesClient, { PricingPolicyColumn } from "./PricingPoliciesClient";
 import { getPool } from "../../lib/sql";
+import { toDropdownOptions, type RawDropdownRow } from "../../lib/dropdownOptions";
 
 async function fetchPricingPolicies(): Promise<PricingPolicyColumn[]> {
   try {
@@ -21,8 +22,26 @@ async function fetchPricingPolicies(): Promise<PricingPolicyColumn[]> {
   }
 }
 
+async function fetchBrands() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<RawDropdownRow>(`
+      SELECT ID, Name
+      FROM dbo.Brands
+      ORDER BY Name
+    `);
+    return toDropdownOptions(result.recordset);
+  } catch (err) {
+    console.error("Failed to fetch brands", err);
+    return [];
+  }
+}
+
 export default async function Page() {
-  const pricingPolicies = await fetchPricingPolicies();
-  return <PricingPoliciesClient pricingPolicies={pricingPolicies} />;
+  const [pricingPolicies, brands] = await Promise.all([
+    fetchPricingPolicies(),
+    fetchBrands(),
+  ]);
+  return <PricingPoliciesClient pricingPolicies={pricingPolicies} brands={brands} />;
 }
 

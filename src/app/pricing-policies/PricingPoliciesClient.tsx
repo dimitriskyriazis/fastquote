@@ -25,6 +25,7 @@ import lookupStyles from "../components/LookupModal.module.css";
 import type { DropdownOption } from "../../lib/dropdownOptions";
 import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from "../components/useActionMenuCoordinator";
 import { useActionMenuPosition } from "../components/useActionMenuPosition";
+import { useAuditUser } from "../components/AuditUserProvider";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -38,6 +39,7 @@ export type PricingPolicyColumn = {
 
 type Props = {
   pricingPolicies: PricingPolicyColumn[];
+  brands: DropdownOption[];
 };
 
 type PolicyCell = { telmacoDiscount: number | null; customerDiscount: number | null };
@@ -193,9 +195,10 @@ const isDefaultPricingPolicyName = (name: string): boolean => {
   return /\bdefault\b/i.test(normalized);
 };
 
-export default function PricingPoliciesClient({ pricingPolicies }: Props) {
+export default function PricingPoliciesClient({ pricingPolicies, brands }: Props) {
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const pendingGrandTotalRef = useRef<Record<string, unknown> | null>(null);
+  const { userId } = useAuditUser();
 
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
   useEffect(() => {
@@ -209,6 +212,15 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
   const [pricingPolicyError, setPricingPolicyError] = useState<string | null>(null);
   const [pricingPolicyDeleting, setPricingPolicyDeleting] = useState(false);
   const [brandDeleting, setBrandDeleting] = useState(false);
+
+  // Add Brand modal state
+  const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
+  const [brandText, setBrandText] = useState("");
+  const [selectedBrandId, setSelectedBrandId] = useState<string>("");
+  const [isBrandListOpen, setIsBrandListOpen] = useState(false);
+  const [brandSaving, setBrandSaving] = useState(false);
+  const [brandError, setBrandError] = useState<string | null>(null);
+  const brandListTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const orderedPricingPolicies = useMemo(() => {
     const defaults = localPricingPolicies.filter((policy) => isDefaultPricingPolicyName(policy.name));
@@ -227,6 +239,113 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
     setNewPricingPolicyEnabled(true);
     setIsAddPricingPolicyOpen(true);
   }, []);
+
+  const cancelBrandListClose = useCallback(() => {
+    if (brandListTimerRef.current) {
+      clearTimeout(brandListTimerRef.current);
+      brandListTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleBrandListClose = useCallback(() => {
+    cancelBrandListClose();
+    brandListTimerRef.current = setTimeout(() => {
+      setIsBrandListOpen(false);
+      brandListTimerRef.current = null;
+    }, 120);
+  }, [cancelBrandListClose]);
+
+  const handleBrandInputFocus = useCallback(() => {
+    cancelBrandListClose();
+    setIsBrandListOpen(true);
+  }, [cancelBrandListClose]);
+
+  const handleBrandInputBlur = useCallback(() => {
+    scheduleBrandListClose();
+  }, [scheduleBrandListClose]);
+
+  const handleBrandInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    setBrandText(value);
+    setSelectedBrandId("");
+    setIsBrandListOpen(true);
+  }, []);
+
+  const handleBrandOptionSelect = useCallback(
+    (option: DropdownOption) => {
+      cancelBrandListClose();
+      setSelectedBrandId(option.value);
+      setBrandText(option.label);
+      setIsBrandListOpen(false);
+    },
+    [cancelBrandListClose],
+  );
+
+  const filteredBrandOptions = useMemo(() => {
+    const query = brandText.trim().toLowerCase();
+    if (!query) return brands;
+    return brands.filter((option) => {
+      const label = option.label.toLowerCase();
+      const value = option.value.toLowerCase();
+      return label.includes(query) || value.includes(query);
+    });
+  }, [brands, brandText]);
+
+  useEffect(() => () => cancelBrandListClose(), [cancelBrandListClose]);
+  useEffect(() => {
+    if (!isAddBrandOpen) {
+      setBrandText("");
+      setSelectedBrandId("");
+      setIsBrandListOpen(false);
+    }
+  }, [isAddBrandOpen]);
+
+  const openAddBrandModal = useCallback(() => {
+    setBrandText("");
+    setSelectedBrandId("");
+    setBrandError(null);
+    setIsBrandListOpen(false);
+    setIsAddBrandOpen(true);
+  }, []);
+
+  const handleAddBrand = useCallback(async () => {
+    if (!selectedBrandId) {
+      setBrandError("Please select a brand");
+      return;
+    }
+    setBrandSaving(true);
+    setBrandError(null);
+    try {
+      const response = await fetch("/api/pricing-policies/matrix/add-brand", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          brandId: selectedBrandId,
+          responsibleUserId: userId,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; createdCount?: number }
+        | null;
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? "Unable to add brand");
+      }
+      showToastMessage("Brand added to pricing policies", "success");
+      setIsAddBrandOpen(false);
+      try {
+        gridApiRef.current?.refreshServerSide?.({ purge: true });
+      } catch {
+        /* noop */
+      }
+    } catch (err) {
+      console.error("Failed to add brand", err);
+      const message = err instanceof Error ? err.message : "Unable to add brand";
+      setBrandError(message);
+      showToastMessage(message, "error");
+    } finally {
+      setBrandSaving(false);
+    }
+  }, [selectedBrandId, userId]);
 
   const enforceDefaultPolicyFirst = useCallback((api: GridApi<Record<string, unknown>> | null) => {
     if (!api) return;
@@ -513,6 +632,9 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
             void deletePricingPolicy(id);
           },
         },
+        suppressHeaderMenuButton: true,
+        sortable: false,
+        resizable: false,
         children: [
           {
             headerName: "Telmaco Discount",
@@ -530,7 +652,7 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
               if (params.node?.rowPinned) return false;
               const row = params.data as MatrixRow | null | undefined;
               if (row?.BrandID == null) return false;
-              return Boolean(row?.policies?.[policyId]);
+              return true; // Allow editing if BrandID exists
             },
             cellEditor: "agTextCellEditor",
             valueSetter: (params: ValueSetterParams<Record<string, unknown>, unknown>) => {
@@ -560,7 +682,7 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
               if (params.node?.rowPinned) return false;
               const row = params.data as MatrixRow | null | undefined;
               if (row?.BrandID == null) return false;
-              return Boolean(row?.policies?.[policyId]);
+              return true; // Allow editing if BrandID exists
             },
             cellEditor: "agTextCellEditor",
             valueSetter: (params: ValueSetterParams<Record<string, unknown>, unknown>) => {
@@ -599,15 +721,26 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
       <PageHeader
         title="Pricing Policies"
         rightActions={
-          <button
-            type="button"
-            className={`${styles.addButton} page-header-button`}
-            onClick={openAddPricingPolicyModal}
-            disabled={pricingPolicySaving}
-            title="Add pricing policy"
-          >
-            Add Pricing Policy
-          </button>
+          <>
+            <button
+              type="button"
+              className={`${styles.addButton} page-header-button`}
+              onClick={openAddBrandModal}
+              disabled={brandSaving || pricingPolicySaving}
+              title="Add brand"
+            >
+              Add Brand
+            </button>
+            <button
+              type="button"
+              className={`${styles.addButton} page-header-button`}
+              onClick={openAddPricingPolicyModal}
+              disabled={pricingPolicySaving}
+              title="Add pricing policy"
+            >
+              Add Pricing Policy
+            </button>
+          </>
         }
       >
         <GridQuickSearchProvider>
@@ -657,6 +790,53 @@ export default function PricingPoliciesClient({ pricingPolicies }: Props) {
             />
             Enabled
           </label>
+        </div>
+      </LookupModal>
+      <LookupModal
+        open={isAddBrandOpen}
+        title="Add Brand"
+        onClose={() => setIsAddBrandOpen(false)}
+        onConfirm={() => void handleAddBrand()}
+        confirmLabel="Add"
+        saving={brandSaving}
+        error={brandError}
+        cardClassName={styles.modalTall}
+        bodyClassName={styles.modalBodyTall}
+      >
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="add-brand-input">
+            Brand <span className={lookupStyles.requiredMark}>*</span>
+          </label>
+          <div className={styles.comboWrapper}>
+            <input
+              id="add-brand-input"
+              autoComplete="off"
+              className={lookupStyles.fieldControl}
+              value={brandText}
+              placeholder="Type to filter brands..."
+              onChange={handleBrandInputChange}
+              onFocus={handleBrandInputFocus}
+              onBlur={handleBrandInputBlur}
+              required
+            />
+            {isBrandListOpen && filteredBrandOptions.length > 0 ? (
+              <div className={styles.comboList}>
+                {filteredBrandOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={styles.comboOption}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      handleBrandOptionSelect(option);
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
       </LookupModal>
     </main>

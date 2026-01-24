@@ -163,7 +163,45 @@ export async function PATCH(req: NextRequest) {
     }
 
     const pool = await getPool();
+    const auditUserId = resolveAuditUserId(req);
 
+    // Get brand and pricing policy names
+    const namesReq = pool.request();
+    namesReq.input("__brandId", sql.Int, brandId);
+    namesReq.input("__pricingPolicyId", sql.Int, pricingPolicyId);
+    const namesRes = await namesReq.query<{
+      BrandName: string | null;
+      PricingPolicyName: string | null;
+    }>(`
+      SELECT
+        b.Name AS BrandName,
+        pp.Name AS PricingPolicyName
+      FROM dbo.Brands b
+      CROSS JOIN dbo.PricingPolicies pp
+      WHERE b.ID = @__brandId
+        AND pp.ID = @__pricingPolicyId
+    `);
+    const namesRow = namesRes.recordset?.[0];
+    if (!namesRow) {
+      return NextResponse.json({ ok: false, error: "Brand or pricing policy not found" }, { status: 404 });
+    }
+
+    const brandName = namesRow.BrandName?.trim() || `Brand ${brandId}`;
+    const pricingPolicyName = namesRow.PricingPolicyName?.trim() || `Policy ${pricingPolicyId}`;
+    const ruleName = `${brandName} - ${pricingPolicyName}`;
+
+    // Check for existing rule with NULL PricingPolicyID (created via Add Brand)
+    const nullPolicyCheck = pool.request();
+    nullPolicyCheck.input("__brandId", sql.Int, brandId);
+    const nullPolicyRes = await nullPolicyCheck.query<{ count: number | bigint | null }>(`
+      SELECT COUNT_BIG(1) AS count
+      FROM dbo.PricingPolicyRules
+      WHERE BrandID = @__brandId
+        AND PricingPolicyID IS NULL
+    `);
+    const hasNullPolicyRule = Number(nullPolicyRes.recordset?.[0]?.count ?? 0) > 0;
+
+    // Check for any existing rules for this brand/policy combination
     const existsReq = pool.request();
     existsReq.input("__brandId", sql.Int, brandId);
     existsReq.input("__pricingPolicyId", sql.Int, pricingPolicyId);
@@ -173,15 +211,7 @@ export async function PATCH(req: NextRequest) {
       WHERE BrandID = @__brandId
         AND PricingPolicyID = @__pricingPolicyId
     `);
-    const count = Number(existsRes.recordset?.[0]?.count ?? 0);
-    if (!Number.isFinite(count) || count <= 0) {
-      return NextResponse.json(
-        { ok: false, error: "No pricing policy rules found for this brand/policy." },
-        { status: 404 },
-      );
-    }
-
-    const auditUserId = resolveAuditUserId(req);
+    const hasAnyRule = Number(existsRes.recordset?.[0]?.count ?? 0) > 0;
 
     const columnCheck = await pool
       .request()
@@ -197,38 +227,180 @@ export async function PATCH(req: NextRequest) {
       field === "telmaco" ? "TelmacoDiscountPercentage" : "CustomerDiscountPercentage";
     const modifiedByClause = hasModifiedBy ? ", ModifiedBy = @__userId" : "";
 
-    const updateSql = `
-      DECLARE @CurrentMin NUMERIC(18, 6);
-      SELECT @CurrentMin = MIN(ppr.[${discountColumn}])
-      FROM dbo.PricingPolicyRules ppr
-      WHERE ppr.BrandID = @__brandId
-        AND ppr.PricingPolicyID = @__pricingPolicyId;
+    if (hasNullPolicyRule) {
+      // Get current discount values from the NULL PricingPolicyID rule
+      const currentDiscountsReq = pool.request();
+      currentDiscountsReq.input("__brandId", sql.Int, brandId);
+      const currentDiscountsRes = await currentDiscountsReq.query<{
+        TelmacoDiscount: number | null;
+        CustomerDiscount: number | null;
+      }>(`
+        SELECT
+          TelmacoDiscountPercentage AS TelmacoDiscount,
+          CustomerDiscountPercentage AS CustomerDiscount
+        FROM dbo.PricingPolicyRules
+        WHERE BrandID = @__brandId
+          AND PricingPolicyID IS NULL
+      `);
+      const currentDiscounts = currentDiscountsRes.recordset?.[0];
+      const currentTelmaco = currentDiscounts?.TelmacoDiscount ?? null;
+      const currentCustomer = currentDiscounts?.CustomerDiscount ?? null;
+      const newTelmaco = field === "telmaco" ? value : currentTelmaco;
+      const newCustomer = field === "customer" ? value : currentCustomer;
 
-      IF @CurrentMin IS NULL
-      BEGIN
-        THROW 50000, 'Unable to resolve current minimum discount for this brand/policy.', 1;
-      END
+      const updateReq = pool.request();
+      updateReq.input("__brandId", sql.Int, brandId);
+      updateReq.input("__pricingPolicyId", sql.Int, pricingPolicyId);
+      updateReq.input("__name", sql.NVarChar(512), ruleName);
+      if (newTelmaco != null) {
+        updateReq.input("__telmaco", sql.TYPES.Numeric(9, 6), newTelmaco);
+      }
+      if (newCustomer != null) {
+        updateReq.input("__customer", sql.TYPES.Numeric(9, 6), newCustomer);
+      }
+      updateReq.input("__userId", sql.NVarChar(450), auditUserId ?? null);
 
-      UPDATE dbo.PricingPolicyRules
-      SET [${discountColumn}] = @__value,
-          ModifiedOn = SYSUTCDATETIME()
-          ${modifiedByClause}
-      WHERE BrandID = @__brandId
-        AND PricingPolicyID = @__pricingPolicyId
-        AND ([${discountColumn}] < @__value OR [${discountColumn}] = @CurrentMin);
+      const telmacoClause = newTelmaco != null ? "@__telmaco" : "NULL";
+      const customerClause = newCustomer != null ? "@__customer" : "NULL";
 
-      SELECT @@ROWCOUNT AS UpdatedCount;
-    `;
+      const updateSql = `
+        UPDATE dbo.PricingPolicyRules
+        SET Name = @__name,
+            PricingPolicyID = @__pricingPolicyId,
+            TelmacoDiscountPercentage = ${telmacoClause},
+            CustomerDiscountPercentage = ${customerClause},
+            ModifiedOn = SYSUTCDATETIME()
+            ${modifiedByClause}
+        WHERE BrandID = @__brandId
+          AND PricingPolicyID IS NULL;
 
-    const updateReq = pool.request();
-    updateReq.input("__brandId", sql.Int, brandId);
-    updateReq.input("__pricingPolicyId", sql.Int, pricingPolicyId);
-    updateReq.input("__value", sql.TYPES.Numeric(9, 6), value);
-    updateReq.input("__userId", sql.NVarChar(450), auditUserId ?? null);
+        SELECT @@ROWCOUNT AS UpdatedCount;
+      `;
 
-    const updateRes = await updateReq.query<{ UpdatedCount: number | null }>(updateSql);
-    const updatedCount = updateRes.recordset?.[0]?.UpdatedCount ?? 0;
-    return NextResponse.json({ ok: true, updatedCount });
+      const updateRes = await updateReq.query<{ UpdatedCount: number | null }>(updateSql);
+      const updatedCount = updateRes.recordset?.[0]?.UpdatedCount ?? 0;
+      return NextResponse.json({ ok: true, updatedCount });
+    } else if (!hasAnyRule) {
+      // Create new rule with name, PricingPolicyID, and discounts
+      const newTelmaco = field === "telmaco" ? value : null;
+      const newCustomer = field === "customer" ? value : null;
+
+      const columns = [
+        "[Name]",
+        "[PricingPolicyID]",
+        "[BrandID]",
+        "[TelmacoDiscountPercentage]",
+        "[CustomerDiscountPercentage]",
+        "[CreatedOn]",
+        "[CreatedBy]",
+        "[ModifiedOn]",
+        hasModifiedBy ? "[ModifiedBy]" : null,
+      ].filter(Boolean);
+      const values = [
+        "@__name",
+        "@__pricingPolicyId",
+        "@__brandId",
+        newTelmaco != null ? "@__telmaco" : "NULL",
+        newCustomer != null ? "@__customer" : "NULL",
+        "SYSUTCDATETIME()",
+        "@__userId",
+        "SYSUTCDATETIME()",
+        hasModifiedBy ? "@__userId" : null,
+      ].filter(Boolean);
+
+      const insertReq = pool.request();
+      insertReq.input("__name", sql.NVarChar(512), ruleName);
+      insertReq.input("__pricingPolicyId", sql.Int, pricingPolicyId);
+      insertReq.input("__brandId", sql.Int, brandId);
+      if (newTelmaco != null) {
+        insertReq.input("__telmaco", sql.TYPES.Numeric(9, 6), newTelmaco);
+      }
+      if (newCustomer != null) {
+        insertReq.input("__customer", sql.TYPES.Numeric(9, 6), newCustomer);
+      }
+      insertReq.input("__userId", sql.NVarChar(450), auditUserId ?? null);
+
+      await insertReq.query(`
+        INSERT INTO dbo.PricingPolicyRules (${columns.join(", ")})
+        VALUES (${values.join(", ")})
+      `);
+
+      return NextResponse.json({ ok: true, updatedCount: 1 });
+    } else {
+      // Update existing rule (with PricingPolicyID) - check if discount is NULL
+      const currentDiscountReq = pool.request();
+      currentDiscountReq.input("__brandId", sql.Int, brandId);
+      currentDiscountReq.input("__pricingPolicyId", sql.Int, pricingPolicyId);
+      const currentDiscountRes = await currentDiscountReq.query<{
+        CurrentDiscount: number | null;
+      }>(`
+        SELECT [${discountColumn}] AS CurrentDiscount
+        FROM dbo.PricingPolicyRules
+        WHERE BrandID = @__brandId
+          AND PricingPolicyID = @__pricingPolicyId
+      `);
+      const currentDiscount = currentDiscountRes.recordset?.[0]?.CurrentDiscount ?? null;
+
+      const modifiedByClause = hasModifiedBy ? ", ModifiedBy = @__userId" : "";
+
+      if (currentDiscount == null) {
+        // If current discount is NULL, just update it directly
+        const updateReq = pool.request();
+        updateReq.input("__brandId", sql.Int, brandId);
+        updateReq.input("__pricingPolicyId", sql.Int, pricingPolicyId);
+        updateReq.input("__value", sql.TYPES.Numeric(9, 6), value);
+        updateReq.input("__userId", sql.NVarChar(450), auditUserId ?? null);
+
+        const updateSql = `
+          UPDATE dbo.PricingPolicyRules
+          SET [${discountColumn}] = @__value,
+              ModifiedOn = SYSUTCDATETIME()
+              ${modifiedByClause}
+          WHERE BrandID = @__brandId
+            AND PricingPolicyID = @__pricingPolicyId;
+
+          SELECT @@ROWCOUNT AS UpdatedCount;
+        `;
+
+        const updateRes = await updateReq.query<{ UpdatedCount: number | null }>(updateSql);
+        const updatedCount = updateRes.recordset?.[0]?.UpdatedCount ?? 0;
+        return NextResponse.json({ ok: true, updatedCount });
+      } else {
+        // Use the existing logic for non-NULL discounts
+        const updateSql = `
+          DECLARE @CurrentMin NUMERIC(18, 6);
+          SELECT @CurrentMin = MIN(ppr.[${discountColumn}])
+          FROM dbo.PricingPolicyRules ppr
+          WHERE ppr.BrandID = @__brandId
+            AND ppr.PricingPolicyID = @__pricingPolicyId;
+
+          IF @CurrentMin IS NULL
+          BEGIN
+            THROW 50000, 'Unable to resolve current minimum discount for this brand/policy.', 1;
+          END
+
+          UPDATE dbo.PricingPolicyRules
+          SET [${discountColumn}] = @__value,
+              ModifiedOn = SYSUTCDATETIME()
+              ${modifiedByClause}
+          WHERE BrandID = @__brandId
+            AND PricingPolicyID = @__pricingPolicyId
+            AND ([${discountColumn}] < @__value OR [${discountColumn}] = @CurrentMin);
+
+          SELECT @@ROWCOUNT AS UpdatedCount;
+        `;
+
+        const updateReq = pool.request();
+        updateReq.input("__brandId", sql.Int, brandId);
+        updateReq.input("__pricingPolicyId", sql.Int, pricingPolicyId);
+        updateReq.input("__value", sql.TYPES.Numeric(9, 6), value);
+        updateReq.input("__userId", sql.NVarChar(450), auditUserId ?? null);
+
+        const updateRes = await updateReq.query<{ UpdatedCount: number | null }>(updateSql);
+        const updatedCount = updateRes.recordset?.[0]?.UpdatedCount ?? 0;
+        return NextResponse.json({ ok: true, updatedCount });
+      }
+    }
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : "Server error";

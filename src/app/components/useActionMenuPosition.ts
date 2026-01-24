@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 'use client';
 
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
@@ -26,14 +27,14 @@ export const useActionMenuPosition = (open: boolean): Result => {
 
   // Layout effects intentionally measure DOM and update local state.
   // This causes an immediate state update; the rule is disabled so ESLint understands this is deliberate.
-   
-   
   useLayoutEffect(() => {
     if (!open) {
+      setMenuPos(null);
       return;
     }
     const rect = buttonRef.current?.getBoundingClientRect();
     if (!rect) return;
+    setMenuPos({ top: rect.bottom + MENU_SPACING, left: rect.left });
   }, [open]);
 
   useLayoutEffect(() => {

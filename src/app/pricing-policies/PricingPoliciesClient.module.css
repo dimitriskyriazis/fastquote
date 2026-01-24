@@ -31,6 +31,8 @@
   justify-content: space-between;
   gap: 6px;
   min-width: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .policyGroupTitle {
@@ -52,6 +54,10 @@
   justify-content: center;
   line-height: 1;
   pointer-events: auto;
+  position: relative;
+  z-index: 10;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .policyGroupMenuButton:disabled {
@@ -119,4 +125,53 @@
 /* Also tint the svg if it uses currentColor */
 .policyGroupMenuIcon :global(svg) {
   color: currentColor;
+}
+
+.comboWrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.comboList {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  max-height: 220px;
+  min-height: 140px;
+  overflow: auto;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+  display: flex;
+  flex-direction: column;
+}
+
+.comboOption {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  color: #0f172a;
+  cursor: default;
+}
+
+.comboOption:hover,
+.comboOption:focus {
+  background: #e5efff;
+}
+
+.modalTall {
+  min-height: 310px;
+}
+
+.modalBodyTall {
+  min-height: 310px;
+  overflow: visible;
 }
