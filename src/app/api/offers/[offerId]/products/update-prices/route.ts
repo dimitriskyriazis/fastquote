@@ -89,7 +89,20 @@ export async function POST(
         [OtherCurrencyID] = price.OtherCurrencyID,
         [CurrencyCostModifier] = price.CurrencyCostModifier,
         [NetCost] = COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice),
-        [TelmacoDiscount] = discounts.TelmacoDiscountPercentage,
+        [TelmacoDiscount] = CASE
+          -- Case 2: If cost price exists, calculate Telmaco discount from cost price
+          WHEN price.CostPrice IS NOT NULL AND price.ListPrice IS NOT NULL AND price.ListPrice <> 0
+            THEN ROUND(
+              (CAST(1 AS DECIMAL(18, 8))
+                - (CAST(price.CostPrice * price.CurrencyCostModifier AS DECIMAL(18, 8))
+                  / CAST(price.ListPrice AS DECIMAL(18, 8))
+                )
+              ) * 100,
+              4
+            )
+          -- Case 1: If no cost price, use discount from pricing policy rule
+          ELSE discounts.TelmacoDiscountPercentage
+        END,
         [CustomerDiscount] = discounts.CustomerDiscountPercentage,
         [Margin] = CASE
           WHEN computed.ComputedNetUnitPrice IS NULL
@@ -214,6 +227,9 @@ export async function POST(
             )
           END AS ComputedNetUnitPrice,
           CASE
+            -- Case 2: If cost price exists, use cost price (with currency modifier) as NetCost
+            WHEN price.CostPrice IS NOT NULL THEN price.CostPrice * price.CurrencyCostModifier
+            -- Case 1: If no cost price, calculate from Telmaco discount percentage
             WHEN price.ListPrice IS NULL THEN NULL
             ELSE ROUND(
               price.ListPrice

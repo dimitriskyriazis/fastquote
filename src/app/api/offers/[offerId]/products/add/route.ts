@@ -717,7 +717,20 @@ async function handleAddProducts(
       computed.ComputedNetUnitPrice,
       CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
       computed.ComputedNetUnitPrice,
-      COALESCE(discounts.TelmacoDiscountPercentage, 0),
+      CASE
+        -- Case 2: If cost price exists, calculate Telmaco discount from cost price
+        WHEN p.CostPrice IS NOT NULL AND p.ListPrice IS NOT NULL AND p.ListPrice <> 0
+          THEN ROUND(
+            (CAST(1 AS DECIMAL(18, 8))
+              - (CAST(p.CostPrice * p.CurrencyCostModifier AS DECIMAL(18, 8))
+                / CAST(p.ListPrice AS DECIMAL(18, 8))
+              )
+            ) * 100,
+            4
+          )
+        -- Case 1: If no cost price, use discount from pricing policy rule
+        ELSE COALESCE(discounts.TelmacoDiscountPercentage, 0)
+      END,
       COALESCE(discounts.CustomerDiscountPercentage, 0),
       p.CostPrice,
       p.OtherCurrencyID,
@@ -822,6 +835,9 @@ async function handleAddProducts(
           )
         END AS ComputedNetUnitPrice,
         CASE
+          -- Case 2: If cost price exists, use cost price (with currency modifier) as NetCost
+          WHEN p.CostPrice IS NOT NULL THEN p.CostPrice * p.CurrencyCostModifier
+          -- Case 1: If no cost price, calculate from Telmaco discount percentage
           WHEN p.ListPrice IS NULL THEN NULL
           ELSE ROUND(
             p.ListPrice
