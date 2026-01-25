@@ -236,6 +236,7 @@ export default function OfferBasicDataClient({ offerId, record, contacts, status
   const [newPricingPolicyEnabled, setNewPricingPolicyEnabled] = useState('1');
   const [pricingPolicySaving, setPricingPolicySaving] = useState(false);
   const [pricingPolicyError, setPricingPolicyError] = useState<string | null>(null);
+  
 
   const fieldDefinitions = useMemo(
     () =>
@@ -367,6 +368,7 @@ export default function OfferBasicDataClient({ offerId, record, contacts, status
       setPricingPolicySaving(false);
     }
   }, [newPricingPolicyName, newPricingPolicyEnabled]);
+
 
   const renderLookupAddButton = useCallback(
     (field: FieldDefinition) =>

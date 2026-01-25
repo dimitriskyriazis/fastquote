@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import OfferBasicDataPanel from '../OfferBasicDataPanel';
+import CreateDraftOfferButton from './CreateDraftOfferButton';
 import styles from '../../offersDetail.module.css';
 
 const buildHeading = (offerId: string) =>
@@ -21,6 +22,10 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
         </div>
         <h1 className={`${styles.heading} ${styles.headingCentered}`}>{headingText}</h1>
         <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
+          <CreateDraftOfferButton
+            offerId={decodedId}
+            className={`${styles.headerActionButton} page-header-button`}
+          />
           <Link
             href={`/offers/${encodeURIComponent(decodedId)}/products`}
             className={`${styles.headerActionButton} page-header-button`}

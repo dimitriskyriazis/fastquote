@@ -8,6 +8,7 @@ declare module 'mssql' {
     options?: {
       encrypt?: boolean;
       requestTimeout?: number;
+      trustServerCertificate?: boolean;
     };
     pool?: {
       max?: number;
