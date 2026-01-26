@@ -139,11 +139,7 @@ export default function CreateDraftOfferButton({ offerId, className }: Props) {
               <div key={selection.productId} style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px' }}>
                 <div style={{ marginBottom: '8px', fontWeight: 600, fontSize: '0.9rem' }}>
                   <span style={{ color: '#000000' }}>Product: {productLabel}</span>
-                  {missingFields.length > 0 && (
-                    <span style={{ marginLeft: '8px', fontSize: '0.8rem', color: '#dc2626', fontWeight: 500 }}>
-                      ({missingFields.join(', ')} not cleaned)
-                    </span>
-                  )}
+                  {missingFields.length > 0}
                 </div>
                 <div style={{ marginBottom: '8px', fontSize: '0.85rem', color: '#64748b' }}>
                   Found {selection.matches.length} matching product(s) in ERP

@@ -36,6 +36,72 @@ function normalizeOfferId(value: unknown): number | null {
   return null;
 }
 
+// Type guard to check if error is a RequestError with a number property
+function isRequestErrorWithNumber(error: unknown): error is { number: number } {
+  return typeof error === 'object' && error !== null && 'number' in error && typeof (error as { number: unknown }).number === 'number';
+}
+
+// Generate a new CODE by finding the max numeric CODE in ERP MTRL table and incrementing
+// Example: if max is 146000, returns 146001
+// Retries if the generated CODE already exists (handles race conditions)
+async function generateNewErpCode(erpPool: Awaited<ReturnType<typeof getErpPool>>, retryCount = 0): Promise<string> {
+  const MAX_RETRIES = 5;
+  try {
+    const codeRequest = erpPool.request();
+    const codeResult = await codeRequest.query<{
+      MaxCode: number | null;
+    }>(`
+      SELECT MAX(CAST(CODE AS BIGINT)) AS MaxCode
+      FROM dbo.MTRL
+      WHERE COMPANY = 1
+        AND ISACTIVE = 1
+        AND CODE IS NOT NULL
+        AND CODE <> ''
+        AND TRY_CAST(CODE AS BIGINT) IS NOT NULL
+    `);
+    
+    const maxCode = codeResult.recordset?.[0]?.MaxCode;
+    let nextCode: number;
+    if (maxCode != null && Number.isFinite(maxCode) && maxCode > 0) {
+      // Increment by 1 + retry count to handle race conditions
+      nextCode = Number(maxCode) + 1 + retryCount;
+    } else {
+      // If no numeric codes found, start from 1 + retry count
+      nextCode = 1 + retryCount;
+    }
+    
+    const codeString = nextCode.toString();
+    
+    // Verify the CODE doesn't already exist (check for duplicates)
+    const checkRequest = erpPool.request();
+    checkRequest.input('code', sql.NVarChar(25), codeString);
+    const checkResult = await checkRequest.query<{
+      Exists: number;
+    }>(`
+      SELECT COUNT(*) AS Exists
+      FROM dbo.MTRL
+      WHERE COMPANY = 1
+        AND CODE = @code
+    `);
+    
+    const exists = checkResult.recordset?.[0]?.Exists ?? 0;
+    if (exists > 0 && retryCount < MAX_RETRIES) {
+      // CODE exists, retry with incremented value
+      return generateNewErpCode(erpPool, retryCount + 1);
+    }
+    
+    return codeString;
+  } catch (err) {
+    console.error('Failed to generate new ERP CODE:', err);
+    if (retryCount < MAX_RETRIES) {
+      // Retry on error
+      return generateNewErpCode(erpPool, retryCount + 1);
+    }
+    // Fallback: use timestamp-based code
+    return Date.now().toString().slice(-10);
+  }
+}
+
 // First call: Find matches for all products
 export async function POST(
   req: NextRequest,
@@ -59,7 +125,22 @@ export async function POST(
     const pool = await getPool();
     const erpPool = await getErpPool();
 
-    // Get all products from the offer that have ProductID
+    // Get offer's SalesDivisionName
+    const offerRequest = pool.request();
+    offerRequest.input('offerId', sql.Int, normalizedId);
+    const offerResult = await offerRequest.query<{
+      SalesDivisionName: string | null;
+    }>(`
+      SELECT sd.Name AS SalesDivisionName
+      FROM dbo.Offer o
+      LEFT JOIN dbo.SalesDivision sd ON o.SalesDivitionID = sd.ID
+      WHERE o.ID = @offerId
+    `);
+    const salesDivisionName = offerResult.recordset?.[0]?.SalesDivisionName ?? null;
+    // Map SalesDivisionName to BusinessUnit: 'TVS' if contains 'TVS', otherwise 'AVS'
+    const businessUnit = salesDivisionName && salesDivisionName.toUpperCase().includes('TVS') ? 'TVS' : 'AVS';
+
+    // Get all products from the offer that have ProductID, including Brand name and Description
     const productsRequest = pool.request();
     productsRequest.input('offerId', sql.Int, normalizedId);
     const productsResult = await productsRequest.query<{
@@ -68,15 +149,22 @@ export async function POST(
       ModelNumberCleared: string | null;
       PartNumber: string | null;
       ModelNumber: string | null;
+      Description: string | null;
+      BrandName: string | null;
+      BrandID: number | null;
     }>(`
       SELECT DISTINCT
         p.ID AS ProductID,
         p.PartNumberCleared,
         p.ModelNumberCleared,
         p.PartNumber,
-        p.ModelNumber
+        p.ModelNumber,
+        p.Description,
+        b.Name AS BrandName,
+        p.BrandID
       FROM dbo.OfferDetails od
       INNER JOIN dbo.Products p ON od.ProductID = p.ID
+      LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
       WHERE od.OfferID = @offerId
         AND od.ProductID IS NOT NULL
         AND (p.PartNumberCleared IS NOT NULL OR p.ModelNumberCleared IS NOT NULL)
@@ -151,15 +239,121 @@ export async function POST(
             }>;
 
             if (foundCount === 0) {
-              // No matches found
-              productMatches.push({
-                productId: product.ProductID,
-                partNumber: product.PartNumberCleared,
-                modelNumber: product.ModelNumberCleared,
-                partNumberActual: product.PartNumber,
-                modelNumberActual: product.ModelNumber,
-                matches: [],
-              });
+              // No matches found - automatically create product in ERP
+              try {
+                // Validate required fields
+                if (!product.Description || !product.BrandID) {
+                  console.error(`Product ${product.ProductID} missing Description or BrandID`);
+                  productMatches.push({
+                    productId: product.ProductID,
+                    partNumber: product.PartNumberCleared,
+                    modelNumber: product.ModelNumberCleared,
+                    partNumberActual: product.PartNumber,
+                    modelNumberActual: product.ModelNumber,
+                    matches: [],
+                  });
+                  continue;
+                }
+
+                // Try to create product with retry logic for duplicate CODE errors
+                let retryCount = 0;
+                const MAX_RETRIES = 3;
+                let createdMTRL: number | null = null;
+                let createdCode: string | null = null;
+
+                while (retryCount <= MAX_RETRIES && !createdMTRL) {
+                  try {
+                    // Generate new CODE (will increment on retries)
+                    const newCode = await generateNewErpCode(erpPool, retryCount);
+
+                    // Call tlm._mtrlCreateProduct
+                    const createRequest = erpPool.request();
+                    createRequest.input('CODE', sql.NVarChar(25), newCode);
+                    createRequest.input('CODE1', sql.NVarChar(25), product.ModelNumberCleared);
+                    createRequest.input('CODE2', sql.NVarChar(50), product.PartNumberCleared);
+                    createRequest.input('Description', sql.NVarChar(128), product.Description);
+                    createRequest.input('BrandId', sql.Int, product.BrandID);
+                    createRequest.input('BusinessUnit', sql.NVarChar(20), businessUnit);
+
+                    const createResult = await createRequest.query(`
+                      DECLARE @CreatedMTRL INT;
+                      EXEC [tlm].[_mtrlCreateProduct]
+                        @CODE = @CODE,
+                        @CODE1 = @CODE1,
+                        @CODE2 = @CODE2,
+                        @Description = @Description,
+                        @BrandId = @BrandId,
+                        @BusinessUnit = @BusinessUnit,
+                        @CreatedMTRL = @CreatedMTRL OUTPUT;
+                      SELECT @CreatedMTRL AS CreatedMTRL;
+                    `) as { recordset: Array<{ CreatedMTRL: number }>; recordsets?: Array<Array<{ MTRL: number; CODE: string | null }>> };
+
+                    // The procedure returns the created product in recordsets[0] and CreatedMTRL in recordset
+                    createdMTRL = createResult.recordset?.[0]?.CreatedMTRL ?? createResult.recordsets?.[0]?.[0]?.MTRL ?? null;
+                    createdCode = createResult.recordsets?.[0]?.[0]?.CODE ?? newCode;
+                  } catch (retryErr) {
+                    const isDuplicateKey = isRequestErrorWithNumber(retryErr) && retryErr.number === 2627;
+                    if (isDuplicateKey && retryCount < MAX_RETRIES) {
+                      // Duplicate CODE error - retry with a new CODE
+                      retryCount++;
+                      console.warn(`Duplicate CODE detected for product ${product.ProductID}, retrying (attempt ${retryCount}/${MAX_RETRIES})...`);
+                      continue;
+                    }
+                    // Re-throw if not a duplicate key error or max retries reached
+                    throw retryErr;
+                  }
+                }
+
+                if (createdMTRL && createdCode) {
+                  // Update FastQuote Products table with the new ERP IDs
+                  const updateRequest = pool.request();
+                  updateRequest.input('productId', sql.Int, product.ProductID);
+                  updateRequest.input('erpId', sql.Int, createdMTRL);
+                  updateRequest.input('erpCode', sql.NVarChar(255), createdCode);
+
+                  updatePromises.push(
+                    updateRequest.query(`
+                      UPDATE dbo.Products
+                      SET ERPID = @erpId,
+                          ERPCode = @erpCode,
+                          ModifiedOn = SYSUTCDATETIME()
+                      WHERE ID = @productId
+                    `).then(() => undefined),
+                  );
+                } else {
+                  throw new Error('Failed to create product after retries - could not get CreatedMTRL from tlm._mtrlCreateProduct');
+                }
+              } catch (createErr) {
+                const errorMessage = createErr instanceof Error ? createErr.message : String(createErr);
+                const isTemplateError = errorMessage.includes('Template MTRL not found') || 
+                                       (isRequestErrorWithNumber(createErr) && createErr.number === 53012);
+                const isDuplicateKey = isRequestErrorWithNumber(createErr) && createErr.number === 2627;
+                
+                if (isTemplateError) {
+                  console.error(
+                    `Failed to create product in ERP for product ${product.ProductID}: Template MTRL (147124) not found in ERP database. ` +
+                    `This is a database configuration issue - the template MTRL must exist in COMPANY=1.`,
+                    createErr
+                  );
+                } else if (isDuplicateKey) {
+                  console.error(
+                    `Failed to create product in ERP for product ${product.ProductID}: Duplicate CODE detected after 3 retries. ` +
+                    `The generated CODE already exists in the ERP database. This may indicate a race condition or CODE generation issue.`,
+                    createErr
+                  );
+                } else {
+                  console.error(`Failed to create product in ERP for product ${product.ProductID}:`, createErr);
+                }
+                // Add to productMatches for manual attention
+                productMatches.push({
+                  productId: product.ProductID,
+                  partNumber: product.PartNumberCleared,
+                  modelNumber: product.ModelNumberCleared,
+                  partNumberActual: product.PartNumber,
+                  modelNumberActual: product.ModelNumber,
+                  matches: [],
+                });
+              }
             } else if (foundCount === 1) {
               // Single match - update directly
               const match = matches[0];
@@ -246,15 +440,119 @@ export async function POST(
         }>;
 
         if (foundCount === 0) {
-          // No matches found
-          productMatches.push({
-            productId: product.ProductID,
-            partNumber: product.PartNumberCleared,
-            modelNumber: product.ModelNumberCleared,
-            partNumberActual: product.PartNumber,
-            modelNumberActual: product.ModelNumber,
-            matches: [],
-          });
+          // No matches found - automatically create product in ERP
+          try {
+            // Validate required fields
+            if (!product.Description || !product.BrandID) {
+              console.error(`Product ${product.ProductID} missing Description or BrandID`);
+              productMatches.push({
+                productId: product.ProductID,
+                partNumber: product.PartNumberCleared,
+                modelNumber: product.ModelNumberCleared,
+                partNumberActual: product.PartNumber,
+                modelNumberActual: product.ModelNumber,
+                matches: [],
+              });
+              continue;
+            }
+
+            // Try to create product with retry logic for duplicate CODE errors
+            let retryCount = 0;
+            const MAX_RETRIES = 3;
+            let createdMTRL: number | null = null;
+            let createdCode: string | null = null;
+
+            while (retryCount <= MAX_RETRIES && !createdMTRL) {
+              try {
+                // Generate new CODE (will increment on retries)
+                const newCode = await generateNewErpCode(erpPool, retryCount);
+
+                // Call tlm._mtrlCreateProduct
+                const createRequest = erpPool.request();
+                createRequest.input('CODE', sql.NVarChar(25), newCode);
+                createRequest.input('CODE1', sql.NVarChar(25), product.ModelNumberCleared);
+                createRequest.input('CODE2', sql.NVarChar(50), product.PartNumberCleared);
+                createRequest.input('Description', sql.NVarChar(128), product.Description);
+                createRequest.input('BrandId', sql.Int, product.BrandID);
+                createRequest.input('BusinessUnit', sql.NVarChar(20), businessUnit);
+
+                const createResult = await createRequest.query(`
+                  DECLARE @CreatedMTRL INT;
+                  EXEC [tlm].[_mtrlCreateProduct]
+                    @CODE = @CODE,
+                    @CODE1 = @CODE1,
+                    @CODE2 = @CODE2,
+                    @Description = @Description,
+                    @BrandId = @BrandId,
+                    @BusinessUnit = @BusinessUnit,
+                    @CreatedMTRL = @CreatedMTRL OUTPUT;
+                  SELECT @CreatedMTRL AS CreatedMTRL;
+                `) as { recordset: Array<{ CreatedMTRL: number }>; recordsets?: Array<Array<{ MTRL: number; CODE: string | null }>> };
+
+                // The procedure returns the created product in recordsets[0] and CreatedMTRL in recordset
+                createdMTRL = createResult.recordset?.[0]?.CreatedMTRL ?? createResult.recordsets?.[0]?.[0]?.MTRL ?? null;
+                createdCode = createResult.recordsets?.[0]?.[0]?.CODE ?? newCode;
+              } catch (retryErr) {
+                const isDuplicateKey = isRequestErrorWithNumber(retryErr) && retryErr.number === 2627;
+                if (isDuplicateKey && retryCount < MAX_RETRIES) {
+                  // Duplicate CODE error - retry with a new CODE
+                  retryCount++;
+                  console.warn(`Duplicate CODE detected for product ${product.ProductID}, retrying (attempt ${retryCount}/${MAX_RETRIES})...`);
+                  continue;
+                }
+                // Re-throw if not a duplicate key error or max retries reached
+                throw retryErr;
+              }
+            }
+
+            if (createdMTRL && createdCode) {
+              // Update FastQuote Products table with the new ERP IDs
+              const updateRequest = pool.request();
+              updateRequest.input('productId', sql.Int, product.ProductID);
+              updateRequest.input('erpId', sql.Int, createdMTRL);
+              updateRequest.input('erpCode', sql.NVarChar(255), createdCode);
+
+              await updateRequest.query(`
+                UPDATE dbo.Products
+                SET ERPID = @erpId,
+                    ERPCode = @erpCode,
+                    ModifiedOn = SYSUTCDATETIME()
+                WHERE ID = @productId
+              `);
+            } else {
+              throw new Error('Failed to create product after retries - could not get CreatedMTRL from tlm._mtrlCreateProduct');
+            }
+          } catch (createErr) {
+            const errorMessage = createErr instanceof Error ? createErr.message : String(createErr);
+            const isTemplateError = errorMessage.includes('Template MTRL not found') || 
+                                   (isRequestErrorWithNumber(createErr) && createErr.number === 53012);
+            const isDuplicateKey = isRequestErrorWithNumber(createErr) && createErr.number === 2627;
+            
+            if (isTemplateError) {
+              console.error(
+                `Failed to create product in ERP for product ${product.ProductID}: Template MTRL (147124) not found in ERP database. ` +
+                `This is a database configuration issue - the template MTRL must exist in COMPANY=1.`,
+                createErr
+              );
+            } else if (isDuplicateKey) {
+              console.error(
+                `Failed to create product in ERP for product ${product.ProductID}: Duplicate CODE detected after 3 retries. ` +
+                `The generated CODE already exists in the ERP database. This may indicate a race condition or CODE generation issue.`,
+                createErr
+              );
+            } else {
+              console.error(`Failed to create product in ERP for product ${product.ProductID}:`, createErr);
+            }
+            // Add to productMatches for manual attention
+            productMatches.push({
+              productId: product.ProductID,
+              partNumber: product.PartNumberCleared,
+              modelNumber: product.ModelNumberCleared,
+              partNumberActual: product.PartNumber,
+              modelNumberActual: product.ModelNumber,
+              matches: [],
+            });
+          }
         } else if (foundCount === 1) {
           // Single match - update directly
           const match = matches[0];
