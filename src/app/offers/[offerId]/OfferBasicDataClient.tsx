@@ -1,10 +1,6 @@
 'use client';
 
 import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
-import type { DropdownOption } from '../../../lib/dropdownOptions';
-import lookupStyles from '../../components/LookupModal.module.css';
-import LookupModal from '../../components/LookupModal';
-import lookupButtonStyles from '../../components/LookupAddButton.module.css';
 import styles from './OfferBasicDataPanel.module.css';
 import type {
   OfferBasicRecord,
@@ -227,27 +223,16 @@ export default function OfferBasicDataClient({ offerId, record, contacts, status
     });
   }, [offerId, record.CustomerName, record.Description, record.Title]);
 
-  const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
-  useEffect(() => {
-    setLocalPricingPolicies(pricingPolicies);
-  }, [pricingPolicies]);
-  const [isAddPricingPolicyOpen, setIsAddPricingPolicyOpen] = useState(false);
-  const [newPricingPolicyName, setNewPricingPolicyName] = useState('');
-  const [newPricingPolicyEnabled, setNewPricingPolicyEnabled] = useState('1');
-  const [pricingPolicySaving, setPricingPolicySaving] = useState(false);
-  const [pricingPolicyError, setPricingPolicyError] = useState<string | null>(null);
-  
-
   const fieldDefinitions = useMemo(
     () =>
       buildFieldDefinitions(
         statuses,
-        localPricingPolicies,
+        pricingPolicies,
         markets,
         users,
         contactOptions,
       ),
-    [statuses, localPricingPolicies, markets, users, contactOptions],
+    [statuses, pricingPolicies, markets, users, contactOptions],
   );
   const editableFields = useMemo(
     () => fieldDefinitions.filter((def) => def.updateField && !def.readOnly),
@@ -325,64 +310,10 @@ export default function OfferBasicDataClient({ offerId, record, contacts, status
     void saveField(def, latestValue);
   }, [saveField, values]);
 
-  const openPricingPolicyModal = useCallback(() => {
-    setNewPricingPolicyName('');
-    setNewPricingPolicyEnabled('1');
-    setPricingPolicyError(null);
-    setIsAddPricingPolicyOpen(true);
-  }, []);
-
-  const handleCreatePricingPolicy = useCallback(async () => {
-    const trimmedName = newPricingPolicyName.trim();
-    if (!trimmedName) {
-      setPricingPolicyError('Name is required');
-      return;
-    }
-    setPricingPolicySaving(true);
-    setPricingPolicyError(null);
-    try {
-      const response = await fetch('/api/pricing-policies', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: trimmedName,
-          enabled: newPricingPolicyEnabled === '1',
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | { ok?: boolean; option?: DropdownOption; error?: string }
-        | null;
-      const option = payload?.option;
-      if (!response.ok || !payload?.ok || !option) {
-        throw new Error(payload?.error ?? 'Unable to add pricing policy');
-      }
-      setLocalPricingPolicies((prev) => [...prev, option]);
-      setValues((prev) => ({ ...prev, pricingPolicy: option.value }));
-      showToastMessage('Pricing policy added', 'success');
-      setIsAddPricingPolicyOpen(false);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to add pricing policy';
-      setPricingPolicyError(message);
-      showToastMessage(message, 'error');
-    } finally {
-      setPricingPolicySaving(false);
-    }
-  }, [newPricingPolicyName, newPricingPolicyEnabled]);
-
-
   const renderLookupAddButton = useCallback(
-    (field: FieldDefinition) =>
-      field.id === 'pricingPolicy' ? (
-        <button
-          type="button"
-          className={lookupButtonStyles.lookupAddButton}
-          onClick={openPricingPolicyModal}
-          disabled={pricingPolicySaving}
-        >
-          Add Pricing Policy
-        </button>
-      ) : null,
-    [openPricingPolicyModal, pricingPolicySaving],
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    (_: FieldDefinition) => null,
+    [],
   );
 
 const renderFieldControl = (
@@ -592,42 +523,6 @@ const renderFieldControl = (
           )}
         </div>
       </section>
-      <LookupModal
-        open={isAddPricingPolicyOpen}
-        title="Add Pricing Policy"
-        onClose={() => setIsAddPricingPolicyOpen(false)}
-        onConfirm={handleCreatePricingPolicy}
-        confirmLabel="Create"
-        saving={pricingPolicySaving}
-        error={pricingPolicyError}
-      >
-        <div className={lookupStyles.field}>
-          <label className={lookupStyles.fieldLabel} htmlFor="offer-basic-pricing-policy-name">
-            Name
-          </label>
-          <input
-            id="offer-basic-pricing-policy-name"
-            className={lookupStyles.fieldControl}
-            value={newPricingPolicyName}
-            required
-            onChange={(event) => setNewPricingPolicyName(event.target.value)}
-          />
-        </div>
-        <div className={lookupStyles.field}>
-          <label className={lookupStyles.fieldLabel} htmlFor="offer-basic-pricing-policy-enabled">
-            Enabled
-          </label>
-          <select
-            id="offer-basic-pricing-policy-enabled"
-            className={lookupStyles.fieldControl}
-            value={newPricingPolicyEnabled}
-            onChange={(event) => setNewPricingPolicyEnabled(event.target.value)}
-          >
-            <option value="1">Yes</option>
-            <option value="0">No</option>
-          </select>
-        </div>
-      </LookupModal>
     </>
   );
 }
