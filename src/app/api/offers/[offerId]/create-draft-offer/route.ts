@@ -299,65 +299,99 @@ IMPORTANT RULES:
   }
 }
 
-// Generate a new CODE by finding the max numeric CODE in ERP MTRL table and incrementing
-// Example: if max is 146000, returns 146001
-// Retries if the generated CODE already exists (handles race conditions)
-async function generateNewErpCode(erpPool: Awaited<ReturnType<typeof getErpPool>>, retryCount = 0): Promise<string> {
-  const MAX_RETRIES = 5;
-  try {
-    const codeRequest = erpPool.request();
-    const codeResult = await codeRequest.query<{
-      MaxCode: number | null;
-    }>(`
-      SELECT MAX(CAST(CODE AS BIGINT)) AS MaxCode
-      FROM dbo.MTRL
-      WHERE COMPANY = 1
-        AND ISACTIVE = 1
-        AND CODE IS NOT NULL
-        AND CODE <> ''
-        AND TRY_CAST(CODE AS BIGINT) IS NOT NULL
-    `);
-    
-    const maxCode = codeResult.recordset?.[0]?.MaxCode;
-    let nextCode: number;
-    if (maxCode != null && Number.isFinite(maxCode) && maxCode > 0) {
-      // Increment by 1 + retry count to handle race conditions
-      nextCode = Number(maxCode) + 1 + retryCount;
-    } else {
-      // If no numeric codes found, start from 1 + retry count
-      nextCode = 1 + retryCount;
-    }
-    
-    const codeString = nextCode.toString();
-    
-    // Verify the CODE doesn't already exist (check for duplicates)
-    const checkRequest = erpPool.request();
-    checkRequest.input('code', sql.NVarChar(25), codeString);
-    const checkResult = await checkRequest.query<{
-      Exists: number;
-    }>(`
-      SELECT COUNT(*) AS Exists
-      FROM dbo.MTRL
-      WHERE COMPANY = 1
-        AND CODE = @code
-    `);
-    
-    const exists = checkResult.recordset?.[0]?.Exists ?? 0;
-    if (exists > 0 && retryCount < MAX_RETRIES) {
-      // CODE exists, retry with incremented value
-      return generateNewErpCode(erpPool, retryCount + 1);
-    }
-    
-    return codeString;
-  } catch (err) {
-    console.error('Failed to generate new ERP CODE:', err);
-    if (retryCount < MAX_RETRIES) {
-      // Retry on error
-      return generateNewErpCode(erpPool, retryCount + 1);
-    }
-    // Fallback: use timestamp-based code
-    return Date.now().toString().slice(-10);
+// Generate a structured CODE: [SubCategoryCode][TypeFirstLetter].[BrandCode].[3DigitSequence]
+// Example: SPRM.BIA.180
+// - SPR = SubCategory Code (3 chars from dbo.ProductSubCategories.Code)
+// - M = Type first letter (1 char from dbo.ProductTypes.Name)
+// - BIA = Brand Code (from dbo.MTRMANFCTR.CODE, matched by NAME)
+// - 180 = 3-digit sequence from tlm._mtrlNextCode3Digit
+async function generateNewErpCode(
+  pool: Awaited<ReturnType<typeof getPool>>,
+  erpPool: Awaited<ReturnType<typeof getErpPool>>,
+  product: {
+    SubCategoryID: number | null;
+    TypeID: number | null;
+    BrandID: number | null;
+    BrandName: string | null;
+  },
+): Promise<string> {
+  if (!product.SubCategoryID || !product.TypeID || !product.BrandID || !product.BrandName) {
+    throw new Error(
+      `Product missing required fields for CODE generation: SubCategoryID=${product.SubCategoryID}, TypeID=${product.TypeID}, BrandID=${product.BrandID}, BrandName=${product.BrandName}`,
+    );
   }
+
+  // 1. Get SubCategory Code (first 3 chars) from TELQUOTE
+  const subCategoryRequest = pool.request();
+  subCategoryRequest.input('subCategoryId', sql.Int, product.SubCategoryID);
+  const subCategoryResult = await subCategoryRequest.query<{ Code: string | null }>(`
+    SELECT Code
+    FROM dbo.ProductSubCategories
+    WHERE ID = @subCategoryId
+  `);
+  const subCategoryCode = subCategoryResult.recordset?.[0]?.Code;
+  if (!subCategoryCode || subCategoryCode.length < 3) {
+    throw new Error(
+      `SubCategory Code not found or too short for product SubCategoryID=${product.SubCategoryID}`,
+    );
+  }
+  const subCategoryCode3 = subCategoryCode.substring(0, 3).toUpperCase();
+
+  // 2. Get Type first letter (4th char) from TELQUOTE
+  const typeRequest = pool.request();
+  typeRequest.input('typeId', sql.Int, product.TypeID);
+  const typeResult = await typeRequest.query<{ Name: string | null }>(`
+    SELECT Name
+    FROM dbo.ProductTypes
+    WHERE ID = @typeId
+  `);
+  const typeName = typeResult.recordset?.[0]?.Name;
+  if (!typeName || typeName.length === 0) {
+    throw new Error(`Type Name not found for product TypeID=${product.TypeID}`);
+  }
+  const typeFirstLetter = typeName.trim().charAt(0).toUpperCase();
+
+  // 3. Match Brand Name with ERP MTRMANFCTR.NAME (case-insensitive) and get CODE
+  const brandRequest = erpPool.request();
+  brandRequest.input('brandName', sql.NVarChar(128), product.BrandName.trim());
+  const brandResult = await brandRequest.query<{ CODE: string | null }>(`
+    SELECT TOP (1) CODE
+    FROM dbo.MTRMANFCTR
+    WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
+    ORDER BY MTRMANFCTR
+  `);
+  const brandCode = brandResult.recordset?.[0]?.CODE;
+  if (!brandCode) {
+    throw new Error(`Brand Code not found in ERP for brand name: ${product.BrandName}`);
+  }
+
+  // 4. Build prefix: SubCategoryCode + TypeFirstLetter + "." + BrandCode (no trailing dot)
+  const prefix = `${subCategoryCode3}${typeFirstLetter}.${brandCode}`;
+
+  // 5. Call tlm._mtrlNextCode3Digit to get the full CODE
+  const nextCodeRequest = erpPool.request();
+  nextCodeRequest.input('Prefix', sql.NVarChar(20), prefix);
+  nextCodeRequest.input('Company', sql.Int, 1);
+  const nextCodeResult = await nextCodeRequest.query<{
+    NextCode: string | null;
+    NextNo: number | null;
+  }>(`
+    DECLARE @NextCode VARCHAR(25);
+    DECLARE @NextNo INT;
+    EXEC tlm._mtrlNextCode3Digit
+      @Prefix = @Prefix,
+      @Company = @Company,
+      @NextCode = @NextCode OUTPUT,
+      @NextNo = @NextNo OUTPUT;
+    SELECT @NextCode AS NextCode, @NextNo AS NextNo;
+  `);
+
+  const nextCode = nextCodeResult.recordset?.[0]?.NextCode;
+  if (!nextCode) {
+    throw new Error(`Failed to get next CODE from tlm._mtrlNextCode3Digit for prefix: ${prefix}`);
+  }
+
+  return nextCode;
 }
 
 // First call: Find matches for all products
@@ -382,6 +416,7 @@ export async function POST(
 
     const pool = await getPool();
     const erpPool = await getErpPool();
+    const requestId = await getRequestId(req);
 
     // Get offer's SalesDivisionName and ProjectID
     const offerRequest = pool.request();
@@ -438,6 +473,7 @@ export async function POST(
 
     const products = productsResult.recordset ?? [];
     if (products.length === 0) {
+      logger.info('create-draft-offer no products', { requestId, offerId: normalizedId });
       return NextResponse.json({
         ok: true,
         message: 'No products found in offer',
@@ -446,8 +482,16 @@ export async function POST(
       });
     }
 
+    logger.info('create-draft-offer started', {
+      requestId,
+      offerId: normalizedId,
+      businessUnit,
+      productsCount: products.length,
+      selectionsCount: selections.length,
+      offerProjectId: offerProjectId ?? null,
+    });
+
     // Auto-fill missing CategoryID, SubCategoryID, TypeID using AI
-    const requestId = await getRequestId(req);
     const categoryUpdatePromises: Promise<void>[] = [];
     for (const product of products) {
       // Check if any category fields are missing (explicitly check for null/undefined)
@@ -562,6 +606,13 @@ export async function POST(
       for (const product of products) {
         const selection = selectionMap.get(product.ProductID);
         if (selection) {
+          logger.info('create-draft-offer DB update (selection)', {
+            requestId,
+            offerId: normalizedId,
+            productId: product.ProductID,
+            erpId: selection.MTRL,
+            erpCode: selection.CODE,
+          });
           const updateRequest = pool.request();
           updateRequest.input('productId', sql.Int, product.ProductID);
           updateRequest.input('erpId', sql.Int, selection.MTRL);
@@ -608,12 +659,35 @@ export async function POST(
               CODE2: string | null;
             }>;
 
+            logger.info('create-draft-offer FindProduct result', {
+              requestId,
+              offerId: normalizedId,
+              productId: product.ProductID,
+              partNo: product.PartNumberCleared,
+              modelNo: product.ModelNumberCleared,
+              foundCount,
+              matches: matches.map((m) => ({ MTRL: m.MTRL, CODE: m.CODE, CODE1: m.CODE1, CODE2: m.CODE2 })),
+            });
+
             if (foundCount === 0) {
               // No matches found - automatically create product in ERP
               try {
                 // Validate required fields
-                if (!product.Description || !product.BrandID) {
-                  console.error(`Product ${product.ProductID} missing Description or BrandID`);
+                if (
+                  !product.Description ||
+                  !product.BrandID ||
+                  !product.SubCategoryID ||
+                  !product.TypeID
+                ) {
+                  logger.warn('Product missing required fields for create', {
+                    requestId,
+                    offerId: normalizedId,
+                    productId: product.ProductID,
+                    hasDescription: !!product.Description,
+                    hasBrandID: !!product.BrandID,
+                    hasSubCategoryID: !!product.SubCategoryID,
+                    hasTypeID: !!product.TypeID,
+                  });
                   productMatches.push({
                     productId: product.ProductID,
                     partNumber: product.PartNumberCleared,
@@ -633,8 +707,12 @@ export async function POST(
 
                 while (retryCount <= MAX_RETRIES && !createdMTRL) {
                   try {
-                    // Generate new CODE (will increment on retries)
-                    const newCode = await generateNewErpCode(erpPool, retryCount);
+                    const newCode = await generateNewErpCode(pool, erpPool, {
+                      SubCategoryID: product.SubCategoryID,
+                      TypeID: product.TypeID,
+                      BrandID: product.BrandID,
+                      BrandName: product.BrandName,
+                    });
 
                     // Call tlm._mtrlCreateProduct
                     const createRequest = erpPool.request();
@@ -675,6 +753,20 @@ export async function POST(
                 }
 
                 if (createdMTRL && createdCode) {
+                  logger.info('create-draft-offer CreateProduct result', {
+                    requestId,
+                    offerId: normalizedId,
+                    productId: product.ProductID,
+                    createdMTRL,
+                    createdCode,
+                  });
+                  logger.info('create-draft-offer DB update (created)', {
+                    requestId,
+                    offerId: normalizedId,
+                    productId: product.ProductID,
+                    erpId: createdMTRL,
+                    erpCode: createdCode,
+                  });
                   // Update FastQuote Products table with the new ERP IDs
                   const updateRequest = pool.request();
                   updateRequest.input('productId', sql.Int, product.ProductID);
@@ -725,6 +817,13 @@ export async function POST(
             } else if (foundCount === 1) {
               // Single match - update directly
               const match = matches[0];
+              logger.info('create-draft-offer DB update (single match)', {
+                requestId,
+                offerId: normalizedId,
+                productId: product.ProductID,
+                erpId: match.MTRL,
+                erpCode: match.CODE,
+              });
               const updateRequest = pool.request();
               updateRequest.input('productId', sql.Int, product.ProductID);
               updateRequest.input('erpId', sql.Int, match.MTRL);
@@ -782,8 +881,23 @@ export async function POST(
         `);
         const projectCode = projectResult.recordset?.[0]?.CODE ?? null;
 
+        logger.info('create-draft-offer project fetch', {
+          requestId,
+          offerId: normalizedId,
+          offerProjectId,
+          projectCode,
+        });
+
         if (projectCode) {
           const projectValidation = await findProject(offerProjectId, projectCode);
+          logger.info('create-draft-offer project validation', {
+            requestId,
+            offerId: normalizedId,
+            offerProjectId,
+            projectCode,
+            statusCode: projectValidation.statusCode,
+            statusText: projectValidation.statusText,
+          });
           if (projectValidation.statusCode !== PROJECT_FIND_STATUS.OK) {
             return NextResponse.json(
               {
@@ -794,18 +908,35 @@ export async function POST(
               { status: 400 },
             );
           }
+        } else {
+          logger.info('create-draft-offer project validation skipped (no project code)', {
+            requestId,
+            offerId: normalizedId,
+            offerProjectId,
+          });
         }
       }
+
+      const updatedIds = selections.map((s) => s.productId);
+      logger.info('create-draft-offer completed (selections path)', {
+        requestId,
+        offerId: normalizedId,
+        updatedCount: updatedIds.length,
+        needsSelectionCount: productMatches.length,
+        updated: updatedIds,
+        needsSelectionProductIds: productMatches.map((pm) => pm.productId),
+      });
 
       return NextResponse.json({
         ok: true,
         message: 'Products updated successfully',
         needsSelection: productMatches,
-        updated: selections.map((s) => s.productId),
+        updated: updatedIds,
       });
     }
 
     // No selections provided - search for all products
+    const successfullyUpdatedIds: number[] = [];
     for (const product of products) {
       try {
         const erpRequest = erpPool.request();
@@ -837,12 +968,35 @@ export async function POST(
           CODE2: string | null;
         }>;
 
+        logger.info('create-draft-offer FindProduct result', {
+          requestId,
+          offerId: normalizedId,
+          productId: product.ProductID,
+          partNo: product.PartNumberCleared,
+          modelNo: product.ModelNumberCleared,
+          foundCount,
+          matches: matches.map((m) => ({ MTRL: m.MTRL, CODE: m.CODE, CODE1: m.CODE1, CODE2: m.CODE2 })),
+        });
+
         if (foundCount === 0) {
           // No matches found - automatically create product in ERP
           try {
             // Validate required fields
-            if (!product.Description || !product.BrandID) {
-              console.error(`Product ${product.ProductID} missing Description or BrandID`);
+            if (
+              !product.Description ||
+              !product.BrandID ||
+              !product.SubCategoryID ||
+              !product.TypeID
+            ) {
+              logger.warn('Product missing required fields for create', {
+                requestId,
+                offerId: normalizedId,
+                productId: product.ProductID,
+                hasDescription: !!product.Description,
+                hasBrandID: !!product.BrandID,
+                hasSubCategoryID: !!product.SubCategoryID,
+                hasTypeID: !!product.TypeID,
+              });
               productMatches.push({
                 productId: product.ProductID,
                 partNumber: product.PartNumberCleared,
@@ -862,8 +1016,12 @@ export async function POST(
 
             while (retryCount <= MAX_RETRIES && !createdMTRL) {
               try {
-                // Generate new CODE (will increment on retries)
-                const newCode = await generateNewErpCode(erpPool, retryCount);
+                const newCode = await generateNewErpCode(pool, erpPool, {
+                  SubCategoryID: product.SubCategoryID,
+                  TypeID: product.TypeID,
+                  BrandID: product.BrandID,
+                  BrandName: product.BrandName,
+                });
 
                 // Call tlm._mtrlCreateProduct
                 const createRequest = erpPool.request();
@@ -904,6 +1062,20 @@ export async function POST(
             }
 
             if (createdMTRL && createdCode) {
+              logger.info('create-draft-offer CreateProduct result', {
+                requestId,
+                offerId: normalizedId,
+                productId: product.ProductID,
+                createdMTRL,
+                createdCode,
+              });
+              logger.info('create-draft-offer DB update (created)', {
+                requestId,
+                offerId: normalizedId,
+                productId: product.ProductID,
+                erpId: createdMTRL,
+                erpCode: createdCode,
+              });
               // Update FastQuote Products table with the new ERP IDs
               const updateRequest = pool.request();
               updateRequest.input('productId', sql.Int, product.ProductID);
@@ -917,6 +1089,7 @@ export async function POST(
                     ModifiedOn = SYSUTCDATETIME()
                 WHERE ID = @productId
               `);
+              successfullyUpdatedIds.push(product.ProductID);
             } else {
               throw new Error('Failed to create product after retries - could not get CreatedMTRL from tlm._mtrlCreateProduct');
             }
@@ -952,6 +1125,13 @@ export async function POST(
         } else if (foundCount === 1) {
           // Single match - update directly
           const match = matches[0];
+          logger.info('create-draft-offer DB update (single match)', {
+            requestId,
+            offerId: normalizedId,
+            productId: product.ProductID,
+            erpId: match.MTRL,
+            erpCode: match.CODE,
+          });
           const updateRequest = pool.request();
           updateRequest.input('productId', sql.Int, product.ProductID);
           updateRequest.input('erpId', sql.Int, match.MTRL);
@@ -964,6 +1144,7 @@ export async function POST(
                 ModifiedOn = SYSUTCDATETIME()
             WHERE ID = @productId
           `);
+          successfullyUpdatedIds.push(product.ProductID);
         } else {
           // Multiple matches - need user selection
           productMatches.push({
@@ -1004,8 +1185,23 @@ export async function POST(
       `);
       const projectCode = projectResult.recordset?.[0]?.CODE ?? null;
 
+      logger.info('create-draft-offer project fetch', {
+        requestId,
+        offerId: normalizedId,
+        offerProjectId,
+        projectCode,
+      });
+
       if (projectCode) {
         const projectValidation = await findProject(offerProjectId, projectCode);
+        logger.info('create-draft-offer project validation', {
+          requestId,
+          offerId: normalizedId,
+          offerProjectId,
+          projectCode,
+          statusCode: projectValidation.statusCode,
+          statusText: projectValidation.statusText,
+        });
         if (projectValidation.statusCode !== PROJECT_FIND_STATUS.OK) {
           return NextResponse.json(
             {
@@ -1016,21 +1212,31 @@ export async function POST(
             { status: 400 },
           );
         }
+      } else {
+        logger.info('create-draft-offer project validation skipped (no project code)', {
+          requestId,
+          offerId: normalizedId,
+          offerProjectId,
+        });
       }
     }
+
+    logger.info('create-draft-offer completed (no-selections path)', {
+      requestId,
+      offerId: normalizedId,
+      updatedCount: successfullyUpdatedIds.length,
+      needsSelectionCount: productMatches.length,
+      updated: successfullyUpdatedIds,
+      needsSelectionProductIds: productMatches.map((pm) => pm.productId),
+    });
 
     return NextResponse.json({
       ok: true,
       needsSelection: productMatches,
-      updated: products
-        .filter((p) => {
-          const match = productMatches.find((pm) => pm.productId === p.ProductID);
-          return match && match.matches.length === 0;
-        })
-        .map((p) => p.ProductID),
+      updated: successfullyUpdatedIds,
     });
   } catch (err) {
-    console.error('Failed to create draft offer', err);
+    logger.error('Failed to create draft offer', {}, err instanceof Error ? err : undefined);
     return NextResponse.json(
       {
         ok: false,

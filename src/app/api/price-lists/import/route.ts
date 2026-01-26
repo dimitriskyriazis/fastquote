@@ -21,6 +21,7 @@ type ParsedPriceListRow = {
   listPrice: number | null;
   costPrice: number | null;
   warning: string | null;
+  weblink: string | null;
 };
 
 type ProductRow = {
@@ -30,7 +31,7 @@ type ProductRow = {
   BrandID: number | null;
 };
 
-type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning";
+type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning" | "weblink";
 
 type ColumnMapping = {
   sheetName: string | null;
@@ -45,6 +46,7 @@ const HEADER_SYNONYMS: Record<HeaderColumnKey, string[]> = {
   listPrice: ["listprice", "list price", "price"],
   costPrice: ["costprice", "cost price", "cost"],
   warning: ["warning"],
+  weblink: ["weblink", "web link", "weblnk", "url", "link"],
 };
 
 const requirePriceListUploadRoot = (): string => {
@@ -201,6 +203,39 @@ const normalizeCellString = (value: unknown, maxLength = 1000): string | null =>
   return null;
 };
 
+// Extract hyperlink URL from Excel cell if it exists
+const extractHyperlink = (sheet: XLSX.WorkSheet | null, rowIndex: number, colIndex: number): string | null => {
+  if (!sheet) return null;
+  try {
+    // Convert 0-based row/col to Excel cell address (e.g., A1, B2)
+    const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+    const cell = sheet[cellAddress];
+    if (!cell) return null;
+    
+    // Check for hyperlink in cell's 'l' (link) property
+    if (cell.l && Array.isArray(cell.l) && cell.l.length > 0) {
+      const link = cell.l[0];
+      // Link can have Target (URL) or Tooltip
+      if (link.Target && typeof link.Target === "string") {
+        const url = link.Target.trim();
+        return url || null;
+      }
+    }
+    
+    // Also check for HYPERLINK formula
+    if (cell.f && typeof cell.f === "string" && cell.f.startsWith("HYPERLINK(")) {
+      // Extract URL from HYPERLINK formula: HYPERLINK("url","text")
+      const match = cell.f.match(/HYPERLINK\s*\(\s*"([^"]+)"\s*,/);
+      if (match && match[1]) {
+        return match[1].trim();
+      }
+    }
+  } catch {
+    // Silently fail if hyperlink extraction fails
+  }
+  return null;
+};
+
 const parseColumnMapping = (value: unknown): ColumnMapping => {
   if (typeof value !== "string") return null;
   try {
@@ -285,6 +320,7 @@ const parseSheetWithMapping = (
   headerRowIndex: number,
   columnMap: Partial<Record<HeaderColumnKey, number | null>>,
   decimalFormat: PriceListDecimalFormat,
+  sheet: XLSX.WorkSheet | null = null,
 ) => {
   const requiredKeys: HeaderColumnKey[] = ["partNumber", "description", "listPrice"];
   const hasAllRequired = requiredKeys.every((key) => typeof columnMap[key] === "number");
@@ -308,8 +344,22 @@ const parseSheetWithMapping = (
     const listPrice = parsePrice(getValue(row, "listPrice"), decimalFormat);
     const costPrice = parsePrice(getValue(row, "costPrice"), decimalFormat);
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
+    
+    // Extract weblink: first try hyperlink, then fall back to cell value
+    const weblinkColIdx = columnMap.weblink;
+    let weblink: string | null = null;
+    if (weblinkColIdx != null && typeof weblinkColIdx === "number" && weblinkColIdx >= 0) {
+      // Try to extract hyperlink URL first
+      weblink = extractHyperlink(sheet, rIdx, weblinkColIdx);
+      // If no hyperlink found, use the cell value
+      if (!weblink) {
+        weblink = normalizeCellString(getValue(row, "weblink"), 1000);
+      }
+    } else {
+      weblink = normalizeCellString(getValue(row, "weblink"), 1000);
+    }
 
-    if (!partNumber && !modelNumber && !description && listPrice == null && costPrice == null && !warning) continue;
+    if (!partNumber && !modelNumber && !description && listPrice == null && costPrice == null && !warning && !weblink) continue;
     if (!partNumber || !description || listPrice == null) continue;
 
     parsed.push({
@@ -319,13 +369,14 @@ const parseSheetWithMapping = (
       listPrice,
       costPrice,
       warning,
+      weblink,
     });
   }
 
   return parsed;
 };
 
-const parseSheet = (rows: unknown[][], decimalFormat: PriceListDecimalFormat): ParsedPriceListRow[] | null => {
+const parseSheet = (rows: unknown[][], decimalFormat: PriceListDecimalFormat, sheet: XLSX.WorkSheet | null = null): ParsedPriceListRow[] | null => {
   const header = findHeaderRow(rows);
   if (!header) return null;
   const { headerRowIndex, columnMap } = header;
@@ -346,8 +397,22 @@ const parseSheet = (rows: unknown[][], decimalFormat: PriceListDecimalFormat): P
     const listPrice = parsePrice(getValue(row, "listPrice"), decimalFormat);
     const costPrice = parsePrice(getValue(row, "costPrice"), decimalFormat);
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
+    
+    // Extract weblink: first try hyperlink, then fall back to cell value
+    const weblinkColIdx = columnMap.weblink;
+    let weblink: string | null = null;
+    if (weblinkColIdx != null && typeof weblinkColIdx === "number" && weblinkColIdx >= 0) {
+      // Try to extract hyperlink URL first
+      weblink = extractHyperlink(sheet, rIdx, weblinkColIdx);
+      // If no hyperlink found, use the cell value
+      if (!weblink) {
+        weblink = normalizeCellString(getValue(row, "weblink"), 1000);
+      }
+    } else {
+      weblink = normalizeCellString(getValue(row, "weblink"), 1000);
+    }
 
-    if (!partNumber && !modelNumber && !description && listPrice == null && costPrice == null && !warning) continue;
+    if (!partNumber && !modelNumber && !description && listPrice == null && costPrice == null && !warning && !weblink) continue;
     if (!partNumber || !description || listPrice == null) continue;
 
     parsed.push({
@@ -357,6 +422,7 @@ const parseSheet = (rows: unknown[][], decimalFormat: PriceListDecimalFormat): P
       listPrice,
       costPrice,
       warning,
+      weblink,
     });
   }
 
@@ -398,6 +464,7 @@ const parseWorkbook = (
               headerRowIndex,
               columnMapping.columns ?? {},
               decimalFormat,
+              sheet,
             );
             if (parsed.length > 0) {
               allParsed.push(...parsed);
@@ -412,7 +479,7 @@ const parseWorkbook = (
       const sheet = wb.Sheets[sheetName];
       if (!sheet) continue;
       const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
-      const parsed = parseSheet(rows, decimalFormat);
+      const parsed = parseSheet(rows, decimalFormat, sheet);
       if (parsed && parsed.length > 0) return parsed;
     }
   } catch (err) {
@@ -526,6 +593,7 @@ const createProduct = async (
   request.input("PartNumber", sql.NVarChar(255), row.partNumber);
   request.input("ModelNumber", sql.NVarChar(255), row.modelNumber);
   request.input("Description", sql.NVarChar(2000), row.description);
+  request.input("WebLink", sql.NVarChar(1000), row.weblink);
   request.input("CreatedBy", sql.NVarChar(450), auditUserId);
   request.input("ModifiedBy", sql.NVarChar(450), auditUserId);
 
@@ -535,6 +603,7 @@ const createProduct = async (
       PartNumber,
       ModelNumber,
       Description,
+      WebLink,
       Enabled,
       CreatedOn,
       CreatedBy,
@@ -547,6 +616,7 @@ const createProduct = async (
       @PartNumber,
       @ModelNumber,
       @Description,
+      @WebLink,
       1,
       SYSUTCDATETIME(),
       @CreatedBy,
@@ -935,6 +1005,20 @@ export async function POST(req: NextRequest) {
 
         if (isExistingProduct) {
           matchedProductCount += 1;
+          // Update WebLink if provided in the import
+          if (row.weblink) {
+            const updateRequest = createRequest(transaction);
+            updateRequest.input("ProductID", sql.Int, productId);
+            updateRequest.input("WebLink", sql.NVarChar(1000), row.weblink);
+            updateRequest.input("ModifiedBy", sql.NVarChar(450), auditUserId);
+            await updateRequest.query(`
+              UPDATE dbo.Products
+              SET WebLink = @WebLink,
+                  ModifiedOn = SYSUTCDATETIME(),
+                  ModifiedBy = @ModifiedBy
+              WHERE ID = @ProductID
+            `);
+          }
         }
 
         const productRecord: ProductRow = {

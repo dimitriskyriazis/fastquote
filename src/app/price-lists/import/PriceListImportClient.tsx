@@ -71,7 +71,7 @@ type FormValues = {
   decimalFormat: PriceListDecimalFormat;
 };
 
-type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning";
+type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning" | "weblink";
 
 const columnKeywords: Record<HeaderColumnKey, string[]> = {
   partNumber: [
@@ -180,8 +180,6 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "warn",
     "note",
     "remark",
-    "comment",
-    "info",
     "σημείωση",
     "σημειωση",
     "σημ.",
@@ -190,12 +188,25 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "παρατήρηση",
     "παρατηρηση",
     "παρατηρ.",
-    "σχόλιο",
-    "σχολιο",
-    "σχόλια",
-    "σχολια",
-    "πληροφορίες",
-    "πληροφοριες",
+
+  ],
+
+  weblink: [
+    "weblink",
+    "web link",
+    "weblnk",
+    "url",
+    "link",
+    "hyperlink",
+    "website",
+    "web",
+    "www",
+    "http",
+    "https",
+    "σύνδεσμος",
+    "συνδεσμος",
+    "ιστοσελίδα",
+    "ιστοσελιδα",
   ],
 };
 
@@ -206,6 +217,7 @@ const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string; required?: bo
   { key: "listPrice", label: "List Price", required: true },
   { key: "costPrice", label: "Cost Price (optional)", required: false },
   { key: "warning", label: "Warning (optional)", required: false },
+  { key: "weblink", label: "Weblink (optional)", required: false },
 ];
 
 const PREVIEW_COLUMN_KEYS: HeaderColumnKey[] = [
@@ -215,6 +227,7 @@ const PREVIEW_COLUMN_KEYS: HeaderColumnKey[] = [
   "listPrice",
   "costPrice",
   "warning",
+  "weblink",
 ];
 
 type ColumnOption = { index: number; label: string; normalized: string };
@@ -336,6 +349,7 @@ const buildSuggestions = (columns: ColumnOption[]) => {
     listPrice: makeSuggestions("listPrice"),
     costPrice: makeSuggestions("costPrice"),
     warning: makeSuggestions("warning"),
+    weblink: makeSuggestions("weblink"),
   };
 };
 
@@ -427,6 +441,7 @@ const evaluateSelection = (sheets: SheetMapping[], activeSheetIndex: number) => 
     listPrice: selection.listPrice != null,
     costPrice: selection.costPrice != null,
     warning: selection.warning != null,
+    weblink: selection.weblink != null,
   };
 
   const status: FileValidation["status"] = validSheets.length > 0 ? "valid" : "invalid";
@@ -1026,6 +1041,7 @@ export default function PriceListImportClient({
           listPrice: sheet.selection.listPrice ?? null,
           costPrice: sheet.selection.costPrice ?? null,
           warning: sheet.selection.warning ?? null,
+          weblink: sheet.selection.weblink ?? null,
         },
       }));
       formData.append("columnMappings", JSON.stringify(columnMappings));

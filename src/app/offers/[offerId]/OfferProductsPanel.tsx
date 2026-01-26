@@ -1522,6 +1522,42 @@ const PartNumberCell = useCallback((params: ICellRendererParams<Record<string, u
   );
 }, []);
 
+const ModelNumberCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
+    const rawValue = params.value;
+    if (rawValue == null) return '';
+    const modelNumber = String(rawValue).trim();
+    if (!modelNumber) return '';
+
+    // Only show link if PartNumber is empty
+    const partNumberRaw = (params.data as { PartNumber?: unknown } | undefined)?.PartNumber;
+    const partNumber = typeof partNumberRaw === 'string' ? partNumberRaw.trim() : '';
+    if (partNumber) return modelNumber; // PartNumber exists, don't show link on ModelNumber
+
+    const rawLink = (params.data as { WebLink?: string | null } | undefined)?.WebLink;
+    const normalizedLink = typeof rawLink === 'string' ? rawLink.trim() : '';
+    if (!normalizedLink) return modelNumber;
+
+    const stop = (event: React.SyntheticEvent) => {
+      event.stopPropagation();
+    };
+
+    return (
+      <a
+        href={normalizedLink}
+        target="_blank"
+        rel="noreferrer noopener"
+        className={styles.partNumberLink}
+        onClick={stop}
+        onMouseDown={stop}
+        onDoubleClick={stop}
+        onContextMenu={stop}
+        title="Open product link"
+      >
+        {modelNumber}
+    </a>
+  );
+}, []);
+
   const REQUESTED_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--requested';
   const ACTUAL_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--actual';
 
@@ -1788,6 +1824,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         field: 'ModelNumber',
         headerName: 'Model Number',
         filter: 'agTextColumnFilter',
+        cellRenderer: ModelNumberCell,
         cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
       },
       {
@@ -2032,6 +2069,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     actualNumericCellClass,
     actualNumericCellStyle,
     PartNumberCell,
+    ModelNumberCell,
     manualMode,
     TreeOrderingCell,
     requestedColumnDefsMap,

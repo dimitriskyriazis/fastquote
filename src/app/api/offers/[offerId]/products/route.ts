@@ -1109,6 +1109,7 @@ export async function POST(
       'BrandName',
       'PartNumber',
       'ModelNumber',
+      'WebLink',
       'RequestedItemNo',
       'RequestedBrand',
       'RequestedModelNo',

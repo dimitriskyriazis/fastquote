@@ -41,6 +41,14 @@
   transition: background-color 140ms ease;
 }
 
+.headerActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .addButton {
   border: 1px solid #d1d5db;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);

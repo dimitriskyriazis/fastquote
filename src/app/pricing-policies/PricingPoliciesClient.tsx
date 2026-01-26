@@ -721,7 +721,7 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
       <PageHeader
         title="Pricing Policies"
         rightActions={
-          <>
+          <div className={styles.headerActions}>
             <button
               type="button"
               className={`${styles.addButton} page-header-button`}
@@ -740,7 +740,7 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
             >
               Add Pricing Policy
             </button>
-          </>
+          </div>
         }
       >
         <GridQuickSearchProvider>
