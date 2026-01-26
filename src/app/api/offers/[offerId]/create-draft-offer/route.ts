@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool, getErpPool } from '../../../../../lib/sql';
+import { findProject, PROJECT_FIND_STATUS } from '../../../../../lib/projectValidation';
 
 type ProductMatch = {
   productId: number;
@@ -125,18 +126,20 @@ export async function POST(
     const pool = await getPool();
     const erpPool = await getErpPool();
 
-    // Get offer's SalesDivisionName
+    // Get offer's SalesDivisionName and ProjectID
     const offerRequest = pool.request();
     offerRequest.input('offerId', sql.Int, normalizedId);
     const offerResult = await offerRequest.query<{
       SalesDivisionName: string | null;
+      ProjectID: number | null;
     }>(`
-      SELECT sd.Name AS SalesDivisionName
+      SELECT sd.Name AS SalesDivisionName, o.ProjectID
       FROM dbo.Offer o
       LEFT JOIN dbo.SalesDivision sd ON o.SalesDivitionID = sd.ID
       WHERE o.ID = @offerId
     `);
     const salesDivisionName = offerResult.recordset?.[0]?.SalesDivisionName ?? null;
+    const offerProjectId = offerResult.recordset?.[0]?.ProjectID ?? null;
     // Map SalesDivisionName to BusinessUnit: 'TVS' if contains 'TVS', otherwise 'AVS'
     const businessUnit = salesDivisionName && salesDivisionName.toUpperCase().includes('TVS') ? 'TVS' : 'AVS';
 
@@ -399,6 +402,36 @@ export async function POST(
 
       await Promise.all(updatePromises);
 
+      // Validate project if present
+      if (offerProjectId && offerProjectId > 0) {
+        // Fetch project CODE from ERP
+        const erpPool = await getErpPool();
+        const projectRequest = erpPool.request();
+        projectRequest.input('PRJC', sql.Int, offerProjectId);
+        const projectResult = await projectRequest.query<{
+          CODE: string | null;
+        }>(`
+          SELECT CODE
+          FROM dbo.PRJC
+          WHERE ID = @PRJC
+        `);
+        const projectCode = projectResult.recordset?.[0]?.CODE ?? null;
+
+        if (projectCode) {
+          const projectValidation = await findProject(offerProjectId, projectCode);
+          if (projectValidation.statusCode !== PROJECT_FIND_STATUS.OK) {
+            return NextResponse.json(
+              {
+                ok: false,
+                error: `Project validation failed: ${projectValidation.statusText}`,
+                projectValidation,
+              },
+              { status: 400 },
+            );
+          }
+        }
+      }
+
       return NextResponse.json({
         ok: true,
         message: 'Products updated successfully',
@@ -590,6 +623,36 @@ export async function POST(
           modelNumberActual: product.ModelNumber,
           matches: [],
         });
+      }
+    }
+
+    // Validate project if present
+    if (offerProjectId && offerProjectId > 0) {
+      // Fetch project CODE from ERP
+      const erpPool = await getErpPool();
+      const projectRequest = erpPool.request();
+      projectRequest.input('PRJC', sql.Int, offerProjectId);
+      const projectResult = await projectRequest.query<{
+        CODE: string | null;
+      }>(`
+        SELECT CODE
+        FROM dbo.PRJC
+        WHERE ID = @PRJC
+      `);
+      const projectCode = projectResult.recordset?.[0]?.CODE ?? null;
+
+      if (projectCode) {
+        const projectValidation = await findProject(offerProjectId, projectCode);
+        if (projectValidation.statusCode !== PROJECT_FIND_STATUS.OK) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: `Project validation failed: ${projectValidation.statusText}`,
+              projectValidation,
+            },
+            { status: 400 },
+          );
+        }
       }
     }
 
