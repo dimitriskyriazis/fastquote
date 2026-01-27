@@ -68,10 +68,39 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const autoResolveAttemptedRef = useState(() => ({ value: false }))[0];
+  const windowsAuthAttemptedRef = useState(() => ({ value: false }))[0];
 
   const normalizeWindowsIdentity = (value: string): string => {
     return value.trim().replaceAll('/', '\\').toLowerCase();
   };
+
+  /** Resolve current user via IIS Windows Auth: /test.asp → POST /api/me */
+  const tryResolveViaWindowsAuth = useCallback(async (): Promise<string | null> => {
+    try {
+      const aspRes = await fetch('/test.asp', { credentials: 'include', cache: 'no-store' });
+      if (!aspRes.ok) return null;
+      const asp = (await aspRes.json().catch(() => null)) as { windowsUserName?: string } | null;
+      const windowsUserName =
+        typeof asp?.windowsUserName === 'string' ? asp.windowsUserName.trim() : '';
+      if (!windowsUserName) return null;
+
+      const meRes = await fetch('/api/me', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ windowsUserName }),
+        cache: 'no-store',
+      });
+      if (!meRes.ok) return null;
+      const me = (await meRes.json().catch(() => null)) as {
+        ok?: boolean;
+        user?: { id: number; userName?: string | null; windowsUserName?: string | null };
+      } | null;
+      if (!me?.ok || !me.user || typeof me.user.id !== 'number') return null;
+      return String(me.user.id);
+    } catch {
+      return null;
+    }
+  }, []);
 
   const tryResolveWindowsIdentity = async (): Promise<string | null> => {
     try {
@@ -137,6 +166,18 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refreshUsers();
   }, [refreshUsers]);
+
+  useEffect(() => {
+    if (windowsAuthAttemptedRef.value) return;
+    windowsAuthAttemptedRef.value = true;
+    void (async () => {
+      const id = await tryResolveViaWindowsAuth();
+      if (id) {
+        writeCookieValue(id);
+        setUserId(id);
+      }
+    })();
+  }, [tryResolveViaWindowsAuth]);
 
   const selectedUser = useMemo(
     () => users.find((user) => user.id === userId) ?? null,
