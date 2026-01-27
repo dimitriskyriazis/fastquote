@@ -7,49 +7,43 @@ type UserRecord = {
   WindowsUserName: string | null;
 };
 
-type WindowsIdentityResponse = {
+type MeRequestBody = {
   windowsUserName?: string;
 };
 
-const WINDOWS_IDENTITY_ENDPOINT = 'http://127.0.0.1/test.asp';
-
-export async function GET() {
+/**
+ * POST /api/me
+ *
+ * Expects JSON body: { "windowsUserName": "TELMACO\\dim.kyriazis" }
+ * (The browser gets this value from the IIS-protected /test.asp endpoint.)
+ *
+ * Returns the matching AspNetUsers row or an appropriate error.
+ */
+export async function POST(request: Request) {
   try {
-    // 1) Ask IIS (via classic ASP endpoint) who the current Windows user is
-    const identityRes = await fetch(WINDOWS_IDENTITY_ENDPOINT, {
-      cache: 'no-store',
-    });
+    const body = (await request.json().catch(() => ({}))) as MeRequestBody;
 
-    if (!identityRes.ok) {
-      const text = await identityRes.text().catch(() => '');
+    const rawWindowsUserName =
+      typeof body.windowsUserName === 'string' ? body.windowsUserName.trim() : '';
+
+    if (!rawWindowsUserName) {
       return NextResponse.json(
         {
           ok: false,
-          error: 'Failed to resolve Windows identity',
-          details: text || identityRes.statusText,
+          error: 'Missing windowsUserName in request body',
         },
-        { status: 502 },
+        { status: 400 },
       );
     }
 
-    const identityJson = (await identityRes.json()) as WindowsIdentityResponse;
-    const windowsUserName = typeof identityJson.windowsUserName === 'string'
-      ? identityJson.windowsUserName.trim()
-      : '';
+    // Use the full DOMAIN\\username as stored in AspNetUsers.WindowsUserName
+    const windowsUserName = rawWindowsUserName;
 
-    if (!windowsUserName) {
-      return NextResponse.json(
-        { ok: false, error: 'No Windows user resolved' },
-        { status: 401 },
-      );
-    }
-
-    // 2) Look up matching AspNetUsers row by full DOMAIN\\username
     const pool = await getPool();
-    const request = pool.request();
-    request.input('WindowsUserName', windowsUserName);
+    const sqlRequest = pool.request();
+    sqlRequest.input('WindowsUserName', windowsUserName);
 
-    const result = await request.query<UserRecord>(`
+    const result = await sqlRequest.query<UserRecord>(`
       SELECT TOP 1
         Id,
         UserName,
@@ -87,4 +81,5 @@ export async function GET() {
     );
   }
 }
+
 
