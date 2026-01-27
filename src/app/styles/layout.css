@@ -260,3 +260,50 @@
 .side-nav[data-collapsed="true"] .side-nav__user {
   display: none;
 }
+
+/* Access denied page (unrecognized Windows user) */
+.access-denied-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-muted);
+  padding: 24px;
+}
+
+.access-denied-page__card {
+  max-width: 420px;
+  padding: 32px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  box-shadow: var(--panel-shadow) 0 4px 20px;
+}
+
+.access-denied-page__title {
+  margin: 0 0 16px;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.access-denied-page__message {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.access-denied-page__contact {
+  margin: 0 0 16px;
+  font-size: 0.95rem;
+  color: var(--foreground);
+  line-height: 1.5;
+}
+
+.access-denied-page__identity {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}

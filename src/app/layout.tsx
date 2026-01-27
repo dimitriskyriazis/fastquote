@@ -4,7 +4,6 @@ import "./globals.css";
 import "ag-grid-community/styles/ag-theme-quartz.css";
 import SideNav from "./components/SideNav";
 import { AuditUserProvider } from "./components/AuditUserProvider";
-import AuditUserPrompt from "./components/AuditUserPrompt";
 import DisableAutofill from "./components/DisableAutofill";
 import PreventBackspaceNavigation from "./components/PreventBackspaceNavigation";
 import CaretVisibilityManager from "./components/CaretVisibilityManager";
@@ -31,7 +30,6 @@ export default function RootLayout({
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <CaretVisibilityManager />
         <AuditUserProvider>
-          <AuditUserPrompt />
           <DisableAutofill />
           <PreventBackspaceNavigation />
           <div className="app-shell">

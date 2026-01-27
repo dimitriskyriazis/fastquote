@@ -59,6 +59,7 @@ export async function POST(request: Request) {
         {
           ok: false,
           error: 'No matching application user for Windows identity',
+          reason: 'unrecognized_windows_user',
           windowsUserName,
         },
         { status: 403 },

@@ -9,6 +9,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import AccessDeniedPage from './AccessDeniedPage';
 
 const COOKIE_NAME = 'fastquote-user-id';
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365; // one year
@@ -62,11 +63,21 @@ const clearCookieValue = () => {
   document.cookie = `${COOKIE_NAME}=; path=/; max-age=0`;
 };
 
+type WindowsAuthResult = {
+  userId: string | null;
+  accessDenied?: boolean;
+  windowsUserName?: string;
+};
+
 export function AuditUserProvider({ children }: { children: ReactNode }) {
   const [userId, setUserId] = useState<string>(() => readCookieValue() ?? '');
   const [users, setUsers] = useState<AuditUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [accessDeniedUnrecognizedUser, setAccessDeniedUnrecognizedUser] = useState(false);
+  const [accessDeniedWindowsIdentity, setAccessDeniedWindowsIdentity] = useState<string | null>(
+    null,
+  );
   const autoResolveAttemptedRef = useState(() => ({ value: false }))[0];
   const windowsAuthAttemptedRef = useState(() => ({ value: false }))[0];
 
@@ -75,14 +86,14 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
   };
 
   /** Resolve current user via IIS Windows Auth: /test.asp → POST /api/me */
-  const tryResolveViaWindowsAuth = useCallback(async (): Promise<string | null> => {
+  const tryResolveViaWindowsAuth = useCallback(async (): Promise<WindowsAuthResult> => {
     try {
       const aspRes = await fetch('/test.asp', { credentials: 'include', cache: 'no-store' });
-      if (!aspRes.ok) return null;
+      if (!aspRes.ok) return { userId: null };
       const asp = (await aspRes.json().catch(() => null)) as { windowsUserName?: string } | null;
       const windowsUserName =
         typeof asp?.windowsUserName === 'string' ? asp.windowsUserName.trim() : '';
-      if (!windowsUserName) return null;
+      if (!windowsUserName) return { userId: null };
 
       const meRes = await fetch('/api/me', {
         method: 'POST',
@@ -90,15 +101,25 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ windowsUserName }),
         cache: 'no-store',
       });
-      if (!meRes.ok) return null;
       const me = (await meRes.json().catch(() => null)) as {
         ok?: boolean;
+        reason?: string;
+        windowsUserName?: string;
         user?: { id: number; userName?: string | null; windowsUserName?: string | null };
       } | null;
-      if (!me?.ok || !me.user || typeof me.user.id !== 'number') return null;
-      return String(me.user.id);
+
+      if (meRes.status === 403 && (me?.reason === 'unrecognized_windows_user' || !me?.ok)) {
+        return {
+          userId: null,
+          accessDenied: true,
+          windowsUserName: typeof me?.windowsUserName === 'string' ? me.windowsUserName : windowsUserName,
+        };
+      }
+      if (!meRes.ok) return { userId: null };
+      if (!me?.ok || !me.user || typeof me.user.id !== 'number') return { userId: null };
+      return { userId: String(me.user.id) };
     } catch {
-      return null;
+      return { userId: null };
     }
   }, []);
 
@@ -171,13 +192,18 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     if (windowsAuthAttemptedRef.value) return;
     windowsAuthAttemptedRef.value = true;
     void (async () => {
-      const id = await tryResolveViaWindowsAuth();
-      if (id) {
-        writeCookieValue(id);
-        setUserId(id);
+      const result = await tryResolveViaWindowsAuth();
+      if (result.accessDenied) {
+        setAccessDeniedUnrecognizedUser(true);
+        setAccessDeniedWindowsIdentity(result.windowsUserName ?? null);
+        return;
+      }
+      if (result.userId) {
+        writeCookieValue(result.userId);
+        setUserId(result.userId);
       }
     })();
-  }, [tryResolveViaWindowsAuth]);
+  }, [tryResolveViaWindowsAuth, windowsAuthAttemptedRef]);
 
   const selectedUser = useMemo(
     () => users.find((user) => user.id === userId) ?? null,
@@ -189,6 +215,7 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     if (loading) return;
     if (userId && selectedUser) return;
     if (users.length === 0) return;
+    if (accessDeniedUnrecognizedUser) return;
 
     autoResolveAttemptedRef.value = true;
 
@@ -205,9 +232,12 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
       if (match) {
         writeCookieValue(match.id);
         setUserId(match.id);
+      } else {
+        setAccessDeniedUnrecognizedUser(true);
+        setAccessDeniedWindowsIdentity(identity);
       }
     })();
-  }, [loading, userId, selectedUser, users, autoResolveAttemptedRef]);
+  }, [loading, userId, selectedUser, users, accessDeniedUnrecognizedUser, autoResolveAttemptedRef]);
 
   const saveUserId = useCallback((nextId: string) => {
     const normalized = normalizeInput(nextId);
@@ -235,6 +265,14 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     }),
     [userId, selectedUser, users, loading, error, refreshUsers, saveUserId, clearUser],
   );
+
+  if (accessDeniedUnrecognizedUser) {
+    return (
+      <AuditUserContext.Provider value={value}>
+        <AccessDeniedPage windowsIdentity={accessDeniedWindowsIdentity} />
+      </AuditUserContext.Provider>
+    );
+  }
 
   return <AuditUserContext.Provider value={value}>{children}</AuditUserContext.Provider>;
 }
