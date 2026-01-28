@@ -12,7 +12,7 @@ import {
 import AccessDeniedPage from './AccessDeniedPage';
 
 const COOKIE_NAME = 'fastquote-user-id';
-const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365; // one year
+const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 90; // 90 days
 
 type AuditUser = {
   id: string;
@@ -190,6 +190,11 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (windowsAuthAttemptedRef.value) return;
+    // If we already have a user id from the cookie, skip Windows auth entirely.
+    // This ensures Windows authentication is only attempted on the first visit
+    // (or after the cookie has been cleared), avoiding repeated login prompts.
+    if (userId) return;
+
     windowsAuthAttemptedRef.value = true;
     void (async () => {
       const result = await tryResolveViaWindowsAuth();
@@ -203,7 +208,7 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
         setUserId(result.userId);
       }
     })();
-  }, [tryResolveViaWindowsAuth, windowsAuthAttemptedRef]);
+  }, [userId, tryResolveViaWindowsAuth, windowsAuthAttemptedRef]);
 
   const selectedUser = useMemo(
     () => users.find((user) => user.id === userId) ?? null,
