@@ -48,6 +48,7 @@ type ExistingOfferRecord = {
   ContactID: number | null;
   OfferContact: string | null;
   ERPProjectID: number | null;
+  ERPFWCProjectID: number | null;
   PrintLevelGroupingID: number | null;
   CustomerRef: string | null;
   InitialRequest: Date | null;
@@ -299,6 +300,7 @@ export async function POST(
         ContactID,
         OfferContact,
         ERPProjectID,
+        ERPFWCProjectID,
         PrintLevelGroupingID,
         CustomerRef,
         InitialRequest,
@@ -369,6 +371,7 @@ export async function POST(
       insertRequest.input('ContactID', sql.Int, existingOffer.ContactID);
       insertRequest.input('OfferContact', sql.NVarChar(500), existingOffer.OfferContact);
       insertRequest.input('ERPProjectID', sql.Int, existingOffer.ERPProjectID);
+      insertRequest.input('ERPFWCProjectID', sql.Int, existingOffer.ERPFWCProjectID);
       insertRequest.input('PrintLevelGroupingID', sql.Int, existingOffer.PrintLevelGroupingID);
       insertRequest.input('CustomerRef', sql.NVarChar(500), existingOffer.CustomerRef);
       insertRequest.input('InitialRequest', sql.DateTime2, existingOffer.InitialRequest);
@@ -381,6 +384,7 @@ export async function POST(
       insertRequest.input('Delivery', sql.DateTime2, existingOffer.Delivery);
       insertRequest.input('OfferDate', sql.DateTime2, existingOffer.OfferDate);
       insertRequest.input('ApprovalUserId', sql.NVarChar(450), normalizedApprovalUserId);
+      insertRequest.input('ParentOfferID', sql.Int, normalizedId);
       insertRequest.input('ProtocolNo', sql.Int, existingOffer.ProtocolNo);
       insertRequest.input('OfferVersion', sql.Int, nextVersion);
       insertRequest.input('Enabled', sql.Bit, enabledValue);
@@ -408,6 +412,7 @@ export async function POST(
           ContactID,
           OfferContact,
           ERPProjectID,
+          ERPFWCProjectID,
           PrintLevelGroupingID,
           CustomerRef,
           InitialRequest,
@@ -420,6 +425,7 @@ export async function POST(
           Delivery,
           OfferDate,
           ApprovalUserId,
+          ParentOfferID,
           ProtocolNo,
           OfferVersion,
           Enabled,
@@ -449,6 +455,7 @@ export async function POST(
           @ContactID,
           @OfferContact,
           @ERPProjectID,
+          @ERPFWCProjectID,
           @PrintLevelGroupingID,
           @CustomerRef,
           @InitialRequest,
@@ -461,6 +468,7 @@ export async function POST(
           @Delivery,
           @OfferDate,
           @ApprovalUserId,
+          @ParentOfferID,
           @ProtocolNo,
           @OfferVersion,
           @Enabled,

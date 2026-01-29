@@ -728,7 +728,6 @@ export async function POST(req: NextRequest) {
     if (!brandId) errors.push("Brand is required.");
     if (pricingPolicies.length === 0) errors.push("At least one pricing policy is required.");
     if (!responsibleUserId) errors.push("Responsible user is required.");
-    if (!supplierId) errors.push("Supplier is required.");
     if (!validFromDate) errors.push("Valid from date is required.");
     if (!validToDate) errors.push("Valid to date is required.");
 

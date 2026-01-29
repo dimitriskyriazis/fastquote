@@ -30,6 +30,7 @@ type FormValues = {
   salesPersonId: string;
   approvalUserId: string;
   projectId: string;
+  erpFwcProjectId: string;
   customerRef: string;
   initialRequest: string;
   draftOffer: string;
@@ -164,6 +165,7 @@ export default function OfferCreateClient({
     salesPersonId: '',
     approvalUserId: '',
     projectId: '0',
+    erpFwcProjectId: '',
     customerRef: '',
     initialRequest: '',
     draftOffer: '',
@@ -398,6 +400,7 @@ export default function OfferCreateClient({
       introNote: toNullableString(values.introNote),
       telmacoNote: toNullableString(values.telmacoNote),
       projectId: toNumberOrNull(values.projectId),
+      erpFwcProjectId: toNumberOrNull(values.erpFwcProjectId),
       customerRef: toNullableString(values.customerRef),
       initialRequest: toNullableString(values.initialRequest),
       draftOffer: toNullableString(values.draftOffer),
@@ -455,6 +458,7 @@ export default function OfferCreateClient({
       { id: 'approvalUserId', label: 'Approval User', section: 'commercial', type: 'select', options: users },
 
       { id: 'projectId', label: 'Project ID', section: 'code', inputType: 'number' },
+      { id: 'erpFwcProjectId', label: 'ERP FWC Project ID', section: 'code', inputType: 'number' },
       { id: 'customerRef', label: 'Customer Ref', section: 'code' },
 
       { id: 'initialRequest', label: 'Initial Request', section: 'dates', type: 'date' },

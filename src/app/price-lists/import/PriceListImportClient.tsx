@@ -25,12 +25,22 @@ import {
   PRICE_LIST_DECIMAL_FORMAT_OPTIONS,
   type PriceListDecimalFormat,
 } from "../../../lib/priceListDecimalFormats";
-import { parseLocaleNumber } from "../../../lib/localeNumber";
+import { getUserNumberLocale, parseLocaleNumber } from "../../../lib/localeNumber";
 import { useAuditUser } from "../../components/AuditUserProvider";
 
 type XlsxModule = typeof import("xlsx");
 
 const loadXlsx = () => import("xlsx");
+
+const numberFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+
+const formatDiscountValue = (value: number | null | undefined): string => {
+  if (value == null || !Number.isFinite(value)) return "";
+  return numberFormatter.format(value);
+};
 
 export type PreviousPriceListOption = DropdownOption & {
   brandId: number | null;
@@ -274,7 +284,6 @@ const REQUIRED_FIELDS: Array<keyof FormValues> = [
   "name",
   "brandId",
   "responsibleUserId",
-  "supplierId",
   "validFromDate",
   "validToDate",
 ];
@@ -529,9 +538,10 @@ export default function PriceListImportClient({
     previousPriceListId: "",
     decimalFormat: "dotDecimal",
   }));
-  const [isAddingPolicy, setIsAddingPolicy] = useState(false);
-  const [newPolicyPricingPolicyId, setNewPolicyPricingPolicyId] = useState("");
-  const [newPolicyPricingPolicyRuleId, setNewPolicyPricingPolicyRuleId] = useState("");
+  const [isRulePickerOpen, setIsRulePickerOpen] = useState(false);
+  const [rulePickerSelection, setRulePickerSelection] = useState<Set<number>>(new Set());
+  const [rulePickerError, setRulePickerError] = useState<string | null>(null);
+  const [discountDrafts, setDiscountDrafts] = useState<Record<number, { telmaco: string; customer: string }>>({});
   const [file, setFile] = useState<File | null>(null);
   const [fileValidation, setFileValidation] = useState<FileValidation>(INITIAL_VALIDATION);
   const validationRunId = useRef(0);
@@ -542,6 +552,9 @@ export default function PriceListImportClient({
   const [brandText, setBrandText] = useState("");
   const [brandError, setBrandError] = useState<string | null>(null);
   const [showBrandList, setShowBrandList] = useState(false);
+  const [localBrands, setLocalBrands] = useState<DropdownOption[]>(brands);
+  const [brandsLoading, setBrandsLoading] = useState(false);
+  const [brandsError, setBrandsError] = useState<string | null>(null);
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
   const [localPricingPolicyRules, setLocalPricingPolicyRules] = useState(pricingPolicyRules);
   const [isAddPricingPolicyRuleOpen, setIsAddPricingPolicyRuleOpen] = useState(false);
@@ -562,6 +575,10 @@ export default function PriceListImportClient({
   useEffect(() => {
     setLocalPricingPolicyRules(pricingPolicyRules);
   }, [pricingPolicyRules]);
+
+  useEffect(() => {
+    setLocalBrands(brands);
+  }, [brands]);
 
   // Automatically select current user as responsible user
   useEffect(() => {
@@ -641,7 +658,6 @@ export default function PriceListImportClient({
         throw new Error(payload?.error ?? "Unable to add pricing policy rule");
       }
       setLocalPricingPolicyRules((prev) => [...prev, option]);
-      setValues((prev) => ({ ...prev, pricingPolicyRuleId: option.value }));
       showToastMessage("Pricing policy rule added", "success");
       setIsAddPricingPolicyRuleOpen(false);
     } catch (err) {
@@ -671,21 +687,85 @@ export default function PriceListImportClient({
     );
   }, [localPricingPolicyRules, values.brandId]);
 
-  const filteredPolicyIds = useMemo(() => {
-    const ids = new Set<string>();
-    filteredRules.forEach((rule) => {
-      if (rule.pricingPolicyId != null) {
-        ids.add(String(rule.pricingPolicyId));
+  const hasBrandSelection = useMemo(() => {
+    const rawBrand = values.brandId.trim();
+    return rawBrand.length > 0 && Number.isFinite(Number(rawBrand));
+  }, [values.brandId]);
+
+  const pricingPolicyNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    localPricingPolicies.forEach((policy) => {
+      const id = Number(policy.value);
+      if (Number.isFinite(id)) {
+        map.set(id, policy.label);
       }
     });
-    return ids;
-  }, [filteredRules]);
+    return map;
+  }, [localPricingPolicies]);
 
-  const filteredPolicies = useMemo(() => {
-    const hasBrand = values.brandId.trim().length > 0 && Number.isFinite(Number(values.brandId));
-    if (!hasBrand || filteredPolicyIds.size === 0) return localPricingPolicies;
-    return localPricingPolicies.filter((policy) => filteredPolicyIds.has(policy.value));
-  }, [filteredPolicyIds, localPricingPolicies, values.brandId]);
+  const rulesForPicker = useMemo(() => {
+    const sorted = [...filteredRules];
+    sorted.sort((a, b) => {
+      const aPolicy = a.pricingPolicyName ?? pricingPolicyNameById.get(Number(a.pricingPolicyId)) ?? "";
+      const bPolicy = b.pricingPolicyName ?? pricingPolicyNameById.get(Number(b.pricingPolicyId)) ?? "";
+      const policyCompare = aPolicy.localeCompare(bPolicy);
+      if (policyCompare !== 0) return policyCompare;
+      return (a.label ?? "").localeCompare(b.label ?? "");
+    });
+    return sorted;
+  }, [filteredRules, pricingPolicyNameById]);
+
+  const selectedRuleIds = useMemo(() => {
+    return new Set(
+      values.pricingPolicies
+        .map((entry) => entry.pricingPolicyRuleId)
+        .filter((id): id is number => typeof id === "number" && Number.isFinite(id)),
+    );
+  }, [values.pricingPolicies]);
+
+  const rulesById = useMemo(() => {
+    const map = new Map<number, PricingPolicyRuleOption>();
+    localPricingPolicyRules.forEach((rule) => {
+      const id = Number(rule.value);
+      if (Number.isFinite(id)) {
+        map.set(id, rule);
+      }
+    });
+    return map;
+  }, [localPricingPolicyRules]);
+
+  const selectedRuleSummary = useMemo(() => {
+    return values.pricingPolicies
+      .map((entry) => (entry.pricingPolicyRuleId != null ? rulesById.get(entry.pricingPolicyRuleId) : null))
+      .filter((rule): rule is PricingPolicyRuleOption => Boolean(rule));
+  }, [rulesById, values.pricingPolicies]);
+
+  useEffect(() => {
+    if (!isRulePickerOpen) return;
+    setRulePickerError(null);
+    const visibleRuleIds = new Set(
+      rulesForPicker
+        .map((rule) => Number(rule.value))
+        .filter((id) => Number.isFinite(id)),
+    );
+    setRulePickerSelection(
+      new Set(Array.from(selectedRuleIds).filter((id) => visibleRuleIds.has(id))),
+    );
+  }, [isRulePickerOpen, rulesForPicker, selectedRuleIds]);
+
+  useEffect(() => {
+    if (!isRulePickerOpen) return;
+    const next: Record<number, { telmaco: string; customer: string }> = {};
+    rulesForPicker.forEach((rule) => {
+      const id = Number(rule.value);
+      if (!Number.isFinite(id)) return;
+      next[id] = {
+        telmaco: formatDiscountValue(rule.telmacoDiscountPercentage ?? null),
+        customer: formatDiscountValue(rule.customerDiscountPercentage ?? null),
+      };
+    });
+    setDiscountDrafts(next);
+  }, [isRulePickerOpen, rulesForPicker]);
 
   const filteredPreviousPriceLists = useMemo(() => {
     const rawBrand = values.brandId.trim();
@@ -698,69 +778,208 @@ export default function PriceListImportClient({
 
   const filteredBrandOptions = useMemo(() => {
     const search = brandText.trim().toLowerCase();
-    if (!search) return brands;
-    return brands.filter((option) => {
+    if (!search) return localBrands;
+    return localBrands.filter((option) => {
       const label = option.label?.toLowerCase() ?? "";
       const value = option.value?.toLowerCase() ?? "";
       return label.includes(search) || value.includes(search);
     });
-  }, [brandText, brands]);
+  }, [brandText, localBrands]);
 
-  const availableRulesForPolicy = useMemo(() => {
-    if (!newPolicyPricingPolicyId) return [];
-    const policyId = Number.parseInt(newPolicyPricingPolicyId, 10);
-    return localPricingPolicyRules.filter((rule) => rule.pricingPolicyId === policyId);
-  }, [newPolicyPricingPolicyId, localPricingPolicyRules]);
+  const refreshBrands = useCallback(async () => {
+    if (brandsLoading) return;
+    setBrandsLoading(true);
+    setBrandsError(null);
+    try {
+      const response = await fetch("/api/products/lookups");
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; brands?: Array<{ id: number; name: string }> | null; error?: string }
+        | null;
+      if (!response.ok || !payload?.ok || !Array.isArray(payload.brands)) {
+        throw new Error(payload?.error ?? "Unable to load brands");
+      }
+      setLocalBrands(
+        payload.brands.map((brand) => ({
+          value: String(brand.id),
+          label: brand.name?.trim() || `Brand ${brand.id}`,
+        })),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to load brands";
+      setBrandsError(message);
+      showToastMessage("Unable to refresh brands. Please try again.", "error");
+    } finally {
+      setBrandsLoading(false);
+    }
+  }, [brandsLoading]);
 
-  const handleAddPricingPolicy = useCallback(() => {
-    const pricingPolicyId = Number.parseInt(newPolicyPricingPolicyId, 10);
-    if (!Number.isInteger(pricingPolicyId)) {
-      showToastMessage("Please select a pricing policy", "error");
+  const updateField = useCallback(<K extends keyof FormValues>(key: K, value: FormValues[K]) => {
+    setValues((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  const toggleRuleSelection = useCallback((ruleId: number) => {
+    setRulePickerSelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(ruleId)) {
+        next.delete(ruleId);
+      } else {
+        next.add(ruleId);
+      }
+      return next;
+    });
+  }, []);
+
+  const applyRuleSelection = useCallback(() => {
+    const rulesById = new Map<number, PricingPolicyRuleOption>();
+    rulesForPicker.forEach((rule) => {
+      const id = Number(rule.value);
+      if (Number.isFinite(id)) {
+        rulesById.set(id, rule);
+      }
+    });
+    const nextPolicies = Array.from(rulePickerSelection)
+      .map((ruleId) => {
+        const rule = rulesById.get(ruleId);
+        if (!rule || rule.pricingPolicyId == null) return null;
+        return {
+          pricingPolicyId: rule.pricingPolicyId,
+          pricingPolicyRuleId: ruleId,
+        };
+      })
+      .filter(
+        (
+          entry,
+        ): entry is {
+          pricingPolicyId: number;
+          pricingPolicyRuleId: number;
+        } => entry !== null,
+      );
+
+    if (nextPolicies.length === 0) {
+      setRulePickerError("Please select at least one pricing policy rule.");
       return;
     }
 
-    setValues((prev) => ({
-      ...prev,
-      pricingPolicies: [
-        ...prev.pricingPolicies,
-        {
-          pricingPolicyId,
-          pricingPolicyRuleId: newPolicyPricingPolicyRuleId ? Number.parseInt(newPolicyPricingPolicyRuleId, 10) : null,
-        },
-      ],
-    }));
-    setNewPolicyPricingPolicyId("");
-    setNewPolicyPricingPolicyRuleId("");
-    setIsAddingPolicy(false);
-  }, [newPolicyPricingPolicyId, newPolicyPricingPolicyRuleId]);
+    setValues((prev) => ({ ...prev, pricingPolicies: nextPolicies }));
+    setIsRulePickerOpen(false);
+  }, [rulePickerSelection, rulesForPicker]);
 
-  const handleRemovePricingPolicy = useCallback(
-    (index: number) => {
-      setValues((prev) => ({
+  const handleRuleDiscountChange = useCallback(
+    (ruleId: number, field: "telmaco" | "customer", value: string) => {
+      setDiscountDrafts((prev) => ({
         ...prev,
-        pricingPolicies: prev.pricingPolicies.filter((_, i) => i !== index),
+        [ruleId]: {
+          telmaco: prev[ruleId]?.telmaco ?? "",
+          customer: prev[ruleId]?.customer ?? "",
+          [field]: value,
+        },
       }));
     },
     [],
   );
 
-  const updateField = useCallback(<K extends keyof FormValues>(key: K, value: FormValues[K]) => {
-    setValues((prev) => ({ ...prev, [key]: value }));
-  }, []);
+  const handleRuleDiscountSave = useCallback(
+    async (rule: PricingPolicyRuleOption, field: "telmaco" | "customer") => {
+      const ruleId = Number(rule.value);
+      if (!Number.isFinite(ruleId)) return;
+      if (rule.brandId == null || rule.pricingPolicyId == null) {
+        showToastMessage("This rule cannot be edited.", "error");
+        setDiscountDrafts((prev) => ({
+          ...prev,
+          [ruleId]: {
+            telmaco: formatDiscountValue(rule.telmacoDiscountPercentage ?? null),
+            customer: formatDiscountValue(rule.customerDiscountPercentage ?? null),
+          },
+        }));
+        return;
+      }
+
+      const draft = discountDrafts[ruleId]?.[field] ?? "";
+      const parsed = parseLocaleNumber(draft);
+      if (parsed == null) {
+        showToastMessage("Discount is required", "error");
+        setDiscountDrafts((prev) => ({
+          ...prev,
+          [ruleId]: {
+            telmaco: formatDiscountValue(rule.telmacoDiscountPercentage ?? null),
+            customer: formatDiscountValue(rule.customerDiscountPercentage ?? null),
+          },
+        }));
+        return;
+      }
+
+      const currentValue =
+        field === "telmaco" ? rule.telmacoDiscountPercentage ?? null : rule.customerDiscountPercentage ?? null;
+      if (currentValue != null && parsed === currentValue) {
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/pricing-policies/matrix", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            brandId: rule.brandId,
+            pricingPolicyId: rule.pricingPolicyId,
+            field,
+            value: parsed,
+          }),
+        });
+        const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!response.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? "Unable to update discounts");
+        }
+        setLocalPricingPolicyRules((prev) =>
+          prev.map((entry) =>
+            entry.value === rule.value
+              ? {
+                  ...entry,
+                  telmacoDiscountPercentage:
+                    field === "telmaco" ? parsed : entry.telmacoDiscountPercentage ?? null,
+                  customerDiscountPercentage:
+                    field === "customer" ? parsed : entry.customerDiscountPercentage ?? null,
+                }
+              : entry,
+          ),
+        );
+        setDiscountDrafts((prev) => ({
+          ...prev,
+          [ruleId]: {
+            telmaco:
+              field === "telmaco" ? formatDiscountValue(parsed) : prev[ruleId]?.telmaco ?? "",
+            customer:
+              field === "customer" ? formatDiscountValue(parsed) : prev[ruleId]?.customer ?? "",
+          },
+        }));
+        showToastMessage("Discount updated", "success");
+      } catch (err) {
+        console.error("Failed to update discount", err);
+        showToastMessage("Unable to update discount. Please try again.", "error");
+        setDiscountDrafts((prev) => ({
+          ...prev,
+          [ruleId]: {
+            telmaco: formatDiscountValue(rule.telmacoDiscountPercentage ?? null),
+            customer: formatDiscountValue(rule.customerDiscountPercentage ?? null),
+          },
+        }));
+      }
+    },
+    [discountDrafts],
+  );
 
   const findBrandOption = useCallback(
     (text: string) => {
       const normalized = text.trim().toLowerCase();
       if (!normalized) return null;
       return (
-        brands.find((option) => {
+        localBrands.find((option) => {
           const label = option.label?.trim().toLowerCase();
           const value = option.value?.trim().toLowerCase();
           return label === normalized || value === normalized;
         }) ?? null
       );
     },
-    [brands],
+    [localBrands],
   );
 
   const setBrandSelection = useCallback(
@@ -1161,6 +1380,7 @@ export default function PriceListImportClient({
                     onChange={(e) => handleBrandInputChange(e.target.value)}
                     onFocus={(e) => {
                       e.target.select();
+                      void refreshBrands();
                       setShowBrandList(true);
                     }}
                     onBlur={handleBrandBlur}
@@ -1185,6 +1405,7 @@ export default function PriceListImportClient({
                     </div>
                   ) : null}
                   {brandError ? <div className={styles.fieldError}>{brandError}</div> : null}
+                  {brandsError ? <div className={styles.fieldError}>{brandsError}</div> : null}
                 </div>
               </div>
 
@@ -1193,107 +1414,48 @@ export default function PriceListImportClient({
                   <div className={styles.lookupLabelRow}>
                     <div className={styles.labelText}>
                       <label className={styles.label}>
-                        Pricing Policies <span className={styles.requiredMark}>*</span>
+                        Pricing Policy Rules <span className={styles.requiredMark}>*</span>
                       </label>
                     </div>
                   </div>
-                  {values.pricingPolicies.length > 0 ? (
-                    <div className={styles.chipList} style={{ marginBottom: '8px' }}>
-                      {values.pricingPolicies.map((policy, index) => {
-                        const policyOption = localPricingPolicies.find((p) => Number(p.value) === policy.pricingPolicyId);
-                        const ruleOption = policy.pricingPolicyRuleId
-                          ? localPricingPolicyRules.find((r) => Number(r.value) === policy.pricingPolicyRuleId)
-                          : null;
-                        const policyLabel = policyOption?.label ?? `Policy ${policy.pricingPolicyId}`;
-                        const ruleLabel = ruleOption
-                          ? ` (Rule: ${ruleOption.label})`
-                          : policy.pricingPolicyRuleId
-                            ? ` (Rule ID: ${policy.pricingPolicyRuleId})`
-                            : '';
-                        return (
-                          <span key={index} className={styles.chip}>
-                            {policyLabel}
-                            {ruleLabel}
-                            <button
-                              type="button"
-                              className={styles.chipDelete}
-                              onClick={() => handleRemovePricingPolicy(index)}
-                              aria-label={`Remove ${policyLabel}`}
-                            >
-                              ×
-                            </button>
-                          </span>
-                        );
-                      })}
+                  {selectedRuleSummary.length > 0 ? (
+                    <div className={styles.ruleSummaryList}>
+                      {selectedRuleSummary.map((rule) => (
+                        <span key={rule.value} className={styles.ruleSummaryItem}>
+                          {rule.label}
+                        </span>
+                      ))}
                     </div>
                   ) : (
-                    <div className={styles.chipListEmpty} style={{ marginBottom: '8px' }}>
-                      No pricing policies selected.
+                    <div className={styles.chipListEmpty} style={{ marginBottom: "8px" }}>
+                      No pricing policy rules selected.
                     </div>
                   )}
-                  {isAddingPolicy ? (
-                    <div className={styles.addPolicyForm}>
-                      <select
-                        className={styles.input}
-                        value={newPolicyPricingPolicyId}
-                        onChange={(e) => {
-                          setNewPolicyPricingPolicyId(e.target.value);
-                          setNewPolicyPricingPolicyRuleId('');
-                        }}
-                      >
-                        <option value="">Select Pricing Policy...</option>
-                        {filteredPolicies
-                          .filter(
-                            (p) => !values.pricingPolicies.some((plp) => plp.pricingPolicyId === Number(p.value)),
-                          )
-                          .map(renderOption)}
-                      </select>
-                      {newPolicyPricingPolicyId && availableRulesForPolicy.length > 0 && (
-                        <select
-                          className={styles.input}
-                          value={newPolicyPricingPolicyRuleId}
-                          onChange={(e) => setNewPolicyPricingPolicyRuleId(e.target.value)}
-                        >
-                          <option value="">All rules (no specific rule)</option>
-                          {availableRulesForPolicy.map((rule) => (
-                            <option key={rule.value} value={rule.value}>
-                              {rule.label}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                      <div className={styles.addPolicyActions}>
-                        <button
-                          type="button"
-                          className={styles.buttonPrimary}
-                          onClick={handleAddPricingPolicy}
-                          disabled={!newPolicyPricingPolicyId}
-                        >
-                          Add
-                        </button>
-                        <button
-                          type="button"
-                          className={styles.buttonSecondary}
-                          onClick={() => {
-                            setIsAddingPolicy(false);
-                            setNewPolicyPricingPolicyId('');
-                            setNewPolicyPricingPolicyRuleId('');
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
+                  <span
+                    className={styles.tooltipWrapper}
+                    data-tooltip={
+                      !hasBrandSelection
+                        ? "Select a brand with a pricing policy and a rule first."
+                        : rulesForPicker.length === 0
+                          ? "No pricing policy rules are available for this brand."
+                          : ""
+                    }
+                  >
                     <button
                       type="button"
-                      className={styles.buttonSecondary}
-                      onClick={() => setIsAddingPolicy(true)}
-                      disabled={filteredPolicies.length === 0}
+                      className={`${styles.buttonSecondary} ${styles.rulePickerButton}`}
+                      onClick={() => {
+                        if (!hasBrandSelection) {
+                          showToastMessage("Please select a brand first.", "error");
+                          return;
+                        }
+                        setIsRulePickerOpen(true);
+                      }}
+                      disabled={!hasBrandSelection || rulesForPicker.length === 0}
                     >
-                      + Add Pricing Policy
+                      Select Pricing Policy Rules
                     </button>
-                  )}
+                  </span>
                 </div>
               </div>
 
@@ -1314,12 +1476,11 @@ export default function PriceListImportClient({
                 </label>
                 <label className={styles.field}>
                   <span className={styles.label}>
-                    Supplier <span className={styles.requiredMark}>*</span>
+                    Supplier
                   </span>
                   <select
                     className={styles.input}
                     value={values.supplierId}
-                    required
                     onChange={(e) => updateField("supplierId", e.target.value)}
                   >
                     <option value="">Select supplier</option>
@@ -1734,6 +1895,96 @@ export default function PriceListImportClient({
       </section>
     </main>
       <LookupModal
+        open={isRulePickerOpen}
+        title="Select Pricing Policy Rules"
+        onClose={() => setIsRulePickerOpen(false)}
+        onConfirm={applyRuleSelection}
+        confirmLabel="Apply"
+        error={rulePickerError}
+        cardClassName={styles.rulePickerModal}
+        bodyClassName={styles.rulePickerBody}
+      >
+        {rulesForPicker.length > 0 ? (
+          <table className={styles.ruleTable}>
+            <thead>
+              <tr>
+                <th className={styles.ruleCheckboxCell} />
+                <th>Rule</th>
+                <th>Pricing Policy</th>
+                <th>Telmaco Discount</th>
+                <th>Customer Discount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rulesForPicker.map((rule) => {
+                const ruleId = Number(rule.value);
+                const isSelected = Number.isFinite(ruleId) && rulePickerSelection.has(ruleId);
+                const policyLabel =
+                  rule.pricingPolicyName ??
+                  pricingPolicyNameById.get(Number(rule.pricingPolicyId)) ??
+                  "—";
+                const canEdit = rule.brandId != null && rule.pricingPolicyId != null;
+                const draft = Number.isFinite(ruleId) ? discountDrafts[ruleId] : null;
+                return (
+                  <tr key={rule.value} className={isSelected ? styles.ruleRowSelected : ""}>
+                    <td className={styles.ruleCheckboxCell}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => {
+                          if (!Number.isFinite(ruleId)) return;
+                          toggleRuleSelection(ruleId);
+                        }}
+                      />
+                    </td>
+                    <td className={styles.ruleName}>{rule.label}</td>
+                    <td className={styles.rulePolicy}>{policyLabel}</td>
+                    <td>
+                      <input
+                        className={styles.ruleDiscountInput}
+                        value={draft?.telmaco ?? formatDiscountValue(rule.telmacoDiscountPercentage ?? null)}
+                        onChange={(event) => {
+                          if (!Number.isFinite(ruleId)) return;
+                          handleRuleDiscountChange(ruleId, "telmaco", event.target.value);
+                        }}
+                        onBlur={() => handleRuleDiscountSave(rule, "telmaco")}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        disabled={!canEdit}
+                        aria-label={`Telmaco discount for ${rule.label}`}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        className={styles.ruleDiscountInput}
+                        value={draft?.customer ?? formatDiscountValue(rule.customerDiscountPercentage ?? null)}
+                        onChange={(event) => {
+                          if (!Number.isFinite(ruleId)) return;
+                          handleRuleDiscountChange(ruleId, "customer", event.target.value);
+                        }}
+                        onBlur={() => handleRuleDiscountSave(rule, "customer")}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        disabled={!canEdit}
+                        aria-label={`Customer discount for ${rule.label}`}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <div className={styles.ruleTableEmpty}>No pricing policy rules available for the selected brand.</div>
+        )}
+      </LookupModal>
+      <LookupModal
         open={isAddPricingPolicyRuleOpen}
         title="Add Pricing Policy Rule"
         onClose={() => setIsAddPricingPolicyRuleOpen(false)}
@@ -1784,7 +2035,7 @@ export default function PriceListImportClient({
             onChange={(event) => setNewRuleBrandId(event.target.value)}
           >
             <option value="">All brands (default)</option>
-            {brands.map((option) => (
+            {localBrands.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>

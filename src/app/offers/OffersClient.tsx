@@ -87,9 +87,12 @@ const localeStringComparator = (a: unknown, b: unknown) => {
 export default function OffersClient() {
   const router = useRouter();
   const defaultEnabledFilterAppliedRef = useRef(false);
+  const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
+  const [expandedVersionGroups, setExpandedVersionGroups] = useState<Set<number>>(new Set());
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     if (!api || defaultEnabledFilterAppliedRef.current) return;
+    gridApiRef.current = api;
     const existingModel = api.getFilterModel() as Record<string, unknown> | null;
     const nextModel = existingModel && typeof existingModel === 'object' ? { ...existingModel } : {};
     if ('Enabled' in nextModel) {
@@ -105,6 +108,28 @@ export default function OffersClient() {
   const handleCreateOfferClick = useCallback(() => {
     router.push('/offers/create');
   }, [router]);
+  const toggleVersionGroup = useCallback((groupId: number | null) => {
+    if (!groupId) return;
+    setExpandedVersionGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  }, []);
+  const expandedVersionGroupIds = useMemo(
+    () => Array.from(expandedVersionGroups),
+    [expandedVersionGroups],
+  );
+
+  useEffect(() => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    api.refreshServerSide?.({ purge: false });
+  }, [expandedVersionGroups]);
   const handleCreateNewVersion = useCallback(async (offerId: number | null) => {
     if (offerId == null) return;
     const encodedId = encodeURIComponent(String(offerId));
@@ -324,6 +349,45 @@ export default function OffersClient() {
     return <ActionMenu />;
   }, [router]);
 
+  const OfferVersionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
+    const data = params.data as Record<string, unknown> | null | undefined;
+    const versionValue = params.value ?? data?.OfferVersion ?? '';
+    const groupId = normalizeOfferIdValue(data?.VersionGroupId ?? null);
+    const isLatest = data?.IsLatestVersion === 1 || data?.IsLatestVersion === true || data?.IsLatestVersion === 'true';
+    const hasOtherVersions = data?.HasOtherVersions === 1
+      || data?.HasOtherVersions === true
+      || data?.HasOtherVersions === 'true';
+    const isExpanded = groupId != null && expandedVersionGroups.has(groupId);
+    const showToggle = Boolean(groupId) && isLatest && hasOtherVersions;
+    const isHistorical = Boolean(groupId) && !isLatest;
+
+    return (
+      <div className={styles.versionCell}>
+        {showToggle ? (
+          <button
+            type="button"
+            className={`${styles.versionToggle} ${isExpanded ? styles.versionToggleExpanded : ''}`.trim()}
+            aria-label={isExpanded ? 'Collapse versions' : 'Expand versions'}
+            title={isExpanded ? 'Collapse versions' : 'Expand versions'}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              toggleVersionGroup(groupId ?? null);
+            }}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            ▸
+          </button>
+        ) : (
+          <span className={styles.versionToggleSpacer} />
+        )}
+        <span className={`${styles.versionValue} ${isHistorical ? styles.versionValueMuted : ''}`}>
+          {versionValue ?? ''}
+        </span>
+      </div>
+    );
+  }, [expandedVersionGroups, toggleVersionGroup]);
+
   const columnDefs: ColDef[] = useMemo(() => [
       {
         headerName: '',
@@ -356,6 +420,7 @@ export default function OffersClient() {
     { field: 'SalesPerson', headerName: 'Sales Creation Person', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'OfferStatus', headerName: 'Status', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'ERPProjectID', headerName: 'ERP Project ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
+    { field: 'ERPFWCProjectID', headerName: 'ERP FWC Project ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     {field: 'Comments',  headerName: 'Comments', filter: 'agTextColumnFilter'},
     { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
@@ -379,7 +444,14 @@ export default function OffersClient() {
         minValidYear: 2000,
       },
     },
-    { field: 'OfferVersion', headerName: 'Offer Version', filter: 'agNumberColumnFilter', type: 'numericColumn' },
+    {
+      field: 'OfferVersion',
+      headerName: 'Offer Version',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      cellRenderer: OfferVersionCell,
+      suppressNavigable: true,
+    },
     {
       field: 'Enabled',
       headerName: 'Enabled',
@@ -393,7 +465,7 @@ export default function OffersClient() {
         closeOnApply: true,
       },
     },
-  ], [ActionCell]);
+  ], [ActionCell, OfferVersionCell]);
 
   return (
     <main className={styles.page}>
@@ -425,6 +497,7 @@ export default function OffersClient() {
                 columnDefs={columnDefs}
                 getContextMenuItems={offersContextMenuItems}
                 onGridReady={handleGridReady}
+                requestPayload={{ expandedVersionGroupIds: expandedVersionGroupIds }}
                 rowGroupPanelShow="always"
                 rowSelection="multiple"
                 rowMultiSelectWithClick

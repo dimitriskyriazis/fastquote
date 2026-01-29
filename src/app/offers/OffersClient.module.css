@@ -129,6 +129,54 @@
   cursor: default;
 }
 
+.versionCell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.versionToggle {
+  border: 1px solid var(--border-subtle, #d1d5db);
+  background: #f8fafc;
+  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  color: #0f172a;
+  padding: 0;
+  transition: background-color 140ms ease, color 140ms ease, transform 160ms ease;
+  transform: rotate(0deg);
+  line-height: 1;
+}
+
+.versionToggle:hover,
+.versionToggle:focus-visible {
+  background: #e2e8f0;
+  outline: none;
+}
+
+.versionToggleExpanded {
+  transform: rotate(90deg);
+}
+
+.versionToggleSpacer {
+  width: 24px;
+  height: 24px;
+  display: inline-block;
+}
+
+.versionValue {
+  font-variant-numeric: tabular-nums;
+}
+
+.versionValueMuted {
+  color: #64748b;
+}
+
 .gridFrame {
   flex: 1;
   min-height: 0;

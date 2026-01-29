@@ -25,6 +25,8 @@ type PricingPolicyRuleRow = {
   BrandName: string | null;
   PricingPolicyID: number | null;
   PricingPolicyName: string | null;
+  TelmacoDiscountPercentage: number | null;
+  CustomerDiscountPercentage: number | null;
 };
 
 type UserRow = {
@@ -66,7 +68,9 @@ async function fetchPricingPolicyRules(): Promise<PricingPolicyRuleOption[]> {
         ppr.BrandID,
         b.Name AS BrandName,
         ppr.PricingPolicyID,
-        pp.Name AS PricingPolicyName
+        pp.Name AS PricingPolicyName,
+        ppr.TelmacoDiscountPercentage,
+        ppr.CustomerDiscountPercentage
       FROM dbo.PricingPolicyRules ppr
       LEFT JOIN dbo.Brands b ON ppr.BrandID = b.ID
       LEFT JOIN dbo.PricingPolicies pp ON ppr.PricingPolicyID = pp.ID
@@ -82,6 +86,8 @@ async function fetchPricingPolicyRules(): Promise<PricingPolicyRuleOption[]> {
         brandName: row.BrandName ?? null,
         pricingPolicyId: row.PricingPolicyID,
         pricingPolicyName: row.PricingPolicyName ?? null,
+        telmacoDiscountPercentage: row.TelmacoDiscountPercentage ?? null,
+        customerDiscountPercentage: row.CustomerDiscountPercentage ?? null,
       }));
   } catch (err) {
     console.error("Failed to load pricing policy rules", err);

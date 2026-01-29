@@ -654,5 +654,112 @@
 
 .buttonSecondary:disabled {
   opacity: 0.5;
-  cursor: not-allowed;
+  cursor: default;
+}
+
+.rulePickerButton {
+  min-width: 100%;
+}
+
+.ruleSummaryList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ruleSummaryItem {
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.rulePickerModal {
+  width: min(92vw, 920px);
+}
+
+.rulePickerBody {
+  max-height: 65vh;
+  overflow: auto;
+}
+
+.ruleTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.ruleTable th,
+.ruleTable td {
+  border-bottom: 1px solid #e5e7eb;
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: middle;
+  color: #000000;
+}
+
+.ruleCheckboxCell {
+  width: 32px;
+  text-align: center;
+}
+
+.ruleRowSelected {
+  background: #eef2ff;
+}
+
+.ruleName {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.rulePolicy {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.ruleDiscountInput {
+  width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 0.82rem;
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.ruleDiscountInput:disabled {
+  background: #f3f4f6;
+  color: #9ca3af;
+}
+
+.ruleTableEmpty {
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.tooltipWrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tooltipWrapper[data-tooltip]:not([data-tooltip=""]):hover::after,
+.tooltipWrapper[data-tooltip]:not([data-tooltip=""]):focus-within::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  background: #0f172a;
+  color: #ffffff;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  z-index: 20;
+  pointer-events: none;
+  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.18);
 }

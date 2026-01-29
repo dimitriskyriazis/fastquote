@@ -152,6 +152,14 @@ const buildFieldDefinitions = (
     updateField: 'ERPProjectID',
     valueType: 'number',
   },
+  {
+    id: 'erpFwcProjectId',
+    label: 'ERP FWC Project ID',
+    section: 'code',
+    recordKey: 'ERPFWCProjectID',
+    updateField: 'ERPFWCProjectID',
+    valueType: 'number',
+  },
   { id: 'offerId', label: 'Offer ID', section: 'code', recordKey: 'OfferID', readOnly: true },
   { id: 'customerRef', label: 'Customer Ref', section: 'code', recordKey: 'CustomerRef', updateField: 'CustomerRef' },
 

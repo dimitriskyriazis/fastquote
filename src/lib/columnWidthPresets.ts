@@ -1,6 +1,6 @@
 export const COLUMN_WIDTH_PRESETS = {
   date: 105,
-  1: 85,
+  1: 100,
   2: 140,
   3: 210,
 } as const;
@@ -23,6 +23,7 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   SalesPerson: 2,
   OfferStatus: 2,
   ERPProjectID: 1,
+  ERPFWCProjectID: 1,
   Comments: 3,
   ProtocolNo: 1,
   OfferContact: 2,

@@ -50,6 +50,12 @@ type GridRequest = {
   groupKeys?: Array<string | null>;
 };
 
+type GridRequestPayload = {
+  request: GridRequest;
+  includeAllVersions: boolean;
+  expandedVersionGroupIds: number[];
+};
+
 type DeleteRequest = {
   OfferIDs?: Array<number | string | null | undefined>;
 };
@@ -65,7 +71,12 @@ type OfferRow = {
   SalesPerson: string | null;
   OfferStatus: string | null;
   ERPProjectID: number | null;
+  ERPFWCProjectID: number | null;
   offerId: number | null;
+  ParentOfferID: number | null;
+  VersionGroupId: number | null;
+  IsLatestVersion: number | null;
+  HasOtherVersions: number | null;
   CustomerRef: string | null;
   ProtocolNo: number | null;
   OfferContact: string | null;
@@ -102,6 +113,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   SalesPerson: 'dbo.AspNetUsers.FullName',
   OfferStatus: 'dbo.OfferStatus.Name',
   ERPProjectID: 'dbo.Offer.ERPProjectID',
+  ERPFWCProjectID: 'dbo.Offer.ERPFWCProjectID',
   offerId: 'dbo.Offer.ID',
   CustomerRef: 'dbo.Offer.CustomerRef',
   ProtocolNo: 'dbo.Offer.ProtocolNo',
@@ -281,17 +293,29 @@ function buildOrder(sortModel: GridRequest['sortModel']) {
   return `ORDER BY ${parts.join(', ')}`;
 }
 
-async function readGridRequest(req: NextRequest): Promise<GridRequest> {
+async function readGridRequest(req: NextRequest): Promise<GridRequestPayload> {
   try {
     const payload = await req.json();
-    if (payload && typeof payload === 'object' && 'request' in payload) {
+    if (payload && typeof payload === 'object') {
       const inner = (payload as { request?: GridRequest }).request;
-      if (inner && typeof inner === 'object') return inner;
+      const includeAllVersions = Boolean(
+        (payload as { includeAllVersions?: unknown }).includeAllVersions,
+      );
+      const rawExpanded = (payload as { expandedVersionGroupIds?: unknown }).expandedVersionGroupIds;
+      const expandedVersionGroupIds = Array.isArray(rawExpanded)
+        ? rawExpanded
+          .map((value) => normalizeOfferId(value))
+          .filter((value): value is number => value != null)
+        : [];
+      if (inner && typeof inner === 'object') {
+        return { request: inner, includeAllVersions, expandedVersionGroupIds };
+      }
+      return { request: { startRow: 0, endRow: 100 }, includeAllVersions, expandedVersionGroupIds };
     }
   } catch {
     /* no-op, will fall back to defaults */
   }
-  return { startRow: 0, endRow: 100 };
+  return { request: { startRow: 0, endRow: 100 }, includeAllVersions: false, expandedVersionGroupIds: [] };
 }
 
 const normalizeOfferId = (value: unknown): number | null => {
@@ -305,12 +329,28 @@ const normalizeOfferId = (value: unknown): number | null => {
 
 export async function POST(req: NextRequest) {
   try {
-    const requestPayload = await readGridRequest(req);
+    const {
+      request: gridRequest,
+      includeAllVersions,
+      expandedVersionGroupIds,
+    } = await readGridRequest(req);
     const auditUserId = resolveAuditUserId(req);
-    const startRow = requestPayload.startRow ?? 0;
-    const endRow = requestPayload.endRow ?? startRow + 100;
+    const startRow = gridRequest.startRow ?? 0;
+    const endRow = gridRequest.endRow ?? startRow + 100;
     const pageSize = Math.max(1, Math.min(1000, endRow - startRow));
     const offset = Math.max(0, startRow);
+
+    const versionTreeCte = `
+      WITH VersionTree AS (
+        SELECT ID, ParentOfferID, ID AS RootOfferID
+        FROM dbo.Offer
+        WHERE ParentOfferID IS NULL
+        UNION ALL
+        SELECT o.ID, o.ParentOfferID, vt.RootOfferID
+        FROM dbo.Offer o
+        INNER JOIN VersionTree vt ON o.ParentOfferID = vt.ID
+      )
+    `;
 
     const select = `
       SELECT
@@ -326,7 +366,18 @@ export async function POST(req: NextRequest) {
         dbo.AspNetUsers.FullName AS SalesPerson,
         dbo.OfferStatus.Name AS OfferStatus,
         dbo.Offer.ERPProjectID AS ERPProjectID,
+        dbo.Offer.ERPFWCProjectID AS ERPFWCProjectID,
         dbo.Offer.ID AS offerId,
+        dbo.Offer.ParentOfferID,
+        COALESCE(versionTree.RootOfferID, dbo.Offer.ID) AS VersionGroupId,
+        CASE
+          WHEN EXISTS (SELECT 1 FROM dbo.Offer child WHERE child.ParentOfferID = dbo.Offer.ID) THEN 0
+          ELSE 1
+        END AS IsLatestVersion,
+        CASE
+          WHEN versionStats.VersionCount > 1 THEN 1
+          ELSE 0
+        END AS HasOtherVersions,
         dbo.Offer.CustomerRef,
         dbo.Offer.ProtocolNo,
         dbo.Offer.OfferContact,
@@ -339,6 +390,13 @@ export async function POST(req: NextRequest) {
     const from = `
       FROM
         dbo.Offer
+        LEFT JOIN VersionTree versionTree ON versionTree.ID = dbo.Offer.ID
+        LEFT JOIN dbo.Offer rootOffer ON rootOffer.ID = COALESCE(versionTree.RootOfferID, dbo.Offer.ID)
+        LEFT JOIN (
+          SELECT RootOfferID, COUNT(1) AS VersionCount
+          FROM VersionTree
+          GROUP BY RootOfferID
+        ) AS versionStats ON versionStats.RootOfferID = versionTree.RootOfferID
         INNER JOIN dbo.Customers ON dbo.Offer.CustomerID = dbo.Customers.ID
         INNER JOIN dbo.PricingPolicies ON dbo.Offer.PricingPolicyID = dbo.PricingPolicies.ID
         INNER JOIN dbo.Markets ON dbo.Offer.MarketID = dbo.Markets.ID
@@ -353,16 +411,42 @@ export async function POST(req: NextRequest) {
         ) AS offerDetailsStats
     `;
 
-    const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);
-    const quickFilterClause = buildQuickFilterClause(requestPayload.quickFilterText, QUICK_FILTER_COLUMNS);
+    const { where, params: whereParams } = buildWhereAndParams(gridRequest.filterModel);
+    const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, QUICK_FILTER_COLUMNS);
     const combinedWhere = mergeWhereClauses(where, quickFilterClause.clause);
-    const combinedParams = [...whereParams, ...quickFilterClause.params];
-    const defaultOrder = 'ORDER BY dbo.Offer.Description';
-    const orderClause = buildOrder(requestPayload.sortModel) || defaultOrder;
+    const expandedParams: QueryParam[] = [];
+    let versionVisibilityClause = '';
+    if (!includeAllVersions) {
+      if (expandedVersionGroupIds.length > 0) {
+        const placeholders = expandedVersionGroupIds.map((groupId, idx) => {
+          const key = `__expanded_group_${idx}`;
+          expandedParams.push({ key, value: groupId });
+          return `@${key}`;
+        });
+        versionVisibilityClause = `
+          AND (
+            NOT EXISTS (SELECT 1 FROM dbo.Offer child WHERE child.ParentOfferID = dbo.Offer.ID)
+            OR COALESCE(versionTree.RootOfferID, dbo.Offer.ID) IN (${placeholders.join(', ')})
+          )
+        `;
+      } else {
+        versionVisibilityClause = 'AND NOT EXISTS (SELECT 1 FROM dbo.Offer child WHERE child.ParentOfferID = dbo.Offer.ID)';
+      }
+    }
+    const combinedWhereWithVersions = mergeWhereClauses(combinedWhere, versionVisibilityClause);
+    const combinedParams = [...whereParams, ...quickFilterClause.params, ...expandedParams];
+    const defaultOrder = `
+      ORDER BY
+        COALESCE(rootOffer.Description, dbo.Offer.Description),
+        IsLatestVersion DESC,
+        dbo.Offer.OfferVersion DESC,
+        dbo.Offer.ID DESC
+    `.trim();
+    const orderClause = buildOrder(gridRequest.sortModel) || defaultOrder;
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
-    const groupingFields = resolveGroupingFields(requestPayload.rowGroupCols);
-    const rawGroupKeys = Array.isArray(requestPayload.groupKeys) ? requestPayload.groupKeys : [];
+    const groupingFields = resolveGroupingFields(gridRequest.rowGroupCols);
+    const rawGroupKeys = Array.isArray(gridRequest.groupKeys) ? gridRequest.groupKeys : [];
     const groupKeys = rawGroupKeys.slice(0, groupingFields.length);
     const parentFilter = groupingFields.length > 0
       ? buildGroupKeyFilter(groupingFields, groupKeys)
@@ -377,14 +461,14 @@ export async function POST(req: NextRequest) {
     };
 
     if (groupingFields.length > 0 && groupLevel < groupingFields.length) {
-      const groupWhere = combineWhereClauses(combinedWhere, parentFilter.clause);
+      const groupWhere = combineWhereClauses(combinedWhereWithVersions, parentFilter.clause);
       const countReq = bindParams(pool.request(), [...combinedParams, ...parentFilter.params]);
       const countSql = `
         SELECT COUNT(DISTINCT ${groupingFields[groupLevel].expression}) AS __groupCount
         ${from}
         ${groupWhere}
       `;
-      const countRes = await countReq.query<{ __groupCount: number }>(countSql);
+      const countRes = await countReq.query<{ __groupCount: number }>(`${versionTreeCte} ${countSql}`);
       const totalGroupCount = Number(countRes.recordset?.[0]?.__groupCount ?? 0);
 
       const groupReq = bindParams(pool.request(), [...combinedParams, ...parentFilter.params]);
@@ -397,7 +481,7 @@ export async function POST(req: NextRequest) {
         ORDER BY ${groupingFields[groupLevel].expression}
         ${paging}
       `;
-      const groupRes = await groupReq.query<{ GroupValue: string | null }>(groupSql);
+      const groupRes = await groupReq.query<{ GroupValue: string | null }>(`${versionTreeCte} ${groupSql}`);
       const rows = (groupRes.recordset ?? []).map((row) => {
         const value = row.GroupValue ?? null;
         return {
@@ -412,11 +496,11 @@ export async function POST(req: NextRequest) {
     }
 
     const appliedWhere = groupingFields.length > 0
-      ? combineWhereClauses(combinedWhere, parentFilter.clause)
-      : combinedWhere;
+      ? combineWhereClauses(combinedWhereWithVersions, parentFilter.clause)
+      : combinedWhereWithVersions;
     const appliedParams = [...combinedParams, ...parentFilter.params];
 
-    const dataSql = `${select} ${from} ${appliedWhere} ${orderClause} ${paging}`;
+    const dataSql = `${versionTreeCte} ${select} ${from} ${appliedWhere} ${orderClause} ${paging}`;
     const dataReq = bindParams(pool.request(), appliedParams);
     dataReq.input('__offset', sql.Int, offset);
     dataReq.input('__limit', sql.Int, pageSize);

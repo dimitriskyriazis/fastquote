@@ -23,6 +23,7 @@ type CreateOfferRequestBody = {
   introNote?: string | null;
   telmacoNote?: string | null;
   projectId?: number | string | null;
+  erpFwcProjectId?: number | string | null;
   customerRef?: string | null;
   initialRequest?: string | Date | null;
   draftOffer?: string | Date | null;
@@ -114,8 +115,8 @@ export async function POST(req: NextRequest) {
     const installationSchedule = normalizeString(body?.installationSchedule, 500);
     const closingNote = normalizeString(body?.closingNote, 2000);
     const introNote = normalizeString(body?.introNote, 2000);
-    const telmacoNote = normalizeString(body?.telmacoNote, 2000);
-    const approvalUserId = normalizeUserId(body?.approvalUserId);
+  const telmacoNote = normalizeString(body?.telmacoNote, 2000);
+  const approvalUserId = normalizeUserId(body?.approvalUserId);
 
   const auditUserId = resolveAuditUserId(req);
   const salesCreationPersonId =
@@ -124,6 +125,7 @@ export async function POST(req: NextRequest) {
     normalizeUserId(body?.salesPersonId) ?? salesCreationPersonId ?? auditUserId ?? null;
   const salesManagerId = salesCreationPersonId;
   const erpProjectId = normalizeInt(body?.projectId) ?? 0;
+  const erpFwcProjectId = normalizeInt(body?.erpFwcProjectId);
 
     const dateFields = {
       initialRequest: normalizeDate(body?.initialRequest),
@@ -257,6 +259,7 @@ export async function POST(req: NextRequest) {
     request.input('ContactID', sql.Int, contactId);
     request.input('OfferContact', sql.NVarChar(500), offerContact);
     request.input('ERPProjectID', sql.Int, erpProjectId);
+    request.input('ERPFWCProjectID', sql.Int, erpFwcProjectId);
     request.input('PrintLevelGroupingID', sql.Int, 1);
     request.input('CustomerRef', sql.NVarChar(500), customerRef);
     request.input('InitialRequest', sql.DateTime2, dateFields.initialRequest);
@@ -293,6 +296,7 @@ export async function POST(req: NextRequest) {
         ContactID,
         OfferContact,
         ERPProjectID,
+        ERPFWCProjectID,
         PrintLevelGroupingID,
         CustomerRef,
         InitialRequest,
@@ -333,6 +337,7 @@ export async function POST(req: NextRequest) {
         @ContactID,
         @OfferContact,
         @ERPProjectID,
+        @ERPFWCProjectID,
         @PrintLevelGroupingID,
         @CustomerRef,
         @InitialRequest,

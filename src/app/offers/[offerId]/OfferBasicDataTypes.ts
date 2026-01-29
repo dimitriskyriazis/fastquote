@@ -33,6 +33,7 @@ export type OfferBasicRecord = {
   SalesPersonId: string | null;
   ApprovalUserId: string | null;
   ERPProjectID: number | null;
+  ERPFWCProjectID: number | null;
   CustomerRef: string | null;
   InitialRequest: Date | string | null;
   DraftOffer: Date | string | null;
@@ -75,6 +76,7 @@ export type OfferBasicUpdateField =
   | 'SalesPersonId'
   | 'ApprovalUserId'
   | 'ERPProjectID'
+  | 'ERPFWCProjectID'
   | 'CustomerRef'
   | 'InitialRequest'
   | 'DraftOffer'

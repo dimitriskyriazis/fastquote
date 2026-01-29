@@ -173,6 +173,8 @@ export async function POST(req: NextRequest) {
       brandName: inserted.BrandName ?? null,
       pricingPolicyId: inserted.PricingPolicyID ?? null,
       pricingPolicyName: inserted.PricingPolicyName ?? null,
+      telmacoDiscountPercentage: telmaco,
+      customerDiscountPercentage: customer,
     };
 
     return NextResponse.json({ ok: true, option });

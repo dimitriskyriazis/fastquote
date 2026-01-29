@@ -164,6 +164,10 @@ type PricingPolicyRuleRow = {
   Name: string | null;
   PricingPolicyID: number | null;
   BrandID: number | null;
+  BrandName: string | null;
+  PricingPolicyName: string | null;
+  TelmacoDiscountPercentage: number | null;
+  CustomerDiscountPercentage: number | null;
 };
 
 async function fetchAllPricingPolicyRules() {
@@ -174,8 +178,14 @@ async function fetchAllPricingPolicyRules() {
         ppr.ID,
         ppr.Name,
         ppr.PricingPolicyID,
-        ppr.BrandID
+        ppr.BrandID,
+        b.Name AS BrandName,
+        pp.Name AS PricingPolicyName,
+        ppr.TelmacoDiscountPercentage,
+        ppr.CustomerDiscountPercentage
       FROM dbo.PricingPolicyRules ppr
+      LEFT JOIN dbo.Brands b ON ppr.BrandID = b.ID
+      LEFT JOIN dbo.PricingPolicies pp ON ppr.PricingPolicyID = pp.ID
       ORDER BY ppr.Name
     `);
     return (result.recordset ?? []).map((row) => ({
@@ -183,6 +193,10 @@ async function fetchAllPricingPolicyRules() {
       name: row.Name,
       pricingPolicyId: row.PricingPolicyID,
       brandId: row.BrandID,
+      brandName: row.BrandName ?? null,
+      pricingPolicyName: row.PricingPolicyName ?? null,
+      telmacoDiscountPercentage: row.TelmacoDiscountPercentage ?? null,
+      customerDiscountPercentage: row.CustomerDiscountPercentage ?? null,
     }));
   } catch (err) {
     console.error('Failed to load pricing policy rules', err);

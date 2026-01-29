@@ -52,6 +52,7 @@ async function fetchOfferBasicRecord(offerId: number) {
         o.SalesPersonId,
         o.ApprovalUserId,
         o.ERPProjectID,
+        o.ERPFWCProjectID,
         o.CustomerRef,
         o.InitialRequest,
         o.DraftOffer,
