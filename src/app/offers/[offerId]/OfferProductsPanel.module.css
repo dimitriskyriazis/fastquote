@@ -184,3 +184,15 @@
 .redDataCell :global(.ag-cell-value) {
   color: #dc2626;
 }
+
+/* Multiline description cells: show line breaks (Alt+Enter) and wrap */
+.multilineCell {
+  white-space: pre-wrap;
+  word-break: break-word;
+  align-items: flex-start;
+}
+
+.multilineCell :global(.ag-cell-value) {
+  white-space: pre-wrap;
+  word-break: break-word;
+}

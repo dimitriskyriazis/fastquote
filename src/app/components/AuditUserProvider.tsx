@@ -28,7 +28,6 @@ type AuditUserContextValue = {
   error: string | null;
   refreshUsers: () => Promise<void>;
   saveUserId: (nextId: string) => boolean;
-  clearUser: () => void;
 };
 
 const AuditUserContext = createContext<AuditUserContextValue | undefined>(undefined);
@@ -57,10 +56,6 @@ const readCookieValue = (): string | null => {
 
 const writeCookieValue = (value: string) => {
   document.cookie = `${COOKIE_NAME}=${encodeURIComponent(value)}; path=/; max-age=${COOKIE_MAX_AGE_SECONDS}`;
-};
-
-const clearCookieValue = () => {
-  document.cookie = `${COOKIE_NAME}=; path=/; max-age=0`;
 };
 
 type WindowsAuthResult = {
@@ -254,11 +249,6 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
-  const clearUser = useCallback(() => {
-    clearCookieValue();
-    setUserId('');
-  }, []);
-
   const value = useMemo(
     () => ({
       userId,
@@ -268,9 +258,8 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
       error,
       refreshUsers,
       saveUserId,
-      clearUser,
     }),
-    [userId, selectedUser, users, loading, error, refreshUsers, saveUserId, clearUser],
+    [userId, selectedUser, users, loading, error, refreshUsers, saveUserId],
   );
 
   if (accessDeniedUnrecognizedUser) {
