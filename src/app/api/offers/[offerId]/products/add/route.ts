@@ -381,8 +381,10 @@ async function handleProductGrid(
       SELECT
         p.ID AS ProductID,
         p.PartNumber,
+        p.PartNumberCleared,
         p.Description,
         p.ModelNumber,
+        p.ModelNumberCleared,
         b.Name AS BrandName
       FROM dbo.Products p
         LEFT JOIN dbo.Brands b ON p.BrandID = b.ID

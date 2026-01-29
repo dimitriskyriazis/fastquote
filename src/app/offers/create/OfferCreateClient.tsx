@@ -120,6 +120,14 @@ const resolveDefaultPricingPolicyId = (options: DropdownOption[]): string => {
   return byValue?.value ?? '';
 };
 
+const resolveDefaultStatusId = (options: DropdownOption[]): string => {
+  const normalizedTarget = 'draft offer';
+  const byLabel = options.find((opt) => (opt.label ?? '').trim().toLowerCase() === normalizedTarget);
+  if (byLabel?.value) return byLabel.value;
+  const byValue = options.find((opt) => (opt.value ?? '').trim().toLowerCase() === normalizedTarget);
+  return byValue?.value ?? '';
+};
+
 export default function OfferCreateClient({
   customers,
   statuses,
@@ -145,8 +153,10 @@ export default function OfferCreateClient({
     [pricingPolicies],
   );
 
+  const defaultStatusId = useMemo(() => resolveDefaultStatusId(statuses), [statuses]);
+
   const initialValues = useMemo<FormValues>(() => ({
-    title: '',
+    title: 'Financial Proposal',
     description: '',
     paymentTerms: defaultValues.paymentTerms ?? '',
     deliveryTime: defaultValues.deliveryTime ?? '',
@@ -157,12 +167,12 @@ export default function OfferCreateClient({
     telmacoNote: '',
     customerId: '',
     contactId: '',
-    statusId: '',
+    statusId: defaultStatusId,
     pricingPolicyId: defaultPricingPolicyId,
     marketId: '',
     salesDivisionId: '',
     salesCreationPersonId: defaultValues.suggestedUserId ?? '',
-    salesPersonId: '',
+    salesPersonId: defaultValues.suggestedUserId ?? '',
     approvalUserId: '',
     projectId: '0',
     erpFwcProjectId: '',
@@ -176,7 +186,7 @@ export default function OfferCreateClient({
     deliveryDue: '',
     delivery: '',
     offerDate: '',
-  }), [defaultPricingPolicyId, defaultValues]);
+  }), [defaultPricingPolicyId, defaultStatusId, defaultValues]);
 
   const [values, setValues] = useState<FormValues>(initialValues);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormValues, string>>>({});
@@ -457,7 +467,7 @@ export default function OfferCreateClient({
       { id: 'salesPersonId', label: 'Sales Person', section: 'commercial', type: 'select', options: users },
       { id: 'approvalUserId', label: 'Approval User', section: 'commercial', type: 'select', options: users },
 
-      { id: 'projectId', label: 'Project ID', section: 'code', inputType: 'number' },
+      { id: 'projectId', label: 'ERP Project ID', section: 'code', inputType: 'number' },
       { id: 'erpFwcProjectId', label: 'ERP FWC Project ID', section: 'code', inputType: 'number' },
       { id: 'customerRef', label: 'Customer Ref', section: 'code' },
 

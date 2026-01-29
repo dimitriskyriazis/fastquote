@@ -102,7 +102,6 @@ export default function ProductsClient() {
       field: "Description",
       headerName: "Description",
       filter: "agTextColumnFilter",
-      width: 320,
     },
     {
       field: "Category",

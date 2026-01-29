@@ -116,10 +116,10 @@ const PRODUCT_DELETE_BATCH = 200;
 
 const ALLOWED_ROW_GROUP_FIELDS = new Set(["Brand", "Category", "SubCategory", "Type"]);
 
-// Normalize part/model numbers by removing special characters
+// Normalize part/model numbers by removing special characters and uppercasing.
 const normalizePartModelNumber = (value: string): string => {
   // Remove common special characters: dashes, underscores, spaces, periods, etc.
-  return value.replace(/[-_\s.]+/g, '');
+  return value.replace(/[-_\s.]+/g, '').toUpperCase();
 };
 
 // Helper to get the cleared column name for part/model numbers
@@ -127,13 +127,13 @@ const normalizePartModelNumber = (value: string): string => {
 const partModelNumberSql = (expr: string) => {
   // Replace PartNumber/ModelNumber with their cleared versions
   if (expr.includes('.PartNumber')) {
-    return `ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, '')`;
+    return `UPPER(ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, ''))`;
   }
   if (expr.includes('.ModelNumber')) {
-    return `ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, '')`;
+    return `UPPER(ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, ''))`;
   }
   // Fallback for edge cases
-  return `ISNULL(${expr}, '')`;
+  return `UPPER(ISNULL(${expr}, ''))`;
 };
 
 function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
