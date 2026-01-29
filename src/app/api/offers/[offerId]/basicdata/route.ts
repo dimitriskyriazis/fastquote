@@ -46,7 +46,7 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   MarketID: { column: 'MarketID', type: 'number', sqlType: sql.Int },
   SalesPersonId: { column: 'SalesPersonId', type: 'string', sqlType: sql.NVarChar, length: 450 },
   ApprovalUserId: { column: 'ApprovalUserId', type: 'string', sqlType: sql.NVarChar, length: 450 },
-  ProjectID: { column: 'ProjectID', type: 'number', sqlType: sql.Int },
+  ERPProjectID: { column: 'ERPProjectID', type: 'number', sqlType: sql.Int },
   CustomerRef: { column: 'CustomerRef', type: 'string', sqlType: sql.NVarChar, length: 500 },
   InitialRequest: { column: 'InitialRequest', type: 'date', sqlType: sql.DateTime2 },
   DraftOffer: { column: 'DraftOffer', type: 'date', sqlType: sql.DateTime2 },
@@ -107,7 +107,8 @@ export async function PATCH(
       body = null;
     }
 
-    const updates = Array.isArray(body?.updates) ? body?.updates : [];
+    const rawUpdates = body?.updates;
+    const updates: UpdateInput[] = Array.isArray(rawUpdates) ? rawUpdates : [];
     const normalizedUpdates: NormalizedUpdate[] = [];
 
     updates.forEach((entry) => {

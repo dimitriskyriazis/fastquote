@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool, getErpPool } from '../../../../../lib/sql';
 import { findProject, PROJECT_FIND_STATUS } from '../../../../../lib/projectValidation';
+import { createProjectFromIntegration } from '../../../../../lib/projectCreation';
+import { createCustomerOrder, addOrderLine } from '../../../../../lib/orderCreation';
 import { getRequestId } from '../../../../../lib/requestId';
 import { logger } from '../../../../../lib/logger';
 
@@ -418,22 +420,46 @@ export async function POST(
     const erpPool = await getErpPool();
     const requestId = await getRequestId(req);
 
-    // Get offer's SalesDivisionName and ProjectID
+    // Get offer metadata needed for ERP integration
     const offerRequest = pool.request();
     offerRequest.input('offerId', sql.Int, normalizedId);
     const offerResult = await offerRequest.query<{
+      Title: string | null;
+      SalesDivisionID: number | null;
       SalesDivisionName: string | null;
-      ProjectID: number | null;
+      ERPCustomerID: number | null;
+      ERPProjectID: number | null;
+      ERPProjectCode: string | null;
     }>(`
-      SELECT sd.Name AS SalesDivisionName, o.ProjectID
+      SELECT 
+        o.Title,
+        o.SalesDivitionID AS SalesDivisionID,
+        sd.Name AS SalesDivisionName,
+        c.ERPID AS ERPCustomerID,
+        o.ERPProjectID,
+        o.ERPProjectCode
       FROM dbo.Offer o
+      INNER JOIN dbo.Customers c ON o.CustomerID = c.ID
       LEFT JOIN dbo.SalesDivision sd ON o.SalesDivitionID = sd.ID
       WHERE o.ID = @offerId
     `);
-    const salesDivisionName = offerResult.recordset?.[0]?.SalesDivisionName ?? null;
-    const offerProjectId = offerResult.recordset?.[0]?.ProjectID ?? null;
-    // Map SalesDivisionName to BusinessUnit: 'TVS' if contains 'TVS', otherwise 'AVS'
-    const businessUnit = salesDivisionName && salesDivisionName.toUpperCase().includes('TVS') ? 'TVS' : 'AVS';
+    const offerRow = offerResult.recordset?.[0] ?? null;
+    const offerDescription = offerRow?.Title ?? `FastQuote Project for offer ${normalizedId}`;
+    const salesDivisionId = offerRow?.SalesDivisionID ?? null;
+    const salesDivisionName = offerRow?.SalesDivisionName ?? null;
+    const erpCustomerId = offerRow?.ERPCustomerID ?? null;
+    const erpProjectId = offerRow?.ERPProjectID ?? null;
+    const erpProjectCode = offerRow?.ERPProjectCode ?? null;
+    // Map SalesDivisionID to BusinessUnit: 4 -> AVS, 3 -> TVS, fallback based on name
+    let businessUnit: 'AVS' | 'TVS';
+    if (salesDivisionId === 3) {
+      businessUnit = 'TVS';
+    } else if (salesDivisionId === 4) {
+      businessUnit = 'AVS';
+    } else {
+      const name = salesDivisionName?.toUpperCase() ?? '';
+      businessUnit = name.includes('TVS') ? 'TVS' : 'AVS';
+    }
 
     // Get all products from the offer that have ProductID, including Brand name and Description
     const productsRequest = pool.request();
@@ -488,7 +514,9 @@ export async function POST(
       businessUnit,
       productsCount: products.length,
       selectionsCount: selections.length,
-      offerProjectId: offerProjectId ?? null,
+      erpProjectId: erpProjectId ?? null,
+      erpProjectCode: erpProjectCode ?? null,
+      erpCustomerId: erpCustomerId ?? null,
     });
 
     // Auto-fill missing CategoryID, SubCategoryID, TypeID using AI
@@ -866,39 +894,51 @@ export async function POST(
 
       await Promise.all(updatePromises);
 
-      // Validate project if present
-      if (offerProjectId && offerProjectId > 0) {
-        // Fetch project CODE from ERP
-        const erpPool = await getErpPool();
-        const projectRequest = erpPool.request();
-        projectRequest.input('PRJC', sql.Int, offerProjectId);
-        const projectResult = await projectRequest.query<{
-          CODE: string | null;
-        }>(`
-          SELECT CODE
-          FROM dbo.PRJC
-          WHERE PRJC = @PRJC
-        `);
-        const projectCode = projectResult.recordset?.[0]?.CODE ?? null;
+      // Ensure ERP project exists and is valid
+      let finalErpProjectId = erpProjectId;
+      let finalErpProjectCode = erpProjectCode;
+
+      if (finalErpProjectId && finalErpProjectId > 0) {
+        // If we don't have a code in FastQuote, fetch it from ERP
+        let codeToValidate = finalErpProjectCode;
+        if (!codeToValidate) {
+          const projectRequest = erpPool.request();
+          projectRequest.input('PRJC', sql.Int, finalErpProjectId);
+          const projectResult = await projectRequest.query<{
+            CODE: string | null;
+          }>(`
+            SELECT CODE
+            FROM dbo.PRJC
+            WHERE PRJC = @PRJC
+          `);
+          codeToValidate = projectResult.recordset?.[0]?.CODE ?? null;
+        }
 
         logger.info('create-draft-offer project fetch', {
           requestId,
           offerId: normalizedId,
-          offerProjectId,
-          projectCode,
+          erpProjectId: finalErpProjectId,
+          erpProjectCode: codeToValidate,
         });
 
-        if (projectCode) {
-          const projectValidation = await findProject(offerProjectId, projectCode);
+        if (codeToValidate) {
+          const projectValidation = await findProject(finalErpProjectId, codeToValidate);
           logger.info('create-draft-offer project validation', {
             requestId,
             offerId: normalizedId,
-            offerProjectId,
-            projectCode,
+            erpProjectId: finalErpProjectId,
+            erpProjectCode: codeToValidate,
             statusCode: projectValidation.statusCode,
             statusText: projectValidation.statusText,
           });
-          if (projectValidation.statusCode !== PROJECT_FIND_STATUS.OK) {
+
+          if (projectValidation.statusCode === PROJECT_FIND_STATUS.OK) {
+            finalErpProjectCode = codeToValidate;
+          } else if (projectValidation.statusCode === PROJECT_FIND_STATUS.NOT_FOUND) {
+            // Treat as "no existing project found" -> create new one
+            finalErpProjectId = null;
+            finalErpProjectCode = null;
+          } else {
             return NextResponse.json(
               {
                 ok: false,
@@ -912,8 +952,148 @@ export async function POST(
           logger.info('create-draft-offer project validation skipped (no project code)', {
             requestId,
             offerId: normalizedId,
-            offerProjectId,
+            erpProjectId: finalErpProjectId,
           });
+        }
+      }
+
+      // If there is no existing valid project, create one via integration
+      if (!finalErpProjectId || finalErpProjectId <= 0) {
+        const createdProject = await createProjectFromIntegration({
+          integrationKey: 'FASTQUOTE_CREATE_PRJC',
+          codePrefix: 'COV',
+          name: offerDescription,
+          prjcParent: null,
+          trdr: null,
+          prjCategory: null,
+          sourceSystem: 'FQ',
+          createdByUser: 1011,
+          businessUnit,
+          prjState: 90,
+        });
+
+        finalErpProjectId = createdProject.prjcId;
+        finalErpProjectCode = createdProject.prjcCode;
+
+        logger.info('create-draft-offer project created', {
+          requestId,
+          offerId: normalizedId,
+          erpProjectId: finalErpProjectId,
+          erpProjectCode: finalErpProjectCode,
+        });
+
+        // Persist ERP project back to FastQuote Offer
+        const updateOfferRequest = pool.request();
+        updateOfferRequest.input('offerId', sql.Int, normalizedId);
+        updateOfferRequest.input('erpProjectId', sql.Int, finalErpProjectId);
+        updateOfferRequest.input('erpProjectCode', sql.NVarChar(25), finalErpProjectCode);
+        await updateOfferRequest.query(`
+          UPDATE dbo.Offer
+          SET ERPProjectID = @erpProjectId,
+              ERPProjectCode = @erpProjectCode,
+              ModifiedOn = SYSUTCDATETIME()
+          WHERE ID = @offerId
+        `);
+      }
+
+      // Create customer order (FINDOC) and lines if we have the required data
+      if (finalErpProjectId && finalErpProjectId > 0 && erpCustomerId && erpCustomerId > 0) {
+        try {
+          const orderInfo = await createCustomerOrder({
+            prjcId: finalErpProjectId,
+            businessUnit,
+            trdr: erpCustomerId,
+            integrationKey: 'FASTQUOTE_CREATE_FINDOC',
+            series: 9001,
+            createdByUser: 1011,
+          });
+
+          logger.info('create-draft-offer order created (selections path)', {
+            requestId,
+            offerId: normalizedId,
+            findocId: orderInfo.findocId,
+            finCode: orderInfo.finCode,
+            seriesNum: orderInfo.seriesNum,
+          });
+
+          // Load offer details that should become order lines
+          const linesRequest = pool.request();
+          linesRequest.input('offerId', sql.Int, normalizedId);
+          const linesResult = await linesRequest.query<{
+            TreeOrdering: number | null;
+            ProductID: number | null;
+            Quantity: number | null;
+            ListPrice: number | null;
+            NetCost: number | null;
+            ERPID: number | null;
+          }>(`
+            SELECT
+              od.TreeOrdering,
+              od.ProductID,
+              od.Quantity,
+              od.ListPrice,
+              od.NetCost,
+              p.ERPID
+            FROM dbo.OfferDetails od
+            INNER JOIN dbo.Products p ON od.ProductID = p.ID
+            WHERE od.OfferID = @offerId
+              AND od.ProductID IS NOT NULL
+              AND p.ERPID IS NOT NULL
+          `);
+
+          const lines = (linesResult.recordset ?? []).sort((a, b) => {
+            const ta = a.TreeOrdering ?? 0;
+            const tb = b.TreeOrdering ?? 0;
+            return ta - tb;
+          });
+
+          let lineIndex = 0;
+          for (const line of lines) {
+            if (
+              line.ERPID == null ||
+              line.Quantity == null ||
+              line.Quantity <= 0 ||
+              line.ListPrice == null ||
+              line.ListPrice < 0
+            ) {
+              // Incomplete line - skip
+              continue;
+            }
+
+            lineIndex += 1;
+            const cccPosNo = String(lineIndex);
+
+            try {
+              await addOrderLine({
+                findocId: orderInfo.findocId,
+                cccPosNo,
+                mtrl: line.ERPID,
+                qty: Number(line.Quantity),
+                price: Number(line.ListPrice),
+                num01: line.NetCost != null ? Number(line.NetCost) : null,
+                createdByUser: 1011,
+              });
+            } catch (lineErr) {
+              logger.error(
+                'Failed to add order line (selections path)',
+                {
+                  requestId,
+                  offerId: normalizedId,
+                  findocId: orderInfo.findocId,
+                  productId: line.ProductID,
+                  erpId: line.ERPID,
+                  cccPosNo,
+                },
+                lineErr instanceof Error ? lineErr : undefined,
+              );
+            }
+          }
+        } catch (orderErr) {
+          logger.error(
+            'Failed to create customer order (selections path)',
+            { requestId, offerId: normalizedId, erpProjectId: finalErpProjectId, erpCustomerId },
+            orderErr instanceof Error ? orderErr : undefined,
+          );
         }
       }
 
@@ -1170,39 +1350,51 @@ export async function POST(
       }
     }
 
-    // Validate project if present
-    if (offerProjectId && offerProjectId > 0) {
-      // Fetch project CODE from ERP
-      const erpPool = await getErpPool();
-      const projectRequest = erpPool.request();
-      projectRequest.input('PRJC', sql.Int, offerProjectId);
-      const projectResult = await projectRequest.query<{
-        CODE: string | null;
-      }>(`
-        SELECT CODE
-        FROM dbo.PRJC
-        WHERE PRJC = @PRJC
-      `);
-      const projectCode = projectResult.recordset?.[0]?.CODE ?? null;
+    // Ensure ERP project exists and is valid
+    let finalErpProjectId = erpProjectId;
+    let finalErpProjectCode = erpProjectCode;
+
+    if (finalErpProjectId && finalErpProjectId > 0) {
+      // If we don't have a code in FastQuote, fetch it from ERP
+      let codeToValidate = finalErpProjectCode;
+      if (!codeToValidate) {
+        const projectRequest = erpPool.request();
+        projectRequest.input('PRJC', sql.Int, finalErpProjectId);
+        const projectResult = await projectRequest.query<{
+          CODE: string | null;
+        }>(`
+          SELECT CODE
+          FROM dbo.PRJC
+          WHERE PRJC = @PRJC
+        `);
+        codeToValidate = projectResult.recordset?.[0]?.CODE ?? null;
+      }
 
       logger.info('create-draft-offer project fetch', {
         requestId,
         offerId: normalizedId,
-        offerProjectId,
-        projectCode,
+        erpProjectId: finalErpProjectId,
+        erpProjectCode: codeToValidate,
       });
 
-      if (projectCode) {
-        const projectValidation = await findProject(offerProjectId, projectCode);
+      if (codeToValidate) {
+        const projectValidation = await findProject(finalErpProjectId, codeToValidate);
         logger.info('create-draft-offer project validation', {
           requestId,
           offerId: normalizedId,
-          offerProjectId,
-          projectCode,
+          erpProjectId: finalErpProjectId,
+          erpProjectCode: codeToValidate,
           statusCode: projectValidation.statusCode,
           statusText: projectValidation.statusText,
         });
-        if (projectValidation.statusCode !== PROJECT_FIND_STATUS.OK) {
+
+        if (projectValidation.statusCode === PROJECT_FIND_STATUS.OK) {
+          finalErpProjectCode = codeToValidate;
+        } else if (projectValidation.statusCode === PROJECT_FIND_STATUS.NOT_FOUND) {
+          // Treat as "no existing project found" -> create new one
+          finalErpProjectId = null;
+          finalErpProjectCode = null;
+        } else {
           return NextResponse.json(
             {
               ok: false,
@@ -1216,8 +1408,148 @@ export async function POST(
         logger.info('create-draft-offer project validation skipped (no project code)', {
           requestId,
           offerId: normalizedId,
-          offerProjectId,
+          erpProjectId: finalErpProjectId,
         });
+      }
+    }
+
+    // If there is no existing valid project, create one via integration
+    if (!finalErpProjectId || finalErpProjectId <= 0) {
+      const createdProject = await createProjectFromIntegration({
+        integrationKey: 'FASTQUOTE_CREATE_PRJC',
+        codePrefix: 'COV',
+        name: offerDescription,
+        prjcParent: null,
+        trdr: null,
+        prjCategory: null,
+        sourceSystem: 'FQ',
+        createdByUser: 1011,
+        businessUnit,
+        prjState: 90,
+      });
+
+      finalErpProjectId = createdProject.prjcId;
+      finalErpProjectCode = createdProject.prjcCode;
+
+      logger.info('create-draft-offer project created', {
+        requestId,
+        offerId: normalizedId,
+        erpProjectId: finalErpProjectId,
+        erpProjectCode: finalErpProjectCode,
+      });
+
+      // Persist ERP project back to FastQuote Offer
+      const updateOfferRequest = pool.request();
+      updateOfferRequest.input('offerId', sql.Int, normalizedId);
+      updateOfferRequest.input('erpProjectId', sql.Int, finalErpProjectId);
+      updateOfferRequest.input('erpProjectCode', sql.NVarChar(25), finalErpProjectCode);
+      await updateOfferRequest.query(`
+        UPDATE dbo.Offer
+        SET ERPProjectID = @erpProjectId,
+            ERPProjectCode = @erpProjectCode,
+            ModifiedOn = SYSUTCDATETIME()
+        WHERE ID = @offerId
+      `);
+    }
+
+    // Create customer order (FINDOC) and lines if we have the required data
+    if (finalErpProjectId && finalErpProjectId > 0 && erpCustomerId && erpCustomerId > 0) {
+      try {
+        const orderInfo = await createCustomerOrder({
+          prjcId: finalErpProjectId,
+          businessUnit,
+          trdr: erpCustomerId,
+          integrationKey: 'FASTQUOTE_CREATE_FINDOC',
+          series: 9001,
+          createdByUser: 1011,
+        });
+
+        logger.info('create-draft-offer order created (no-selections path)', {
+          requestId,
+          offerId: normalizedId,
+          findocId: orderInfo.findocId,
+          finCode: orderInfo.finCode,
+          seriesNum: orderInfo.seriesNum,
+        });
+
+        // Load offer details that should become order lines
+        const linesRequest = pool.request();
+        linesRequest.input('offerId', sql.Int, normalizedId);
+        const linesResult = await linesRequest.query<{
+          TreeOrdering: number | null;
+          ProductID: number | null;
+          Quantity: number | null;
+          ListPrice: number | null;
+          NetCost: number | null;
+          ERPID: number | null;
+        }>(`
+          SELECT
+            od.TreeOrdering,
+            od.ProductID,
+            od.Quantity,
+            od.ListPrice,
+            od.NetCost,
+            p.ERPID
+          FROM dbo.OfferDetails od
+          INNER JOIN dbo.Products p ON od.ProductID = p.ID
+          WHERE od.OfferID = @offerId
+            AND od.ProductID IS NOT NULL
+            AND p.ERPID IS NOT NULL
+        `);
+
+        const lines = (linesResult.recordset ?? []).sort((a, b) => {
+          const ta = a.TreeOrdering ?? 0;
+          const tb = b.TreeOrdering ?? 0;
+          return ta - tb;
+        });
+
+        let lineIndex = 0;
+        for (const line of lines) {
+          if (
+            line.ERPID == null ||
+            line.Quantity == null ||
+            line.Quantity <= 0 ||
+            line.ListPrice == null ||
+            line.ListPrice < 0
+          ) {
+            // Incomplete line - skip
+            continue;
+          }
+
+          lineIndex += 1;
+          const cccPosNo = String(lineIndex);
+
+          try {
+            await addOrderLine({
+              findocId: orderInfo.findocId,
+              cccPosNo,
+              mtrl: line.ERPID,
+              qty: Number(line.Quantity),
+              price: Number(line.ListPrice),
+              num01: line.NetCost != null ? Number(line.NetCost) : null,
+              createdByUser: 1011,
+            });
+          } catch (lineErr) {
+            logger.error(
+              'Failed to add order line (no-selections path)',
+              {
+                requestId,
+                offerId: normalizedId,
+                findocId: orderInfo.findocId,
+                productId: line.ProductID,
+                erpId: line.ERPID,
+                cccPosNo,
+              },
+              lineErr instanceof Error ? lineErr : undefined,
+            );
+          }
+        }
+      } catch (orderErr) {
+        logger.error(
+          'Failed to create customer order (no-selections path)',
+          { requestId, offerId: normalizedId, erpProjectId: finalErpProjectId, erpCustomerId },
+          orderErr instanceof Error ? orderErr : undefined,
+        );
       }
     }
 

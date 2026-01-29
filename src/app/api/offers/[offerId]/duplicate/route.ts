@@ -47,7 +47,7 @@ type ExistingOfferRecord = {
   Comments: string | null;
   ContactID: number | null;
   OfferContact: string | null;
-  ProjectID: number | null;
+  ERPProjectID: number | null;
   PrintLevelGroupingID: number | null;
   CustomerRef: string | null;
   InitialRequest: Date | null;
@@ -298,7 +298,7 @@ export async function POST(
         Comments,
         ContactID,
         OfferContact,
-        ProjectID,
+        ERPProjectID,
         PrintLevelGroupingID,
         CustomerRef,
         InitialRequest,
@@ -368,7 +368,7 @@ export async function POST(
       insertRequest.input('Comments', sql.NVarChar(2000), existingOffer.Comments);
       insertRequest.input('ContactID', sql.Int, existingOffer.ContactID);
       insertRequest.input('OfferContact', sql.NVarChar(500), existingOffer.OfferContact);
-      insertRequest.input('ProjectID', sql.Int, existingOffer.ProjectID);
+      insertRequest.input('ERPProjectID', sql.Int, existingOffer.ERPProjectID);
       insertRequest.input('PrintLevelGroupingID', sql.Int, existingOffer.PrintLevelGroupingID);
       insertRequest.input('CustomerRef', sql.NVarChar(500), existingOffer.CustomerRef);
       insertRequest.input('InitialRequest', sql.DateTime2, existingOffer.InitialRequest);
@@ -407,7 +407,7 @@ export async function POST(
           Comments,
           ContactID,
           OfferContact,
-          ProjectID,
+          ERPProjectID,
           PrintLevelGroupingID,
           CustomerRef,
           InitialRequest,
@@ -448,7 +448,7 @@ export async function POST(
           @Comments,
           @ContactID,
           @OfferContact,
-          @ProjectID,
+          @ERPProjectID,
           @PrintLevelGroupingID,
           @CustomerRef,
           @InitialRequest,

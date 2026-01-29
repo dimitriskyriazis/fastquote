@@ -54,7 +54,11 @@ declare module 'mssql' {
   export const Int: ISqlTypeFactory;
   export const Bit: ISqlTypeFactory;
   export const DateTime2: ISqlTypeFactory;
+  export const Decimal: ISqlTypeFactory;
   export const NVarChar: ISqlTypeFactoryWithLength;
+  export const Char: ISqlTypeFactoryWithLength;
+  export const VarChar: ISqlTypeFactoryWithLength;
+  export const SmallInt: ISqlTypeFactory;
   export const MAX: number;
 
   export function connect(config: config): Promise<ConnectionPool>;
@@ -66,7 +70,11 @@ declare module 'mssql' {
     Int: typeof Int;
     Bit: typeof Bit;
     DateTime2: typeof DateTime2;
+    Decimal: typeof Decimal;
     NVarChar: typeof NVarChar;
+    Char: typeof Char;
+    VarChar: typeof VarChar;
+    SmallInt: typeof SmallInt;
     MAX: typeof MAX;
     Transaction: typeof Transaction;
   };

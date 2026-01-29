@@ -51,7 +51,7 @@ async function fetchOfferBasicRecord(offerId: number) {
         approver.UserName AS ApprovalUserUserName,
         o.SalesPersonId,
         o.ApprovalUserId,
-        o.ProjectID,
+        o.ERPProjectID,
         o.CustomerRef,
         o.InitialRequest,
         o.DraftOffer,

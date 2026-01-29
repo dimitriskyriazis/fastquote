@@ -15,7 +15,7 @@ const createProductSchema = z.object({
   }),
   modelNumber: partModelNumberSchema(255),
   partNumber: partModelNumberSchema(255),
-  erpPartNumber: partModelNumberSchema(255),
+  erpCode: partModelNumberSchema(255),
   typeId: positiveIntSchema,
   categoryId: positiveIntSchema,
   subCategoryId: positiveIntSchema,
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     const brandId = body.brandId!; // Validated as required
     const modelNumber = body.modelNumber;
     const partNumber = body.partNumber;
-    const erpPartNumber = body.erpPartNumber;
+    const erpCode = body.erpCode;
     const description = body.description;
     const weblink = body.weblink;
     const comments = body.comments;
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
     request.input("BrandID", sql.Int, brandId);
     request.input("ModelNumber", sql.NVarChar(255), modelNumber);
     request.input("PartNumber", sql.NVarChar(255), partNumber);
-    request.input("ERPPartNumber", sql.NVarChar(255), erpPartNumber);
+    request.input("ERPCode", sql.NVarChar(255), erpCode);
     request.input("Description", sql.NVarChar(2000), description);
     request.input("WebLink", sql.NVarChar(1000), weblink);
     request.input("Comments", sql.NVarChar(2000), comments);
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
         BrandID,
         ModelNumber,
         PartNumber,
-        ERPPartNumber,
+        ERPCode,
         Description,
         WebLink,
         Comments,
@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
         @BrandID,
         @ModelNumber,
         @PartNumber,
-        @ERPPartNumber,
+        @ERPCode,
         @Description,
         @WebLink,
         @Comments,

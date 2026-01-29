@@ -144,7 +144,14 @@ const buildFieldDefinitions = (
     options: users,
     valueType: 'string',
   },
-  { id: 'projectId', label: 'Project ID', section: 'code', recordKey: 'ProjectID', updateField: 'ProjectID', valueType: 'number' },
+  {
+    id: 'erpProjectId',
+    label: 'ERP Project ID',
+    section: 'code',
+    recordKey: 'ERPProjectID',
+    updateField: 'ERPProjectID',
+    valueType: 'number',
+  },
   { id: 'offerId', label: 'Offer ID', section: 'code', recordKey: 'OfferID', readOnly: true },
   { id: 'customerRef', label: 'Customer Ref', section: 'code', recordKey: 'CustomerRef', updateField: 'CustomerRef' },
 

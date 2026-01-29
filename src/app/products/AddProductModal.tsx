@@ -40,7 +40,7 @@ type ProductFormState = {
   brandId: string;
   modelNumber: string;
   partNumber: string;
-  erpPartNumber: string;
+  erpCode: string;
   typeId: string;
   categoryId: string;
   subCategoryId: string;
@@ -57,7 +57,7 @@ const createEmptyProductForm = (): ProductFormState => ({
   brandId: '',
   modelNumber: '',
   partNumber: '',
-  erpPartNumber: '',
+  erpCode: '',
   typeId: '',
   categoryId: '',
   subCategoryId: '',
@@ -143,7 +143,7 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
         brandId: parseOptionalId(form.brandId),
         modelNumber: trimmedModelNumber || null,
         partNumber: trimmedPartNumber || null,
-        erpPartNumber: form.erpPartNumber.trim() || null,
+        erpCode: form.erpCode.trim() || null,
         typeId: parseOptionalId(form.typeId),
         categoryId: parseOptionalId(form.categoryId),
         subCategoryId: parseOptionalId(form.subCategoryId),
@@ -302,13 +302,13 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
         </div>
         <div className={`${lookupStyles.field} ${lookupStyles.fieldHalf}`}>
           <label className={lookupStyles.fieldLabel} htmlFor="product-erp">
-            ERP part number
+            ERP Code
           </label>
           <input
             id="product-erp"
             className={lookupStyles.fieldControl}
-            value={form.erpPartNumber}
-            onChange={(event) => updateFormField('erpPartNumber', event.target.value)}
+            value={form.erpCode}
+            onChange={(event) => updateFormField('erpCode', event.target.value)}
           />
         </div>
         <div className={`${lookupStyles.field} ${lookupStyles.fieldHalf}`}>

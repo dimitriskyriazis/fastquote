@@ -123,7 +123,7 @@ export async function POST(req: NextRequest) {
   const salesPersonId =
     normalizeUserId(body?.salesPersonId) ?? salesCreationPersonId ?? auditUserId ?? null;
   const salesManagerId = salesCreationPersonId;
-  const projectId = normalizeInt(body?.projectId) ?? 0;
+  const erpProjectId = normalizeInt(body?.projectId) ?? 0;
 
     const dateFields = {
       initialRequest: normalizeDate(body?.initialRequest),
@@ -256,7 +256,7 @@ export async function POST(req: NextRequest) {
     request.input('Comments', sql.NVarChar(2000), telmacoNote);
     request.input('ContactID', sql.Int, contactId);
     request.input('OfferContact', sql.NVarChar(500), offerContact);
-    request.input('ProjectID', sql.Int, projectId);
+    request.input('ERPProjectID', sql.Int, erpProjectId);
     request.input('PrintLevelGroupingID', sql.Int, 1);
     request.input('CustomerRef', sql.NVarChar(500), customerRef);
     request.input('InitialRequest', sql.DateTime2, dateFields.initialRequest);
@@ -292,7 +292,7 @@ export async function POST(req: NextRequest) {
         Comments,
         ContactID,
         OfferContact,
-        ProjectID,
+        ERPProjectID,
         PrintLevelGroupingID,
         CustomerRef,
         InitialRequest,
@@ -332,7 +332,7 @@ export async function POST(req: NextRequest) {
         @Comments,
         @ContactID,
         @OfferContact,
-        @ProjectID,
+        @ERPProjectID,
         @PrintLevelGroupingID,
         @CustomerRef,
         @InitialRequest,

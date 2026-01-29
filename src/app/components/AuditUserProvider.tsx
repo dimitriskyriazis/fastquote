@@ -218,7 +218,9 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (autoResolveAttemptedRef.value) return;
     if (loading) return;
-    if (userId && selectedUser) return;
+    // If we already have a user id from the cookie, do not call Windows-auth endpoints
+    // (e.g. /whoami.aspx); they can trigger a credential prompt.
+    if (userId) return;
     if (users.length === 0) return;
     if (accessDeniedUnrecognizedUser) return;
 

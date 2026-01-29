@@ -64,7 +64,7 @@ type OfferRow = {
   SalesDivision: string | null;
   SalesPerson: string | null;
   OfferStatus: string | null;
-  ProjectID: number | null;
+  ERPProjectID: number | null;
   offerId: number | null;
   CustomerRef: string | null;
   ProtocolNo: number | null;
@@ -101,7 +101,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   SalesDivision: 'dbo.SalesDivision.Name',
   SalesPerson: 'dbo.AspNetUsers.FullName',
   OfferStatus: 'dbo.OfferStatus.Name',
-  ProjectID: 'dbo.Offer.ERPProjectID',
+  ERPProjectID: 'dbo.Offer.ERPProjectID',
   offerId: 'dbo.Offer.ID',
   CustomerRef: 'dbo.Offer.CustomerRef',
   ProtocolNo: 'dbo.Offer.ProtocolNo',
@@ -325,7 +325,7 @@ export async function POST(req: NextRequest) {
         dbo.SalesDivision.Name AS SalesDivision,
         dbo.AspNetUsers.FullName AS SalesPerson,
         dbo.OfferStatus.Name AS OfferStatus,
-        dbo.Offer.ERPProjectID,
+        dbo.Offer.ERPProjectID AS ERPProjectID,
         dbo.Offer.ID AS offerId,
         dbo.Offer.CustomerRef,
         dbo.Offer.ProtocolNo,
@@ -452,7 +452,7 @@ export async function DELETE(req: NextRequest) {
       body = null;
     }
 
-    const rawIds = Array.isArray(body?.OfferIDs) ? body.OfferIDs : [];
+    const rawIds = body != null && Array.isArray(body.OfferIDs) ? body.OfferIDs : [];
     const normalizedIds = Array.from(
       new Set(
         rawIds
