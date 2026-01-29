@@ -444,7 +444,7 @@
 .offer-products-grid .offer-row--category-collapsed + .ag-row .ag-cell-wrapper {
   padding-top: 0 !important;
   border-top: none !important;
-  margin-top: -1px !important;
+  margin-top: 0px !important;
 }
 
 .offer-products-grid .offer-row--category-collapsed + .ag-row {

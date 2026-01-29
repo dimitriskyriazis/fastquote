@@ -34,6 +34,9 @@ type UserRow = {
 
 const toOptions = (rows: RawDropdownRow[] | null | undefined): DropdownOption[] => toDropdownOptions(rows);
 
+// Always fetch fresh lookup data (e.g. brands) on each request so manually added DB rows are visible after refresh
+export const dynamic = "force-dynamic";
+
 const safeLabel = (value: string | null | undefined, fallback: string): string => {
   if (!value) return fallback;
   const trimmed = value.trim();

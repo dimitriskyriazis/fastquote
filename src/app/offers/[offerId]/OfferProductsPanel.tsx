@@ -12,7 +12,6 @@ import type {
   MenuItemDef,
   RowClassParams,
   RowDoubleClickedEvent,
-  RowHeightParams,
   RowNode,
   ValueFormatterParams,
   ValueGetterParams,
@@ -61,9 +60,52 @@ const decimalFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
   maximumFractionDigits: 2,
 });
 const DEFAULT_ROW_HEIGHT = 32;
-// AG Grid v34 warns if rowHeight is 0 (warning #23). Using 1 keeps collapsed
-// descendants effectively hidden while avoiding the warning.
-const COLLAPSED_ROW_HEIGHT = 1;
+
+const COLLAPSED_CATEGORIES_COOKIE_NAME = 'offer_products_collapsed';
+
+function readCollapsedCategoryPathsFromCookie(offerId: string): Set<string> {
+  if (typeof document === 'undefined' || !offerId) return new Set();
+  try {
+    const raw = document.cookie
+      .split(';')
+      .map((s) => s.trim())
+      .find((s) => s.startsWith(`${COLLAPSED_CATEGORIES_COOKIE_NAME}=`));
+    if (!raw) return new Set();
+    const value = raw.slice(COLLAPSED_CATEGORIES_COOKIE_NAME.length + 1).trim();
+    const decoded = value ? decodeURIComponent(value) : '';
+    const parsed = JSON.parse(decoded) as Record<string, string[] | undefined>;
+    const paths = parsed[offerId];
+    return Array.isArray(paths) ? new Set(paths) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function writeCollapsedCategoryPathsToCookie(offerId: string, paths: Set<string>): void {
+  if (typeof document === 'undefined' || !offerId) return;
+  try {
+    let all: Record<string, string[]> = {};
+    const existing = document.cookie
+      .split(';')
+      .map((s) => s.trim())
+      .find((s) => s.startsWith(`${COLLAPSED_CATEGORIES_COOKIE_NAME}=`));
+    if (existing) {
+      const value = existing.slice(COLLAPSED_CATEGORIES_COOKIE_NAME.length + 1).trim();
+      const decoded = value ? decodeURIComponent(value) : '{}';
+      all = JSON.parse(decoded) as Record<string, string[]>;
+    }
+    if (paths.size === 0) {
+      delete all[offerId];
+    } else {
+      all[offerId] = Array.from(paths);
+    }
+    const encoded = encodeURIComponent(JSON.stringify(all));
+    const maxAge = 60 * 60 * 24 * 365; // 1 year
+    document.cookie = `${COLLAPSED_CATEGORIES_COOKIE_NAME}=${encoded}; path=/; max-age=${maxAge}; SameSite=Lax`;
+  } catch {
+    // ignore
+  }
+}
 
 type GridRowNode = RowNode<Record<string, unknown>> | IRowNode<Record<string, unknown>>;
 
@@ -816,7 +858,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [requestedColumnsReady, setRequestedColumnsReadyFlag] = useState(false);
   const [requestedMatchQueue, setRequestedMatchQueue] = useState<RequestedProductMatchEntry[]>([]);
   const [processedRequestedMatches, setProcessedRequestedMatches] = useState(0);
-  const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() => new Set());
+  const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() =>
+    readCollapsedCategoryPathsFromCookie(offerId),
+  );
   const [categoryPathsWithChildren, setCategoryPathsWithChildren] = useState<Set<string>>(() => new Set());
   const [categoryChildrenKnown, setCategoryChildrenKnown] = useState(false);
   const treeOrderingRootMapRef = useRef<Map<string, number>>(new Map());
@@ -1257,53 +1301,22 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     return key.length > 0 && categoryPathsWithChildren.has(key);
   }, [categoryChildrenKnown, categoryPathsWithChildren]);
 
-  const hasCollapsedAncestor = useCallback((path: number[]) => {
+  const hasCollapsedAncestorInSet = useCallback((path: number[], collapsedSet: Set<string>) => {
     for (let idx = 1; idx < path.length; idx += 1) {
       const ancestorKey = buildTreeOrderingKey(path.slice(0, idx));
-      if (ancestorKey && collapsedCategoryPaths.has(ancestorKey)) {
+      if (ancestorKey && collapsedSet.has(ancestorKey)) {
         return true;
       }
     }
     return false;
-  }, [collapsedCategoryPaths]);
+  }, []);
 
-  const determineRowHeight = useCallback((row: Record<string, unknown> | null) => {
-    const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
-    if (path.length > 0 && hasCollapsedAncestor(path)) {
-      return COLLAPSED_ROW_HEIGHT;
-    }
-    return DEFAULT_ROW_HEIGHT;
-  }, [hasCollapsedAncestor]);
+  const determineRowHeight = useCallback(() => DEFAULT_ROW_HEIGHT, []);
 
   const getRowHeight = useCallback(
-    (params: RowHeightParams<Record<string, unknown>>) => determineRowHeight(params.data ?? null),
+    () => determineRowHeight(),
     [determineRowHeight],
   );
-
-  const resetCollapsedRowHeights = useCallback(() => {
-    const api = gridApiRef.current;
-    if (!api || api.isDestroyed?.()) return;
-    const scrollApi = api as GridApi<Record<string, unknown>> & {
-      getHorizontalScrollPosition?: () => number;
-      setHorizontalScrollPosition?: (pos: number) => void;
-    };
-    const savedHorizontalScroll =
-      typeof scrollApi.getHorizontalScrollPosition === 'function'
-        ? scrollApi.getHorizontalScrollPosition()
-        : null;
-    if (typeof api.resetRowHeights === 'function') {
-      try {
-        api.resetRowHeights();
-      } catch (err) {
-        console.warn('Failed to reset row heights after collapsing categories', err);
-      }
-    } else if (typeof api.onRowHeightChanged === 'function') {
-      api.onRowHeightChanged();
-    }
-    if (savedHorizontalScroll != null && typeof scrollApi.setHorizontalScrollPosition === 'function') {
-      scrollApi.setHorizontalScrollPosition(savedHorizontalScroll);
-    }
-  }, []);
 
   const handleGridModelUpdated = useCallback(() => {
     if (skipModelUpdateRef.current) {
@@ -1368,17 +1381,34 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         }
       }
     }
-    const path = parseTreeOrderingPath(
-      (params.data as { TreeOrdering?: string | null } | null | undefined)?.TreeOrdering ?? null,
-    );
-    if (path.length > 0 && hasCollapsedAncestor(path)) {
-      classes.push('offer-row--category-descendant-collapsed');
-    }
     if (classes.length === 0) {
       return undefined;
     }
     return classes.join(' ');
-  }, [isCategoryRowCollapsed, hasCategoryChildren, hasCollapsedAncestor]);
+  }, [isCategoryRowCollapsed, hasCategoryChildren]);
+
+  const removeCollapsedDescendantsFromGrid = useCallback((collapsedSet: Set<string>) => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    if (collapsedSet.size === 0) return;
+    const rowsToRemove: Array<Record<string, unknown>> = [];
+    api.forEachNode((node) => {
+      const row = node.data ?? null;
+      if (!row) return;
+      const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+      if (path.length === 0) return;
+      if (hasCollapsedAncestorInSet(path, collapsedSet)) {
+        rowsToRemove.push(row);
+      }
+    });
+    if (rowsToRemove.length > 0) {
+      try {
+        api.applyServerSideTransaction({ remove: rowsToRemove });
+      } catch {
+        /* noop */
+      }
+    }
+  }, [hasCollapsedAncestorInSet]);
 
   const handleRowDoubleClicked = useCallback((params: RowDoubleClickedEvent<Record<string, unknown>>) => {
     const target = params.event?.target;
@@ -1864,7 +1894,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             || isOfferProductProduct(row)
           );
         },
-        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+        cellEditor: 'agTextCellEditor',
+        cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS],
       },
     {
       field: 'ListPrice',
@@ -2124,9 +2155,22 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
   }, [processedRequestedMatches, requestedMatchQueue.length]);
 
+  const previousCollapsedPathsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    resetCollapsedRowHeights();
-  }, [collapsedCategoryPaths, resetCollapsedRowHeights]);
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    const prev = previousCollapsedPathsRef.current;
+    const next = collapsedCategoryPaths;
+    const added = Array.from(next).filter((key) => !prev.has(key));
+    const removed = Array.from(prev).filter((key) => !next.has(key));
+    if (added.length > 0) {
+      removeCollapsedDescendantsFromGrid(next);
+    }
+    if (removed.length > 0) {
+      api.refreshServerSide?.({ purge: false });
+    }
+    previousCollapsedPathsRef.current = new Set(next);
+  }, [collapsedCategoryPaths, removeCollapsedDescendantsFromGrid]);
 
   useEffect(() => {
     const api = gridApiRef.current;
@@ -2137,6 +2181,20 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       /* noop */
     }
   }, [collapsedCategoryPaths]);
+
+  const prevOfferIdForCookieRef = useRef(offerId);
+  useEffect(() => {
+    if (prevOfferIdForCookieRef.current !== offerId) {
+      prevOfferIdForCookieRef.current = offerId;
+      return;
+    }
+    writeCollapsedCategoryPathsToCookie(offerId, collapsedCategoryPaths);
+  }, [offerId, collapsedCategoryPaths]);
+
+  useEffect(() => {
+    setCollapsedCategoryPaths(readCollapsedCategoryPathsFromCookie(offerId));
+    prevOfferIdForCookieRef.current = offerId;
+  }, [offerId]);
 
   const productRowDeletion = useMemo(
     () =>
@@ -3364,7 +3422,3 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 OfferProductsPanel.displayName = 'OfferProductsPanel';
 
 export default React.memo(OfferProductsPanel);
-
-
-
-

@@ -22,20 +22,20 @@ const createRateLimiter = (points: number, duration: number) => {
 
 // IP-based rate limiter (applies to all requests)
 const ipLimiter = createRateLimiter(
-  Number(process.env.RATE_LIMIT_IP_POINTS || 100),
-  Number(process.env.RATE_LIMIT_IP_DURATION || 900), // 15 minutes
+  Number(process.env.RATE_LIMIT_IP_POINTS),
+  Number(process.env.RATE_LIMIT_IP_DURATION), // 15 minutes
 );
 
 // User-based rate limiter (applies to authenticated requests)
 const userLimiter = createRateLimiter(
-  Number(process.env.RATE_LIMIT_USER_POINTS || 200),
-  Number(process.env.RATE_LIMIT_USER_DURATION || 900), // 15 minutes
+  Number(process.env.RATE_LIMIT_USER_POINTS),
+  Number(process.env.RATE_LIMIT_USER_DURATION), // 15 minutes
 );
 
 // Strict rate limiter for write operations (create/update/delete)
 const strictLimiter = createRateLimiter(
-  Number(process.env.RATE_LIMIT_STRICT_POINTS || 30),
-  Number(process.env.RATE_LIMIT_STRICT_DURATION || 900), // 15 minutes
+  Number(process.env.RATE_LIMIT_STRICT_POINTS),
+  Number(process.env.RATE_LIMIT_STRICT_DURATION), // 15 minutes
 );
 
 /**

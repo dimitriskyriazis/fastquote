@@ -10,17 +10,23 @@ export async function GET(req: NextRequest) {
   }
 
   // Create a readable stream for SSE
+  let cleanup: (() => void) | null = null;
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();
+      let closed = false;
 
       // Send initial connection message
       const send = (data: string) => {
+        if (closed) return false;
         try {
           controller.enqueue(encoder.encode(data));
+          return true;
         } catch (err) {
           // Connection closed
           console.error('Failed to send SSE data', err);
+          cleanup?.();
+          return false;
         }
       };
 
@@ -37,7 +43,9 @@ export async function GET(req: NextRequest) {
       }, 30000); // Every 30 seconds
 
       // Cleanup on close
-      const cleanup = () => {
+      cleanup = () => {
+        if (closed) return;
+        closed = true;
         clearInterval(heartbeatInterval);
         unsubscribe();
         try {
@@ -47,12 +55,11 @@ export async function GET(req: NextRequest) {
         }
       };
 
-      req.signal.addEventListener('abort', cleanup);
-
-      // Also handle client disconnect
-      if (typeof req.signal === 'object' && req.signal) {
-        req.signal.addEventListener('abort', cleanup);
-      }
+      req.signal.addEventListener('abort', cleanup, { once: true });
+    },
+    cancel() {
+      // Called when client disconnects or stream is cancelled.
+      cleanup?.();
     },
   });
 

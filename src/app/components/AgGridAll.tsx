@@ -46,6 +46,7 @@ import {
   ModelUpdatedEvent,
   NumberFilterModule,
   RowClassParams,
+  RowStyle,
   RowStyleModule,
   RowDoubleClickedEvent,
   RowDragEndEvent,
@@ -59,6 +60,7 @@ import {
   SelectionChangedEvent,
   ServerSideRowSelectionState,
   SelectEditorModule,
+  CustomEditorModule,
   SortChangedEvent,
   TextEditorModule,
   TextFilterModule,
@@ -66,6 +68,8 @@ import {
   ModuleRegistry,
   ColumnPivotModeChangedEvent,
   CsvExportModule,
+  ValidationModule,
+  ExternalFilterModule,
 } from 'ag-grid-community';
 import {
   AggregationModule,
@@ -380,6 +384,7 @@ if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
     DateFilterModule,
     TextEditorModule,
     SelectEditorModule,
+    CustomEditorModule,
     RowSelectionModule,
     RowDragModule,
     EventApiModule,
@@ -388,6 +393,8 @@ if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
     RowStyleModule,
     CellStyleModule,
     RowApiModule,
+    ExternalFilterModule,
+    ValidationModule,
   ]);
   globalThis.__AG_GRID_MODULES_REGISTERED__ = true;
 }
@@ -423,6 +430,9 @@ type Props = {
   rowGroupPanelShow?: 'always' | 'onlyWhenGrouping' | 'never';
   suppressRowGroup?: boolean;
   getRowClass?: (params: RowClassParams<RowData>) => string | string[] | undefined;
+  getRowStyle?: (params: RowClassParams<RowData>) => RowStyle | undefined;
+  isExternalFilterPresent?: () => boolean;
+  doesExternalFilterPass?: (node: IRowNode<RowData>) => boolean;
   getContextMenuItems?: (params: GetContextMenuItemsParams<RowData>) => Array<MenuItemDef<RowData> | DefaultMenuItem | string> | undefined;
   getHeaderMenuItems?: GetMainMenuItems<RowData>;
   suppressContextMenu?: boolean;
@@ -999,6 +1009,9 @@ export default function AgGridAll({
   rowGroupPanelShow = 'always',
   suppressRowGroup = false,
   getRowClass,
+  getRowStyle,
+  isExternalFilterPresent,
+  doesExternalFilterPass,
   getContextMenuItems,
   getHeaderMenuItems,
   suppressContextMenu = false,
@@ -2568,7 +2581,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 
   const sharedGridOptions = useMemo(() => {
     const options: GridOptions<RowData> = {
-      enableRangeSelection: true,
+      cellSelection: true,
       maintainColumnOrder,
     };
     if (useAgGridRowDrag) {
@@ -3545,6 +3558,9 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           autoGroupColumnDef={autoGroupColumnDef}
           getRowId={getRowId}
           getRowClass={mergedGetRowClass}
+          getRowStyle={getRowStyle}
+          isExternalFilterPresent={isExternalFilterPresent}
+          doesExternalFilterPass={doesExternalFilterPass}
           getMainMenuItems={headerMenuItemsHandler}
           getContextMenuItems={contextMenuItemsHandler}
           suppressContextMenu={suppressContextMenu}
