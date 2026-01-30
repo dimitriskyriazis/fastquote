@@ -21,7 +21,7 @@
 }
 
 .header {
-  padding: 16px 20px;
+  padding: 6px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -30,13 +30,13 @@
 }
 
 .title {
-  font-size: 1.25rem;
+  font-size: 1.1rem;
   font-weight: 700;
   color: #0f172a;
 }
 
 .subtitle {
-  font-size: 0.95rem;
+  font-size: 0.85rem;
   color: #475569;
   margin-top: 4px;
 }
@@ -44,6 +44,41 @@
 .headerActions {
   display: flex;
   gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.headerMeta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #0f172a;
+  white-space: nowrap;
+  height: 38px;
+}
+
+.headerMetaItem {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.headerMetaLabel {
+  display: block;
+  color: #475569;
+  font-weight: 600;
+}
+
+.headerMetaValue {
+  display: block;
+  color: #0f172a;
 }
 
 .primaryButton {
@@ -56,6 +91,7 @@
   cursor: pointer;
   box-shadow: 0 10px 24px rgba(37, 99, 235, 0.35);
   transition: transform 120ms ease, box-shadow 150ms ease, background-color 150ms ease;
+  font-size: 0.9rem;
 }
 
 .primaryButton:hover {
@@ -79,6 +115,7 @@
   font-weight: 600;
   cursor: pointer;
   transition: background-color 150ms ease, transform 120ms ease;
+  font-size: 0.9rem;
 }
 
 .ghostButton:hover {
@@ -95,6 +132,7 @@
   font-weight: 600;
   cursor: pointer;
   transition: background-color 150ms ease, transform 120ms ease;
+  font-size: 0.9rem;
 }
 
 .secondaryButton:hover {
@@ -112,18 +150,18 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 12px 16px 16px;
+  padding: 8px 12px 12px;
   overflow: hidden;
 }
 
 .section {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
-  padding: 12px;
+  padding: 8px;
   min-height: 0;
   height: 100%;
 }
@@ -192,13 +230,18 @@
 .sectionHeader {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
+  flex-wrap: nowrap;
 }
 
 .sectionTitle {
   font-weight: 700;
   color: #0f172a;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sectionHint {

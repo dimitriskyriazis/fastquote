@@ -20,6 +20,7 @@ type Props = {
   newProductId?: number | null;
   onClearNewProductId?: () => void;
   onRequestPayloadConsumed?: () => void;
+  refreshToken?: number;
 };
 
 type CategoryRow = {
@@ -140,6 +141,7 @@ export default function AddProductsModal({
   newProductId,
   onClearNewProductId,
   onRequestPayloadConsumed,
+  refreshToken,
 }: Props) {
   const showRequestedItemNo = Boolean(showRequestedColumns);
   const [selectedCategory, setSelectedCategory] = useState<CategoryRow | null>(null);
@@ -423,6 +425,29 @@ export default function AddProductsModal({
     }
   }, []);
 
+  const refreshCategoryGrid = useCallback(() => {
+    const api = categoryApiRef.current;
+    if (!api) return;
+    const refreshFn = (api as GridApi & { refreshServerSide?: (params?: { purge?: boolean }) => void })
+      .refreshServerSide;
+    if (typeof refreshFn === 'function') {
+      try {
+        refreshFn.call(api, { purge: true });
+        return;
+      } catch {
+        /* noop */
+      }
+    }
+    const purgeFn = (api as GridApi & { purgeServerSideCache?: () => void }).purgeServerSideCache;
+    if (typeof purgeFn === 'function') {
+      try {
+        purgeFn.call(api);
+      } catch {
+        /* noop */
+      }
+    }
+  }, []);
+
   const ensureProductSort = useCallback(() => {
     const api = productsApiRef.current;
     if (!api) return;
@@ -520,6 +545,22 @@ export default function AddProductsModal({
     };
   }, [newProductId, ensureProductSort, refreshProductsGrid]);
 
+  useEffect(() => {
+    if (refreshToken == null) return;
+    refreshCategoryGrid();
+    refreshProductsGrid();
+    const categoryId = selectedCategory?.OfferDetailID ?? null;
+    if (categoryId != null) {
+      void fetchRequestedRows(categoryId, { force: true });
+    }
+  }, [
+    refreshToken,
+    refreshCategoryGrid,
+    refreshProductsGrid,
+    fetchRequestedRows,
+    selectedCategory?.OfferDetailID,
+  ]);
+
   const handleProductsGridReady = useCallback((api: GridApi) => {
     productsApiRef.current = api as ProductsGridApi;
     ensureProductSort();
@@ -550,6 +591,16 @@ export default function AddProductsModal({
             <div className={styles.subtitle}>Choose a category and pick products to append.</div>
           </div>
           <div className={styles.headerActions}>
+            <div className={styles.headerMeta}>
+              <div className={styles.headerMetaItem}>
+                <span className={styles.headerMetaLabel}>Category:</span>
+                <span className={styles.headerMetaValue}>{selectedCategoryLabel}</span>
+              </div>
+              <div className={styles.headerMetaItem}>
+                <span className={styles.headerMetaLabel}>Products selected:</span>
+                <span className={styles.headerMetaValue}>{selectedProducts.length}</span>
+              </div>
+            </div>
             {onRequestAddProduct ? (
               <button
                 type="button"
@@ -577,14 +628,6 @@ export default function AddProductsModal({
         <div className={styles.body}>
           <section className={`${styles.section} ${styles.splitPane}`}>
             <div className={`${styles.sectionInner} ${styles.categoriesColumn}`}>
-              <div className={styles.sectionHeader}>
-                <div>
-                  <div className={styles.sectionTitle}>Categories</div>
-                  <div className={styles.selectedBadge}>
-                    Selected: <span className={styles.selectedValue}>{selectedCategoryLabel}</span>
-                  </div>
-                </div>
-              </div>
               <div className={styles.categoryGridShell}>
                 <AgGridAll
                   endpoint={endpoint}
@@ -657,14 +700,6 @@ export default function AddProductsModal({
             </div>
 
             <div className={`${styles.sectionInner} ${styles.productsColumn}`}>
-              <div className={styles.sectionHeader}>
-                <div>
-                  <div className={styles.sectionTitle}>Products (multi-select)</div>
-                </div>
-                <div className={styles.selectedBadge}>
-                  Selected products: <span className={styles.selectedValue}>{selectedProducts.length}</span>
-                </div>
-              </div>
               <div 
                 className={`${styles.productsGridShell} offer-products-grid`}
                 data-fastquote-keep-selection="true"
@@ -709,6 +744,16 @@ export default function AddProductsModal({
             <div className={styles.subtitle}>Choose a category and pick products to append.</div>
           </div>
           <div className={styles.headerActions}>
+            <div className={styles.headerMeta}>
+              <div className={styles.headerMetaItem}>
+                <span className={styles.headerMetaLabel}>Category:</span>
+                <span className={styles.headerMetaValue}>{selectedCategoryLabel}</span>
+              </div>
+              <div className={styles.headerMetaItem}>
+                <span className={styles.headerMetaLabel}>Products selected:</span>
+                <span className={styles.headerMetaValue}>{selectedProducts.length}</span>
+              </div>
+            </div>
             {onRequestAddProduct ? (
               <button
                 type="button"
@@ -736,14 +781,6 @@ export default function AddProductsModal({
         <div className={styles.body}>
           <section className={`${styles.section} ${styles.splitPane}`}>
             <div className={`${styles.sectionInner} ${styles.categoriesColumn}`}>
-              <div className={styles.sectionHeader}>
-                <div>
-                  <div className={styles.sectionTitle}>Categories</div>
-                  <div className={styles.selectedBadge}>
-                    Selected: <span className={styles.selectedValue}>{selectedCategoryLabel}</span>
-                  </div>
-                </div>
-              </div>
               <div className={styles.categoryGridShell}>
                 <AgGridAll
                   endpoint={endpoint}
@@ -816,14 +853,6 @@ export default function AddProductsModal({
             </div>
 
             <div className={`${styles.sectionInner} ${styles.productsColumn}`}>
-              <div className={styles.sectionHeader}>
-                <div>
-                  <div className={styles.sectionTitle}>Products (multi-select)</div>
-                </div>
-                <div className={styles.selectedBadge}>
-                  Selected products: <span className={styles.selectedValue}>{selectedProducts.length}</span>
-                </div>
-              </div>
               <div 
                 className={`${styles.productsGridShell} offer-products-grid`}
                 data-fastquote-keep-selection="true"

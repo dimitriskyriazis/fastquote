@@ -34,7 +34,7 @@ async function fetchOfferStatuses() {
     const result = await pool.request().query<LookupRow>(`
       SELECT ID, Name
       FROM dbo.OfferStatus
-      ORDER BY Name
+      ORDER BY Sorting, Name
     `);
     return mapOptions(result.recordset);
   } catch (err) {

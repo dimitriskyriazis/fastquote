@@ -273,6 +273,39 @@ const applyColumnLengthsToRow = (row: NormalizedRow, lengths: ColumnLengthMap): 
   };
 };
 
+const fetchExistingTreeOrderings = async (
+  pool: ConnectionPool,
+  offerId: number,
+  treeOrderings: string[],
+): Promise<Set<string>> => {
+  const existing = new Set<string>();
+  const unique = Array.from(new Set(treeOrderings.filter(Boolean)));
+  if (unique.length === 0) return existing;
+  const chunkSize = computeChunkSize(1, 1);
+  for (let idx = 0; idx < unique.length; idx += chunkSize) {
+    const chunk = unique.slice(idx, idx + chunkSize);
+    const request = pool.request();
+    request.input('__offerId', sql.Int, offerId);
+    const params = chunk
+      .map((tree, chunkIdx) => {
+        const key = `tree_${chunkIdx}`;
+        request.input(key, sql.NVarChar(255), tree);
+        return `@${key}`;
+      })
+      .join(', ');
+    const result = await request.query<{ TreeOrdering: string | null }>(`
+      SELECT NULLIF(LTRIM(RTRIM(od.TreeOrdering)), '') AS TreeOrdering
+      FROM dbo.OfferDetails od
+      WHERE od.OfferID = @__offerId
+        AND od.TreeOrdering IN (${params});
+    `);
+    result.recordset?.forEach((row) => {
+      if (row.TreeOrdering) existing.add(row.TreeOrdering);
+    });
+  }
+  return existing;
+};
+
 const readRequestedColumnLengths = async (pool: ConnectionPool): Promise<ColumnLengthMap> => {
   const defaults: ColumnLengthMap = {
     RequestedItemNo: null,
@@ -334,11 +367,32 @@ export async function POST(
     const columnLengths = await readRequestedColumnLengths(pool);
     const normalizedRows = normalizedRowsRaw.map((row) => applyColumnLengthsToRow(row, columnLengths));
 
-    const rowsWithTree = dedupeRowsByTree(normalizedRows.filter((row) => row.treeOrdering));
+    const rowsWithTreeRaw = dedupeRowsByTree(normalizedRows.filter((row) => row.treeOrdering));
     const rowsWithoutTree = normalizedRows.filter((row) => !row.treeOrdering);
     let updatedCount = 0;
     let insertedCount = 0;
     const rowsNeedingInsert: NormalizedRow[] = [...rowsWithoutTree];
+
+    let rowsWithTree = rowsWithTreeRaw;
+    if (rowsWithTree.length) {
+      const existingTreeOrderings = await fetchExistingTreeOrderings(
+        pool,
+        offerId,
+        rowsWithTree.map((row) => row.treeOrdering ?? '').filter(Boolean),
+      );
+      if (existingTreeOrderings.size) {
+        const available: NormalizedRow[] = [];
+        rowsWithTree.forEach((row) => {
+          const treeOrdering = row.treeOrdering ?? null;
+          if (treeOrdering && existingTreeOrderings.has(treeOrdering)) {
+            rowsNeedingInsert.push({ ...row, treeOrdering: null });
+          } else {
+            available.push(row);
+          }
+        });
+        rowsWithTree = available;
+      }
+    }
 
     if (rowsWithTree.length) {
       const chunkSize = computeChunkSize(2, UPDATE_ROW_PARAM_COUNT);

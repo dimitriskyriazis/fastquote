@@ -195,6 +195,12 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     setRefreshToken((prev) => prev + 1);
   }, []);
   const showRequestedColumns = tableLayout === 'wReq';
+  const headerRowTopClassName = showAddProductModal
+    ? `${pageHeaderStyles.headerRowTop} ${toolbarStyles.compactHeaderRow}`
+    : pageHeaderStyles.headerRowTop;
+  const headerRowBottomClassName = showAddProductModal
+    ? `${pageHeaderStyles.headerRowBottom} ${toolbarStyles.compactHeaderRow}`
+    : pageHeaderStyles.headerRowBottom;
   const handleSaveLayout = useCallback(() => {
     setShowSaveLayoutModal(true);
   }, []);
@@ -366,7 +372,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     <main className={layoutStyles.page}>
       <PageHeader
         title={headingText}
-        className={pageHeaderStyles.headerRowTop}
+        className={headerRowTopClassName}
         headingClassName={pageHeaderStyles.topTitle}
         leftActions={
           <Link href="/offers" className={`${layoutStyles.backLink} page-header-button`}>
@@ -393,7 +399,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
               </div>
             }
             rightActions={pivotView ? null : addButtonGroup}
-            className={pageHeaderStyles.headerRowBottom}
+            className={headerRowBottomClassName}
             hideTitle
           >
             <div className={toolbarStyles.contentArea}>
@@ -418,12 +424,13 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
                     />
                   </div>
                   <div className={toolbarStyles.splitRight}>
-                    <AddProductsModal
+                  <AddProductsModal
                       offerId={offerId}
                       onAdded={handleProductsAdded}
                       onClose={handleCloseModal}
                       showRequestedColumns={showRequestedColumns}
                       splitViewMode
+                      refreshToken={refreshToken}
                       onRequestAddProduct={handleOpenAddProductForm}
                       newProductId={newProductId}
                       onClearNewProductId={handleClearNewProductId}

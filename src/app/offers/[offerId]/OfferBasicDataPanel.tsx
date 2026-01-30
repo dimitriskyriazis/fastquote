@@ -98,7 +98,7 @@ async function fetchOfferStatuses() {
     const result = await request.query<LookupRow>(`
       SELECT ID, Name
       FROM dbo.OfferStatus
-      ORDER BY Name
+      ORDER BY Sorting, Name
     `);
     return mapLookupRows(result.recordset);
   } catch (err) {
