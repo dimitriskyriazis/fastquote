@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getWindowsIdentityFromHeaders } from '../../../lib/windowsIdentity';
 import { findUserByWindowsIdentity } from '../../../lib/windowsUserLookup';
-import { buildSessionCookie } from '../../../lib/session';
+import { buildSessionCookie, getSessionCookieSecure } from '../../../lib/session';
 import { fetchUserRoles } from '../../../lib/authz';
 import { AUDIT_USER_COOKIE_NAME } from '../../../lib/authConstants';
 
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
       name: AUDIT_USER_COOKIE_NAME,
       value: String(user.Id),
       httpOnly: false,
-      secure: true,
+      secure: getSessionCookieSecure(),
       sameSite: 'lax',
       path: '/',
       maxAge: 60 * 60 * 24 * 90,

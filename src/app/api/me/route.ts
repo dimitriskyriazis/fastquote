@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { fetchUserRoles } from '../../../lib/authz';
 import { getWindowsIdentityFromHeaders } from '../../../lib/windowsIdentity';
 import { findUserByWindowsIdentity } from '../../../lib/windowsUserLookup';
-import { buildSessionCookie } from '../../../lib/session';
+import { buildSessionCookie, getSessionCookieSecure } from '../../../lib/session';
 import { AUDIT_USER_COOKIE_NAME } from '../../../lib/authConstants';
 
 type MeRequestBody = {
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
       name: AUDIT_USER_COOKIE_NAME,
       value: String(user.Id),
       httpOnly: false,
-      secure: true,
+      secure: getSessionCookieSecure(),
       sameSite: 'lax',
       path: '/',
       maxAge: 60 * 60 * 24 * 90,

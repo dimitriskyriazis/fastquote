@@ -14,6 +14,10 @@ type SessionPayload = {
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? '';
 const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS ?? 60 * 60 * 8);
+const SESSION_COOKIE_SECURE =
+  process.env.SESSION_COOKIE_SECURE != null
+    ? process.env.SESSION_COOKIE_SECURE === 'true'
+    : true;
 
 const base64UrlEncode = (input: string | Buffer) => Buffer.from(input).toString('base64url');
 const base64UrlDecode = (input: string) => Buffer.from(input, 'base64url').toString('utf8');
@@ -50,13 +54,15 @@ export const buildSessionCookie = (userId: string, windowsUserName: string) => {
     value: `${payloadEncoded}.${signature}`,
     options: {
       httpOnly: true,
-      secure: true,
+      secure: SESSION_COOKIE_SECURE,
       sameSite: 'lax' as const,
       path: '/',
       maxAge: SESSION_TTL_SECONDS,
     },
   };
 };
+
+export const getSessionCookieSecure = () => SESSION_COOKIE_SECURE;
 
 export const readSessionPayload = (cookies?: CookieStore): SessionPayload | null => {
   if (!cookies || typeof cookies.get !== 'function') return null;
