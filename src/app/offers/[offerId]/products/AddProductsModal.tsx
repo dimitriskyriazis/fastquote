@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
-import type { ColDef, GridApi, RowNode } from 'ag-grid-community';
+import type { CellValueChangedEvent, ColDef, GridApi, RowNode } from 'ag-grid-community';
 import styles from './AddProductsModal.module.css';
 import { showToastMessage } from '../../../../lib/toast';
 import { priceListStatusClassRules } from '../../../../lib/priceListStatus';
@@ -94,6 +94,12 @@ const normalizeProductId = (value: unknown): number | null => {
     if (Number.isFinite(parsed)) return parsed;
   }
   return null;
+};
+
+const normalizeEditableValue = (value: unknown): string | null => {
+  if (value == null) return null;
+  const trimmed = String(value).trim();
+  return trimmed.length > 0 ? trimmed : null;
 };
 
 const DescriptionCellRenderer = ({ value }: { value?: unknown }) => {
@@ -272,15 +278,46 @@ export default function AddProductsModal({
 
   const productColumns: ColDef[] = useMemo(
     () => [
-      { field: 'PartNumber', headerName: 'Part Number', filter: 'agTextColumnFilter', width: 170 },
+      {
+        field: 'PartNumber',
+        headerName: 'Part Number',
+        filter: 'agTextColumnFilter',
+        width: 170,
+        editable: true,
+        valueParser: (params) => {
+          const raw = params.newValue;
+          if (raw == null) return null;
+          const trimmed = String(raw).trim();
+          return trimmed.length > 0 ? trimmed : null;
+        },
+      },
       {
         field: 'Description',
         headerName: 'Description',
         filter: 'agTextColumnFilter',
         cellRenderer: DescriptionCellRenderer,
+        editable: true,
+        valueParser: (params) => {
+          const raw = params.newValue;
+          if (raw == null) return null;
+          const trimmed = String(raw).trim();
+          return trimmed.length > 0 ? trimmed : null;
+        },
       },
       { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter', width: 150 },
-      { field: 'ModelNumber', headerName: 'Model Number', filter: 'agTextColumnFilter', width: 150 },
+      {
+        field: 'ModelNumber',
+        headerName: 'Model Number',
+        filter: 'agTextColumnFilter',
+        width: 150,
+        editable: true,
+        valueParser: (params) => {
+          const raw = params.newValue;
+          if (raw == null) return null;
+          const trimmed = String(raw).trim();
+          return trimmed.length > 0 ? trimmed : null;
+        },
+      },
       { field: 'PriceListName', headerName: 'Price List', filter: 'agTextColumnFilter', width: 170 },
       {
         field: 'ListPrice',
@@ -309,6 +346,64 @@ export default function AddProductsModal({
     }),
     [],
   );
+
+  const handleProductCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    const field = typeof event.colDef?.field === 'string' ? event.colDef.field : null;
+    if (!field) return;
+    const editableFields: Record<string, { label: string; payloadKey: 'partNumber' | 'modelNumber' | 'description' }> = {
+      PartNumber: { label: 'Part number', payloadKey: 'partNumber' },
+      ModelNumber: { label: 'Model number', payloadKey: 'modelNumber' },
+      Description: { label: 'Description', payloadKey: 'description' },
+    };
+    const config = editableFields[field];
+    if (!config) return;
+    const source = (event as { source?: string }).source;
+    if (source === 'api') return;
+
+    const productId = normalizeProductId((event.data as ProductRow | null | undefined)?.ProductID ?? null);
+    if (productId == null) {
+      showToastMessage(`Unable to update ${config.label.toLowerCase()}. Missing product id.`, 'error');
+      try {
+        event.node?.setDataValue?.(field, event.oldValue ?? null);
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+
+    const normalizedOld = normalizeEditableValue(event.oldValue ?? null);
+    const normalizedNew = normalizeEditableValue(event.newValue ?? null);
+    if (normalizedOld === normalizedNew) return;
+
+    const revertValue = () => {
+      try {
+        event.node?.setDataValue?.(field, normalizedOld ?? null);
+      } catch {
+        /* noop */
+      }
+    };
+
+    const runUpdate = async () => {
+      try {
+        const res = await fetch(`/api/products/${encodeURIComponent(String(productId))}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [config.payloadKey]: normalizedNew }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update ${config.label.toLowerCase()} (status ${res.status})`);
+        }
+        showToastMessage(`${config.label} updated`, 'success');
+      } catch (err) {
+        console.error(`Failed to update ${config.label}`, err);
+        showToastMessage(`Unable to update ${config.label.toLowerCase()}. Please try again.`, 'error');
+        revertValue();
+      }
+    };
+
+    void runUpdate();
+  }, []);
 
   const handleAddProducts = useCallback(async () => {
     if (!selectedProducts.length) {
@@ -716,6 +811,7 @@ export default function AddProductsModal({
                   rowGroupPanelShow="never"
                   onSelectionChanged={handleProductSelection as (rows: Record<string, unknown>[], api: GridApi) => void}
                   autoSizeExclusions={['Description']}
+                  onCellValueChanged={handleProductCellEdit}
                   onGridReady={handleProductsGridReady}
                   onModelUpdated={handleProductsGridModelUpdated}
                   onRequestPayloadConsumed={onRequestPayloadConsumed}
@@ -869,6 +965,7 @@ export default function AddProductsModal({
                   rowGroupPanelShow="never"
                   onSelectionChanged={handleProductSelection as (rows: Record<string, unknown>[], api: GridApi) => void}
                   autoSizeExclusions={['Description']}
+                  onCellValueChanged={handleProductCellEdit}
                   onGridReady={handleProductsGridReady}
                   onModelUpdated={handleProductsGridModelUpdated}
                   onRequestPayloadConsumed={onRequestPayloadConsumed}
