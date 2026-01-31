@@ -488,20 +488,36 @@ const parseWorkbook = (
   return [];
 };
 
-const formatTimestampFileName = (date: Date) => {
+const formatDisplayTimestamp = (date: Date) => {
   const pad = (val: number) => val.toString().padStart(2, "0");
-  return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}T${pad(
-    date.getUTCHours(),
-  )}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}`;
+  return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}`;
 };
 
-const saveUploadedFile = async (buffer: Buffer, originalName: string | null | undefined) => {
+const sanitizeFileStem = (value: string | null | undefined, fallback: string) => {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return fallback;
+  const cleaned = raw
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return fallback;
+  return cleaned.length > 120 ? cleaned.slice(0, 120).trim() : cleaned;
+};
+
+const saveUploadedFile = async (
+  buffer: Buffer,
+  originalName: string | null | undefined,
+  priceListName: string | null | undefined,
+) => {
   const uploadRoot = requirePriceListUploadRoot();
   await fs.mkdir(uploadRoot, { recursive: true });
-  const timestamp = formatTimestampFileName(new Date());
+  const timestamp = formatDisplayTimestamp(new Date());
   const ext = (typeof originalName === "string" && path.extname(originalName)) || ".xlsx";
   const safeExt = ext.trim() || ".xlsx";
-  const fileName = `${timestamp}${safeExt}`;
+  const safeName = sanitizeFileStem(priceListName, "price list");
+  const fileName = `${safeName} (${timestamp})${safeExt}`;
   const absolutePath = path.join(uploadRoot, fileName);
   await fs.writeFile(absolutePath, buffer);
   const relativePath = path.relative(process.cwd(), absolutePath);
@@ -841,7 +857,7 @@ export async function POST(req: NextRequest) {
       if (modelKey && !byModelNumber.has(modelKey)) byModelNumber.set(modelKey, product);
     });
 
-    const { relativePath, fileName, absolutePath } = await saveUploadedFile(buffer, file.name);
+    const { relativePath, fileName, absolutePath } = await saveUploadedFile(buffer, file.name, name);
 
     const TransactionCtor = (sql as unknown as {
       Transaction: new (pool: ConnectionPool) => TransactionLike;
