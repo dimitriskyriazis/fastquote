@@ -19,6 +19,7 @@ async function fetchCustomers() {
     const result = await pool.request().query<LookupRow>(`
       SELECT ID, Name
       FROM dbo.Customers
+      WHERE ISNULL(IsParent, 0) = 0
       ORDER BY Name
     `);
     return mapOptions(result.recordset);
