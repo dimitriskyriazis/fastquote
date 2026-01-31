@@ -6,6 +6,7 @@ import { createProjectFromIntegration } from '../../../../../lib/projectCreation
 import { createCustomerOrder, addOrderLine } from '../../../../../lib/orderCreation';
 import { getRequestId } from '../../../../../lib/requestId';
 import { logger } from '../../../../../lib/logger';
+import { requirePermission } from '../../../../../lib/authz';
 
 type ProductMatch = {
   productId: number;
@@ -402,6 +403,9 @@ export async function POST(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
+    const auth = await requirePermission(req, "editOffers");
+    if (!auth.ok) return auth.response;
+
     const { offerId: offerIdParam } = await params;
     const normalizedId = normalizeOfferId(
       typeof offerIdParam === 'string' ? decodeURIComponent(offerIdParam) : null,

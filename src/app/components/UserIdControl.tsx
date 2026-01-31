@@ -23,6 +23,16 @@ export default function UserIdControl({ collapsed }: Props) {
         <p className="side-nav__user-display" aria-live="polite">
           {selectedUser ? selectedUser.label : loading ? 'Loading…' : 'No user selected'}
         </p>
+        {selectedUser?.salesSeniorityName && (
+          <p className="side-nav__user-role">
+            {selectedUser.salesSeniorityName}
+          </p>
+        )}
+        {selectedUser?.roles?.length ? (
+          <p className="side-nav__user-role">
+            {selectedUser.roles.join(' • ')}
+          </p>
+        ) : null}
       </div>
       {error && (
         <p className="side-nav__user-message">

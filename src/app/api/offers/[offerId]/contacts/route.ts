@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool } from '../../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../../lib/auditTrail';
+import { requirePermission } from '../../../../../lib/authz';
 
 type ContactRequestBody = {
   firstName?: string;
@@ -50,6 +51,9 @@ export async function POST(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
+    const auth = await requirePermission(req, "editOffers");
+    if (!auth.ok) return auth.response;
+
     const { offerId: offerIdParam } = await params;
     const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();
     if (!normalizedId) {

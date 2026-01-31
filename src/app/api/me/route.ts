@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getPool } from '../../../lib/sql';
+import { fetchUserRoles } from '../../../lib/authz';
 
 type UserRecord = {
   Id: number;
@@ -66,12 +67,15 @@ export async function POST(request: Request) {
       );
     }
 
+    const roles = await fetchUserRoles(String(user.Id));
+
     return NextResponse.json({
       ok: true,
       user: {
         id: user.Id,
         userName: user.UserName,
         windowsUserName: user.WindowsUserName,
+        roles,
       },
     });
   } catch (err) {
@@ -82,5 +86,4 @@ export async function POST(request: Request) {
     );
   }
 }
-
 

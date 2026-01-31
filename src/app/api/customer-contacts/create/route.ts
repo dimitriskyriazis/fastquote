@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import sql, { ConnectionPool } from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
+import { requirePermission } from "../../../../lib/authz";
 
 const normalizeString = (value: unknown, maxLength = 500): string | null => {
   if (value == null) return null;
@@ -78,6 +79,9 @@ const ensureTitleExists = async (pool: ConnectionPool, titleId: number): Promise
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "manageCustomersContacts");
+    if (!auth.ok) return auth.response;
+
     const payload = (await req.json().catch(() => null)) as
       | {
           customerId?: unknown;

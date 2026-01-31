@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import sql, { type ISqlTypeFactory } from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../../lib/auditTrail";
+import { requirePermission } from "../../../../../lib/authz";
 import type { PriceListBasicUpdateField } from "../../../../price-lists/[priceListId]/PriceListBasicDataTypes";
 
 type UpdateInput = {
@@ -82,6 +83,9 @@ export async function PATCH(
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
   try {
+    const auth = await requirePermission(req, "managePriceLists");
+    if (!auth.ok) return auth.response;
+
     const { priceListId } = await params;
     const normalizedId = decodeURIComponent(String(priceListId ?? "")).trim();
     if (!normalizedId) {

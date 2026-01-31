@@ -195,8 +195,9 @@
 
 .side-nav__user-form {
   display: flex;
-  gap: 8px;
-  align-items: center;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
 }
 
 .side-nav__user-select {
@@ -245,6 +246,12 @@
   flex: 1;
   color: rgba(248, 250, 252, 0.9);
   font-size: 0.9rem;
+}
+
+.side-nav__user-role {
+  margin: 0;
+  color: rgba(226, 232, 240, 0.85);
+  font-size: 0.8rem;
 }
 
 .side-nav__user-message {

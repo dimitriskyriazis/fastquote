@@ -4,6 +4,7 @@ import { buildAuditContext, type AuditContext } from '../../../../../lib/auditTr
 import { getPool } from '../../../../../lib/sql';
 import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from '../../../../../lib/gridFilters';
 import { realtimeEvents } from '../../../../../lib/realtimeEvents';
+import { requirePermission } from '../../../../../lib/authz';
 import {
   buildTreeFromRows,
   collectResequencedUpdates,
@@ -1127,10 +1128,14 @@ export async function POST(
       .filter((field) => Boolean(SELECT_FIELD_EXPRESSIONS[field]));
 
     if ((body as ReorderRequest | null)?.action === 'reorder') {
+      const auth = await requirePermission(req, "editOffers");
+      if (!auth.ok) return auth.response;
       return handleReorderRow(idValue, body as ReorderRequest, audit);
     }
 
     if ((body as CreateRowRequest | null)?.action === 'create') {
+      const auth = await requirePermission(req, "editOffers");
+      if (!auth.ok) return auth.response;
       return handleCreateRow(idValue, body as CreateRowRequest, audit);
     }
 
@@ -1318,6 +1323,9 @@ export async function PUT(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
+    const auth = await requirePermission(req, "editOffers");
+    if (!auth.ok) return auth.response;
+
     const audit = buildAuditContext(req);
     const { offerId: offerIdParam } = await params;
     const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();
@@ -1369,6 +1377,9 @@ export async function PATCH(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
+    const auth = await requirePermission(req, "editOffers");
+    if (!auth.ok) return auth.response;
+
     const audit = buildAuditContext(req);
     const { offerId: offerIdParam } = await params;
     const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();
@@ -2216,6 +2227,9 @@ export async function DELETE(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
+    const auth = await requirePermission(req, "editOffers");
+    if (!auth.ok) return auth.response;
+
     const audit = buildAuditContext(req);
     const { offerId: offerIdParam } = await params;
     const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();

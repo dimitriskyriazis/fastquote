@@ -3,6 +3,7 @@ import sql, { type ISqlTypeFactory } from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../../lib/auditTrail";
 import type { CustomerBasicUpdateField } from "../../../../customers/[customerId]/CustomerBasicDataTypes";
+import { requirePermission } from "../../../../../lib/authz";
 
 type UpdateInput = {
   field?: CustomerBasicUpdateField;
@@ -83,6 +84,9 @@ export async function PATCH(
   { params }: { params: Promise<{ customerId: string }> },
 ) {
   try {
+    const auth = await requirePermission(req, "manageCustomersContacts");
+    if (!auth.ok) return auth.response;
+
     const { customerId } = await params;
     const normalizedId = decodeURIComponent(String(customerId ?? "")).trim();
     if (!normalizedId) {

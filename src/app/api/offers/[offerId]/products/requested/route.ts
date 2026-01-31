@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql, { type ConnectionPool } from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
+import { requirePermission } from '../../../../../../lib/authz';
 
 const getDecimalType = () => {
   const decimalFactory = (sql as unknown as { Decimal: (precision: number, scale: number) => unknown }).Decimal;
@@ -340,6 +341,9 @@ export async function POST(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
+    const auth = await requirePermission(req, "editOffers");
+    if (!auth.ok) return auth.response;
+
     const audit = buildAuditContext(req);
     const { offerId: offerIdParam } = await params;
     const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();

@@ -3,6 +3,7 @@ import sql from "mssql";
 import type { ConnectionPool, Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
 import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from "../../../lib/gridFilters";
+import { requirePermission } from "../../../lib/authz";
 
 type TextFilterModel = {
   filterType: "text";
@@ -551,6 +552,9 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "manageCustomersContacts");
+    if (!auth.ok) return auth.response;
+
     const body = await req.json().catch(() => null);
     const updates = Array.isArray((body as { updates?: ContactUpdateInput[] } | null)?.updates)
       ? ((body as { updates?: ContactUpdateInput[] }).updates ?? [])
@@ -593,6 +597,9 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "manageCustomersContacts");
+    if (!auth.ok) return auth.response;
+
     const body = await req.json().catch(() => null);
     const ids = collectContactIds((body as { ContactIDs?: unknown } | null)?.ContactIDs ?? []);
     if (ids.length === 0) {

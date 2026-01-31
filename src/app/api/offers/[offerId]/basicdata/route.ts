@@ -3,6 +3,7 @@ import sql, { type ISqlTypeFactory } from 'mssql';
 import { getPool } from '../../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../../lib/auditTrail';
 import type { OfferBasicUpdateField } from '../../../../offers/[offerId]/OfferBasicDataTypes';
+import { requirePermission } from '../../../../../lib/authz';
 
 type UpdateInput = {
   field?: OfferBasicUpdateField;
@@ -91,6 +92,9 @@ export async function PATCH(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
+    const auth = await requirePermission(req, "editOffers");
+    if (!auth.ok) return auth.response;
+
     const { offerId: offerIdParam } = await params;
     const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();
     if (!normalizedId) {

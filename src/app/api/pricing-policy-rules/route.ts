@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPool, sql } from '../../../lib/sql';
 import { resolveAuditUserId } from '../../../lib/auditTrail';
+import { requirePermission } from '../../../lib/authz';
 
 type CreatePricingPolicyRuleBody = {
   name?: unknown;
@@ -53,6 +54,9 @@ const normalizeDecimal = (value: unknown): number | null => {
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "managePricingPolicies");
+    if (!auth.ok) return auth.response;
+
     const payload = (await req.json().catch(() => null)) as CreatePricingPolicyRuleBody | null;
     const name = normalizeString(payload?.name, 512);
     if (!name) {

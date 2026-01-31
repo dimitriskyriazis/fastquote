@@ -3,6 +3,7 @@ import sql from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
 import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from '../../../../../../lib/gridFilters';
+import { requirePermission } from '../../../../../../lib/authz';
 
 type TextFilterModel = {
   filterType: 'text';
@@ -1170,9 +1171,13 @@ export async function POST(
     }
     const audit = buildAuditContext(req);
     if (actionRaw === 'assign-requested') {
+      const auth = await requirePermission(req, "editOffers");
+      if (!auth.ok) return auth.response;
       return handleAssignProductToRequestedRow(offerId, body, audit.userId);
     }
     if (actionRaw === 'add') {
+      const auth = await requirePermission(req, "editOffers");
+      if (!auth.ok) return auth.response;
       return handleAddProducts(offerId, body, audit.userId);
     }
 

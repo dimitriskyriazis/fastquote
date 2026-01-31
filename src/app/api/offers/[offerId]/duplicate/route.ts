@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { buildAuditContext } from '../../../../../lib/auditTrail';
 import { getPool } from '../../../../../lib/sql';
+import { requirePermission } from '../../../../../lib/authz';
 
 const normalizeOfferIdParam = (value: string | null | undefined): number | null => {
   if (typeof value !== 'string') return null;
@@ -267,6 +268,9 @@ export async function POST(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
+    const auth = await requirePermission(req, "createOffers");
+    if (!auth.ok) return auth.response;
+
     const { offerId: offerIdParam } = await params;
     const normalizedId = normalizeOfferIdParam(offerIdParam);
     if (!normalizedId) {

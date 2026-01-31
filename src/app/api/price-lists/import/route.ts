@@ -6,6 +6,7 @@ import sql from "mssql";
 import type { ConnectionPool } from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
+import { requirePermission } from "../../../../lib/authz";
 import {
   DEFAULT_PRICE_LIST_DECIMAL_FORMAT,
   normalizePriceListDecimalFormat,
@@ -695,6 +696,9 @@ const insertPriceListItem = async (
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "managePriceLists");
+    if (!auth.ok) return auth.response;
+
     const formData = await req.formData();
     const file = formData.get("file");
     if (!(file instanceof File)) {

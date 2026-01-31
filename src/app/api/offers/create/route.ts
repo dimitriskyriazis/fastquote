@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool } from '../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../lib/auditTrail';
+import { requirePermission } from '../../../../lib/authz';
 
 type CreateOfferRequestBody = {
   title?: string | null;
@@ -93,6 +94,9 @@ const normalizeDate = (value: unknown): Date | null => {
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "createOffers");
+    if (!auth.ok) return auth.response;
+
     let body: CreateOfferRequestBody | null = null;
     try {
       body = (await req.json()) as CreateOfferRequestBody;

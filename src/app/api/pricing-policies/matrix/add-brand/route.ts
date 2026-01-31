@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPool, sql } from "../../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../../lib/auditTrail";
+import { requirePermission } from "../../../../../lib/authz";
 
 type AddBrandBody = {
   brandId?: unknown;
@@ -33,6 +34,9 @@ const normalizeString = (value: unknown, maxLength: number): string | null => {
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "managePricingPolicies");
+    if (!auth.ok) return auth.response;
+
     const payload = (await req.json().catch(() => null)) as AddBrandBody | null;
     const brandId = normalizeInt(payload?.brandId);
     if (brandId == null) {

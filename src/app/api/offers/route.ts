@@ -4,6 +4,7 @@ import type { Request as SqlRequest } from 'mssql';
 import { getPool } from '../../../lib/sql';
 import { resolveAuditUserId } from '../../../lib/auditTrail';
 import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from '../../../lib/gridFilters';
+import { requirePermission } from '../../../lib/authz';
 
 type TextFilterModel = {
   filterType: 'text';
@@ -529,6 +530,9 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "editOffers");
+    if (!auth.ok) return auth.response;
+
     let body: DeleteRequest | null = null;
     try {
       body = (await req.json()) as DeleteRequest;

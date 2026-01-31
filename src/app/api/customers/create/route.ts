@@ -6,6 +6,7 @@ import { resolveAuditUserId } from '../../../../lib/auditTrail';
 import { getRequestId } from '../../../../lib/requestId';
 import { handleApiError } from '../../../../lib/errorHandler';
 import { validateRequest, stringSchema, positiveIntSchema, emailSchema, urlSchema } from '../../../../lib/validation';
+import { requirePermission } from '../../../../lib/authz';
 
 // Strict schema-based validation with rejection of unknown fields
 const createCustomerSchema = z.object({
@@ -48,6 +49,9 @@ export async function POST(req: NextRequest) {
   const userId = resolveAuditUserId(req);
 
   try {
+    const auth = await requirePermission(req, "manageCustomersContacts");
+    if (!auth.ok) return auth.response;
+
     // Validate request body with strict schema
     const validation = await validateRequest(req, createCustomerSchema, {
       endpoint: '/api/customers/create',

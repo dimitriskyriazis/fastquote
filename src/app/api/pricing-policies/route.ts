@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool } from '../../../lib/sql';
+import { requirePermission } from '../../../lib/authz';
 
 type CreatePricingPolicyBody = {
   name?: unknown;
@@ -56,6 +57,9 @@ const normalizeIntArray = (value: unknown): number[] => {
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "managePricingPolicies");
+    if (!auth.ok) return auth.response;
+
     const payload = (await req.json().catch(() => null)) as CreatePricingPolicyBody | null;
     const name = normalizeString(payload?.name, 512);
     if (!name) {
@@ -102,6 +106,9 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "managePricingPolicies");
+    if (!auth.ok) return auth.response;
+
     const payload = (await req.json().catch(() => null)) as DeletePricingPolicyBody | null;
     const singleId = normalizeInt(payload?.pricingPolicyId);
     const listIds = normalizeIntArray(payload?.pricingPolicyIds ?? payload?.ids);

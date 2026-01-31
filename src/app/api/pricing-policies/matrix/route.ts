@@ -3,6 +3,7 @@ import type { Request as SqlRequest } from "mssql";
 import { getPool, sql } from "../../../../lib/sql";
 import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from "../../../../lib/gridFilters";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
+import { requirePermission } from "../../../../lib/authz";
 
 type TextFilterModel = {
   filterType: "text";
@@ -144,6 +145,9 @@ const normalizeUpdateField = (value: unknown): "telmaco" | "customer" | null => 
 
 export async function PATCH(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "managePricingPolicies");
+    if (!auth.ok) return auth.response;
+
     const payload = (await req.json().catch(() => null)) as MatrixUpdateBody | null;
     const brandId = normalizeInt(payload?.brandId);
     if (brandId == null) {
@@ -410,6 +414,9 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "managePricingPolicies");
+    if (!auth.ok) return auth.response;
+
     const payload = (await req.json().catch(() => null)) as MatrixDeleteBody | null;
     const brandId = normalizeInt(payload?.brandId);
     if (brandId == null) {
@@ -584,4 +591,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
-

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool } from '../../../../../lib/sql';
+import { requirePermission } from '../../../../../lib/authz';
 
 const normalizeInt = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isInteger(value)) return value;
@@ -79,6 +80,9 @@ export async function POST(
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
   try {
+    const auth = await requirePermission(req, "managePriceLists");
+    if (!auth.ok) return auth.response;
+
     const { priceListId } = await params;
     const normalizedId = decodeURIComponent(String(priceListId ?? '')).trim();
     if (!normalizedId) {
@@ -136,6 +140,9 @@ export async function PUT(
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
   try {
+    const auth = await requirePermission(req, "managePriceLists");
+    if (!auth.ok) return auth.response;
+
     const { priceListId } = await params;
     const normalizedId = decodeURIComponent(String(priceListId ?? '')).trim();
     if (!normalizedId) {
@@ -188,6 +195,9 @@ export async function DELETE(
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
   try {
+    const auth = await requirePermission(req, "managePriceLists");
+    if (!auth.ok) return auth.response;
+
     const { priceListId } = await params;
     const normalizedId = decodeURIComponent(String(priceListId ?? '')).trim();
     if (!normalizedId) {

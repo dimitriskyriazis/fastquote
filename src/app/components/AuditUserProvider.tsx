@@ -18,12 +18,15 @@ type AuditUser = {
   id: string;
   label: string;
   windowsUserName?: string;
+  roles: string[];
+  salesSeniorityName?: string | null;
 };
 
 type AuditUserContextValue = {
   userId: string;
   selectedUser: AuditUser | null;
   users: AuditUser[];
+  roles: string[];
   loading: boolean;
   error: string | null;
   refreshUsers: () => Promise<void>;
@@ -154,7 +157,13 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
       const res = await fetch('/api/users');
       const payload = (await res.json().catch(() => null)) as {
         ok?: boolean;
-        users?: Array<{ id: number; userName: string | null; windowsUserName?: string | null }>;
+        users?: Array<{
+          id: number;
+          userName: string | null;
+          windowsUserName?: string | null;
+          roles?: string[];
+          salesSeniorityName?: string | null;
+        }>;
         error?: string;
       } | null;
 
@@ -167,6 +176,8 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
           id: String(user.id),
           label: user.userName || '',
           windowsUserName: user.windowsUserName ?? undefined,
+          roles: Array.isArray(user.roles) ? user.roles : [],
+          salesSeniorityName: user.salesSeniorityName ?? null,
         }))
         .filter((user) => Boolean(user.label));
       setUsers(mapped);
@@ -254,6 +265,7 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
       userId,
       selectedUser,
       users,
+      roles: selectedUser?.roles ?? [],
       loading,
       error,
       refreshUsers,
