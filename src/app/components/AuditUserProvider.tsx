@@ -10,8 +10,9 @@ import {
   type ReactNode,
 } from 'react';
 import AccessDeniedPage from './AccessDeniedPage';
+import { AUDIT_USER_COOKIE_NAME } from '../../lib/authConstants';
 
-const COOKIE_NAME = 'fastquote-user-id';
+const COOKIE_NAME = AUDIT_USER_COOKIE_NAME;
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 90; // 90 days
 
 type AuditUser = {
@@ -58,13 +59,15 @@ const readCookieValue = (): string | null => {
 };
 
 const writeCookieValue = (value: string) => {
-  document.cookie = `${COOKIE_NAME}=${encodeURIComponent(value)}; path=/; max-age=${COOKIE_MAX_AGE_SECONDS}`;
+  const isSecure = typeof window !== 'undefined' && window.location.protocol === 'https:';
+  const secureFlag = isSecure ? '; Secure' : '';
+  document.cookie = `${COOKIE_NAME}=${encodeURIComponent(value)}; path=/; max-age=${COOKIE_MAX_AGE_SECONDS}; SameSite=Lax${secureFlag}`;
 };
 
 type WindowsAuthResult = {
   userId: string | null;
   accessDenied?: boolean;
-  windowsUserName?: string;
+  windowsUserName?: string | null;
 };
 
 export function AuditUserProvider({ children }: { children: ReactNode }) {
@@ -76,79 +79,33 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
   const [accessDeniedWindowsIdentity, setAccessDeniedWindowsIdentity] = useState<string | null>(
     null,
   );
-  const autoResolveAttemptedRef = useState(() => ({ value: false }))[0];
   const windowsAuthAttemptedRef = useState(() => ({ value: false }))[0];
 
-  const normalizeWindowsIdentity = (value: string): string => {
-    return value.trim().replaceAll('/', '\\').toLowerCase();
-  };
-
-  /** Resolve current user via IIS Windows Auth: /test.asp → POST /api/me */
+  /** Resolve current user via IIS Windows Auth: /api/sso (uses X-Windows-User header). */
   const tryResolveViaWindowsAuth = useCallback(async (): Promise<WindowsAuthResult> => {
     try {
-      const aspRes = await fetch('/test.asp', { credentials: 'include', cache: 'no-store' });
-      if (!aspRes.ok) return { userId: null };
-      const asp = (await aspRes.json().catch(() => null)) as { windowsUserName?: string } | null;
-      const windowsUserName =
-        typeof asp?.windowsUserName === 'string' ? asp.windowsUserName.trim() : '';
-      if (!windowsUserName) return { userId: null };
-
-      const meRes = await fetch('/api/me', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ windowsUserName }),
-        cache: 'no-store',
-      });
-      const me = (await meRes.json().catch(() => null)) as {
+      const res = await fetch('/api/sso', { credentials: 'include', cache: 'no-store' });
+      const payload = (await res.json().catch(() => null)) as {
         ok?: boolean;
         reason?: string;
         windowsUserName?: string;
         user?: { id: number; userName?: string | null; windowsUserName?: string | null };
       } | null;
 
-      if (meRes.status === 403 && (me?.reason === 'unrecognized_windows_user' || !me?.ok)) {
+      if (res.status === 403 && (payload?.reason === 'unrecognized_windows_user' || !payload?.ok)) {
         return {
           userId: null,
           accessDenied: true,
-          windowsUserName: typeof me?.windowsUserName === 'string' ? me.windowsUserName : windowsUserName,
+          windowsUserName: typeof payload?.windowsUserName === 'string' ? payload.windowsUserName : null,
         };
       }
-      if (!meRes.ok) return { userId: null };
-      if (!me?.ok || !me.user || typeof me.user.id !== 'number') return { userId: null };
-      return { userId: String(me.user.id) };
+      if (!res.ok) return { userId: null };
+      if (!payload?.ok || !payload.user || typeof payload.user.id !== 'number') return { userId: null };
+      return { userId: String(payload.user.id) };
     } catch {
       return { userId: null };
     }
   }, []);
-
-  const tryResolveWindowsIdentity = async (): Promise<string | null> => {
-    try {
-      const res = await fetch('/api/whoami', { cache: 'no-store' });
-      const payload = (await res.json().catch(() => null)) as
-        | { ok?: boolean; username?: string; source?: string }
-        | null;
-      if (
-        res.ok &&
-        payload?.ok &&
-        payload.source === 'header' &&
-        typeof payload.username === 'string' &&
-        payload.username.trim()
-      ) {
-        return payload.username.trim();
-      }
-    } catch {
-      // ignore and fall back
-    }
-
-    try {
-      const res = await fetch('/whoami.aspx', { cache: 'no-store' });
-      if (!res.ok) return null;
-      const text = (await res.text()).trim();
-      return text ? text : null;
-    } catch {
-      return null;
-    }
-  };
 
   const refreshUsers = useCallback(async () => {
     setLoading(true);
@@ -191,8 +148,9 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!userId) return;
     void refreshUsers();
-  }, [refreshUsers]);
+  }, [refreshUsers, userId]);
 
   useEffect(() => {
     if (windowsAuthAttemptedRef.value) return;
@@ -220,37 +178,6 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     () => users.find((user) => user.id === userId) ?? null,
     [userId, users],
   );
-
-  useEffect(() => {
-    if (autoResolveAttemptedRef.value) return;
-    if (loading) return;
-    // If we already have a user id from the cookie, do not call Windows-auth endpoints
-    // (e.g. /whoami.aspx); they can trigger a credential prompt.
-    if (userId) return;
-    if (users.length === 0) return;
-    if (accessDeniedUnrecognizedUser) return;
-
-    autoResolveAttemptedRef.value = true;
-
-    void (async () => {
-      const identity = await tryResolveWindowsIdentity();
-      if (!identity) return;
-
-      const normalized = normalizeWindowsIdentity(identity);
-      const match = users.find((user) => {
-        if (!user.windowsUserName) return false;
-        return normalizeWindowsIdentity(user.windowsUserName) === normalized;
-      });
-
-      if (match) {
-        writeCookieValue(match.id);
-        setUserId(match.id);
-      } else {
-        setAccessDeniedUnrecognizedUser(true);
-        setAccessDeniedWindowsIdentity(identity);
-      }
-    })();
-  }, [loading, userId, selectedUser, users, accessDeniedUnrecognizedUser, autoResolveAttemptedRef]);
 
   const saveUserId = useCallback((nextId: string) => {
     const normalized = normalizeInput(nextId);

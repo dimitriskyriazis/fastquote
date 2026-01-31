@@ -1,45 +1,21 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { fetchUserRoles } from '../../../lib/authz';
 import { getWindowsIdentityFromHeaders } from '../../../lib/windowsIdentity';
 import { findUserByWindowsIdentity } from '../../../lib/windowsUserLookup';
 import { buildSessionCookie } from '../../../lib/session';
+import { fetchUserRoles } from '../../../lib/authz';
 import { AUDIT_USER_COOKIE_NAME } from '../../../lib/authConstants';
 
-type MeRequestBody = {
-  windowsUserName?: string;
-};
-
-/**
- * POST /api/me
- *
- * Uses the IIS-injected X-Windows-User header to resolve the app user and
- * sets the FastQuote session cookie.
- */
-export async function POST(request: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
-    const headerIdentity = getWindowsIdentityFromHeaders(request.headers);
-    let windowsUserName = headerIdentity ?? '';
-
-    if (!windowsUserName) {
-      const body = (await request.json().catch(() => ({}))) as MeRequestBody;
-      const rawWindowsUserName =
-        typeof body.windowsUserName === 'string' ? body.windowsUserName.trim() : '';
-      const allowBodyOverride = process.env.ALLOW_WINDOWS_USER_BODY === 'true';
-      windowsUserName = allowBodyOverride ? rawWindowsUserName : '';
-    }
-
+    const windowsUserName = getWindowsIdentityFromHeaders(request.headers);
     if (!windowsUserName) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: 'Missing Windows identity header',
-        },
+        { ok: false, error: 'Missing Windows identity header' },
         { status: 401 },
       );
     }
 
     const user = await findUserByWindowsIdentity(windowsUserName);
-
     if (!user) {
       return NextResponse.json(
         {
@@ -63,6 +39,7 @@ export async function POST(request: NextRequest) {
         roles,
       },
     });
+
     const sessionCookie = buildSessionCookie(String(user.Id), windowsUserName);
     response.cookies.set(sessionCookie);
     response.cookies.set({
@@ -74,6 +51,7 @@ export async function POST(request: NextRequest) {
       path: '/',
       maxAge: 60 * 60 * 24 * 90,
     });
+
     return response;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

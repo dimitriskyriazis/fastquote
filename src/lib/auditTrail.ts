@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { getSessionUserId } from './session';
 
 type CookieStore = {
   get(name: string): { value?: string } | undefined;
@@ -54,6 +55,11 @@ const resolveFallbackAuditUserId = (): string | null => {
 
 const FALLBACK_AUDIT_USER_ID = resolveFallbackAuditUserId();
 
+const readFromSession = (req: RequestLike): string | null => {
+  if (!req?.cookies || typeof req.cookies.get !== 'function') return null;
+  return getSessionUserId(req.cookies);
+};
+
 const readFromHeaders = (req: RequestLike): string | null => {
   if (!req?.headers) return null;
   for (const headerName of AUDIT_HEADER_CANDIDATES) {
@@ -96,6 +102,10 @@ export type AuditContext = {
 export const getAuditFallbackUserId = () => FALLBACK_AUDIT_USER_ID;
 
 export function buildAuditContext(req?: RequestLike): AuditContext {
+  const fromSession = readFromSession(req);
+  if (fromSession) {
+    return { userId: fromSession, hasExplicitUser: true };
+  }
   const fromHeaders = readFromHeaders(req);
   if (fromHeaders) {
     return { userId: fromHeaders, hasExplicitUser: true };

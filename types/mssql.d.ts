@@ -3,12 +3,14 @@ declare module 'mssql' {
     server: string;
     port?: number;
     database: string;
-    user: string;
-    password: string;
+    user?: string;
+    password?: string;
+    driver?: string;
     options?: {
       encrypt?: boolean;
       requestTimeout?: number;
       trustServerCertificate?: boolean;
+      trustedConnection?: boolean;
     };
     pool?: {
       max?: number;

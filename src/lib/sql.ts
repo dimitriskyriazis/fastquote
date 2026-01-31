@@ -3,19 +3,47 @@ import type { ConnectionPool, config as SqlConfig } from 'mssql';
 
 type SqlConnectionConfig = SqlConfig;
 
-const config: SqlConnectionConfig = {
-  server: process.env.TELQUOTE_HOST!,
-  port: Number(process.env.TELQUOTE_PORT!),
-  database: process.env.TELQUOTE_DB!,
-  user: process.env.TELQUOTE_USER!,
-  password: process.env.TELQUOTE_PASSWORD!,
-  options: {
-    trustServerCertificate: process.env.TELQUOTE_TRUST_CERT === 'true',
-    encrypt: process.env.TELQUOTE_ENCRYPT === 'true',
-    requestTimeout: Number(process.env.TELQUOTE_REQUEST_TIMEOUT),
-  },
-  pool: { max: 10, min: 1, idleTimeoutMillis: 30000 },
+const buildFastQuoteConfig = (): SqlConnectionConfig => {
+  const server = process.env.FASTQUOTE_HOST!;
+  const port = Number(process.env.FASTQUOTE_PORT!);
+  const database = process.env.FASTQUOTE_DB!;
+  const trustServerCertificate = process.env.FASTQUOTE_TRUST_CERT === 'true';
+  const encrypt = process.env.FASTQUOTE_ENCRYPT === 'true';
+  const requestTimeout = Number(process.env.FASTQUOTE_REQUEST_TIMEOUT);
+  const integrated = process.env.FASTQUOTE_INTEGRATED === 'true';
+
+  if (integrated) {
+    return {
+      server,
+      port,
+      database,
+      driver: 'msnodesqlv8',
+      options: {
+        trustedConnection: true,
+        trustServerCertificate,
+        encrypt,
+        requestTimeout,
+      },
+      pool: { max: 10, min: 1, idleTimeoutMillis: 30000 },
+    };
+  }
+
+  return {
+    server,
+    port,
+    database,
+    user: process.env.FASTQUOTE_USER!,
+    password: process.env.FASTQUOTE_PASSWORD!,
+    options: {
+      trustServerCertificate,
+      encrypt,
+      requestTimeout,
+    },
+    pool: { max: 10, min: 1, idleTimeoutMillis: 30000 },
+  };
 };
+
+const config: SqlConnectionConfig = buildFastQuoteConfig();
 
 type SqlFactoryWithPrecisionScale = (precision?: number, scale?: number) => {
   type: unknown;
@@ -54,16 +82,40 @@ export async function getPool(): Promise<ConnectionPool> {
 
 // ERP database connection (SOFT1_ERP) - build config dynamically to ensure env vars are read
 function getErpConfig(): SqlConnectionConfig {
+  const server = process.env.SOFT1_ERP_HOST!;
+  const port = Number(process.env.SOFT1_ERP_PORT!);
+  const database = process.env.SOFT1_ERP_DB!;
+  const encrypt = process.env.SOFT1_ERP_ENCRYPT === 'true';
+  const trustServerCertificate = process.env.SOFT1_ERP_TRUST_CERT === 'true';
+  const requestTimeout = Number(process.env.SOFT1_ERP_REQUEST_TIMEOUT || 30000);
+  const integrated = process.env.SOFT1_ERP_INTEGRATED === 'true';
+
+  if (integrated) {
+    return {
+      server,
+      port,
+      database,
+      driver: 'msnodesqlv8',
+      options: {
+        trustedConnection: true,
+        encrypt,
+        trustServerCertificate,
+        requestTimeout,
+      },
+      pool: { max: 10, min: 1, idleTimeoutMillis: 30000 },
+    };
+  }
+
   return {
-    server: process.env.SOFT1_ERP_HOST!,
-    port: Number(process.env.SOFT1_ERP_PORT!),
-    database: process.env.SOFT1_ERP_DB!,
+    server,
+    port,
+    database,
     user: process.env.SOFT1_ERP_USER!,
     password: process.env.SOFT1_ERP_PASSWORD!,
     options: {
-      encrypt: process.env.SOFT1_ERP_ENCRYPT === 'true',
-      trustServerCertificate: process.env.SOFT1_ERP_TRUST_CERT === 'true',
-      requestTimeout: Number(process.env.SOFT1_ERP_REQUEST_TIMEOUT || 30000),
+      encrypt,
+      trustServerCertificate,
+      requestTimeout,
     },
     pool: { max: 10, min: 1, idleTimeoutMillis: 30000 },
   };

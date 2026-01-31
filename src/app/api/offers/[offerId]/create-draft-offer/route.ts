@@ -324,7 +324,7 @@ async function generateNewErpCode(
     );
   }
 
-  // 1. Get SubCategory Code (first 3 chars) from TELQUOTE
+  // 1. Get SubCategory Code (first 3 chars) from FASTQUOTE
   const subCategoryRequest = pool.request();
   subCategoryRequest.input('subCategoryId', sql.Int, product.SubCategoryID);
   const subCategoryResult = await subCategoryRequest.query<{ Code: string | null }>(`
@@ -340,7 +340,7 @@ async function generateNewErpCode(
   }
   const subCategoryCode3 = subCategoryCode.substring(0, 3).toUpperCase();
 
-  // 2. Get Type first letter (4th char) from TELQUOTE
+  // 2. Get Type first letter (4th char) from FASTQUOTE
   const typeRequest = pool.request();
   typeRequest.input('typeId', sql.Int, product.TypeID);
   const typeResult = await typeRequest.query<{ Name: string | null }>(`

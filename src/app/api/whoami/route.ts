@@ -1,15 +1,12 @@
 import os from 'os';
 import { NextResponse } from 'next/server';
+import { getWindowsIdentityFromHeaders } from '../../../lib/windowsIdentity';
 
 export async function GET(req: Request) {
   try {
-    const forwardedUser =
-      req.headers.get('x-remote-user') ??
-      req.headers.get('x-forwarded-user') ??
-      req.headers.get('remote-user');
-
-    if (forwardedUser && forwardedUser.trim()) {
-      return NextResponse.json({ ok: true, username: forwardedUser.trim(), source: 'header' });
+    const headerUser = getWindowsIdentityFromHeaders(req.headers);
+    if (headerUser) {
+      return NextResponse.json({ ok: true, username: headerUser, source: 'header' });
     }
 
     const username = os.userInfo?.().username ?? process.env.USERNAME ?? 'unknown';

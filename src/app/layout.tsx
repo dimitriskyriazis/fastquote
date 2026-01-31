@@ -22,6 +22,8 @@ export const metadata: Metadata = {
   title: "FastQuote",
 };
 
+export const dynamic = 'force-dynamic';
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
