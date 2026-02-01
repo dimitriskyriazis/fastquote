@@ -81,27 +81,37 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
   );
   const windowsAuthAttemptedRef = useState(() => ({ value: false }))[0];
 
-  /** Resolve current user via IIS Windows Auth: /api/sso (uses X-Windows-User header). */
+  /** Resolve current user via IIS Windows Auth: /whoami.asp → POST /api/me */
   const tryResolveViaWindowsAuth = useCallback(async (): Promise<WindowsAuthResult> => {
     try {
-      const res = await fetch('/api/sso', { credentials: 'include', cache: 'no-store' });
-      const payload = (await res.json().catch(() => null)) as {
+      const aspRes = await fetch('/whoami.asp', { credentials: 'include', cache: 'no-store' });
+      if (!aspRes.ok) return { userId: null };
+      const windowsUserName = (await aspRes.text()).trim();
+      if (!windowsUserName) return { userId: null };
+
+      const meRes = await fetch('/api/me', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ windowsUserName }),
+        cache: 'no-store',
+      });
+      const me = (await meRes.json().catch(() => null)) as {
         ok?: boolean;
         reason?: string;
         windowsUserName?: string;
         user?: { id: number; userName?: string | null; windowsUserName?: string | null };
       } | null;
 
-      if (res.status === 403 && (payload?.reason === 'unrecognized_windows_user' || !payload?.ok)) {
+      if (meRes.status === 403 && (me?.reason === 'unrecognized_windows_user' || !me?.ok)) {
         return {
           userId: null,
           accessDenied: true,
-          windowsUserName: typeof payload?.windowsUserName === 'string' ? payload.windowsUserName : null,
+          windowsUserName: typeof me?.windowsUserName === 'string' ? me.windowsUserName : windowsUserName,
         };
       }
-      if (!res.ok) return { userId: null };
-      if (!payload?.ok || !payload.user || typeof payload.user.id !== 'number') return { userId: null };
-      return { userId: String(payload.user.id) };
+      if (!meRes.ok) return { userId: null };
+      if (!me?.ok || !me.user || typeof me.user.id !== 'number') return { userId: null };
+      return { userId: String(me.user.id) };
     } catch {
       return { userId: null };
     }
