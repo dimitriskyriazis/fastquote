@@ -2754,9 +2754,28 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
   const sideBarDef = useMemo(() => {
     if (suppressSideBar) return false;
     return {
-      toolPanels: ['columns', 'filters'],
+      toolPanels: [
+        {
+          id: 'columns',
+          labelDefault: 'Columns',
+          labelKey: 'columns',
+          iconKey: 'columns',
+          toolPanel: 'agColumnsToolPanel',
+          toolPanelParams: {
+            suppressPivotMode: !enablePivotMode,
+            suppressPivots: !enablePivotMode,
+          },
+        },
+        {
+          id: 'filters',
+          labelDefault: 'Filters',
+          labelKey: 'filters',
+          iconKey: 'filter',
+          toolPanel: 'agFiltersToolPanel',
+        },
+      ],
     };
-  }, [suppressSideBar]);
+  }, [enablePivotMode, suppressSideBar]);
 
   // GRID CONFIGURATION - Sidebar, Row ID, & Menu Handlers
   const getRowId = useCallback((params: GetRowIdParams<RowData>) => {
