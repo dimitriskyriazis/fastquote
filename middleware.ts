@@ -7,27 +7,41 @@ import { SESSION_COOKIE_NAME } from './src/lib/authConstants';
 export async function middleware(request: NextRequest) {
   const requestId = await getRequestId(request);
   const pathname = request.nextUrl.pathname;
-  
-  // Apply rate limiting to all API routes
-  if (pathname.startsWith('/api/')) {
-    const allowUnauthed =
-      pathname === '/api/sso' ||
-      pathname === '/api/whoami' ||
-      pathname === '/api/debug-windows-user';
-    const requireSession = process.env.AUTH_REQUIRE_SESSION === 'true';
-    if (requireSession && !allowUnauthed && request.method !== 'OPTIONS') {
-      const sessionCookie = request.cookies.get(SESSION_COOKIE_NAME)?.value ?? '';
-      if (!sessionCookie) {
-        const response = NextResponse.json(
-          { ok: false, error: 'Authentication required' },
-          { status: 401 },
-        );
-        setRequestIdHeader(response, requestId);
-        return response;
-      }
+
+  const requireSession = process.env.AUTH_REQUIRE_SESSION === 'true';
+  const isApi = pathname.startsWith('/api/');
+  const allowUnauthedApi =
+    pathname === '/api/sso' ||
+    pathname === '/api/me' ||
+    pathname === '/api/whoami' ||
+    pathname === '/api/debug-windows-user';
+  const allowUnauthedPage =
+    pathname === '/' ||
+    pathname === '/favicon.ico' ||
+    pathname === '/robots.txt' ||
+    pathname === '/sitemap.xml' ||
+    pathname.startsWith('/_next/');
+
+  if (
+    requireSession &&
+    request.method !== 'OPTIONS' &&
+    !allowUnauthedApi &&
+    !allowUnauthedPage
+  ) {
+    const sessionCookie = request.cookies.get(SESSION_COOKIE_NAME)?.value ?? '';
+    if (!sessionCookie) {
+      const response = isApi
+        ? NextResponse.json({ ok: false, error: 'Authentication required' }, { status: 401 })
+        : new NextResponse('Authentication required', { status: 401 });
+      setRequestIdHeader(response, requestId);
+      return response;
     }
+  }
+
+  // Apply rate limiting to all API routes
+  if (isApi) {
     const method = request.method;
-    
+
     // Apply rate limiting (strict for write operations)
     const rateLimitResponse = await applyRateLimitEdge(request, {
       strict: isWriteOperation(method),
@@ -59,5 +73,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: '/api/:path*',
+  matcher: '/:path*',
 };
