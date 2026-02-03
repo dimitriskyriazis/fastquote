@@ -15,6 +15,11 @@ import {
   positiveIntSchema,
 } from '../../../../lib/validation';
 
+const toClearedPartModel = (value: string | null | undefined) => {
+  if (!value) return null;
+  return value.replace(/[-_\s.]+/g, "").toUpperCase();
+};
+
 // Validate productId parameter
 const productIdParamsSchema = z.object({
   productId: z.string().transform((val, ctx) => {
@@ -168,9 +173,21 @@ export async function PATCH(
 
     if (body.partNumber !== undefined) {
       updates.push({ column: 'PartNumber', param: 'PartNumber', value: body.partNumber, type: sql.NVarChar(255) });
+      updates.push({
+        column: 'PartNumberCleared',
+        param: 'PartNumberCleared',
+        value: toClearedPartModel(body.partNumber),
+        type: sql.NVarChar(255),
+      });
     }
     if (body.modelNumber !== undefined) {
       updates.push({ column: 'ModelNumber', param: 'ModelNumber', value: body.modelNumber, type: sql.NVarChar(255) });
+      updates.push({
+        column: 'ModelNumberCleared',
+        param: 'ModelNumberCleared',
+        value: toClearedPartModel(body.modelNumber),
+        type: sql.NVarChar(255),
+      });
     }
     if (body.erpCode !== undefined) {
       updates.push({ column: 'ERPCode', param: 'ERPCode', value: body.erpCode, type: sql.NVarChar(255) });

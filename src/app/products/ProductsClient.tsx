@@ -138,11 +138,11 @@ export default function ProductsClient() {
   const [refreshToken, setRefreshToken] = useState(0);
   const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null);
   const [lookups, setLookups] = useState<ProductLookups | null>(null);
-  const [lookupsLoading, setLookupsLoading] = useState(false);
+  const lookupsLoadingRef = useRef(false);
 
   const loadLookups = useCallback(async () => {
-    if (lookupsLoading) return;
-    setLookupsLoading(true);
+    if (lookupsLoadingRef.current) return;
+    lookupsLoadingRef.current = true;
     try {
       const response = await fetch(PRODUCT_LOOKUP_ENDPOINT);
       const payload = (await response.json().catch(() => null)) as ProductLookupResponse | null;
@@ -161,13 +161,14 @@ export default function ProductsClient() {
         "error",
       );
     } finally {
-      setLookupsLoading(false);
+      lookupsLoadingRef.current = false;
     }
-  }, [lookupsLoading]);
+  }, []);
 
   useEffect(() => {
+    if (lookups) return;
     loadLookups();
-  }, [loadLookups]);
+  }, [loadLookups, lookups]);
 
   const categoryOptions = useMemo(() => lookups?.categories ?? [], [lookups]);
   const subCategoryOptions = useMemo(() => lookups?.subCategories ?? [], [lookups]);

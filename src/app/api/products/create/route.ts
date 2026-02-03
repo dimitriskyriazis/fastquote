@@ -8,6 +8,11 @@ import { handleApiError } from "../../../../lib/errorHandler";
 import { logger } from "../../../../lib/logger";
 import { validateRequest, positiveIntSchema, stringSchema, urlSchema, partModelNumberSchema } from "../../../../lib/validation";
 
+const toClearedPartModel = (value: string | null | undefined) => {
+  if (!value) return null;
+  return value.replace(/[-_\s.]+/g, "").toUpperCase();
+};
+
 // Strict schema-based validation with rejection of unknown fields
 const createProductSchema = z.object({
   brandId: positiveIntSchema.refine((val) => val !== null && val !== undefined, {
@@ -45,6 +50,8 @@ export async function POST(req: NextRequest) {
     const brandId = body.brandId!; // Validated as required
     const modelNumber = body.modelNumber;
     const partNumber = body.partNumber;
+    const modelNumberCleared = toClearedPartModel(modelNumber);
+    const partNumberCleared = toClearedPartModel(partNumber);
     const erpCode = body.erpCode;
     const description = body.description;
     const weblink = body.weblink;
@@ -61,6 +68,8 @@ export async function POST(req: NextRequest) {
     request.input("BrandID", sql.Int, brandId);
     request.input("ModelNumber", sql.NVarChar(255), modelNumber);
     request.input("PartNumber", sql.NVarChar(255), partNumber);
+    request.input("ModelNumberCleared", sql.NVarChar(255), modelNumberCleared);
+    request.input("PartNumberCleared", sql.NVarChar(255), partNumberCleared);
     request.input("ERPCode", sql.NVarChar(255), erpCode);
     request.input("Description", sql.NVarChar(2000), description);
     request.input("WebLink", sql.NVarChar(1000), weblink);
@@ -77,6 +86,8 @@ export async function POST(req: NextRequest) {
         BrandID,
         ModelNumber,
         PartNumber,
+        ModelNumberCleared,
+        PartNumberCleared,
         ERPCode,
         Description,
         WebLink,
@@ -95,6 +106,8 @@ export async function POST(req: NextRequest) {
         @BrandID,
         @ModelNumber,
         @PartNumber,
+        @ModelNumberCleared,
+        @PartNumberCleared,
         @ERPCode,
         @Description,
         @WebLink,

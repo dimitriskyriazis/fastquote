@@ -804,6 +804,9 @@ export default function AddProductsModal({
                   columnDefs={productColumns}
                   defaultColDef={defaultColDef}
                   requestPayload={productRequestPayload}
+                  cacheBlockSize={200}
+                  rowBuffer={40}
+                  maxBlocksInCache={10}
                   rowSelection="multiple"
                   rowMultiSelectWithClick
                   rowDeselection
@@ -958,6 +961,9 @@ export default function AddProductsModal({
                   columnDefs={productColumns}
                   defaultColDef={defaultColDef}
                   requestPayload={productRequestPayload}
+                  cacheBlockSize={200}
+                  rowBuffer={40}
+                  maxBlocksInCache={10}
                   rowSelection="multiple"
                   rowMultiSelectWithClick
                   rowDeselection

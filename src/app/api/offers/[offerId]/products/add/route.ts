@@ -92,10 +92,12 @@ function readGridRequest(body: GridRequestEnvelope): GridRequest {
   return { startRow: 0, endRow: 100 };
 }
 
-// Normalize part/model numbers by removing special characters
+const DEFAULT_PRODUCT_ORDER = 'ORDER BY bp.BrandName, bp.ModelNumber, bp.ProductID';
+
+// Normalize part/model numbers by removing special characters and uppercasing.
 const normalizePartModelNumber = (value: string): string => {
   // Remove common special characters: dashes, underscores, spaces, periods, etc.
-  return value.replace(/[-_\s.]+/g, '');
+  return value.replace(/[-_\s.]+/g, '').toUpperCase();
 };
 
 // Helper to get the cleared column name for part/model numbers
@@ -103,13 +105,13 @@ const normalizePartModelNumber = (value: string): string => {
 const partModelNumberSql = (expr: string) => {
   // Replace PartNumber/ModelNumber with their cleared versions
   if (expr.includes('.PartNumber')) {
-    return `ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, '')`;
+    return `UPPER(ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, ''))`;
   }
   if (expr.includes('.ModelNumber')) {
-    return `ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, '')`;
+    return `UPPER(ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, ''))`;
   }
   // Fallback for edge cases
-  return `ISNULL(${expr}, '')`;
+  return `UPPER(ISNULL(${expr}, ''))`;
 };
 
 const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpressions: Record<string, string>) => {
@@ -228,6 +230,10 @@ const buildOrderSql = (sortModel: GridRequest['sortModel'], columnExpressions: R
       const direction = entry.sort === 'desc' ? 'DESC' : 'ASC';
       return `${expression} ${direction}`;
     });
+  const hasProductId = sortModel.some((entry) => entry?.colId === 'ProductID');
+  if (!hasProductId) {
+    parts.push(`${columnExpressions.ProductID ?? '[ProductID]'} ASC`);
+  }
   return parts.length ? `ORDER BY ${parts.join(', ')}` : defaultOrder;
 };
 
@@ -356,8 +362,7 @@ async function handleProductGrid(
     ? `${whereSql} ${quickFilterClause.clause}`.trim()
     : whereSql;
   const combinedParams = [...params, ...quickFilterClause.params];
-  // Default order: PartNumber ASC (not ProductID DESC to avoid showing all new products)
-  const defaultOrder = 'ORDER BY bp.PartNumber ASC';
+  const defaultOrder = DEFAULT_PRODUCT_ORDER;
   const baseOrderSql = buildOrderSql(
     gridRequest.sortModel,
     columnExpressions,
