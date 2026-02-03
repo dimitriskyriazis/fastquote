@@ -26,6 +26,12 @@ type UseRealtimeGridUpdatesOptions = {
   gridApi: GridApi | null;
   enabled?: boolean;
   showNotifications?: boolean; // Default: false - only show toasts for own edits, not real-time updates
+  onBeforeCellUpdate?: (info: {
+    rowId: number;
+    field: string;
+    value: unknown;
+    updatedBy?: string;
+  }) => void;
   onRowAdded?: (row: RowData) => void;
   onRowUpdated?: (rowId: number, field: string, value: unknown) => void;
   onRowDeleted?: (rowId: number) => void;
@@ -76,6 +82,7 @@ export function useRealtimeGridUpdates({
   gridApi,
   enabled = true,
   showNotifications = false, // Default to false - person making edit already gets feedback
+  onBeforeCellUpdate,
   onRowAdded,
   onRowUpdated,
   onRowDeleted,
@@ -136,7 +143,7 @@ export function useRealtimeGridUpdates({
 
           case 'cell-updated':
           case 'row-updated': {
-            const { rowId, OfferDetailID, field, value, row: fullRow } = event.data;
+            const { rowId, OfferDetailID, field, value, row: fullRow, updatedBy } = event.data;
             const targetId = rowId ?? OfferDetailID;
 
             if (fullRow && targetId) {
@@ -145,6 +152,12 @@ export function useRealtimeGridUpdates({
                 update: [fullRow],
               });
             } else if (targetId && field !== undefined) {
+              onBeforeCellUpdate?.({
+                rowId: targetId,
+                field,
+                value,
+                updatedBy,
+              });
               // Update specific cell
               api.forEachNode((node) => {
                 if (node.data?.OfferDetailID === targetId) {
@@ -212,12 +225,23 @@ export function useRealtimeGridUpdates({
     };
 
     eventSource.onerror = (err) => {
-      console.error('Realtime connection error', err);
+      if (process.env.NODE_ENV !== 'production') {
+        console.debug('Realtime connection error (will retry)', err);
+      }
       // EventSource will automatically reconnect
     };
 
     return () => {
       eventSource.close();
     };
-  }, [resource, enabled, showNotifications, onRowAdded, onRowUpdated, onRowDeleted, onRowsReordered]);
+  }, [
+    resource,
+    enabled,
+    showNotifications,
+    onBeforeCellUpdate,
+    onRowAdded,
+    onRowUpdated,
+    onRowDeleted,
+    onRowsReordered,
+  ]);
 }

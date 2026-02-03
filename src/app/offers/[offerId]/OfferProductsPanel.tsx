@@ -737,6 +737,31 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     [columnStateNamespace, persistenceEndpoint, userId],
   );
   const pricingToastDedupRef = useRef<Map<string, number>>(new Map());
+  const realtimeCellUpdateRef = useRef<Map<string, number>>(new Map());
+  const registerRealtimeCellUpdate = useCallback((rowId: number, field: string, value: unknown) => {
+    const key = `${rowId}:${field}:${String(value)}`;
+    realtimeCellUpdateRef.current.set(key, Date.now());
+  }, []);
+  const shouldSkipRealtimeCellEdit = useCallback(
+    (event: CellValueChangedEvent<Record<string, unknown>>) => {
+      const field = event.colDef.field;
+      if (!field) return false;
+      const rowId = normalizeOfferDetailId(
+        (event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null,
+      );
+      if (rowId == null) return false;
+      const key = `${rowId}:${field}:${String(event.newValue)}`;
+      const lastSeen = realtimeCellUpdateRef.current.get(key);
+      if (!lastSeen) return false;
+      if (Date.now() - lastSeen > 1500) {
+        realtimeCellUpdateRef.current.delete(key);
+        return false;
+      }
+      realtimeCellUpdateRef.current.delete(key);
+      return true;
+    },
+    [],
+  );
   const { savedColumnOrder, savedHiddenMap } = useMemo(() => {
     if (typeof window === 'undefined' || !columnStateStorageKey) {
       return { savedColumnOrder: [] as string[], savedHiddenMap: {} as Record<string, boolean> };
@@ -3044,6 +3069,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     if (!isRequestedFieldKey(field)) return;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
+    if (shouldSkipRealtimeCellEdit(event)) return;
     if (!canEditRequestedField(field, event.data)) return;
 
     const label = REQUESTED_FIELD_LABELS[field];
@@ -3124,12 +3150,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     };
 
     void runUpdate();
-  }, [resolvedEndpoint]);
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit]);
 
   const handleQuantityEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Quantity') return;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
+    if (shouldSkipRealtimeCellEdit(event)) return;
       if (!isOfferProductCommentOrProduct(event.data)) {
         try {
           event.node?.setDataValue?.('Quantity', event.oldValue ?? '');
@@ -3201,12 +3228,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
     };
     void runUpdate();
-  }, [resolvedEndpoint]);
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit]);
 
   const handleDescriptionEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Description') return;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
+    if (shouldSkipRealtimeCellEdit(event)) return;
     const normalizedOldValue = normalizeDescriptionValue(event.oldValue);
     const normalizedNewValue = normalizeDescriptionValue(event.newValue);
     if (normalizedOldValue === normalizedNewValue) {
@@ -3252,7 +3280,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
     };
     void runUpdate();
-  }, [resolvedEndpoint]);
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit]);
 
   const handlePricingEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
@@ -3260,6 +3288,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     const label = PRICING_FIELD_LABELS[field] ?? field;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
+    if (shouldSkipRealtimeCellEdit(event)) return;
 
     if (!isOfferProductCommentOrProduct(event.data)) {
       try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
@@ -3350,7 +3379,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     };
 
     void runUpdate();
-  }, [refreshOfferProductGrid, resolvedEndpoint]);
+  }, [refreshOfferProductGrid, resolvedEndpoint, shouldSkipRealtimeCellEdit]);
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     handleDescriptionEdit(event);
@@ -3375,6 +3404,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     gridApi: gridApiRef.current,
     enabled: true,
     showNotifications: false,
+    onBeforeCellUpdate: (info) => {
+      registerRealtimeCellUpdate(info.rowId, info.field, info.value);
+    },
   });
 
   return (

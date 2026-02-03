@@ -71,6 +71,7 @@ import {
   CsvExportModule,
   ValidationModule,
   ExternalFilterModule,
+  ScrollApiModule,
 } from 'ag-grid-community';
 import {
   AggregationModule,
@@ -396,6 +397,7 @@ if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
     RowApiModule,
     PinnedRowModule,
     ExternalFilterModule,
+    ScrollApiModule,
     ValidationModule,
   ]);
   globalThis.__AG_GRID_MODULES_REGISTERED__ = true;
