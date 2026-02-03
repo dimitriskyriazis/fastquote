@@ -45,6 +45,7 @@ import {
   MenuItemDef,
   ModelUpdatedEvent,
   NumberFilterModule,
+  PinnedRowModule,
   RowClassParams,
   RowStyle,
   RowStyleModule,
@@ -393,6 +394,7 @@ if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
     RowStyleModule,
     CellStyleModule,
     RowApiModule,
+    PinnedRowModule,
     ExternalFilterModule,
     ValidationModule,
   ]);

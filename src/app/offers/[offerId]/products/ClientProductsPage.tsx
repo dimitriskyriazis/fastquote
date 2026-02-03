@@ -8,7 +8,6 @@ import OfferProductsPanel, { type OfferProductsPanelHandle } from '../OfferProdu
 import OfferProductsPivotPanel from './OfferProductsPivotPanel';
 import { showToastMessage } from '../../../../lib/toast';
 import { addRecentOffer } from '../../../lib/recentOffers';
-import LookupModal from '../../../components/LookupModal';
 import { useAuditUser } from '../../../components/AuditUserProvider';
 import layoutStyles from '../../offersDetail.module.css';
 import pageHeaderStyles from '../../../components/PageHeader.module.css';
@@ -26,12 +25,6 @@ type CreatableActionType = Exclude<AddActionType, 'product'>;
 type ProductsTableLayout = 'cust' | 'wCost' | 'wReq';
 
 const LAYOUT_STORAGE_PREFIX = 'fastquote-offer-products-layout';
-
-const tableLayoutLabels: Record<ProductsTableLayout, string> = {
-  cust: 'Cust',
-  wCost: 'wCost',
-  wReq: 'wReq',
-};
 
 const addActionLabels: Record<AddActionType, string> = {
   product: 'Add Products',
@@ -101,7 +94,6 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [showAddProductFormModal, setShowAddProductFormModal] = useState(false);
   const [newProductId, setNewProductId] = useState<number | null>(null);
   const [tableLayout, setTableLayout] = useState<ProductsTableLayout>('wReq');
-  const [showSaveLayoutModal, setShowSaveLayoutModal] = useState(false);
   const [pivotView, setPivotView] = useState(false);
   const [pivotLayout, setPivotLayout] = useState<'category' | 'brand' | 'categoryBrand' | 'discount'>('category');
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
@@ -201,16 +193,6 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const headerRowBottomClassName = showAddProductModal
     ? `${pageHeaderStyles.headerRowBottom} ${toolbarStyles.compactHeaderRow}`
     : pageHeaderStyles.headerRowBottom;
-  const handleSaveLayout = useCallback(() => {
-    setShowSaveLayoutModal(true);
-  }, []);
-  const handleConfirmSaveLayout = useCallback(() => {
-    offerProductsPanelRef.current?.saveLayout();
-    setShowSaveLayoutModal(false);
-  }, []);
-  const handleCloseSaveLayoutModal = useCallback(() => setShowSaveLayoutModal(false), []);
-  const saveLayoutPromptLabel = tableLayoutLabels[tableLayout] ?? tableLayout;
-
   const updatePricesEndpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/update-prices`,
     [offerId],
@@ -338,22 +320,6 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
       <option value="wReq">wReq</option>
     </select>
   );
-  const layoutSaveButton = (
-    <button
-      type="button"
-      className={`${toolbarStyles.layoutSaveButton} page-header-button`}
-      onClick={handleSaveLayout}
-      aria-label="Save layout"
-      disabled={pivotView}
-    >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M5 4h10l4 4v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
-        <path d="M7 4v6h8V4" />
-        <path d="M7 18h10" />
-      </svg>
-    </button>
-  );
-
   const pivotLayoutSelect = pivotView ? (
     <select
       className={`${toolbarStyles.layoutSelect} ${toolbarStyles.pivotLayoutSelect} page-header-button`}
@@ -393,7 +359,6 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
                   <>
                     {addRequestedButton}
                     {layoutSelect}
-                    {layoutSaveButton}
                   </>
                 )}
               </div>
@@ -450,21 +415,6 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
                 />
               )}
             </div>
-            <LookupModal
-              open={showSaveLayoutModal}
-              title="Save layout"
-              onClose={handleCloseSaveLayoutModal}
-              onConfirm={handleConfirmSaveLayout}
-              confirmLabel="Yes"
-              cancelLabel="No"
-              confirmFirst
-              headerClassName={toolbarStyles.saveLayoutModalHeader}
-              titleClassName={toolbarStyles.saveLayoutModalTitle}
-              bodyClassName={toolbarStyles.saveLayoutModalBody}
-              footerClassName={toolbarStyles.saveLayoutModalFooter}
-            >
-              <p>Would you like to save this layout to {saveLayoutPromptLabel}?</p>
-            </LookupModal>
             {showRequestedModal ? (
               <AddRequestedProductsModal
                 offerId={offerId}

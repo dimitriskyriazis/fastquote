@@ -4,6 +4,11 @@ import React, { useMemo, useCallback, useState, useRef, useEffect, useImperative
 import type {
   CellValueChangedEvent,
   ColDef,
+  ColumnEventType,
+  ColumnMovedEvent,
+  ColumnPinnedEvent,
+  ColumnResizedEvent,
+  ColumnVisibleEvent,
   DefaultMenuItem,
   GetContextMenuItemsParams,
   GridApi,
@@ -695,7 +700,6 @@ type Props = {
 };
 
 export type OfferProductsPanelHandle = {
-  saveLayout: () => boolean;
   populateOffer: () => Promise<void>;
 };
 
@@ -1175,9 +1179,11 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     lastServerRequestRef.current = request;
   }, []);
 
+  const [gridReadyApi, setGridReadyApi] = useState<GridApi<Record<string, unknown>> | null>(null);
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     gridApiRef.current = api;
-    
+    setGridReadyApi(api);
+
     // Real-time updates are handled by useRealtimeGridUpdates hook below
     setRequestedColumnsReadyFlag(true);
   }, [setRequestedColumnsReadyFlag]);
@@ -1197,12 +1203,14 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     }
   }, [onRequestPivot]);
 
-  const saveLayout = useCallback(() => {
+  const saveLayout = useCallback((options?: { silent?: boolean }) => {
     if (typeof window === 'undefined') return false;
     if (!columnStateStorageKey) return false;
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) {
-      showToastMessage('Unable to save layout. Please try again.', 'error');
+      if (!options?.silent) {
+        showToastMessage('Unable to save layout. Please try again.', 'error');
+      }
       return false;
     }
     const currentState = api.getColumnState();
@@ -1280,9 +1288,74 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       return entry;
     });
     writePersistedColumnState(columnStateStorageKey, nextState);
-    showToastMessage('Layout saved', 'success');
+    if (!options?.silent) {
+      showToastMessage('Layout saved', 'success');
+    }
     return true;
   }, [columnStateStorageKey]);
+
+  const autoSaveTimerRef = useRef<number | null>(null);
+  const queueAutoSaveLayout = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (autoSaveTimerRef.current) {
+      window.clearTimeout(autoSaveTimerRef.current);
+    }
+    autoSaveTimerRef.current = window.setTimeout(() => {
+      autoSaveTimerRef.current = null;
+      saveLayout({ silent: true });
+    }, 200);
+  }, [saveLayout]);
+
+  const shouldAutoSaveFromColumnEvent = useCallback((source: ColumnEventType) => (
+    source.startsWith('ui')
+    || source === 'toolPanelUi'
+    || source === 'toolPanelDragAndDrop'
+    || source === 'columnMenu'
+    || source === 'contextMenu'
+  ), []);
+
+  useEffect(() => () => {
+    if (autoSaveTimerRef.current && typeof window !== 'undefined') {
+      window.clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    const api = gridReadyApi;
+    if (!api || api.isDestroyed?.()) return undefined;
+
+    const handleColumnMoved = (event: ColumnMovedEvent<Record<string, unknown>>) => {
+      if (!event.finished) return;
+      if (!shouldAutoSaveFromColumnEvent(event.source)) return;
+      queueAutoSaveLayout();
+    };
+    const handleColumnResized = (event: ColumnResizedEvent<Record<string, unknown>>) => {
+      if (!event.finished) return;
+      if (!shouldAutoSaveFromColumnEvent(event.source)) return;
+      queueAutoSaveLayout();
+    };
+    const handleColumnVisible = (event: ColumnVisibleEvent<Record<string, unknown>>) => {
+      if (!shouldAutoSaveFromColumnEvent(event.source)) return;
+      queueAutoSaveLayout();
+    };
+    const handleColumnPinned = (event: ColumnPinnedEvent<Record<string, unknown>>) => {
+      if (!shouldAutoSaveFromColumnEvent(event.source)) return;
+      queueAutoSaveLayout();
+    };
+
+    api.addEventListener('columnMoved', handleColumnMoved);
+    api.addEventListener('columnResized', handleColumnResized);
+    api.addEventListener('columnVisible', handleColumnVisible);
+    api.addEventListener('columnPinned', handleColumnPinned);
+
+    return () => {
+      api.removeEventListener('columnMoved', handleColumnMoved);
+      api.removeEventListener('columnResized', handleColumnResized);
+      api.removeEventListener('columnVisible', handleColumnVisible);
+      api.removeEventListener('columnPinned', handleColumnPinned);
+    };
+  }, [gridReadyApi, queueAutoSaveLayout, shouldAutoSaveFromColumnEvent]);
 
   const isCategoryRowCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!row) return false;
@@ -2570,7 +2643,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
   }, [populateRequestedRowsToOffer]);
 
-  useImperativeHandle(ref, () => ({ saveLayout, populateOffer }), [saveLayout, populateOffer]);
+  useImperativeHandle(ref, () => ({ populateOffer }), [populateOffer]);
 
 
   const manualMatchTotal = processedRequestedMatches + requestedMatchQueue.length;
