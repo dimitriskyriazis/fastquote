@@ -181,6 +181,13 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "λιστ",
     "χονδρική",
     "χονδρικη",
+    "euros",
+    "eur",
+    "ευρώ",
+    "€",
+    "dollars",
+    "usd",
+    "$",
   ],
 
   costPrice: [
