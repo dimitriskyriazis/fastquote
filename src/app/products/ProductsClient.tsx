@@ -608,6 +608,9 @@ export default function ProductsClient() {
                 requestPayload={highlightRequestPayload}
                 onGridReady={handleGridReady}
                 onModelUpdated={handleModelUpdated}
+                cacheBlockSize={200}
+                rowBuffer={40}
+                maxBlocksInCache={10}
                 rowSelection="multiple"
                 rowMultiSelectWithClick
                 rowDeselection

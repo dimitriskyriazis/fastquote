@@ -89,7 +89,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   WebLink: "dbo.Products.WebLink",
 };
 const QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
-const DEFAULT_PRODUCT_ORDER = "ORDER BY dbo.Brands.Name, dbo.Products.ModelNumber";
+const DEFAULT_PRODUCT_ORDER = "ORDER BY dbo.Brands.Name, dbo.Products.ModelNumber, dbo.Products.ID";
 
 const normalizeProductId = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
@@ -283,6 +283,10 @@ function buildOrder(sortModel: GridRequest["sortModel"]) {
     const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
     return `${expression} ${s.sort.toUpperCase()}`;
   });
+  const hasProductId = sortModel.some((s) => s.colId === "ProductID");
+  if (!hasProductId) {
+    parts.push(`${COLUMN_EXPRESSIONS.ProductID} ASC`);
+  }
   return `ORDER BY ${parts.join(", ")}`;
 }
 
