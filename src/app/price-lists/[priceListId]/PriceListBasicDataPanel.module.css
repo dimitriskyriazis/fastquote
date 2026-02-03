@@ -173,7 +173,7 @@
 
 .chipEdit:hover {
   background: #f3f4f6;
-  color: #3b82f6;
+  color: #b91c1c;
 }
 
 .chipDelete {
@@ -233,14 +233,14 @@
 }
 
 .buttonPrimary {
-  background: #3b82f6;
+  background: #111827;
   color: #ffffff;
-  border-color: #3b82f6;
+  border-color: #111827;
 }
 
 .buttonPrimary:hover:not(:disabled) {
-  background: #2563eb;
-  border-color: #2563eb;
+  background: #b91c1c;
+  border-color: #b91c1c;
 }
 
 .buttonPrimary:disabled {
@@ -314,7 +314,7 @@
 }
 
 .ruleRowSelected {
-  background: #eef2ff;
+  background: #fff1f2;
 }
 
 .ruleName {
@@ -407,7 +407,7 @@
 }
 
 .fieldControl:focus {
-  outline: 2px solid #3b82f6;
+  outline: 2px solid #b91c1c;
   outline-offset: 1px;
 }
 

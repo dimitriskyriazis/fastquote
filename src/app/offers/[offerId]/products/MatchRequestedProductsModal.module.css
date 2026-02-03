@@ -122,19 +122,19 @@
 }
 
 .primaryButton {
-  background: #2563eb;
+  background: #111827;
   color: #ffffff;
   border: none;
   border-radius: 999px;
   padding: 10px 18px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.35);
+  box-shadow: 0 10px 24px rgba(17, 24, 39, 0.35);
   transition: transform 120ms ease, box-shadow 150ms ease, background-color 150ms ease;
 }
 
 .primaryButton:hover {
-  background: #1d4ed8;
+  background: #b91c1c;
   transform: translateY(-1px);
 }
 

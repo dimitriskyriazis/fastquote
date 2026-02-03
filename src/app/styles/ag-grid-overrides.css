@@ -230,13 +230,13 @@
 }
 
 .fastquote-confirm-btn--confirm {
-  background: #2563eb;
+  background: #111827;
   color: #ffffff;
-  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35);
+  box-shadow: 0 6px 18px rgba(17, 24, 39, 0.35);
 }
 
 .fastquote-confirm-btn--confirm:hover {
-  background: #1d4ed8;
+  background: #b91c1c;
 }
 
 .fastquote-confirm-btn--danger {
@@ -263,7 +263,7 @@
 }
 
 .fastquote-menu-icon--history {
-  color: #2563eb;
+  color: #111827;
 }
 
 .fastquote-menu-icon--category {
@@ -271,7 +271,7 @@
 }
 
 .fastquote-menu-icon--copy {
-  color: #0ea5e9;
+  color: #111827;
 }
 
 .fastquote-menu-icon--filter {

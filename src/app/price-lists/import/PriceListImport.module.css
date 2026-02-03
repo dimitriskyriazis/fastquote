@@ -6,7 +6,7 @@
 }
 
 .card {
-  background: linear-gradient(135deg, #f7f9fc 0%, #eef2ff 100%);
+  background: linear-gradient(135deg, #fff5f5 0%, #fee2e2 100%);
   border: 1px solid #d9e1f2;
   border-radius: 16px;
   padding: 18px;
@@ -95,8 +95,8 @@
 
 .input:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.18);
   background: #ffffff;
 }
 
@@ -146,7 +146,7 @@
 
 .comboOption:hover,
 .comboOption:focus {
-  background: #e5efff;
+  background: #fff1f2;
   outline: none;
 }
 
@@ -193,14 +193,14 @@
 }
 
 .uploadArea:hover {
-  border-color: #3b82f6;
-  background: #eef2ff;
+  border-color: #dc2626;
+  background: #fff5f5;
   transform: translateY(-1px);
 }
 
 .uploadAreaDragging {
-  border-color: #1d4ed8;
-  background: #e0e7ff;
+  border-color: #b91c1c;
+  background: #fee2e2;
   transform: translateY(-1px);
 }
 
@@ -253,8 +253,8 @@
 }
 
 .validationChecking {
-  border-color: #bfdbfe;
-  background: #eff6ff;
+  border-color: #e2e8f0;
+  background: #f8fafc;
 }
 
 .validationIdle {
@@ -282,7 +282,7 @@
 }
 
 .statusIconChecking {
-  background: #2563eb;
+  background: #111827;
 }
 
 .statusIconIdle {
@@ -350,16 +350,16 @@
 }
 
 .sheetTabActive {
-  border-color: #2563eb;
-  background: #e0f2fe;
-  color: #1d4ed8;
-  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.18);
+  border-color: #b91c1c;
+  background: #fff1f2;
+  color: #7f1d1d;
+  box-shadow: 0 4px 10px rgba(185, 28, 28, 0.18);
 }
 
 .sheetTabIncluded.sheetTabActive {
   border-color: #10b981;
   background: #ecfdf3;
-  color: #1d4ed8;
+  color: #065f46;
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.18);
 }
 
@@ -428,7 +428,7 @@
 }
 
 .previewTable th {
-  background: #eff2ff;
+  background: #fff1f2;
   font-weight: 700;
   color: #0f172a;
 }
@@ -439,7 +439,7 @@
 
 .previewListPrice {
   font-weight: 700;
-  color: #1d4ed8;
+  color: #b91c1c;
 }
 
 .previewEmpty {
@@ -453,9 +453,9 @@
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px dashed #0ea5e9;
+  border: 1px dashed #fca5a5;
   border-radius: 10px;
-  background: #f0f9ff;
+  background: #fff5f5;
   width: fit-content;
   font-weight: 600;
   color: #0f172a;
@@ -516,8 +516,8 @@
 }
 
 .submitButton {
-  border: 1px solid #1e3a8a;
-  background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+  border: 1px solid #111827;
+  background: linear-gradient(135deg, #111827 0%, #1f2937 100%);
   color: #ffffff;
   border-radius: 999px;
   padding: 8px 20px;
@@ -528,13 +528,13 @@
   cursor: pointer;
   min-width: 180px;
   transition: transform 120ms ease, box-shadow 120ms ease;
-  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.24);
+  box-shadow: 0 10px 20px rgba(17, 24, 39, 0.24);
 }
 
 .submitButton:hover,
 .submitButton:focus-visible {
   transform: translateY(-1px);
-  box-shadow: 0 14px 24px rgba(37, 99, 235, 0.28);
+  box-shadow: 0 14px 24px rgba(185, 28, 28, 0.28);
   outline: none;
 }
 
@@ -626,14 +626,14 @@
 }
 
 .buttonPrimary {
-  background: #3b82f6;
+  background: #111827;
   color: #ffffff;
-  border-color: #3b82f6;
+  border-color: #111827;
 }
 
 .buttonPrimary:hover:not(:disabled) {
-  background: #2563eb;
-  border-color: #2563eb;
+  background: #b91c1c;
+  border-color: #b91c1c;
 }
 
 .buttonPrimary:disabled {
@@ -707,7 +707,7 @@
 }
 
 .ruleRowSelected {
-  background: #eef2ff;
+  background: #fff1f2;
 }
 
 .ruleName {
