@@ -108,7 +108,7 @@
 
 .policyGroupMenuButton:not(:disabled):hover,
 .policyGroupMenuButton:not(:disabled):focus-visible {
-  background: rgba(15, 23, 42, 0.08);
+  background: rgba(41, 41, 41, 0.08);
   outline: none;
 }
 
@@ -149,7 +149,7 @@
 
 .policyGroupMenuItem:hover:not(:disabled),
 .policyGroupMenuItem:focus-visible:not(:disabled) {
-  background: #e2e8f0;
+  background: #d1d5db;
   outline: none;
 }
 
@@ -205,7 +205,7 @@
 
 .comboOption:hover,
 .comboOption:focus {
-  background: #e5efff;
+  background: #e9f1ff;
 }
 
 .modalTall {
@@ -216,3 +216,5 @@
   min-height: 310px;
   overflow: visible;
 }
+
+

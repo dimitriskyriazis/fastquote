@@ -7,10 +7,10 @@
 
 .card {
   background: linear-gradient(135deg, #fff5f5 0%, #fee2e2 100%);
-  border: 1px solid #d9e1f2;
+  border: 1px solid #d1d5db;
   border-radius: 16px;
   padding: 18px;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.1);
+  box-shadow: 0 12px 30px rgba(32, 32, 32, 0.1);
 }
 
 .form {
@@ -28,7 +28,7 @@
 
 .fieldStack {
   background: #ffffff;
-  border: 1px solid #dfe5f3;
+  border: 1px solid #d1d5db;
   border-radius: 14px;
   padding: 14px;
   display: flex;
@@ -84,12 +84,12 @@
 
 .input {
   width: 100%;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #d1d5db;
   border-radius: 10px;
   padding: 8px 11px;
   font-size: 0.95rem;
   color: #0f172a;
-  background: #f9fafb;
+  background: #f8fafc;
   transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 
@@ -169,7 +169,7 @@
   align-items: center;
   justify-content: center;
   padding: 10px 12px;
-  border: 1px dashed #cbd5e1;
+  border: 1px dashed #d1d5db;
   border-radius: 10px;
   background: #f8fafc;
 }
@@ -181,7 +181,7 @@
 }
 
 .uploadArea {
-  border: 2px dashed #cbd5e1;
+  border: 2px dashed #d1d5db;
   border-radius: 12px;
   background: #f8fafc;
   padding: 18px;
@@ -236,7 +236,7 @@
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 10px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid #d1d5db;
   border-radius: 12px;
   padding: 10px 12px;
   background: #f8fafc;
@@ -253,12 +253,12 @@
 }
 
 .validationChecking {
-  border-color: #e2e8f0;
+  border-color: #d1d5db;
   background: #f8fafc;
 }
 
 .validationIdle {
-  border-color: #e2e8f0;
+  border-color: #d1d5db;
   background: #f8fafc;
 }
 
@@ -282,7 +282,7 @@
 }
 
 .statusIconChecking {
-  background: #111827;
+  background: #2b2b2b;
 }
 
 .statusIconIdle {
@@ -333,7 +333,7 @@
 }
 
 .sheetTab {
-  border: 1px solid #e2e8f0;
+  border: 1px solid #d1d5db;
   background: #ffffff;
   color: #111827;
   border-radius: 10px;
@@ -384,7 +384,7 @@
 
 .previewSection {
   margin-top: 16px;
-  border: 1px solid #d0d7e3;
+  border: 1px solid #d1d5db;
   border-radius: 12px;
   padding: 12px;
   background: #ffffff;
@@ -420,7 +420,7 @@
 
 .previewTable th,
 .previewTable td {
-  border: 1px solid #e2e8f0;
+  border: 1px solid #d1d5db;
   padding: 6px 8px;
   text-align: left;
   color: #0f172a;
@@ -468,7 +468,7 @@
   gap: 6px;
   padding: 6px 8px;
   border-radius: 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #d1d5db;
   background: #ffffff;
   font-size: 0.88rem;
 }
@@ -517,7 +517,7 @@
 
 .submitButton {
   border: 1px solid #111827;
-  background: linear-gradient(135deg, #111827 0%, #1f2937 100%);
+  background: linear-gradient(135deg, #2e2e2e 0%, #363636 100%);
   color: #ffffff;
   border-radius: 999px;
   padding: 8px 20px;
@@ -626,9 +626,9 @@
 }
 
 .buttonPrimary {
-  background: #111827;
+  background: #1d1d1d;
   color: #ffffff;
-  border-color: #111827;
+  border-color: #222222;
 }
 
 .buttonPrimary:hover:not(:disabled) {
@@ -648,7 +648,7 @@
 }
 
 .buttonSecondary:hover:not(:disabled) {
-  background: #f9fafb;
+  background: #f8fafc;
   border-color: #9ca3af;
 }
 
@@ -694,7 +694,7 @@
 
 .ruleTable th,
 .ruleTable td {
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid #d1d5db;
   padding: 6px 8px;
   text-align: left;
   vertical-align: middle;
@@ -763,3 +763,5 @@
   pointer-events: none;
   box-shadow: 0 8px 16px rgba(15, 23, 42, 0.18);
 }
+
+

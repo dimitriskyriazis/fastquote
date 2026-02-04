@@ -233,9 +233,9 @@
 }
 
 .buttonPrimary {
-  background: #111827;
+  background: #222222;
   color: #ffffff;
-  border-color: #111827;
+  border-color: #222222;
 }
 
 .buttonPrimary:hover:not(:disabled) {

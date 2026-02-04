@@ -1,7 +1,7 @@
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.55);
+  background: rgba(0, 0, 0, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -27,7 +27,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 16px 20px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid #d1d5db;
   background: #fff5f5;
 }
 
@@ -102,7 +102,7 @@
 }
 
 .fieldControl {
-  border: 1px solid #cbd5e1;
+  border: 1px solid #d1d5db;
   border-radius: 10px;
   padding: 8px 11px;
   font-size: 0.95rem;
@@ -150,7 +150,7 @@
 
 .footer {
   padding: 14px 20px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid #d1d5db;
   display: flex;
   justify-content: flex-end;
   gap: 10px;
@@ -176,13 +176,13 @@
 }
 
 .cancelButton:hover {
-  background: #e2e8f0;
+  background: #d1d5db;
   border-color: rgba(15, 23, 42, 0.35);
 }
 
 .confirmButton {
   border: 1px solid #111827;
-  background: #111827;
+  background: #000000;
   color: #ffffff;
   box-shadow: 0 6px 12px rgba(17, 24, 39, 0.28);
 }
@@ -204,3 +204,4 @@
   font-size: 0.85rem;
   font-weight: 600;
 }
+

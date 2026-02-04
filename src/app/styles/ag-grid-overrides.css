@@ -131,7 +131,7 @@
 }
 
 .drop-toast {
-  background: rgba(15, 23, 42, 0.96);
+  background: rgba(0, 0, 0, 0.96);
   color: #f8fafc;
   padding: 10px 16px;
   border-radius: 8px;
@@ -144,7 +144,7 @@
 }
 
 .drop-toast.drop-toast--info {
-  background: rgba(15, 23, 42, 0.96);
+  background: rgba(0, 0, 0, 0.96);
 }
 
 .drop-toast.drop-toast--warning {
@@ -167,7 +167,7 @@
 .fastquote-confirm-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.55);
+  background: rgba(0, 0, 0, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -194,13 +194,13 @@
   margin: 0 0 8px;
   font-size: 1.15rem;
   font-weight: 600;
-  color: #111827;
+  color: #2b2b2b;
 }
 
 .fastquote-confirm-message {
   margin: 0 0 20px;
   font-size: 0.95rem;
-  color: #374151;
+  color: #585858;
   line-height: 1.4;
 }
 
@@ -221,7 +221,7 @@
 }
 
 .fastquote-confirm-btn--cancel {
-  background: #e5e7eb;
+  background: #d1d5db;
   color: #1f2937;
 }
 
@@ -230,7 +230,7 @@
 }
 
 .fastquote-confirm-btn--confirm {
-  background: #111827;
+  background: #000000;
   color: #ffffff;
   box-shadow: 0 6px 18px rgba(17, 24, 39, 0.35);
 }
@@ -298,7 +298,7 @@
 }
 .offer-products-grid .ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell,
 .offer-products-grid .ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell {
-  background-color: #e5e7eb !important;
+  background-color: #d1d5db !important;
 }
 
 /* Preserve price list cell colors when row is selected - make them darker like the row background */
@@ -386,7 +386,7 @@
 .offer-products-grid .offer-row--product.ag-row-selected .ag-cell,
 .offer-products-grid .offer-row--product.ag-row-range-selected .ag-cell,
 .offer-products-grid .offer-row--product.ag-row--context-menu-active .ag-cell {
-  background-color: #e5e7eb !important;
+  background-color: #d1d5db !important;
 }
 
 /* Hover state for product rows (only when not selected) - using :hover pseudo-class */
@@ -479,3 +479,4 @@
   font-weight: 400 !important;
   color: inherit !important;
 }
+
