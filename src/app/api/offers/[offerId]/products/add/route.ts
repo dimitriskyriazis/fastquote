@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
-import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from '../../../../../../lib/gridFilters';
+import {
+  buildQuickFilterClause,
+  buildTextMatchPredicate,
+  isSensitiveColumn,
+  mergeWhereClauses,
+  QueryParam,
+} from '../../../../../../lib/gridFilters';
 import { requirePermission } from '../../../../../../lib/authz';
 
 type TextFilterModel = {
@@ -147,51 +153,62 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
           ? columnExpressions['PartNumber'] 
           : null;
         
-        if (type === 'equals') {
-          if (isPartOrModel && otherColumnExpression) {
-            // Cross-search: search both PartNumber and ModelNumber
-            clauses.push(`(${partModelNumberSql(columnExpression)} = @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} = @${paramBase})`);
+        if (isPartOrModel) {
+          if (type === 'equals') {
+            if (otherColumnExpression) {
+              // Cross-search: search both PartNumber and ModelNumber
+              clauses.push(`(${partModelNumberSql(columnExpression)} = @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} = @${paramBase})`);
+              params.push({ key: paramBase, value: searchVal });
+            } else {
+              const expr = partModelNumberSql(columnExpression);
+              clauses.push(`${expr} = @${paramBase}`);
+              params.push({ key: paramBase, value: searchVal });
+            }
+          } else if (type === 'notEqual') {
+            const expr = partModelNumberSql(columnExpression);
+            clauses.push(`${expr} <> @${paramBase}`);
             params.push({ key: paramBase, value: searchVal });
+          } else if (type === 'startsWith') {
+            if (otherColumnExpression) {
+              // Cross-search: search both PartNumber and ModelNumber
+              clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
+              params.push({ key: paramBase, value: `${searchVal}%` });
+            } else {
+              const expr = partModelNumberSql(columnExpression);
+              clauses.push(`${expr} LIKE @${paramBase}`);
+              params.push({ key: paramBase, value: `${searchVal}%` });
+            }
+          } else if (type === 'endsWith') {
+            if (otherColumnExpression) {
+              // Cross-search: search both PartNumber and ModelNumber
+              clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
+              params.push({ key: paramBase, value: `%${searchVal}` });
+            } else {
+              const expr = partModelNumberSql(columnExpression);
+              clauses.push(`${expr} LIKE @${paramBase}`);
+              params.push({ key: paramBase, value: `%${searchVal}` });
+            }
           } else {
-            const expr = isPartOrModel ? partModelNumberSql(columnExpression) : columnExpression;
-            clauses.push(`${expr} = @${paramBase}`);
-            params.push({ key: paramBase, value: searchVal });
-          }
-        } else if (type === 'notEqual') {
-          const expr = isPartOrModel ? partModelNumberSql(columnExpression) : columnExpression;
-          clauses.push(`${expr} <> @${paramBase}`);
-          params.push({ key: paramBase, value: searchVal });
-        } else if (type === 'startsWith') {
-          if (isPartOrModel && otherColumnExpression) {
-            // Cross-search: search both PartNumber and ModelNumber
-            clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
-            params.push({ key: paramBase, value: `${searchVal}%` });
-          } else {
-            const expr = isPartOrModel ? partModelNumberSql(columnExpression) : columnExpression;
-            clauses.push(`${expr} LIKE @${paramBase}`);
-            params.push({ key: paramBase, value: `${searchVal}%` });
-          }
-        } else if (type === 'endsWith') {
-          if (isPartOrModel && otherColumnExpression) {
-            // Cross-search: search both PartNumber and ModelNumber
-            clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
-            params.push({ key: paramBase, value: `%${searchVal}` });
-          } else {
-            const expr = isPartOrModel ? partModelNumberSql(columnExpression) : columnExpression;
-            clauses.push(`${expr} LIKE @${paramBase}`);
-            params.push({ key: paramBase, value: `%${searchVal}` });
+            // contains (default)
+            if (otherColumnExpression) {
+              // Cross-search: search both PartNumber and ModelNumber
+              clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
+              params.push({ key: paramBase, value: `%${searchVal}%` });
+            } else {
+              const expr = partModelNumberSql(columnExpression);
+              clauses.push(`${expr} LIKE @${paramBase}`);
+              params.push({ key: paramBase, value: `%${searchVal}%` });
+            }
           }
         } else {
-          // contains (default)
-          if (isPartOrModel && otherColumnExpression) {
-            // Cross-search: search both PartNumber and ModelNumber
-            clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
-            params.push({ key: paramBase, value: `%${searchVal}%` });
-          } else {
-            const expr = isPartOrModel ? partModelNumberSql(columnExpression) : columnExpression;
-            clauses.push(`${expr} LIKE @${paramBase}`);
-            params.push({ key: paramBase, value: `%${searchVal}%` });
-          }
+          const mode = (type ?? 'contains') as 'contains' | 'equals' | 'startsWith' | 'endsWith' | 'notEqual';
+          const { clause, params: clauseParams } = buildTextMatchPredicate(columnExpression, value, {
+            paramKey: paramBase,
+            mode,
+            enablePhonetic: !isSensitiveColumn(col),
+          });
+          clauses.push(clause);
+          clauseParams.forEach((p) => params.push(p));
         }
         break;
       }
@@ -267,7 +284,11 @@ async function handleCategoryGrid(
 
   const { clauses, params } = buildWhereClauses(gridRequest.filterModel, columnExpressions);
   const whereSql = clauses.length ? `AND ${clauses.join(' AND ')}` : '';
-  const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, Object.values(columnExpressions));
+  const quickFilterColumns = Object.entries(columnExpressions).map(([colId, expression]) => ({
+    colId,
+    expression,
+  }));
+  const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, quickFilterColumns);
   const combinedWhereSql = mergeWhereClauses(whereSql, quickFilterClause.clause);
   const combinedParams = [...params, ...quickFilterClause.params];
 
@@ -357,7 +378,11 @@ async function handleProductGrid(
 
   const { clauses, params } = buildWhereClauses(gridRequest.filterModel, columnExpressions);
   const whereSql = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-  const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, Object.values(columnExpressions));
+  const quickFilterColumns = Object.entries(columnExpressions).map(([colId, expression]) => ({
+    colId,
+    expression,
+  }));
+  const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, quickFilterColumns);
   const combinedWhereSql = quickFilterClause.clause
     ? `${whereSql} ${quickFilterClause.clause}`.trim()
     : whereSql;

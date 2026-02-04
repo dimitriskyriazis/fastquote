@@ -13,7 +13,7 @@ export default function AccessDeniedPage({ windowsIdentity }: Props) {
           You signed in with a domain account that is not authorized for this application.
         </p>
         <p className="access-denied-page__contact">
-          To request access, please contact <strong>Dimitris Kyriazis (dim.kyriazis)</strong>.
+          To request access, please contact <strong>Dimitris Kyriazis (dim.kyriazis@telmaco.gr)</strong>.
         </p>
         {windowsIdentity && (
           <p className="access-denied-page__identity" aria-label="Logged in as">

@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import type { Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
-import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from "../../../lib/gridFilters";
+import {
+  buildQuickFilterClause,
+  buildTextMatchPredicate,
+  isSensitiveColumn,
+  mergeWhereClauses,
+  QueryParam,
+} from "../../../lib/gridFilters";
 import { requirePermission } from "../../../lib/authz";
 
 type TextFilterModel = {
@@ -82,7 +88,10 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   SupplierName: "dbo.Suppliers.Name",
   SupplierComment: "dbo.PriceLists.SupplierComment",
 };
-const QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
+const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
+  colId,
+  expression,
+}));
 
 function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
   if (!filterModel || Object.keys(filterModel).length === 0) return { where: "", params: [] as QueryParam[] };
@@ -99,19 +108,14 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
         const type = fm.type;
         const val = String(fm.filter ?? "");
         if (!val) break;
-        if (type === "contains") {
-          parts.push(`${columnExpression} LIKE @${pBase}`);
-          params.push({ key: pBase, value: `%${val}%` });
-        } else if (type === "equals") {
-          parts.push(`${columnExpression} = @${pBase}`);
-          params.push({ key: pBase, value: val });
-        } else if (type === "startsWith") {
-          parts.push(`${columnExpression} LIKE @${pBase}`);
-          params.push({ key: pBase, value: `${val}%` });
-        } else if (type === "endsWith") {
-          parts.push(`${columnExpression} LIKE @${pBase}`);
-          params.push({ key: pBase, value: `%${val}` });
-        }
+        const mode = (type ?? "contains") as "contains" | "equals" | "startsWith" | "endsWith" | "notEqual";
+        const { clause, params: clauseParams } = buildTextMatchPredicate(columnExpression, val, {
+          paramKey: pBase,
+          mode,
+          enablePhonetic: !isSensitiveColumn(col),
+        });
+        parts.push(clause);
+        clauseParams.forEach((p) => params.push(p));
         break;
       }
       case "number": {

@@ -3,7 +3,13 @@ import sql from "mssql";
 import type { ConnectionPool, Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
 import { resolveAuditUserId } from "../../../lib/auditTrail";
-import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from "../../../lib/gridFilters";
+import {
+  buildQuickFilterClause,
+  buildTextMatchPredicate,
+  isSensitiveColumn,
+  mergeWhereClauses,
+  QueryParam,
+} from "../../../lib/gridFilters";
 
 type TextFilterModel = {
   filterType: "text";
@@ -44,7 +50,10 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Enabled: "dbo.Markets.Enabled",
 };
 
-const QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
+const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
+  colId,
+  expression,
+}));
 
 const ALLOWED_ROW_GROUP_FIELDS = new Set(["SalesDivision"]);
 
@@ -90,19 +99,14 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
       const val = String((fm as TextFilterModel).filter ?? "");
       if (!val) return;
       const type = (fm as TextFilterModel).type;
-      if (type === "equals") {
-        parts.push(`${columnExpression} = @${pBase}`);
-        params.push({ key: pBase, value: val });
-      } else if (type === "startsWith") {
-        parts.push(`${columnExpression} LIKE @${pBase}`);
-        params.push({ key: pBase, value: `${val}%` });
-      } else if (type === "endsWith") {
-        parts.push(`${columnExpression} LIKE @${pBase}`);
-        params.push({ key: pBase, value: `%${val}` });
-      } else {
-        parts.push(`${columnExpression} LIKE @${pBase}`);
-        params.push({ key: pBase, value: `%${val}%` });
-      }
+      const mode = (type ?? "contains") as "contains" | "equals" | "startsWith" | "endsWith" | "notEqual";
+      const { clause, params: clauseParams } = buildTextMatchPredicate(columnExpression, val, {
+        paramKey: pBase,
+        mode,
+        enablePhonetic: !isSensitiveColumn(col),
+      });
+      parts.push(clause);
+      clauseParams.forEach((p) => params.push(p));
     } else if (fm.filterType === "set") {
       const values = Array.isArray(fm.values) ? fm.values : [];
       if (values.length === 0) return;

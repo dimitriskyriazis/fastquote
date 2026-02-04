@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Request as SqlRequest } from "mssql";
 import { getPool, sql } from "../../../../lib/sql";
-import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from "../../../../lib/gridFilters";
+import {
+  buildQuickFilterClause,
+  buildTextMatchPredicate,
+  isSensitiveColumn,
+  mergeWhereClauses,
+  QueryParam,
+} from "../../../../lib/gridFilters";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { requirePermission } from "../../../../lib/authz";
 
@@ -58,7 +64,10 @@ const BRAND_COLUMN_EXPRESSIONS: Record<string, string> = {
   BrandName: "dbo.Brands.Name",
 };
 
-const QUICK_FILTER_COLUMNS = ["dbo.Brands.Name", "dbo.Brands.ID"];
+const QUICK_FILTER_COLUMNS = [
+  { colId: "Name", expression: "dbo.Brands.Name" },
+  { colId: "BrandID", expression: "dbo.Brands.ID" },
+];
 
 const normalizeInt = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
@@ -99,23 +108,14 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
     const pBase = `${col}_${idx}`;
     const expr = BRAND_COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
     const type = (fm as TextFilterModel).type;
-    if (type === "equals") {
-      parts.push(`${expr} = @${pBase}`);
-      params.push({ key: pBase, value: val });
-      return;
-    }
-    if (type === "startsWith") {
-      parts.push(`${expr} LIKE @${pBase}`);
-      params.push({ key: pBase, value: `${val}%` });
-      return;
-    }
-    if (type === "endsWith") {
-      parts.push(`${expr} LIKE @${pBase}`);
-      params.push({ key: pBase, value: `%${val}` });
-      return;
-    }
-    parts.push(`${expr} LIKE @${pBase}`);
-    params.push({ key: pBase, value: `%${val}%` });
+    const mode = (type ?? "contains") as "contains" | "equals" | "startsWith" | "endsWith" | "notEqual";
+    const { clause, params: clauseParams } = buildTextMatchPredicate(expr, val, {
+      paramKey: pBase,
+      mode,
+      enablePhonetic: !isSensitiveColumn(col),
+    });
+    parts.push(clause);
+    clauseParams.forEach((p) => params.push(p));
   });
 
   return {

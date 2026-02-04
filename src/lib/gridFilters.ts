@@ -1,5 +1,7 @@
 export type QueryParam = { key: string; value: string | number | boolean };
 
+export type QuickFilterColumn = { colId: string; expression: string };
+
 // Normalize part/model numbers by removing special characters
 const normalizePartModelNumber = (value: string): string => {
   // Remove common special characters: dashes, underscores, spaces, periods, etc.
@@ -31,9 +33,132 @@ const buildColumnQuickFilterExpression = (expression: string) => {
   return `UPPER(COALESCE(CAST(${expression} AS NVARCHAR(MAX)), ''))`;
 };
 
+const hasDigits = (value: string): boolean => /\d/.test(value);
+
+const buildAdjacentSwapVariants = (value: string): string[] => {
+  if (value.length < 2) return [];
+  const variants = new Set<string>();
+  for (let i = 0; i < value.length - 1; i += 1) {
+    const chars = value.split('');
+    const tmp = chars[i];
+    chars[i] = chars[i + 1];
+    chars[i + 1] = tmp;
+    variants.add(chars.join(''));
+  }
+  return Array.from(variants);
+};
+
+export const isSensitiveColumn = (colId: string): boolean => {
+  if (!colId) return true;
+  const normalized = colId.trim();
+  if (!normalized) return true;
+  const lower = normalized.toLowerCase();
+  if (['partnumber', 'modelnumber', 'erpcode', 'weblink'].includes(lower)) return true;
+  if (/(^|[^a-z])id$/i.test(normalized)) return true;
+  if (/code/i.test(normalized)) return true;
+  if (/number/i.test(normalized)) return true;
+  if (/price/i.test(normalized)) return true;
+  if (/cost/i.test(normalized)) return true;
+  if (/date/i.test(normalized)) return true;
+  if (/link/i.test(normalized)) return true;
+  if (/url/i.test(normalized)) return true;
+  return false;
+};
+
+type TextMatchMode = 'contains' | 'equals' | 'startsWith' | 'endsWith' | 'notEqual';
+
+export const buildTextMatchPredicate = (
+  expression: string,
+  term: string,
+  options: { paramKey: string; mode?: TextMatchMode; enablePhonetic?: boolean },
+): { clause: string; params: QueryParam[] } => {
+  const mode = options.mode ?? 'contains';
+  const trimmed = term.trim();
+  const upper = trimmed.toUpperCase();
+  const safeExpr = `COALESCE(CAST(${expression} AS NVARCHAR(MAX)), '')`;
+  const ciExpr = `UPPER(${safeExpr})`;
+  const params: QueryParam[] = [];
+
+  let value = upper;
+  if (mode === 'contains') value = `%${upper}%`;
+  if (mode === 'startsWith') value = `${upper}%`;
+  if (mode === 'endsWith') value = `%${upper}`;
+
+  const paramKey = options.paramKey;
+  if (mode === 'equals') {
+    params.push({ key: paramKey, value: upper });
+  } else if (mode === 'notEqual') {
+    params.push({ key: paramKey, value: upper });
+  } else {
+    params.push({ key: paramKey, value });
+  }
+
+  let clause = '';
+  if (mode === 'equals') {
+    clause = `${ciExpr} = @${paramKey}`;
+  } else if (mode === 'notEqual') {
+    clause = `${ciExpr} <> @${paramKey}`;
+  } else {
+    clause = `${ciExpr} LIKE @${paramKey}`;
+  }
+
+  const extraClauses: string[] = [];
+
+  if (mode === 'contains' && trimmed.length >= 4 && trimmed.length <= 6 && !hasDigits(trimmed)) {
+    const upperTerm = trimmed.toUpperCase();
+    const firstLetterGuard = `LEFT(${ciExpr}, 1) = LEFT(UPPER(@${paramKey}_first), 1)`;
+    params.push({ key: `${paramKey}_first`, value: upperTerm });
+    const variants = buildAdjacentSwapVariants(trimmed).filter((v) => v !== trimmed);
+    variants.forEach((variant, idx) => {
+      const key = `${paramKey}_sw${idx}`;
+      params.push({ key, value: `%${variant.toUpperCase()}%` });
+      extraClauses.push(`(${ciExpr} LIKE @${key} AND ${firstLetterGuard})`);
+    });
+
+    const insertionPatterns: string[] = [];
+    for (let i = 0; i <= upperTerm.length; i += 1) {
+      insertionPatterns.push(`${upperTerm.slice(0, i)}%${upperTerm.slice(i)}`);
+    }
+    insertionPatterns.forEach((pattern, idx) => {
+      const key = `${paramKey}_ins${idx}`;
+      params.push({ key, value: `%${pattern}%` });
+      extraClauses.push(`(${ciExpr} LIKE @${key} AND ${firstLetterGuard})`);
+    });
+
+    const substitutionPatterns: string[] = [];
+    for (let i = 0; i < upperTerm.length; i += 1) {
+      substitutionPatterns.push(`${upperTerm.slice(0, i)}%${upperTerm.slice(i + 1)}`);
+    }
+    substitutionPatterns.forEach((pattern, idx) => {
+      const key = `${paramKey}_sub${idx}`;
+      params.push({ key, value: `%${pattern}%` });
+      extraClauses.push(`(${ciExpr} LIKE @${key} AND ${firstLetterGuard})`);
+    });
+  }
+
+  const shouldPhonetic =
+    Boolean(options.enablePhonetic) &&
+    mode === 'contains' &&
+    trimmed.length >= 6 &&
+    !hasDigits(trimmed);
+
+  if (shouldPhonetic) {
+    const phoneticKey = `${paramKey}_ph`;
+    params.push({ key: phoneticKey, value: trimmed });
+    const phoneticClause = `(DIFFERENCE(${safeExpr}, @${phoneticKey}) >= 3 AND LEFT(${ciExpr}, 1) = LEFT(UPPER(@${phoneticKey}), 1))`;
+    extraClauses.push(phoneticClause);
+  }
+
+  if (extraClauses.length > 0) {
+    clause = `(${[clause, ...extraClauses].join(' OR ')})`;
+  }
+
+  return { clause, params };
+};
+
 export const buildQuickFilterClause = (
   quickFilterText: string | null | undefined,
-  columnExpressions: string[],
+  columnExpressions: Array<QuickFilterColumn | string>,
   paramPrefix = "quickFilter",
 ): { clause: string; params: QueryParam[] } => {
   const normalized = typeof quickFilterText === "string" ? quickFilterText.trim() : "";
@@ -44,16 +169,34 @@ export const buildQuickFilterClause = (
     .map((term) => term.trim())
     .filter(Boolean);
   if (rawTerms.length === 0) return { clause: "", params: [] };
-  const columns = Array.from(new Set(columnExpressions.filter((expr) => typeof expr === "string" && expr.length > 0)));
+  const normalizedColumns = columnExpressions
+    .map((col) => {
+      if (typeof col === "string") {
+        return { colId: col, expression: col };
+      }
+      if (col && typeof col.expression === "string" && col.expression.length > 0) {
+        const colId = typeof col.colId === "string" && col.colId.length > 0 ? col.colId : col.expression;
+        return { colId, expression: col.expression };
+      }
+      return null;
+    })
+    .filter((col): col is QuickFilterColumn => Boolean(col));
+  const columns = Array.from(
+    new Map(normalizedColumns.map((col) => [col.expression, col])).values(),
+  );
   if (columns.length === 0) return { clause: "", params: [] };
 
   const parts: string[] = [];
   const params: QueryParam[] = [];
 
   // Find PartNumber and ModelNumber column expressions
-  const partNumberExpr = columns.find((expr) => /\.PartNumber/i.test(expr));
-  const modelNumberExpr = columns.find((expr) => /\.ModelNumber/i.test(expr));
-  const hasPartModelCrossSearch = partNumberExpr && modelNumberExpr;
+  const partNumberColumn = columns.find(
+    (col) => col.colId === "PartNumber" || /\.PartNumber/i.test(col.expression),
+  );
+  const modelNumberColumn = columns.find(
+    (col) => col.colId === "ModelNumber" || /\.ModelNumber/i.test(col.expression),
+  );
+  const hasPartModelCrossSearch = partNumberColumn && modelNumberColumn;
 
   rawTerms.forEach((term, termIdx) => {
     // Normalize term for part/model number searches
@@ -61,33 +204,49 @@ export const buildQuickFilterClause = (
     const likeParts: string[] = [];
     const processedColumns = new Set<string>();
     
-    columns.forEach((expr, colIdx) => {
-      const isPartNumber = partNumberExpr && expr === partNumberExpr;
-      const isModelNumber = modelNumberExpr && expr === modelNumberExpr;
+    columns.forEach((col, colIdx) => {
+      const expr = col.expression;
+      const isPartNumber = partNumberColumn && expr === partNumberColumn.expression;
+      const isModelNumber = modelNumberColumn && expr === modelNumberColumn.expression;
       
       // For PartNumber and ModelNumber, add cross-search
       if (isPartNumber && hasPartModelCrossSearch && !processedColumns.has('partmodel')) {
         // When searching PartNumber, also search ModelNumber
         const paramKey = `${paramPrefix}_${termIdx}_partmodel`;
         params.push({ key: paramKey, value: `%${normalizedTerm}%` });
-        likeParts.push(`(${partModelNumberSql(expr)} LIKE @${paramKey} OR ${partModelNumberSql(modelNumberExpr)} LIKE @${paramKey})`);
+        likeParts.push(
+          `(${partModelNumberSql(expr)} LIKE @${paramKey} OR ${partModelNumberSql(modelNumberColumn.expression)} LIKE @${paramKey})`,
+        );
         processedColumns.add('partmodel');
         processedColumns.add(expr);
-        processedColumns.add(modelNumberExpr);
+        processedColumns.add(modelNumberColumn.expression);
       } else if (isModelNumber && hasPartModelCrossSearch && !processedColumns.has('partmodel')) {
         // When searching ModelNumber, also search PartNumber
         const paramKey = `${paramPrefix}_${termIdx}_partmodel`;
         params.push({ key: paramKey, value: `%${normalizedTerm}%` });
-        likeParts.push(`(${partModelNumberSql(partNumberExpr)} LIKE @${paramKey} OR ${partModelNumberSql(expr)} LIKE @${paramKey})`);
+        likeParts.push(
+          `(${partModelNumberSql(partNumberColumn.expression)} LIKE @${paramKey} OR ${partModelNumberSql(expr)} LIKE @${paramKey})`,
+        );
         processedColumns.add('partmodel');
         processedColumns.add(expr);
-        processedColumns.add(partNumberExpr);
+        processedColumns.add(partNumberColumn.expression);
       } else if (!processedColumns.has(expr)) {
         // Regular column search
         const paramKey = `${paramPrefix}_${termIdx}_${colIdx}`;
-        const searchValue = (isPartNumber || isModelNumber) ? normalizedTerm : term.toUpperCase();
-        params.push({ key: paramKey, value: `%${searchValue}%` });
-        likeParts.push(`${buildColumnQuickFilterExpression(expr)} LIKE @${paramKey}`);
+        const searchValue = (isPartNumber || isModelNumber) ? normalizedTerm : term;
+        if (isPartNumber || isModelNumber) {
+          params.push({ key: paramKey, value: `%${searchValue}%` });
+          likeParts.push(`${buildColumnQuickFilterExpression(expr)} LIKE @${paramKey}`);
+        } else {
+          const sensitive = isSensitiveColumn(col.colId);
+          const { clause, params: clauseParams } = buildTextMatchPredicate(
+            expr,
+            searchValue,
+            { paramKey, mode: 'contains', enablePhonetic: !sensitive },
+          );
+          likeParts.push(clause);
+          clauseParams.forEach((p) => params.push(p));
+        }
         processedColumns.add(expr);
       }
     });
@@ -98,7 +257,7 @@ export const buildQuickFilterClause = (
   });
 
   if (parts.length === 0) return { clause: "", params };
-  return { clause: `AND ${parts.join(" AND ")}`, params };
+  return { clause: `AND (${parts.join(" OR ")})`, params };
 };
 
 export const mergeWhereClauses = (baseWhere: string, clause: string): string => {

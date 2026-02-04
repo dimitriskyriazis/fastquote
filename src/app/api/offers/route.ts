@@ -3,7 +3,13 @@ import sql from 'mssql';
 import type { Request as SqlRequest } from 'mssql';
 import { getPool } from '../../../lib/sql';
 import { resolveAuditUserId } from '../../../lib/auditTrail';
-import { buildQuickFilterClause, mergeWhereClauses, QueryParam } from '../../../lib/gridFilters';
+import {
+  buildQuickFilterClause,
+  buildTextMatchPredicate,
+  isSensitiveColumn,
+  mergeWhereClauses,
+  QueryParam,
+} from '../../../lib/gridFilters';
 import { requirePermission } from '../../../lib/authz';
 
 type TextFilterModel = {
@@ -124,7 +130,10 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferDate: 'dbo.Offer.OfferDate',
   ModifiedOn: LATEST_MODIFIED_EXPRESSION,
 };
-const QUICK_FILTER_COLUMNS = Object.values(COLUMN_EXPRESSIONS);
+const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
+  colId,
+  expression,
+}));
 
 const ALLOWED_ROW_GROUP_FIELDS = new Set([
   'CustomerName',
@@ -205,19 +214,14 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
         const type = fm.type; // contains, equals, notEqual, startsWith, endsWith
         const val = String(fm.filter ?? '');
         if (!val) break;
-        if (type === 'contains') {
-          parts.push(`${columnExpression} LIKE @${pBase}`);
-          params.push({ key: pBase, value: `%${val}%` });
-        } else if (type === 'equals') {
-          parts.push(`${columnExpression} = @${pBase}`);
-          params.push({ key: pBase, value: val });
-        } else if (type === 'startsWith') {
-          parts.push(`${columnExpression} LIKE @${pBase}`);
-          params.push({ key: pBase, value: `${val}%` });
-        } else if (type === 'endsWith') {
-          parts.push(`${columnExpression} LIKE @${pBase}`);
-          params.push({ key: pBase, value: `%${val}` });
-        }
+        const mode = (type ?? 'contains') as 'contains' | 'equals' | 'startsWith' | 'endsWith' | 'notEqual';
+        const { clause, params: clauseParams } = buildTextMatchPredicate(columnExpression, val, {
+          paramKey: pBase,
+          mode,
+          enablePhonetic: !isSensitiveColumn(col),
+        });
+        parts.push(clause);
+        clauseParams.forEach((p) => params.push(p));
         break;
       }
       case 'number': {
