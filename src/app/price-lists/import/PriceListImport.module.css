@@ -57,6 +57,10 @@
   gap: 6px;
 }
 
+.fieldNudgeDown {
+  margin-top: 14px;
+}
+
 .label {
   font-size: 0.82rem;
   font-weight: 700;
@@ -95,8 +99,8 @@
 
 .input:focus {
   outline: none;
-  border-color: #dc2626;
-  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.18);
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
   background: #ffffff;
 }
 
@@ -193,14 +197,14 @@
 }
 
 .uploadArea:hover {
-  border-color: #dc2626;
-  background: #fff5f5;
+  border-color: #2563eb;
+  background: #eff6ff;
   transform: translateY(-1px);
 }
 
 .uploadAreaDragging {
-  border-color: #b91c1c;
-  background: #fee2e2;
+  border-color: #1d4ed8;
+  background: #dbeafe;
   transform: translateY(-1px);
 }
 
@@ -763,5 +767,3 @@
   pointer-events: none;
   box-shadow: 0 8px 16px rgba(15, 23, 42, 0.18);
 }
-
-

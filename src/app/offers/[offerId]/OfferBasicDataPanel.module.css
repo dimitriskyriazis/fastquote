@@ -302,7 +302,7 @@
 }
 
 .fieldControl:focus {
-  outline: 2px solid #b91c1c;
+  outline: 2px solid #2563eb;
   outline-offset: 1px;
 }
 
@@ -422,6 +422,7 @@
 .contactToggleControl input {
   width: 18px;
   height: 18px;
+  accent-color: #000000;
 }
 
 .contactModalError {

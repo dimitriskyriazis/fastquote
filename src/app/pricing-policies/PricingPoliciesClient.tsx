@@ -20,7 +20,9 @@ import { showConfirmDialog } from "../../lib/confirm";
 import { showToastMessage } from "../../lib/toast";
 import { getUserNumberLocale, parseLocaleNumber } from "../../lib/localeNumber";
 import LookupModal from "../components/LookupModal";
+import AddBrandModal from "../components/AddBrandModal";
 import lookupStyles from "../components/LookupModal.module.css";
+import lookupButtonStyles from "../components/LookupAddButton.module.css";
 import type { DropdownOption } from "../../lib/dropdownOptions";
 import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from "../components/useActionMenuCoordinator";
 import { useActionMenuPosition } from "../components/useActionMenuPosition";
@@ -199,9 +201,13 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
   const { userId } = useAuditUser();
 
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
+  const [localBrands, setLocalBrands] = useState(brands);
   useEffect(() => {
     setLocalPricingPolicies(pricingPolicies);
   }, [pricingPolicies]);
+  useEffect(() => {
+    setLocalBrands(brands);
+  }, [brands]);
 
   const [isAddPricingPolicyOpen, setIsAddPricingPolicyOpen] = useState(false);
   const [newPricingPolicyName, setNewPricingPolicyName] = useState("");
@@ -213,6 +219,7 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
 
   // Add Brand modal state
   const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
+  const [isCreateBrandOpen, setIsCreateBrandOpen] = useState(false);
   const [brandText, setBrandText] = useState("");
   const [selectedBrandId, setSelectedBrandId] = useState<string>("");
   const [isBrandListOpen, setIsBrandListOpen] = useState(false);
@@ -281,13 +288,13 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
 
   const filteredBrandOptions = useMemo(() => {
     const query = brandText.trim().toLowerCase();
-    if (!query) return brands;
-    return brands.filter((option) => {
+    if (!query) return localBrands;
+    return localBrands.filter((option) => {
       const label = option.label.toLowerCase();
       const value = option.value.toLowerCase();
       return label.includes(query) || value.includes(query);
     });
-  }, [brands, brandText]);
+  }, [localBrands, brandText]);
 
   useEffect(() => () => cancelBrandListClose(), [cancelBrandListClose]);
   useEffect(() => {
@@ -304,6 +311,18 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
     setBrandError(null);
     setIsBrandListOpen(false);
     setIsAddBrandOpen(true);
+  }, []);
+
+  const handleBrandCreated = useCallback((brand: { id: number; name: string }) => {
+    const option = { value: String(brand.id), label: brand.name };
+    setLocalBrands((prev) => {
+      if (prev.some((existing) => existing.value === option.value)) return prev;
+      return [...prev, option];
+    });
+    setSelectedBrandId(option.value);
+    setBrandText(option.label);
+    setIsBrandListOpen(false);
+    setBrandError(null);
   }, []);
 
   const handleAddBrand = useCallback(async () => {
@@ -787,9 +806,20 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
         bodyClassName={styles.modalBodyTall}
       >
         <div className={lookupStyles.field}>
-          <label className={lookupStyles.fieldLabel} htmlFor="add-brand-input">
-            Brand <span className={lookupStyles.requiredMark}>*</span>
-          </label>
+          <div className={lookupStyles.labelRow}>
+            <label className={lookupStyles.fieldLabel} htmlFor="add-brand-input">
+              <span className={lookupStyles.labelText}>
+                Brand <span className={lookupStyles.requiredMark}>*</span>
+              </span>
+            </label>
+            <button
+              type="button"
+              className={lookupButtonStyles.lookupAddButton}
+              onClick={() => setIsCreateBrandOpen(true)}
+            >
+              Add new Brand
+            </button>
+          </div>
           <div className={styles.comboWrapper}>
             <input
               id="add-brand-input"
@@ -822,6 +852,11 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
           </div>
         </div>
       </LookupModal>
+      <AddBrandModal
+        open={isCreateBrandOpen}
+        onClose={() => setIsCreateBrandOpen(false)}
+        onCreated={handleBrandCreated}
+      />
     </main>
   );
 }

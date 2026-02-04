@@ -88,6 +88,23 @@
   text-transform: uppercase;
 }
 
+.labelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.labelText {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.fieldNudgeDown {
+  margin-top: 12px;
+}
+
 .fieldHint {
   font-size: 0.72rem;
   color: #475569;
@@ -181,10 +198,14 @@
   color: #0f172a;
 }
 
+.checkboxLabel input[type="checkbox"] {
+  accent-color: #000000;
+}
+
 .fieldControl:focus {
   outline: none;
-  border-color: #dc2626;
-  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.18);
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
 }
 
 .textarea {

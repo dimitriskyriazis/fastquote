@@ -131,6 +131,10 @@
   color: #0f172a;
 }
 
+.marketToggleControl input[type="checkbox"] {
+  accent-color: #000000;
+}
+
 .fieldControl option {
   color: #0f172a;
   font-weight: 500;

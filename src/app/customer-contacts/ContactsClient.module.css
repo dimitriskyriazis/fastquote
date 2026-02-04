@@ -189,6 +189,10 @@
   color: #0f172a;
 }
 
+.contactToggleControl input[type="checkbox"] {
+  accent-color: #000000;
+}
+
 .comboWrapper {
   position: relative;
   display: flex;

@@ -11,6 +11,8 @@ import {
   type DragEvent,
 } from "react";
 import Link from "next/link";
+import AddBrandModal from "../../components/AddBrandModal";
+import lookupButtonStyles from "../../components/LookupAddButton.module.css";
 import { useRouter } from "next/navigation";
 import type * as XLSXTypes from "xlsx";
 import type { DropdownOption } from "../../../lib/dropdownOptions";
@@ -572,6 +574,7 @@ export default function PriceListImportClient({
   const [localBrands, setLocalBrands] = useState<DropdownOption[]>(brands);
   const [brandsLoading, setBrandsLoading] = useState(false);
   const [brandsError, setBrandsError] = useState<string | null>(null);
+  const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
   const [localPricingPolicyRules, setLocalPricingPolicyRules] = useState(pricingPolicyRules);
   const [isAddPricingPolicyRuleOpen, setIsAddPricingPolicyRuleOpen] = useState(false);
@@ -859,6 +862,21 @@ export default function PriceListImportClient({
   const updateField = useCallback(<K extends keyof FormValues>(key: K, value: FormValues[K]) => {
     setValues((prev) => ({ ...prev, [key]: value }));
   }, []);
+
+  const handleBrandCreated = useCallback(
+    (brand: { id: number; name: string }) => {
+      const option = { value: String(brand.id), label: brand.name };
+      setLocalBrands((prev) => {
+        if (prev.some((existing) => existing.value === option.value)) return prev;
+        return [...prev, option];
+      });
+      updateField("brandId", option.value);
+      setBrandText(option.label);
+      setBrandError(null);
+      setBrandsError(null);
+    },
+    [updateField],
+  );
 
   const togglePolicySelection = useCallback((policyId: number) => {
     setPolicyPickerSelection((prev) => {
@@ -1375,7 +1393,7 @@ export default function PriceListImportClient({
             <div className={styles.fieldStack}>
               <div className={styles.sectionHeading}>Price List Details</div>
               <div className={styles.fieldRow}>
-                <label className={styles.field}>
+                <label className={`${styles.field} ${styles.fieldNudgeDown}`}>
                   <span className={styles.label}>
                     Name <span className={styles.requiredMark}>*</span>
                   </span>
@@ -1388,8 +1406,19 @@ export default function PriceListImportClient({
                   />
                 </label>
                 <div className={`${styles.field} ${styles.comboWrapper}`}>
-                  <span className={styles.label}>
-                    Brand <span className={styles.requiredMark}>*</span>
+                  <span className={styles.lookupLabelRow}>
+                    <span className={styles.labelText}>
+                      <span className={styles.label}>
+                        Brand <span className={styles.requiredMark}>*</span>
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      className={lookupButtonStyles.lookupAddButton}
+                      onClick={() => setIsAddBrandOpen(true)}
+                    >
+                      Add new Brand
+                    </button>
                   </span>
                   <input
                     autoComplete="off"
@@ -1913,6 +1942,11 @@ export default function PriceListImportClient({
           </div>
         </form>
       </section>
+      <AddBrandModal
+        open={isAddBrandOpen}
+        onClose={() => setIsAddBrandOpen(false)}
+        onCreated={handleBrandCreated}
+      />
     </main>
       <LookupModal
         open={isRulePickerOpen}

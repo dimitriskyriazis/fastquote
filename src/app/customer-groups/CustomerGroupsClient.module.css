@@ -164,3 +164,7 @@
   font-size: 0.9rem;
   color: #0f172a;
 }
+
+.groupToggleControl input[type="checkbox"] {
+  accent-color: #000000;
+}

@@ -2,7 +2,9 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import LookupModal from '../components/LookupModal';
+import AddBrandModal from '../components/AddBrandModal';
 import lookupStyles from '../components/LookupModal.module.css';
+import lookupButtonStyles from '../components/LookupAddButton.module.css';
 import { showToastMessage } from '../../lib/toast';
 
 type LookupOption = {
@@ -89,6 +91,7 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
   const [brandText, setBrandText] = useState('');
   const [isBrandListOpen, setIsBrandListOpen] = useState(false);
   const brandListTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
 
   const loadLookups = useCallback(async () => {
     setLookupsLoading(true);
@@ -171,6 +174,27 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
       setIsBrandListOpen(false);
     },
     [cancelBrandListClose, updateFormField],
+  );
+
+  const handleBrandCreated = useCallback(
+    (brand: { id: number; name: string }) => {
+      setLookups((prev) => {
+        const base =
+          prev ??
+          ({
+            brands: [],
+            categories: [],
+            subCategories: [],
+            types: [],
+          } as ProductLookups);
+        if (base.brands.some((existing) => existing.id === brand.id)) return base;
+        return { ...base, brands: [...base.brands, { id: brand.id, name: brand.name }] };
+      });
+      updateFormField('brandId', String(brand.id));
+      setBrandText(brand.name);
+      setIsBrandListOpen(false);
+    },
+    [updateFormField],
   );
 
   const handleCreateProduct = useCallback(async () => {
@@ -274,9 +298,20 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
     >
       <div className={lookupStyles.fieldGrid}>
         <div className={`${lookupStyles.field} ${lookupStyles.fieldHalf}`}>
-          <label className={lookupStyles.fieldLabel} htmlFor="product-brand">
-            Brand <span className={lookupStyles.requiredMark}>*</span>
-          </label>
+          <div className={lookupStyles.labelRow}>
+            <label className={lookupStyles.fieldLabel} htmlFor="product-brand">
+              <span className={lookupStyles.labelText}>
+                Brand <span className={lookupStyles.requiredMark}>*</span>
+              </span>
+            </label>
+            <button
+              type="button"
+              className={lookupButtonStyles.lookupAddButton}
+              onClick={() => setIsAddBrandOpen(true)}
+            >
+              Add new Brand
+            </button>
+          </div>
           <div className={lookupStyles.comboWrapper}>
             <input
               id="product-brand"
@@ -307,7 +342,7 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
             ) : null}
           </div>
         </div>
-        <div className={`${lookupStyles.field} ${lookupStyles.fieldHalf}`}>
+        <div className={`${lookupStyles.field} ${lookupStyles.fieldHalf} ${lookupStyles.fieldNudgeDown}`}>
           <label className={lookupStyles.fieldLabel} htmlFor="product-type">
             Type
           </label>
@@ -453,6 +488,12 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
           </label>
         </div>
       </div>
+      <AddBrandModal
+        open={isAddBrandOpen}
+        onClose={() => setIsAddBrandOpen(false)}
+        onCreated={handleBrandCreated}
+        overlayClassName={lookupStyles.overlayHigh}
+      />
     </LookupModal>
   );
 }
