@@ -578,7 +578,7 @@ export async function POST(req: NextRequest) {
 
     const grandTotalRow = {
       BrandID: null,
-      BrandName: "Grand Total",
+      BrandName: "Minimum per Policy",
       policies: grandPolicies,
       totalTelmacoDiscount: grandTelmacoValues.length > 0 ? Math.min(...grandTelmacoValues) : null,
       totalCustomerDiscount: grandCustomerValues.length > 0 ? Math.min(...grandCustomerValues) : null,

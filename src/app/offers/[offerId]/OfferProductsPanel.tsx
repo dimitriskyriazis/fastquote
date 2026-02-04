@@ -2140,6 +2140,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         cellClass: [...actualNumericCellClass, styles.redDataCell],
         cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
       },
+      {
+        field: 'Comment',
+        headerName: 'Comment',
+        filter: 'agTextColumnFilter',
+        editable: false,
+        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+      },
     ];
     const columnMap = new Map<string, ColDef>();
     baseColumns.forEach((column) => {

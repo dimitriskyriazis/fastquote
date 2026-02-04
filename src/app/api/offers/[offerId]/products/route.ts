@@ -95,6 +95,7 @@ type ProductRow = {
   WebLink: string | null;
   Quantity: number | null;
   Description: string | null;
+  Comment: string | null;
   CustomerDiscount: number | null;
   NetUnitPrice: number | null;
   TotalPrice: number | null;
@@ -226,6 +227,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   ModelNumber: 'p.ModelNumber',
   Quantity: 'od.Quantity',
   Description: 'od.ProductDescription',
+  Comment: 'od.[Comment]',
   CustomerDiscount: 'od.CustomerDiscount',
   NetUnitPrice: 'od.NetUnitPrice',
   TotalPrice: 'od.TotalPrice',

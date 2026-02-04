@@ -15,7 +15,6 @@ import type {
 import { createPortal } from "react-dom";
 import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
-import type { GridResponse } from "../components/AgGridAll";
 import styles from "./PricingPoliciesClient.module.css";
 import { showConfirmDialog } from "../../lib/confirm";
 import { showToastMessage } from "../../lib/toast";
@@ -197,7 +196,6 @@ const isDefaultPricingPolicyName = (name: string): boolean => {
 
 export default function PricingPoliciesClient({ pricingPolicies, brands }: Props) {
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
-  const pendingGrandTotalRef = useRef<Record<string, unknown> | null>(null);
   const { userId } = useAuditUser();
 
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
@@ -369,32 +367,17 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
     }
   }, [defaultPolicyId]);
 
-  const applyGrandTotalRow = useCallback(() => {
-    const api = gridApiRef.current;
-    if (!api) return;
-    const grandTotal = pendingGrandTotalRef.current;
-    try {
-      api.setGridOption("pinnedBottomRowData", grandTotal ? [grandTotal] : []);
-    } catch (err) {
-      console.warn("Failed to apply grand total row", err);
-    }
-  }, []);
-
   const handleGridReady = useCallback(
     (api: GridApi<Record<string, unknown>>) => {
       gridApiRef.current = api;
-      applyGrandTotalRow();
       enforceDefaultPolicyFirst(api);
     },
-    [applyGrandTotalRow, enforceDefaultPolicyFirst],
+    [enforceDefaultPolicyFirst],
   );
 
-  const handleResponse = useCallback((response: GridResponse | null) => {
-    const raw = response as (GridResponse & { grandTotal?: Record<string, unknown> | null }) | null;
-    pendingGrandTotalRef.current = raw?.grandTotal ?? null;
-    applyGrandTotalRow();
+  const handleResponse = useCallback(() => {
     enforceDefaultPolicyFirst(gridApiRef.current);
-  }, [applyGrandTotalRow, enforceDefaultPolicyFirst]);
+  }, [enforceDefaultPolicyFirst]);
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const colId = event.column?.getColId?.() ?? event.colDef?.colId ?? "";

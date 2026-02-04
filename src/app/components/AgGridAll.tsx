@@ -244,7 +244,7 @@ const scheduleDeselectAllRows = (api?: GridApi<RowData> | null) => {
   }, 0);
 };
 
-const QUICK_SEARCH_REFRESH_DEBOUNCE_MS = 220;
+const QUICK_SEARCH_REFRESH_DEBOUNCE_MS = 800;
 
 // HOOKS - Caret & Editor Focus Management
 const useMutationCaret = () => {
@@ -1892,6 +1892,44 @@ export default function AgGridAll({
   useEffect(() => {
     const shell = shellRef.current;
     if (!shell) return;
+    const handleFilterTab = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const element = resolveElementFromEventTarget(event.target ?? null);
+      if (!element?.closest('.ag-floating-filter')) return;
+      const activeField = element.matches('input, select, textarea, [contenteditable="true"]')
+        ? (element as HTMLElement)
+        : (element.closest('input, select, textarea, [contenteditable="true"]') as HTMLElement | null);
+      if (!activeField) return;
+      const focusables = Array.from(
+        shell.querySelectorAll<HTMLElement>(
+          '.ag-floating-filter input, .ag-floating-filter select, .ag-floating-filter textarea, .ag-floating-filter [contenteditable="true"]',
+        ),
+      ).filter((node) => {
+        if (node.tabIndex < 0) return false;
+        if (node.getAttribute('aria-disabled') === 'true') return false;
+        if (node instanceof HTMLInputElement || node instanceof HTMLSelectElement || node instanceof HTMLTextAreaElement) {
+          if (node.disabled) return false;
+        }
+        return node.offsetParent !== null;
+      });
+      const currentIndex = focusables.indexOf(activeField);
+      if (currentIndex === -1) return;
+      const nextIndex = currentIndex + (event.shiftKey ? -1 : 1);
+      const nextField = focusables[nextIndex];
+      if (!nextField) return;
+      event.preventDefault();
+      event.stopPropagation();
+      nextField.focus();
+    };
+    shell.addEventListener('keydown', handleFilterTab, true);
+    return () => {
+      shell.removeEventListener('keydown', handleFilterTab, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell) return;
     const handleMouseDownCapture = (event: MouseEvent) => {
       if (event.button !== 2) return;
       const element = resolveElementFromEventTarget(event.target ?? null);
@@ -2493,8 +2531,9 @@ export default function AgGridAll({
 
   const dcd: ColDef = useMemo(() => {
     const baseFilterParams = {
-      buttons: ['apply', 'clear'] as const,
-      closeOnApply: true,
+      // Apply filters automatically after typing stops.
+      debounceMs: 800,
+      buttons: ['clear'] as const,
     };
     const incomingFilterParams = defaultColDef?.filterParams;
     const mergedFilterParams = typeof incomingFilterParams === 'object' && incomingFilterParams !== null
