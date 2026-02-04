@@ -8,6 +8,7 @@ import type {
   GridApi,
   GetContextMenuItemsParams,
   ICellRendererParams,
+  MenuItemDef,
 } from "ag-grid-community";
 import { createPortal } from "react-dom";
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from "../components/actionMenuMarkers";
@@ -38,6 +39,17 @@ const normalizeCustomerId = (value: unknown): number | null => {
   }
   return null;
 };
+
+const createOfferMenuIcon = `
+  <span class="fastquote-menu-icon fastquote-menu-icon--copy" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 3H7a2 2 0 0 0-2 2v12" />
+      <path d="M17 7h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-2" />
+      <path d="M12 11v6" />
+      <path d="M9 14h6" />
+    </svg>
+  </span>
+`;
 
 const resolveCustomerLabel = (
   row: Record<string, unknown> | null | undefined,
@@ -288,9 +300,40 @@ export default function CustomersClient() {
   );
 
   const customerContextMenuItems = useCallback(
-    (params: GetContextMenuItemsParams<Record<string, unknown>>) =>
-      customerRowDeletion.getContextMenuItems(params),
-    [customerRowDeletion],
+    (params: GetContextMenuItemsParams<Record<string, unknown>>) => {
+      const baseItems = customerRowDeletion.getContextMenuItems(params);
+      const items = Array.isArray(baseItems) ? [...baseItems] : [];
+      const clickedCustomerId = normalizeCustomerId(
+        (params.node?.data as { CustomerID?: unknown } | null | undefined)?.CustomerID ?? null,
+      );
+      if (!clickedCustomerId) {
+        return items;
+      }
+
+      const selectedNodes = typeof params.api?.getSelectedNodes === "function"
+        ? params.api.getSelectedNodes()
+        : [];
+      if (selectedNodes.length > 1) {
+        return items;
+      }
+
+      const createOfferItem: MenuItemDef<Record<string, unknown>> = {
+        name: "Create an offer for this customer",
+        icon: createOfferMenuIcon,
+        action: () => {
+          router.push(`/offers/create?customerId=${encodeURIComponent(String(clickedCustomerId))}`);
+        },
+      };
+
+      if (items.length > 0) {
+        items.splice(Math.max(0, items.length - 1), 0, createOfferItem);
+      } else {
+        items.push(createOfferItem);
+      }
+
+      return items;
+    },
+    [customerRowDeletion, router],
   );
 
   return (

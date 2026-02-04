@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect, useCallback, useRef, type FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import type { DropdownOption } from '../../../lib/dropdownOptions';
 import { showToastMessage } from '../../../lib/toast';
 import panelStyles from '../[offerId]/OfferBasicDataPanel.module.css';
@@ -139,6 +139,7 @@ export default function OfferCreateClient({
   formId = 'offer-create-form',
 }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [contactOptions, setContactOptions] = useState<DropdownOption[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [contactLoadError, setContactLoadError] = useState<string | null>(null);
@@ -147,6 +148,8 @@ export default function OfferCreateClient({
   const [showCustomerList, setShowCustomerList] = useState(false);
   const lastCustomerRef = useRef<string>('');
   const listCloseTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const appliedCustomerParamRef = useRef(false);
+  const initialCustomerIdParam = (searchParams?.get('customerId') ?? '').trim();
 
   const defaultPricingPolicyId = useMemo(
     () => resolveDefaultPricingPolicyId(pricingPolicies),
@@ -280,6 +283,22 @@ export default function OfferCreateClient({
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    if (appliedCustomerParamRef.current) return;
+    if (!initialCustomerIdParam) return;
+    if (customers.length === 0) return;
+    const match = customers.find((option) => {
+      const value = option.value?.trim() ?? '';
+      return value === initialCustomerIdParam;
+    }) ?? customers.find((option) => {
+      const label = option.label?.trim().toLowerCase() ?? '';
+      return label === initialCustomerIdParam.toLowerCase();
+    });
+    appliedCustomerParamRef.current = true;
+    if (!match) return;
+    setCustomerSelection(match, match.label ?? initialCustomerIdParam);
+  }, [customers, initialCustomerIdParam, setCustomerSelection]);
 
   const handleCustomerInputChange = useCallback((text: string) => {
     const match = findCustomerOption(text);
