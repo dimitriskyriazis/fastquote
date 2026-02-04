@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import LookupModal from '../components/LookupModal';
 import lookupStyles from '../components/LookupModal.module.css';
 import { showToastMessage } from '../../lib/toast';
@@ -86,6 +86,9 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
   const [form, setForm] = useState<ProductFormState>(createEmptyProductForm());
   const [formError, setFormError] = useState<string | null>(null);
   const [savingProduct, setSavingProduct] = useState(false);
+  const [brandText, setBrandText] = useState('');
+  const [isBrandListOpen, setIsBrandListOpen] = useState(false);
+  const brandListTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadLookups = useCallback(async () => {
     setLookupsLoading(true);
@@ -119,6 +122,56 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
     setForm((prev) => ({ ...prev, [field]: value }));
     setFormError(null);
   }, []);
+
+  const cancelBrandListClose = useCallback(() => {
+    if (brandListTimerRef.current) {
+      clearTimeout(brandListTimerRef.current);
+      brandListTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleBrandListClose = useCallback(() => {
+    cancelBrandListClose();
+    brandListTimerRef.current = setTimeout(() => {
+      setIsBrandListOpen(false);
+      brandListTimerRef.current = null;
+    }, 120);
+  }, [cancelBrandListClose]);
+
+  useEffect(() => {
+    if (open) return;
+    cancelBrandListClose();
+    setIsBrandListOpen(false);
+  }, [cancelBrandListClose, open]);
+
+  const handleBrandInputFocus = useCallback(() => {
+    cancelBrandListClose();
+    setIsBrandListOpen(true);
+  }, [cancelBrandListClose]);
+
+  const handleBrandInputBlur = useCallback(() => {
+    scheduleBrandListClose();
+  }, [scheduleBrandListClose]);
+
+  const handleBrandInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const value = event.target.value;
+      setBrandText(value);
+      updateFormField('brandId', '');
+      setIsBrandListOpen(true);
+    },
+    [updateFormField],
+  );
+
+  const handleBrandOptionSelect = useCallback(
+    (option: LookupOption) => {
+      cancelBrandListClose();
+      updateFormField('brandId', String(option.id));
+      setBrandText(option.name || `Brand ${option.id}`);
+      setIsBrandListOpen(false);
+    },
+    [cancelBrandListClose, updateFormField],
+  );
 
   const handleCreateProduct = useCallback(async () => {
     if (!form.brandId) {
@@ -163,6 +216,7 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
       }
       showToastMessage('Product added', 'success');
       setForm(createEmptyProductForm());
+      setBrandText('');
       setFormError(null);
       onAdded?.({ productId: result.productId ?? null });
       onClose();
@@ -176,12 +230,35 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
 
   const isModelOrPartInvalid = formError === 'Please provide a part number or model number.';
 
-  const brandOptions = lookups?.brands ?? [];
+  const brandOptions = useMemo(() => lookups?.brands ?? [], [lookups]);
+  const selectedBrand = useMemo(
+    () => brandOptions.find((option) => String(option.id) === form.brandId) ?? null,
+    [brandOptions, form.brandId],
+  );
+  const filteredBrandOptions = useMemo(() => {
+    const query = brandText.trim().toLowerCase();
+    if (!query) return brandOptions;
+    return brandOptions.filter((option) => {
+      const label = (option.name || `Brand ${option.id}`).toLowerCase();
+      const idText = String(option.id).toLowerCase();
+      return label.includes(query) || idText.includes(query);
+    });
+  }, [brandOptions, brandText]);
   const typeOptions = lookups?.types ?? [];
   const categoryOptions = lookups?.categories ?? [];
   const subCategoryOptions = (lookups?.subCategories ?? []).filter((option) => option.categoryId === parseOptionalId(form.categoryId));
 
   const modalError = formError ?? lookupsError;
+
+  useEffect(() => {
+    if (!selectedBrand || isBrandListOpen) return;
+    const label = selectedBrand.name || `Brand ${selectedBrand.id}`;
+    if (brandText !== label) {
+      setBrandText(label);
+    }
+  }, [brandText, isBrandListOpen, selectedBrand]);
+
+  useEffect(() => () => cancelBrandListClose(), [cancelBrandListClose]);
 
   return (
     <LookupModal
@@ -200,21 +277,35 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
           <label className={lookupStyles.fieldLabel} htmlFor="product-brand">
             Brand <span className={lookupStyles.requiredMark}>*</span>
           </label>
-          <select
-            id="product-brand"
-            className={lookupStyles.fieldControl}
-            value={form.brandId}
-            required
-            onChange={(event) => updateFormField('brandId', event.target.value)}
-            disabled={lookupsLoading}
-          >
-            <option value="">Select brand...</option>
-            {brandOptions.map((option) => (
-              <option key={option.id} value={String(option.id)}>
-                {option.name || `Brand ${option.id}`}
-              </option>
-            ))}
-          </select>
+          <div className={lookupStyles.comboWrapper}>
+            <input
+              id="product-brand"
+              autoComplete="off"
+              className={`${lookupStyles.fieldControl} ${lookupStyles.comboInput}`}
+              value={brandText}
+              required
+              placeholder="Type to filter brands..."
+              onChange={handleBrandInputChange}
+              onFocus={handleBrandInputFocus}
+              onBlur={handleBrandInputBlur}
+              disabled={lookupsLoading}
+            />
+            {isBrandListOpen && filteredBrandOptions.length > 0 ? (
+              <div className={lookupStyles.comboList}>
+                {filteredBrandOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    className={lookupStyles.comboOption}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => handleBrandOptionSelect(option)}
+                  >
+                    {option.name || `Brand ${option.id}`}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
         <div className={`${lookupStyles.field} ${lookupStyles.fieldHalf}`}>
           <label className={lookupStyles.fieldLabel} htmlFor="product-type">
