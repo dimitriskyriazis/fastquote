@@ -578,7 +578,7 @@ export default function CustomerCreateClient({
             onClick={openPricingPolicyModal}
             disabled={pricingPolicySaving}
           >
-            Add new
+            Add New
           </button>
         );
       }

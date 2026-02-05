@@ -309,7 +309,7 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
               className={lookupButtonStyles.lookupAddButton}
               onClick={() => setIsAddBrandOpen(true)}
             >
-              Add new Brand
+              Add New Brand
             </button>
           </div>
           <div className={lookupStyles.comboWrapper}>

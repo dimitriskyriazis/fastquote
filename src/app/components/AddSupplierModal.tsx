@@ -25,7 +25,6 @@ type Props = {
 export default function AddSupplierModal({ open, onClose, onCreated, cities, countries, overlayClassName }: Props) {
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
-  const [addressNo, setAddressNo] = useState('');
   const [cityId, setCityId] = useState<number | null>(null);
   const [countryId, setCountryId] = useState<number | null>(null);
   const [postalCode, setPostalCode] = useState('');
@@ -39,7 +38,6 @@ export default function AddSupplierModal({ open, onClose, onCreated, cities, cou
   const resetForm = useCallback(() => {
     setName('');
     setAddress('');
-    setAddressNo('');
     setCityId(null);
     setCountryId(null);
     setPostalCode('');
@@ -69,7 +67,6 @@ export default function AddSupplierModal({ open, onClose, onCreated, cities, cou
       const payload = {
         name: trimmedName,
         address: address.trim() || null,
-        addressNo: addressNo.trim() || null,
         cityId: cityId ?? null,
         countryId: countryId ?? null,
         postalCode: postalCode.trim() || null,
@@ -102,7 +99,7 @@ export default function AddSupplierModal({ open, onClose, onCreated, cities, cou
     } finally {
       setSaving(false);
     }
-  }, [name, address, addressNo, cityId, countryId, postalCode, phone, webSite, comments, enabled, onClose, onCreated, resetForm]);
+  }, [name, address, cityId, countryId, postalCode, phone, webSite, comments, enabled, onClose, onCreated, resetForm]);
 
   return (
     <LookupModal
@@ -137,17 +134,6 @@ export default function AddSupplierModal({ open, onClose, onCreated, cities, cou
             className={lookupStyles.fieldControl}
             value={address}
             onChange={(event) => setAddress(event.target.value)}
-          />
-        </div>
-        <div className={lookupStyles.fieldHalf}>
-          <label className={lookupStyles.fieldLabel} htmlFor="supplier-address-no">
-            Address No
-          </label>
-          <input
-            id="supplier-address-no"
-            className={lookupStyles.fieldControl}
-            value={addressNo}
-            onChange={(event) => setAddressNo(event.target.value)}
           />
         </div>
         <div className={lookupStyles.fieldHalf}>

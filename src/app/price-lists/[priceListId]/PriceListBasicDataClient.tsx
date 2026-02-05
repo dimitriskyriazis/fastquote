@@ -794,7 +794,7 @@ export default function PriceListBasicDataClient({
                           className={lookupButtonStyles.lookupAddButton}
                           onClick={() => setIsAddBrandOpen(true)}
                         >
-                          Add new Brand
+                          Add New Brand
                         </button>
                       ) : null}
                       {isSupplierField ? (
@@ -803,7 +803,7 @@ export default function PriceListBasicDataClient({
                           className={lookupButtonStyles.lookupAddButton}
                           onClick={() => setIsAddSupplierOpen(true)}
                         >
-                          Add new Supplier
+                          Add New Supplier
                         </button>
                       ) : null}
                     </span>

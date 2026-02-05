@@ -1455,7 +1455,7 @@ export default function PriceListImportClient({
                       className={lookupButtonStyles.lookupAddButton}
                       onClick={() => setIsAddBrandOpen(true)}
                     >
-                      Add new Brand
+                      Add New Brand
                     </button>
                   </span>
                   <input

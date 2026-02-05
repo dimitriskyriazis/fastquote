@@ -12,6 +12,7 @@ import { AgGridReact } from 'ag-grid-react';
 import {
   CellContextMenuEvent,
   CellEditingStartedEvent,
+  CellEditingStoppedEvent,
   CellClassParams,
   CellMouseDownEvent,
   CellRange,
@@ -450,6 +451,8 @@ type Props = {
   getHeaderMenuItems?: GetMainMenuItems<RowData>;
   suppressContextMenu?: boolean;
   onCellValueChanged?: (event: CellValueChangedEvent<RowData>) => void;
+  onCellEditingStarted?: (event: CellEditingStartedEvent<RowData>) => void;
+  onCellEditingStopped?: (event: CellEditingStoppedEvent<RowData>) => void;
   onRowDoubleClicked?: (event: RowDoubleClickedEvent<RowData>) => void;
   getRowHeight?: (params: RowHeightParams<RowData>) => number | undefined;
   refreshToken?: number;
@@ -1029,6 +1032,8 @@ export default function AgGridAll({
   getHeaderMenuItems,
   suppressContextMenu = false,
   onCellValueChanged: externalCellValueChangeHandler,
+  onCellEditingStarted: externalCellEditingStartedHandler,
+  onCellEditingStopped: externalCellEditingStoppedHandler,
   getRowHeight,
   onModelUpdated,
   refreshToken = 0,
@@ -3599,6 +3604,26 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, selectedNodes ?? []);
   }, [externalSelectionChangedHandler]);
 
+  const handleCellEditingStarted = useCallback(
+    (event: CellEditingStartedEvent<RowData>) => {
+      handleEditingStart(event);
+      if (typeof externalCellEditingStartedHandler === 'function') {
+        externalCellEditingStartedHandler(event);
+      }
+    },
+    [externalCellEditingStartedHandler, handleEditingStart],
+  );
+
+  const handleCellEditingStopped = useCallback(
+    (event: CellEditingStoppedEvent<RowData>) => {
+      handleEditingStop();
+      if (typeof externalCellEditingStoppedHandler === 'function') {
+        externalCellEditingStoppedHandler(event);
+      }
+    },
+    [externalCellEditingStoppedHandler, handleEditingStop],
+  );
+
   const handleRowDragEnd = useCallback((event: RowDragEndEvent<RowData>) => {
     lastDragNodeRef.current = null;
     clearDropIndicator();
@@ -3779,8 +3804,8 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           onPasteEnd={handlePasteEnd}
           onCellValueChanged={handleCellValueChanged}
           onSelectionChanged={handleSelectionChanged}
-          onCellEditingStarted={handleEditingStart}
-          onCellEditingStopped={handleEditingStop}
+          onCellEditingStarted={handleCellEditingStarted}
+          onCellEditingStopped={handleCellEditingStopped}
           onColumnMoved={shouldAutoPersistColumnState ? queuePersistColumnState : undefined}
           onColumnPinned={shouldAutoPersistColumnState ? queuePersistColumnState : undefined}
           onColumnVisible={handleColumnVisibleWithReorder}

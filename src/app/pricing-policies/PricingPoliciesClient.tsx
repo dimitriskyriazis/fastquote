@@ -817,7 +817,7 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
               className={lookupButtonStyles.lookupAddButton}
               onClick={() => setIsCreateBrandOpen(true)}
             >
-              Add new Brand
+              Add New Brand
             </button>
           </div>
           <div className={styles.comboWrapper}>
