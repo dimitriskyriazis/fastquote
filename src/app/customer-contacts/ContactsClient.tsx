@@ -381,8 +381,6 @@ export default function ContactsClient({ statuses, importances, customers, title
             if (a === b) return 0;
             return a === "true" ? -1 : 1;
           },
-          buttons: ["apply"],
-          closeOnApply: true,
         },
         width: 120,
         editable: true,

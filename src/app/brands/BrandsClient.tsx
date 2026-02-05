@@ -182,8 +182,6 @@ export default function BrandsClient() {
             if (a === b) return 0;
             return a === "true" ? -1 : 1;
           },
-          buttons: ["apply"],
-          closeOnApply: true,
         },
         width: 120,
         editable: true,
@@ -284,6 +282,10 @@ export default function BrandsClient() {
                 onCellValueChanged={handleCellEdit}
                 refreshToken={refreshToken}
                 getContextMenuItems={getContextMenuItems}
+                rowSelection="multiple"
+                rowMultiSelectWithClick
+                rowDeselection
+                allowRowClickSelection
               />
             </div>
           </GridQuickSearchProvider>

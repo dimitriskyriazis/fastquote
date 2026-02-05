@@ -282,8 +282,6 @@ export default function PriceListsClient() {
             if (a === b) return 0;
             return a === "true" ? -1 : 1;
           },
-          buttons: ["apply"],
-          closeOnApply: true,
         },
         width: 110,
         editable: true,

@@ -471,8 +471,6 @@ export default function OffersClient() {
         values: ['true', 'false'],
         valueFormatter: (params: { value?: unknown }) => formatEnabledValue(params.value),
         comparator: (valueA: string, valueB: string) => (valueA === valueB ? 0 : valueA === 'true' ? -1 : 1),
-        buttons: ['apply'],
-        closeOnApply: true,
       },
     },
   ], [ActionCell, OfferVersionCell]);

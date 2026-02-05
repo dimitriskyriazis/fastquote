@@ -233,8 +233,6 @@ export default function MarketsClient({ salesDivisions }: Props) {
             if (a === b) return 0;
             return a === "true" ? -1 : 1;
           },
-          buttons: ["apply"],
-          closeOnApply: true,
         },
         width: 120,
         editable: true,

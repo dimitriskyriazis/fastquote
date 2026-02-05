@@ -148,28 +148,63 @@ export default function CountriesCitiesClient({ countries }: Props) {
       }
 
       let payload: { updates: Array<Record<string, unknown>> } | null = null;
+      const isCityField = field.startsWith("City");
+      let shouldCreateCity = false;
 
       if (field === "Country") {
         payload = {
           updates: [{ CountryID: countryId, field: "Country", value }],
         };
-      } else if (field.startsWith("City")) {
+      } else if (isCityField) {
         const cityIdKey = `${field}Id`;
-        const cityId = (event.data as Record<string, unknown>)[cityIdKey];
-        if (typeof cityId !== "number") {
-          showToastMessage("Cannot edit an empty city. Use Add New City.", "error");
-          revertCell(event);
-          return;
+        const rawCityId = (event.data as Record<string, unknown>)[cityIdKey];
+        const cityId =
+          typeof rawCityId === "number"
+            ? rawCityId
+            : typeof rawCityId === "string"
+              ? Number.parseInt(rawCityId, 10)
+              : null;
+        if (!cityId || !Number.isFinite(cityId)) {
+          shouldCreateCity = true;
+        } else {
+          payload = {
+            updates: [{ CountryID: countryId, field, value, cityId }],
+          };
         }
-        payload = {
-          updates: [{ CountryID: countryId, field, value, cityId }],
-        };
       } else {
         return;
       }
 
       const submit = async () => {
         try {
+          if (shouldCreateCity) {
+            const res = await fetch("/api/cities", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name: value, countryId, enabled: true }),
+            });
+            const data = (await res.json().catch(() => null)) as
+              | { ok?: boolean; option?: { label?: string } }
+              | { ok?: boolean; error?: string }
+              | null;
+            if (!res.ok || !data?.ok) {
+              throw new Error((data as { error?: string } | null)?.error ?? "Create failed");
+            }
+
+            setRows((prev) => {
+              const next = prev.map((row) => {
+                if (row.id !== countryId) return row;
+                const cities = [...row.cities, value].sort(sortByName);
+                return { ...row, cities };
+              });
+              return next;
+            });
+            showToastMessage("City added", "success");
+            setRefreshToken((prev) => prev + 1);
+            return;
+          }
+
+          if (!payload) return;
           const res = await fetch("/api/countries-cities", {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -191,7 +226,10 @@ export default function CountriesCitiesClient({ countries }: Props) {
           setRefreshToken((prev) => prev + 1);
         } catch (err) {
           console.error("Failed to update cell", err);
-          showToastMessage("Unable to update. Please try again.", "error");
+          showToastMessage(
+            err instanceof Error ? err.message : "Unable to update. Please try again.",
+            "error",
+          );
           revertCell(event);
         }
       };
@@ -239,6 +277,112 @@ export default function CountriesCitiesClient({ countries }: Props) {
     [],
   );
 
+  const deleteCountries = useCallback(
+    async (countriesToDelete: Array<{ id: number; name: string | null }>) => {
+      const uniqueCountries = Array.from(
+        new Map(
+          countriesToDelete
+            .filter((country) => Number.isFinite(country.id) && country.id > 0)
+            .map((country) => [country.id, country]),
+        ).values(),
+      );
+      if (uniqueCountries.length === 0) return;
+
+      const names = uniqueCountries
+        .map((country) => country.name?.trim())
+        .filter((name): name is string => Boolean(name));
+      const label =
+        names.length > 0
+          ? names.length <= 3
+            ? names.join(", ")
+            : `${names.length} countries`
+          : `${uniqueCountries.length} countries`;
+
+      const confirmed = await showConfirmDialog({
+        title: "Delete countries",
+        message: `Delete ${label}? This will also delete all cities in these countries. This action cannot be undone.`,
+        confirmLabel: "Delete countries",
+        cancelLabel: "Keep countries",
+        tone: "danger",
+      });
+      if (!confirmed) return;
+
+      try {
+        const response = await fetch("/api/countries-cities", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ CountryIDs: uniqueCountries.map((country) => country.id) }),
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { ok?: boolean; error?: string }
+          | null;
+        if (!response.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? "Unable to delete countries");
+        }
+
+        const ids = new Set(uniqueCountries.map((country) => country.id));
+        setRows((prev) => prev.filter((row) => !ids.has(row.id)));
+        showToastMessage("Countries deleted", "success");
+        setRefreshToken((prev) => prev + 1);
+      } catch (err) {
+        console.error("Failed to delete countries", err);
+        showToastMessage(err instanceof Error ? err.message : "Unable to delete countries.", "error");
+      }
+    },
+    [],
+  );
+
+  const deleteCity = useCallback(
+    async (countryId: number, cityId: number, cityName: string | null) => {
+      if (!Number.isFinite(countryId) || countryId <= 0) return;
+      if (!Number.isFinite(cityId) || cityId <= 0) return;
+      const label = cityName?.trim() || `#${cityId}`;
+
+      const confirmed = await showConfirmDialog({
+        title: "Delete city",
+        message: `Delete city "${label}"? This action cannot be undone.`,
+        confirmLabel: "Delete city",
+        cancelLabel: "Keep city",
+        tone: "danger",
+      });
+      if (!confirmed) return;
+
+      try {
+        const response = await fetch("/api/cities", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ CityIDs: [cityId] }),
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { ok?: boolean; error?: string }
+          | null;
+        if (!response.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? "Unable to delete city");
+        }
+
+        if (cityName) {
+          setRows((prev) =>
+            prev.map((row) => {
+              if (row.id !== countryId) return row;
+              const index = row.cities.findIndex((name) => name === cityName);
+              if (index < 0) return row;
+              return {
+                ...row,
+                cities: [...row.cities.slice(0, index), ...row.cities.slice(index + 1)],
+              };
+            }),
+          );
+        }
+        showToastMessage("City deleted", "success");
+        setRefreshToken((prev) => prev + 1);
+      } catch (err) {
+        console.error("Failed to delete city", err);
+        showToastMessage(err instanceof Error ? err.message : "Unable to delete city.", "error");
+      }
+    },
+    [],
+  );
+
   const getContextMenuItems = useCallback(
     (
       params: GetContextMenuItemsParams<Record<string, unknown>>,
@@ -246,6 +390,22 @@ export default function CountriesCitiesClient({ countries }: Props) {
       const baseItems: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> =
         Array.isArray(params.defaultItems) ? [...params.defaultItems] : [];
       const data = (params.node?.data ?? null) as Record<string, unknown> | null;
+      const selectedCountries = (params.api.getSelectedNodes?.() ?? [])
+        .map((node) => {
+          const row = (node?.data ?? null) as Record<string, unknown> | null;
+          const rawId = row?.CountryID;
+          const id =
+            typeof rawId === "number"
+              ? rawId
+              : typeof rawId === "string"
+                ? Number.parseInt(rawId, 10)
+                : null;
+          if (!id || !Number.isFinite(id)) return null;
+          const name = typeof row?.Country === "string" ? row.Country : null;
+          return { id, name };
+        })
+        .filter((entry): entry is { id: number; name: string | null } => Boolean(entry));
+      const hasMultiSelection = selectedCountries.length > 1;
       const rawCountryId = data?.CountryID;
       const countryId =
         typeof rawCountryId === "number"
@@ -256,19 +416,60 @@ export default function CountriesCitiesClient({ countries }: Props) {
       if (!countryId || !Number.isFinite(countryId)) return baseItems;
       const countryName = typeof data?.Country === "string" ? data.Country : null;
 
+      const field = params.column?.getColDef().field ?? params.column?.getColId() ?? "";
+      let canDeleteCity = false;
+      let cityId: number | null = null;
+      let cityName: string | null = null;
+      if (typeof field === "string" && field.startsWith("City")) {
+        const cityIdKey = `${field}Id`;
+        const rawCityId = data?.[cityIdKey];
+        const parsedCityId =
+          typeof rawCityId === "number"
+            ? rawCityId
+            : typeof rawCityId === "string"
+              ? Number.parseInt(rawCityId, 10)
+              : null;
+        const rawCityName = data?.[field];
+        const parsedCityName = typeof rawCityName === "string" ? rawCityName.trim() : "";
+        if (parsedCityId && Number.isFinite(parsedCityId) && parsedCityName) {
+          canDeleteCity = true;
+          cityId = parsedCityId;
+          cityName = parsedCityName;
+        }
+      }
+
       if (baseItems.length > 0 && baseItems[baseItems.length - 1] !== "separator") {
         baseItems.push("separator");
       }
-      baseItems.push({
-        name: "Delete Country",
-        icon: deleteMenuIcon,
-        action: () => {
-          void deleteCountry(countryId, countryName);
-        },
-      });
+      if (canDeleteCity && cityId != null) {
+        baseItems.push({
+          name: "Delete City",
+          icon: deleteMenuIcon,
+          action: () => {
+            void deleteCity(countryId, cityId as number, cityName);
+          },
+        });
+      }
+      if (hasMultiSelection) {
+        baseItems.push({
+          name: "Delete Countries",
+          icon: deleteMenuIcon,
+          action: () => {
+            void deleteCountries(selectedCountries);
+          },
+        });
+      } else {
+        baseItems.push({
+          name: "Delete Country",
+          icon: deleteMenuIcon,
+          action: () => {
+            void deleteCountry(countryId, countryName);
+          },
+        });
+      }
       return baseItems;
     },
-    [deleteCountry],
+    [deleteCountries, deleteCountry, deleteCity],
   );
 
   const columnDefs = useMemo<ColDef[]>(() => {
@@ -330,8 +531,11 @@ export default function CountriesCitiesClient({ countries }: Props) {
                 onCellValueChanged={handleCellEdit}
                 getContextMenuItems={getContextMenuItems}
                 refreshToken={refreshToken}
-                suppressRowClickSelection
                 suppressMovableColumns
+                rowSelection="multiple"
+                rowMultiSelectWithClick
+                rowDeselection
+                allowRowClickSelection
               />
             </div>
           </GridQuickSearchProvider>

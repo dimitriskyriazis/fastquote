@@ -131,8 +131,6 @@ export default function CustomerContactsClient({ customerId, customerName }: Pro
             if (a === b) return 0;
             return a === "true" ? -1 : 1;
           },
-          buttons: ["apply"],
-          closeOnApply: true,
         },
         editable: true,
         cellEditor: "agSelectCellEditor",

@@ -120,8 +120,6 @@ export default function CustomerGroupsClient() {
             if (a === b) return 0;
             return a === "true" ? -1 : 1;
           },
-          buttons: ["apply"],
-          closeOnApply: true,
         },
         editable: true,
         cellEditor: "agSelectCellEditor",

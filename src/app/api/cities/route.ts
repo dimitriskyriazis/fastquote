@@ -83,3 +83,51 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const body = (await req.json().catch(() => null)) as { CityIDs?: unknown } | null;
+    const rawIds = Array.isArray(body?.CityIDs) ? body?.CityIDs : [];
+    const ids = Array.from(
+      new Set(
+        rawIds
+          .map((entry) => {
+            if (typeof entry === "number" && Number.isFinite(entry)) {
+              return Math.trunc(entry);
+            }
+            if (typeof entry === "string") {
+              const parsed = Number.parseInt(entry, 10);
+              if (Number.isFinite(parsed)) return parsed;
+            }
+            return null;
+          })
+          .filter((value): value is number => value != null),
+      ),
+    );
+
+    if (ids.length === 0) {
+      return NextResponse.json({ ok: false, error: "No cities selected for deletion" }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    const request = pool.request();
+    const paramNames: string[] = [];
+    ids.forEach((value, idx) => {
+      const paramName = `city_${idx}`;
+      paramNames.push(paramName);
+      request.input(paramName, sql.Int, value);
+    });
+    const placeholders = paramNames.map((name) => `@${name}`).join(", ");
+
+    const result = await request.query(`
+      DELETE FROM dbo.Cities
+      WHERE ID IN (${placeholders});
+    `);
+
+    return NextResponse.json({ ok: true, deletedCities: result.rowsAffected?.[0] ?? 0 });
+  } catch (err) {
+    console.error("Failed to delete cities", err);
+    const message = err instanceof Error ? err.message : "Unable to delete cities.";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}

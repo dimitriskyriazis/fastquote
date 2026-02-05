@@ -100,10 +100,11 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  let ids: number[] = [];
   try {
     const body = (await req.json().catch(() => null)) as { CountryIDs?: unknown } | null;
     const rawIds = Array.isArray(body?.CountryIDs) ? body?.CountryIDs : [];
-    const ids = Array.from(
+    ids = Array.from(
       new Set(
         rawIds
           .map((entry) => {
@@ -137,6 +138,20 @@ export async function DELETE(req: NextRequest) {
       });
       const placeholders = paramNames.map((name) => `@${name}`).join(", ");
 
+      const referencingCustomers = await request.query(`
+        SELECT TOP 1 CountryID
+        FROM dbo.Customers
+        WHERE CountryID IN (${placeholders});
+      `);
+      if ((referencingCustomers.recordset ?? []).length > 0) {
+        await transaction.rollback().catch(() => {});
+        const message =
+          ids.length === 1
+            ? "Cannot delete country because it is assigned to existing customers. Reassign customers first."
+            : "Cannot delete countries because some are assigned to existing customers. Reassign customers first.";
+        return NextResponse.json({ ok: false, error: message }, { status: 409 });
+      }
+
       const deleteCities = await request.query(`
         DELETE FROM dbo.Cities
         WHERE CountryID IN (${placeholders});
@@ -158,7 +173,14 @@ export async function DELETE(req: NextRequest) {
     }
   } catch (err) {
     console.error("Failed to delete countries", err);
-    const message = err instanceof Error ? err.message : "Unable to delete countries.";
+    let message = err instanceof Error ? err.message : "Unable to delete countries.";
+    const errorNumber = (err as { number?: number } | null)?.number;
+    if (errorNumber === 547) {
+      message =
+        ids.length === 1
+          ? "Cannot delete country because it is referenced by other records. Reassign customers first."
+          : "Cannot delete countries because they are referenced by other records. Reassign customers first.";
+    }
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

@@ -55,7 +55,7 @@ export default function ProductHistoryGrid({ rows }: Props) {
     filter: true,
     floatingFilter: true,
     enableRowGroup: false,
-    filterParams: { buttons: ['apply', 'clear'], closeOnApply: true },
+    filterParams: { buttons: ['reset'] },
   }), []);
 
   const handleGridReady = useCallback((params: { api: GridApi<HistoryRow> }) => {

@@ -67,6 +67,7 @@ import {
   TextEditorModule,
   TextFilterModule,
   EventApiModule,
+  LocaleModule,
   ModuleRegistry,
   ColumnPivotModeChangedEvent,
   CsvExportModule,
@@ -409,6 +410,7 @@ if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
     ExternalFilterModule,
     ScrollApiModule,
     ValidationModule,
+    LocaleModule,
   ]);
   globalThis.__AG_GRID_MODULES_REGISTERED__ = true;
 }
@@ -2536,15 +2538,25 @@ export default function AgGridAll({
   }, [shouldPersistColumnState, applySavedColumnState]);
 
   const dcd: ColDef = useMemo(() => {
+    const normalizeFilterButtons = (buttons?: string[]) => {
+      if (!Array.isArray(buttons) || buttons.length === 0) return buttons;
+      return buttons.map((button) => (button === 'clear' ? 'reset' : button));
+    };
     const baseFilterParams = {
       // Apply filters automatically after typing stops.
       debounceMs: 800,
-      buttons: ['clear'] as const,
+      buttons: ['reset'] as const,
     };
     const incomingFilterParams = defaultColDef?.filterParams;
-    const mergedFilterParams = typeof incomingFilterParams === 'object' && incomingFilterParams !== null
+    let mergedFilterParams = typeof incomingFilterParams === 'object' && incomingFilterParams !== null
       ? { ...baseFilterParams, ...incomingFilterParams }
       : baseFilterParams;
+    if (typeof mergedFilterParams === 'object' && mergedFilterParams !== null) {
+      mergedFilterParams = {
+        ...mergedFilterParams,
+        buttons: normalizeFilterButtons(mergedFilterParams.buttons as string[] | undefined),
+      };
+    }
 
     // Note: CSS handles cursor styling (arrow for single clicks, text for editing cells)
     // We pass through cellStyle from defaultColDef without modification
@@ -3177,6 +3189,20 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       if (!filterStateRestoringRef.current && filterStateStorageKey) {
         writePersistedFilterModel(filterStateStorageKey, null);
       }
+      if (!filterStateRestoringRef.current) {
+        refreshServerSideData(event.api, { purge: true });
+      }
+      return;
+    }
+    if (Object.keys(model).length === 0) {
+      // Normalize empty models to null so floating filters and SSRM stay in sync.
+      event.api.setFilterModel(null);
+      if (!filterStateRestoringRef.current && filterStateStorageKey) {
+        writePersistedFilterModel(filterStateStorageKey, null);
+      }
+      if (!filterStateRestoringRef.current) {
+        refreshServerSideData(event.api, { purge: true });
+      }
       return;
     }
 
@@ -3204,6 +3230,9 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       const finalModel = mutated ? nextModel : model;
       const modelToSave = Object.keys(finalModel).length > 0 ? finalModel : null;
       writePersistedFilterModel(filterStateStorageKey, modelToSave);
+    }
+    if (!filterStateRestoringRef.current) {
+      refreshServerSideData(event.api, { purge: true });
     }
   }, [filterStateStorageKey]);
 
@@ -3776,8 +3805,9 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           // Grouping flags are fine; without a license they’re ignored, not crashed
           rowGroupPanelShow={rowGroupPanelShow}
           getRowHeight={getRowHeight}
-          suppressColumnVirtualisation={suppressColumnVirtualisation}
-          suppressMovableColumns={suppressMovableColumns}
+      suppressColumnVirtualisation={suppressColumnVirtualisation}
+      suppressMovableColumns={suppressMovableColumns}
+      localeText={{ resetFilter: 'Clear' }}
 
           // Cache settings
           cacheBlockSize={resolvedCacheBlockSize}

@@ -243,8 +243,6 @@ export default function CustomersClient() {
             if (a === b) return 0;
             return a === "true" ? -1 : 1;
           },
-          buttons: ["apply"],
-          closeOnApply: true,
         },
       },
       {
@@ -277,8 +275,6 @@ export default function CustomersClient() {
             if (a === b) return 0;
             return a === "true" ? -1 : 1;
           },
-          buttons: ["apply"],
-          closeOnApply: true,
         },
         editable: true,
         cellEditor: "agSelectCellEditor",
