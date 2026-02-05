@@ -337,7 +337,6 @@ export default function UsersClient() {
                 refreshToken={refreshToken}
                 suppressRowClickSelection
                 suppressMovableColumns
-                suppressSideBar
               />
             </div>
           </GridQuickSearchProvider>

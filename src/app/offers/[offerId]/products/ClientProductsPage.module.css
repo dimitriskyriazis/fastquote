@@ -235,6 +235,23 @@
   background: #86efadd7;
 }
 
+.pivotToggle {
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background: #ffffff;
+  color: #0f172a;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.pivotToggleActive {
+  background: #fde047;
+  color: #713f12;
+  border-color: rgba(202, 138, 4, 0.6);
+}
+
+.pivotToggleActive:hover {
+  background: #fde047d7;
+}
+
 .splitLayout {
   display: flex;
   flex-direction: column;
@@ -257,6 +274,16 @@
   flex-direction: column;
   border-top: 1px solid #e2e8f0;
   padding-top: 1px;
+}
+
+.splitLeft > * {
+  flex: 1;
+  min-height: 0;
+}
+
+.splitRight > * {
+  flex: 1;
+  min-height: 0;
 }
 
 .contentArea {

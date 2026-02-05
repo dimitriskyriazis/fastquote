@@ -1,6 +1,6 @@
 export const COLUMN_WIDTH_PRESETS = {
   date: 105,
-  1: 100,
+  1: 110,
   2: 140,
   3: 210,
 } as const;
@@ -85,15 +85,15 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   City2: 2,
   Website: 3,
   UserName: 2,
-  FullName: 2,
-  FullNameGR: 2,
+  FullName: 3,
+  FullNameGR: 3,
   SalesSeniority: 2,
   SignTitle: 3,
   WindowsUserName: 3,
-  NameCode: 2,
+  NameCode: 1,
   Role1: 2,
   Role2: 2,
-
+  Qty: 1,
 };
 
 export const resolveColumnWidthAssignments = (

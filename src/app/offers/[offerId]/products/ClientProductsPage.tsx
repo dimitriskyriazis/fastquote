@@ -23,6 +23,7 @@ type Props = {
 type AddActionType = 'product' | 'category' | 'printable-comment' | 'non-printable-comment';
 type CreatableActionType = Exclude<AddActionType, 'product'>;
 type ProductsTableLayout = 'cust' | 'wCost' | 'wReq';
+type PivotLayout = 'category' | 'brand';
 
 const LAYOUT_STORAGE_PREFIX = 'fastquote-offer-products-layout';
 
@@ -95,9 +96,8 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [newProductId, setNewProductId] = useState<number | null>(null);
   const [tableLayout, setTableLayout] = useState<ProductsTableLayout>('wReq');
   const [pivotView, setPivotView] = useState(false);
-  const [pivotLayout, setPivotLayout] = useState<'category' | 'brand' | 'discount'>('category');
+  const [pivotLayout, setPivotLayout] = useState<PivotLayout>('brand');
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
-  const handleRequestPivot = useCallback(() => setPivotView(true), []);
   const layoutStorageKey = useMemo(() => buildLayoutStorageKey(userId), [userId]);
   const layoutLoadedRef = useRef<string | null>(null);
   const creationCountersRef = useRef<Record<CreatableActionType, number>>({
@@ -172,6 +172,10 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     ? `${toolbarStyles.manualToggle} ${toolbarStyles.manualToggleActive} page-header-button`
     : `${toolbarStyles.manualToggle} page-header-button`;
 
+  const pivotToggleClass = pivotView
+    ? `${toolbarStyles.pivotToggle} ${toolbarStyles.pivotToggleActive} page-header-button`
+    : `${toolbarStyles.pivotToggle} page-header-button`;
+
   const handleProductsAdded = useCallback((count: number) => {
     void count;
     setRefreshToken((prev) => prev + 1);
@@ -187,12 +191,15 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     setRefreshToken((prev) => prev + 1);
   }, []);
   const showRequestedColumns = tableLayout === 'wReq';
-  const headerRowTopClassName = showAddProductModal
-    ? `${pageHeaderStyles.headerRowTop} ${toolbarStyles.compactHeaderRow}`
-    : pageHeaderStyles.headerRowTop;
+  const headerRowTopClassName = pivotView
+    ? undefined
+    : showAddProductModal
+      ? `${pageHeaderStyles.headerRowTop} ${toolbarStyles.compactHeaderRow}`
+      : pageHeaderStyles.headerRowTop;
   const headerRowBottomClassName = showAddProductModal
     ? `${pageHeaderStyles.headerRowBottom} ${toolbarStyles.compactHeaderRow}`
     : pageHeaderStyles.headerRowBottom;
+  const headingClassName = pivotView ? undefined : pageHeaderStyles.topTitle;
   const updatePricesEndpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/update-prices`,
     [offerId],
@@ -267,6 +274,13 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
           </button>
         </>
       )}
+      <button
+        type="button"
+        className={pivotToggleClass}
+        onClick={() => setPivotView((prev) => !prev)}
+      >
+        Pivot Mode
+      </button>
       <Link
         href={`/offers/${encodeURIComponent(offerId)}/basicdata`}
         className={`${layoutStyles.headerActionButton} page-header-button`}
@@ -327,112 +341,123 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
       onChange={(event) => setPivotLayout(event.target.value as typeof pivotLayout)}
       aria-label="Pivot layout"
     >
-      <option value="category">Pivot: Category</option>
-      <option value="brand">Pivot: Brand</option>
-      <option value="discount">Pivot: Discounts</option>
+      <option value="brand">Layout: Brand</option>
+      <option value="category">Layout: Category</option>
     </select>
   ) : null;
+
+  const topLeftActions = (
+    <div className={toolbarStyles.leftColumn}>
+      <Link href="/offers" className={`${layoutStyles.backLink} page-header-button`}>
+        <span aria-hidden="true">←</span>
+        Back to offers
+      </Link>
+      {pivotLayoutSelect}
+    </div>
+  );
+
+  const contentArea = (
+    <div className={toolbarStyles.contentArea}>
+      {pivotView ? (
+        <OfferProductsPivotPanel
+          offerId={offerId}
+          refreshToken={refreshToken}
+          layout={pivotLayout}
+          onExitPivot={() => setPivotView(false)}
+        />
+      ) : showAddProductModal ? (
+        <div className={toolbarStyles.splitLayout}>
+          <div className={toolbarStyles.splitLeft}>
+            <OfferProductsPanel
+              ref={offerProductsPanelRef}
+              offerId={offerId}
+              manualMode={manualMode}
+              refreshToken={refreshToken}
+              showRequestedColumns={showRequestedColumns}
+              tableLayout={tableLayout}
+              hideTotals
+            />
+          </div>
+          <div className={toolbarStyles.splitRight}>
+            <AddProductsModal
+              offerId={offerId}
+              onAdded={handleProductsAdded}
+              onClose={handleCloseModal}
+              showRequestedColumns={showRequestedColumns}
+              splitViewMode
+              refreshToken={refreshToken}
+              onRequestAddProduct={handleOpenAddProductForm}
+              newProductId={newProductId}
+              onClearNewProductId={handleClearNewProductId}
+              onRequestPayloadConsumed={handleClearNewProductId}
+            />
+          </div>
+        </div>
+      ) : (
+        <OfferProductsPanel
+          ref={offerProductsPanelRef}
+          offerId={offerId}
+          manualMode={manualMode}
+          refreshToken={refreshToken}
+          showRequestedColumns={showRequestedColumns}
+          tableLayout={tableLayout}
+        />
+      )}
+    </div>
+  );
+
+  const panelContent = (
+    <>
+      {contentArea}
+      {showRequestedModal ? (
+        <AddRequestedProductsModal
+          offerId={offerId}
+          onClose={handleCloseRequestedModal}
+          onImported={handleRequestedImported}
+        />
+      ) : null}
+      <AddProductModal
+        open={showAddProductFormModal}
+        onClose={handleCloseAddProductForm}
+        onAdded={(result) => {
+          if (result?.productId != null) {
+            setNewProductId(result.productId);
+          }
+          handleCloseAddProductForm();
+          setRefreshToken((prev) => prev + 1);
+        }}
+      />
+    </>
+  );
 
   return (
     <main className={layoutStyles.page}>
       <PageHeader
         title={headingText}
         className={headerRowTopClassName}
-        headingClassName={pageHeaderStyles.topTitle}
-        leftActions={
-          <Link href="/offers" className={`${layoutStyles.backLink} page-header-button`}>
-            <span aria-hidden="true">←</span>
-            Back to offers
-          </Link>
-        }
+        headingClassName={headingClassName}
+        leftActions={topLeftActions}
         rightActions={headerRightControls}
       >
         <GridQuickSearchProvider>
-          <PageHeader
-            title={headingText}
-            leftActions={
-              <div className={toolbarStyles.leftRequestedRow}>
-                {pivotView ? (
-                  pivotLayoutSelect
-                ) : (
-                  <>
-                    {addRequestedButton}
-                    {layoutSelect}
-                  </>
-                )}
-              </div>
-            }
-            rightActions={pivotView ? null : addButtonGroup}
-            className={headerRowBottomClassName}
-            hideTitle
-          >
-            <div className={toolbarStyles.contentArea}>
-              {pivotView ? (
-                <OfferProductsPivotPanel
-                  offerId={offerId}
-                  refreshToken={refreshToken}
-                  layout={pivotLayout}
-                  onExitPivot={() => setPivotView(false)}
-                />
-              ) : showAddProductModal ? (
-                <div className={toolbarStyles.splitLayout}>
-                  <div className={toolbarStyles.splitLeft}>
-                    <OfferProductsPanel
-                      ref={offerProductsPanelRef}
-                      offerId={offerId}
-                      manualMode={manualMode}
-                      refreshToken={refreshToken}
-                      showRequestedColumns={showRequestedColumns}
-                      tableLayout={tableLayout}
-                      onRequestPivot={handleRequestPivot}
-                    />
-                  </div>
-                  <div className={toolbarStyles.splitRight}>
-                  <AddProductsModal
-                      offerId={offerId}
-                      onAdded={handleProductsAdded}
-                      onClose={handleCloseModal}
-                      showRequestedColumns={showRequestedColumns}
-                      splitViewMode
-                      refreshToken={refreshToken}
-                      onRequestAddProduct={handleOpenAddProductForm}
-                      newProductId={newProductId}
-                      onClearNewProductId={handleClearNewProductId}
-                      onRequestPayloadConsumed={handleClearNewProductId}
-                    />
-                  </div>
+          {pivotView ? (
+            panelContent
+          ) : (
+            <PageHeader
+              title={headingText}
+              leftActions={
+                <div className={toolbarStyles.leftRequestedRow}>
+                  {addRequestedButton}
+                  {layoutSelect}
                 </div>
-              ) : (
-                <OfferProductsPanel
-                  ref={offerProductsPanelRef}
-                  offerId={offerId}
-                  manualMode={manualMode}
-                  refreshToken={refreshToken}
-                  showRequestedColumns={showRequestedColumns}
-                  tableLayout={tableLayout}
-                  onRequestPivot={handleRequestPivot}
-                />
-              )}
-            </div>
-            {showRequestedModal ? (
-              <AddRequestedProductsModal
-                offerId={offerId}
-                onClose={handleCloseRequestedModal}
-                onImported={handleRequestedImported}
-              />
-            ) : null}
-            <AddProductModal
-              open={showAddProductFormModal}
-              onClose={handleCloseAddProductForm}
-              onAdded={(result) => {
-                if (result?.productId != null) {
-                  setNewProductId(result.productId);
-                }
-                handleCloseAddProductForm();
-                setRefreshToken((prev) => prev + 1);
-              }}
-            />
-          </PageHeader>
+              }
+              rightActions={addButtonGroup}
+              className={headerRowBottomClassName}
+              hideTitle
+            >
+              {panelContent}
+            </PageHeader>
+          )}
         </GridQuickSearchProvider>
       </PageHeader>
     </main>

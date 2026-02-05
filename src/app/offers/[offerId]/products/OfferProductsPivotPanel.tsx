@@ -51,7 +51,7 @@ type Props = {
   offerId: string;
   refreshToken?: number;
   onExitPivot?: () => void;
-  layout: 'category' | 'brand' | 'discount';
+  layout: 'category' | 'brand';
 };
 
 const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -73,6 +73,14 @@ const numberValueFormatter = ({ value }: ValueFormatterParams<RowData, unknown>)
   const num = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(num) || Object.is(num, 0)) return '';
   return String(num);
+};
+const formatEuroTotal = (value: number | null | undefined) => {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `${currencyFormatter.format(value)} €`;
+};
+const formatPercentTotal = (value: number | null | undefined) => {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `${percentFormatter.format(value)} %`;
 };
 
 const toFiniteNumber = (value: unknown): number | null => {
@@ -141,41 +149,41 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     [offerId],
   );
 
-  const columnDefs = useMemo<ColDef<RowData>[]>(() => ([
-    { field: 'OfferDetailID', hide: true, suppressColumnsToolPanel: true },
-    { field: 'ProductID', hide: true, suppressColumnsToolPanel: true },
+  const columnDefs = useMemo<ColDef<RowData>[]>(() => {
+    const hideCategory = layout === 'brand';
+    const hideBrand = layout === 'category';
+    return [
+      { field: 'OfferDetailID', hide: true, suppressColumnsToolPanel: true },
+      { field: 'ProductID', hide: true, suppressColumnsToolPanel: true },
 
-    { field: 'CategoryName', headerName: 'Category' },
-    { field: 'BrandName', headerName: 'Brand' },
-    { field: 'PartNumber', headerName: 'Part No' },
-    { field: 'ModelNumber', headerName: 'Model No' },
-    { field: 'Quantity', headerName: 'Qty', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('Quantity'), valueFormatter: numberValueFormatter, aggFunc: 'sum' },
-
-    { field: 'ListPrice', headerName: 'List Price', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('ListPrice'), valueFormatter: euroValueFormatter, aggFunc: 'sum' },
-    { field: 'NetUnitPrice', headerName: 'Net Unit', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('NetUnitPrice'), valueFormatter: euroValueFormatter, aggFunc: 'sum' },
-    { field: 'TotalPrice', headerName: 'Total List', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalPrice'), valueFormatter: euroValueFormatter, aggFunc: 'sum' },
-    { field: 'TotalNet', headerName: 'Total Net', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalNet'), valueFormatter: euroValueFormatter, aggFunc: 'sum' },
-    { field: 'NetCost', headerName: 'Net Cost', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('NetCost'), valueFormatter: euroValueFormatter, aggFunc: 'sum', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' } },
-    { field: 'TotalCost', headerName: 'Total Cost', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalCost'), valueFormatter: euroValueFormatter, aggFunc: 'sum', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' } },
-    { field: 'GrossProfit', headerName: 'Gross Profit', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('GrossProfit'), valueFormatter: euroValueFormatter, aggFunc: 'sum', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' } },
-    { field: 'Margin', headerName: 'Margin %', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('Margin'), valueFormatter: percentValueFormatter, aggFunc: 'avg', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' } },
-    { field: 'CustomerDiscount', headerName: 'Cust Disc %', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('CustomerDiscount'), valueFormatter: percentValueFormatter, aggFunc: 'avg' },
-    { field: 'TelmacoDiscount', headerName: 'Telm Disc %', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TelmacoDiscount'), valueFormatter: percentValueFormatter, aggFunc: 'avg', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' } },
-    {
-      colId: 'DiscountAmount',
-      headerName: 'Discount €',
-      valueGetter: (params) => {
-        const data = params.data as RowData | null | undefined;
-        const totalPrice = data ? toFiniteNumber((data as { TotalPrice?: unknown })?.TotalPrice) : null;
-        const totalNet = data ? toFiniteNumber((data as { TotalNet?: unknown })?.TotalNet) : null;
-        if (totalPrice == null || totalNet == null) return null;
-        return totalPrice - totalNet;
+      { field: 'CategoryName', headerName: 'Category', hide: hideCategory, suppressColumnsToolPanel: hideCategory},
+      { field: 'BrandName', headerName: 'Brand', hide: hideBrand, suppressColumnsToolPanel: hideBrand },
+      { field: 'Quantity', headerName: 'Qty', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('Quantity'), valueFormatter: numberValueFormatter, aggFunc: 'sum', width: 110 },
+      { field: 'TotalPrice', headerName: 'Total List', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalPrice'), valueFormatter: euroValueFormatter, aggFunc: 'sum', width: 150 },
+      { field: 'CustomerDiscount', headerName: 'Customer Discount', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('CustomerDiscount'), valueFormatter: percentValueFormatter, aggFunc: 'avg', width: 200 },
+      { field: 'TotalNet', headerName: 'Total Net', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalNet'), valueFormatter: euroValueFormatter, aggFunc: 'sum', width: 150 },
+      { field: 'TelmacoDiscount', headerName: 'Telmaco Discount', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TelmacoDiscount'), valueFormatter: percentValueFormatter, aggFunc: 'avg', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' }, width: 180 },
+      { field: 'Margin', headerName: 'Margin %', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('Margin'), valueFormatter: percentValueFormatter, aggFunc: 'avg', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' }, width: 150 },
+      { field: 'GrossProfit', headerName: 'Gross Profit', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('GrossProfit'), valueFormatter: euroValueFormatter, aggFunc: 'sum', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' }, width: 150 },
+      { field: 'TotalCost', headerName: 'Total Cost', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalCost'), valueFormatter: euroValueFormatter, aggFunc: 'sum', cellClass: panelStyles.redDataCell, cellStyle: { color:'#dc2626' }, width : 150},
+      {
+        colId: 'DiscountAmount',
+        headerName: 'Total Discounts',
+        valueGetter: (params) => {
+          const data = params.data as RowData | null | undefined;
+          const totalPrice = data ? toFiniteNumber((data as { TotalPrice?: unknown })?.TotalPrice) : null;
+          const totalNet = data ? toFiniteNumber((data as { TotalNet?: unknown })?.TotalNet) : null;
+          if (totalPrice == null || totalNet == null) return null;
+          return totalPrice - totalNet;
+        },
+        valueFormatter: euroValueFormatter,
+        aggFunc: 'sum',
+        enableValue: true,
+        cellStyle: { color: '#dc2626' },
+        width: 180,
       },
-      valueFormatter: euroValueFormatter,
-      aggFunc: 'sum',
-      enableValue: true,
-    },
-  ]), []);
+    ];
+  }, [layout]);
 
   const fieldList = useMemo(
     () => Array.from(new Set(
@@ -185,12 +193,26 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     )),
     [columnDefs],
   );
+  const totals = useMemo(() => {
+    let totalNetPrice = 0;
+    let totalListPrice = 0;
+    let totalCost = 0;
+    rowData.forEach((row) => {
+      totalNetPrice += toFiniteNumber((row as { TotalNet?: unknown }).TotalNet) ?? 0;
+      totalListPrice += toFiniteNumber((row as { TotalPrice?: unknown }).TotalPrice) ?? 0;
+      totalCost += toFiniteNumber((row as { TotalCost?: unknown }).TotalCost) ?? 0;
+    });
+    const marginBasis = Object.is(totalNetPrice, 0) ? 0 : totalNetPrice;
+    const totalMargin = marginBasis === 0 ? 0 : ((totalNetPrice - totalCost) / marginBasis) * 100;
+    return { totalNetPrice, totalListPrice, totalCost, totalMargin };
+  }, [rowData]);
 
   const applyLayout = useMemo(() => () => {
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return;
 
     api.setGridOption('pivotMode', true);
+    api.closeToolPanel();
 
     const state: ColumnState[] = [
       // reset everything
@@ -218,15 +240,6 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
       case 'brand': {
         set('BrandName', { rowGroup: true, rowGroupIndex: 0 });
         enableTotals();
-        break;
-      }
-      case 'discount': {
-        set('CategoryName', { rowGroup: true, rowGroupIndex: 0 });
-        set('TotalPrice', { aggFunc: 'sum' });
-        set('TotalNet', { aggFunc: 'sum' });
-        set('DiscountAmount', { aggFunc: 'sum' });
-        set('TotalCost', { aggFunc: 'sum' });
-        set('GrossProfit', { aggFunc: 'sum' });
         break;
       }
       default:
@@ -305,7 +318,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     gridApiRef.current = e.api;
     e.api.setSideBarVisible(true);
     e.api.closeToolPanel();
-    // Start in pivot mode (user can disable via the default Pivot Mode toggle).
+    // Start in pivot mode for the pivot view.
     e.api.setGridOption('pivotMode', true);
     e.api.setGridOption('quickFilterText', quickSearch?.value ?? '');
     setGridReady(true);
@@ -345,7 +358,28 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
             rowHeight={32}
             headerHeight={38}
             rowModelType="clientSide"
-            sideBar={{ toolPanels: ['columns', 'filters'], defaultToolPanel: 'columns' }}
+            sideBar={{
+              toolPanels: [
+                {
+                  id: 'columns',
+                  labelDefault: 'Columns',
+                  labelKey: 'columns',
+                  iconKey: 'columns',
+                  toolPanel: 'agColumnsToolPanel',
+                  toolPanelParams: {
+                    suppressPivotMode: true,
+                    suppressPivots: true,
+                  },
+                },
+                {
+                  id: 'filters',
+                  labelDefault: 'Filters',
+                  labelKey: 'filters',
+                  iconKey: 'filter',
+                  toolPanel: 'agFiltersToolPanel',
+                },
+              ],
+            }}
             statusBar={{ statusPanels: [{ statusPanel: 'agAggregationComponent' }] }}
             rowGroupPanelShow="always"
             pivotPanelShow="always"
@@ -360,6 +394,24 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
                   : '<span style="padding: 10px; color: #475569;">No rows.</span>'
             }
           />
+        </div>
+      </div>
+      <div className={panelStyles.totalsBar}>
+        <div className={panelStyles.totalItem}>
+          <span className={panelStyles.totalLabel}>Total Net Price</span>
+          <span className={panelStyles.totalValue}>{formatEuroTotal(totals.totalNetPrice)}</span>
+        </div>
+        <div className={panelStyles.totalItem}>
+          <span className={panelStyles.totalLabel}>Total List Price</span>
+          <span className={panelStyles.totalValue}>{formatEuroTotal(totals.totalListPrice)}</span>
+        </div>
+        <div className={panelStyles.totalItem}>
+          <span className={panelStyles.totalLabel}>Total Cost</span>
+          <span className={panelStyles.totalValue}>{formatEuroTotal(totals.totalCost)}</span>
+        </div>
+        <div className={panelStyles.totalItem}>
+          <span className={panelStyles.totalLabel}>Total Margin</span>
+          <span className={panelStyles.totalValue}>{formatPercentTotal(totals.totalMargin)}</span>
         </div>
       </div>
     </div>

@@ -332,7 +332,6 @@ export default function CountriesCitiesClient({ countries }: Props) {
                 refreshToken={refreshToken}
                 suppressRowClickSelection
                 suppressMovableColumns
-                suppressSideBar
               />
             </div>
           </GridQuickSearchProvider>

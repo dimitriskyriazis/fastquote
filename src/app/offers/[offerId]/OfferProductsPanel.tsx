@@ -705,7 +705,7 @@ type Props = {
   refreshToken?: number;
   showRequestedColumns?: boolean;
   tableLayout?: 'cust' | 'wCost' | 'wReq';
-  onRequestPivot?: () => void;
+  hideTotals?: boolean;
 };
 
 export type OfferProductsPanelHandle = {
@@ -722,7 +722,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   refreshToken = 0,
   showRequestedColumns = true,
   tableLayout = 'wReq',
-  onRequestPivot,
+  hideTotals = false,
 }: Props, ref) => {
   const router = useRouter();
   const { userId } = useAuditUser();
@@ -1222,20 +1222,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     setRequestedColumnsReadyFlag(true);
   }, [setRequestedColumnsReadyFlag]);
 
-  const handlePivotModeChanged = useCallback((enabled: boolean) => {
-    if (!enabled) return;
-    // Pivoting is handled in a separate (client-side) pivot view.
-    // We trigger it via the built-in Pivot Mode toggle from the Columns tool panel.
-    onRequestPivot?.();
-
-    // Immediately turn pivot mode back off on the SSRM grid to avoid triggering server-side pivot requests.
-    const api = gridApiRef.current;
-    try {
-      api?.setGridOption?.('pivotMode', false);
-    } catch {
-      /* noop */
-    }
-  }, [onRequestPivot]);
 
   const saveLayout = useCallback((options?: { silent?: boolean }) => {
     if (typeof window === 'undefined') return false;
@@ -3444,8 +3430,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             persistenceEndpoint={persistenceEndpoint}
             columnDefs={productColumnDefs}
             defaultColDef={defaultColDef}
-            enablePivotMode
-            onPivotModeChanged={handlePivotModeChanged}
             manualMode={manualMode}
             getRowClass={getRowClass}
             getContextMenuItems={productContextMenuItems}
@@ -3475,24 +3459,26 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             maxBlocksInCache={2}
           />
         </div>
-        <div className={styles.totalsBar}>
-          <div className={styles.totalItem}>
-            <span className={styles.totalLabel}>Total Net Price</span>
-            <span className={styles.totalValue}>{formatEuroTotal(totals?.totalNetPrice)}</span>
+        {hideTotals ? null : (
+          <div className={styles.totalsBar}>
+            <div className={styles.totalItem}>
+              <span className={styles.totalLabel}>Total Net Price</span>
+              <span className={styles.totalValue}>{formatEuroTotal(totals?.totalNetPrice)}</span>
+            </div>
+            <div className={styles.totalItem}>
+              <span className={styles.totalLabel}>Total List Price</span>
+              <span className={styles.totalValue}>{formatEuroTotal(totals?.totalListPrice)}</span>
+            </div>
+            <div className={styles.totalItem}>
+              <span className={styles.totalLabel}>Total Cost</span>
+              <span className={styles.totalValue}>{formatEuroTotal(totals?.totalCost)}</span>
+            </div>
+            <div className={styles.totalItem}>
+              <span className={styles.totalLabel}>Total Margin</span>
+              <span className={styles.totalValue}>{formatPercentTotal(totals?.totalMargin)}</span>
+            </div>
           </div>
-          <div className={styles.totalItem}>
-            <span className={styles.totalLabel}>Total List Price</span>
-            <span className={styles.totalValue}>{formatEuroTotal(totals?.totalListPrice)}</span>
-          </div>
-          <div className={styles.totalItem}>
-            <span className={styles.totalLabel}>Total Cost</span>
-            <span className={styles.totalValue}>{formatEuroTotal(totals?.totalCost)}</span>
-          </div>
-          <div className={styles.totalItem}>
-            <span className={styles.totalLabel}>Total Margin</span>
-            <span className={styles.totalValue}>{formatPercentTotal(totals?.totalMargin)}</span>
-          </div>
-        </div>
+        )}
       </div>
       {currentRequestedMatch ? (
       <MatchRequestedProductsModal

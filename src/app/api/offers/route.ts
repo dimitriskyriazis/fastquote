@@ -76,6 +76,7 @@ type OfferRow = {
   SalesMarket: string | null;
   SalesDivision: string | null;
   SalesPerson: string | null;
+  SalesCreationPerson: string | null;
   OfferStatus: string | null;
   ERPProjectID: number | null;
   ERPFWCProjectID: number | null;
@@ -117,7 +118,8 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   PricingPolicyName: 'dbo.PricingPolicies.Name',
   SalesMarket: 'dbo.Markets.Name',
   SalesDivision: 'dbo.SalesDivision.Name',
-  SalesPerson: 'dbo.AspNetUsers.FullName',
+  SalesPerson: 'sales.FullName',
+  SalesCreationPerson: 'created.FullName',
   OfferStatus: 'dbo.OfferStatus.Name',
   ERPProjectID: 'dbo.Offer.ERPProjectID',
   ERPFWCProjectID: 'dbo.Offer.ERPFWCProjectID',
@@ -357,23 +359,24 @@ export async function POST(req: NextRequest) {
       )
     `;
 
-    const select = `
-      SELECT
-        COUNT_BIG(1) OVER () AS __totalCount,
-        dbo.Offer.ID AS OfferPK,
-        dbo.Offer.Description,
-        dbo.Offer.Title,
-        dbo.Offer.Comments,
-        dbo.Customers.Name AS CustomerName,
-        dbo.PricingPolicies.Name AS PricingPolicyName,
-        dbo.Markets.Name AS SalesMarket,
-        dbo.SalesDivision.Name AS SalesDivision,
-        dbo.AspNetUsers.FullName AS SalesPerson,
-        dbo.OfferStatus.Name AS OfferStatus,
-        dbo.Offer.ERPProjectID AS ERPProjectID,
-        dbo.Offer.ERPFWCProjectID AS ERPFWCProjectID,
-        dbo.Offer.ID AS offerId,
-        dbo.Offer.ParentOfferID,
+	    const select = `
+	      SELECT
+	        COUNT_BIG(1) OVER () AS __totalCount,
+	        dbo.Offer.ID AS OfferPK,
+	        dbo.Offer.Description,
+	        dbo.Offer.Title,
+	        dbo.Offer.Comments,
+	        dbo.Customers.Name AS CustomerName,
+	        dbo.PricingPolicies.Name AS PricingPolicyName,
+	        dbo.Markets.Name AS SalesMarket,
+	        dbo.SalesDivision.Name AS SalesDivision,
+	        sales.FullName AS SalesPerson,
+	        created.FullName AS SalesCreationPerson,
+	        dbo.OfferStatus.Name AS OfferStatus,
+	        dbo.Offer.ERPProjectID AS ERPProjectID,
+	        dbo.Offer.ERPFWCProjectID AS ERPFWCProjectID,
+	        dbo.Offer.ID AS offerId,
+	        dbo.Offer.ParentOfferID,
         COALESCE(versionTree.RootOfferID, dbo.Offer.ID) AS VersionGroupId,
         CASE
           WHEN EXISTS (SELECT 1 FROM dbo.Offer child WHERE child.ParentOfferID = dbo.Offer.ID) THEN 0
@@ -402,16 +405,17 @@ export async function POST(req: NextRequest) {
           FROM VersionTree
           GROUP BY RootOfferID
         ) AS versionStats ON versionStats.RootOfferID = versionTree.RootOfferID
-        INNER JOIN dbo.Customers ON dbo.Offer.CustomerID = dbo.Customers.ID
-        INNER JOIN dbo.PricingPolicies ON dbo.Offer.PricingPolicyID = dbo.PricingPolicies.ID
-        INNER JOIN dbo.Markets ON dbo.Offer.MarketID = dbo.Markets.ID
-        INNER JOIN dbo.SalesDivision ON dbo.Offer.SalesDivitionID = dbo.SalesDivision.ID
-        INNER JOIN dbo.AspNetUsers ON dbo.Offer.SalesPersonId = dbo.AspNetUsers.Id
-        INNER JOIN dbo.OfferStatus ON dbo.Offer.StatusID = dbo.OfferStatus.ID
-        OUTER APPLY (
-          SELECT MAX(od.ModifiedOn) AS DetailsModifiedOn
-          FROM dbo.OfferDetails od
-          WHERE od.OfferID = dbo.Offer.ID
+	        INNER JOIN dbo.Customers ON dbo.Offer.CustomerID = dbo.Customers.ID
+	        INNER JOIN dbo.PricingPolicies ON dbo.Offer.PricingPolicyID = dbo.PricingPolicies.ID
+	        INNER JOIN dbo.Markets ON dbo.Offer.MarketID = dbo.Markets.ID
+	        INNER JOIN dbo.SalesDivision ON dbo.Offer.SalesDivitionID = dbo.SalesDivision.ID
+	        INNER JOIN dbo.AspNetUsers AS sales ON dbo.Offer.SalesPersonId = sales.Id
+	        LEFT JOIN dbo.AspNetUsers AS created ON dbo.Offer.CreatedBy = created.Id
+	        INNER JOIN dbo.OfferStatus ON dbo.Offer.StatusID = dbo.OfferStatus.ID
+	        OUTER APPLY (
+	          SELECT MAX(od.ModifiedOn) AS DetailsModifiedOn
+	          FROM dbo.OfferDetails od
+	          WHERE od.OfferID = dbo.Offer.ID
             AND od.ModifiedBy = @__auditUserId
         ) AS offerDetailsStats
     `;

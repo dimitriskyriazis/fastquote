@@ -51,34 +51,42 @@
 .headerMeta {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 0 10px;
+  gap: 12px;
+  padding: 6px 12px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #f8fafc;
   font-size: 0.9rem;
   font-weight: 600;
-  color: #535353;
+  color: #0f172a;
   white-space: nowrap;
-  height: 38px;
 }
 
 .headerMetaItem {
   display: inline-flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
 }
 
 .headerMetaLabel {
   display: block;
-  color: #535353;
+  color: #000000;
   font-weight: 600;
+  font-size: 0.9rem;
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 .headerMetaValue {
   display: block;
-  color: #000000;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.headerMetaItem + .headerMetaItem {
+  border-left: 1px solid #e2e8f0;
+  padding-left: 12px;
 }
 
 .primaryButton {
