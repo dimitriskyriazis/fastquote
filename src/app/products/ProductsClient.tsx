@@ -318,7 +318,8 @@ export default function ProductsClient() {
         (item) =>
           typeof item === "object" &&
           item != null &&
-          (item as MenuItemDef).name === "Delete row",
+          typeof (item as MenuItemDef).name === "string" &&
+          (item as MenuItemDef).name.trim().toLowerCase().startsWith("delete"),
       );
       if (deleteIndex >= 0) {
         items.splice(deleteIndex, 0, historyItem);

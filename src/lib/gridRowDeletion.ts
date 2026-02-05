@@ -270,11 +270,14 @@ export class GridRowDeletion<RowData> {
       if (baseItems.length > 0 && baseItems[baseItems.length - 1] !== 'separator') {
         baseItems.push('separator');
       }
+      const rows = targetEntries.map((entry) => entry.row ?? null);
+      const deleteLabel = targetEntries.length > 1
+        ? `Delete ${this.getMultiRowTypeLabel(rows)}`
+        : `Delete ${this.getRowTypeLabel(rows[0])}`;
       const deleteItem: MenuItemDef<RowData> = {
-        name: targetEntries.length > 1 ? 'Delete rows' : 'Delete row',
+        name: deleteLabel,
         icon: deleteRecordMenuIcon,
         action: () => {
-          const rows = targetEntries.map((entry) => entry.row);
           const ids = targetEntries.map((entry) => entry.id);
           void this.deleteRows(rows, ids, params.api ?? null);
         },

@@ -203,14 +203,24 @@ export default function OffersClient() {
         },
       };
 
-      const separatorIndex = items.lastIndexOf('separator');
-      if (separatorIndex >= 0) {
-        items.splice(separatorIndex, 0, versionMenuItem);
+      const deleteIndex = items.findIndex((item) => (
+        typeof item === 'object'
+        && item
+        && typeof item.name === 'string'
+        && item.name.trim().toLowerCase().startsWith('delete')
+      ));
+      if (deleteIndex >= 0) {
+        items.splice(deleteIndex, 0, versionMenuItem);
       } else {
-        if (items.length > 0 && items[items.length - 1] !== 'separator') {
-          items.push('separator');
+        const separatorIndex = items.lastIndexOf('separator');
+        if (separatorIndex >= 0) {
+          items.splice(separatorIndex + 1, 0, versionMenuItem);
+        } else {
+          if (items.length > 0 && items[items.length - 1] !== 'separator') {
+            items.push('separator');
+          }
+          items.push(versionMenuItem);
         }
-        items.push(versionMenuItem);
       }
 
       return items;

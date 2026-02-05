@@ -686,7 +686,7 @@ const findDeleteMenuItemIndex = (
   const { name } = item as MenuItemDef<Record<string, unknown>>;
   if (typeof name !== 'string') return false;
   const normalized = name.trim().toLowerCase();
-  return normalized === 'delete row' || normalized === 'delete rows';
+  return normalized.startsWith('delete');
 });
 
 type Props = {
@@ -2309,12 +2309,22 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           normalizeOfferDetailId((row as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null),
         resolveRowLabel,
         resolveRowTypeLabel: resolveOfferProductTypeLabel,
+        resolveMultiRowTypeLabel: (rows) => {
+          const types = new Set(
+            rows.map((row) => resolveOfferProductTypeLabel(row)).filter((value) => value && value.trim().length > 0),
+          );
+          if (types.size !== 1) return 'items';
+          const [type] = Array.from(types);
+          if (type === 'category') return 'categories';
+          if (type === 'product') return 'products';
+          if (type === 'comment') return 'comments';
+          if (type.endsWith('s')) return type;
+          return `${type}s`;
+        },
         buildPayload: (ids) => ({ OfferDetailIDs: ids }),
-        confirmTitle: ({ isSingle }) => (isSingle ? 'Delete row' : 'Delete rows'),
-        confirmConfirmLabel: ({ isSingle }) =>
-          (isSingle ? 'Delete row' : 'Delete rows'),
-        confirmCancelLabel: ({ isSingle }) =>
-          (isSingle ? 'Keep row' : 'Keep rows'),
+        confirmTitle: ({ typeLabel }) => `Delete ${typeLabel}`,
+        confirmConfirmLabel: ({ typeLabel }) => `Delete ${typeLabel}`,
+        confirmCancelLabel: ({ typeLabel }) => `Keep ${typeLabel}`,
         successToastMessage: 'Row deleted',
         failureToastMessage: 'Unable to delete row. Please try again.',
         refreshHandler: (api) => refreshOfferProductGrid(api, { purge: true }),
