@@ -194,7 +194,7 @@ const navItems: NavItem[] = [
   },
   {
     label: "User Management",
-    href: "/users",
+    href: "/user-management",
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <rect x="3.5" y="4.5" width="17" height="15" rx="2" stroke="currentColor" strokeWidth="1.6" fill="none" />

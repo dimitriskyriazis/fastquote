@@ -309,7 +309,7 @@ export default function UsersClient() {
     <>
       <main className={styles.page}>
         <PageHeader
-          title="Users"
+          title="User Management"
           rightActions={
             <div className={styles.headerActions}>
               <button

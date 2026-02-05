@@ -1213,14 +1213,6 @@ export default function AgGridAll({
     const prev = previousStorageKeysRef.current;
     const next = { column: columnStateStorageKey, filter: filterStateStorageKey, sort: sortStateStorageKey };
 
-    // If the userId changes from empty/"anon" to a resolved audit user id, the storage key changes.
-    // Without migration, the grid immediately falls back to defaults (widths/visibility/order) because
-    // it reads a *new* key with no saved state yet.
-    //
-    // We migrate the previous saved state forward when:
-    // - previous key belonged to "anon"
-    // - next key belongs to a real user id
-    // - next key does not already exist
     const extractUserSegment = (key: string): string => {
       const parts = String(key ?? '').split(':');
       return parts.length >= 2 ? parts[1] ?? '' : '';
