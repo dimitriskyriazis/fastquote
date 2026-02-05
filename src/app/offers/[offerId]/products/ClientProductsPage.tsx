@@ -95,7 +95,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [newProductId, setNewProductId] = useState<number | null>(null);
   const [tableLayout, setTableLayout] = useState<ProductsTableLayout>('wReq');
   const [pivotView, setPivotView] = useState(false);
-  const [pivotLayout, setPivotLayout] = useState<'category' | 'brand' | 'categoryBrand' | 'discount'>('category');
+  const [pivotLayout, setPivotLayout] = useState<'category' | 'brand' | 'discount'>('category');
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
   const handleRequestPivot = useCallback(() => setPivotView(true), []);
   const layoutStorageKey = useMemo(() => buildLayoutStorageKey(userId), [userId]);
@@ -329,7 +329,6 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     >
       <option value="category">Pivot: Category</option>
       <option value="brand">Pivot: Brand</option>
-      <option value="categoryBrand">Pivot: Category × Brand</option>
       <option value="discount">Pivot: Discounts</option>
     </select>
   ) : null;

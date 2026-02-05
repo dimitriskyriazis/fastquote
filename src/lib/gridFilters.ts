@@ -54,6 +54,7 @@ export const isSensitiveColumn = (colId: string): boolean => {
   if (!normalized) return true;
   const lower = normalized.toLowerCase();
   if (['partnumber', 'modelnumber', 'erpcode', 'weblink'].includes(lower)) return true;
+  if (/description/i.test(normalized)) return true;
   if (/(^|[^a-z])id$/i.test(normalized)) return true;
   if (/code/i.test(normalized)) return true;
   if (/number/i.test(normalized)) return true;
@@ -75,7 +76,7 @@ export const buildTextMatchPredicate = (
   const mode = options.mode ?? 'contains';
   const trimmed = term.trim();
   const upper = trimmed.toUpperCase();
-  const safeExpr = `COALESCE(CAST(${expression} AS NVARCHAR(MAX)), '')`;
+  const safeExpr = `LTRIM(RTRIM(COALESCE(CAST(${expression} AS NVARCHAR(MAX)), '')))`;
   const ciExpr = `UPPER(${safeExpr})`;
   const params: QueryParam[] = [];
 
@@ -134,20 +135,33 @@ export const buildTextMatchPredicate = (
       params.push({ key, value: `%${pattern}%` });
       extraClauses.push(`(${ciExpr} LIKE @${key} AND ${firstLetterGuard})`);
     });
+  } else if (mode === 'contains' && trimmed.length >= 7 && trimmed.length <= 9 && !hasDigits(trimmed)) {
+    // For longer terms, keep only mild typo tolerance to avoid noisy matches.
+    const upperTerm = trimmed.toUpperCase();
+    const firstLetterGuard = `LEFT(${ciExpr}, 1) = LEFT(UPPER(@${paramKey}_first), 1)`;
+    const lastLetterGuard = `RIGHT(${ciExpr}, 1) = RIGHT(UPPER(@${paramKey}_last), 1)`;
+    params.push({ key: `${paramKey}_first`, value: upperTerm });
+    params.push({ key: `${paramKey}_last`, value: upperTerm });
+
+    const variants = buildAdjacentSwapVariants(trimmed).filter((v) => v !== trimmed);
+    variants.forEach((variant, idx) => {
+      const key = `${paramKey}_sw${idx}`;
+      params.push({ key, value: `%${variant.toUpperCase()}%` });
+      extraClauses.push(`(${ciExpr} LIKE @${key} AND ${firstLetterGuard} AND ${lastLetterGuard})`);
+    });
+
+    const insertionPatterns: string[] = [];
+    for (let i = 0; i <= upperTerm.length; i += 1) {
+      insertionPatterns.push(`${upperTerm.slice(0, i)}%${upperTerm.slice(i)}`);
+    }
+    insertionPatterns.forEach((pattern, idx) => {
+      const key = `${paramKey}_ins${idx}`;
+      params.push({ key, value: `%${pattern}%` });
+      extraClauses.push(`(${ciExpr} LIKE @${key} AND ${firstLetterGuard} AND ${lastLetterGuard})`);
+    });
   }
 
-  const shouldPhonetic =
-    Boolean(options.enablePhonetic) &&
-    mode === 'contains' &&
-    trimmed.length >= 6 &&
-    !hasDigits(trimmed);
-
-  if (shouldPhonetic) {
-    const phoneticKey = `${paramKey}_ph`;
-    params.push({ key: phoneticKey, value: trimmed });
-    const phoneticClause = `(DIFFERENCE(${safeExpr}, @${phoneticKey}) >= 3 AND LEFT(${ciExpr}, 1) = LEFT(UPPER(@${phoneticKey}), 1))`;
-    extraClauses.push(phoneticClause);
-  }
+  // Phonetic matching disabled due to frequent false positives in UI searches.
 
   if (extraClauses.length > 0) {
     clause = `(${[clause, ...extraClauses].join(' OR ')})`;

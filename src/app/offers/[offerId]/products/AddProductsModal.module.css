@@ -306,12 +306,12 @@
 }
 
 .requestedRow:hover {
-  border-color: #fecaca;
+  border-color: #bfdbfe;
 }
 
 .requestedRowSelected {
-  border-color: #b91c1c;
-  box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.2);
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
 }
 
 .requestedRowLabel {

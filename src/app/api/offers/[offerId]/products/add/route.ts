@@ -1036,11 +1036,14 @@ async function handleAssignProductToRequestedRow(
         NULLIF(od.ProductDescription, '')
       ),
       od.Warranty = p.WarrantyValue,
-      od.Quantity = 1,
+      od.Quantity = q.Quantity,
       od.ListPrice = p.ListPrice,
       od.NetUnitPrice = computed.ComputedNetUnitPrice,
-      od.TotalPrice = CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
-      od.TotalNet = computed.ComputedNetUnitPrice,
+      od.TotalPrice = CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice * q.Quantity END,
+      od.TotalNet = CASE
+        WHEN computed.ComputedNetUnitPrice IS NULL THEN NULL
+        ELSE computed.ComputedNetUnitPrice * q.Quantity
+      END,
       od.TelmacoDiscount = COALESCE(discounts.TelmacoDiscountPercentage, 0),
       od.CustomerDiscount = COALESCE(discounts.CustomerDiscountPercentage, 0),
       od.NetCostOtherCurrency = p.CostPrice,
@@ -1066,18 +1069,30 @@ async function handleAssignProductToRequestedRow(
           OR COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL
           THEN NULL
         ELSE ROUND(
-          computed.ComputedNetUnitPrice
-          - COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
+          (computed.ComputedNetUnitPrice
+            - COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice)
+          ) * q.Quantity,
           4
         )
       END,
-      od.TotalCost = COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
+      od.TotalCost = CASE
+        WHEN COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL
+          THEN NULL
+        ELSE COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) * q.Quantity
+      END,
       od.PriceListID = p.PriceListID,
       od.PriceListItemID = p.PriceListItemID,
       od.ModifiedOn = SYSUTCDATETIME(),
       od.ModifiedBy = @__modifiedBy
     FROM dbo.OfferDetails od
       CROSS JOIN @ProductData p
+      CROSS APPLY (
+        SELECT CASE
+          WHEN od.RequestedQuantity IS NOT NULL AND od.RequestedQuantity <> 0
+            THEN od.RequestedQuantity
+          ELSE 1
+        END AS Quantity
+      ) q
       OUTER APPLY (
         SELECT TOP (1)
           ppr.TelmacoDiscountPercentage,
@@ -1159,7 +1174,7 @@ async function handleAssignProductToRequestedRow(
     WHERE od.OfferID = @__offerId
       AND od.ID = @__rowId
       AND (
-        (@__categoryId IS NULL AND od.ParentOfferDetailID IS NULL)
+        @__categoryId IS NULL
         OR od.ParentOfferDetailID = @__categoryId
         OR (
           @__categoryTree IS NOT NULL

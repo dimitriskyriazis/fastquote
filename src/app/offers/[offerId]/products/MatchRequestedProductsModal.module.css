@@ -165,3 +165,36 @@
   cursor: not-allowed;
   transform: none;
 }
+
+.descriptionCell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.descriptionText {
+  max-height: 44px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  line-clamp: 2;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.3;
+}
+
+.descriptionText[data-expanded="true"] {
+  max-height: none;
+  line-clamp: unset;
+  -webkit-line-clamp: unset;
+}
+
+.descriptionToggle {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  color: #b91c1c;
+  font-size: 12px;
+  padding: 0;
+  cursor: pointer;
+}

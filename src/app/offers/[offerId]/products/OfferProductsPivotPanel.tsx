@@ -51,7 +51,7 @@ type Props = {
   offerId: string;
   refreshToken?: number;
   onExitPivot?: () => void;
-  layout: 'category' | 'brand' | 'categoryBrand' | 'discount';
+  layout: 'category' | 'brand' | 'discount';
 };
 
 const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -220,12 +220,6 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
         enableTotals();
         break;
       }
-      case 'categoryBrand': {
-        set('CategoryName', { rowGroup: true, rowGroupIndex: 0 });
-        set('BrandName', { pivot: true, pivotIndex: 0 });
-        set('TotalNet', { aggFunc: 'sum' });
-        break;
-      }
       case 'discount': {
         set('CategoryName', { rowGroup: true, rowGroupIndex: 0 });
         set('TotalPrice', { aggFunc: 'sum' });
@@ -371,4 +365,3 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     </div>
   );
 }
-

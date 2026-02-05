@@ -643,6 +643,15 @@ const categoryMenuIcon = `
   </span>
 `;
 
+const brandBulkEditMenuIcon = `
+  <span class="fastquote-menu-icon fastquote-menu-icon--brand" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+    </svg>
+  </span>
+`;
+
 const productAccentCellClassRules = {
   'offer-products-grid__cell--product-accent': (params: { data?: Record<string, unknown> | null }) =>
     isOfferProductProduct(params.data),
@@ -2929,10 +2938,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         otherCurrencyName.toLowerCase().includes('euro');
       const setModifierItem: MenuItemDef = {
         name: 'Set cost modifier for this brand',
+        icon: brandBulkEditMenuIcon,
         action: () => openBrandBulkEdit('CurrencyCostModifier', rowBrandName, currentModifier),
       };
       const setMarginItem: MenuItemDef = {
         name: 'Set margin for this brand',
+        icon: brandBulkEditMenuIcon,
         action: () => openBrandBulkEdit('Margin', rowBrandName, currentMargin),
       };
       const bulkItems: MenuItemDef[] = [];
@@ -2940,14 +2951,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         bulkItems.push(setModifierItem);
       }
       bulkItems.push(setMarginItem);
-      const bulkMenu: MenuItemDef = {
-        name: 'Bulk edit brand',
-        subMenu: bulkItems,
-      };
-      if (deleteIndexAfterHistory >= 0) {
-        items.splice(deleteIndexAfterHistory, 0, bulkMenu);
-      } else {
-        items.push(bulkMenu);
+      if (bulkItems.length > 0) {
+        if (deleteIndexAfterHistory >= 0) {
+          items.splice(deleteIndexAfterHistory, 0, ...bulkItems);
+        } else {
+          items.push(...bulkItems);
+        }
       }
       deleteIndexAfterHistory = findDeleteMenuItemIndex(items);
     }
@@ -3487,6 +3496,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       </div>
       {currentRequestedMatch ? (
       <MatchRequestedProductsModal
+        offerId={offerId}
         entry={currentRequestedMatch}
         position={manualMatchPosition}
         total={manualMatchTotal}

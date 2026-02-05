@@ -160,7 +160,7 @@ export default function AddProductsModal({
   const categoryApiRef = useRef<GridApi | null>(null);
   const productsApiRef = useRef<ProductsGridApi | null>(null);
   const requestedRowsFetchIdRef = useRef(0);
-  const requestedRowsCacheRef = useRef<Record<number, RequestedRow[]>>({});
+  const requestedRowsCacheRef = useRef<Record<string, RequestedRow[]>>({});
   const pendingSelectionProductIdRef = useRef<number | null>(null);
 
   const categoryRequestPayload = useMemo(() => ({ action: 'categories' }), []);
@@ -195,10 +195,11 @@ export default function AddProductsModal({
   );
 
   const fetchRequestedRows = useCallback(
-    async (categoryId: number, options?: { force?: boolean }) => {
+    async (categoryId: number | null, options?: { force?: boolean }) => {
       const forceRefresh = Boolean(options?.force);
+      const cacheKey = categoryId == null ? '__all__' : String(categoryId);
       if (!forceRefresh) {
-        const cached = requestedRowsCacheRef.current[categoryId];
+        const cached = requestedRowsCacheRef.current[cacheKey];
         if (cached) {
           setRequestedRows(cached);
           setRequestedRowsError(null);
@@ -210,25 +211,28 @@ export default function AddProductsModal({
       setRequestedRowsLoading(true);
       setRequestedRowsError(null);
       try {
-      const params = new URLSearchParams();
-      params.set('categoryId', String(categoryId));
-      const res = await fetch(
-        `/api/offers/${encodeURIComponent(offerId)}/products/requests?${params.toString()}`,
-      );
-      const payload = (await res.json().catch(() => null)) as {
-        ok?: boolean;
-        rows?: RequestedRow[];
-        error?: string;
-      } | null;
-      if (!res.ok || !payload?.ok) {
-        throw new Error(payload?.error ?? `Failed to load requested rows (status ${res.status})`);
-      }
+        const params = new URLSearchParams();
+        if (categoryId != null) {
+          params.set('categoryId', String(categoryId));
+        }
+        const query = params.toString();
+        const res = await fetch(
+          `/api/offers/${encodeURIComponent(offerId)}/products/requests${query ? `?${query}` : ''}`,
+        );
+        const payload = (await res.json().catch(() => null)) as {
+          ok?: boolean;
+          rows?: RequestedRow[];
+          error?: string;
+        } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to load requested rows (status ${res.status})`);
+        }
         if (requestedRowsFetchIdRef.current !== fetchId) {
           return;
         }
         const rows = Array.isArray(payload.rows) ? payload.rows : [];
         setRequestedRows(rows);
-        requestedRowsCacheRef.current[categoryId] = rows;
+        requestedRowsCacheRef.current[cacheKey] = rows;
       } catch (err) {
         if (requestedRowsFetchIdRef.current !== fetchId) {
           return;
@@ -248,13 +252,6 @@ export default function AddProductsModal({
   useEffect(() => {
     setSelectedRequestedRowId(null);
     const categoryId = selectedCategory?.OfferDetailID ?? null;
-    if (categoryId == null) {
-      requestedRowsFetchIdRef.current += 1;
-      setRequestedRows([]);
-      setRequestedRowsError(null);
-      setRequestedRowsLoading(false);
-      return;
-    }
     void fetchRequestedRows(categoryId);
   }, [selectedCategory, fetchRequestedRows]);
 
@@ -464,7 +461,7 @@ export default function AddProductsModal({
         'success',
       );
       onAdded(addedCount);
-      if (isAssigningRequestedRow && baseCategory != null) {
+      if (isAssigningRequestedRow) {
         void fetchRequestedRows(baseCategory, { force: true });
       }
       setSelectedRequestedRowId(null);
@@ -645,9 +642,7 @@ export default function AddProductsModal({
     refreshCategoryGrid();
     refreshProductsGrid();
     const categoryId = selectedCategory?.OfferDetailID ?? null;
-    if (categoryId != null) {
-      void fetchRequestedRows(categoryId, { force: true });
-    }
+    void fetchRequestedRows(categoryId, { force: true });
   }, [
     refreshToken,
     refreshCategoryGrid,
@@ -751,14 +746,12 @@ export default function AddProductsModal({
                 </div>
               </div>
               <div className={styles.requestedList}>
-                {!selectedCategory ? (
-                  <div className={styles.requestedRowEmpty}>Select a category to view its requested items.</div>
-                ) : requestedRowsLoading ? (
+                {requestedRowsLoading ? (
                   <div className={styles.requestedRowEmpty}>Loading requested rows…</div>
                 ) : requestedRowsError ? (
                   <div className={styles.requestedRowEmpty}>{requestedRowsError}</div>
                 ) : requestedRows.length === 0 ? (
-                  <div className={styles.requestedRowEmpty}>No requested items found for this category.</div>
+                  <div className={styles.requestedRowEmpty}>No requested items found.</div>
                 ) : (
                   requestedRows.map((row) => {
                     const isSelected = selectedRequestedRowId === row.OfferDetailID;
@@ -908,14 +901,12 @@ export default function AddProductsModal({
                 </div>
               </div>
               <div className={styles.requestedList}>
-                {!selectedCategory ? (
-                  <div className={styles.requestedRowEmpty}>Select a category to view its requested items.</div>
-                ) : requestedRowsLoading ? (
+                {requestedRowsLoading ? (
                   <div className={styles.requestedRowEmpty}>Loading requested rows…</div>
                 ) : requestedRowsError ? (
                   <div className={styles.requestedRowEmpty}>{requestedRowsError}</div>
                 ) : requestedRows.length === 0 ? (
-                  <div className={styles.requestedRowEmpty}>No requested items found for this category.</div>
+                  <div className={styles.requestedRowEmpty}>No requested items found.</div>
                 ) : (
                   requestedRows.map((row) => {
                     const isSelected = selectedRequestedRowId === row.OfferDetailID;

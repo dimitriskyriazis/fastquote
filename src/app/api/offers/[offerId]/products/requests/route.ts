@@ -77,7 +77,7 @@ export async function GET(
       FROM dbo.OfferDetails od
       WHERE od.OfferID = @__offerId
         AND (
-          (@__categoryId IS NULL AND od.ParentOfferDetailID IS NULL)
+          @__categoryId IS NULL
           OR od.ParentOfferDetailID = @__categoryId
           OR (
             @__categoryTree IS NOT NULL
@@ -94,6 +94,11 @@ export async function GET(
           OR NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL
           OR od.RequestedQuantity IS NOT NULL
         )
+        AND od.ProductID IS NULL
+        AND od.BrandID IS NULL
+        AND NULLIF(LTRIM(RTRIM(od.PartNumber)), '') IS NULL
+        AND NULLIF(LTRIM(RTRIM(od.ModelNumber)), '') IS NULL
+        AND NULLIF(LTRIM(RTRIM(od.ProductDescription)), '') IS NULL
       ORDER BY ${TREE_ORDERING_HIERARCHY_EXPRESSION}, od.TreeOrdering;
     `;
 

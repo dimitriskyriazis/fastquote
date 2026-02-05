@@ -2,10 +2,12 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
-import type { GridApi, RowDoubleClickedEvent, RowNode } from 'ag-grid-community';
+import type { ColDef, GridApi, RowDoubleClickedEvent, RowNode } from 'ag-grid-community';
 import { PageHeaderContext } from '../../../components/PageHeader';
 import { GridQuickSearchProvider } from '../../../components/GridQuickSearchProvider';
-import { productGridColumnDefs, productDefaultColDef } from '../../../../lib/productColumns';
+import { productDefaultColDef } from '../../../../lib/productColumns';
+import { priceListStatusClassRules } from '../../../../lib/priceListStatus';
+import { getUserNumberLocale } from '../../../../lib/localeNumber';
 import styles from './MatchRequestedProductsModal.module.css';
 
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), {
@@ -43,6 +45,7 @@ type MatcherRowNode = RowNode<MatcherRowData> & {
 };
 
 type Props = {
+  offerId: string;
   entry: RequestedProductMatchEntry;
   position: number;
   total: number;
@@ -55,6 +58,24 @@ type Props = {
   onSkipAll: () => void;
 };
 
+const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const formatEuro = (value: unknown) => {
+  if (value == null) return '';
+  const num = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  return `${currencyFormatter.format(num)} €`;
+};
+
+const priceListClassRules = priceListStatusClassRules();
+
+const priceValueFormatter = (params: { value: unknown }) => formatEuro(params.value);
+
+const emptyColumnWidthDefaults = {};
+
 const normalizeProductId = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
   if (typeof value === 'string') {
@@ -64,7 +85,31 @@ const normalizeProductId = (value: unknown): number | null => {
   return null;
 };
 
+const DescriptionCellRenderer = ({ value }: { value?: unknown }) => {
+  const [expanded, setExpanded] = useState(false);
+  const text = value == null ? '' : String(value);
+  const hasLongText = text.length > 60;
+  const toggle = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    event.preventDefault();
+    setExpanded((v) => !v);
+  };
+  return (
+    <div className={styles.descriptionCell}>
+      <div className={styles.descriptionText} data-expanded={expanded}>
+        {text}
+      </div>
+      {hasLongText ? (
+        <button type="button" className={styles.descriptionToggle} onClick={toggle}>
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      ) : null}
+    </div>
+  );
+};
+
 export default function MatchRequestedProductsModal({
+  offerId,
   entry,
   position,
   total,
@@ -94,23 +139,67 @@ export default function MatchRequestedProductsModal({
     }
   }, []);
 
+  const productColumns: ColDef[] = useMemo(
+    () => [
+      {
+        field: 'PartNumber',
+        headerName: 'Part Number',
+        filter: 'agTextColumnFilter',
+      },
+      {
+        field: 'Description',
+        headerName: 'Description',
+        filter: 'agTextColumnFilter',
+        cellRenderer: DescriptionCellRenderer,
+      },
+      { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter' },
+      {
+        field: 'ModelNumber',
+        headerName: 'Model Number',
+        filter: 'agTextColumnFilter',
+      },
+      { field: 'PriceListName', headerName: 'Price List', filter: 'agTextColumnFilter' },
+      {
+        field: 'ListPrice',
+        headerName: 'List Price',
+        filter: 'agNumberColumnFilter',
+        type: 'numericColumn',
+        valueFormatter: priceValueFormatter,
+        cellClassRules: priceListClassRules,
+      },
+      {
+        field: 'UnitPrice',
+        headerName: 'Unit Price',
+        filter: 'agNumberColumnFilter',
+        type: 'numericColumn',
+        valueFormatter: priceValueFormatter,
+      },
+    ],
+    [],
+  );
+
   const requestedFilterModel = useMemo(() => {
     const filters: Record<string, { filterType: 'text'; type: 'contains'; filter: string }> = {};
     const applyFilter = (colId: string, value: string | null) => {
       if (!value) return;
       filters[colId] = { filterType: 'text', type: 'contains', filter: value };
     };
-    applyFilter('Brand', entry.requestedBrand);
+    applyFilter('BrandName', entry.requestedBrand);
     applyFilter('ModelNumber', entry.requestedModelNumber);
     applyFilter('PartNumber', entry.requestedPartNumber);
     return Object.keys(filters).length > 0 ? filters : null;
   }, [entry.requestedBrand, entry.requestedModelNumber, entry.requestedPartNumber]);
 
   const requestPayload = useMemo(() => {
-    const payload: Record<string, unknown> = {};
+    const payload: Record<string, unknown> = { action: 'products' };
     if (newProductId != null) payload.newProductId = newProductId;
     return Object.keys(payload).length > 0 ? payload : null;
   }, [newProductId]);
+
+  const endpoint = useMemo(
+    () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
+    [offerId],
+  );
 
   const hasAppliedRequestedFiltersRef = useRef(false);
 
@@ -323,6 +412,12 @@ export default function MatchRequestedProductsModal({
     } catch {
       /* noop */
     }
+    // Clear any filters that were manually applied by the user
+    try {
+      productsApiRef.current?.setFilterModel(null);
+    } catch {
+      /* noop */
+    }
     setSelectedProduct(null);
     setAssigning(false);
   }, [entry.offerDetailId]);
@@ -377,11 +472,12 @@ export default function MatchRequestedProductsModal({
                 </div>
               ) : null}
             </div>
-            <div className={styles.gridShell}>
+            <div className={`${styles.gridShell} offer-products-grid`}>
               <AgGridAll
-                endpoint="/api/products"
-                columnDefs={productGridColumnDefs}
+                endpoint={endpoint}
+                columnDefs={productColumns}
                 defaultColDef={productDefaultColDef}
+                columnWidthDefaults={emptyColumnWidthDefaults}
                 requestPayload={requestPayload}
                 serverSideEnableClientSideSort={false}
                 cacheBlockSize={25}
@@ -389,12 +485,15 @@ export default function MatchRequestedProductsModal({
                 rowSelection="single"
                 rowMultiSelectWithClick
                 rowDeselection
-                autoSizeExclusions={["Description"]}
                 onSelectionChanged={handleSelectionChanged}
                 onRowDoubleClicked={handleRowDoubleClick}
                 onGridReady={handleGridReady}
                 onModelUpdated={handleGridModelUpdated}
                 allowRowClickSelection
+                columnStateNamespace="match-requested-products-v2"
+                applyColumnStateOrder={true}
+                maintainColumnOrder={true}
+                disableAutoSize={true}
               />
             </div>
             <div className={styles.actions}>
