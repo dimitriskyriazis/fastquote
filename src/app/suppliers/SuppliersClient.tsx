@@ -238,6 +238,7 @@ export default function SuppliersClient({ cities, countries }: Props) {
         headerName: "Website",
         filter: "agTextColumnFilter",
         editable: true,
+        width: 200,
       },
       {
         field: "Comments",
