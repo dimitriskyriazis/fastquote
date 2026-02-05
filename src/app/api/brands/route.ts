@@ -18,6 +18,33 @@ const createBrandSchema = z
   })
   .strict();
 
+type BrandUpdateInput = {
+  BrandID?: number | string | null;
+  field?: string | null;
+  value?: unknown;
+};
+
+type NormalizedBrandUpdate = {
+  brandId: number;
+  field: "Enabled";
+  value: unknown;
+};
+
+const normalizeBrandId = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
+const normalizeBooleanInput = (value: unknown): boolean => {
+  if (value === true || value === "true" || value === 1 || value === "1") return true;
+  if (value === false || value === "false" || value === 0 || value === "0") return false;
+  return Boolean(value);
+};
+
 export async function POST(req: NextRequest) {
   const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
@@ -102,6 +129,62 @@ export async function POST(req: NextRequest) {
       requestId,
       endpoint: "/api/brands",
       method: "POST",
+      userId,
+    });
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
+
+  try {
+    const body = await req.json().catch(() => null);
+    const updates = Array.isArray((body as { updates?: BrandUpdateInput[] } | null)?.updates)
+      ? ((body as { updates?: BrandUpdateInput[] }).updates ?? [])
+      : [];
+    const normalized: NormalizedBrandUpdate[] = updates
+      .map((entry) => {
+        const brandId = normalizeBrandId(entry?.BrandID ?? null);
+        const field = typeof entry?.field === "string" ? entry.field : null;
+        if (brandId == null || field !== "Enabled") return null;
+        return { brandId, field: "Enabled", value: entry?.value };
+      })
+      .filter((entry): entry is NormalizedBrandUpdate => entry != null);
+
+    if (normalized.length === 0) {
+      return NextResponse.json({ ok: false, error: "No valid updates provided" }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    for (const update of normalized) {
+      const request = pool.request();
+      request.input("brandId", sql.Int, update.brandId);
+      request.input("userId", sql.NVarChar(450), userId ?? null);
+      request.input("value", sql.Bit, normalizeBooleanInput(update.value) ? 1 : 0);
+      await request.query(`
+        UPDATE dbo.Brands
+        SET Enabled = @value,
+          ModifiedOn = SYSUTCDATETIME(),
+          ModifiedBy = @userId
+        WHERE ID = @brandId
+      `);
+    }
+
+    logger.info("Brand updated successfully", {
+      requestId,
+      endpoint: "/api/brands",
+      method: "PATCH",
+      userId,
+      count: normalized.length,
+    });
+
+    return NextResponse.json({ ok: true, updated: normalized.length });
+  } catch (err) {
+    return await handleApiError(err, {
+      requestId,
+      endpoint: "/api/brands",
+      method: "PATCH",
       userId,
     });
   }

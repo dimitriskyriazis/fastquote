@@ -94,6 +94,15 @@ import {
 } from 'ag-grid-enterprise';
 import { usePathname } from 'next/navigation';
 import { showToastMessage } from '../../lib/toast';
+import {
+  detectExportMode,
+  exportAllFilteredRowsAsCsv,
+  exportSelectedRowsAsCsv,
+  exportSelectedCellsAsCsv,
+  exportAllFilteredRowsAsExcel,
+  exportSelectedRowsAsExcel,
+  exportSelectedCellsAsExcel,
+} from '../../lib/gridExport';
 import styles from './AgGridAll.module.css';
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from './actionMenuMarkers';
 import { setGridRowDeletionContextMenuSelectionSnapshot } from '../../lib/gridRowDeletion';
@@ -2960,11 +2969,109 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
         return item;
       })
     );
+
+    // Custom export menu items
+    const csvExportIcon = `
+      <span class="ag-icon ag-icon-csv" aria-hidden="true"></span>
+    `;
+    const excelExportIcon = `
+      <span class="ag-icon ag-icon-excel" aria-hidden="true"></span>
+    `;
+
+    const createCustomExportMenuItem = (): MenuItemDef<RowData> => {
+      return {
+        name: 'Export',
+        icon: '<span class="ag-icon ag-icon-save" aria-hidden="true"></span>',
+        subMenu: [
+          {
+            name: 'Excel Export',
+            icon: excelExportIcon,
+            action: async (actionParams) => {
+              const api = actionParams.api ?? null;
+              console.log('[Excel Export] Starting export, api:', !!api);
+              const mode = detectExportMode(api);
+              console.log('[Excel Export] Export mode:', mode);
+
+              try {
+                if (mode === 'selected-cells') {
+                  console.log('[Excel Export] Exporting selected cells');
+                  exportSelectedCellsAsExcel(api);
+                } else if (mode === 'selected-rows') {
+                  console.log('[Excel Export] Exporting selected rows');
+                  exportSelectedRowsAsExcel(api);
+                } else {
+                  console.log('[Excel Export] Exporting all filtered rows');
+                  // Export all filtered rows
+                  const payload = requestPayloadRef.current && typeof requestPayloadRef.current === 'object'
+                    ? { ...requestPayloadRef.current }
+                    : undefined;
+                  const quickFilter = allowQuickSearch !== false ? quickSearchFilterRef.current : null;
+                  console.log('[Excel Export] Payload:', payload, 'QuickFilter:', quickFilter);
+                  await exportAllFilteredRowsAsExcel(api, endpoint, 'export.xlsx', payload, quickFilter);
+                  console.log('[Excel Export] Export completed');
+                }
+              } catch (err) {
+                console.error('[Excel Export] Export failed:', err);
+                showToastMessage('Failed to export Excel', 'error');
+              }
+            },
+          },
+          {
+            name: 'CSV Export',
+            icon: csvExportIcon,
+            action: async (actionParams) => {
+              const api = actionParams.api ?? null;
+              console.log('[CSV Export] Starting export, api:', !!api);
+              const mode = detectExportMode(api);
+              console.log('[CSV Export] Export mode:', mode);
+
+              try {
+                if (mode === 'selected-cells') {
+                  console.log('[CSV Export] Exporting selected cells');
+                  exportSelectedCellsAsCsv(api);
+                } else if (mode === 'selected-rows') {
+                  console.log('[CSV Export] Exporting selected rows');
+                  exportSelectedRowsAsCsv(api);
+                } else {
+                  console.log('[CSV Export] Exporting all filtered rows');
+                  // Export all filtered rows
+                  const payload = requestPayloadRef.current && typeof requestPayloadRef.current === 'object'
+                    ? { ...requestPayloadRef.current }
+                    : undefined;
+                  const quickFilter = allowQuickSearch !== false ? quickSearchFilterRef.current : null;
+                  console.log('[CSV Export] Payload:', payload, 'QuickFilter:', quickFilter);
+                  await exportAllFilteredRowsAsCsv(api, endpoint, 'export.csv', payload, quickFilter);
+                  console.log('[CSV Export] Export completed');
+                }
+              } catch (err) {
+                console.error('[CSV Export] Export failed:', err);
+                showToastMessage('Failed to export CSV', 'error');
+              }
+            },
+          },
+        ],
+      };
+    };
+
+    const replaceExportItem = (
+      items: Array<MenuItemDef<RowData> | DefaultMenuItem | string>,
+    ): Array<MenuItemDef<RowData> | DefaultMenuItem | string> => {
+      const customExportItem = createCustomExportMenuItem();
+      return items.map((item) => {
+        if (item === 'export') return customExportItem;
+        if (typeof item === 'object' && item && typeof item.name === 'string') {
+          const normalized = item.name.trim().toLowerCase();
+          if (normalized === 'export') return customExportItem;
+        }
+        return item;
+      });
+    };
+
     const filterByItem = hasRowNode ? createFilterByMenuItem(params) : null;
 
     if (!filterByItem) {
       const itemsWithAutoSize = autoSizeItems.length > 0 ? [...autoSizeItems, ...menuItems] : menuItems;
-      return wrapActions(replaceDeleteItem(itemsWithAutoSize));
+      return wrapActions(replaceExportItem(replaceDeleteItem(itemsWithAutoSize)));
     }
 
     const isExportMenuItem = (
@@ -2991,8 +3098,8 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       itemsWithFilter.splice(safeIndex, 0, ...autoSizeItems);
     }
 
-    return wrapActions(replaceDeleteItem(itemsWithFilter));
-  }, [clearContextMenuRow, deleteSelectionValues, getContextMenuItems, resolveAutoSizeMenuItems]);
+    return wrapActions(replaceExportItem(replaceDeleteItem(itemsWithFilter)));
+  }, [clearContextMenuRow, deleteSelectionValues, getContextMenuItems, resolveAutoSizeMenuItems, endpoint, allowQuickSearch]);
 
   const headerMenuItemsHandler = useCallback<GetMainMenuItems<RowData>>((params) => {
     const column = params.column;

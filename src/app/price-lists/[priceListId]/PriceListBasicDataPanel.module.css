@@ -76,6 +76,13 @@
   color: #475569;
 }
 
+.fieldLabelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .fieldControl {
   width: 100%;
   border: 1px solid #d1d5db;
@@ -126,6 +133,13 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #475569;
+}
+
+.chipListHeadingRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .chipList {

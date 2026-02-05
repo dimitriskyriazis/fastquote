@@ -33,12 +33,15 @@ yarn-error.log*
 
 # env files
 .env*
+ecosystem.config.cjs
 
 # vercel
 .vercel
 
-ecosystem.config.cjs
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# claude
+.claude/

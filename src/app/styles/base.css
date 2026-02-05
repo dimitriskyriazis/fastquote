@@ -133,6 +133,9 @@ select[aria-invalid="true"] {
   text-decoration: none;
   cursor: pointer;
   transition: transform 120ms ease, box-shadow 120ms ease;
+  background-color: #ffffff;
+  color: #000000;
+  border: 1px solid #e5e7eb;
 }
 
 h1 {

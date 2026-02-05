@@ -4,6 +4,7 @@ import React, { useMemo, useCallback, useEffect, useRef, useState } from "react"
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import type {
+  CellValueChangedEvent,
   ColDef,
   GetContextMenuItemsParams,
   GridApi,
@@ -21,6 +22,8 @@ import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import Link from "next/link";
 import { formatDateUK } from "../lib/formatDateTime";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
+import { normalizeBoolean } from "../../lib/normalizeBoolean";
+import { showToastMessage } from "../../lib/toast";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -57,9 +60,14 @@ const resolvePriceListRowLabel = (
 
 const PRICE_LIST_ROW_TYPE_LABEL = "price list";
 
+const PRICE_LIST_FIELD_LABELS: Record<string, string> = {
+  Enabled: "Enabled",
+};
+
 export default function PriceListsClient() {
   const router = useRouter();
   const defaultEnabledFilterAppliedRef = useRef(false);
+  const enabledOptions = useMemo(() => ["Yes", "No"], []);
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     if (!api || defaultEnabledFilterAppliedRef.current) return;
@@ -278,6 +286,14 @@ export default function PriceListsClient() {
           closeOnApply: true,
         },
         width: 110,
+        editable: true,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: { values: enabledOptions },
+        valueSetter: (params) => {
+          params.data = params.data ?? {};
+          (params.data as Record<string, unknown>).Enabled = normalizeBoolean(params.newValue);
+          return true;
+        },
       },
       {
         field: "SupplierComment",
@@ -285,8 +301,55 @@ export default function PriceListsClient() {
         filter: "agTextColumnFilter"
       },
     ],
-    [ActionCell]
+    [ActionCell, enabledOptions]
   );
+
+  const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    const field = event.colDef.field;
+    if (!field || !(field in PRICE_LIST_FIELD_LABELS)) return;
+    if (event.newValue === event.oldValue) return;
+    const priceListId = normalizePriceListIdValue(
+      (event.data as { PriceListID?: unknown } | null | undefined)?.PriceListID ?? null,
+    );
+    if (priceListId == null) return;
+    const label = PRICE_LIST_FIELD_LABELS[field] ?? field;
+    const revertValue = () => {
+      if (event.node) {
+        try {
+          event.node.setDataValue(field, event.oldValue);
+          return;
+        } catch {
+          /* noop */
+        }
+      }
+      event.api.refreshCells({ force: true });
+    };
+    const value = normalizeBoolean(
+      (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
+    );
+
+    const submit = async () => {
+      try {
+        const res = await fetch(`/api/price-lists/${priceListId}/basicdata`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ updates: [{ field, value }] }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update ${label}`);
+        }
+        showToastMessage(`${label} updated`, "success");
+        event.api?.refreshServerSide?.({ purge: false });
+      } catch (err) {
+        console.error(`Failed to update ${label}`, err);
+        showToastMessage(`Unable to update ${label}. Please try again.`, "error");
+        revertValue();
+      }
+    };
+
+    void submit();
+  }, []);
 
   return (
     <main className={styles.page}>
@@ -309,6 +372,7 @@ export default function PriceListsClient() {
               columnDefs={columnDefs}
               getContextMenuItems={priceListsContextMenuItems}
               onGridReady={handleGridReady}
+              onCellValueChanged={handleCellEdit}
               autoSizeExclusions={["ValidFromDate", "ValidToDate"]}
               rowSelection="multiple"
               rowMultiSelectWithClick

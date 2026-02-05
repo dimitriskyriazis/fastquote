@@ -3,12 +3,14 @@
 import Link from "next/link";
 import React, { useMemo, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
-import type { ColDef, GetContextMenuItemsParams, GridApi } from "ag-grid-community";
+import type { CellValueChangedEvent, ColDef, GetContextMenuItemsParams, GridApi } from "ag-grid-community";
 import { GridRowDeletion } from "../../../../lib/gridRowDeletion";
 import styles from "./CustomerContactsClient.module.css";
 import PageHeader from "../../../components/PageHeader";
 import { GridQuickSearchProvider } from "../../../components/GridQuickSearchProvider";
 import { formatBooleanValue } from "../../../lib/formatBooleanValue";
+import { normalizeBoolean } from "../../../../lib/normalizeBoolean";
+import { showToastMessage } from "../../../../lib/toast";
 
 const AgGridAll = dynamic(() => import("../../../components/AgGridAll"), {
   ssr: false,
@@ -45,6 +47,10 @@ const resolveCustomerContactLabel = (
   return fallback;
 };
 
+const CONTACT_FIELD_LABELS: Record<string, string> = {
+  Enabled: "Enabled",
+};
+
 type Props = {
   customerId: string;
   customerName: string | null;
@@ -53,6 +59,7 @@ type Props = {
 export default function CustomerContactsClient({ customerId, customerName }: Props) {
   const defaultEnabledFilterAppliedRef = useRef(false);
   const encodedCustomerId = encodeURIComponent(customerId);
+  const enabledOptions = useMemo(() => ["Yes", "No"], []);
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     if (!api || defaultEnabledFilterAppliedRef.current) return;
@@ -127,12 +134,67 @@ export default function CustomerContactsClient({ customerId, customerName }: Pro
           buttons: ["apply"],
           closeOnApply: true,
         },
+        editable: true,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: { values: enabledOptions },
+        valueSetter: (params) => {
+          params.data = params.data ?? {};
+          (params.data as Record<string, unknown>).Enabled = normalizeBoolean(params.newValue);
+          return true;
+        },
       },
     ],
-    [],
+    [enabledOptions],
   );
 
   const endpoint = `/api/customers/${encodedCustomerId}/contacts`;
+
+  const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    const field = event.colDef.field;
+    if (!field || !(field in CONTACT_FIELD_LABELS)) return;
+    if (event.newValue === event.oldValue) return;
+    const contactId = normalizeContactId(
+      (event.data as { ContactID?: unknown } | undefined)?.ContactID ?? null,
+    );
+    if (contactId == null) return;
+    const label = CONTACT_FIELD_LABELS[field] ?? field;
+    const revertValue = () => {
+      if (event.node) {
+        try {
+          event.node.setDataValue(field, event.oldValue);
+          return;
+        } catch {
+          /* noop */
+        }
+      }
+      event.api.refreshCells({ force: true });
+    };
+    const value = normalizeBoolean(
+      (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
+    );
+
+    const submit = async () => {
+      try {
+        const res = await fetch("/api/customer-contacts", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ updates: [{ ContactID: contactId, field, value }] }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update ${label}`);
+        }
+        showToastMessage(`${label} updated`, "success");
+        event.api?.refreshServerSide?.({ purge: false });
+      } catch (err) {
+        console.error(`Failed to update ${label}`, err);
+        showToastMessage(`Unable to update ${label}. Please try again.`, "error");
+        revertValue();
+      }
+    };
+
+    void submit();
+  }, []);
 
   const contactRowDeletion = useMemo(
     () =>
@@ -193,6 +255,7 @@ export default function CustomerContactsClient({ customerId, customerName }: Pro
               rowGroupPanelShow="never"
               columnStateNamespace="customer-contacts"
               onGridReady={handleGridReady}
+              onCellValueChanged={handleCellEdit}
               getContextMenuItems={contactContextMenuItems}
             />
           </div>

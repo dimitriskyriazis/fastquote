@@ -171,7 +171,7 @@ async function fetchPreviousPriceLists(): Promise<PreviousPriceListOption[]> {
 export default async function PriceListImportPage() {
   const pool = await getPool();
 
-  const [brands, suppliers, currencies, countries] = await Promise.all([
+  const [brands, suppliers, currencies, countries, cities] = await Promise.all([
     pool
       .request()
       .query<RawDropdownRow>("SELECT ID, Name FROM dbo.Brands ORDER BY Name")
@@ -214,6 +214,14 @@ export default async function PriceListImportPage() {
         console.error("Failed to load countries", err);
         return [] as DropdownOption[];
       }),
+    pool
+      .request()
+      .query<RawDropdownRow>("SELECT ID, Name FROM dbo.Cities ORDER BY Name")
+      .then((res) => toOptions(res.recordset))
+      .catch((err) => {
+        console.error("Failed to load cities", err);
+        return [] as DropdownOption[];
+      }),
   ]);
 
   const [pricingPolicies, pricingPolicyRules, users, previousPriceLists] =
@@ -230,6 +238,7 @@ export default async function PriceListImportPage() {
       suppliers={suppliers}
       currencies={currencies}
       countries={countries}
+      cities={cities}
       pricingPolicies={pricingPolicies}
       pricingPolicyRules={pricingPolicyRules}
       users={users}

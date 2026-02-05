@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
+import { resolveAuditUserId } from "../../../../../lib/auditTrail";
 import { buildTextMatchPredicate, isSensitiveColumn } from "../../../../../lib/gridFilters";
 
 type TextFilterModel = {
@@ -75,6 +76,18 @@ type PriceListProductRowWithCount = PriceListProductRow & {
   __totalCount: number | bigint | null;
 };
 
+type PriceListProductUpdateInput = {
+  PriceListItemID?: number | string | null;
+  field?: string | null;
+  value?: unknown;
+};
+
+type NormalizedPriceListProductUpdate = {
+  priceListItemId: number;
+  field: "Enabled";
+  value: unknown;
+};
+
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   ProductID: "dbo.Products.ID",
   Description: "dbo.Products.Description",
@@ -108,6 +121,12 @@ const partModelNumberSql = (expr: string) => {
   }
   // Fallback for edge cases
   return `ISNULL(${expr}, '')`;
+};
+
+const normalizeBooleanInput = (value: unknown): boolean => {
+  if (value === true || value === "true" || value === 1 || value === "1") return true;
+  if (value === false || value === "false" || value === 0 || value === "0") return false;
+  return Boolean(value);
 };
 
 function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
@@ -384,6 +403,65 @@ export async function POST(
       { ok: false, error: message, rows: [], rowCount: 0 },
       { status: 500 },
     );
+  }
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ priceListId: string }> },
+) {
+  try {
+    const { priceListId } = await params;
+    const normalizedId = decodeURIComponent(String(priceListId ?? "")).trim();
+    if (!normalizedId) {
+      return NextResponse.json({ ok: false, error: "Missing price list id" }, { status: 400 });
+    }
+    const idValue = Number(normalizedId);
+    if (!Number.isFinite(idValue) || !Number.isInteger(idValue)) {
+      return NextResponse.json({ ok: false, error: "Invalid price list id" }, { status: 400 });
+    }
+
+    const body = await req.json().catch(() => null);
+    const updates = Array.isArray((body as { updates?: PriceListProductUpdateInput[] } | null)?.updates)
+      ? ((body as { updates?: PriceListProductUpdateInput[] }).updates ?? [])
+      : [];
+
+    const normalized: NormalizedPriceListProductUpdate[] = updates
+      .map((entry) => {
+        const itemId = normalizePriceListItemId(entry?.PriceListItemID ?? null);
+        const field = typeof entry?.field === "string" ? entry.field : null;
+        if (itemId == null || field !== "Enabled") return null;
+        return { priceListItemId: itemId, field: "Enabled", value: entry?.value };
+      })
+      .filter((entry): entry is NormalizedPriceListProductUpdate => entry != null);
+
+    if (normalized.length === 0) {
+      return NextResponse.json({ ok: false, error: "No valid updates provided" }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    const auditUserId = resolveAuditUserId(req);
+    for (const update of normalized) {
+      const request = pool.request();
+      request.input("__priceListId", sql.Int, idValue);
+      request.input("__itemId", sql.Int, update.priceListItemId);
+      request.input("__enabled", sql.Bit, normalizeBooleanInput(update.value) ? 1 : 0);
+      request.input("__modifiedBy", sql.NVarChar(450), auditUserId ?? null);
+      await request.query(`
+        UPDATE dbo.PriceListItems
+        SET Enabled = @__enabled,
+          ModifiedOn = SYSUTCDATETIME(),
+          ModifiedBy = @__modifiedBy
+        WHERE ID = @__itemId
+          AND PriceListID = @__priceListId
+      `);
+    }
+
+    return NextResponse.json({ ok: true, updated: normalized.length });
+  } catch (err) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
 

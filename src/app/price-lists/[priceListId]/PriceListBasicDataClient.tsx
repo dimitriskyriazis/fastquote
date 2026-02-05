@@ -12,6 +12,9 @@ import type {
 import { showToastMessage } from '../../../lib/toast';
 import UKDatePicker from '../../components/DatePicker';
 import LookupModal from '../../components/LookupModal';
+import AddBrandModal from '../../components/AddBrandModal';
+import AddSupplierModal from '../../components/AddSupplierModal';
+import lookupButtonStyles from '../../components/LookupAddButton.module.css';
 import { formatDisplayValue } from '../../lib/formatDisplayValue';
 import { normalizeValueForApi } from '../../lib/normalizeValueForApi';
 import { formatDateInputValue } from '../../lib/formatDateInputValue';
@@ -22,6 +25,7 @@ type Props = {
   record: PriceListBasicRecord;
   brands: PriceListDropdownOption[];
   countries: PriceListDropdownOption[];
+  cities: PriceListDropdownOption[];
   suppliers: PriceListDropdownOption[];
   currencies: PriceListDropdownOption[];
   users: PriceListDropdownOption[];
@@ -224,6 +228,7 @@ export default function PriceListBasicDataClient({
   record,
   brands,
   countries,
+  cities,
   suppliers,
   currencies,
   users,
@@ -234,9 +239,14 @@ export default function PriceListBasicDataClient({
 }: Props) {
   // Suppress unused variable warning - pricingPoliciesByBrand is part of Props but not used in this component
   void _unused;
+
+  // Local state for brands and suppliers (can be updated when new items are created)
+  const [localBrands, setLocalBrands] = useState(brands);
+  const [localSuppliers, setLocalSuppliers] = useState(suppliers);
+
   const fieldDefinitions = useMemo(
-    () => buildFieldDefinitions(brands, countries, suppliers, currencies, users),
-    [brands, countries, suppliers, currencies, users]
+    () => buildFieldDefinitions(localBrands, countries, localSuppliers, currencies, users),
+    [localBrands, countries, localSuppliers, currencies, users]
   );
 
   const editableFields = useMemo(
@@ -267,14 +277,64 @@ export default function PriceListBasicDataClient({
   const [rulePickerSaving, setRulePickerSaving] = useState(false);
   const [rulePickerError, setRulePickerError] = useState<string | null>(null);
   const [discountDrafts, setDiscountDrafts] = useState<Record<number, { telmaco: string; customer: string }>>({});
+  const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
+  const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
 
   useEffect(() => {
     setLocalPricingPolicyRules(allPricingPolicyRules);
   }, [allPricingPolicyRules]);
 
+  useEffect(() => {
+    setLocalBrands(brands);
+  }, [brands]);
+
+  useEffect(() => {
+    setLocalSuppliers(suppliers);
+  }, [suppliers]);
+
+  const citiesForModal = useMemo(() =>
+    cities.map((city) => ({
+      id: Number(city.value),
+      name: city.label,
+    })),
+    [cities]
+  );
+
+  const countriesForModal = useMemo(() =>
+    countries.map((country) => ({
+      id: Number(country.value),
+      name: country.label,
+    })),
+    [countries]
+  );
+
   const handleValueChange = useCallback((fieldId: string, value: string) => {
     setValues((prev) => ({ ...prev, [fieldId]: value }));
   }, []);
+
+  const handleBrandCreated = useCallback(
+    (brand: { id: number; name: string }) => {
+      const option = { value: String(brand.id), label: brand.name };
+      setLocalBrands((prev) => {
+        if (prev.some((existing) => existing.value === option.value)) return prev;
+        return [...prev, option];
+      });
+      setValues((prev) => ({ ...prev, brand: option.value }));
+    },
+    [],
+  );
+
+  const handleSupplierCreated = useCallback(
+    (supplier: { id: number; name: string }) => {
+      const option = { value: String(supplier.id), label: supplier.name };
+      setLocalSuppliers((prev) => {
+        if (prev.some((existing) => existing.value === option.value)) return prev;
+        return [...prev, option];
+      });
+      setValues((prev) => ({ ...prev, supplier: option.value }));
+    },
+    [],
+  );
 
   const saveField = useCallback(
     async (def: FieldDefinition, rawValue: string) => {
@@ -719,10 +779,37 @@ export default function PriceListBasicDataClient({
           {sectionFields.map((field) => {
             const spanClass =
               field.span && field.span > 1 ? styles.fieldWide : field.span === -1 ? styles.fieldFull : '';
+            const isBrandField = field.id === 'brand';
+            const isSupplierField = field.id === 'supplier';
+
             return (
               <div key={field.id} className={`${styles.fieldBlock} ${spanClass}`}>
                 <label className={styles.fieldLabel} htmlFor={`price-list-field-${field.id}`}>
-                  {field.label}
+                  {isBrandField || isSupplierField ? (
+                    <span className={styles.fieldLabelRow}>
+                      <span>{field.label}</span>
+                      {isBrandField ? (
+                        <button
+                          type="button"
+                          className={lookupButtonStyles.lookupAddButton}
+                          onClick={() => setIsAddBrandOpen(true)}
+                        >
+                          Add new Brand
+                        </button>
+                      ) : null}
+                      {isSupplierField ? (
+                        <button
+                          type="button"
+                          className={lookupButtonStyles.lookupAddButton}
+                          onClick={() => setIsAddSupplierOpen(true)}
+                        >
+                          Add new Supplier
+                        </button>
+                      ) : null}
+                    </span>
+                  ) : (
+                    field.label
+                  )}
                 </label>
                 {renderFieldControl(field)}
               </div>
@@ -869,6 +956,18 @@ export default function PriceListBasicDataClient({
           <div className={styles.ruleTableEmpty}>No pricing policy rules available for the selected brand.</div>
         )}
       </LookupModal>
+      <AddBrandModal
+        open={isAddBrandOpen}
+        onClose={() => setIsAddBrandOpen(false)}
+        onCreated={handleBrandCreated}
+      />
+      <AddSupplierModal
+        open={isAddSupplierOpen}
+        onClose={() => setIsAddSupplierOpen(false)}
+        onCreated={handleSupplierCreated}
+        cities={citiesForModal}
+        countries={countriesForModal}
+      />
     </>
   );
 }

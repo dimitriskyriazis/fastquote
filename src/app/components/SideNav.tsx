@@ -80,6 +80,34 @@ const navItems: NavItem[] = [
     ),
   },
   {
+    label: "Pricing Policies",
+    href: "/pricing-policies",
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M4.5 6.5h15v11h-15z"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinejoin="round"
+          fill="none"
+        />
+        <path
+          d="M7.5 9h4.5M7.5 12h9M7.5 15h6"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
+        <path
+          d="M18.5 6.5V5.2a1.7 1.7 0 0 0-1.7-1.7H7.2A1.7 1.7 0 0 0 5.5 5.2v1.3"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          fill="none"
+        />
+      </svg>
+    ),
+  },
+  {
     label: "Products",
     href: "/products",
     icon: (
@@ -116,29 +144,31 @@ const navItems: NavItem[] = [
     ),
   },
   {
-    label: "Pricing Policies",
-    href: "/pricing-policies",
+    label: "Suppliers",
+    href: "/suppliers",
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <path
-          d="M4.5 6.5h15v11h-15z"
+          d="M2 8h11v8H2z"
           stroke="currentColor"
           strokeWidth="1.8"
           strokeLinejoin="round"
           fill="none"
         />
         <path
-          d="M7.5 9h4.5M7.5 12h9M7.5 15h6"
+          d="M13 8h5l3 3v5h-8V8z"
           stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-        />
-        <path
-          d="M18.5 6.5V5.2a1.7 1.7 0 0 0-1.7-1.7H7.2A1.7 1.7 0 0 0 5.5 5.2v1.3"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
+          strokeWidth="1.8"
+          strokeLinejoin="round"
           fill="none"
+        />
+        <circle cx="6.5" cy="18.5" r="2" stroke="currentColor" strokeWidth="1.6" fill="none" />
+        <circle cx="17.5" cy="18.5" r="2" stroke="currentColor" strokeWidth="1.6" fill="none" />
+        <path
+          d="M13 16h-2.5M21 16h-1.5"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
         />
       </svg>
     ),

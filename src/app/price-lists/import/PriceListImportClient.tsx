@@ -12,6 +12,7 @@ import {
 } from "react";
 import Link from "next/link";
 import AddBrandModal from "../../components/AddBrandModal";
+import AddSupplierModal from "../../components/AddSupplierModal";
 import lookupButtonStyles from "../../components/LookupAddButton.module.css";
 import { useRouter } from "next/navigation";
 import type * as XLSXTypes from "xlsx";
@@ -54,6 +55,7 @@ type Props = {
   suppliers: DropdownOption[];
   currencies: DropdownOption[];
   countries: DropdownOption[];
+  cities: DropdownOption[];
   pricingPolicies: DropdownOption[];
   pricingPolicyRules: PricingPolicyRuleOption[];
   users: DropdownOption[];
@@ -521,6 +523,7 @@ export default function PriceListImportClient({
   suppliers,
   currencies,
   countries,
+  cities,
   pricingPolicies,
   pricingPolicyRules,
   users,
@@ -572,9 +575,11 @@ export default function PriceListImportClient({
   const [brandError, setBrandError] = useState<string | null>(null);
   const [showBrandList, setShowBrandList] = useState(false);
   const [localBrands, setLocalBrands] = useState<DropdownOption[]>(brands);
+  const [localSuppliers, setLocalSuppliers] = useState<DropdownOption[]>(suppliers);
   const [brandsLoading, setBrandsLoading] = useState(false);
   const [brandsError, setBrandsError] = useState<string | null>(null);
   const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
+  const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
   const [localPricingPolicyRules, setLocalPricingPolicyRules] = useState(pricingPolicyRules);
   const [isAddPricingPolicyRuleOpen, setIsAddPricingPolicyRuleOpen] = useState(false);
@@ -600,12 +605,33 @@ export default function PriceListImportClient({
     setLocalBrands(brands);
   }, [brands]);
 
+  useEffect(() => {
+    setLocalSuppliers(suppliers);
+  }, [suppliers]);
+
   // Automatically select current user as responsible user
   useEffect(() => {
     if (currentUserId && !values.responsibleUserId) {
       setValues((prev) => ({ ...prev, responsibleUserId: currentUserId }));
     }
   }, [currentUserId, values.responsibleUserId]);
+
+  // Convert dropdown options to the format expected by AddSupplierModal
+  const citiesForModal = useMemo(() =>
+    cities.map((city) => ({
+      id: Number(city.value),
+      name: city.label,
+    })),
+    [cities]
+  );
+
+  const countriesForModal = useMemo(() =>
+    countries.map((country) => ({
+      id: Number(country.value),
+      name: country.label,
+    })),
+    [countries]
+  );
 
   const isCostCurrencyEuro = !values.costCurrencyId || values.costCurrencyId === euroCurrencyId;
 
@@ -874,6 +900,18 @@ export default function PriceListImportClient({
       setBrandText(option.label);
       setBrandError(null);
       setBrandsError(null);
+    },
+    [updateField],
+  );
+
+  const handleSupplierCreated = useCallback(
+    (supplier: { id: number; name: string }) => {
+      const option = { value: String(supplier.id), label: supplier.name };
+      setLocalSuppliers((prev) => {
+        if (prev.some((existing) => existing.value === option.value)) return prev;
+        return [...prev, option];
+      });
+      updateField("supplierId", option.value);
     },
     [updateField],
   );
@@ -1509,7 +1547,7 @@ export default function PriceListImportClient({
               </div>
 
               <div className={styles.fieldRow}>
-                <label className={styles.field}>
+                <label className={`${styles.field} ${styles.fieldNudgeDown}`}>
                   <span className={styles.label}>
                     Responsible User <span className={styles.requiredMark}>*</span>
                   </span>
@@ -1523,9 +1561,20 @@ export default function PriceListImportClient({
                     {users.map(renderOption)}
                   </select>
                 </label>
-                <label className={styles.field}>
-                  <span className={styles.label}>
-                    Supplier
+                <div className={styles.field}>
+                  <span className={styles.lookupLabelRow}>
+                    <span className={styles.labelText}>
+                      <span className={styles.label}>
+                        Supplier
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      className={lookupButtonStyles.lookupAddButton}
+                      onClick={() => setIsAddSupplierOpen(true)}
+                    >
+                      Add new Supplier
+                    </button>
                   </span>
                   <select
                     className={styles.input}
@@ -1533,9 +1582,9 @@ export default function PriceListImportClient({
                     onChange={(e) => updateField("supplierId", e.target.value)}
                   >
                     <option value="">Select supplier</option>
-                    {suppliers.map(renderOption)}
+                    {localSuppliers.map(renderOption)}
                   </select>
-                </label>
+                </div>
               </div>
 
               <div className={styles.fieldRow}>
@@ -1946,6 +1995,13 @@ export default function PriceListImportClient({
         open={isAddBrandOpen}
         onClose={() => setIsAddBrandOpen(false)}
         onCreated={handleBrandCreated}
+      />
+      <AddSupplierModal
+        open={isAddSupplierOpen}
+        onClose={() => setIsAddSupplierOpen(false)}
+        onCreated={handleSupplierCreated}
+        cities={citiesForModal}
+        countries={countriesForModal}
       />
     </main>
       <LookupModal

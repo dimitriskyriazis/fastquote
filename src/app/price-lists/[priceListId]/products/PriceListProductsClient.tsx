@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type {
+  CellValueChangedEvent,
   ColDef,
   GetContextMenuItemsParams,
   MenuItemDef,
@@ -14,6 +15,8 @@ import layoutStyles from "../../priceListDetail.module.css";
 import pageStyles from "./PriceListProductsPage.module.css";
 import { GridRowDeletion } from "../../../../lib/gridRowDeletion";
 import { getUserNumberLocale } from "../../../../lib/localeNumber";
+import { normalizeBoolean } from "../../../../lib/normalizeBoolean";
+import { showToastMessage } from "../../../../lib/toast";
 
 const AgGridAll = dynamic(() => import("../../../components/AgGridAll"), {
   ssr: false,
@@ -80,6 +83,10 @@ const resolvePriceListRowLabel = (row: PriceListProductRowGrid | null | undefine
 
 const PRICE_LIST_ROW_TYPE_LABEL = "price list item";
 
+const PRICE_LIST_FIELD_LABELS: Record<string, string> = {
+  Enabled: "Enabled",
+};
+
 const productHistoryMenuIcon = `
   <span class="fastquote-menu-icon fastquote-menu-icon--history" aria-hidden="true">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -100,6 +107,7 @@ export default function PriceListProductsClient({
     [priceListId],
   );
   const router = useRouter();
+  const enabledOptions = useMemo(() => ["Yes", "No"], []);
 
   const columnDefs: ColDef[] = useMemo(
     () => [
@@ -170,6 +178,14 @@ export default function PriceListProductsClient({
           closeOnApply: true,
         },
         width: 110,
+        editable: true,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: { values: enabledOptions },
+        valueSetter: (params) => {
+          params.data = params.data ?? {};
+          (params.data as Record<string, unknown>).Enabled = normalizeBoolean(params.newValue);
+          return true;
+        },
       },
       {
         field: "PriceListID",
@@ -178,8 +194,55 @@ export default function PriceListProductsClient({
         suppressColumnsToolPanel: true,
       },
     ],
-    [],
+    [enabledOptions],
   );
+
+  const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    const field = event.colDef.field;
+    if (!field || !(field in PRICE_LIST_FIELD_LABELS)) return;
+    if (event.newValue === event.oldValue) return;
+    const priceListItemId = normalizePriceListItemId(
+      (event.data as { PriceListItemID?: unknown } | undefined)?.PriceListItemID ?? null,
+    );
+    if (priceListItemId == null) return;
+    const label = PRICE_LIST_FIELD_LABELS[field] ?? field;
+    const revertValue = () => {
+      if (event.node) {
+        try {
+          event.node.setDataValue(field, event.oldValue);
+          return;
+        } catch {
+          /* noop */
+        }
+      }
+      event.api.refreshCells({ force: true });
+    };
+    const value = normalizeBoolean(
+      (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
+    );
+
+    const submit = async () => {
+      try {
+        const res = await fetch(endpoint, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ updates: [{ PriceListItemID: priceListItemId, field, value }] }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update ${label}`);
+        }
+        showToastMessage(`${label} updated`, "success");
+        event.api?.refreshServerSide?.({ purge: false });
+      } catch (err) {
+        console.error(`Failed to update ${label}`, err);
+        showToastMessage(`Unable to update ${label}. Please try again.`, "error");
+        revertValue();
+      }
+    };
+
+    void submit();
+  }, [endpoint]);
 
   const defaultColDef = useMemo<ColDef>(
     () => ({
@@ -290,6 +353,7 @@ export default function PriceListProductsClient({
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             getContextMenuItems={priceListContextMenuItems}
+            onCellValueChanged={handleCellEdit}
             rowGroupPanelShow="never"
           />
         </div>
