@@ -703,7 +703,7 @@ export default function AddProductsModal({
                 onClick={onRequestAddProduct}
                 disabled={submitting}
               >
-                Add New product
+                Add New Product
               </button>
             ) : null}
             <button

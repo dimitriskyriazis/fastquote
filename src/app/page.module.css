@@ -22,7 +22,6 @@
 
 .heroContent {
   flex: 1;
-  min-width: 260px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;

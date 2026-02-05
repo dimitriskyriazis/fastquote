@@ -22,7 +22,6 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  min-width: 0;
 }
 
 .headerSideLeft {
@@ -42,7 +41,6 @@
   letter-spacing: var(--page-heading-letter-spacing);
   flex: 0 1 auto;
   text-align: center;
-  min-width: 0;
 }
 
 .searchSlot {

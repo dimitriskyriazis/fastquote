@@ -160,7 +160,6 @@ export default function CreateDraftOfferButton({ offerId, className }: Props) {
                   }}
                   style={{ 
                     width: '100%', 
-                    minWidth: '600px',
                     maxWidth: '100%',
                     whiteSpace: 'normal',
                     wordWrap: 'break-word',

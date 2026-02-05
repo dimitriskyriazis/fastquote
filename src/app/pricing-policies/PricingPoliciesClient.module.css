@@ -71,13 +71,11 @@
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  min-width: 0;
   position: relative;
   z-index: 1;
 }
 
 .policyGroupTitle {
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

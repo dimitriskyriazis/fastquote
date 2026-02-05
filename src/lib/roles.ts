@@ -8,6 +8,7 @@ export type AppRole =
 
 export type Permission =
   | 'dangerousOps'
+  | 'manageUsers'
   | 'managePriceLists'
   | 'managePricingPolicies'
   | 'createOffers'
@@ -57,6 +58,8 @@ export const roleHasPermission = (roles: readonly AppRole[], permission: Permiss
       return roles.includes('Sales Manager') || roles.includes('Sales Team');
     case 'manageCustomersContacts':
       return roles.includes('Simple User');
+    case 'manageUsers':
+      return false;
     case 'dangerousOps':
     default:
       return false;

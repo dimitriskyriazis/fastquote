@@ -530,7 +530,6 @@
   letter-spacing: normal;
   text-transform: none;
   cursor: pointer;
-  min-width: 180px;
   transition: transform 120ms ease, box-shadow 120ms ease;
   box-shadow: 0 10px 20px rgba(17, 24, 39, 0.24);
 }
@@ -662,7 +661,6 @@
 }
 
 .rulePickerButton {
-  min-width: 100%;
 }
 
 .ruleSummaryList {

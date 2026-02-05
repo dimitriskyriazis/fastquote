@@ -149,7 +149,6 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     { field: 'BrandName', headerName: 'Brand' },
     { field: 'PartNumber', headerName: 'Part No' },
     { field: 'ModelNumber', headerName: 'Model No' },
-    { field: 'Description', headerName: 'Description', minWidth: 280 },
     { field: 'Quantity', headerName: 'Qty', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('Quantity'), valueFormatter: numberValueFormatter, aggFunc: 'sum' },
 
     { field: 'ListPrice', headerName: 'List Price', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('ListPrice'), valueFormatter: euroValueFormatter, aggFunc: 'sum' },
@@ -305,7 +304,6 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     enableRowGroup: true,
     enablePivot: true,
     enableValue: true,
-    minWidth: 120,
     flex: 0,
   }), []);
 

@@ -13,7 +13,6 @@
   flex: 0 0 auto;
   width: fit-content;
   max-width: max-content;
-  min-width: 0;
   text-decoration: none;
   cursor: pointer;
   border: 1px solid rgba(15, 23, 42, 0.15);

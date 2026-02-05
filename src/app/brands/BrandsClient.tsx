@@ -152,7 +152,6 @@ export default function BrandsClient() {
         field: "Name",
         headerName: "Brand Name",
         filter: "agTextColumnFilter",
-        minWidth: 200,
       },
       {
         field: "SoftOneID",
@@ -170,7 +169,6 @@ export default function BrandsClient() {
         field: "Comment",
         headerName: "Comment",
         filter: "agTextColumnFilter",
-        minWidth: 200,
       },
       {
         field: "Enabled",

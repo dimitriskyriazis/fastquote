@@ -178,14 +178,12 @@ export default function SuppliersClient({ cities, countries }: Props) {
         headerName: "Supplier Name",
         filter: "agTextColumnFilter",
         editable: true,
-        minWidth: 200,
       },
       {
         field: "Address",
         headerName: "Address",
         filter: "agTextColumnFilter",
         editable: true,
-        minWidth: 200,
       },
       {
         field: "Country",
@@ -240,14 +238,12 @@ export default function SuppliersClient({ cities, countries }: Props) {
         headerName: "Website",
         filter: "agTextColumnFilter",
         editable: true,
-        minWidth: 200,
       },
       {
         field: "Comments",
         headerName: "Comments",
         filter: "agTextColumnFilter",
         editable: true,
-        minWidth: 200,
       },
       {
         field: "Enabled",
