@@ -285,7 +285,6 @@ export default function BrandsClient() {
                 rowSelection="multiple"
                 rowMultiSelectWithClick
                 rowDeselection
-                allowRowClickSelection
               />
             </div>
           </GridQuickSearchProvider>

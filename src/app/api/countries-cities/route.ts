@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import { getPool } from "../../../lib/sql";
 import { resolveAuditUserId } from "../../../lib/auditTrail";
+import { requirePermission } from "../../../lib/authz";
 
 type UpdateInput = {
   CountryID?: number | string | null;
@@ -31,6 +32,9 @@ const normalizeText = (value: unknown): string => {
 
 export async function PATCH(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "manageCitiesCountries");
+    if (!auth.ok) return auth.response;
+
     const body = await req.json().catch(() => null);
     const updates = Array.isArray((body as { updates?: UpdateInput[] } | null)?.updates)
       ? ((body as { updates?: UpdateInput[] }).updates ?? [])
@@ -102,6 +106,9 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   let ids: number[] = [];
   try {
+    const auth = await requirePermission(req, "manageCitiesCountries");
+    if (!auth.ok) return auth.response;
+
     const body = (await req.json().catch(() => null)) as { CountryIDs?: unknown } | null;
     const rawIds = Array.isArray(body?.CountryIDs) ? body?.CountryIDs : [];
     ids = Array.from(

@@ -10,6 +10,7 @@ import {
   mergeWhereClauses,
   QueryParam,
 } from "../../../lib/gridFilters";
+import { requirePermission } from "../../../lib/authz";
 
 type TextFilterModel = {
   filterType: "text";
@@ -201,6 +202,9 @@ async function readGridRequest(req: NextRequest): Promise<GridRequest> {
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "manageBrandsSuppliers");
+    if (!auth.ok) return auth.response;
+
     const gridRequest = await readGridRequest(req);
     const startRow = gridRequest.startRow ?? 0;
     const endRow = gridRequest.endRow ?? startRow + 100;
@@ -264,6 +268,9 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "manageBrandsSuppliers");
+    if (!auth.ok) return auth.response;
+
     const body = await req.json().catch(() => null);
     const updates = Array.isArray((body as { updates?: SupplierUpdateInput[] } | null)?.updates)
       ? ((body as { updates?: SupplierUpdateInput[] }).updates ?? [])
@@ -400,6 +407,9 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "manageBrandsSuppliers");
+    if (!auth.ok) return auth.response;
+
     const body = (await req.json().catch(() => null)) as SupplierDeleteBody | null;
     const rawIds = Array.isArray(body?.SupplierIDs) ? body.SupplierIDs : [];
     const ids = Array.from(

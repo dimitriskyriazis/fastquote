@@ -112,13 +112,30 @@ async function fetchUsers() {
   try {
     const pool = await getPool();
     const result = await pool.request().query<LookupRow>(`
-      SELECT Id AS ID, UserName AS Name
+      SELECT
+        Id AS ID,
+        COALESCE(NULLIF(LTRIM(RTRIM(FullName)), ''), UserName) AS Name
       FROM dbo.AspNetUsers
-      ORDER BY UserName
+      ORDER BY COALESCE(NULLIF(LTRIM(RTRIM(FullName)), ''), UserName)
     `);
     return mapOptions(result.recordset);
   } catch (err) {
     console.error('Failed to load users', err);
+    return [];
+  }
+}
+
+async function fetchFwcProjects() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<LookupRow>(`
+      SELECT ID, ShortName AS Name
+      FROM dbo.FWCs
+      ORDER BY ShortName, ID
+    `);
+    return mapOptions(result.recordset);
+  } catch (err) {
+    console.error('Failed to load FWC projects', err);
     return [];
   }
 }
@@ -138,6 +155,7 @@ export default async function Page() {
     markets,
     salesDivisions,
     users,
+    fwcProjects,
   ] = await Promise.all([
     fetchCustomers(),
     fetchOfferStatuses(),
@@ -145,6 +163,7 @@ export default async function Page() {
     fetchMarkets(),
     fetchSalesDivisions(),
     fetchUsers(),
+    fetchFwcProjects(),
   ]);
 
   const fallbackUserId = getAuditFallbackUserId();
@@ -183,6 +202,7 @@ export default async function Page() {
           markets={markets}
           salesDivisions={salesDivisions}
           users={users}
+          fwcProjects={fwcProjects}
           defaultValues={{
             deliveryTime: '8 weeks',
             paymentTerms: 'Upon Agreement',

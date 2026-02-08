@@ -7,6 +7,7 @@ import { getRequestId } from "../../../lib/requestId";
 import { handleApiError } from "../../../lib/errorHandler";
 import { logger } from "../../../lib/logger";
 import { validateRequest, intSchema, stringSchema, booleanSchema } from "../../../lib/validation";
+import { requirePermission } from "../../../lib/authz";
 
 const createBrandSchema = z
   .object({
@@ -50,6 +51,9 @@ export async function POST(req: NextRequest) {
   const userId = resolveAuditUserId(req);
 
   try {
+    const auth = await requirePermission(req, "manageBrandsSuppliers");
+    if (!auth.ok) return auth.response;
+
     const validation = await validateRequest(req, createBrandSchema, {
       endpoint: "/api/brands",
       method: "POST",
@@ -139,6 +143,9 @@ export async function PATCH(req: NextRequest) {
   const userId = resolveAuditUserId(req);
 
   try {
+    const auth = await requirePermission(req, "manageBrandsSuppliers");
+    if (!auth.ok) return auth.response;
+
     const body = await req.json().catch(() => null);
     const updates = Array.isArray((body as { updates?: BrandUpdateInput[] } | null)?.updates)
       ? ((body as { updates?: BrandUpdateInput[] }).updates ?? [])

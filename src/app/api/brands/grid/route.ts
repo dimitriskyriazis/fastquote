@@ -9,6 +9,7 @@ import {
   mergeWhereClauses,
   QueryParam,
 } from "../../../../lib/gridFilters";
+import { requirePermission } from "../../../../lib/authz";
 
 type TextFilterModel = {
   filterType: "text";
@@ -137,6 +138,9 @@ async function readGridRequest(req: NextRequest): Promise<GridRequest> {
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "manageBrandsSuppliers");
+    if (!auth.ok) return auth.response;
+
     const gridRequest = await readGridRequest(req);
     const startRow = gridRequest.startRow ?? 0;
     const endRow = gridRequest.endRow ?? startRow + 100;

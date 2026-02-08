@@ -535,7 +535,6 @@ export default function CountriesCitiesClient({ countries }: Props) {
                 rowSelection="multiple"
                 rowMultiSelectWithClick
                 rowDeselection
-                allowRowClickSelection
               />
             </div>
           </GridQuickSearchProvider>

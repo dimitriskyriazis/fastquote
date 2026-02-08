@@ -363,7 +363,6 @@ export default function SuppliersClient({ cities, countries }: Props) {
                 rowSelection="multiple"
                 rowMultiSelectWithClick
                 rowDeselection
-                allowRowClickSelection
               />
             </div>
           </GridQuickSearchProvider>

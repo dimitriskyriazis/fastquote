@@ -73,6 +73,7 @@ type Props = {
   markets: MarketOption[];
   salesDivisions: DropdownOption[];
   users: DropdownOption[];
+  fwcProjects: DropdownOption[];
   defaultValues: OfferCreateDefaults;
   formId?: string;
 };
@@ -135,6 +136,7 @@ export default function OfferCreateClient({
   markets,
   salesDivisions,
   users,
+  fwcProjects,
   defaultValues,
   formId = 'offer-create-form',
 }: Props) {
@@ -487,7 +489,7 @@ export default function OfferCreateClient({
       { id: 'approvalUserId', label: 'Approval User', section: 'commercial', type: 'select', options: users },
 
       { id: 'projectId', label: 'ERP Project ID', section: 'code', inputType: 'number' },
-      { id: 'erpFwcProjectId', label: 'ERP FWC Project ID', section: 'code', inputType: 'number' },
+      { id: 'erpFwcProjectId', label: 'ERP FWC Project ID', section: 'code', type: 'select', options: fwcProjects },
       { id: 'customerRef', label: 'Customer Ref', section: 'code' },
 
       { id: 'initialRequest', label: 'Initial Request', section: 'dates', type: 'date' },
@@ -508,6 +510,7 @@ export default function OfferCreateClient({
       salesDivisions,
       statuses,
       users,
+      fwcProjects,
     ],
   );
 

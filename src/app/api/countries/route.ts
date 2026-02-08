@@ -3,6 +3,7 @@ import sql from "mssql";
 import { getPool } from "../../../lib/sql";
 import { resolveAuditUserId } from "../../../lib/auditTrail";
 import type { DropdownOption } from "../../../lib/dropdownOptions";
+import { requirePermission } from "../../../lib/authz";
 
 type CreateCountryBody = {
   name?: string;
@@ -17,6 +18,9 @@ const normalizeBoolean = (value: unknown): boolean | null => {
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "manageCitiesCountries");
+    if (!auth.ok) return auth.response;
+
     let payload: CreateCountryBody | null = null;
     try {
       payload = (await req.json()) as CreateCountryBody;

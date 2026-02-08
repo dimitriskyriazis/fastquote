@@ -660,9 +660,6 @@
   cursor: default;
 }
 
-.rulePickerButton {
-}
-
 .ruleSummaryList {
   display: flex;
   flex-wrap: wrap;

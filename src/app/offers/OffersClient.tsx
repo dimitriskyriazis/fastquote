@@ -259,10 +259,15 @@ export default function OffersClient() {
         event.preventDefault();
         event.stopPropagation();
       };
-      const navigateTo = (suffix: 'products' | 'basicdata') => {
+      const openInNewWindow = (suffix: 'products' | 'basicdata') => {
         if (!encodedId) return;
+        const url = `/offers/${encodedId}/${suffix}`;
         setOpen(false);
-        router.push(`/offers/${encodedId}/${suffix}`);
+        if (typeof window !== 'undefined') {
+          window.open(url, '_blank', 'noopener,noreferrer');
+          return;
+        }
+        router.push(url);
       };
 
       useEffect(() => {
@@ -332,7 +337,7 @@ export default function OffersClient() {
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                navigateTo('basicdata');
+                openInNewWindow('basicdata');
               }}
             >
               View Basic Data
@@ -344,7 +349,7 @@ export default function OffersClient() {
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                navigateTo('products');
+                openInNewWindow('products');
               }}
             >
               View Products

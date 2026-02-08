@@ -23,6 +23,7 @@ type Props = {
   pricingPolicies: OfferDropdownOption[];
   markets: OfferDropdownOption[];
   users: OfferDropdownOption[];
+  fwcProjects: OfferDropdownOption[];
 };
 
 type SectionKey = 'general' | 'info' | 'commercial' | 'code' | 'dates';
@@ -65,6 +66,7 @@ const buildFieldDefinitions = (
   markets: OfferDropdownOption[],
   users: OfferDropdownOption[],
   contacts: OfferDropdownOption[],
+  fwcProjects: OfferDropdownOption[],
 ): FieldDefinition[] => [
   { id: 'title', label: 'Title', section: 'general', recordKey: 'Title', updateField: 'Title' },
   { id: 'description', label: 'Description', section: 'general', recordKey: 'Description', updateField: 'Description' },
@@ -159,6 +161,7 @@ const buildFieldDefinitions = (
     recordKey: 'ERPFWCProjectID',
     updateField: 'ERPFWCProjectID',
     valueType: 'number',
+    options: fwcProjects,
   },
   { id: 'offerId', label: 'Offer ID', section: 'code', recordKey: 'OfferID', readOnly: true },
   { id: 'customerRef', label: 'Customer Ref', section: 'code', recordKey: 'CustomerRef', updateField: 'CustomerRef' },
@@ -187,7 +190,16 @@ const formatInitialValue = (record: OfferBasicRecord, def: FieldDefinition) => {
 const resolveFieldValue = (record: OfferBasicRecord, def: FieldDefinition) =>
   (typeof def.resolveValue === 'function' ? def.resolveValue(record) : record[def.recordKey]) ?? null;
 
-export default function OfferBasicDataClient({ offerId, record, contacts, statuses, pricingPolicies, markets, users }: Props) {
+export default function OfferBasicDataClient({
+  offerId,
+  record,
+  contacts,
+  statuses,
+  pricingPolicies,
+  markets,
+  users,
+  fwcProjects,
+}: Props) {
 
   const contactOptions = useMemo(() => {
     const sortedContacts = sortContacts(contacts);
@@ -218,6 +230,21 @@ export default function OfferBasicDataClient({ offerId, record, contacts, status
     return options;
   }, [contacts, record.ContactFullName, record.ContactID]);
 
+  const fwcProjectOptions = useMemo(() => {
+    const options = [...fwcProjects];
+    const selectedId = record.ERPFWCProjectID;
+    if (
+      selectedId != null &&
+      !options.some((option) => Number(option.value) === Number(selectedId))
+    ) {
+      options.push({
+        value: String(selectedId),
+        label: String(selectedId),
+      });
+    }
+    return options;
+  }, [fwcProjects, record.ERPFWCProjectID]);
+
   useEffect(() => {
     const trimmedDescription = typeof record.Description === 'string'
       ? record.Description.trim()
@@ -246,8 +273,9 @@ export default function OfferBasicDataClient({ offerId, record, contacts, status
         markets,
         users,
         contactOptions,
+        fwcProjectOptions,
       ),
-    [statuses, pricingPolicies, markets, users, contactOptions],
+    [statuses, pricingPolicies, markets, users, contactOptions, fwcProjectOptions],
   );
   const editableFields = useMemo(
     () => fieldDefinitions.filter((def) => def.updateField && !def.readOnly),

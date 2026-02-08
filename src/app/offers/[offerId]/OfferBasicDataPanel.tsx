@@ -144,13 +144,31 @@ async function fetchAspNetUsers() {
     const pool = await getPool();
     const request = pool.request();
     const result = await request.query<LookupRow>(`
-      SELECT Id AS ID, UserName AS Name
+      SELECT
+        Id AS ID,
+        COALESCE(NULLIF(LTRIM(RTRIM(FullName)), ''), UserName) AS Name
       FROM dbo.AspNetUsers
-      ORDER BY UserName
+      ORDER BY COALESCE(NULLIF(LTRIM(RTRIM(FullName)), ''), UserName)
     `);
     return mapLookupRows(result.recordset);
   } catch (err) {
     console.error('Failed to load users', err);
+    return [];
+  }
+}
+
+async function fetchFwcProjects() {
+  try {
+    const pool = await getPool();
+    const request = pool.request();
+    const result = await request.query<LookupRow>(`
+      SELECT ID, ShortName AS Name
+      FROM dbo.FWCs
+      ORDER BY ShortName, ID
+    `);
+    return mapLookupRows(result.recordset);
+  } catch (err) {
+    console.error('Failed to load FWC projects', err);
     return [];
   }
 }
@@ -205,12 +223,14 @@ export default async function OfferBasicDataPanel({ offerId }: Props) {
     pricingPolicies,
     markets,
     users,
+    fwcProjects,
   ] = await Promise.all([
     fetchCustomerContacts(record.CustomerID ?? null),
     fetchOfferStatuses(),
     fetchPricingPolicies(),
     fetchMarkets(),
     fetchAspNetUsers(),
+    fetchFwcProjects(),
   ]);
 
   return (
@@ -222,6 +242,7 @@ export default async function OfferBasicDataPanel({ offerId }: Props) {
       pricingPolicies={pricingPolicies}
       markets={markets}
       users={users}
+      fwcProjects={fwcProjects}
     />
   );
 }

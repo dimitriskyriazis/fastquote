@@ -27,6 +27,22 @@
   height: 100%;
 }
 
+.gridFrame :global(.ag-theme-quartz .ag-row-odd .ag-cell) {
+  background: #f4f6fb !important;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-row-even .ag-cell) {
+  background: #ffffff !important;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-row-hover .ag-cell) {
+  background: #e9f1ff !important;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-cell) {
+  transition: background-color 140ms ease;
+}
+
 .loading {
   padding: 2rem;
   text-align: center;

@@ -29,7 +29,7 @@ export type OrderLineInput = {
 /**
  * Creates a customer order (FINDOC) in ERP using the integration procedure.
  *
- * Assumes a stored procedure like tlm.findoc_CreateFromIntegration exists that:
+ * Calls tlm._findocCreateCustomerOrder which:
  * - Enforces the IntegrationConfig kill switch
  * - Reserves the next SERIESNUM via tlm.FINDOC_SeriesCounter
  * - Inserts into dbo.FINDOC
@@ -42,9 +42,9 @@ export async function createCustomerOrder(
   const request = erpPool.request();
 
   request.input('IntegrationKey', sql.NVarChar(100), params.integrationKey);
-  request.input('PRJC', sql.Int, params.prjcId);
+  request.input('Prjc', sql.Int, params.prjcId);
+  request.input('Trdr', sql.Int, params.trdr);
   request.input('BusinessUnit', sql.VarChar(20), params.businessUnit);
-  request.input('TRDR', sql.Int, params.trdr);
   request.input('Series', sql.Int, params.series);
   request.input('CreatedByUser', sql.Int, params.createdByUser);
 
@@ -53,18 +53,18 @@ export async function createCustomerOrder(
     FINCODE: string;
     SERIESNUM: number;
   }>(`
-    EXEC tlm.findoc_CreateFromIntegration
+    EXEC tlm._findocCreateCustomerOrder
       @IntegrationKey = @IntegrationKey,
-      @PRJC           = @PRJC,
+      @Prjc           = @Prjc,
+      @Trdr           = @Trdr,
       @BusinessUnit   = @BusinessUnit,
-      @TRDR           = @TRDR,
       @Series         = @Series,
       @CreatedByUser  = @CreatedByUser;
   `);
 
   const row = result.recordset?.[0];
   if (!row || row.FINDOC_ID == null || !row.FINCODE || row.SERIESNUM == null) {
-    throw new Error('findoc_CreateFromIntegration did not return FINDOC_ID/FINCODE/SERIESNUM');
+    throw new Error('_findocCreateCustomerOrder did not return FINDOC_ID/FINCODE/SERIESNUM');
   }
 
   return {

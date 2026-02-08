@@ -87,6 +87,8 @@ const formatEuro = (value: unknown) => {
   return `${currencyFormatter.format(num)} €`;
 };
 
+const emptyColumnWidthDefaults = {};
+
 const normalizeProductId = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
   if (typeof value === 'string') {
@@ -162,6 +164,7 @@ export default function AddProductsModal({
   const requestedRowsFetchIdRef = useRef(0);
   const requestedRowsCacheRef = useRef<Record<string, RequestedRow[]>>({});
   const pendingSelectionProductIdRef = useRef<number | null>(null);
+  const categoryRowClickHandlerRef = useRef<((event: { node?: RowNode }) => void) | null>(null);
 
   const categoryRequestPayload = useMemo(() => ({ action: 'categories' }), []);
   const productRequestPayload = useMemo(() => {
@@ -252,6 +255,13 @@ export default function AddProductsModal({
   useEffect(() => {
     setSelectedRequestedRowId(null);
     const categoryId = selectedCategory?.OfferDetailID ?? null;
+    if (categoryId == null) {
+      requestedRowsFetchIdRef.current += 1;
+      setRequestedRows([]);
+      setRequestedRowsError(null);
+      setRequestedRowsLoading(false);
+      return;
+    }
     void fetchRequestedRows(categoryId);
   }, [selectedCategory, fetchRequestedRows]);
 
@@ -642,6 +652,13 @@ export default function AddProductsModal({
     refreshCategoryGrid();
     refreshProductsGrid();
     const categoryId = selectedCategory?.OfferDetailID ?? null;
+    if (categoryId == null) {
+      requestedRowsFetchIdRef.current += 1;
+      setRequestedRows([]);
+      setRequestedRowsError(null);
+      setRequestedRowsLoading(false);
+      return;
+    }
     void fetchRequestedRows(categoryId, { force: true });
   }, [
     refreshToken,
@@ -650,6 +667,34 @@ export default function AddProductsModal({
     fetchRequestedRows,
     selectedCategory?.OfferDetailID,
   ]);
+
+  const handleCategoryGridReady = useCallback((api: GridApi) => {
+    const previousApi = categoryApiRef.current;
+    const existingHandler = categoryRowClickHandlerRef.current;
+    if (previousApi && existingHandler) {
+      previousApi.removeEventListener('rowClicked', existingHandler as unknown as (event: unknown) => void);
+    }
+    categoryApiRef.current = api;
+    const handler = existingHandler ?? ((event: { node?: RowNode }) => {
+      const node = event?.node;
+      if (!node) return;
+      if (node.isSelected()) {
+        node.setSelected(false, true);
+        return;
+      }
+      node.setSelected(true, true);
+    });
+    categoryRowClickHandlerRef.current = handler;
+    api.addEventListener('rowClicked', handler as unknown as (event: unknown) => void);
+  }, []);
+
+  useEffect(() => () => {
+    const api = categoryApiRef.current;
+    const handler = categoryRowClickHandlerRef.current;
+    if (api && handler) {
+      api.removeEventListener('rowClicked', handler as unknown as (event: unknown) => void);
+    }
+  }, []);
 
   const handleProductsGridReady = useCallback((api: GridApi) => {
     productsApiRef.current = api as ProductsGridApi;
@@ -665,6 +710,7 @@ export default function AddProductsModal({
   }, [ensureProductSort, trySelectPendingProduct]);
 
   const selectedCategoryLabel = selectedCategory?.Description?.trim() || selectedCategory?.TreeOrdering || 'None';
+  const hasSelectedCategory = selectedCategory?.OfferDetailID != null;
 
   if (splitViewMode) {
     return (
@@ -726,12 +772,12 @@ export default function AddProductsModal({
                   requestPayload={categoryRequestPayload}
                   rowSelection="single"
                   rowDeselection
-                  allowRowClickSelection
+                  suppressRowClickSelection
                   onSelectionChanged={handleCategorySelection as (rows: Record<string, unknown>[], api: GridApi) => void}
                   rowGroupPanelShow="never"
                   autoSizeExclusions={['Description']}
                   suppressSideBar
-                  onGridReady={(api) => { categoryApiRef.current = api; }}
+                  onGridReady={handleCategoryGridReady}
                 />
               </div>
             <div 
@@ -746,7 +792,9 @@ export default function AddProductsModal({
                 </div>
               </div>
               <div className={styles.requestedList}>
-                {requestedRowsLoading ? (
+                {!hasSelectedCategory ? (
+                  <div className={styles.requestedRowEmpty}>Select a category to view requested items.</div>
+                ) : requestedRowsLoading ? (
                   <div className={styles.requestedRowEmpty}>Loading requested rows…</div>
                 ) : requestedRowsError ? (
                   <div className={styles.requestedRowEmpty}>{requestedRowsError}</div>
@@ -796,6 +844,7 @@ export default function AddProductsModal({
                   endpoint={endpoint}
                   columnDefs={productColumns}
                   defaultColDef={defaultColDef}
+                  columnWidthDefaults={emptyColumnWidthDefaults}
                   requestPayload={productRequestPayload}
                   cacheBlockSize={200}
                   rowBuffer={40}
@@ -811,6 +860,10 @@ export default function AddProductsModal({
                   onGridReady={handleProductsGridReady}
                   onModelUpdated={handleProductsGridModelUpdated}
                   onRequestPayloadConsumed={onRequestPayloadConsumed}
+                  columnStateNamespace="add-products-modal-v2"
+                  applyColumnStateOrder={true}
+                  maintainColumnOrder={true}
+                  disableAutoSize={true}
                 />
               </div>
             </div>
@@ -881,12 +934,12 @@ export default function AddProductsModal({
                   requestPayload={categoryRequestPayload}
                   rowSelection="single"
                   rowDeselection
-                  allowRowClickSelection
+                  suppressRowClickSelection
                   onSelectionChanged={handleCategorySelection as (rows: Record<string, unknown>[], api: GridApi) => void}
                   rowGroupPanelShow="never"
                   autoSizeExclusions={['Description']}
                   suppressSideBar
-                  onGridReady={(api) => { categoryApiRef.current = api; }}
+                  onGridReady={handleCategoryGridReady}
                 />
               </div>
             <div 
@@ -901,7 +954,9 @@ export default function AddProductsModal({
                 </div>
               </div>
               <div className={styles.requestedList}>
-                {requestedRowsLoading ? (
+                {!hasSelectedCategory ? (
+                  <div className={styles.requestedRowEmpty}>Select a category to view requested items.</div>
+                ) : requestedRowsLoading ? (
                   <div className={styles.requestedRowEmpty}>Loading requested rows…</div>
                 ) : requestedRowsError ? (
                   <div className={styles.requestedRowEmpty}>{requestedRowsError}</div>
@@ -951,6 +1006,7 @@ export default function AddProductsModal({
                   endpoint={endpoint}
                   columnDefs={productColumns}
                   defaultColDef={defaultColDef}
+                  columnWidthDefaults={emptyColumnWidthDefaults}
                   requestPayload={productRequestPayload}
                   cacheBlockSize={200}
                   rowBuffer={40}
@@ -966,6 +1022,10 @@ export default function AddProductsModal({
                   onGridReady={handleProductsGridReady}
                   onModelUpdated={handleProductsGridModelUpdated}
                   onRequestPayloadConsumed={onRequestPayloadConsumed}
+                  columnStateNamespace="add-products-modal-v2"
+                  applyColumnStateOrder={true}
+                  maintainColumnOrder={true}
+                  disableAutoSize={true}
                 />
               </div>
             </div>

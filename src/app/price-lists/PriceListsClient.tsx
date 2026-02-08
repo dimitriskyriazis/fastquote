@@ -19,7 +19,6 @@ import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import styles from "./PriceListsClient.module.css";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
-import Link from "next/link";
 import { formatDateUK } from "../lib/formatDateTime";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
@@ -102,6 +101,17 @@ export default function PriceListsClient() {
         event.stopPropagation();
       };
 
+      const openInNewWindow = (suffix: "products" | "basicdata") => {
+        if (!encodedId) return;
+        const url = `/price-lists/${encodedId}/${suffix}`;
+        setOpen(false);
+        if (typeof window !== "undefined") {
+          window.open(url, "_blank", "noopener,noreferrer");
+          return;
+        }
+        router.push(url);
+      };
+
       useEffect(() => {
         if (!open) return;
         const onDocClick = (e: MouseEvent) => {
@@ -170,24 +180,30 @@ export default function PriceListsClient() {
                   e.stopPropagation();
                 }}
               >
-                <Link
+                <button
+                  type="button"
                   role="menuitem"
                   className={styles.actionMenuItem}
-                  href={`/price-lists/${encodedId}/basicdata`}
-                  prefetch={false}
-                  onClick={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openInNewWindow("basicdata");
+                  }}
                 >
                   View Basic Data
-                </Link>
-                <Link
+                </button>
+                <button
+                  type="button"
                   role="menuitem"
                   className={styles.actionMenuItem}
-                  href={`/price-lists/${encodedId}/products`}
-                  prefetch={false}
-                  onClick={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openInNewWindow("products");
+                  }}
                 >
                   View Products
-                </Link>
+                </button>
               </div>,
               document.body
             )}
@@ -196,7 +212,7 @@ export default function PriceListsClient() {
     };
 
   return <ActionMenu />;
-  }, []);
+  }, [router]);
 
   const priceListRowDeletion = useMemo(
     () =>

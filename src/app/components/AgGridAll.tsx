@@ -3563,7 +3563,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       event.api.applyColumnState({
         state: [{ colId: 'TreeOrdering', sort: 'asc', sortIndex: 0 }],
         defaultState: { sort: null },
-        applyOrder: true,
+        applyOrder: false,
       });
       reorderRowsByTreeOrdering(event.api);
       requestRefresh(() => event.api.refreshCells({ columns: TREE_DEPENDENT_COLUMNS, force: true }));

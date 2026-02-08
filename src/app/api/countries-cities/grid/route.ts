@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPool } from "../../../../lib/sql";
+import { requirePermission } from "../../../../lib/authz";
 
 type GridRequest = {
   startRow?: number;
@@ -132,6 +133,9 @@ const applySort = (rows: Record<string, unknown>[], sortModel?: GridRequest["sor
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "manageCitiesCountries");
+    if (!auth.ok) return auth.response;
+
     const body = (await req.json().catch(() => null)) as GridBody | null;
     const request = body?.request ?? {};
     const fields = Array.isArray(body?.fields) ? body?.fields.filter((f) => typeof f === "string") : [];

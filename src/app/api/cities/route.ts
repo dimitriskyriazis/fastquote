@@ -3,6 +3,7 @@ import sql from "mssql";
 import { getPool } from "../../../lib/sql";
 import { resolveAuditUserId } from "../../../lib/auditTrail";
 import type { DropdownOption } from "../../../lib/dropdownOptions";
+import { requirePermission } from "../../../lib/authz";
 
 type CreateCityBody = {
   name?: string;
@@ -32,6 +33,9 @@ const normalizeBoolean = (value: unknown): boolean | null => {
 
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "manageCitiesCountries");
+    if (!auth.ok) return auth.response;
+
     let payload: CreateCityBody | null = null;
     try {
       payload = (await req.json()) as CreateCityBody;
@@ -86,6 +90,9 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "manageCitiesCountries");
+    if (!auth.ok) return auth.response;
+
     const body = (await req.json().catch(() => null)) as { CityIDs?: unknown } | null;
     const rawIds = Array.isArray(body?.CityIDs) ? body?.CityIDs : [];
     const ids = Array.from(

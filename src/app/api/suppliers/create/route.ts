@@ -7,6 +7,7 @@ import { getRequestId } from "../../../../lib/requestId";
 import { handleApiError } from "../../../../lib/errorHandler";
 import { logger } from "../../../../lib/logger";
 import { validateRequest, intSchema, stringSchema, booleanSchema } from "../../../../lib/validation";
+import { requirePermission } from "../../../../lib/authz";
 
 const createSupplierSchema = z
   .object({
@@ -28,6 +29,9 @@ export async function POST(req: NextRequest) {
   const userId = resolveAuditUserId(req);
 
   try {
+    const auth = await requirePermission(req, "manageBrandsSuppliers");
+    if (!auth.ok) return auth.response;
+
     const validation = await validateRequest(req, createSupplierSchema, {
       endpoint: "/api/suppliers/create",
       method: "POST",

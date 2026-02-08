@@ -2,6 +2,17 @@
   cursor: default !important;
 }
 
+/* Keep grab cursor on the offer products row drag handle (avoid default cursor override). */
+.offer-products-grid .ag-cell[col-id="__row_drag__"],
+.offer-products-grid .ag-cell[col-id="__row_drag__"] * {
+  cursor: url("/hand-m.cur") 10 4, grab !important;
+}
+
+.offer-products-grid .ag-row-drag,
+.offer-products-grid .ag-row-drag * {
+  cursor: url("/hand-m.cur") 10 4, grab !important;
+}
+
 .ag-theme-quartz .ag-cell.ag-cell-editing {
   outline: 2px solid rgba(37, 99, 235, 0.5);
   outline-offset: -2px;
@@ -96,6 +107,31 @@
 .ag-theme-quartz .ag-row-hover .ag-cell {
   filter: none !important;
   background-color: rgba(0,0,0,0.04) !important;
+}
+
+/* Offer products grid: match final hover colors to avoid dark flash. */
+.offer-products-grid .ag-row-hover .ag-cell {
+  background-color: #f5f5f5 !important;
+}
+
+.offer-products-grid .ag-row-hover.offer-row--product .ag-cell {
+  background-color: #f5f5f5 !important;
+}
+
+.offer-products-grid .ag-row-hover.offer-row--category .ag-cell {
+  background-color: #d4d4d4 !important;
+}
+
+.offer-products-grid .ag-row-hover.offer-row--printable-comment .ag-cell {
+  background-color: #cfe2f3 !important;
+}
+
+.offer-products-grid .ag-row-hover.offer-row--nonprintable-comment .ag-cell {
+  background-color: #fecaca !important;
+}
+
+.offer-products-grid .ag-row-hover:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell {
+  background-color: #f5f5f5 !important;
 }
 
 .ag-theme-quartz .ag-row-selected,
@@ -293,7 +329,7 @@
 
 .dragging,
 .dragging * {
-  cursor: grabbing !important;
+  cursor: url("/hand-m.cur") 10 4, grabbing !important;
 }
 
 .drag-overlay-row,

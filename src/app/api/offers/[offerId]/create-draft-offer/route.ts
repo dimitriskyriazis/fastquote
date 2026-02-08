@@ -29,8 +29,16 @@ type ProductSelection = {
   CODE: string | null;
 };
 
+type CustomerSelection = {
+  TRDR: number;
+  CODE: string | null;
+};
+
 type CreateDraftOfferRequestBody = {
   selections?: ProductSelection[];
+  customerSelection?: CustomerSelection;
+  customerCode?: string;
+  customerConfirmed?: boolean;
 };
 
 type LookupRow = {
@@ -428,18 +436,20 @@ export async function POST(
     const offerRequest = pool.request();
     offerRequest.input('offerId', sql.Int, normalizedId);
     const offerResult = await offerRequest.query<{
-      Title: string | null;
+      Description: string | null;
       SalesDivisionID: number | null;
       SalesDivisionName: string | null;
       ERPCustomerID: number | null;
+      CustomerName: string | null;
       ERPProjectID: number | null;
       ERPProjectCode: string | null;
     }>(`
-      SELECT 
-        o.Title,
+      SELECT
+        o.Description,
         o.SalesDivitionID AS SalesDivisionID,
         sd.Name AS SalesDivisionName,
         c.ERPID AS ERPCustomerID,
+        c.Name AS CustomerName,
         o.ERPProjectID,
         o.ERPProjectCode
       FROM dbo.Offer o
@@ -448,10 +458,11 @@ export async function POST(
       WHERE o.ID = @offerId
     `);
     const offerRow = offerResult.recordset?.[0] ?? null;
-    const offerDescription = offerRow?.Title ?? `FastQuote Project for offer ${normalizedId}`;
+    const offerDescription = offerRow?.Description ?? `FastQuote Project for offer ${normalizedId}`;
     const salesDivisionId = offerRow?.SalesDivisionID ?? null;
     const salesDivisionName = offerRow?.SalesDivisionName ?? null;
-    const erpCustomerId = offerRow?.ERPCustomerID ?? null;
+    let erpCustomerId = offerRow?.ERPCustomerID ?? null;
+    const customerName = offerRow?.CustomerName ?? null;
     const erpProjectId = offerRow?.ERPProjectID ?? null;
     const erpProjectCode = offerRow?.ERPProjectCode ?? null;
     // Map SalesDivisionID to BusinessUnit: 4 -> AVS, 3 -> TVS, fallback based on name
@@ -463,6 +474,128 @@ export async function POST(
     } else {
       const name = salesDivisionName?.toUpperCase() ?? '';
       businessUnit = name.includes('TVS') ? 'TVS' : 'AVS';
+    }
+
+    // Customer finding logic: search for customer before searching for project
+    const customerSelection = body?.customerSelection ?? null;
+    const customerCode = body?.customerCode ?? null;
+    const customerConfirmed = body?.customerConfirmed ?? false;
+
+    if (!erpCustomerId) {
+      // No ERP customer ID found, need to search for customer
+      if (customerSelection && customerConfirmed) {
+        // User confirmed the customer selection
+        erpCustomerId = customerSelection.TRDR;
+        logger.info('create-draft-offer customer confirmed', {
+          requestId,
+          offerId: normalizedId,
+          erpCustomerId,
+          customerCode: customerSelection.CODE,
+        });
+      } else if (customerSelection && !customerConfirmed) {
+        // User selected but not confirmed yet, ask for confirmation
+        return NextResponse.json({
+          ok: true,
+          needsCustomerConfirmation: customerSelection,
+          message: 'Please confirm the selected customer.',
+        });
+      } else if (customerCode) {
+        // User provided customer code, search by code
+        const customerSearchRequest = erpPool.request();
+        customerSearchRequest.input('SearchValue', sql.NVarChar(200), customerCode.trim());
+        const customerSearchResult = await customerSearchRequest.query<{
+          TRDR: number;
+          CODE: string | null;
+          NAME: string | null;
+        }>(`
+          EXEC tlm.FindCustomer @SearchValue = @SearchValue
+        `);
+        const customerMatches = customerSearchResult.recordset ?? [];
+
+        if (customerMatches.length === 0) {
+          return NextResponse.json({
+            ok: false,
+            error: `No customer found with code: ${customerCode}`,
+            needsCustomerCode: true,
+          });
+        } else if (customerMatches.length === 1) {
+          // Single match found, ask for confirmation
+          return NextResponse.json({
+            ok: true,
+            needsCustomerConfirmation: customerMatches[0],
+            message: 'Please confirm this is the correct customer.',
+          });
+        } else {
+          // Multiple matches, return for user selection
+          return NextResponse.json({
+            ok: true,
+            needsCustomerSelection: customerMatches,
+            message: `Multiple customers found with code: ${customerCode}. Please select one.`,
+          });
+        }
+      } else if (customerName) {
+        // Search by customer name
+        const customerSearchRequest = erpPool.request();
+        customerSearchRequest.input('SearchValue', sql.NVarChar(200), customerName);
+        const customerSearchResult = await customerSearchRequest.query<{
+          TRDR: number;
+          CODE: string | null;
+          NAME: string | null;
+        }>(`
+          EXEC tlm.FindCustomer @SearchValue = @SearchValue
+        `);
+        const customerMatches = customerSearchResult.recordset ?? [];
+
+        if (customerMatches.length === 0) {
+          // No matches by name, ask for customer code
+          return NextResponse.json({
+            ok: false,
+            error: `No customer found with name: ${customerName}. Please provide customer code.`,
+            needsCustomerCode: true,
+          });
+        } else if (customerMatches.length === 1) {
+          // Single match found, ask for confirmation
+          return NextResponse.json({
+            ok: true,
+            needsCustomerConfirmation: customerMatches[0],
+            message: 'Please confirm this is the correct customer.',
+          });
+        } else {
+          // Multiple matches, return for user selection
+          return NextResponse.json({
+            ok: true,
+            needsCustomerSelection: customerMatches,
+            message: `Multiple customers found with name: ${customerName}. Please select one.`,
+          });
+        }
+      } else {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: 'No customer information available. Cannot create draft offer.',
+          },
+          { status: 400 },
+        );
+      }
+
+      // Persist the found customer ERP ID back to the Customers table
+      if (erpCustomerId && (customerSelection || customerCode || customerName)) {
+        const updateCustomerRequest = pool.request();
+        updateCustomerRequest.input('offerId', sql.Int, normalizedId);
+        updateCustomerRequest.input('erpCustomerId', sql.Int, erpCustomerId);
+        await updateCustomerRequest.query(`
+          UPDATE dbo.Customers
+          SET ERPID = @erpCustomerId,
+              ModifiedOn = SYSUTCDATETIME()
+          WHERE ID = (SELECT CustomerID FROM dbo.Offer WHERE ID = @offerId)
+            AND ERPID IS NULL
+        `);
+        logger.info('create-draft-offer customer ERPID persisted', {
+          requestId,
+          offerId: normalizedId,
+          erpCustomerId,
+        });
+      }
     }
 
     // Get all products from the offer that have ProductID, including Brand name and Description
@@ -963,12 +1096,23 @@ export async function POST(
 
       // If there is no existing valid project, create one via integration
       if (!finalErpProjectId || finalErpProjectId <= 0) {
+        // Ensure we have a customer before creating project
+        if (!erpCustomerId) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: 'Cannot create project without a valid customer. Please ensure the offer has a customer assigned.',
+            },
+            { status: 400 },
+          );
+        }
+
         const createdProject = await createProjectFromIntegration({
           integrationKey: 'FASTQUOTE_CREATE_PRJC',
           codePrefix: 'COV',
           name: offerDescription,
           prjcParent: null,
-          trdr: null,
+          trdr: erpCustomerId,
           prjCategory: null,
           sourceSystem: 'FQ',
           createdByUser: 1011,
@@ -1419,12 +1563,23 @@ export async function POST(
 
     // If there is no existing valid project, create one via integration
     if (!finalErpProjectId || finalErpProjectId <= 0) {
+      // Ensure we have a customer before creating project
+      if (!erpCustomerId) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: 'Cannot create project without a valid customer. Please ensure the offer has a customer assigned.',
+          },
+          { status: 400 },
+        );
+      }
+
       const createdProject = await createProjectFromIntegration({
         integrationKey: 'FASTQUOTE_CREATE_PRJC',
         codePrefix: 'COV',
         name: offerDescription,
         prjcParent: null,
-        trdr: null,
+        trdr: erpCustomerId,
         prjCategory: null,
         sourceSystem: 'FQ',
         createdByUser: 1011,
