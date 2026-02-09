@@ -4,53 +4,11 @@ import type { Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
 import {
   buildQuickFilterClause,
-  buildTextMatchPredicate,
-  isSensitiveColumn,
   mergeWhereClauses,
   QueryParam,
 } from "../../../lib/gridFilters";
-
-type TextFilterModel = {
-  filterType: "text";
-  type?: "contains" | "equals" | "notEqual" | "startsWith" | "endsWith";
-  filter?: string;
-};
-
-type NumberFilterModel = {
-  filterType: "number";
-  type?:
-    | "equals"
-    | "notEqual"
-    | "lessThan"
-    | "greaterThan"
-    | "lessThanOrEqual"
-    | "greaterThanOrEqual"
-    | "inRange";
-  filter?: number;
-  filterTo?: number;
-};
-
-type SetFilterModel = {
-  filterType: "set";
-  values?: Array<string | number | boolean>;
-};
-
-type DateFilterModel = {
-  filterType: "date";
-  type?:
-    | "equals"
-    | "notEqual"
-    | "lessThan"
-    | "greaterThan"
-    | "lessThanOrEqual"
-    | "greaterThanOrEqual"
-    | "inRange";
-  dateFrom?: string;
-  dateTo?: string;
-  filter?: string;
-};
-
-type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel | DateFilterModel;
+import { KnownFilterModel, TextCondition, isCompoundFilter } from "../../../lib/filterTypes";
+import { processFilter } from "../../../lib/filterProcessing";
 
 type GridRequest = {
   startRow?: number;
@@ -160,140 +118,56 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
     const isPartNumber = col === "PartNumber";
     const isModelNumber = col === "ModelNumber";
     const isPartOrModel = isPartNumber || isModelNumber;
-    
-    switch (fm.filterType) {
-      case "text": {
-        const type = fm.type;
-        const val = String(fm.filter ?? "");
-        if (!val) break;
 
-        if (isPartOrModel) {
-          // Normalize the search value for part/model numbers
-          const normalizedVal = normalizePartModelNumber(val);
-          const searchVal = normalizedVal;
+    // Special handling for PartNumber/ModelNumber with cross-search (only for single-condition filters)
+    if (isPartOrModel && fm.filterType === "text" && !isCompoundFilter(fm)) {
+      const typedFm = fm as TextCondition;
+      const type = typedFm.type;
+      const val = String(typedFm.filter ?? "");
+      if (!val) return;
 
-          // Get the other field for cross-search (PartNumber <-> ModelNumber)
-          const otherColumnExpression = isPartNumber
-            ? COLUMN_EXPRESSIONS["ModelNumber"]
-            : isModelNumber
-            ? COLUMN_EXPRESSIONS["PartNumber"]
-            : null;
+      // Normalize the search value for part/model numbers
+      const normalizedVal = normalizePartModelNumber(val);
+      const searchVal = normalizedVal;
 
-          if (type === "contains") {
-            if (otherColumnExpression) {
-              // Cross-search: search both PartNumber and ModelNumber
-              parts.push(
-                `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase})`,
-              );
-              params.push({ key: pBase, value: `%${searchVal}%` });
-            } else {
-              parts.push(`${partModelNumberSql(columnExpression)} LIKE @${pBase}`);
-              params.push({ key: pBase, value: `%${searchVal}%` });
-            }
-          } else if (type === "equals") {
-            if (otherColumnExpression) {
-              // Cross-search: search both PartNumber and ModelNumber
-              parts.push(
-                `(${partModelNumberSql(columnExpression)} = @${pBase} OR ${partModelNumberSql(otherColumnExpression)} = @${pBase})`,
-              );
-              params.push({ key: pBase, value: searchVal });
-            } else {
-              parts.push(`${partModelNumberSql(columnExpression)} = @${pBase}`);
-              params.push({ key: pBase, value: searchVal });
-            }
-          } else if (type === "startsWith") {
-            if (otherColumnExpression) {
-              // Cross-search: search both PartNumber and ModelNumber
-              parts.push(
-                `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase})`,
-              );
-              params.push({ key: pBase, value: `${searchVal}%` });
-            } else {
-              parts.push(`${partModelNumberSql(columnExpression)} LIKE @${pBase}`);
-              params.push({ key: pBase, value: `${searchVal}%` });
-            }
-          } else if (type === "endsWith") {
-            if (otherColumnExpression) {
-              // Cross-search: search both PartNumber and ModelNumber
-              parts.push(
-                `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase})`,
-              );
-              params.push({ key: pBase, value: `%${searchVal}` });
-            } else {
-              parts.push(`${partModelNumberSql(columnExpression)} LIKE @${pBase}`);
-              params.push({ key: pBase, value: `%${searchVal}` });
-            }
-          }
-        } else {
-          const mode = (type ?? "contains") as "contains" | "equals" | "startsWith" | "endsWith" | "notEqual";
-          const { clause, params: clauseParams } = buildTextMatchPredicate(columnExpression, val, {
-            paramKey: pBase,
-            mode,
-            enablePhonetic: !isSensitiveColumn(col),
-          });
-          parts.push(clause);
-          clauseParams.forEach((p) => params.push(p));
-        }
-        break;
+      // Get the other field for cross-search (PartNumber <-> ModelNumber)
+      const otherColumnExpression = isPartNumber
+        ? COLUMN_EXPRESSIONS["ModelNumber"]
+        : COLUMN_EXPRESSIONS["PartNumber"];
+
+      if (type === "contains") {
+        parts.push(
+          `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase})`,
+        );
+        params.push({ key: pBase, value: `%${searchVal}%` });
+      } else if (type === "equals") {
+        parts.push(
+          `(${partModelNumberSql(columnExpression)} = @${pBase} OR ${partModelNumberSql(otherColumnExpression)} = @${pBase})`,
+        );
+        params.push({ key: pBase, value: searchVal });
+      } else if (type === "startsWith") {
+        parts.push(
+          `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase})`,
+        );
+        params.push({ key: pBase, value: `${searchVal}%` });
+      } else if (type === "endsWith") {
+        parts.push(
+          `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase})`,
+        );
+        params.push({ key: pBase, value: `%${searchVal}` });
       }
-      case "number": {
-        const type = fm.type;
-        const val = fm.filter !== undefined ? Number(fm.filter) : Number.NaN;
-        const valTo = fm.filterTo !== undefined ? Number(fm.filterTo) : undefined;
-        if (Number.isNaN(val)) break;
-        if (type === "equals") parts.push(`${columnExpression} = @${pBase}`);
-        if (type === "notEqual") parts.push(`${columnExpression} <> @${pBase}`);
-        if (type === "lessThan") parts.push(`${columnExpression} < @${pBase}`);
-        if (type === "greaterThan") parts.push(`${columnExpression} > @${pBase}`);
-        if (type === "lessThanOrEqual") parts.push(`${columnExpression} <= @${pBase}`);
-        if (type === "greaterThanOrEqual") parts.push(`${columnExpression} >= @${pBase}`);
-        if (type === "inRange" && valTo !== undefined) {
-          parts.push(`(${columnExpression} BETWEEN @${pBase} AND @${pBase}_to)`);
-          params.push({ key: `${pBase}_to`, value: valTo });
-        }
-        params.push({ key: pBase, value: val });
-        break;
-      }
-      case "set": {
-        const rawValues = fm.values ?? [];
-        if (rawValues.length === 0) break;
+    } else {
+      // Use centralized filter processor for all other columns
+      const result = processFilter(fm, {
+        columnExpression,
+        columnId: col,
+        paramBase: pBase,
+      });
 
-        const normalize = (value: string | number | boolean) => {
-          if (value === true || value === "true") return 1;
-          if (value === false || value === "false") return 0;
-          return value;
-        };
-
-        const placeholders = rawValues.map((value, valueIdx) => {
-          const key = `${pBase}_${valueIdx}`;
-          params.push({ key, value: normalize(value) });
-          return `@${key}`;
-        });
-
-        parts.push(`${columnExpression} IN (${placeholders.join(", ")})`);
-        break;
+      if (result.clause) {
+        parts.push(result.clause);
+        params.push(...result.params);
       }
-      case "date": {
-        const type = fm.type;
-        const val = fm.dateFrom || fm.filter;
-        const valTo = fm.dateTo;
-        if (!val) break;
-        const dateExpression = `CAST(${columnExpression} AS date)`;
-        if (type === "equals") parts.push(`${dateExpression} = @${pBase}`);
-        if (type === "notEqual") parts.push(`${dateExpression} <> @${pBase}`);
-        if (type === "lessThan") parts.push(`${dateExpression} < @${pBase}`);
-        if (type === "greaterThan") parts.push(`${dateExpression} > @${pBase}`);
-        if (type === "lessThanOrEqual") parts.push(`${dateExpression} <= @${pBase}`);
-        if (type === "greaterThanOrEqual") parts.push(`${dateExpression} >= @${pBase}`);
-        if (type === "inRange" && valTo) {
-          parts.push(`(${dateExpression} BETWEEN @${pBase} AND @${pBase}_to)`);
-          params.push({ key: `${pBase}_to`, value: valTo });
-        }
-        params.push({ key: pBase, value: val });
-        break;
-      }
-      default:
-        break;
     }
   });
 

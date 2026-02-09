@@ -109,6 +109,12 @@
   z-index: 1;
 }
 
+.buttonExport {
+  background-color: #d8f5d0;
+  color: #000000;
+  border-color: rgba(22, 163, 74, 0.45);
+}
+
 .buttonAddRequested {
   background-color: #ffe0c3;
   color: #c2630b;

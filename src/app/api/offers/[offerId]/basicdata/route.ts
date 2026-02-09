@@ -130,6 +130,19 @@ export async function PATCH(
 
     const pool = await getPool();
 
+    // Check if status is being updated and store old value
+    const statusUpdate = normalizedUpdates.find((u) => u.field === 'StatusID');
+    let oldStatusID: number | null = null;
+
+    if (statusUpdate) {
+      const statusQuery = await pool.request()
+        .input('__offerId', sql.Int, offerId)
+        .query<{ StatusID: number | null }>(`
+          SELECT StatusID FROM dbo.Offer WHERE ID = @__offerId
+        `);
+      oldStatusID = statusQuery.recordset[0]?.StatusID ?? null;
+    }
+
     const contactUpdate = normalizedUpdates.find((entry) => entry.field === 'ContactID');
     const hasOfferContactUpdate = normalizedUpdates.some((entry) => entry.field === 'OfferContact');
     if (contactUpdate && !hasOfferContactUpdate) {
@@ -199,6 +212,34 @@ export async function PATCH(
     `;
     const result = await request.query(query);
     const rowsAffected = result.rowsAffected?.[0] ?? 0;
+
+    // Log status change to history if status was updated
+    if (statusUpdate && typeof statusUpdate.value === 'number') {
+      const newStatusID = statusUpdate.value;
+      // Only insert if status actually changed
+      if (oldStatusID !== newStatusID) {
+        const historyRequest = pool.request();
+        historyRequest.input('__offerId', sql.Int, offerId);
+        historyRequest.input('__statusId', sql.Int, newStatusID);
+        if (auditUserId) {
+          historyRequest.input('__createdBy', sql.NVarChar(450), auditUserId);
+        }
+
+        const historyQuery = `
+          INSERT INTO dbo.OfferStatusHistory (
+            OfferID, StatusID, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, Enabled
+          ) VALUES (
+            @__offerId, @__statusId, SYSUTCDATETIME(),
+            ${auditUserId ? '@__createdBy' : 'NULL'},
+            SYSUTCDATETIME(),
+            ${auditUserId ? '@__createdBy' : 'NULL'},
+            1
+          )
+        `;
+
+        await historyRequest.query(historyQuery);
+      }
+    }
 
     return NextResponse.json({ ok: true, updated: normalizedUpdates.length, rowsAffected });
   } catch (err) {

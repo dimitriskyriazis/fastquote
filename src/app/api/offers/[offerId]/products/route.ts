@@ -107,6 +107,8 @@ type ProductRow = {
   TotalPrice: number | null;
   TotalNet: number | null;
   Warranty: string | number | null;
+  Delivery: string | null;
+  OfferValidity: string | null;
   ListPrice: number | null;
   TelmacoDiscount: number | null;
   NetCostOtherCurrency: number | null;
@@ -179,6 +181,7 @@ type DeleteRowRequest = {
 
 type DetailUpdateInput = {
   ProductDescription?: string | null;
+  Delivery?: string | null;
   OfferDetailID?: number | string | null;
   Description?: string | null;
   Quantity?: number | string | null;
@@ -239,6 +242,8 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   TotalPrice: 'od.TotalPrice',
   TotalNet: 'od.TotalNet',
   Warranty: 'od.Warranty',
+  Delivery: 'od.Delivery',
+  OfferValidity: 'o.OfferValidity',
   ListPrice: 'od.ListPrice',
   TelmacoDiscount: 'od.TelmacoDiscount',
   NetCostOtherCurrency: 'od.NetCostOtherCurrency',
@@ -293,6 +298,7 @@ const normalizeRequestedTextValue = (value: unknown): string | null => {
 };
 
 const normalizeRequestedItemNoValue = normalizeRequestedTextValue;
+const normalizeDeliveryValue = normalizeRequestedTextValue;
 
 const normalizeQuantityValue = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
@@ -1225,6 +1231,7 @@ export async function POST(
             AND NULLIF(LTRIM(RTRIM(cat.TreeOrdering)), '') = ${TREE_ORDERING_ROOT_EXPRESSION}
           LEFT OUTER JOIN dbo.Products p ON od.ProductID = p.ID
           LEFT OUTER JOIN dbo.Brands b ON p.BrandID = b.ID
+          LEFT OUTER JOIN dbo.[Offer] o ON od.OfferID = o.ID
           LEFT OUTER JOIN dbo.PriceLists pl ON od.PriceListID = pl.ID
           LEFT OUTER JOIN dbo.Currencies oc ON od.OtherCurrencyID = oc.ID
         ${combinedWhereSql}
@@ -1430,6 +1437,7 @@ export async function PATCH(
         const hasProductDescription = entry
           ? Object.prototype.hasOwnProperty.call(entry, 'ProductDescription')
           : false;
+        const hasDelivery = entry ? Object.prototype.hasOwnProperty.call(entry, 'Delivery') : false;
         const hasDescription = entry ? Object.prototype.hasOwnProperty.call(entry, 'Description') : false;
         const hasQuantity = entry ? Object.prototype.hasOwnProperty.call(entry, 'Quantity') : false;
         const hasCustomerDiscount = entry ? Object.prototype.hasOwnProperty.call(entry, 'CustomerDiscount') : false;
@@ -1470,6 +1478,7 @@ export async function PATCH(
           || hasNetCostOtherCurrency || hasOtherCurrencyID || hasCurrencyCostModifier;
         if (
           !hasProductDescription
+          && !hasDelivery
           && !hasDescription
           && !hasQuantity
           && !hasPricingFields
@@ -1492,6 +1501,7 @@ export async function PATCH(
           : hasDescription
             ? normalizeDescriptionValue(entry?.Description ?? null)
             : null;
+        const delivery = hasDelivery ? normalizeDeliveryValue(entry?.Delivery ?? null) : null;
         let quantity: number | null = null;
         if (hasQuantity) {
           quantity = normalizeQuantityValue(entry?.Quantity ?? null);
@@ -1559,9 +1569,11 @@ export async function PATCH(
         return {
           OfferDetailID: id,
           ProductDescription: productDescription,
+          Delivery: delivery,
           Quantity: quantity,
           // Treat both `ProductDescription` and legacy `Description` as a description update.
           hasProductDescription: hasProductDescription || hasDescription,
+          hasDelivery,
           hasQuantity,
           hasCustomerDiscount,
           hasTelmacoDiscount,
@@ -1606,8 +1618,10 @@ export async function PATCH(
       .filter((entry): entry is {
         OfferDetailID: number;
         ProductDescription: string | null;
+        Delivery: string | null;
         Quantity: number | null;
         hasProductDescription: boolean;
+        hasDelivery: boolean;
         hasQuantity: boolean;
         hasCustomerDiscount: boolean;
         hasTelmacoDiscount: boolean;
@@ -1679,6 +1693,7 @@ export async function PATCH(
         ProductID: number | null;
         IsComment: number | null;
         ProductDescription: string | null;
+        Delivery: string | null;
         Quantity: number | null;
         ListPrice: number | null;
         CustomerDiscount: number | null;
@@ -1696,6 +1711,7 @@ export async function PATCH(
         od.ProductID,
         od.IsComment,
         od.ProductDescription,
+          od.Delivery,
           od.Quantity,
           od.ListPrice,
           od.CustomerDiscount,
@@ -1715,6 +1731,7 @@ export async function PATCH(
         ProductID: number | null;
         IsComment: number | null;
         ProductDescription: string | null;
+        Delivery: string | null;
         Quantity: number | null;
         ListPrice: number | null;
         CustomerDiscount: number | null;
@@ -1733,7 +1750,9 @@ export async function PATCH(
       const pendingRows: Array<{
         OfferDetailID: number;
         ProductDescription: string | null;
+        Delivery: string | null;
         HasProductDescription: boolean;
+        HasDelivery: boolean;
         Quantity: number | null;
         HasQuantity: boolean;
         CustomerDiscount: number | null;
@@ -1902,7 +1921,9 @@ export async function PATCH(
           ProductDescription: entry.hasProductDescription
             ? entry.ProductDescription
             : current.ProductDescription,
+          Delivery: entry.hasDelivery ? entry.Delivery : current.Delivery,
           HasProductDescription: entry.hasProductDescription,
+          HasDelivery: entry.hasDelivery,
           Quantity: entry.hasQuantity ? entry.Quantity : current.Quantity ?? safeQuantity,
           HasQuantity: entry.hasQuantity,
           CustomerDiscount: resolvedPricing.customerDiscount,
@@ -1959,6 +1980,8 @@ export async function PATCH(
         const idParam = `odid_${rowIdx}`;
         const productDescriptionParam = `productDescription_${rowIdx}`;
         const hasProductDescriptionParam = `hasProductDescription_${rowIdx}`;
+        const deliveryParam = `delivery_${rowIdx}`;
+        const hasDeliveryParam = `hasDelivery_${rowIdx}`;
         const quantityParam = `quantity_${rowIdx}`;
         const hasQuantityParam = `hasQuantity_${rowIdx}`;
         const customerDiscountParam = `customerDiscount_${rowIdx}`;
@@ -2007,6 +2030,8 @@ export async function PATCH(
           sql.Bit,
           row.HasProductDescription ? 1 : 0,
         );
+        request.input(deliveryParam, sql.NVarChar(4000), row.HasDelivery ? row.Delivery : null);
+        request.input(hasDeliveryParam, sql.Bit, row.HasDelivery ? 1 : 0);
         request.input(quantityParam, decimalType, row.Quantity);
         request.input(hasQuantityParam, sql.Bit, row.HasQuantity ? 1 : 0);
         request.input(customerDiscountParam, decimalType, row.CustomerDiscount);
@@ -2044,7 +2069,7 @@ export async function PATCH(
         request.input(hasRequestedQuantityParam, sql.Bit, row.HasRequestedQuantity ? 1 : 0);
         request.input(isCategoryParam, sql.Bit, row.HasIsCategory ? (row.IsCategory ? 1 : 0) : null);
         request.input(hasIsCategoryParam, sql.Bit, row.HasIsCategory ? 1 : 0);
-        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam})`);
+        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam})`);
       });
 
       const query = `
@@ -2052,6 +2077,8 @@ export async function PATCH(
           OfferDetailID,
           ProductDescription,
           HasProductDescription,
+          Delivery,
+          HasDelivery,
           Quantity,
           HasQuantity,
           CustomerDiscount,
@@ -2095,6 +2122,8 @@ export async function PATCH(
             OfferDetailID,
             ProductDescription,
             HasProductDescription,
+            Delivery,
+            HasDelivery,
             Quantity,
             HasQuantity,
             CustomerDiscount,
@@ -2136,6 +2165,7 @@ export async function PATCH(
         )
         UPDATE od
         SET od.ProductDescription = CASE WHEN PendingUpdates.HasProductDescription = 1 THEN PendingUpdates.ProductDescription ELSE od.ProductDescription END,
+            od.Delivery = CASE WHEN PendingUpdates.HasDelivery = 1 THEN PendingUpdates.Delivery ELSE od.Delivery END,
             od.Quantity = CASE WHEN PendingUpdates.HasQuantity = 1 THEN PendingUpdates.Quantity ELSE od.Quantity END,
             od.CustomerDiscount = PendingUpdates.CustomerDiscount,
             od.TelmacoDiscount = PendingUpdates.TelmacoDiscount,
@@ -2185,6 +2215,8 @@ export async function PATCH(
         const fieldMap: Record<string, string> = {
           hasProductDescription: 'Description',
           ProductDescription: 'Description',
+          hasDelivery: 'Delivery',
+          Delivery: 'Delivery',
           hasQuantity: 'Quantity',
           Quantity: 'Quantity',
           hasCustomerDiscount: 'CustomerDiscount',

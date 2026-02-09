@@ -366,6 +366,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'Unable to create offer.' }, { status: 500 });
     }
 
+    // Log initial status to history
+    if (statusId) {
+      const historyRequest = pool.request();
+      historyRequest.input('__offerId', sql.Int, created);
+      historyRequest.input('__statusId', sql.Int, statusId);
+      if (salesCreationPersonId) {
+        historyRequest.input('__createdBy', sql.NVarChar(450), salesCreationPersonId);
+      }
+
+      await historyRequest.query(`
+        INSERT INTO dbo.OfferStatusHistory (
+          OfferID, StatusID, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, Enabled
+        ) VALUES (
+          @__offerId, @__statusId, SYSUTCDATETIME(),
+          ${salesCreationPersonId ? '@__createdBy' : 'NULL'},
+          SYSUTCDATETIME(),
+          ${salesCreationPersonId ? '@__createdBy' : 'NULL'},
+          1
+        )
+      `);
+    }
+
     return NextResponse.json({ ok: true, offerId: created });
   } catch (err) {
     console.error(err);

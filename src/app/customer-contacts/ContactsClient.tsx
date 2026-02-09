@@ -43,6 +43,9 @@ type Props = {
   importances: Array<string | number>;
   customers: CustomerDropdownOption[];
   titles: DropdownOption[];
+  initialContactName?: string | null;
+  initialContactFirstName?: string | null;
+  initialContactLastName?: string | null;
 };
 
 const CONTACT_FIELD_LABELS: Record<string, string> = {
@@ -96,9 +99,18 @@ const resolveContactLabel = (
   return fallback;
 };
 
-export default function ContactsClient({ statuses, importances, customers, titles }: Props) {
+export default function ContactsClient({
+  statuses,
+  importances,
+  customers,
+  titles,
+  initialContactName,
+  initialContactFirstName,
+  initialContactLastName,
+}: Props) {
   const router = useRouter();
   const defaultEnabledFilterAppliedRef = useRef(false);
+  const initialContactFilterAppliedRef = useRef(false);
   const statusOptions = useMemo(() => {
     const unique = new Set(
       statuses.map((entry) => (typeof entry === "string" ? entry.trim() : "")).filter(Boolean),
@@ -277,19 +289,68 @@ export default function ContactsClient({ statuses, importances, customers, title
   );
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
-    if (!api || defaultEnabledFilterAppliedRef.current) return;
-    const existingModel = api.getFilterModel() as Record<string, unknown> | null;
-    const nextModel = existingModel && typeof existingModel === "object" ? { ...existingModel } : {};
-    if ("Enabled" in nextModel) {
+    if (!api) return;
+    const firstNameFilter = typeof initialContactFirstName === "string" ? initialContactFirstName.trim() : "";
+    const lastNameFilter = typeof initialContactLastName === "string" ? initialContactLastName.trim() : "";
+    const nameFilter = typeof initialContactName === "string" ? initialContactName.trim() : "";
+    const hasColumnNameFilters = firstNameFilter.length > 0 || lastNameFilter.length > 0;
+    const applyLaunchFilters = () => {
+      if (hasColumnNameFilters) {
+        const nextModel: Record<string, unknown> = {};
+        if (firstNameFilter.length > 0) {
+          nextModel.FirstName = {
+            filterType: "text",
+            type: "contains",
+            filter: firstNameFilter,
+          };
+        }
+        if (lastNameFilter.length > 0) {
+          nextModel.LastName = {
+            filterType: "text",
+            type: "contains",
+            filter: lastNameFilter,
+          };
+        }
+        api.setFilterModel(nextModel);
+        return;
+      }
+      if (nameFilter.length > 0) {
+        const apiWithQuickFilter = api as GridApi<Record<string, unknown>> & {
+          setGridOption?: (key: string, value: unknown) => void;
+          setQuickFilter?: (value: string) => void;
+        };
+        if (typeof apiWithQuickFilter.setGridOption === "function") {
+          apiWithQuickFilter.setGridOption("quickFilterText", nameFilter);
+        } else if (typeof apiWithQuickFilter.setQuickFilter === "function") {
+          apiWithQuickFilter.setQuickFilter(nameFilter);
+        }
+      }
+    };
+
+    if (!defaultEnabledFilterAppliedRef.current) {
+      const existingModel = api.getFilterModel() as Record<string, unknown> | null;
+      const nextModel = existingModel && typeof existingModel === "object" ? { ...existingModel } : {};
+      if (!("Enabled" in nextModel) && nameFilter.length === 0 && !hasColumnNameFilters) {
+        api.setFilterModel({
+          ...nextModel,
+          Enabled: { filterType: "set", values: ["true"] },
+        });
+      }
       defaultEnabledFilterAppliedRef.current = true;
-      return;
     }
-    api.setFilterModel({
-      ...nextModel,
-      Enabled: { filterType: "set", values: ["true"] },
-    });
-    defaultEnabledFilterAppliedRef.current = true;
-  }, []);
+    if (!initialContactFilterAppliedRef.current) {
+      if (hasColumnNameFilters || nameFilter.length > 0) {
+        applyLaunchFilters();
+        // AgGridAll restores persisted filter state right after grid ready.
+        // Re-apply launch filters to ensure link-driven filtering wins.
+        setTimeout(() => {
+          if (api.isDestroyed?.()) return;
+          applyLaunchFilters();
+        }, 350);
+      }
+      initialContactFilterAppliedRef.current = true;
+    }
+  }, [initialContactFirstName, initialContactLastName, initialContactName]);
 
   const columnDefs = useMemo<ColDef[]>(() => {
     const orderedColumns: ColDef[] = [

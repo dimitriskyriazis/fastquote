@@ -19,6 +19,7 @@ import PageHeader from '../components/PageHeader';
 import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
 import { formatDateTime } from '../lib/formatDateTime';
 import { showToastMessage } from '../../lib/toast';
+import OfferStatusHistoryModal from './[offerId]/OfferStatusHistoryModal';
 import styles from './OffersClient.module.css';
 
 const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
@@ -41,6 +42,15 @@ const duplicateVersionMenuIcon = `
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
       <path d="M7 5h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z" />
       <path d="M7 7V5a2 2 0 0 1 2-2h6" />
+    </svg>
+  </span>
+`;
+
+const historyMenuIcon = `
+  <span class="fastquote-menu-icon" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <polyline points="12 6 12 12 16 14"/>
     </svg>
   </span>
 `;
@@ -89,6 +99,8 @@ export default function OffersClient() {
   const defaultEnabledFilterAppliedRef = useRef(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const [expandedVersionGroups, setExpandedVersionGroups] = useState<Set<number>>(new Set());
+  const [statusHistoryModalOpen, setStatusHistoryModalOpen] = useState(false);
+  const [statusHistoryOfferId, setStatusHistoryOfferId] = useState<number | null>(null);
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     if (!api || defaultEnabledFilterAppliedRef.current) return;
@@ -160,6 +172,17 @@ export default function OffersClient() {
     router.push('/markets');
   }, [router]);
 
+  const handleViewStatusHistory = useCallback((offerId: number | null) => {
+    if (offerId == null) return;
+    setStatusHistoryOfferId(offerId);
+    setStatusHistoryModalOpen(true);
+  }, []);
+
+  const handleCloseStatusHistory = useCallback(() => {
+    setStatusHistoryModalOpen(false);
+    setStatusHistoryOfferId(null);
+  }, []);
+
   const offersRowDeletion = useMemo(
     () =>
       new GridRowDeletion<Record<string, unknown>>({
@@ -195,6 +218,14 @@ export default function OffersClient() {
         return items;
       }
 
+      const statusHistoryMenuItem: MenuItemDef<Record<string, unknown>> = {
+        name: 'View status history',
+        icon: historyMenuIcon,
+        action: () => {
+          void handleViewStatusHistory(clickedOfferId);
+        },
+      };
+
       const versionMenuItem: MenuItemDef<Record<string, unknown>> = {
         name: 'Create new version',
         icon: duplicateVersionMenuIcon,
@@ -210,22 +241,22 @@ export default function OffersClient() {
         && item.name.trim().toLowerCase().startsWith('delete')
       ));
       if (deleteIndex >= 0) {
-        items.splice(deleteIndex, 0, versionMenuItem);
+        items.splice(deleteIndex, 0, statusHistoryMenuItem, versionMenuItem);
       } else {
         const separatorIndex = items.lastIndexOf('separator');
         if (separatorIndex >= 0) {
-          items.splice(separatorIndex + 1, 0, versionMenuItem);
+          items.splice(separatorIndex + 1, 0, statusHistoryMenuItem, versionMenuItem);
         } else {
           if (items.length > 0 && items[items.length - 1] !== 'separator') {
             items.push('separator');
           }
-          items.push(versionMenuItem);
+          items.push(statusHistoryMenuItem, versionMenuItem);
         }
       }
 
       return items;
     },
-    [offersRowDeletion, handleCreateNewVersion],
+    [offersRowDeletion, handleCreateNewVersion, handleViewStatusHistory],
   );
 
   const formatDateDMY = (value: unknown): string => {
@@ -435,7 +466,7 @@ export default function OffersClient() {
     { field: 'SalesPerson', headerName: 'Sales Creation Person', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'OfferStatus', headerName: 'Status', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'ERPProjectID', headerName: 'ERP Project ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
-    { field: 'ERPFWCProjectID', headerName: 'ERP FWC Project ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
+    { field: 'ERPFWCProjectShortName', headerName: 'ERP FWC Project', filter: 'agTextColumnFilter' },
     {field: 'Comments',  headerName: 'Comments', filter: 'agTextColumnFilter'},
     { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
@@ -519,6 +550,11 @@ export default function OffersClient() {
             </div>
           </GridQuickSearchProvider>
         </PageHeader>
+        <OfferStatusHistoryModal
+          open={statusHistoryModalOpen}
+          offerId={statusHistoryOfferId ? String(statusHistoryOfferId) : ''}
+          onClose={handleCloseStatusHistory}
+        />
     </main>
   );
 }

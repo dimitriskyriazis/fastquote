@@ -300,6 +300,49 @@
   gap: 10px;
 }
 
+.previewTableWrapper {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  overflow: auto;
+}
+
+.previewTable {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 460px;
+  font-size: 0.84rem;
+  color: #0f172a;
+}
+
+.previewTable thead th {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  text-align: left;
+  font-weight: 700;
+  color: #334155;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.previewTable tbody td {
+  border-bottom: 1px solid #f1f5f9;
+  padding: 8px 10px;
+  vertical-align: top;
+}
+
+.previewTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.previewRowNumber {
+  font-weight: 700;
+  color: #7c2d12;
+  white-space: nowrap;
+}
+
 .previewItem {
   border: 1px solid #e2e8f0;
   border-radius: 12px;
@@ -317,4 +360,22 @@
 .errorText {
   color: #b91c1c;
   font-weight: 600;
+}
+
+.exportBody {
+  flex-direction: column;
+  overflow: auto;
+}
+
+.exportMappingColumn {
+  min-height: 0;
+}
+
+.exportPreviewColumn {
+  width: auto;
+  flex-shrink: 1;
+  border-left: 0;
+  border-top: 1px solid #e2e8f0;
+  padding-left: 0;
+  padding-top: 18px;
 }

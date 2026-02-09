@@ -3,53 +3,19 @@ import sql from "mssql";
 import { getPool } from "../../../lib/sql";
 import {
   buildQuickFilterClause,
-  buildTextMatchPredicate,
-  isSensitiveColumn,
   mergeWhereClauses,
-  QueryParam,
-} from "../../../lib/gridFilters";
+  QueryParam } from "../../../lib/gridFilters";
+import { KnownFilterModel } from "../../../lib/filterTypes";
+import { processFilter } from "../../../lib/filterProcessing";
 
-type TextFilterModel = {
-  filterType: "text";
-  type?: "contains" | "equals" | "notEqual" | "startsWith" | "endsWith";
-  filter?: string;
-};
 
-type NumberFilterModel = {
-  filterType: "number";
-  type?:
-    | "equals"
-    | "notEqual"
-    | "lessThan"
-    | "greaterThan"
-    | "lessThanOrEqual"
-    | "greaterThanOrEqual"
-    | "inRange";
-  filter?: number;
-  filterTo?: number;
-};
 
-type SetFilterModel = {
-  filterType: "set";
-  values?: Array<string | number | boolean>;
-};
 
-type DateFilterModel = {
-  filterType: "date";
-  type?:
-    | "equals"
-    | "notEqual"
-    | "lessThan"
-    | "greaterThan"
-    | "lessThanOrEqual"
-    | "greaterThanOrEqual"
-    | "inRange";
-  dateFrom?: string;
-  dateTo?: string;
-  filter?: string;
-};
 
-type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel | DateFilterModel;
+
+
+
+
 
 type GridRequest = {
   startRow?: number;
@@ -72,14 +38,12 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   CustomerGroupID: "dbo.CustomerGroups.ID",
   Name: "dbo.CustomerGroups.Name",
   Enabled: "dbo.CustomerGroups.Enabled",
-  CreatedOn: "dbo.CustomerGroups.CreatedOn",
-};
+  CreatedOn: "dbo.CustomerGroups.CreatedOn" };
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
   colId,
-  expression,
-}));
+  expression }));
 
-function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
+const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
   if (!filterModel || Object.keys(filterModel).length === 0) {
     return { where: "", params: [] as QueryParam[] };
   }
@@ -91,79 +55,23 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
     const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
-    switch (fm.filterType) {
-      case "text": {
-        const val = String(fm.filter ?? "");
-        if (!val) break;
-        const mode = (fm.type ?? "contains") as "contains" | "equals" | "startsWith" | "endsWith" | "notEqual";
-        const { clause, params: clauseParams } = buildTextMatchPredicate(columnExpression, val, {
-          paramKey: pBase,
-          mode,
-          enablePhonetic: !isSensitiveColumn(col),
-        });
-        parts.push(clause);
-        clauseParams.forEach((p) => params.push(p));
-        break;
-      }
-      case "number": {
-        const val = fm.filter !== undefined ? Number(fm.filter) : Number.NaN;
-        const valTo = fm.filterTo !== undefined ? Number(fm.filterTo) : undefined;
-        if (Number.isNaN(val)) break;
-        if (fm.type === "equals") parts.push(`${columnExpression} = @${pBase}`);
-        if (fm.type === "notEqual") parts.push(`${columnExpression} <> @${pBase}`);
-        if (fm.type === "lessThan") parts.push(`${columnExpression} < @${pBase}`);
-        if (fm.type === "greaterThan") parts.push(`${columnExpression} > @${pBase}`);
-        if (fm.type === "lessThanOrEqual") parts.push(`${columnExpression} <= @${pBase}`);
-        if (fm.type === "greaterThanOrEqual") parts.push(`${columnExpression} >= @${pBase}`);
-        if (fm.type === "inRange" && valTo !== undefined) {
-          parts.push(`(${columnExpression} BETWEEN @${pBase} AND @${pBase}_to)`);
-          params.push({ key: `${pBase}_to`, value: valTo });
-        }
-        params.push({ key: pBase, value: val });
-        break;
-      }
-      case "set": {
-        const rawValues = fm.values ?? [];
-        if (rawValues.length === 0) break;
-        const normalize = (value: string | number | boolean) => {
-          if (value === true || value === "true") return 1;
-          if (value === false || value === "false") return 0;
-          return value;
-        };
-        const placeholders = rawValues.map((value, valueIdx) => {
-          const key = `${pBase}_${valueIdx}`;
-          params.push({ key, value: normalize(value) });
-          return `@${key}`;
-        });
-        parts.push(`${columnExpression} IN (${placeholders.join(", ")})`);
-        break;
-      }
-      case "date": {
-        const val = fm.dateFrom || fm.filter;
-        const valTo = fm.dateTo;
-        if (!val) break;
-        const dateExpression = `CAST(${columnExpression} AS date)`;
-        if (fm.type === "equals") parts.push(`${dateExpression} = @${pBase}`);
-        if (fm.type === "notEqual") parts.push(`${dateExpression} <> @${pBase}`);
-        if (fm.type === "lessThan") parts.push(`${dateExpression} < @${pBase}`);
-        if (fm.type === "greaterThan") parts.push(`${dateExpression} > @${pBase}`);
-        if (fm.type === "lessThanOrEqual") parts.push(`${dateExpression} <= @${pBase}`);
-        if (fm.type === "greaterThanOrEqual") parts.push(`${dateExpression} >= @${pBase}`);
-        if (fm.type === "inRange" && valTo) {
-          parts.push(`(${dateExpression} BETWEEN @${pBase} AND @${pBase}_to)`);
-          params.push({ key: `${pBase}_to`, value: valTo });
-        }
-        params.push({ key: pBase, value: val });
-        break;
-      }
-      default:
-        break;
+
+    // Use centralized filter processor
+    const result = processFilter(fm, {
+      columnExpression,
+      columnId: col,
+      paramBase: pBase,
+    });
+
+    if (result.clause) {
+      parts.push(result.clause);
+      params.push(...result.params);
     }
   });
 
   const where = parts.length ? `WHERE ${parts.join(" AND ")}` : "";
   return { where, params };
-}
+};
 
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "";
@@ -325,8 +233,7 @@ export async function PATCH(req: NextRequest) {
         return {
           groupId,
           field,
-          value: entry?.value,
-        } as NormalizedGroupUpdate;
+          value: entry?.value } as NormalizedGroupUpdate;
       })
       .filter((entry): entry is NormalizedGroupUpdate => entry != null);
 

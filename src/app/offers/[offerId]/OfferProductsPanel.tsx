@@ -13,6 +13,7 @@ import type {
   GetContextMenuItemsParams,
   GridApi,
   ICellRendererParams,
+  ICellEditorParams,
   IRowNode,
   MenuItemDef,
   RowClassParams,
@@ -580,6 +581,34 @@ const roundMoney = (value: number, places = 4) => {
   return Math.round(value * factor) / factor;
 };
 
+const OFFER_PRODUCTS_EXPORT_FIELDS = [
+  'TreeOrdering',
+  'PartNumber',
+  'BrandName',
+  'ModelNumber',
+  'Description',
+  'Quantity',
+  'NetUnitPrice',
+  'Comment',
+  'Delivery',
+  'IsPrintable',
+  'IsComment',
+  'IsCategory',
+] as const;
+
+const normalizeNoForExport = (value: unknown): string | number => {
+  if (value == null) return '';
+  const trimmed = String(value).trim();
+  if (!trimmed) return '';
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return trimmed;
+};
+
 const recalcProductTotals = (
   event: CellValueChangedEvent<Record<string, unknown>>,
   quantityOverride?: number | null,
@@ -710,7 +739,98 @@ type Props = {
 
 export type OfferProductsPanelHandle = {
   populateOffer: () => Promise<void>;
+  getTemplateExportRows: () => Promise<OfferProductsTemplateExportRow[]>;
 };
+
+export type OfferProductsTemplateExportRow = {
+  no: string | number;
+  productReference: string;
+  manufacturer: string;
+  descriptionType: string;
+  qty: number | '';
+  unitPrice: number | '';
+  delayForDelivery: string;
+  comments: string;
+};
+
+type OfferExportRow = {
+  TreeOrdering: string | null;
+  PartNumber: string | null;
+  BrandName: string | null;
+  ModelNumber: string | null;
+  Description: string | null;
+  Quantity: number | null;
+  NetUnitPrice: number | null;
+  Delivery: string | null;
+  Comment: string | null;
+  IsPrintable?: boolean | null;
+  IsComment?: boolean | null;
+  IsCategory?: boolean | null;
+};
+
+// Custom cell editor for multiline text (Description and Comment cells)
+class MultilineTextCellEditor {
+  private eInput!: HTMLTextAreaElement;
+  private initialValue: string = '';
+
+  init(params: ICellEditorParams) {
+    this.initialValue = params.value ?? '';
+
+    // Create textarea
+    this.eInput = document.createElement('textarea');
+    this.eInput.value = this.initialValue;
+    this.eInput.style.width = '100%';
+    this.eInput.style.height = '100%';
+    this.eInput.style.border = 'none';
+    this.eInput.style.outline = 'none';
+    this.eInput.style.resize = 'none';
+    this.eInput.style.padding = '8px';
+    this.eInput.style.fontFamily = 'inherit';
+    this.eInput.style.fontSize = 'inherit';
+    this.eInput.style.lineHeight = '1.5';
+    this.eInput.style.whiteSpace = 'pre-wrap';
+    this.eInput.style.overflow = 'hidden';
+
+    // Handle Alt+Enter to insert line breaks
+    this.eInput.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const start = this.eInput.selectionStart;
+        const end = this.eInput.selectionEnd;
+        const value = this.eInput.value;
+
+        // Insert newline at cursor position
+        this.eInput.value = value.substring(0, start) + '\n' + value.substring(end);
+
+        // Move cursor after the newline
+        this.eInput.selectionStart = this.eInput.selectionEnd = start + 1;
+      }
+    });
+  }
+
+  getGui() {
+    return this.eInput;
+  }
+
+  afterGuiAttached() {
+    this.eInput.focus();
+    this.eInput.select();
+  }
+
+  getValue() {
+    return this.eInput.value;
+  }
+
+  isCancelBeforeStart() {
+    return false;
+  }
+
+  isCancelAfterEnd() {
+    return false;
+  }
+}
 
 const buildEndpointForOffer = (offerId: string) =>
   `/api/offers/${encodeURIComponent(offerId)}/products`;
@@ -993,6 +1113,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       || isOfferProductComment(params?.data ?? null)
     ),
     sortable: false,
+    cellStyle: {
+      display: 'flex',
+      alignItems: 'center',
+    },
   }), []);
 
   const handleTotalsChange = useCallback((payload: GridTotals | null) => {
@@ -1404,10 +1528,24 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     return false;
   }, []);
 
-  const determineRowHeight = useCallback(() => DEFAULT_ROW_HEIGHT, []);
+  const determineRowHeight = useCallback((params: { data?: Record<string, unknown> }) => {
+    const row = params.data;
+    if (!row) return DEFAULT_ROW_HEIGHT;
+
+    // Check if Description or Comment fields contain line breaks
+    const description = (row.ProductDescription ?? row.Description ?? '') as string;
+    const comment = (row.Comment ?? '') as string;
+
+    // If either field contains newlines, return undefined to let AG Grid auto-calculate height
+    if (description.includes('\n') || comment.includes('\n')) {
+      return undefined;
+    }
+
+    return DEFAULT_ROW_HEIGHT;
+  }, []);
 
   const getRowHeight = useCallback(
-    () => determineRowHeight(),
+    (params: { data?: Record<string, unknown> }) => determineRowHeight(params),
     [determineRowHeight],
   );
 
@@ -1689,7 +1827,7 @@ const ModelNumberCell = useCallback((params: ICellRendererParams<Record<string, 
     [],
   );
   const actualNumericCellStyle = useMemo(
-    () => ({ justifyContent: 'flex-end', textAlign: 'right' } as const),
+    () => ({ justifyContent: 'flex-end', textAlign: 'right', display: 'flex', alignItems: 'center' } as const),
     [],
   );
 
@@ -1987,8 +2125,23 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             || isOfferProductProduct(row)
           );
         },
-        cellEditor: 'agTextCellEditor',
+        cellEditor: MultilineTextCellEditor,
         cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS],
+        cellStyle: (params) => {
+          const row = params.data as Record<string, unknown> | null | undefined;
+          const description = (row?.ProductDescription ?? row?.Description ?? '') as string;
+          const hasLineBreaks = description.includes('\n');
+
+          return {
+            whiteSpace: hasLineBreaks ? 'pre' : 'nowrap',
+            lineHeight: '1.5',
+            display: 'flex',
+            alignItems: 'center',
+            overflow: 'hidden',
+            textOverflow: hasLineBreaks ? 'clip' : 'ellipsis',
+          };
+        },
+        autoHeight: true,
       },
     {
       field: 'ListPrice',
@@ -2077,6 +2230,59 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
     },
+      {
+        field: 'Comment',
+        headerName: 'Comment',
+        filter: 'agTextColumnFilter',
+        editable: (params) => {
+          const row = params?.data ?? null;
+          return (
+            isOfferProductCategory(row)
+            || isOfferProductComment(row)
+            || isOfferProductProduct(row)
+          );
+        },
+        cellEditor: MultilineTextCellEditor,
+        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+        cellStyle: (params) => {
+          const row = params.data as Record<string, unknown> | null | undefined;
+          const comment = (row?.Comment ?? '') as string;
+          const hasLineBreaks = comment.includes('\n');
+
+          return {
+            whiteSpace: hasLineBreaks ? 'pre' : 'nowrap',
+            lineHeight: '1.5',
+            display: 'flex',
+            alignItems: 'center',
+            overflow: 'hidden',
+            textOverflow: hasLineBreaks ? 'clip' : 'ellipsis',
+          };
+        },
+        autoHeight: true,
+      },
+      {
+        field: 'Delivery',
+        headerName: 'Delivery',
+        filter: 'agTextColumnFilter',
+        editable: (params) => {
+          const row = params?.data ?? null;
+          return (
+            isOfferProductCategory(row)
+            || isOfferProductComment(row)
+            || isOfferProductProduct(row)
+          );
+        },
+        valueGetter: ({ data }) => {
+          const raw = (data as { Delivery?: unknown } | null | undefined)?.Delivery;
+          return raw == null ? '' : String(raw).trim();
+        },
+        valueSetter: ({ data, newValue }: ValueSetterParams<Record<string, unknown>, unknown>) => {
+          if (!data) return false;
+          (data as Record<string, unknown>).Delivery = normalizeRequestedLookupValue(newValue ?? null);
+          return true;
+        },
+        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+      },
     {
       field: 'TelmacoDiscount',
       headerName: 'Telmaco Discount',
@@ -2134,13 +2340,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         editable: false,
         cellClass: [...actualNumericCellClass, styles.redDataCell],
         cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
-      },
-      {
-        field: 'Comment',
-        headerName: 'Comment',
-        filter: 'agTextColumnFilter',
-        editable: false,
-        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
       },
     ];
     const columnMap = new Map<string, ColDef>();
@@ -2680,7 +2879,80 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
   }, [populateRequestedRowsToOffer]);
 
-  useImperativeHandle(ref, () => ({ populateOffer }), [populateOffer]);
+  const fetchExportRows = useCallback(async (): Promise<OfferExportRow[]> => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) {
+      throw new Error('Grid is not ready yet.');
+    }
+    const filterModel = api.getFilterModel?.() ?? {};
+    const sortModel = api.getColumnState?.()
+      ?.filter((col) => col.sort === 'asc' || col.sort === 'desc')
+      .map((col) => ({ colId: col.colId, sort: col.sort as 'asc' | 'desc' })) ?? [];
+    const quickFilterText = typeof lastServerRequestRef.current?.quickFilterText === 'string'
+      ? lastServerRequestRef.current.quickFilterText
+      : null;
+    const request: Record<string, unknown> = {
+      startRow: 0,
+      endRow: 1000,
+      allRows: true,
+      filterModel,
+      sortModel,
+    };
+    if (quickFilterText && quickFilterText.trim().length > 0) {
+      request.quickFilterText = quickFilterText.trim();
+    }
+
+    const response = await fetch(dataEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        request,
+        fields: [...OFFER_PRODUCTS_EXPORT_FIELDS],
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | { ok?: boolean; error?: string; rows?: OfferExportRow[] }
+      | null;
+    if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
+      throw new Error(payload?.error ?? `Failed to fetch export rows (status ${response.status})`);
+    }
+    return payload.rows;
+  }, [dataEndpoint]);
+
+  const buildTemplateExportRows = useCallback((rows: OfferExportRow[]): OfferProductsTemplateExportRow[] => {
+    const includedRows = rows.filter((row) => {
+      const rowType = resolveOfferProductRowType(row as unknown as Record<string, unknown>);
+      return rowType === 'product' || rowType === 'category' || rowType === 'printable-comment';
+    });
+
+    return includedRows.map((row) => {
+      const model = (row.ModelNumber ?? '').toString().trim();
+      const description = (row.Description ?? '').toString().trim();
+      const descriptionType = [model, description].filter((part) => part.length > 0).join(' ').trim();
+      const qty = coerceNumber(row.Quantity);
+      const netUnitPrice = coerceNumber(row.NetUnitPrice);
+      const qtyForExport = qty != null && !Object.is(qty, 0) ? qty : null;
+      const deliveryRaw = row.Delivery == null ? '' : String(row.Delivery).trim();
+      const deliveryValue = deliveryRaw.length > 0 ? deliveryRaw : 'unknown';
+      return {
+        no: normalizeNoForExport(row.TreeOrdering),
+        productReference: row.PartNumber?.toString().trim() ?? '',
+        manufacturer: row.BrandName?.toString().trim() ?? '',
+        descriptionType,
+        qty: qtyForExport ?? '',
+        unitPrice: netUnitPrice ?? '',
+        delayForDelivery: deliveryValue,
+        comments: row.Comment?.toString() ?? '',
+      };
+    });
+  }, []);
+
+  const getTemplateExportRows = useCallback(async (): Promise<OfferProductsTemplateExportRow[]> => {
+    const rows = await fetchExportRows();
+    return buildTemplateExportRows(rows);
+  }, [buildTemplateExportRows, fetchExportRows]);
+
+  useImperativeHandle(ref, () => ({ populateOffer, getTemplateExportRows }), [getTemplateExportRows, populateOffer]);
 
 
   const manualMatchTotal = processedRequestedMatches + requestedMatchQueue.length;
@@ -3294,6 +3566,61 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     void runUpdate();
   }, [resolvedEndpoint, shouldSkipRealtimeCellEdit]);
 
+  const handleDeliveryEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    if (event.colDef.field !== 'Delivery') return;
+    const source = (event as { source?: string }).source;
+    if (source === 'api') return;
+    if (shouldSkipRealtimeCellEdit(event)) return;
+
+    const normalizedOldValue = normalizeRequestedLookupValue(event.oldValue ?? null);
+    const normalizedNewValue = normalizeRequestedLookupValue(event.newValue ?? null);
+    if (normalizedOldValue === normalizedNewValue) {
+      return;
+    }
+
+    const offerDetailId = normalizeOfferDetailId((event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null);
+    if (offerDetailId == null) {
+      showToastMessage('Unable to update delivery. Missing record identifier.', 'error');
+      try {
+        event.node?.setDataValue?.('Delivery', normalizedOldValue ?? '');
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+
+    const revertValue = () => {
+      try {
+        event.node?.setDataValue?.('Delivery', normalizedOldValue ?? '');
+      } catch {
+        /* noop */
+      }
+    };
+
+    const runUpdate = async () => {
+      try {
+        const res = await fetch(resolvedEndpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: [{ OfferDetailID: offerDetailId, Delivery: normalizedNewValue }],
+          }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update delivery (status ${res.status})`);
+        }
+        showToastMessage('Delivery updated', 'success');
+      } catch (err) {
+        console.error('Failed to update delivery', err);
+        showToastMessage('Unable to update delivery. Please try again.', 'error');
+        revertValue();
+      }
+    };
+
+    void runUpdate();
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit]);
+
   const handlePricingEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
     if (!field || !PRICING_EDITABLE_FIELDS.has(field)) return;
@@ -3395,10 +3722,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     handleDescriptionEdit(event);
+    handleDeliveryEdit(event);
     handleRequestedFieldEdit(event);
     handleQuantityEdit(event);
     handlePricingEdit(event);
-  }, [handleDescriptionEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit]);
+  }, [handleDescriptionEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit]);
 
   const formatEuroTotal = (value: number | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return '—';

@@ -5,47 +5,12 @@ import { getPool } from '../../../lib/sql';
 import { resolveAuditUserId } from '../../../lib/auditTrail';
 import {
   buildQuickFilterClause,
-  buildTextMatchPredicate,
-  isSensitiveColumn,
   mergeWhereClauses,
   QueryParam,
 } from '../../../lib/gridFilters';
 import { requirePermission } from '../../../lib/authz';
-
-type TextFilterModel = {
-  filterType: 'text';
-  type?: 'contains' | 'equals' | 'notEqual' | 'startsWith' | 'endsWith';
-  filter?: string;
-};
-
-type NumberFilterModel = {
-  filterType: 'number';
-  type?:
-    | 'equals'
-    | 'notEqual'
-    | 'lessThan'
-    | 'greaterThan'
-    | 'lessThanOrEqual'
-    | 'greaterThanOrEqual'
-    | 'inRange';
-  filter?: number;
-  filterTo?: number;
-};
-
-type SetFilterModel = {
-  filterType: 'set';
-  values?: Array<string | number | boolean>;
-};
-
-type DateFilterModel = {
-  filterType: 'date';
-  type?: 'equals' | 'notEqual' | 'lessThan' | 'greaterThan' | 'inRange';
-  dateFrom?: string;
-  dateTo?: string;
-  filter?: string;
-};
-
-type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel | DateFilterModel;
+import { KnownFilterModel } from '../../../lib/filterTypes';
+import { processFilter } from '../../../lib/filterProcessing';
 
 type GridRequest = {
   startRow?: number;
@@ -80,6 +45,7 @@ type OfferRow = {
   OfferStatus: string | null;
   ERPProjectID: number | null;
   ERPFWCProjectID: number | null;
+  ERPFWCProjectShortName: string | null;
   offerId: number | null;
   ParentOfferID: number | null;
   VersionGroupId: number | null;
@@ -123,6 +89,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferStatus: 'dbo.OfferStatus.Name',
   ERPProjectID: 'dbo.Offer.ERPProjectID',
   ERPFWCProjectID: 'dbo.Offer.ERPFWCProjectID',
+  ERPFWCProjectShortName: 'fwc.ShortName',
   offerId: 'dbo.Offer.ID',
   CustomerRef: 'dbo.Offer.CustomerRef',
   ProtocolNo: 'dbo.Offer.ProtocolNo',
@@ -210,80 +177,17 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
     const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
-    // Handle Text, Number, Date basic ops
-    switch (fm.filterType) {
-      case 'text': {
-        const type = fm.type; // contains, equals, notEqual, startsWith, endsWith
-        const val = String(fm.filter ?? '');
-        if (!val) break;
-        const mode = (type ?? 'contains') as 'contains' | 'equals' | 'startsWith' | 'endsWith' | 'notEqual';
-        const { clause, params: clauseParams } = buildTextMatchPredicate(columnExpression, val, {
-          paramKey: pBase,
-          mode,
-          enablePhonetic: !isSensitiveColumn(col),
-        });
-        parts.push(clause);
-        clauseParams.forEach((p) => params.push(p));
-        break;
-      }
-      case 'number': {
-        const type = fm.type; // equals, notEqual, lessThan, greaterThan, inRange, etc.
-        const val = fm.filter !== undefined ? Number(fm.filter) : Number.NaN;
-        const valTo = fm.filterTo !== undefined ? Number(fm.filterTo) : undefined;
-        if (Number.isNaN(val)) break;
-        if (type === 'equals') parts.push(`${columnExpression} = @${pBase}`);
-        if (type === 'notEqual') parts.push(`${columnExpression} <> @${pBase}`);
-        if (type === 'lessThan') parts.push(`${columnExpression} < @${pBase}`);
-        if (type === 'greaterThan') parts.push(`${columnExpression} > @${pBase}`);
-        if (type === 'lessThanOrEqual') parts.push(`${columnExpression} <= @${pBase}`);
-        if (type === 'greaterThanOrEqual') parts.push(`${columnExpression} >= @${pBase}`);
-        if (type === 'inRange' && valTo !== undefined) {
-          parts.push(`(${columnExpression} BETWEEN @${pBase} AND @${pBase}_to)`);
-          params.push({ key: `${pBase}_to`, value: valTo });
-        }
-        params.push({ key: pBase, value: val });
-        break;
-      }
-      case 'set': {
-        const rawValues = fm.values ?? [];
-        if (rawValues.length === 0) break;
 
-        const normalize = (value: string | number | boolean) => {
-          if (value === true || value === 'true') return 1;
-          if (value === false || value === 'false') return 0;
-          return value;
-        };
+    // Use centralized filter processor
+    const result = processFilter(fm, {
+      columnExpression,
+      columnId: col,
+      paramBase: pBase,
+    });
 
-        const placeholders = rawValues.map((value, valueIdx) => {
-          const key = `${pBase}_${valueIdx}`;
-          params.push({ key, value: normalize(value) });
-          return `@${key}`;
-        });
-
-        parts.push(`${columnExpression} IN (${placeholders.join(', ')})`);
-        break;
-      }
-
-      case 'date': {
-        // Expecting YYYY-MM-DD from AG Grid date filter
-        const type = fm.type;
-        const val = fm.dateFrom || fm.filter;
-        const valTo = fm.dateTo;
-        if (!val) break;
-        if (type === 'equals') parts.push(`CAST(${columnExpression} AS date) = @${pBase}`);
-        if (type === 'notEqual') parts.push(`CAST(${columnExpression} AS date) <> @${pBase}`);
-        if (type === 'lessThan') parts.push(`CAST(${columnExpression} AS date) < @${pBase}`);
-        if (type === 'greaterThan') parts.push(`CAST(${columnExpression} AS date) > @${pBase}`);
-        if (type === 'inRange' && valTo) {
-          parts.push(`(CAST(${columnExpression} AS date) BETWEEN @${pBase} AND @${pBase}_to)`);
-          params.push({ key: `${pBase}_to`, value: valTo });
-        }
-        params.push({ key: pBase, value: val });
-        break;
-      }
-      default:
-        // Additional filter types can be handled here
-        break;
+    if (result.clause) {
+      parts.push(result.clause);
+      params.push(...result.params);
     }
   });
 
@@ -375,6 +279,7 @@ export async function POST(req: NextRequest) {
 	        dbo.OfferStatus.Name AS OfferStatus,
 	        dbo.Offer.ERPProjectID AS ERPProjectID,
 	        dbo.Offer.ERPFWCProjectID AS ERPFWCProjectID,
+	        fwc.ShortName AS ERPFWCProjectShortName,
 	        dbo.Offer.ID AS offerId,
 	        dbo.Offer.ParentOfferID,
         COALESCE(versionTree.RootOfferID, dbo.Offer.ID) AS VersionGroupId,
@@ -412,6 +317,7 @@ export async function POST(req: NextRequest) {
 	        INNER JOIN dbo.AspNetUsers AS sales ON dbo.Offer.SalesPersonId = sales.Id
 	        LEFT JOIN dbo.AspNetUsers AS created ON dbo.Offer.CreatedBy = created.Id
 	        INNER JOIN dbo.OfferStatus ON dbo.Offer.StatusID = dbo.OfferStatus.ID
+	        LEFT JOIN dbo.FWCs AS fwc ON fwc.ID = dbo.Offer.ERPFWCProjectID
 	        OUTER APPLY (
 	          SELECT MAX(od.ModifiedOn) AS DetailsModifiedOn
 	          FROM dbo.OfferDetails od

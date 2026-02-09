@@ -5,25 +5,12 @@ import { getPool } from "../../../lib/sql";
 import { resolveAuditUserId } from "../../../lib/auditTrail";
 import {
   buildQuickFilterClause,
-  buildTextMatchPredicate,
-  isSensitiveColumn,
   mergeWhereClauses,
   QueryParam,
 } from "../../../lib/gridFilters";
 import { requirePermission } from "../../../lib/authz";
-
-type TextFilterModel = {
-  filterType: "text";
-  type?: "contains" | "equals" | "notEqual" | "startsWith" | "endsWith";
-  filter?: string;
-};
-
-type SetFilterModel = {
-  filterType: "set";
-  values?: Array<string | number | boolean>;
-};
-
-type KnownFilterModel = TextFilterModel | SetFilterModel;
+import { KnownFilterModel } from "../../../lib/filterTypes";
+import { processFilter } from "../../../lib/filterProcessing";
 
 type GridRequest = {
   startRow?: number;
@@ -108,27 +95,17 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
   Object.entries(typed).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
     const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
-    if (fm.filterType === "text") {
-      const val = String((fm as TextFilterModel).filter ?? "");
-      if (!val) return;
-      const type = (fm as TextFilterModel).type;
-      const mode = (type ?? "contains") as "contains" | "equals" | "startsWith" | "endsWith" | "notEqual";
-      const { clause, params: clauseParams } = buildTextMatchPredicate(columnExpression, val, {
-        paramKey: pBase,
-        mode,
-        enablePhonetic: !isSensitiveColumn(col),
-      });
-      parts.push(clause);
-      clauseParams.forEach((p) => params.push(p));
-    } else if (fm.filterType === "set") {
-      const values = Array.isArray(fm.values) ? fm.values : [];
-      if (values.length === 0) return;
-      const placeholders = values.map((value, valueIdx) => {
-        const key = `${pBase}_${valueIdx}`;
-        params.push({ key, value });
-        return `@${key}`;
-      });
-      parts.push(`${columnExpression} IN (${placeholders.join(", ")})`);
+
+    // Use centralized filter processor
+    const result = processFilter(fm, {
+      columnExpression,
+      columnId: col,
+      paramBase: pBase,
+    });
+
+    if (result.clause) {
+      parts.push(result.clause);
+      params.push(...result.params);
     }
   });
 

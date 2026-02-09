@@ -3,21 +3,15 @@ import type { Request as SqlRequest } from "mssql";
 import { getPool, sql } from "../../../../lib/sql";
 import {
   buildQuickFilterClause,
-  buildTextMatchPredicate,
-  isSensitiveColumn,
   mergeWhereClauses,
-  QueryParam,
-} from "../../../../lib/gridFilters";
+  QueryParam } from "../../../../lib/gridFilters";
+import { KnownFilterModel } from "../../../../lib/filterTypes";
+import { processFilter } from "../../../../lib/filterProcessing";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { requirePermission } from "../../../../lib/authz";
 
-type TextFilterModel = {
-  filterType: "text";
-  type?: "contains" | "equals" | "notEqual" | "startsWith" | "endsWith";
-  filter?: string;
-};
 
-type KnownFilterModel = TextFilterModel;
+
 
 type GridRequest = {
   startRow?: number;
@@ -60,8 +54,9 @@ type GrandAggRow = {
   MinCustomer: number | null;
 };
 
-const BRAND_COLUMN_EXPRESSIONS: Record<string, string> = {
-  BrandName: "dbo.Brands.Name",
+const COLUMN_EXPRESSIONS: Record<string, string> = {
+  Name: "dbo.Brands.Name",
+  BrandID: "dbo.Brands.ID",
 };
 
 const QUICK_FILTER_COLUMNS = [
@@ -91,38 +86,35 @@ async function readGridRequest(req: NextRequest): Promise<GridRequest> {
   return { startRow: 0, endRow: 100 };
 }
 
-function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
+const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
   if (!filterModel || Object.keys(filterModel).length === 0) {
     return { where: "", params: [] as QueryParam[] };
   }
 
   const parts: string[] = [];
   const params: QueryParam[] = [];
-  const typed = filterModel as Record<string, KnownFilterModel>;
+  const typedFilterModel = filterModel as Record<string, KnownFilterModel>;
 
-  Object.entries(typed).forEach(([col, fm], idx) => {
-    if (!fm || fm.filterType !== "text") return;
-    if (col !== "BrandName") return;
-    const val = String((fm as TextFilterModel).filter ?? "").trim();
-    if (!val) return;
+  Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const expr = BRAND_COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
-    const type = (fm as TextFilterModel).type;
-    const mode = (type ?? "contains") as "contains" | "equals" | "startsWith" | "endsWith" | "notEqual";
-    const { clause, params: clauseParams } = buildTextMatchPredicate(expr, val, {
-      paramKey: pBase,
-      mode,
-      enablePhonetic: !isSensitiveColumn(col),
+    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
+
+    // Use centralized filter processor
+    const result = processFilter(fm, {
+      columnExpression,
+      columnId: col,
+      paramBase: pBase,
     });
-    parts.push(clause);
-    clauseParams.forEach((p) => params.push(p));
+
+    if (result.clause) {
+      parts.push(result.clause);
+      params.push(...result.params);
+    }
   });
 
-  return {
-    where: parts.length ? `WHERE ${parts.join(" AND ")}` : "",
-    params,
-  };
-}
+  const where = parts.length ? `WHERE ${parts.join(" AND ")}` : "";
+  return { where, params };
+};
 
 const normalizeNumeric = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -533,8 +525,7 @@ export async function POST(req: NextRequest) {
       const map = policiesByBrand.get(brandId) ?? {};
       map[key] = {
         telmacoDiscount: normalizeNumeric(row.MinTelmaco),
-        customerDiscount: normalizeNumeric(row.MinCustomer),
-      };
+        customerDiscount: normalizeNumeric(row.MinCustomer) };
       policiesByBrand.set(brandId, map);
     });
 
@@ -553,8 +544,7 @@ export async function POST(req: NextRequest) {
         BrandName: brand.BrandName,
         policies,
         totalTelmacoDiscount: telmacoValues.length > 0 ? Math.min(...telmacoValues) : null,
-        totalCustomerDiscount: customerValues.length > 0 ? Math.min(...customerValues) : null,
-      };
+        totalCustomerDiscount: customerValues.length > 0 ? Math.min(...customerValues) : null };
     });
 
     const grandPolicies: Record<string, { telmacoDiscount: number | null; customerDiscount: number | null }> = {};
@@ -565,8 +555,7 @@ export async function POST(req: NextRequest) {
       if (policyId == null) return;
       const cell = {
         telmacoDiscount: normalizeNumeric(row.MinTelmaco),
-        customerDiscount: normalizeNumeric(row.MinCustomer),
-      };
+        customerDiscount: normalizeNumeric(row.MinCustomer) };
       grandPolicies[String(policyId)] = cell;
       if (cell.telmacoDiscount != null && Number.isFinite(cell.telmacoDiscount)) {
         grandTelmacoValues.push(cell.telmacoDiscount);
@@ -581,8 +570,7 @@ export async function POST(req: NextRequest) {
       BrandName: "Minimum per Policy",
       policies: grandPolicies,
       totalTelmacoDiscount: grandTelmacoValues.length > 0 ? Math.min(...grandTelmacoValues) : null,
-      totalCustomerDiscount: grandCustomerValues.length > 0 ? Math.min(...grandCustomerValues) : null,
-    };
+      totalCustomerDiscount: grandCustomerValues.length > 0 ? Math.min(...grandCustomerValues) : null };
 
     return NextResponse.json({ ok: true, rows, rowCount, grandTotal: grandTotalRow });
   } catch (err) {

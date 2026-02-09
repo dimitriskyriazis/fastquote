@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import { useMemo, useState, useCallback, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react';
 import styles from './OfferBasicDataPanel.module.css';
 import type {
   OfferBasicRecord,
@@ -51,6 +51,22 @@ const sortContacts = (list: OfferContactInfo[]) =>
   [...list].sort((a, b) =>
     (a.FullName || '').localeCompare(b.FullName || '', undefined, { sensitivity: 'base' })
   );
+
+const normalizeContactNamePart = (value: string | null | undefined): string => {
+  if (typeof value !== 'string') return '';
+  return value.trim();
+};
+
+const splitContactName = (fullName: string | null | undefined): { firstName: string; lastName: string } => {
+  const normalized = normalizeContactNamePart(fullName);
+  if (!normalized) return { firstName: '', lastName: '' };
+  const parts = normalized.split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) return { firstName: normalized, lastName: '' };
+  return {
+    firstName: parts[0] ?? '',
+    lastName: parts.slice(1).join(' '),
+  };
+};
 
 const SECTION_METADATA: Record<SectionKey, { title: string; gridClass: string }> = {
   general: { title: 'General', gridClass: styles.generalGrid },
@@ -156,7 +172,7 @@ const buildFieldDefinitions = (
   },
   {
     id: 'erpFwcProjectId',
-    label: 'ERP FWC Project ID',
+    label: 'ERP FWC Project',
     section: 'code',
     recordKey: 'ERPFWCProjectID',
     updateField: 'ERPFWCProjectID',
@@ -200,7 +216,6 @@ export default function OfferBasicDataClient({
   users,
   fwcProjects,
 }: Props) {
-
   const contactOptions = useMemo(() => {
     const sortedContacts = sortContacts(contacts);
     const options = sortedContacts.map((contact) => {
@@ -295,6 +310,102 @@ export default function OfferBasicDataClient({
   const [savedValues, setSavedValues] = useState(initialValues);
   const savedValuesRef = useRef(savedValues);
   savedValuesRef.current = savedValues;
+  const [contextMenuState, setContextMenuState] = useState<{
+    x: number;
+    y: number;
+    fieldId: 'customer' | 'contactId';
+  } | null>(null);
+
+  const activeContactId = useMemo(() => {
+    const raw = values.contactId ?? '';
+    if (!raw) return null;
+    const parsed = Number.parseInt(String(raw), 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  }, [values.contactId]);
+
+  const activeContactName = useMemo(() => {
+    if (activeContactId != null) {
+      const fromOptions = contactOptions.find((option) => Number(option.value) === activeContactId);
+      const label = fromOptions?.label?.trim();
+      if (label) return label;
+    }
+    const fallback = (record.ContactFullName ?? '').trim();
+    return fallback.length > 0 ? fallback : null;
+  }, [activeContactId, contactOptions, record.ContactFullName]);
+
+  const activeContactNameParts = useMemo(() => {
+    if (activeContactId != null) {
+      const selected = contacts.find((entry) => Number(entry.ContactID) === activeContactId);
+      const firstName = normalizeContactNamePart(selected?.FirstName);
+      const lastName = normalizeContactNamePart(selected?.LastName);
+      if (firstName || lastName) {
+        return { firstName, lastName };
+      }
+    }
+    return splitContactName(activeContactName);
+  }, [activeContactId, activeContactName, contacts]);
+
+  const hasCustomerNavigation = Number.isInteger(record.CustomerID) && Number(record.CustomerID) > 0;
+  const hasContactNavigation = typeof activeContactName === 'string' && activeContactName.length > 0;
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenuState(null);
+  }, []);
+
+  const handleContextMenuAction = useCallback((fieldId: 'customer' | 'contactId') => {
+    if (fieldId === 'customer') {
+      if (!hasCustomerNavigation) return;
+      const customerId = Number(record.CustomerID);
+      const customerUrl = `/customers/${encodeURIComponent(String(customerId))}/basicdata`;
+      window.open(customerUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (!hasContactNavigation || !activeContactName) return;
+    const params = new URLSearchParams();
+    if (activeContactNameParts.firstName) {
+      params.set('firstName', activeContactNameParts.firstName);
+    }
+    if (activeContactNameParts.lastName) {
+      params.set('lastName', activeContactNameParts.lastName);
+    }
+    if (params.size === 0) {
+      params.set('contactName', activeContactName);
+    }
+    const contactUrl = `/customer-contacts?${params.toString()}`;
+    window.open(contactUrl, '_blank', 'noopener,noreferrer');
+  }, [activeContactName, activeContactNameParts.firstName, activeContactNameParts.lastName, hasContactNavigation, hasCustomerNavigation, record.CustomerID]);
+
+  const handleFieldContextMenu = useCallback(
+    (event: ReactMouseEvent, fieldId: 'customer' | 'contactId') => {
+      const canOpen =
+        (fieldId === 'customer' && hasCustomerNavigation) ||
+        (fieldId === 'contactId' && hasContactNavigation);
+      if (!canOpen) return;
+      event.preventDefault();
+      setContextMenuState({
+        x: event.clientX,
+        y: event.clientY,
+        fieldId,
+      });
+    },
+    [hasContactNavigation, hasCustomerNavigation],
+  );
+
+  useEffect(() => {
+    if (!contextMenuState) return;
+    const handlePointerDown = () => closeContextMenu();
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeContextMenu();
+    };
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleEscape);
+    window.addEventListener('scroll', handlePointerDown, true);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleEscape);
+      window.removeEventListener('scroll', handlePointerDown, true);
+    };
+  }, [closeContextMenu, contextMenuState]);
 
   const handleValueChange = useCallback((fieldId: string, value: string) => {
     setValues((prev) => ({ ...prev, [fieldId]: value }));
@@ -358,6 +469,12 @@ export default function OfferBasicDataClient({
     (_: FieldDefinition) => null,
     [],
   );
+
+  const getFieldContextMenuItemLabel = useCallback((fieldId: string) => {
+    if (fieldId === 'customer' && hasCustomerNavigation) return 'View Customer';
+    if (fieldId === 'contactId' && hasContactNavigation) return 'View Contact';
+    return null;
+  }, [hasContactNavigation, hasCustomerNavigation]);
 
 const renderFieldControl = (
   def: FieldDefinition,
@@ -510,7 +627,15 @@ const renderFieldControl = (
                     {renderLookupAddButton(field)}
                   </div>
                 </label>
-                {renderFieldControl(field, values, pendingFields, handleValueChange, handleBlur, record)}
+                <div
+                  onContextMenu={(event) => {
+                    if (field.id === 'customer' || field.id === 'contactId') {
+                      handleFieldContextMenu(event, field.id);
+                    }
+                  }}
+                >
+                  {renderFieldControl(field, values, pendingFields, handleValueChange, handleBlur, record)}
+                </div>
               </div>
             );
           })}
@@ -553,7 +678,15 @@ const renderFieldControl = (
                     <label className={styles.fieldLabel} htmlFor={`offer-field-${field.id}`}>
                       {field.label}
                     </label>
-                    {renderFieldControl(field, values, pendingFields, handleValueChange, handleBlur, record)}
+                    <div
+                      onContextMenu={(event) => {
+                        if (field.id === 'customer' || field.id === 'contactId') {
+                          handleFieldContextMenu(event, field.id);
+                        }
+                      }}
+                    >
+                      {renderFieldControl(field, values, pendingFields, handleValueChange, handleBlur, record)}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -566,6 +699,35 @@ const renderFieldControl = (
           )}
         </div>
       </section>
+      {contextMenuState ? (
+        <div
+          className={styles.fieldContextMenu}
+          style={{ left: contextMenuState.x, top: contextMenuState.y }}
+          role="menu"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className={styles.fieldContextMenuItem}
+            onClick={() => {
+              handleContextMenuAction(contextMenuState.fieldId);
+              closeContextMenu();
+            }}
+          >
+            <span
+              className={`${styles.fieldContextMenuIcon} fastquote-menu-icon`}
+              aria-hidden="true"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 4h6v6" />
+                <path d="m10 14 10-10" />
+                <path d="M20 14v6H4V4h6" />
+              </svg>
+            </span>
+            {getFieldContextMenuItemLabel(contextMenuState.fieldId)}
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }

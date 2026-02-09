@@ -14,22 +14,9 @@ const sortRecentOffers = (items: RecentOfferSummary[]) =>
     return right - left;
   });
 
-const normalizeOfferIdToken = (value: string) =>
-  value.replace(/[^0-9]+/g, "").trim();
-
-const looksLikeOfferIdPlaceholder = (text: string, offerId: string) => {
-  const normalized = text.trim().toLowerCase();
-  const numericId = normalizeOfferIdToken(offerId);
-  if (!numericId) return false;
-  const bare = `offer ${numericId}`;
-  if (normalized === bare) return true;
-  if (normalized === `offer #${numericId}`) return true;
-  if (normalized === `offerid ${numericId}`) return true;
-  return false;
-};
-
 export default function RecentOffersSection() {
   const [recentOffers, setRecentOffers] = useState<RecentOfferSummary[]>([]);
+  const [verifiedOffers, setVerifiedOffers] = useState<RecentOfferSummary[] | null>([]);
   const [descriptionOverrides, setDescriptionOverrides] = useState<Record<string, string>>({});
   const { userId } = useAuditUser();
 
@@ -40,6 +27,7 @@ export default function RecentOffersSection() {
         const entries = sortRecentOffers(await loadRecentOffers());
         if (signal?.aborted) return;
         setRecentOffers(entries);
+        setVerifiedOffers(entries.length === 0 ? [] : null);
         setDescriptionOverrides({});
       } catch (err) {
         console.error("Failed to load recent offers", err);
@@ -71,47 +59,54 @@ export default function RecentOffersSection() {
   }, [refreshRecentOffers]);
 
   useEffect(() => {
-    if (recentOffers.length === 0) return;
-    const missing = recentOffers.filter((offer) => {
-      const overridden = descriptionOverrides[offer.id];
-      if (overridden) return false;
-      const storedDescription = offer.description?.trim();
-      if (!storedDescription) return true;
-      if (looksLikeOfferIdPlaceholder(storedDescription, offer.id)) return true;
-      return false;
-    });
-    if (missing.length === 0) return;
+    if (recentOffers.length === 0) {
+      return;
+    }
+
     let cancelled = false;
-    const refreshDescriptions = async () => {
-      const updated: Record<string, string> = {};
-      for (const entry of missing) {
-        try {
-          const response = await fetch(`/api/offers/${encodeURIComponent(entry.id)}/summary`);
-          if (!response.ok) continue;
-          const payload = (await response.json()) as {
-            ok?: boolean;
-            offer?: { description?: string | null; title?: string | null };
-          } | null;
-          if (!payload?.ok) continue;
-          const description = payload.offer?.description?.trim();
-          const title = payload.offer?.title?.trim();
-          const resolved = description || title;
-          if (resolved) {
-            updated[entry.id] = resolved;
+    const verifyOffersAndDescriptions = async () => {
+      const checks = await Promise.all(
+        recentOffers.map(async (entry) => {
+          try {
+            const response = await fetch(`/api/offers/${encodeURIComponent(entry.id)}/summary`);
+            if (!response.ok) return null;
+            const payload = (await response.json()) as {
+              ok?: boolean;
+              offer?: { description?: string | null; title?: string | null };
+            } | null;
+            if (!payload?.ok) return null;
+            const description = payload.offer?.description?.trim();
+            const title = payload.offer?.title?.trim();
+            return { entry, resolvedDescription: description || title || null };
+          } catch {
+            return null;
           }
-        } catch {
-          //
+        }),
+      );
+
+      const nextVerified: RecentOfferSummary[] = [];
+      const nextOverrides: Record<string, string> = {};
+      for (const result of checks) {
+        if (!result) continue;
+        nextVerified.push(result.entry);
+        if (result.resolvedDescription) {
+          nextOverrides[result.entry.id] = result.resolvedDescription;
         }
       }
+
       if (cancelled) return;
-      if (Object.keys(updated).length === 0) return;
-      setDescriptionOverrides((prev) => ({ ...prev, ...updated }));
+      setVerifiedOffers(nextVerified);
+      setDescriptionOverrides(nextOverrides);
     };
-    void refreshDescriptions();
+
+    void verifyOffersAndDescriptions();
     return () => {
       cancelled = true;
     };
-  }, [recentOffers, descriptionOverrides]);
+  }, [recentOffers]);
+
+  const offersToRender = verifiedOffers ?? [];
+  const isCheckingRecentOffers = verifiedOffers === null;
 
   return (
     <section className={styles.recentOffersSection}>
@@ -125,14 +120,18 @@ export default function RecentOffersSection() {
         </Link>
       </header>
 
-      {recentOffers.length === 0 ? (
+      {isCheckingRecentOffers ? (
+        <div className={styles.emptyState}>
+          <p>Checking recent offers...</p>
+        </div>
+      ) : offersToRender.length === 0 ? (
         <div className={styles.emptyState}>
           <p>No offers shown yet.</p>
           <p>Open any offer to make it appear here for quick access.</p>
         </div>
       ) : (
         <div className={styles.recentOfferGrid}>
-          {recentOffers.map((offer) => {
+          {offersToRender.map((offer) => {
             const encodedId = encodeURIComponent(offer.id);
             const descriptionValue = descriptionOverrides[offer.id] ?? offer.description?.trim();
             const fallbackDescription = offer.label.includes(" – ")

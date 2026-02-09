@@ -74,6 +74,7 @@ import {
   ValidationModule,
   ExternalFilterModule,
   ScrollApiModule,
+  RowAutoHeightModule,
 } from 'ag-grid-community';
 import {
   AggregationModule,
@@ -411,6 +412,7 @@ if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
     ScrollApiModule,
     ValidationModule,
     LocaleModule,
+    RowAutoHeightModule,
   ]);
   globalThis.__AG_GRID_MODULES_REGISTERED__ = true;
 }
@@ -2546,6 +2548,10 @@ export default function AgGridAll({
       // Apply filters automatically after typing stops.
       debounceMs: 800,
       buttons: ['reset'] as const,
+      // Enable compound filters (2 conditions per column with AND/OR logic)
+      maxNumConditions: 2,
+      alwaysShowBothConditions: true,
+      defaultJoinOperator: 'AND' as const,
     };
     const incomingFilterParams = defaultColDef?.filterParams;
     let mergedFilterParams = typeof incomingFilterParams === 'object' && incomingFilterParams !== null
@@ -2685,9 +2691,6 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           onRequestPayloadConsumed();
         }
         const serverRequest: ServerRequestWithQuickFilter = { ...params.request };
-        if (typeof onServerRequest === 'function') {
-          onServerRequest(serverRequest);
-        }
         if (quickSearchEnabled) {
           const quickFilterText = quickSearchFilterRef.current;
           if (typeof quickFilterText === 'string' && quickFilterText.length > 0) {
@@ -2695,6 +2698,9 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           } else {
             delete serverRequest.quickFilterText;
           }
+        }
+        if (typeof onServerRequest === 'function') {
+          onServerRequest(serverRequest);
         }
         const visibleFields = params.api?.getAllDisplayedColumns?.()
           ?.map((column) => column.getColDef()?.field)

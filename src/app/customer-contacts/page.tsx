@@ -4,6 +4,12 @@ import { IMPORTANCE_VALUES, fetchCustomers } from "../customers/[customerId]/cus
 import { toDropdownOptions, type RawDropdownRow, type DropdownOption } from "../../lib/dropdownOptions";
 
 type LookupRow = RawDropdownRow & { ID: number | string | null };
+type SearchParams = Record<string, string | string[] | undefined>;
+
+const getFirstParam = (value: string | string[] | undefined): string | null => {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return typeof value === "string" ? value : null;
+};
 
 async function fetchEmailStatuses(): Promise<string[]> {
   try {
@@ -42,7 +48,15 @@ async function fetchTitles(): Promise<DropdownOption[]> {
   }
 }
 
-export default async function Page() {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}) {
+  const resolvedSearch = await searchParams;
+  const initialContactName = getFirstParam(resolvedSearch.contactName)?.trim() ?? "";
+  const initialContactFirstName = getFirstParam(resolvedSearch.firstName)?.trim() ?? "";
+  const initialContactLastName = getFirstParam(resolvedSearch.lastName)?.trim() ?? "";
   const [statuses, customers, titles] = await Promise.all([
     fetchEmailStatuses(),
     fetchCustomers(),
@@ -54,6 +68,9 @@ export default async function Page() {
       importances={IMPORTANCE_VALUES}
       customers={customers}
       titles={titles}
+      initialContactName={initialContactName}
+      initialContactFirstName={initialContactFirstName}
+      initialContactLastName={initialContactLastName}
     />
   );
 }

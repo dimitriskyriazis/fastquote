@@ -4,54 +4,12 @@ import type { Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
 import {
   buildQuickFilterClause,
-  buildTextMatchPredicate,
-  isSensitiveColumn,
   mergeWhereClauses,
   QueryParam,
 } from "../../../lib/gridFilters";
 import { requirePermission } from "../../../lib/authz";
-
-type TextFilterModel = {
-  filterType: "text";
-  type?: "contains" | "equals" | "notEqual" | "startsWith" | "endsWith";
-  filter?: string;
-};
-
-type NumberFilterModel = {
-  filterType: "number";
-  type?:
-    | "equals"
-    | "notEqual"
-    | "lessThan"
-    | "greaterThan"
-    | "lessThanOrEqual"
-    | "greaterThanOrEqual"
-    | "inRange";
-  filter?: number;
-  filterTo?: number;
-};
-
-type SetFilterModel = {
-  filterType: "set";
-  values?: Array<string | number | boolean>;
-};
-
-type DateFilterModel = {
-  filterType: "date";
-  type?:
-    | "equals"
-    | "notEqual"
-    | "lessThan"
-    | "greaterThan"
-    | "lessThanOrEqual"
-    | "greaterThanOrEqual"
-    | "inRange";
-  dateFrom?: string;
-  dateTo?: string;
-  filter?: string;
-};
-
-type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel | DateFilterModel;
+import { KnownFilterModel } from "../../../lib/filterTypes";
+import { processFilter } from "../../../lib/filterProcessing";
 
 type GridRequest = {
   startRow?: number;
@@ -103,79 +61,17 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
     const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
-    switch (fm.filterType) {
-      case "text": {
-        const type = fm.type;
-        const val = String(fm.filter ?? "");
-        if (!val) break;
-        const mode = (type ?? "contains") as "contains" | "equals" | "startsWith" | "endsWith" | "notEqual";
-        const { clause, params: clauseParams } = buildTextMatchPredicate(columnExpression, val, {
-          paramKey: pBase,
-          mode,
-          enablePhonetic: !isSensitiveColumn(col),
-        });
-        parts.push(clause);
-        clauseParams.forEach((p) => params.push(p));
-        break;
-      }
-      case "number": {
-        const type = fm.type;
-        const val = fm.filter !== undefined ? Number(fm.filter) : Number.NaN;
-        const valTo = fm.filterTo !== undefined ? Number(fm.filterTo) : undefined;
-        if (Number.isNaN(val)) break;
-        if (type === "equals") parts.push(`${columnExpression} = @${pBase}`);
-        if (type === "notEqual") parts.push(`${columnExpression} <> @${pBase}`);
-        if (type === "lessThan") parts.push(`${columnExpression} < @${pBase}`);
-        if (type === "greaterThan") parts.push(`${columnExpression} > @${pBase}`);
-        if (type === "lessThanOrEqual") parts.push(`${columnExpression} <= @${pBase}`);
-        if (type === "greaterThanOrEqual") parts.push(`${columnExpression} >= @${pBase}`);
-        if (type === "inRange" && valTo !== undefined) {
-          parts.push(`(${columnExpression} BETWEEN @${pBase} AND @${pBase}_to)`);
-          params.push({ key: `${pBase}_to`, value: valTo });
-        }
-        params.push({ key: pBase, value: val });
-        break;
-      }
-      case "set": {
-        const rawValues = fm.values ?? [];
-        if (rawValues.length === 0) break;
 
-        const normalize = (value: string | number | boolean) => {
-          if (value === true || value === "true") return 1;
-          if (value === false || value === "false") return 0;
-          return value;
-        };
+    // Use centralized filter processor
+    const result = processFilter(fm, {
+      columnExpression,
+      columnId: col,
+      paramBase: pBase,
+    });
 
-        const placeholders = rawValues.map((value, valueIdx) => {
-          const key = `${pBase}_${valueIdx}`;
-          params.push({ key, value: normalize(value) });
-          return `@${key}`;
-        });
-
-        parts.push(`${columnExpression} IN (${placeholders.join(", ")})`);
-        break;
-      }
-      case "date": {
-        const type = fm.type;
-        const val = fm.dateFrom || fm.filter;
-        const valTo = fm.dateTo;
-        if (!val) break;
-        const dateExpression = `CAST(${columnExpression} AS date)`;
-        if (type === "equals") parts.push(`${dateExpression} = @${pBase}`);
-        if (type === "notEqual") parts.push(`${dateExpression} <> @${pBase}`);
-        if (type === "lessThan") parts.push(`${dateExpression} < @${pBase}`);
-        if (type === "greaterThan") parts.push(`${dateExpression} > @${pBase}`);
-        if (type === "lessThanOrEqual") parts.push(`${dateExpression} <= @${pBase}`);
-        if (type === "greaterThanOrEqual") parts.push(`${dateExpression} >= @${pBase}`);
-        if (type === "inRange" && valTo) {
-          parts.push(`(${dateExpression} BETWEEN @${pBase} AND @${pBase}_to)`);
-          params.push({ key: `${pBase}_to`, value: valTo });
-        }
-        params.push({ key: pBase, value: val });
-        break;
-      }
-      default:
-        break;
+    if (result.clause) {
+      parts.push(result.clause);
+      params.push(...result.params);
     }
   });
 

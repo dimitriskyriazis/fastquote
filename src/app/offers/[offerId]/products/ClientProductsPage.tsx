@@ -14,6 +14,7 @@ import pageHeaderStyles from '../../../components/PageHeader.module.css';
 import toolbarStyles from './ClientProductsPage.module.css';
 import AddProductsModal from './AddProductsModal';
 import AddRequestedProductsModal from './AddRequestedProductsModal';
+import ExportOfferProductsModal from './ExportOfferProductsModal';
 import AddProductModal from '../../../products/AddProductModal';
 type Props = {
   offerId: string;
@@ -90,6 +91,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [refreshToken, setRefreshToken] = useState(0);
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
   const [isPopulatingOffer, setIsPopulatingOffer] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
   const [showRequestedModal, setShowRequestedModal] = useState(false);
   const [showAddProductFormModal, setShowAddProductFormModal] = useState(false);
@@ -245,6 +247,22 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     }
   }, [isPopulatingOffer]);
 
+  const handleOpenExportModal = useCallback(() => {
+    setShowExportModal(true);
+  }, []);
+
+  const handleCloseExportModal = useCallback(() => {
+    setShowExportModal(false);
+  }, []);
+
+  const handleRequestTemplateExportRows = useCallback(async () => {
+    const panel = offerProductsPanelRef.current;
+    if (!panel) {
+      throw new Error('Products grid is not ready yet.');
+    }
+    return panel.getTemplateExportRows();
+  }, []);
+
   const headerRightControls = (
     <div className={toolbarStyles.topControls}>
       {pivotView ? null : (
@@ -271,6 +289,13 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
             onClick={() => setManualMode((prev) => !prev)}
           >
             Manual Mode
+          </button>
+          <button
+            type="button"
+            className={`${toolbarStyles.button} ${toolbarStyles.buttonExport} page-header-button`}
+            onClick={handleOpenExportModal}
+          >
+            Export
           </button>
         </>
       )}
@@ -414,6 +439,12 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
           offerId={offerId}
           onClose={handleCloseRequestedModal}
           onImported={handleRequestedImported}
+        />
+      ) : null}
+      {showExportModal ? (
+        <ExportOfferProductsModal
+          onClose={handleCloseExportModal}
+          onRequestRows={handleRequestTemplateExportRows}
         />
       ) : null}
       <AddProductModal

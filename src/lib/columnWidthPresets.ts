@@ -24,6 +24,7 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   OfferStatus: 2,
   ERPProjectID: 2,
   ERPFWCProjectID: 2,
+  ERPFWCProjectShortName: 2,
   Comments: 3,
   Comment: 3,
   ProtocolNo: 2,
@@ -94,6 +95,7 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   Role1: 2,
   Role2: 2,
   Qty: 1,
+
 };
 
 export const resolveColumnWidthAssignments = (
