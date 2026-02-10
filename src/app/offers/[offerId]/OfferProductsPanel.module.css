@@ -15,7 +15,19 @@
 .treeOrderingCell {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.25rem;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.treeOrderingText {
+  text-align: right;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .treeOrderingIndicator {
@@ -157,6 +169,74 @@
 .partNumberLink {
   color: #1d4ed8;
   text-decoration: underline;
+  display: block !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+:global(.offer-products-grid .ag-cell.offer-products-grid__cell--truncate) {
+  overflow: hidden !important;
+  min-width: 0 !important;
+}
+
+:global(.offer-products-grid .ag-cell.offer-products-grid__cell--truncate .ag-cell-wrapper) {
+  width: 100% !important;
+  min-width: 0 !important;
+  display: flex !important;
+  overflow: hidden !important;
+}
+
+:global(.offer-products-grid .ag-cell.offer-products-grid__cell--truncate .ag-cell-value) {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  flex: 1 1 0 !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+:global(.offer-products-grid .ag-cell.offer-products-grid__cell--truncate .ag-cell-value > *) {
+  display: block !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+/* Fallback: force truncation for all non-description/comment cells in offer products. */
+:global(.offer-products-grid .ag-cell:not([col-id="Description"]):not([col-id="Comment"]):not([col-id="RequestedDescription"]):not([col-id="RequestedDescription2"]):not([col-id="RequestedDescription3"]):not([col-id="__row_drag__"])) {
+  overflow: hidden !important;
+  min-width: 0 !important;
+}
+
+:global(.offer-products-grid .ag-cell:not([col-id="Description"]):not([col-id="Comment"]):not([col-id="RequestedDescription"]):not([col-id="RequestedDescription2"]):not([col-id="RequestedDescription3"]):not([col-id="__row_drag__"]) .ag-cell-wrapper) {
+  width: 100% !important;
+  min-width: 0 !important;
+  display: flex !important;
+  overflow: hidden !important;
+}
+
+:global(.offer-products-grid .ag-cell:not([col-id="Description"]):not([col-id="Comment"]):not([col-id="RequestedDescription"]):not([col-id="RequestedDescription2"]):not([col-id="RequestedDescription3"]):not([col-id="__row_drag__"]) .ag-cell-value) {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  flex: 1 1 0 !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+:global(.offer-products-grid .ag-cell:not([col-id="Description"]):not([col-id="Comment"]):not([col-id="RequestedDescription"]):not([col-id="RequestedDescription2"]):not([col-id="RequestedDescription3"]):not([col-id="__row_drag__"]) .ag-cell-value > *) {
+  display: block !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
 }
 
 .requestedHeader {
@@ -194,4 +274,13 @@
 .multilineCell :global(.ag-cell-value) {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Allow overflow during cell editing for description/comment cells */
+:global(.offer-products-grid .ag-cell[col-id="Description"].ag-cell-inline-editing),
+:global(.offer-products-grid .ag-cell[col-id="Comment"].ag-cell-inline-editing),
+:global(.offer-products-grid .ag-cell[col-id="RequestedDescription"].ag-cell-inline-editing),
+:global(.offer-products-grid .ag-cell[col-id="RequestedDescription2"].ag-cell-inline-editing),
+:global(.offer-products-grid .ag-cell[col-id="RequestedDescription3"].ag-cell-inline-editing) {
+  overflow: visible !important;
 }

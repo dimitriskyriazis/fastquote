@@ -190,6 +190,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const handleClearNewProductId = useCallback(() => setNewProductId(null), []);
   const handleRequestedImported = useCallback((result: { inserted?: number; updated?: number; total?: number }) => {
     void result;
+    setTableLayout('wReq');
     setRefreshToken((prev) => prev + 1);
   }, []);
   const showRequestedColumns = tableLayout === 'wReq';

@@ -33,6 +33,12 @@ type TextFilterModel = {
   filter?: string;
 };
 
+type CompoundTextFilterModel = {
+  filterType: 'text';
+  operator: 'AND' | 'OR';
+  conditions: TextFilterModel[];
+};
+
 type NumberFilterModel = {
   filterType: 'number';
   type?:
@@ -47,12 +53,23 @@ type NumberFilterModel = {
   filterTo?: number;
 };
 
+type CompoundNumberFilterModel = {
+  filterType: 'number';
+  operator: 'AND' | 'OR';
+  conditions: NumberFilterModel[];
+};
+
 type SetFilterModel = {
   filterType: 'set';
   values?: Array<string | number | boolean>;
 };
 
-type KnownFilterModel = TextFilterModel | NumberFilterModel | SetFilterModel;
+type KnownFilterModel =
+  | TextFilterModel
+  | CompoundTextFilterModel
+  | NumberFilterModel
+  | CompoundNumberFilterModel
+  | SetFilterModel;
 
 type GridRequest = {
   startRow?: number;
@@ -181,6 +198,7 @@ type DeleteRowRequest = {
 
 type DetailUpdateInput = {
   ProductDescription?: string | null;
+  Comment?: string | null;
   Delivery?: string | null;
   OfferDetailID?: number | string | null;
   Description?: string | null;
@@ -195,6 +213,8 @@ type DetailUpdateInput = {
   Margin?: number | string | null;
   ListPrice?: number | string | null;
   IsCategory?: boolean | null;
+  IsPrintable?: boolean | number | string | null;
+  IsComment?: boolean | number | string | null;
   RequestedItemNo?: string | null;
   RequestedBrand?: string | null;
   RequestedModelNo?: string | null;
@@ -939,6 +959,16 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
   const clauses: string[] = [];
   const params: QueryParam[] = [];
   const typedModel = filterModel as Record<string, KnownFilterModel>;
+  const isCompoundTextFilter = (filter: KnownFilterModel): filter is CompoundTextFilterModel => (
+    filter.filterType === 'text'
+    && 'operator' in filter
+    && Array.isArray((filter as { conditions?: unknown }).conditions)
+  );
+  const isCompoundNumberFilter = (filter: KnownFilterModel): filter is CompoundNumberFilterModel => (
+    filter.filterType === 'number'
+    && 'operator' in filter
+    && Array.isArray((filter as { conditions?: unknown }).conditions)
+  );
 
   Object.entries(typedModel).forEach(([col, fm], idx) => {
     if (!fm) return;
@@ -947,99 +977,151 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
     const isPartNumber = col === 'PartNumber';
     const isModelNumber = col === 'ModelNumber';
     const isPartOrModel = isPartNumber || isModelNumber;
+    const otherColumnExpression = isPartNumber
+      ? COLUMN_EXPRESSIONS.ModelNumber
+      : isModelNumber
+        ? COLUMN_EXPRESSIONS.PartNumber
+        : null;
 
     switch (fm.filterType) {
       case 'text': {
-        const type = fm.type;
-        const value = String(fm.filter ?? '');
-        if (!value) break;
-        
-        // Normalize the search value for part/model numbers
-        const normalizedVal = isPartOrModel ? normalizePartModelNumber(value) : value;
-        const searchVal = normalizedVal;
-        
-        // Get the other field for cross-search (PartNumber <-> ModelNumber)
-        const otherColumnExpression = isPartNumber 
-          ? COLUMN_EXPRESSIONS['ModelNumber'] 
-          : isModelNumber 
-          ? COLUMN_EXPRESSIONS['PartNumber'] 
-          : null;
-        
-        if (isPartOrModel) {
-          if (type === 'equals') {
-            if (otherColumnExpression) {
-              // Cross-search: search both PartNumber and ModelNumber
-              clauses.push(`(${partModelNumberSql(columnExpression)} = @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} = @${paramBase})`);
-              params.push({ key: paramBase, value: searchVal });
-            } else {
-              const expr = partModelNumberSql(columnExpression);
-              clauses.push(`${expr} = @${paramBase}`);
-              params.push({ key: paramBase, value: searchVal });
-            }
-          } else if (type === 'notEqual') {
+        const buildTextConditionClause = (condition: TextFilterModel, conditionParamBase: string) => {
+          const type = condition.type;
+          const value = String(condition.filter ?? '');
+          if (!value) return { clause: '', params: [] as QueryParam[] };
+
+          if (isPartOrModel) {
+            const searchVal = normalizePartModelNumber(value);
             const expr = partModelNumberSql(columnExpression);
-            clauses.push(`${expr} <> @${paramBase}`);
-            params.push({ key: paramBase, value: searchVal });
-          } else if (type === 'startsWith') {
-            if (otherColumnExpression) {
-              // Cross-search: search both PartNumber and ModelNumber
-              clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
-              params.push({ key: paramBase, value: `${searchVal}%` });
-            } else {
-              const expr = partModelNumberSql(columnExpression);
-              clauses.push(`${expr} LIKE @${paramBase}`);
-              params.push({ key: paramBase, value: `${searchVal}%` });
+            if (type === 'equals') {
+              if (otherColumnExpression) {
+                return {
+                  clause: `(${expr} = @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} = @${conditionParamBase})`,
+                  params: [{ key: conditionParamBase, value: searchVal }],
+                };
+              }
+              return {
+                clause: `${expr} = @${conditionParamBase}`,
+                params: [{ key: conditionParamBase, value: searchVal }],
+              };
             }
-          } else if (type === 'endsWith') {
-            if (otherColumnExpression) {
-              // Cross-search: search both PartNumber and ModelNumber
-              clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
-              params.push({ key: paramBase, value: `%${searchVal}` });
-            } else {
-              const expr = partModelNumberSql(columnExpression);
-              clauses.push(`${expr} LIKE @${paramBase}`);
-              params.push({ key: paramBase, value: `%${searchVal}` });
+            if (type === 'notEqual') {
+              return {
+                clause: `${expr} <> @${conditionParamBase}`,
+                params: [{ key: conditionParamBase, value: searchVal }],
+              };
             }
-          } else {
-            // contains (default)
-            if (otherColumnExpression) {
-              // Cross-search: search both PartNumber and ModelNumber
-              clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
-              params.push({ key: paramBase, value: `%${searchVal}%` });
-            } else {
-              const expr = partModelNumberSql(columnExpression);
-              clauses.push(`${expr} LIKE @${paramBase}`);
-              params.push({ key: paramBase, value: `%${searchVal}%` });
+            if (type === 'startsWith') {
+              if (otherColumnExpression) {
+                return {
+                  clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase})`,
+                  params: [{ key: conditionParamBase, value: `${searchVal}%` }],
+                };
+              }
+              return {
+                clause: `${expr} LIKE @${conditionParamBase}`,
+                params: [{ key: conditionParamBase, value: `${searchVal}%` }],
+              };
             }
+            if (type === 'endsWith') {
+              if (otherColumnExpression) {
+                return {
+                  clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase})`,
+                  params: [{ key: conditionParamBase, value: `%${searchVal}` }],
+                };
+              }
+              return {
+                clause: `${expr} LIKE @${conditionParamBase}`,
+                params: [{ key: conditionParamBase, value: `%${searchVal}` }],
+              };
+            }
+            if (otherColumnExpression) {
+              return {
+                clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase})`,
+                params: [{ key: conditionParamBase, value: `%${searchVal}%` }],
+              };
+            }
+            return {
+              clause: `${expr} LIKE @${conditionParamBase}`,
+              params: [{ key: conditionParamBase, value: `%${searchVal}%` }],
+            };
           }
-        } else {
+
           const mode = (type ?? 'contains') as 'contains' | 'equals' | 'startsWith' | 'endsWith' | 'notEqual';
-          const { clause, params: clauseParams } = buildTextMatchPredicate(columnExpression, value, {
-            paramKey: paramBase,
+          return buildTextMatchPredicate(columnExpression, value, {
+            paramKey: conditionParamBase,
             mode,
             enablePhonetic: !isSensitiveColumn(col),
           });
-          clauses.push(clause);
-          clauseParams.forEach((p) => params.push(p));
+        };
+
+        if (isCompoundTextFilter(fm)) {
+          const operator = fm.operator === 'OR' ? 'OR' : 'AND';
+          const conditionResults = fm.conditions
+            .map((condition, conditionIdx) => (
+              buildTextConditionClause(condition, `${paramBase}_c${conditionIdx}`)
+            ))
+            .filter((result) => result.clause);
+          if (conditionResults.length === 0) break;
+          if (conditionResults.length === 1) {
+            clauses.push(conditionResults[0].clause);
+          } else {
+            clauses.push(`(${conditionResults.map((result) => result.clause).join(` ${operator} `)})`);
+          }
+          conditionResults.forEach((result) => result.params.forEach((p) => params.push(p)));
+          break;
+        }
+
+        const single = buildTextConditionClause(fm as TextFilterModel, paramBase);
+        if (single.clause) {
+          clauses.push(single.clause);
+          single.params.forEach((p) => params.push(p));
         }
         break;
       }
       case 'number': {
-        const type = fm.type;
-        const val = fm.filter !== undefined ? Number(fm.filter) : Number.NaN;
-        const valTo = fm.filterTo !== undefined ? Number(fm.filterTo) : undefined;
-        if (Number.isNaN(val)) break;
-        if (type === 'equals') clauses.push(`${columnExpression} = @${paramBase}`);
-        if (type === 'notEqual') clauses.push(`${columnExpression} <> @${paramBase}`);
-        if (type === 'lessThan') clauses.push(`${columnExpression} < @${paramBase}`);
-        if (type === 'greaterThan') clauses.push(`${columnExpression} > @${paramBase}`);
-        if (type === 'lessThanOrEqual') clauses.push(`${columnExpression} <= @${paramBase}`);
-        if (type === 'greaterThanOrEqual') clauses.push(`${columnExpression} >= @${paramBase}`);
-        if (type === 'inRange' && valTo !== undefined) {
-          clauses.push(`(${columnExpression} BETWEEN @${paramBase} AND @${paramBase}_to)`);
-          params.push({ key: `${paramBase}_to`, value: valTo });
+        const buildNumberConditionClause = (condition: NumberFilterModel, conditionParamBase: string) => {
+          const type = condition.type;
+          const val = condition.filter !== undefined ? Number(condition.filter) : Number.NaN;
+          const valTo = condition.filterTo !== undefined ? Number(condition.filterTo) : undefined;
+          if (Number.isNaN(val)) return { clause: '', params: [] as QueryParam[] };
+          const conditionParams: QueryParam[] = [{ key: conditionParamBase, value: val }];
+          let clause = '';
+          if (type === 'equals') clause = `${columnExpression} = @${conditionParamBase}`;
+          if (type === 'notEqual') clause = `${columnExpression} <> @${conditionParamBase}`;
+          if (type === 'lessThan') clause = `${columnExpression} < @${conditionParamBase}`;
+          if (type === 'greaterThan') clause = `${columnExpression} > @${conditionParamBase}`;
+          if (type === 'lessThanOrEqual') clause = `${columnExpression} <= @${conditionParamBase}`;
+          if (type === 'greaterThanOrEqual') clause = `${columnExpression} >= @${conditionParamBase}`;
+          if (type === 'inRange' && valTo !== undefined) {
+            clause = `(${columnExpression} BETWEEN @${conditionParamBase} AND @${conditionParamBase}_to)`;
+            conditionParams.push({ key: `${conditionParamBase}_to`, value: valTo });
+          }
+          return { clause, params: conditionParams };
+        };
+
+        if (isCompoundNumberFilter(fm)) {
+          const operator = fm.operator === 'OR' ? 'OR' : 'AND';
+          const conditionResults = fm.conditions
+            .map((condition, conditionIdx) => (
+              buildNumberConditionClause(condition, `${paramBase}_c${conditionIdx}`)
+            ))
+            .filter((result) => result.clause);
+          if (conditionResults.length === 0) break;
+          if (conditionResults.length === 1) {
+            clauses.push(conditionResults[0].clause);
+          } else {
+            clauses.push(`(${conditionResults.map((result) => result.clause).join(` ${operator} `)})`);
+          }
+          conditionResults.forEach((result) => result.params.forEach((p) => params.push(p)));
+          break;
         }
-        params.push({ key: paramBase, value: val });
+
+        const single = buildNumberConditionClause(fm as NumberFilterModel, paramBase);
+        if (single.clause) {
+          clauses.push(single.clause);
+          single.params.forEach((p) => params.push(p));
+        }
         break;
       }
       case 'set': {
@@ -1437,6 +1519,7 @@ export async function PATCH(
         const hasProductDescription = entry
           ? Object.prototype.hasOwnProperty.call(entry, 'ProductDescription')
           : false;
+        const hasComment = entry ? Object.prototype.hasOwnProperty.call(entry, 'Comment') : false;
         const hasDelivery = entry ? Object.prototype.hasOwnProperty.call(entry, 'Delivery') : false;
         const hasDescription = entry ? Object.prototype.hasOwnProperty.call(entry, 'Description') : false;
         const hasQuantity = entry ? Object.prototype.hasOwnProperty.call(entry, 'Quantity') : false;
@@ -1450,6 +1533,8 @@ export async function PATCH(
         const hasMargin = entry ? Object.prototype.hasOwnProperty.call(entry, 'Margin') : false;
         const hasListPrice = entry ? Object.prototype.hasOwnProperty.call(entry, 'ListPrice') : false;
         const hasIsCategory = entry ? Object.prototype.hasOwnProperty.call(entry, 'IsCategory') : false;
+        const hasIsPrintable = entry ? Object.prototype.hasOwnProperty.call(entry, 'IsPrintable') : false;
+        const hasIsComment = entry ? Object.prototype.hasOwnProperty.call(entry, 'IsComment') : false;
         const hasRequestedItemNo = entry
           ? Object.prototype.hasOwnProperty.call(entry, 'RequestedItemNo')
           : false;
@@ -1478,12 +1563,15 @@ export async function PATCH(
           || hasNetCostOtherCurrency || hasOtherCurrencyID || hasCurrencyCostModifier;
         if (
           !hasProductDescription
+          && !hasComment
           && !hasDelivery
           && !hasDescription
           && !hasQuantity
           && !hasPricingFields
           && !hasListPrice
           && !hasIsCategory
+          && !hasIsPrintable
+          && !hasIsComment
           && !hasRequestedItemNo
           && !hasRequestedBrand
           && !hasRequestedModelNo
@@ -1501,6 +1589,7 @@ export async function PATCH(
           : hasDescription
             ? normalizeDescriptionValue(entry?.Description ?? null)
             : null;
+        const comment = hasComment ? normalizeDescriptionValue(entry?.Comment ?? null) : null;
         const delivery = hasDelivery ? normalizeDeliveryValue(entry?.Delivery ?? null) : null;
         let quantity: number | null = null;
         if (hasQuantity) {
@@ -1550,6 +1639,8 @@ export async function PATCH(
         const margin = hasMargin ? normalizePercentValue(entry?.Margin ?? null, { allowNegative: true }) : null;
         const listPrice = hasListPrice ? normalizeMoneyValue(entry?.ListPrice ?? null) : null;
         const isCategoryValue = hasIsCategory ? normalizeBoolean(entry?.IsCategory ?? null) : null;
+        const isPrintableValue = hasIsPrintable ? normalizeBoolean(entry?.IsPrintable ?? null) : null;
+        const isCommentValue = hasIsComment ? normalizeBoolean(entry?.IsComment ?? null) : null;
 
         if (hasPricingFields) {
           const invalidPricing = (hasCustomerDiscount && customerDiscount == null)
@@ -1569,10 +1660,12 @@ export async function PATCH(
         return {
           OfferDetailID: id,
           ProductDescription: productDescription,
+          Comment: comment,
           Delivery: delivery,
           Quantity: quantity,
           // Treat both `ProductDescription` and legacy `Description` as a description update.
           hasProductDescription: hasProductDescription || hasDescription,
+          hasComment,
           hasDelivery,
           hasQuantity,
           hasCustomerDiscount,
@@ -1584,6 +1677,8 @@ export async function PATCH(
           hasNetCost,
           hasMargin,
           hasListPrice,
+          hasIsPrintable,
+          hasIsComment,
           hasRequestedItemNo,
           hasRequestedBrand,
           hasRequestedModelNo,
@@ -1603,6 +1698,8 @@ export async function PATCH(
           listPrice,
           hasIsCategory,
           IsCategory: isCategoryValue,
+          IsPrintable: isPrintableValue,
+          IsComment: isCommentValue,
           requestedItemNo: hasRequestedItemNo
             ? normalizeRequestedItemNoValue(entry?.RequestedItemNo ?? null)
             : null,
@@ -1618,9 +1715,11 @@ export async function PATCH(
       .filter((entry): entry is {
         OfferDetailID: number;
         ProductDescription: string | null;
+        Comment: string | null;
         Delivery: string | null;
         Quantity: number | null;
         hasProductDescription: boolean;
+        hasComment: boolean;
         hasDelivery: boolean;
         hasQuantity: boolean;
         hasCustomerDiscount: boolean;
@@ -1632,6 +1731,8 @@ export async function PATCH(
         hasNetCost: boolean;
         hasMargin: boolean;
         hasListPrice: boolean;
+        hasIsPrintable: boolean;
+        hasIsComment: boolean;
         hasRequestedItemNo: boolean;
         hasRequestedBrand: boolean;
         hasRequestedModelNo: boolean;
@@ -1651,6 +1752,8 @@ export async function PATCH(
         listPrice: number | null;
         hasIsCategory: boolean;
         IsCategory: boolean | null;
+        IsPrintable: boolean | null;
+        IsComment: boolean | null;
         requestedItemNo: string | null;
         RequestedBrand: string | null;
         RequestedModelNo: string | null;
@@ -1693,6 +1796,7 @@ export async function PATCH(
         ProductID: number | null;
         IsComment: number | null;
         ProductDescription: string | null;
+        Comment: string | null;
         Delivery: string | null;
         Quantity: number | null;
         ListPrice: number | null;
@@ -1711,6 +1815,7 @@ export async function PATCH(
         od.ProductID,
         od.IsComment,
         od.ProductDescription,
+          od.[Comment] AS Comment,
           od.Delivery,
           od.Quantity,
           od.ListPrice,
@@ -1731,6 +1836,7 @@ export async function PATCH(
         ProductID: number | null;
         IsComment: number | null;
         ProductDescription: string | null;
+        Comment: string | null;
         Delivery: string | null;
         Quantity: number | null;
         ListPrice: number | null;
@@ -1750,8 +1856,10 @@ export async function PATCH(
       const pendingRows: Array<{
         OfferDetailID: number;
         ProductDescription: string | null;
+        Comment: string | null;
         Delivery: string | null;
         HasProductDescription: boolean;
+        HasComment: boolean;
         HasDelivery: boolean;
         Quantity: number | null;
         HasQuantity: boolean;
@@ -1790,6 +1898,10 @@ export async function PATCH(
         HasRequestedQuantity: boolean;
         IsCategory: boolean | null;
         HasIsCategory: boolean;
+        IsPrintable: boolean | null;
+        HasIsPrintable: boolean;
+        IsComment: boolean | null;
+        HasIsComment: boolean;
       }> = [];
       const errors: string[] = [];
 
@@ -1921,8 +2033,10 @@ export async function PATCH(
           ProductDescription: entry.hasProductDescription
             ? entry.ProductDescription
             : current.ProductDescription,
+          Comment: entry.hasComment ? entry.Comment : current.Comment,
           Delivery: entry.hasDelivery ? entry.Delivery : current.Delivery,
           HasProductDescription: entry.hasProductDescription,
+          HasComment: entry.hasComment,
           HasDelivery: entry.hasDelivery,
           Quantity: entry.hasQuantity ? entry.Quantity : current.Quantity ?? safeQuantity,
           HasQuantity: entry.hasQuantity,
@@ -1961,6 +2075,10 @@ export async function PATCH(
           HasRequestedQuantity: entry.hasRequestedQuantity,
           IsCategory: entry.hasIsCategory ? entry.IsCategory : null,
           HasIsCategory: entry.hasIsCategory,
+          IsPrintable: entry.hasIsPrintable ? entry.IsPrintable : null,
+          HasIsPrintable: entry.hasIsPrintable,
+          IsComment: entry.hasIsComment ? entry.IsComment : null,
+          HasIsComment: entry.hasIsComment,
         });
       });
 
@@ -1980,6 +2098,8 @@ export async function PATCH(
         const idParam = `odid_${rowIdx}`;
         const productDescriptionParam = `productDescription_${rowIdx}`;
         const hasProductDescriptionParam = `hasProductDescription_${rowIdx}`;
+        const commentParam = `comment_${rowIdx}`;
+        const hasCommentParam = `hasComment_${rowIdx}`;
         const deliveryParam = `delivery_${rowIdx}`;
         const hasDeliveryParam = `hasDelivery_${rowIdx}`;
         const quantityParam = `quantity_${rowIdx}`;
@@ -2003,6 +2123,10 @@ export async function PATCH(
         const hasListPriceParam = `hasListPrice_${rowIdx}`;
         const isCategoryParam = `isCategory_${rowIdx}`;
         const hasIsCategoryParam = `hasIsCategory_${rowIdx}`;
+        const isPrintableParam = `isPrintable_${rowIdx}`;
+        const hasIsPrintableParam = `hasIsPrintable_${rowIdx}`;
+        const isCommentParam = `isComment_${rowIdx}`;
+        const hasIsCommentParam = `hasIsComment_${rowIdx}`;
         const requestedItemNoParam = `requestedItemNo_${rowIdx}`;
         const hasRequestedItemNoParam = `hasRequestedItemNo_${rowIdx}`;
         const requestedBrandParam = `requestedBrand_${rowIdx}`;
@@ -2030,6 +2154,8 @@ export async function PATCH(
           sql.Bit,
           row.HasProductDescription ? 1 : 0,
         );
+        request.input(commentParam, sql.NVarChar(4000), row.HasComment ? row.Comment : null);
+        request.input(hasCommentParam, sql.Bit, row.HasComment ? 1 : 0);
         request.input(deliveryParam, sql.NVarChar(4000), row.HasDelivery ? row.Delivery : null);
         request.input(hasDeliveryParam, sql.Bit, row.HasDelivery ? 1 : 0);
         request.input(quantityParam, decimalType, row.Quantity);
@@ -2067,9 +2193,25 @@ export async function PATCH(
         request.input(hasRequestedDescription3Param, sql.Bit, row.HasRequestedDescription3 ? 1 : 0);
         request.input(requestedQuantityParam, decimalType, row.RequestedQuantity);
         request.input(hasRequestedQuantityParam, sql.Bit, row.HasRequestedQuantity ? 1 : 0);
-        request.input(isCategoryParam, sql.Bit, row.HasIsCategory ? (row.IsCategory ? 1 : 0) : null);
+        request.input(
+          isCategoryParam,
+          sql.Bit,
+          row.HasIsCategory ? (row.IsCategory == null ? null : (row.IsCategory ? 1 : 0)) : null,
+        );
         request.input(hasIsCategoryParam, sql.Bit, row.HasIsCategory ? 1 : 0);
-        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam})`);
+        request.input(
+          isPrintableParam,
+          sql.Bit,
+          row.HasIsPrintable ? (row.IsPrintable == null ? null : (row.IsPrintable ? 1 : 0)) : null,
+        );
+        request.input(hasIsPrintableParam, sql.Bit, row.HasIsPrintable ? 1 : 0);
+        request.input(
+          isCommentParam,
+          sql.Bit,
+          row.HasIsComment ? (row.IsComment == null ? null : (row.IsComment ? 1 : 0)) : null,
+        );
+        request.input(hasIsCommentParam, sql.Bit, row.HasIsComment ? 1 : 0);
+        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam})`);
       });
 
       const query = `
@@ -2077,6 +2219,8 @@ export async function PATCH(
           OfferDetailID,
           ProductDescription,
           HasProductDescription,
+          Comment,
+          HasComment,
           Delivery,
           HasDelivery,
           Quantity,
@@ -2115,13 +2259,19 @@ export async function PATCH(
           RequestedQuantity,
           HasRequestedQuantity,
           IsCategory,
-          HasIsCategory
+          HasIsCategory,
+          IsPrintable,
+          HasIsPrintable,
+          IsComment,
+          HasIsComment
         ) AS (
           SELECT *
           FROM (VALUES ${valueClauses.join(', ')}) AS v (
             OfferDetailID,
             ProductDescription,
             HasProductDescription,
+            Comment,
+            HasComment,
             Delivery,
             HasDelivery,
             Quantity,
@@ -2160,11 +2310,16 @@ export async function PATCH(
           RequestedQuantity,
             HasRequestedQuantity,
             IsCategory,
-            HasIsCategory
+            HasIsCategory,
+            IsPrintable,
+            HasIsPrintable,
+            IsComment,
+            HasIsComment
           )
         )
         UPDATE od
         SET od.ProductDescription = CASE WHEN PendingUpdates.HasProductDescription = 1 THEN PendingUpdates.ProductDescription ELSE od.ProductDescription END,
+            od.[Comment] = CASE WHEN PendingUpdates.HasComment = 1 THEN PendingUpdates.Comment ELSE od.[Comment] END,
             od.Delivery = CASE WHEN PendingUpdates.HasDelivery = 1 THEN PendingUpdates.Delivery ELSE od.Delivery END,
             od.Quantity = CASE WHEN PendingUpdates.HasQuantity = 1 THEN PendingUpdates.Quantity ELSE od.Quantity END,
             od.CustomerDiscount = PendingUpdates.CustomerDiscount,
@@ -2189,6 +2344,8 @@ export async function PATCH(
             od.RequestedDescription3 = CASE WHEN PendingUpdates.HasRequestedDescription3 = 1 THEN PendingUpdates.RequestedDescription3 ELSE od.RequestedDescription3 END,
             od.RequestedQuantity = CASE WHEN PendingUpdates.HasRequestedQuantity = 1 THEN PendingUpdates.RequestedQuantity ELSE od.RequestedQuantity END,
             od.IsCategory = CASE WHEN PendingUpdates.HasIsCategory = 1 THEN PendingUpdates.IsCategory ELSE od.IsCategory END,
+            od.IsPrintable = CASE WHEN PendingUpdates.HasIsPrintable = 1 THEN PendingUpdates.IsPrintable ELSE od.IsPrintable END,
+            od.IsComment = CASE WHEN PendingUpdates.HasIsComment = 1 THEN PendingUpdates.IsComment ELSE od.IsComment END,
             od.ModifiedOn = SYSUTCDATETIME(),
             od.ModifiedBy = @__modifiedBy
         FROM dbo.OfferDetails od
@@ -2215,6 +2372,8 @@ export async function PATCH(
         const fieldMap: Record<string, string> = {
           hasProductDescription: 'Description',
           ProductDescription: 'Description',
+          hasComment: 'Comment',
+          Comment: 'Comment',
           hasDelivery: 'Delivery',
           Delivery: 'Delivery',
           hasQuantity: 'Quantity',

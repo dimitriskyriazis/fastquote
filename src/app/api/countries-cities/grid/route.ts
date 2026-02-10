@@ -45,12 +45,18 @@ type TextFilterModel = {
   filter?: string;
 };
 
+type CompoundTextFilterModel = {
+  filterType: "text";
+  operator: "AND" | "OR";
+  conditions: TextFilterModel[];
+};
+
 type SetFilterModel = {
   filterType: "set";
   values?: Array<string | number | boolean>;
 };
 
-type KnownFilterModel = TextFilterModel | SetFilterModel;
+type KnownFilterModel = TextFilterModel | CompoundTextFilterModel | SetFilterModel;
 
 const applyQuickFilter = (rows: Record<string, unknown>[], query: string) => {
   const needle = query.trim().toLowerCase();
@@ -64,7 +70,7 @@ const applyQuickFilter = (rows: Record<string, unknown>[], query: string) => {
   });
 };
 
-const applyTextFilter = (value: unknown, model: TextFilterModel): boolean => {
+const applyTextCondition = (value: unknown, model: TextFilterModel): boolean => {
   const filterValue = String(model.filter ?? "").toLowerCase();
   if (!filterValue) return true;
   const text = String(value ?? "").toLowerCase();
@@ -83,6 +89,20 @@ const applyTextFilter = (value: unknown, model: TextFilterModel): boolean => {
   }
 };
 
+const applyTextFilter = (value: unknown, model: TextFilterModel | CompoundTextFilterModel): boolean => {
+  if ("operator" in model && Array.isArray(model.conditions)) {
+    const operator = model.operator === "OR" ? "OR" : "AND";
+    const conditionResults = model.conditions
+      .map((condition) => applyTextCondition(value, condition));
+    if (conditionResults.length === 0) return true;
+    if (operator === "OR") {
+      return conditionResults.some(Boolean);
+    }
+    return conditionResults.every(Boolean);
+  }
+  return applyTextCondition(value, model);
+};
+
 const applySetFilter = (value: unknown, model: SetFilterModel): boolean => {
   const values = Array.isArray(model.values) ? model.values : [];
   if (values.length === 0) return true;
@@ -99,7 +119,7 @@ const applyFilterModel = (
       const value = row[field];
       if (!model) return true;
       if (model.filterType === "text") {
-        return applyTextFilter(value, model as TextFilterModel);
+        return applyTextFilter(value, model as TextFilterModel | CompoundTextFilterModel);
       }
       if (model.filterType === "set") {
         return applySetFilter(value, model as SetFilterModel);

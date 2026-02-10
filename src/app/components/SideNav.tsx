@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import UserIdControl from "./UserIdControl";
 import { useAuditUser } from "./AuditUserProvider";
 
@@ -213,10 +213,20 @@ const navItems: NavItem[] = [
   },
 ];
 
-export default function SideNav() {
+const SIDENAV_COLLAPSED_COOKIE_NAME = "fastquote_sidenav_collapsed";
+
+type SideNavProps = {
+  initialCollapsed?: boolean;
+};
+
+export default function SideNav({ initialCollapsed = false }: SideNavProps) {
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(initialCollapsed);
   const { roles } = useAuditUser();
+
+  useEffect(() => {
+    document.cookie = `${SIDENAV_COLLAPSED_COOKIE_NAME}=${collapsed ? "true" : "false"}; path=/; SameSite=Lax`;
+  }, [collapsed]);
 
   const visibleNavItems = useMemo(
     () =>

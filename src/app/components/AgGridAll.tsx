@@ -119,6 +119,14 @@ import { resolveColumnWidthAssignments, ColumnWidthAssignment } from '../../lib/
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
 const GRID_ROW_HEIGHT = 32;
+const FILTER_INPUT_SELECTOR = [
+  '.ag-floating-filter input:not([type="checkbox"]):not([type="radio"])',
+  '.ag-floating-filter textarea',
+  '.ag-floating-filter select',
+  '.ag-filter input:not([type="checkbox"]):not([type="radio"])',
+  '.ag-filter textarea',
+  '.ag-filter select',
+].join(', ');
 
 // UTILITY FUNCTIONS - Column & Cell Operations
 const resolveColumnId = (column: string | Column): string => (
@@ -197,6 +205,50 @@ const resolveElementFromEventTarget = (target: EventTarget | null): Element | nu
   return null;
 };
 
+const suppressFilterFieldBrowserSuggestions = (field: HTMLElement) => {
+  if (
+    !(field instanceof HTMLInputElement)
+    && !(field instanceof HTMLTextAreaElement)
+    && !(field instanceof HTMLSelectElement)
+  ) {
+    return;
+  }
+
+  if (field instanceof HTMLInputElement) {
+    const type = (field.type || 'text').toLowerCase();
+    if (['checkbox', 'radio', 'button', 'submit', 'reset'].includes(type)) return;
+
+    // `new-password` is more reliable than `off` in Chromium for suppressing saved-value suggestions.
+    if (field.getAttribute('autocomplete') !== 'new-password') {
+      field.setAttribute('autocomplete', 'new-password');
+    }
+  } else if (field.getAttribute('autocomplete') !== 'off') {
+    field.setAttribute('autocomplete', 'off');
+  }
+
+  if (field.getAttribute('autocorrect') !== 'off') {
+    field.setAttribute('autocorrect', 'off');
+  }
+  if (field.getAttribute('autocapitalize') !== 'off') {
+    field.setAttribute('autocapitalize', 'off');
+  }
+  if (field.getAttribute('spellcheck') !== 'false') {
+    field.setAttribute('spellcheck', 'false');
+  }
+};
+
+const suppressBrowserSuggestionsInFilterInputs = (root: ParentNode | null) => {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+
+  if (root instanceof HTMLElement && root.matches(FILTER_INPUT_SELECTOR)) {
+    suppressFilterFieldBrowserSuggestions(root);
+  }
+
+  root.querySelectorAll<HTMLElement>(FILTER_INPUT_SELECTOR).forEach((field) => {
+    suppressFilterFieldBrowserSuggestions(field);
+  });
+};
+
 export type AgGridAllProps = Props;
 
 const isActionMenuEventTarget = (target: EventTarget | null): boolean => {
@@ -257,6 +309,28 @@ const scheduleDeselectAllRows = (api?: GridApi<RowData> | null) => {
 };
 
 const QUICK_SEARCH_REFRESH_DEBOUNCE_MS = 800;
+const BASE_COMPOUND_FILTER_PARAMS = {
+  debounceMs: 800,
+  buttons: ['reset'] as const,
+  maxNumConditions: 2,
+  alwaysShowBothConditions: true,
+  defaultJoinOperator: 'AND' as const,
+};
+
+const normalizeFilterButtons = (buttons?: readonly string[]) => {
+  if (!Array.isArray(buttons) || buttons.length === 0) return buttons;
+  return buttons.map((button) => (button === 'clear' ? 'reset' : button));
+};
+
+const mergeCompoundFilterParams = (incoming?: unknown) => {
+  const merged = typeof incoming === 'object' && incoming !== null
+    ? { ...BASE_COMPOUND_FILTER_PARAMS, ...incoming }
+    : { ...BASE_COMPOUND_FILTER_PARAMS };
+  return {
+    ...merged,
+    buttons: normalizeFilterButtons(merged.buttons as readonly string[] | undefined),
+  };
+};
 
 // HOOKS - Caret & Editor Focus Management
 const useMutationCaret = () => {
@@ -576,7 +650,7 @@ const buildFilterModelForColumnValue = (colDef: ColDef | null | undefined, value
     default: {
       const stringValue = coerceToString(value);
       if (stringValue == null) return null;
-      return { filterType: 'text', type: 'equals', filter: stringValue };
+      return { filterType: 'text', type: 'contains', filter: stringValue };
     }
   }
 };
@@ -1174,6 +1248,7 @@ export default function AgGridAll({
   const sortStateLoadedRef = useRef(false);
   const filterStateRestoringRef = useRef(false);
   const sortStateRestoringRef = useRef(false);
+  const pendingFilterWidthRestoreRef = useRef<Array<{ colId: string; width: number }> | null>(null);
   const firstDataRenderedRef = useRef(false);
   const [isGridReady, setIsGridReady] = useState(false);
   const { userId } = useAuditUser();
@@ -1289,6 +1364,34 @@ export default function AgGridAll({
       : false
   ), [cellSelectionEnabled]);
 
+  const captureColumnWidths = useCallback((api: GridApi<RowData>): Array<{ colId: string; width: number }> => {
+    if (!api || api.isDestroyed?.()) return [];
+    const columnState = typeof api.getColumnState === 'function' ? api.getColumnState() : [];
+    if (!Array.isArray(columnState) || columnState.length === 0) return [];
+    return columnState
+      .map((entry) => {
+        const colId = typeof entry?.colId === 'string' ? entry.colId : '';
+        const width = typeof entry?.width === 'number' && Number.isFinite(entry.width) && entry.width > 0
+          ? entry.width
+          : null;
+        if (!colId || width == null) return null;
+        return { colId, width };
+      })
+      .filter((entry): entry is { colId: string; width: number } => entry != null);
+  }, []);
+
+  const restoreColumnWidths = useCallback((api: GridApi<RowData>, widths: Array<{ colId: string; width: number }> | null) => {
+    if (!api || api.isDestroyed?.() || !widths || widths.length === 0) return;
+    try {
+      api.applyColumnState({
+        state: widths,
+        applyOrder: false,
+      });
+    } catch {
+      /* noop */
+    }
+  }, []);
+
   // COLUMN DEFINITIONS - Processing & Width Management
   type ColumnDefinitionWithChildren = ColDef & { children?: ColDef[] };
   const invalidCellKeysRef = useRef<Set<string>>(new Set());
@@ -1363,6 +1466,9 @@ export default function AgGridAll({
         if (next.singleClickEdit) {
           next.singleClickEdit = false;
         }
+        if (next.filter !== false) {
+          next.filterParams = mergeCompoundFilterParams(next.filterParams);
+        }
         const children = definition.children;
         if (Array.isArray(children) && children.length > 0) {
           next.children = applyDefaults(children);
@@ -1371,7 +1477,11 @@ export default function AgGridAll({
       },
     );
     const baseWithDefaults = applyDefaults(attachValidationClassRules(base));
-    if (!shouldPersistColumnState || Object.keys(persistedColumnWidths).length === 0) {
+    if (
+      !shouldPersistColumnState
+      || Object.keys(persistedColumnWidths).length === 0
+      || columnStateLoadedRef.current
+    ) {
       return baseWithDefaults;
     }
     const applyWidths = (definitions: ColumnDefinitionWithChildren[]): ColumnDefinitionWithChildren[] => definitions.map(
@@ -1934,6 +2044,47 @@ export default function AgGridAll({
     shell.addEventListener('keydown', handleFilterTab, true);
     return () => {
       shell.removeEventListener('keydown', handleFilterTab, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    suppressBrowserSuggestionsInFilterInputs(document);
+
+    const handleFocusIn = (event: FocusEvent) => {
+      const element = resolveElementFromEventTarget(event.target ?? null);
+      if (!element) return;
+      const filterField = element.matches(FILTER_INPUT_SELECTOR)
+        ? element
+        : element.closest(FILTER_INPUT_SELECTOR);
+      if (!(filterField instanceof HTMLElement)) return;
+      suppressFilterFieldBrowserSuggestions(filterField);
+    };
+
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.type !== 'childList') continue;
+        record.addedNodes.forEach((node) => {
+          if (!(node instanceof Element)) return;
+          if (
+            !node.matches('input, textarea, select, .ag-filter, .ag-floating-filter, .ag-popup')
+            && node.querySelector('.ag-filter, .ag-floating-filter, .ag-popup') == null
+          ) {
+            return;
+          }
+          suppressBrowserSuggestionsInFilterInputs(node);
+        });
+      }
+    });
+
+    if (document.body) {
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+    document.addEventListener('focusin', handleFocusIn, true);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('focusin', handleFocusIn, true);
     };
   }, []);
 
@@ -2515,9 +2666,14 @@ export default function AgGridAll({
     shouldPersistColumnState,
   ]);
 
-  const handleColumnResized = useCallback((event: { finished?: boolean }) => {
+  const handleColumnResized = useCallback((event: { finished?: boolean; source?: string }) => {
     if (!shouldAutoPersistColumnState || !columnStateLoadedRef.current) return;
     if (event?.finished === false) return;
+    // Don't persist column state if we're about to restore widths from a filter operation
+    if (pendingFilterWidthRestoreRef.current) return;
+    // Don't persist column state if resize is triggered by API (e.g., during filtering)
+    // Only persist user-initiated resizes
+    if (event?.source === 'api' || event?.source === 'autosizeColumns' || event?.source === 'sizeColumnsToFit') return;
     queuePersistColumnState();
   }, [queuePersistColumnState, shouldAutoPersistColumnState]);
 
@@ -2540,29 +2696,7 @@ export default function AgGridAll({
   }, [shouldPersistColumnState, applySavedColumnState]);
 
   const dcd: ColDef = useMemo(() => {
-    const normalizeFilterButtons = (buttons?: string[]) => {
-      if (!Array.isArray(buttons) || buttons.length === 0) return buttons;
-      return buttons.map((button) => (button === 'clear' ? 'reset' : button));
-    };
-    const baseFilterParams = {
-      // Apply filters automatically after typing stops.
-      debounceMs: 800,
-      buttons: ['reset'] as const,
-      // Enable compound filters (2 conditions per column with AND/OR logic)
-      maxNumConditions: 2,
-      alwaysShowBothConditions: true,
-      defaultJoinOperator: 'AND' as const,
-    };
-    const incomingFilterParams = defaultColDef?.filterParams;
-    let mergedFilterParams = typeof incomingFilterParams === 'object' && incomingFilterParams !== null
-      ? { ...baseFilterParams, ...incomingFilterParams }
-      : baseFilterParams;
-    if (typeof mergedFilterParams === 'object' && mergedFilterParams !== null) {
-      mergedFilterParams = {
-        ...mergedFilterParams,
-        buttons: normalizeFilterButtons(mergedFilterParams.buttons as string[] | undefined),
-      };
-    }
+    const mergedFilterParams = mergeCompoundFilterParams(defaultColDef?.filterParams);
 
     // Note: CSS handles cursor styling (arrow for single clicks, text for editing cells)
     // We pass through cellStyle from defaultColDef without modification
@@ -3189,6 +3323,12 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 
   // GRID EVENT HANDLERS - Filter, Sort, Model Updates
   const handleFilterChanged = useCallback((event: FilterChangedEvent) => {
+    // ALWAYS capture column widths before any filter operation (apply or remove)
+    if (!filterStateRestoringRef.current) {
+      const widthSnapshot = captureColumnWidths(event.api);
+      pendingFilterWidthRestoreRef.current = widthSnapshot.length > 0 ? widthSnapshot : null;
+    }
+
     const model = event.api.getFilterModel() as Record<string, FilterDescriptor> | null;
     if (!model) {
       // Persist empty filter model when filters are cleared (skip during restoration)
@@ -3240,7 +3380,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     if (!filterStateRestoringRef.current) {
       refreshServerSideData(event.api, { purge: true });
     }
-  }, [filterStateStorageKey]);
+  }, [captureColumnWidths, filterStateStorageKey]);
 
   const getViewportElement = useCallback(() => {
     const shell = shellRef.current;
@@ -3293,6 +3433,32 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     if (typeof onModelUpdated === 'function') {
       onModelUpdated(event.api);
     }
+    const pendingWidthSnapshot = pendingFilterWidthRestoreRef.current;
+    if (pendingWidthSnapshot && pendingWidthSnapshot.length > 0) {
+      pendingFilterWidthRestoreRef.current = null;
+      const runRestore = () => {
+        if (event.api.isDestroyed?.()) return;
+        restoreColumnWidths(event.api, pendingWidthSnapshot);
+        // Apply multiple times to ensure it sticks
+        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+          window.requestAnimationFrame(() => {
+            restoreColumnWidths(event.api, pendingWidthSnapshot);
+            // One more time with delay
+            setTimeout(() => restoreColumnWidths(event.api, pendingWidthSnapshot), 100);
+          });
+        } else {
+          setTimeout(() => {
+            restoreColumnWidths(event.api, pendingWidthSnapshot);
+            setTimeout(() => restoreColumnWidths(event.api, pendingWidthSnapshot), 100);
+          }, 0);
+        }
+      };
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(runRestore);
+      } else {
+        setTimeout(runRestore, 0);
+      }
+    }
     const restoreTop = pendingScrollRestoreTopRef.current;
     if (restoreTop != null) {
       pendingScrollRestoreTopRef.current = null;
@@ -3311,6 +3477,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
   }, [
     getViewportElement,
     onModelUpdated,
+    restoreColumnWidths,
     runQuickSearchFocus,
     stopQuickSearchFocusRetries,
   ]);

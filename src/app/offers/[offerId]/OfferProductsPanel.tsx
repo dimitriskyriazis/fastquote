@@ -210,6 +210,7 @@ const REQUESTED_FIELD_LABELS: Record<RequestedFieldKey, string> = {
   RequestedDescription3: 'requested description 3',
   RequestedQuantity: 'requested quantity',
 };
+
 const REQUESTED_FIELD_SET = new Set<RequestedFieldKey>([
   'RequestedItemNo',
   'RequestedBrand',
@@ -771,25 +772,49 @@ type OfferExportRow = {
 // Custom cell editor for multiline text (Description and Comment cells)
 class MultilineTextCellEditor {
   private eInput!: HTMLTextAreaElement;
+  private eWrapper!: HTMLDivElement;
   private initialValue: string = '';
 
   init(params: ICellEditorParams) {
     this.initialValue = params.value ?? '';
+    const hasLineBreaks = this.initialValue.includes('\n');
+
+    // Create wrapper div for positioning
+    this.eWrapper = document.createElement('div');
+    this.eWrapper.style.position = 'relative';
+    this.eWrapper.style.width = '100%';
+    this.eWrapper.style.height = '100%';
+    this.eWrapper.style.overflow = 'visible';
 
     // Create textarea
     this.eInput = document.createElement('textarea');
     this.eInput.value = this.initialValue;
-    this.eInput.style.width = '100%';
-    this.eInput.style.height = '100%';
     this.eInput.style.border = 'none';
     this.eInput.style.outline = 'none';
     this.eInput.style.resize = 'none';
-    this.eInput.style.padding = '8px';
+    this.eInput.style.padding = '4px 0';
     this.eInput.style.fontFamily = 'inherit';
     this.eInput.style.fontSize = 'inherit';
     this.eInput.style.lineHeight = '1.5';
-    this.eInput.style.whiteSpace = 'pre-wrap';
-    this.eInput.style.overflow = 'hidden';
+    this.eInput.style.boxSizing = 'border-box';
+    this.eInput.style.background = 'white';
+
+    // If no line breaks, allow overflow to the right
+    if (!hasLineBreaks) {
+      this.eInput.style.position = 'absolute';
+      this.eInput.style.top = '0';
+      this.eInput.style.left = '0';
+      this.eInput.style.width = '2000px';
+      this.eInput.style.height = '100%';
+      this.eInput.style.whiteSpace = 'nowrap';
+      this.eInput.style.overflow = 'hidden';
+      this.eInput.style.zIndex = '1000';
+    } else {
+      this.eInput.style.width = '100%';
+      this.eInput.style.height = '100%';
+      this.eInput.style.whiteSpace = 'pre-wrap';
+      this.eInput.style.overflow = 'hidden';
+    }
 
     // Handle Alt+Enter to insert line breaks
     this.eInput.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -806,17 +831,27 @@ class MultilineTextCellEditor {
 
         // Move cursor after the newline
         this.eInput.selectionStart = this.eInput.selectionEnd = start + 1;
+
+        // Switch to multi-line mode
+        this.eInput.style.position = 'static';
+        this.eInput.style.width = '100%';
+        this.eInput.style.height = '100%';
+        this.eInput.style.whiteSpace = 'pre-wrap';
+        this.eInput.style.overflow = 'hidden';
       }
     });
+
+    this.eWrapper.appendChild(this.eInput);
   }
 
   getGui() {
-    return this.eInput;
+    return this.eWrapper;
   }
 
   afterGuiAttached() {
     this.eInput.focus();
     this.eInput.select();
+    this.eInput.scrollLeft = 0;
   }
 
   getValue() {
@@ -829,6 +864,18 @@ class MultilineTextCellEditor {
 
   isCancelAfterEnd() {
     return false;
+  }
+
+  destroy() {
+    // Reset scroll position of the cell so it shows the left (beginning) of text
+    const cell = this.eWrapper.closest('.ag-cell');
+    if (cell) {
+      cell.scrollLeft = 0;
+      const wrapper = cell.querySelector('.ag-cell-wrapper');
+      if (wrapper) (wrapper as HTMLElement).scrollLeft = 0;
+      const value = cell.querySelector('.ag-cell-value');
+      if (value) (value as HTMLElement).scrollLeft = 0;
+    }
   }
 }
 
@@ -1021,6 +1068,12 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   );
   const [categoryPathsWithChildren, setCategoryPathsWithChildren] = useState<Set<string>>(() => new Set());
   const [categoryChildrenKnown, setCategoryChildrenKnown] = useState(false);
+  const collapsedCategoryPathsRef = useRef(collapsedCategoryPaths);
+  collapsedCategoryPathsRef.current = collapsedCategoryPaths;
+  const categoryPathsWithChildrenRef = useRef(categoryPathsWithChildren);
+  categoryPathsWithChildrenRef.current = categoryPathsWithChildren;
+  const categoryChildrenKnownRef = useRef(categoryChildrenKnown);
+  categoryChildrenKnownRef.current = categoryChildrenKnown;
   const treeOrderingRootMapRef = useRef<Map<string, number>>(new Map());
   const serverRowsRef = useRef<Array<Record<string, unknown>>>([]);
   const appliedRequestedColumnVisibilityRef = useRef<Record<RequestedDisplayFieldKey, boolean> | null>(null);
@@ -1034,6 +1087,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const skipModelUpdateRef = useRef(false);
   const collapseSkipUntilRef = useRef<number | null>(null);
   const pendingContextMenuSelectionClearRef = useRef(false);
+  const toggleCategoryCollapsedRef = useRef<(row: Record<string, unknown> | null | undefined) => void>(() => {});
   const [matchAddProductOpen, setMatchAddProductOpen] = useState(false);
   const [matchAddedProductId, setMatchAddedProductId] = useState<number | null>(null);
   const clearMatchAddedProductId = useCallback(() => setMatchAddedProductId(null), []);
@@ -1045,6 +1099,33 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [brandBulkEditError, setBrandBulkEditError] = useState<string | null>(null);
   const refreshScheduledRef = useRef(false);
   const pendingRefreshPurgeRef = useRef<boolean | null>(null);
+  const captureColumnWidths = useCallback((api: GridApi<Record<string, unknown>>) => {
+    const stateNow = typeof api.getColumnState === 'function' ? api.getColumnState() : [];
+    return (Array.isArray(stateNow) ? stateNow : [])
+      .map((entry) => {
+        const colId = typeof entry?.colId === 'string' ? entry.colId : '';
+        const width = typeof entry?.width === 'number' && Number.isFinite(entry.width) && entry.width > 0
+          ? entry.width
+          : null;
+        if (!colId || width == null) return null;
+        return { colId, width };
+      })
+      .filter((entry): entry is { colId: string; width: number } => entry != null);
+  }, []);
+  const restoreColumnWidths = useCallback((
+    api: GridApi<Record<string, unknown>>,
+    widths: Array<{ colId: string; width: number }>,
+  ) => {
+    if (!widths.length) return;
+    try {
+      api.applyColumnState({
+        state: widths,
+        applyOrder: false,
+      });
+    } catch {
+      /* noop */
+    }
+  }, []);
   const rebuildTreeOrderingRootMap = useCallback((rows?: Array<Record<string, unknown>>, reset = false) => {
     const map = reset ? new Map<string, number>() : new Map(treeOrderingRootMapRef.current);
     (rows ?? []).forEach((row) => {
@@ -1195,6 +1276,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     if (!requestedColumnsReady) return;
     const api = gridApiRef.current;
     if (!api) return;
+    const widthSnapshot = captureColumnWidths(api);
 
     const keys = REQUESTED_DISPLAY_FIELD_KEYS;
     const forcedHiddenVisibility = keys.reduce<Record<RequestedDisplayFieldKey, boolean>>((acc, key) => {
@@ -1234,6 +1316,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     } catch {
       /* noop */
     }
+    restoreColumnWidths(api, widthSnapshot);
 
     // AG Grid can sometimes drift hidden "Requested…" columns into unexpected positions.
     // Always keep the full Requested block (visible + hidden) at the start (right after the
@@ -1255,20 +1338,26 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           api.moveColumns(toMove, anchorIndex);
         } catch {
           /* noop */
+        } finally {
+          restoreColumnWidths(api, widthSnapshot);
         }
       };
       // Run twice to avoid races with internal column-state restoration.
       window.requestAnimationFrame(() => window.requestAnimationFrame(applyOrder));
+    } else {
+      restoreColumnWidths(api, widthSnapshot);
     }
 
     appliedRequestedColumnVisibilityRef.current = { ...effectiveVisibility };
     appliedRequestedItemNoVisibleRef.current = effectiveItemNoVisible;
     appliedShowRequestedColumnsRef.current = showRequestedColumns;
   }, [
+    captureColumnWidths,
     columnStateStorageKey,
     requestedColumnVisibility,
     requestedColumnsReady,
     requestedItemNoVisible,
+    restoreColumnWidths,
     savedHiddenMap,
     showRequestedColumns,
   ]);
@@ -1278,6 +1367,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return;
     if (appliedTableLayoutRef.current === tableLayout) return;
+    const widthSnapshot = captureColumnWidths(api);
 
     const showCostAnalysis = tableLayout !== 'cust';
     try {
@@ -1289,9 +1379,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     } catch {
       /* noop */
     }
+    restoreColumnWidths(api, widthSnapshot);
 
     appliedTableLayoutRef.current = tableLayout;
-  }, [requestedColumnsReady, tableLayout]);
+  }, [captureColumnWidths, requestedColumnsReady, restoreColumnWidths, tableLayout]);
 
   const handleGridResponse = useCallback((response: GridResponse | null) => {
     lastRowCountRef.current = response?.rowCount ?? null;
@@ -1518,6 +1609,23 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     return key.length > 0 && categoryPathsWithChildren.has(key);
   }, [categoryChildrenKnown, categoryPathsWithChildren]);
 
+  const isCategoryRowCollapsedForRenderer = useCallback((row: Record<string, unknown> | null | undefined) => {
+    if (!row) return false;
+    const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+    if (path.length === 0) return false;
+    const key = buildTreeOrderingKey(path);
+    return key.length > 0 && collapsedCategoryPathsRef.current.has(key);
+  }, []);
+
+  const hasCategoryChildrenForRenderer = useCallback((row: Record<string, unknown> | null | undefined) => {
+    if (!isOfferProductCategory(row)) return false;
+    const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+    if (path.length === 0) return false;
+    const key = buildTreeOrderingKey(path);
+    if (!categoryChildrenKnownRef.current) return true;
+    return key.length > 0 && categoryPathsWithChildrenRef.current.has(key);
+  }, []);
+
   const hasCollapsedAncestorInSet = useCallback((path: number[], collapsedSet: Set<string>) => {
     for (let idx = 1; idx < path.length; idx += 1) {
       const ancestorKey = buildTreeOrderingKey(path.slice(0, idx));
@@ -1580,6 +1688,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       return next;
     });
   }, [hasCategoryChildren]);
+  toggleCategoryCollapsedRef.current = toggleCategoryCollapsed;
 
   const getRowClass = useCallback((params: RowClassParams<Record<string, unknown>>) => {
     const rowType = resolveOfferProductRowType(params.data);
@@ -1662,8 +1771,8 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const rowData = params.data ?? null;
     const isCategory = isOfferProductCategory(rowData);
     const shouldShowIndicator = isCategory;
-    const hasChildren = isCategory && hasCategoryChildren(rowData);
-    const collapsed = isCategory && isCategoryRowCollapsed(rowData);
+    const hasChildren = isCategory && hasCategoryChildrenForRenderer(rowData);
+    const collapsed = isCategory && isCategoryRowCollapsedForRenderer(rowData);
     const indicator = shouldShowIndicator
       ? hasChildren
         ? (collapsed ? '▸' : '▾')
@@ -1678,7 +1787,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const handleIndicatorClick = (event: React.MouseEvent<HTMLButtonElement>) => {
       event.stopPropagation();
       if (hasChildren) {
-        toggleCategoryCollapsed(rowData);
+        toggleCategoryCollapsedRef.current(rowData);
       }
     };
 
@@ -1689,7 +1798,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const display = value;
     return (
       <span className={styles.treeOrderingCell}>
-        <span>{display}</span>
         {indicator && (
           <button
             type="button"
@@ -1701,17 +1809,18 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
             {indicator}
           </button>
         )}
+        <span className={styles.treeOrderingText}>{display}</span>
       </span>
     );
-  }, [hasCategoryChildren, isCategoryRowCollapsed, toggleCategoryCollapsed, formatDisplayTreeOrdering]);
+  }, [formatDisplayTreeOrdering, hasCategoryChildrenForRenderer, isCategoryRowCollapsedForRenderer]);
 
 const RequestedItemNoCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
   const value = params.value;
   const rowData = params.data ?? null;
   const isCategory = isOfferProductCategory(rowData);
   const shouldShowIndicator = isCategory && isRequestedRow(rowData);
-  const hasChildren = shouldShowIndicator && hasCategoryChildren(rowData);
-  const collapsed = shouldShowIndicator && isCategoryRowCollapsed(rowData);
+  const hasChildren = shouldShowIndicator && hasCategoryChildrenForRenderer(rowData);
+  const collapsed = shouldShowIndicator && isCategoryRowCollapsedForRenderer(rowData);
   const indicator = shouldShowIndicator
     ? hasChildren
       ? (collapsed ? '▸' : '▾')
@@ -1726,7 +1835,7 @@ const RequestedItemNoCell = useCallback((params: ICellRendererParams<Record<stri
     const handleIndicatorClick = (event: React.MouseEvent<HTMLButtonElement>) => {
       event.stopPropagation();
       if (hasChildren) {
-        toggleCategoryCollapsed(rowData);
+        toggleCategoryCollapsedRef.current(rowData);
       }
     };
 
@@ -1736,7 +1845,6 @@ const RequestedItemNoCell = useCallback((params: ICellRendererParams<Record<stri
 
     return (
       <span className={styles.treeOrderingCell}>
-        <span>{value ?? ''}</span>
         {indicator && (
           <button
             type="button"
@@ -1748,9 +1856,10 @@ const RequestedItemNoCell = useCallback((params: ICellRendererParams<Record<stri
             {indicator}
           </button>
         )}
+        <span className={styles.treeOrderingText}>{value ?? ''}</span>
       </span>
     );
-  }, [hasCategoryChildren, isCategoryRowCollapsed, toggleCategoryCollapsed]);
+  }, [hasCategoryChildrenForRenderer, isCategoryRowCollapsedForRenderer]);
 
 const PartNumberCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     const rawValue = params.value;
@@ -1821,14 +1930,30 @@ const ModelNumberCell = useCallback((params: ICellRendererParams<Record<string, 
 
   const REQUESTED_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--requested';
   const ACTUAL_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--actual';
+  const TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--truncate';
+  const truncateCellStyle = useMemo(
+    () => ({
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      display: 'flex',
+      alignItems: 'center',
+      minWidth: 0,
+    } as const),
+    [],
+  );
 
   const actualNumericCellClass = useMemo(
-    () => [ACTUAL_COLUMN_GLOBAL_CLASS, 'ag-right-aligned'],
+    () => [ACTUAL_COLUMN_GLOBAL_CLASS, TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS, 'ag-right-aligned'],
     [],
   );
   const actualNumericCellStyle = useMemo(
-    () => ({ justifyContent: 'flex-end', textAlign: 'right', display: 'flex', alignItems: 'center' } as const),
-    [],
+    () => ({
+      ...truncateCellStyle,
+      justifyContent: 'flex-end',
+      textAlign: 'right',
+    } as const),
+    [truncateCellStyle],
   );
 
   const requestedCellClassRules = useMemo(() => ({
@@ -1867,6 +1992,8 @@ const ModelNumberCell = useCallback((params: ICellRendererParams<Record<string, 
     if (!node) return;
     try {
       node.setDataValue('IsCategory', 1);
+      node.setDataValue('IsComment', false);
+      node.setDataValue('IsPrintable', null);
     } catch {
       /* noop */
     }
@@ -1935,9 +2062,26 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       filter: 'agTextColumnFilter',
       headerClass: styles.requestedHeader,
       cellClassRules: requestedCellClassRules,
+      cellClass: isDescription ? ACTUAL_COLUMN_GLOBAL_CLASS : TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS,
+      cellStyle: isDescription
+        ? (params) => {
+            const row = params.data as Record<string, unknown> | null | undefined;
+            const description = (row?.[field] ?? '') as string;
+            const hasLineBreaks = description.includes('\n');
+
+            return {
+              whiteSpace: hasLineBreaks ? 'pre' : 'nowrap',
+              lineHeight: '1.5',
+              display: 'flex',
+              alignItems: 'center',
+              overflow: 'hidden',
+              textOverflow: hasLineBreaks ? 'clip' : 'ellipsis',
+            };
+          }
+        : truncateCellStyle,
       editable: (params: { data?: Record<string, unknown> | null }) =>
         canEditRequestedField(field, params.data ?? null),
-      cellEditor: 'agTextCellEditor',
+      cellEditor: isDescription ? MultilineTextCellEditor : 'agTextCellEditor',
       valueGetter: (params: ValueGetterParams<Record<string, unknown>, unknown>) => {
         const row = params.data ?? null;
         const rawValue = row ? row[field] : null;
@@ -1955,6 +2099,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         (data as Record<string, unknown>)[field] = normalized;
         return true;
       },
+      autoHeight: isDescription ? true : undefined,
     };
     return column;
   };
@@ -1986,7 +2131,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       },
     },
   };
-}, [actualNumericCellStyle, requestedCellClassRules]);
+}, [actualNumericCellStyle, requestedCellClassRules, truncateCellStyle]);
 
   const productColumnDefs: ColDef[] = useMemo(() => {
     const requestedColumns: ColDef[] = [];
@@ -2004,7 +2149,14 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       comparator: compareTreeOrderingValues,
       editable: manualMode,
       cellRenderer: TreeOrderingCell,
-      cellClass: ['offer-products-tree-ordering-cell', ACTUAL_COLUMN_GLOBAL_CLASS],
+      headerClass: 'ag-right-aligned-header',
+      cellClass: [
+        'offer-products-tree-ordering-cell',
+        ACTUAL_COLUMN_GLOBAL_CLASS,
+        TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS,
+        'ag-right-aligned',
+      ],
+      cellStyle: truncateCellStyle,
     valueGetter: ({ data }) => {
       const row = data as {
         __isRequestedRow?: number | null;
@@ -2022,8 +2174,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       field: 'RequestedItemNo',
       headerName: 'Req. Item No',
       filter: 'agTextColumnFilter',
-      headerClass: styles.requestedHeader,
+      headerClass: [styles.requestedHeader, 'ag-right-aligned-header'],
       cellClassRules: requestedCellClassRules,
+      cellClass: [TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS, 'ag-right-aligned'],
+      cellStyle: truncateCellStyle,
       editable: (params: { data?: Record<string, unknown> | null }) =>
         canEditRequestedField('RequestedItemNo', params.data ?? null),
       cellEditor: 'agTextCellEditor',
@@ -2072,21 +2226,24 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         headerName: 'Brand',
         filter: 'agTextColumnFilter',
         cellClassRules: productAccentCellClassRules,
-        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+        cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS, TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS],
+        cellStyle: truncateCellStyle,
       },
       {
         field: 'PartNumber',
         headerName: 'Part Number',
         filter: 'agTextColumnFilter',
         cellRenderer: PartNumberCell,
-        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+        cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS, TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS],
+        cellStyle: truncateCellStyle,
       },
       {
         field: 'ModelNumber',
         headerName: 'Model Number',
         filter: 'agTextColumnFilter',
         cellRenderer: ModelNumberCell,
-        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+        cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS, TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS],
+        cellStyle: truncateCellStyle,
       },
       {
         field: 'Description',
@@ -2126,7 +2283,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           );
         },
         cellEditor: MultilineTextCellEditor,
-        cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS],
+        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
         cellStyle: (params) => {
           const row = params.data as Record<string, unknown> | null | undefined;
           const description = (row?.ProductDescription ?? row?.Description ?? '') as string;
@@ -2281,7 +2438,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           (data as Record<string, unknown>).Delivery = normalizeRequestedLookupValue(newValue ?? null);
           return true;
         },
-        cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+        cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS, TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS],
+        cellStyle: truncateCellStyle,
       },
     {
       field: 'TelmacoDiscount',
@@ -2407,6 +2565,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     requestedCellClassRules,
     savedHiddenMap,
     savedColumnOrder,
+    truncateCellStyle,
   ]);
 
   const refreshOfferProductGrid = useCallback((api: GridApi<Record<string, unknown>> | null, options?: { refresh?: boolean; purge?: boolean }) => {
@@ -3231,6 +3390,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         icon: categoryMenuIcon,
         action: async () => {
           const previousIsCategory = rowNode?.data ? (rowNode.data as { IsCategory?: unknown }).IsCategory : null;
+          const previousIsComment = rowNode?.data ? (rowNode.data as { IsComment?: unknown }).IsComment : null;
+          const previousIsPrintable = rowNode?.data ? (rowNode.data as { IsPrintable?: unknown }).IsPrintable : null;
           const previousDescription = rowNode?.data ? (rowNode.data as { Description?: unknown }).Description : null;
           const previousTreeOrdering = rowNode?.data ? (rowNode.data as { TreeOrdering?: unknown }).TreeOrdering : null;
           const previousRequestedFlag = rowNode?.data ? (rowNode.data as { __isRequestedRow?: unknown }).__isRequestedRow : null;
@@ -3258,6 +3419,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             const payloadEntry: Record<string, unknown> = {
               OfferDetailID: offerDetailId,
               IsCategory: 1,
+              IsComment: false,
+              IsPrintable: null,
             };
             if (descriptionValue != null) {
               payloadEntry.Description = descriptionValue;
@@ -3295,6 +3458,16 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             if (rowNode) {
               try {
                 rowNode.setDataValue('IsCategory', previousIsCategory ?? null);
+              } catch {
+                /* noop */
+              }
+              try {
+                rowNode.setDataValue('IsComment', previousIsComment ?? null);
+              } catch {
+                /* noop */
+              }
+              try {
+                rowNode.setDataValue('IsPrintable', previousIsPrintable ?? null);
               } catch {
                 /* noop */
               }
@@ -3566,6 +3739,71 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     void runUpdate();
   }, [resolvedEndpoint, shouldSkipRealtimeCellEdit]);
 
+  const handleCommentEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    if (event.colDef.field !== 'Comment') return;
+    const source = (event as { source?: string }).source;
+    if (source === 'api') return;
+    if (shouldSkipRealtimeCellEdit(event)) return;
+
+    const row = event.data ?? null;
+    if (!isOfferProductCategory(row) && !isOfferProductComment(row) && !isOfferProductProduct(row)) {
+      try {
+        event.node?.setDataValue?.('Comment', event.oldValue ?? '');
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+
+    const normalizedOldValue = normalizeDescriptionValue(event.oldValue);
+    const normalizedNewValue = normalizeDescriptionValue(event.newValue);
+    if (normalizedOldValue === normalizedNewValue) {
+      return;
+    }
+
+    const offerDetailId = normalizeOfferDetailId((event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null);
+    if (offerDetailId == null) {
+      showToastMessage('Unable to update comment. Missing record identifier.', 'error');
+      try {
+        event.node?.setDataValue?.('Comment', normalizedOldValue ?? '');
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+
+    const revertValue = () => {
+      try {
+        event.node?.setDataValue?.('Comment', normalizedOldValue ?? '');
+      } catch {
+        /* noop */
+      }
+    };
+
+    const runUpdate = async () => {
+      try {
+        const res = await fetch(resolvedEndpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: [{ OfferDetailID: offerDetailId, Comment: normalizedNewValue }],
+          }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update comment (status ${res.status})`);
+        }
+        showToastMessage('Comment updated', 'success');
+      } catch (err) {
+        console.error('Failed to update comment', err);
+        showToastMessage('Unable to update comment. Please try again.', 'error');
+        revertValue();
+      }
+    };
+
+    void runUpdate();
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit]);
+
   const handleDeliveryEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Delivery') return;
     const source = (event as { source?: string }).source;
@@ -3722,11 +3960,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     handleDescriptionEdit(event);
+    handleCommentEdit(event);
     handleDeliveryEdit(event);
     handleRequestedFieldEdit(event);
     handleQuantityEdit(event);
     handlePricingEdit(event);
-  }, [handleDescriptionEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit]);
+  }, [handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit]);
 
   const formatEuroTotal = (value: number | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return '—';

@@ -55,7 +55,12 @@ export default function ProductHistoryGrid({ rows }: Props) {
     filter: true,
     floatingFilter: true,
     enableRowGroup: false,
-    filterParams: { buttons: ['reset'] },
+    filterParams: {
+      buttons: ['reset'],
+      maxNumConditions: 2,
+      alwaysShowBothConditions: true,
+      defaultJoinOperator: 'AND',
+    },
   }), []);
 
   const handleGridReady = useCallback((params: { api: GridApi<HistoryRow> }) => {
@@ -77,6 +82,9 @@ export default function ProductHistoryGrid({ rows }: Props) {
       filterParams: { 
         browserDatePicker: false, 
         minValidYear: 2000,
+        maxNumConditions: 2,
+        alwaysShowBothConditions: true,
+        defaultJoinOperator: 'AND',
       } 
     },
     { field: 'CustomerName', headerName: 'Customer', filter: 'agTextColumnFilter', width: 200, suppressHeaderMenuButton: true, enableRowGroup: true },

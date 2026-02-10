@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { cookies } from "next/headers";
 import "./globals.css";
 import "ag-grid-community/styles/ag-theme-quartz.css";
 import SideNav from "./components/SideNav";
@@ -24,9 +25,14 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
-export default function RootLayout({
+const SIDENAV_COLLAPSED_COOKIE_NAME = "fastquote_sidenav_collapsed";
+
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const cookieStore = await cookies();
+  const initialCollapsed = cookieStore.get(SIDENAV_COLLAPSED_COOKIE_NAME)?.value === "true";
+
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
@@ -35,7 +41,7 @@ export default function RootLayout({
           <DisableAutofill />
           <PreventBackspaceNavigation />
           <div className="app-shell">
-            <SideNav />
+            <SideNav initialCollapsed={initialCollapsed} />
             <div className="app-content">{children}</div>
           </div>
         </AuditUserProvider>

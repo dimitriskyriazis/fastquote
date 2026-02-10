@@ -17,6 +17,12 @@ type TextFilterModel = {
   filter?: string;
 };
 
+type CompoundTextFilterModel = {
+  filterType: 'text';
+  operator: 'AND' | 'OR';
+  conditions: TextFilterModel[];
+};
+
 type NumberFilterModel = {
   filterType: 'number';
   type?:
@@ -31,7 +37,17 @@ type NumberFilterModel = {
   filterTo?: number;
 };
 
-type KnownFilterModel = TextFilterModel | NumberFilterModel;
+type CompoundNumberFilterModel = {
+  filterType: 'number';
+  operator: 'AND' | 'OR';
+  conditions: NumberFilterModel[];
+};
+
+type KnownFilterModel =
+  | TextFilterModel
+  | CompoundTextFilterModel
+  | NumberFilterModel
+  | CompoundNumberFilterModel;
 
 type GridRequest = {
   startRow?: number;
@@ -127,6 +143,16 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
   const clauses: string[] = [];
   const params: QueryParam[] = [];
   const typedModel = filterModel as Record<string, KnownFilterModel>;
+  const isCompoundTextFilter = (filter: KnownFilterModel): filter is CompoundTextFilterModel => (
+    filter.filterType === 'text'
+    && 'operator' in filter
+    && Array.isArray((filter as { conditions?: unknown }).conditions)
+  );
+  const isCompoundNumberFilter = (filter: KnownFilterModel): filter is CompoundNumberFilterModel => (
+    filter.filterType === 'number'
+    && 'operator' in filter
+    && Array.isArray((filter as { conditions?: unknown }).conditions)
+  );
 
   Object.entries(typedModel).forEach(([col, fm], idx) => {
     if (!fm) return;
@@ -135,99 +161,151 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
     const isPartNumber = col === 'PartNumber';
     const isModelNumber = col === 'ModelNumber';
     const isPartOrModel = isPartNumber || isModelNumber;
+    const otherColumnExpression = isPartNumber
+      ? columnExpressions.ModelNumber
+      : isModelNumber
+        ? columnExpressions.PartNumber
+        : null;
 
     switch (fm.filterType) {
       case 'text': {
-        const type = fm.type;
-        const value = String(fm.filter ?? '');
-        if (!value) break;
-        
-        // Normalize the search value for part/model numbers
-        const normalizedVal = isPartOrModel ? normalizePartModelNumber(value) : value;
-        const searchVal = normalizedVal;
-        
-        // Get the other field for cross-search (PartNumber <-> ModelNumber)
-        const otherColumnExpression = isPartNumber 
-          ? columnExpressions['ModelNumber'] 
-          : isModelNumber 
-          ? columnExpressions['PartNumber'] 
-          : null;
-        
-        if (isPartOrModel) {
-          if (type === 'equals') {
-            if (otherColumnExpression) {
-              // Cross-search: search both PartNumber and ModelNumber
-              clauses.push(`(${partModelNumberSql(columnExpression)} = @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} = @${paramBase})`);
-              params.push({ key: paramBase, value: searchVal });
-            } else {
-              const expr = partModelNumberSql(columnExpression);
-              clauses.push(`${expr} = @${paramBase}`);
-              params.push({ key: paramBase, value: searchVal });
-            }
-          } else if (type === 'notEqual') {
+        const buildTextConditionClause = (condition: TextFilterModel, conditionParamBase: string) => {
+          const type = condition.type;
+          const value = String(condition.filter ?? '');
+          if (!value) return { clause: '', params: [] as QueryParam[] };
+
+          if (isPartOrModel) {
+            const searchVal = normalizePartModelNumber(value);
             const expr = partModelNumberSql(columnExpression);
-            clauses.push(`${expr} <> @${paramBase}`);
-            params.push({ key: paramBase, value: searchVal });
-          } else if (type === 'startsWith') {
-            if (otherColumnExpression) {
-              // Cross-search: search both PartNumber and ModelNumber
-              clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
-              params.push({ key: paramBase, value: `${searchVal}%` });
-            } else {
-              const expr = partModelNumberSql(columnExpression);
-              clauses.push(`${expr} LIKE @${paramBase}`);
-              params.push({ key: paramBase, value: `${searchVal}%` });
+            if (type === 'equals') {
+              if (otherColumnExpression) {
+                return {
+                  clause: `(${expr} = @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} = @${conditionParamBase})`,
+                  params: [{ key: conditionParamBase, value: searchVal }],
+                };
+              }
+              return {
+                clause: `${expr} = @${conditionParamBase}`,
+                params: [{ key: conditionParamBase, value: searchVal }],
+              };
             }
-          } else if (type === 'endsWith') {
-            if (otherColumnExpression) {
-              // Cross-search: search both PartNumber and ModelNumber
-              clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
-              params.push({ key: paramBase, value: `%${searchVal}` });
-            } else {
-              const expr = partModelNumberSql(columnExpression);
-              clauses.push(`${expr} LIKE @${paramBase}`);
-              params.push({ key: paramBase, value: `%${searchVal}` });
+            if (type === 'notEqual') {
+              return {
+                clause: `${expr} <> @${conditionParamBase}`,
+                params: [{ key: conditionParamBase, value: searchVal }],
+              };
             }
-          } else {
-            // contains (default)
-            if (otherColumnExpression) {
-              // Cross-search: search both PartNumber and ModelNumber
-              clauses.push(`(${partModelNumberSql(columnExpression)} LIKE @${paramBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${paramBase})`);
-              params.push({ key: paramBase, value: `%${searchVal}%` });
-            } else {
-              const expr = partModelNumberSql(columnExpression);
-              clauses.push(`${expr} LIKE @${paramBase}`);
-              params.push({ key: paramBase, value: `%${searchVal}%` });
+            if (type === 'startsWith') {
+              if (otherColumnExpression) {
+                return {
+                  clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase})`,
+                  params: [{ key: conditionParamBase, value: `${searchVal}%` }],
+                };
+              }
+              return {
+                clause: `${expr} LIKE @${conditionParamBase}`,
+                params: [{ key: conditionParamBase, value: `${searchVal}%` }],
+              };
             }
+            if (type === 'endsWith') {
+              if (otherColumnExpression) {
+                return {
+                  clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase})`,
+                  params: [{ key: conditionParamBase, value: `%${searchVal}` }],
+                };
+              }
+              return {
+                clause: `${expr} LIKE @${conditionParamBase}`,
+                params: [{ key: conditionParamBase, value: `%${searchVal}` }],
+              };
+            }
+            if (otherColumnExpression) {
+              return {
+                clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase})`,
+                params: [{ key: conditionParamBase, value: `%${searchVal}%` }],
+              };
+            }
+            return {
+              clause: `${expr} LIKE @${conditionParamBase}`,
+              params: [{ key: conditionParamBase, value: `%${searchVal}%` }],
+            };
           }
-        } else {
+
           const mode = (type ?? 'contains') as 'contains' | 'equals' | 'startsWith' | 'endsWith' | 'notEqual';
-          const { clause, params: clauseParams } = buildTextMatchPredicate(columnExpression, value, {
-            paramKey: paramBase,
+          return buildTextMatchPredicate(columnExpression, value, {
+            paramKey: conditionParamBase,
             mode,
             enablePhonetic: !isSensitiveColumn(col),
           });
-          clauses.push(clause);
-          clauseParams.forEach((p) => params.push(p));
+        };
+
+        if (isCompoundTextFilter(fm)) {
+          const operator = fm.operator === 'OR' ? 'OR' : 'AND';
+          const conditionResults = fm.conditions
+            .map((condition, conditionIdx) => (
+              buildTextConditionClause(condition, `${paramBase}_c${conditionIdx}`)
+            ))
+            .filter((result) => result.clause);
+          if (conditionResults.length === 0) break;
+          if (conditionResults.length === 1) {
+            clauses.push(conditionResults[0].clause);
+          } else {
+            clauses.push(`(${conditionResults.map((result) => result.clause).join(` ${operator} `)})`);
+          }
+          conditionResults.forEach((result) => result.params.forEach((p) => params.push(p)));
+          break;
+        }
+
+        const single = buildTextConditionClause(fm as TextFilterModel, paramBase);
+        if (single.clause) {
+          clauses.push(single.clause);
+          single.params.forEach((p) => params.push(p));
         }
         break;
       }
       case 'number': {
-        const type = fm.type;
-        const val = fm.filter !== undefined ? Number(fm.filter) : Number.NaN;
-        const valTo = fm.filterTo !== undefined ? Number(fm.filterTo) : undefined;
-        if (Number.isNaN(val)) break;
-        if (type === 'equals') clauses.push(`${columnExpression} = @${paramBase}`);
-        if (type === 'notEqual') clauses.push(`${columnExpression} <> @${paramBase}`);
-        if (type === 'lessThan') clauses.push(`${columnExpression} < @${paramBase}`);
-        if (type === 'greaterThan') clauses.push(`${columnExpression} > @${paramBase}`);
-        if (type === 'lessThanOrEqual') clauses.push(`${columnExpression} <= @${paramBase}`);
-        if (type === 'greaterThanOrEqual') clauses.push(`${columnExpression} >= @${paramBase}`);
-        if (type === 'inRange' && valTo !== undefined) {
-          clauses.push(`(${columnExpression} BETWEEN @${paramBase} AND @${paramBase}_to)`);
-          params.push({ key: `${paramBase}_to`, value: valTo });
+        const buildNumberConditionClause = (condition: NumberFilterModel, conditionParamBase: string) => {
+          const type = condition.type;
+          const val = condition.filter !== undefined ? Number(condition.filter) : Number.NaN;
+          const valTo = condition.filterTo !== undefined ? Number(condition.filterTo) : undefined;
+          if (Number.isNaN(val)) return { clause: '', params: [] as QueryParam[] };
+          const conditionParams: QueryParam[] = [{ key: conditionParamBase, value: val }];
+          let clause = '';
+          if (type === 'equals') clause = `${columnExpression} = @${conditionParamBase}`;
+          if (type === 'notEqual') clause = `${columnExpression} <> @${conditionParamBase}`;
+          if (type === 'lessThan') clause = `${columnExpression} < @${conditionParamBase}`;
+          if (type === 'greaterThan') clause = `${columnExpression} > @${conditionParamBase}`;
+          if (type === 'lessThanOrEqual') clause = `${columnExpression} <= @${conditionParamBase}`;
+          if (type === 'greaterThanOrEqual') clause = `${columnExpression} >= @${conditionParamBase}`;
+          if (type === 'inRange' && valTo !== undefined) {
+            clause = `(${columnExpression} BETWEEN @${conditionParamBase} AND @${conditionParamBase}_to)`;
+            conditionParams.push({ key: `${conditionParamBase}_to`, value: valTo });
+          }
+          return { clause, params: conditionParams };
+        };
+
+        if (isCompoundNumberFilter(fm)) {
+          const operator = fm.operator === 'OR' ? 'OR' : 'AND';
+          const conditionResults = fm.conditions
+            .map((condition, conditionIdx) => (
+              buildNumberConditionClause(condition, `${paramBase}_c${conditionIdx}`)
+            ))
+            .filter((result) => result.clause);
+          if (conditionResults.length === 0) break;
+          if (conditionResults.length === 1) {
+            clauses.push(conditionResults[0].clause);
+          } else {
+            clauses.push(`(${conditionResults.map((result) => result.clause).join(` ${operator} `)})`);
+          }
+          conditionResults.forEach((result) => result.params.forEach((p) => params.push(p)));
+          break;
         }
-        params.push({ key: paramBase, value: val });
+
+        const single = buildNumberConditionClause(fm as NumberFilterModel, paramBase);
+        if (single.clause) {
+          clauses.push(single.clause);
+          single.params.forEach((p) => params.push(p));
+        }
         break;
       }
       default:

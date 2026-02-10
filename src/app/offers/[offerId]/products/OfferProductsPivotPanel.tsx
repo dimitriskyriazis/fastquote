@@ -312,6 +312,12 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     enablePivot: true,
     enableValue: true,
     flex: 0,
+    filterParams: {
+      buttons: ['reset'],
+      maxNumConditions: 2,
+      alwaysShowBothConditions: true,
+      defaultJoinOperator: 'AND',
+    },
   }), []);
 
   const onGridReady = useMemo(() => (e: GridReadyEvent<RowData>) => {
