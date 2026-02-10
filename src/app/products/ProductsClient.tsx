@@ -2,6 +2,7 @@
 
 import React, { useMemo, useCallback, useState, useRef, useEffect } from "react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import type {
   CellValueChangedEvent,
   ColDef,
@@ -134,6 +135,7 @@ type ProductRowNode = RowNode<Record<string, unknown>> & {
 const PRODUCT_ROW_TYPE = "product";
 
 export default function ProductsClient() {
+  const router = useRouter();
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
   const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null);
@@ -587,6 +589,13 @@ export default function ProductsClient() {
           title="Products"
           rightActions={
             <div className={styles.headerActions}>
+              <button
+                type="button"
+                className={`${styles.headerButton} page-header-button`}
+                onClick={() => router.push("/brands")}
+              >
+                View Brands
+              </button>
               <button
                 type="button"
                 className={`${styles.headerButton} page-header-button`}
