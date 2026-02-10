@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import type { Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
+import { requirePermission } from "../../../lib/authz";
 import {
   buildQuickFilterClause,
   mergeWhereClauses,
@@ -329,6 +330,9 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "manageCustomersContacts");
+    if (!auth.ok) return auth.response;
+
     const body = await req.json().catch(() => null);
     const ids = collectCustomerIds((body as { CustomerIDs?: unknown } | null)?.CustomerIDs ?? []);
     if (ids.length === 0) {

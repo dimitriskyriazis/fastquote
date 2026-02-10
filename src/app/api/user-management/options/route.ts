@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPool } from "../../../../lib/sql";
 import { requirePermission } from "../../../../lib/authz";
+import { sortRoleNames } from "../../../../lib/roles";
 
 const normalizeList = (rows: Array<{ Name: string | null }>) => {
   const values = new Set<string>();
@@ -9,6 +10,15 @@ const normalizeList = (rows: Array<{ Name: string | null }>) => {
     if (name) values.add(name);
   });
   return Array.from(values).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+};
+
+const normalizeRoleList = (rows: Array<{ Name: string | null }>) => {
+  const values = new Set<string>();
+  rows.forEach((row) => {
+    const name = row.Name?.trim();
+    if (name) values.add(name);
+  });
+  return sortRoleNames(Array.from(values));
 };
 
 export async function GET(req: NextRequest) {
@@ -37,7 +47,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      roles: normalizeList(rolesResult.recordset ?? []),
+      roles: normalizeRoleList(rolesResult.recordset ?? []),
       salesDivisions: normalizeList(divisionsResult.recordset ?? []),
       salesSeniorities: normalizeList(senioritiesResult.recordset ?? []),
     });

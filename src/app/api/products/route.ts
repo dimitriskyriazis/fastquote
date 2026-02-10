@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import type { Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
+import { requirePermission } from "../../../lib/authz";
 import {
   buildQuickFilterClause,
   mergeWhereClauses,
@@ -241,6 +242,9 @@ async function readGridRequest(req: NextRequest): Promise<GridRequestResult> {
 
 export async function DELETE(req: NextRequest) {
   try {
+    const auth = await requirePermission(req, "manageBrandsSuppliers");
+    if (!auth.ok) return auth.response;
+
     const body = await req.json().catch(() => null);
     const ids = collectProductIds((body as { ProductIDs?: unknown } | null)?.ProductIDs ?? []);
     if (ids.length === 0) {

@@ -17,6 +17,15 @@ export type Permission =
   | 'editOffers'
   | 'manageCustomersContacts';
 
+export const APP_ROLE_ORDER: readonly AppRole[] = [
+  'Developer',
+  'Administrator',
+  'Back Office User',
+  'Sales Manager',
+  'Sales Team',
+  'Simple User',
+];
+
 const ROLE_ALIASES: Record<string, AppRole> = {
   developer: 'Developer',
   administrator: 'Administrator',
@@ -45,6 +54,22 @@ export const coerceRoles = (values: Array<string | null | undefined>): AppRole[]
   return Array.from(unique);
 };
 
+export const sortRoleNames = (roles: readonly string[]): string[] => {
+  const order = new Map<string, number>();
+  APP_ROLE_ORDER.forEach((role, index) => {
+    order.set(role.toLowerCase(), index);
+  });
+
+  return [...roles].sort((a, b) => {
+    const aOrder = order.get(a.trim().toLowerCase());
+    const bOrder = order.get(b.trim().toLowerCase());
+    if (aOrder != null && bOrder != null) return aOrder - bOrder;
+    if (aOrder != null) return -1;
+    if (bOrder != null) return 1;
+    return a.localeCompare(b, undefined, { sensitivity: 'base' });
+  });
+};
+
 export const roleHasPermission = (roles: readonly AppRole[], permission: Permission): boolean => {
   if (roles.includes('Developer')) return true;
   if (roles.includes('Administrator')) {
@@ -54,7 +79,7 @@ export const roleHasPermission = (roles: readonly AppRole[], permission: Permiss
   switch (permission) {
     case 'managePriceLists':
     case 'managePricingPolicies':
-      return roles.includes('Back Office User');
+      return roles.includes('Back Office User') || roles.includes('Sales Manager');
     // Permission ID 40: brands & suppliers management
     case 'manageBrandsSuppliers':
       return (
@@ -72,9 +97,14 @@ export const roleHasPermission = (roles: readonly AppRole[], permission: Permiss
       );
     case 'createOffers':
     case 'editOffers':
-      return roles.includes('Sales Manager') || roles.includes('Sales Team');
+      return roles.includes('Sales Manager') || roles.includes('Sales Team') || roles.includes('Back Office User');
     case 'manageCustomersContacts':
-      return roles.includes('Simple User');
+      return (
+        roles.includes('Simple User') ||
+        roles.includes('Back Office User') ||
+        roles.includes('Sales Manager') ||
+        roles.includes('Sales Team')
+      );
     case 'manageUsers':
       return false;
     case 'dangerousOps':
