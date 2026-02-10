@@ -25,29 +25,60 @@ export type SetFilterModel = {
   values?: Array<string | number | boolean>;
 };
 
-// Compound filter types (new - for 2-condition filtering)
+type CompoundOperator = "AND" | "OR";
+
+// Compound filter types (2-condition filtering, modern and legacy shapes)
 export type CompoundTextFilter = {
   filterType: "text";
-  operator: "AND" | "OR";
+  operator: CompoundOperator;
   conditions: TextCondition[];
 };
 
 export type CompoundNumberFilter = {
   filterType: "number";
-  operator: "AND" | "OR";
+  operator: CompoundOperator;
   conditions: NumberCondition[];
 };
 
 export type CompoundDateFilter = {
   filterType: "date";
-  operator: "AND" | "OR";
+  operator: CompoundOperator;
   conditions: DateCondition[];
 };
 
+export type LegacyCompoundTextFilter = {
+  filterType: "text";
+  operator: CompoundOperator;
+  condition1?: TextCondition;
+  condition2?: TextCondition;
+};
+
+export type LegacyCompoundNumberFilter = {
+  filterType: "number";
+  operator: CompoundOperator;
+  condition1?: NumberCondition;
+  condition2?: NumberCondition;
+};
+
+export type LegacyCompoundDateFilter = {
+  filterType: "date";
+  operator: CompoundOperator;
+  condition1?: DateCondition;
+  condition2?: DateCondition;
+};
+
+export type AnyCompoundFilter =
+  | CompoundTextFilter
+  | CompoundNumberFilter
+  | CompoundDateFilter
+  | LegacyCompoundTextFilter
+  | LegacyCompoundNumberFilter
+  | LegacyCompoundDateFilter;
+
 // Union types for backward compatibility
-export type TextFilterModel = TextCondition | CompoundTextFilter;
-export type NumberFilterModel = NumberCondition | CompoundNumberFilter;
-export type DateFilterModel = DateCondition | CompoundDateFilter;
+export type TextFilterModel = TextCondition | CompoundTextFilter | LegacyCompoundTextFilter;
+export type NumberFilterModel = NumberCondition | CompoundNumberFilter | LegacyCompoundNumberFilter;
+export type DateFilterModel = DateCondition | CompoundDateFilter | LegacyCompoundDateFilter;
 
 export type KnownFilterModel =
   | TextFilterModel
@@ -58,12 +89,30 @@ export type KnownFilterModel =
 // Type guard helpers
 export function isCompoundFilter(
   filter: KnownFilterModel
-): filter is CompoundTextFilter | CompoundNumberFilter | CompoundDateFilter {
-  return 'operator' in filter && 'conditions' in filter && Array.isArray(filter.conditions);
+): filter is AnyCompoundFilter {
+  if (!("operator" in filter)) return false;
+  if ("conditions" in filter && Array.isArray(filter.conditions)) return true;
+  return "condition1" in filter || "condition2" in filter;
 }
 
 export function isSingleConditionFilter(
   filter: KnownFilterModel
 ): filter is TextCondition | NumberCondition | DateCondition {
   return !isCompoundFilter(filter) && filter.filterType !== 'set';
+}
+
+export function getCompoundFilterConditions(
+  filter: AnyCompoundFilter
+): Array<TextCondition | NumberCondition | DateCondition> {
+  if ("conditions" in filter && Array.isArray(filter.conditions)) {
+    return filter.conditions;
+  }
+  const conditions: Array<TextCondition | NumberCondition | DateCondition> = [];
+  if ("condition1" in filter && filter.condition1) {
+    conditions.push(filter.condition1);
+  }
+  if ("condition2" in filter && filter.condition2) {
+    conditions.push(filter.condition2);
+  }
+  return conditions;
 }

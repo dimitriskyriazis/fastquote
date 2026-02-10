@@ -265,6 +265,7 @@ export default function PriceListsClient() {
         cellRenderer: ActionCell,
       },
       { field: "Name", headerName: "Price List", filter: "agTextColumnFilter" },
+      { field: "BrandName", headerName: "Brand", filter: "agTextColumnFilter" },
       { field: "SupplierName", headerName: "Supplier", filter: "agTextColumnFilter", enableRowGroup: true },
       {
         field: "ValidFromDate",

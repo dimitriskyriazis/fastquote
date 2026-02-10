@@ -49,8 +49,9 @@ const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
 
 const formatCurrency = (params: ValueFormatterParams) => {
   const value = params?.value;
+  if (value == null || value === "") return "";
   const num = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(num)) return value == null ? "" : String(value);
+  if (!Number.isFinite(num)) return String(value);
   return `${currencyFormatter.format(num)} €`;
 };
 
@@ -82,6 +83,11 @@ const resolvePriceListRowLabel = (row: PriceListProductRowGrid | null | undefine
 };
 
 const PRICE_LIST_ROW_TYPE_LABEL = "price list item";
+const TWO_CONDITION_FILTER_PARAMS = {
+  maxNumConditions: 2,
+  alwaysShowBothConditions: true,
+  defaultJoinOperator: "AND" as const,
+};
 
 const PRICE_LIST_FIELD_LABELS: Record<string, string> = {
   Enabled: "Enabled",
@@ -133,17 +139,20 @@ export default function PriceListProductsClient({
         field: "Description",
         headerName: "Product",
         filter: "agTextColumnFilter",
+        filterParams: TWO_CONDITION_FILTER_PARAMS,
       },
       {
         field: "PartNumber",
         headerName: "Part Number",
         filter: "agTextColumnFilter",
+        filterParams: TWO_CONDITION_FILTER_PARAMS,
         width: 160,
       },
       {
         field: "ListPrice",
         headerName: "List Price",
         filter: "agNumberColumnFilter",
+        filterParams: TWO_CONDITION_FILTER_PARAMS,
         valueFormatter: formatCurrency,
         type: "numericColumn",
         width: 140,
@@ -152,6 +161,7 @@ export default function PriceListProductsClient({
         field: "CostPrice",
         headerName: "Cost Price",
         filter: "agNumberColumnFilter",
+        filterParams: TWO_CONDITION_FILTER_PARAMS,
         valueFormatter: formatCurrency,
         type: "numericColumn",
         width: 140,
@@ -160,6 +170,7 @@ export default function PriceListProductsClient({
         field: "Warning",
         headerName: "Warning",
         filter: "agTextColumnFilter",
+        filterParams: TWO_CONDITION_FILTER_PARAMS,
         width: 140,
       },
       {
@@ -247,6 +258,7 @@ export default function PriceListProductsClient({
       sortable: true,
       resizable: true,
       filter: true,
+      filterParams: TWO_CONDITION_FILTER_PARAMS,
     }),
     [],
   );
@@ -353,6 +365,9 @@ export default function PriceListProductsClient({
             getContextMenuItems={priceListContextMenuItems}
             onCellValueChanged={handleCellEdit}
             rowGroupPanelShow="never"
+            rowSelection="multiple"
+            rowMultiSelectWithClick
+            rowDeselection
           />
         </div>
       </div>

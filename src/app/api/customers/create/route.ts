@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
 
     const pool = await getPool();
 
-    // Enforce that pricing policy exists and has a default rule (BrandID IS NULL).
+    // Enforce that pricing policy exists and is enabled.
     const policyExists = await pool.request()
       .input('__ppid', sql.Int, pricingPolicyId)
       .query<{ ID: number }>(`
@@ -99,21 +99,6 @@ export async function POST(req: NextRequest) {
     if (!policyExists.recordset?.[0]?.ID) {
       return NextResponse.json(
         { ok: false, error: 'Selected pricing policy was not found or is disabled.' },
-        { status: 400 },
-      );
-    }
-    const defaultRuleCheck = await pool.request()
-      .input('__ppid', sql.Int, pricingPolicyId)
-      .query<{ cnt: number }>(`
-        SELECT COUNT(1) AS cnt
-        FROM dbo.PricingPolicyRules
-        WHERE PricingPolicyID = @__ppid
-          AND BrandID IS NULL
-      `);
-    const defaultRuleCount = defaultRuleCheck.recordset?.[0]?.cnt ?? 0;
-    if (defaultRuleCount <= 0) {
-      return NextResponse.json(
-        { ok: false, error: 'Selected pricing policy has no default rule (All brands). Please add one first.' },
         { status: 400 },
       );
     }

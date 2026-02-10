@@ -2546,6 +2546,16 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: percentageFormatter,
+      cellClassRules: {
+        [styles.negativeMarginCell]: (params) => {
+          const value = coerceNumber(
+            params.value
+            ?? (params.data as { Margin?: unknown } | null | undefined)?.Margin
+            ?? null,
+          );
+          return value != null && value < 0;
+        },
+      },
       cellClass: [...actualNumericCellClass, styles.redDataCell],
       cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
     },

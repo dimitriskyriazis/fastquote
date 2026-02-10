@@ -260,8 +260,26 @@
   color: #dc2626;
 }
 
+.negativeMarginCell {
+  background-color: #dc2626;
+  color: #ffffff !important;
+}
+
 .redDataCell :global(.ag-cell-value) {
   color: #dc2626;
+}
+
+.negativeMarginCell :global(.ag-cell-value) {
+  color: #ffffff !important;
+}
+
+:global(.offer-products-grid .ag-cell).negativeMarginCell {
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
+}
+
+:global(.offer-products-grid .ag-cell).negativeMarginCell :global(.ag-cell-value) {
+  color: #ffffff !important;
 }
 
 /* Multiline description cells: show line breaks (Alt+Enter) and wrap */

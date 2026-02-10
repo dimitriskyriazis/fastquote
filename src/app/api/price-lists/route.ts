@@ -28,6 +28,7 @@ type DeleteRequest = {
 type PriceListRow = {
   PriceListID: number | null;
   Name: string | null;
+  BrandName: string | null;
   ValidFromDate: string | Date | null;
   ValidToDate: string | Date | null;
   Enabled: boolean | number | null;
@@ -40,6 +41,7 @@ type PriceListRowWithCount = PriceListRow & { __totalCount: number | bigint | nu
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   PriceListID: "dbo.PriceLists.ID",
   Name: "dbo.PriceLists.Name",
+  BrandName: "dbo.Brands.Name",
   ValidFromDate: "dbo.PriceLists.ValidFromDate",
   ValidToDate: "dbo.PriceLists.ValidToDate",
   Enabled: "dbo.PriceLists.Enabled",
@@ -177,6 +179,7 @@ export async function POST(req: NextRequest) {
         COUNT_BIG(1) OVER () AS __totalCount,
         dbo.PriceLists.ID AS PriceListID,
         dbo.PriceLists.Name,
+        dbo.Brands.Name AS BrandName,
         dbo.PriceLists.ValidFromDate,
         dbo.PriceLists.ValidToDate,
         dbo.PriceLists.Enabled,
@@ -186,7 +189,8 @@ export async function POST(req: NextRequest) {
 
     const from = `
       FROM dbo.PriceLists
-      INNER JOIN dbo.Suppliers ON dbo.PriceLists.SupplierID = dbo.Suppliers.ID
+      LEFT OUTER JOIN dbo.Suppliers ON dbo.PriceLists.SupplierID = dbo.Suppliers.ID
+      LEFT OUTER JOIN dbo.Brands ON dbo.PriceLists.BrandID = dbo.Brands.ID
     `;
 
     const normalizedFilterModel = ensureEnabledFilterModel(requestPayload.filterModel);

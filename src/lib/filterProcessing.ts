@@ -5,6 +5,7 @@ import {
   SetFilterModel,
   KnownFilterModel,
   isCompoundFilter,
+  getCompoundFilterConditions,
   TextCondition,
   NumberCondition,
   DateCondition,
@@ -25,7 +26,8 @@ export function processTextFilter(
   context: FilterContext
 ): { clause: string; params: QueryParam[] } {
   if (isCompoundFilter(filter)) {
-    const { conditions, operator } = filter;
+    const conditions = getCompoundFilterConditions(filter) as TextCondition[];
+    const operator = filter.operator;
 
     // Process all conditions
     const results = conditions
@@ -83,7 +85,8 @@ export function processNumberFilter(
   context: FilterContext
 ): { clause: string; params: QueryParam[] } {
   if (isCompoundFilter(filter)) {
-    const { conditions, operator } = filter;
+    const conditions = getCompoundFilterConditions(filter) as NumberCondition[];
+    const operator = filter.operator;
 
     // Process all conditions
     const results = conditions
@@ -179,7 +182,8 @@ export function processDateFilter(
   context: FilterContext
 ): { clause: string; params: QueryParam[] } {
   if (isCompoundFilter(filter)) {
-    const { conditions, operator } = filter;
+    const conditions = getCompoundFilterConditions(filter) as DateCondition[];
+    const operator = filter.operator;
 
     // Process all conditions
     const results = conditions
