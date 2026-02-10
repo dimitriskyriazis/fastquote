@@ -630,7 +630,7 @@ export default function ContactsClient({
               className={`${styles.contactModalField} ${styles.comboWrapper} ${styles.contactModalFieldFull}`}
             >
               <label className={styles.fieldLabel} htmlFor="contact-customer">
-                Customer
+                Customer <span className={styles.requiredMark}>*</span>
               </label>
               <input
                 id="contact-customer"
@@ -689,7 +689,7 @@ export default function ContactsClient({
             </div>
           <div className={styles.contactModalField}>
             <label className={styles.fieldLabel} htmlFor="contact-last-name">
-              Last name
+              Last name <span className={styles.requiredMark}>*</span>
             </label>
             <input
               id="contact-last-name"
@@ -701,7 +701,7 @@ export default function ContactsClient({
           </div>
           <div className={styles.contactModalField}>
             <label className={styles.fieldLabel} htmlFor="contact-first-name">
-              First name
+              First name <span className={styles.requiredMark}>*</span>
             </label>
             <input
               id="contact-first-name"
@@ -713,18 +713,19 @@ export default function ContactsClient({
           </div>
           <div className={styles.contactModalField}>
             <label className={styles.fieldLabel} htmlFor="contact-position">
-              Position
+              Position <span className={styles.requiredMark}>*</span>
             </label>
             <input
               id="contact-position"
               className={styles.fieldControl}
               value={contactForm.position}
+              required
               onChange={(event) => setContactField("position", event.target.value)}
             />
           </div>
           <div className={styles.contactModalField}>
             <label className={styles.fieldLabel} htmlFor="contact-importance">
-              Importance
+              Importance <span className={styles.requiredMark}>*</span>
             </label>
             <select
               id="contact-importance"
@@ -821,7 +822,7 @@ export default function ContactsClient({
           </div>
           <div className={`${styles.contactModalField} ${styles.contactModalToggle}`}>
             <label className={styles.fieldLabel} htmlFor="contact-enabled">
-              Enabled
+              Enabled <span className={styles.requiredMark}>*</span>
             </label>
             <label className={styles.contactToggleControl} htmlFor="contact-enabled">
               <input

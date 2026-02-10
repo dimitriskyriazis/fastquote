@@ -1,6 +1,46 @@
 import { notFound } from "next/navigation";
 import CustomerContactsClient from "./CustomerContactsClient";
 import { getPool } from "../../../../lib/sql";
+import { IMPORTANCE_VALUES } from "../customerBasicDataLookups";
+import { toDropdownOptions, type DropdownOption } from "../../../../lib/dropdownOptions";
+
+type LookupRow = { ID: number | string | null; Name: string | null };
+
+async function fetchEmailStatuses(): Promise<string[]> {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<{ Name: string | null }>(`
+      SELECT Name
+      FROM dbo.EmailStatuses
+      ORDER BY Name
+    `);
+    const rows = result.recordset ?? [];
+    const unique = new Set<string>();
+    rows.forEach((row) => {
+      const name = row.Name?.trim();
+      if (name) unique.add(name);
+    });
+    return Array.from(unique);
+  } catch (err) {
+    console.error("Failed to fetch email statuses", err);
+    return [];
+  }
+}
+
+async function fetchTitles(): Promise<DropdownOption[]> {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<LookupRow>(`
+      SELECT ID, Name
+      FROM dbo.Titles
+      ORDER BY Name
+    `);
+    return toDropdownOptions(result.recordset);
+  } catch (err) {
+    console.error("Failed to fetch titles", err);
+    return [];
+  }
+}
 
 async function fetchCustomerName(customerId: number): Promise<string | null> {
   try {
@@ -34,12 +74,19 @@ export default async function Page({ params }: { params: Promise<{ customerId: s
   if (!numericCustomerId) {
     notFound();
   }
-  const customerName = await fetchCustomerName(numericCustomerId);
+  const [customerName, statuses, titles] = await Promise.all([
+    fetchCustomerName(numericCustomerId),
+    fetchEmailStatuses(),
+    fetchTitles(),
+  ]);
 
   return (
     <CustomerContactsClient
       customerId={String(numericCustomerId)}
       customerName={customerName}
+      statuses={statuses}
+      importances={IMPORTANCE_VALUES}
+      titles={titles}
     />
   );
 }

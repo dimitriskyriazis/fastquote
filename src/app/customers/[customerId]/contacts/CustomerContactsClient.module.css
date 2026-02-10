@@ -77,3 +77,95 @@
   width: 100%;
   height: 100%;
 }
+
+.contactModalBody {
+  padding: 14px 16px 6px;
+  overflow-y: auto;
+}
+
+.contactModalGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(200px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.contactModalField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.contactModalFieldFull {
+  grid-column: 1 / -1;
+}
+
+.fieldLabel {
+  font-size: 0.85rem;
+  color: #475569;
+  font-weight: 600;
+}
+
+.labelText {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lookupLabelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.requiredMark {
+  color: #b91c1c;
+  margin-left: 4px;
+  font-size: 0.75rem;
+}
+
+.fieldControl {
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.95rem;
+  background: #ffffff;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+  color: #0f172a;
+}
+
+.fieldControl:not(select) {
+  cursor: text;
+}
+
+.fieldControl:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.fieldControl option {
+  color: #0f172a;
+  font-weight: 500;
+}
+
+.contactModalToggle {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+}
+
+.contactToggleControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: #0f172a;
+}
+
+.contactToggleControl input[type="checkbox"] {
+  accent-color: #000000;
+}

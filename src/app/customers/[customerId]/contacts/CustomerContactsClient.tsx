@@ -1,16 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import React, { useMemo, useCallback, useRef } from "react";
+import React, { useMemo, useCallback, useRef, useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import type { CellValueChangedEvent, ColDef, GetContextMenuItemsParams, GridApi } from "ag-grid-community";
 import { GridRowDeletion } from "../../../../lib/gridRowDeletion";
 import styles from "./CustomerContactsClient.module.css";
+import lookupStyles from "../../../components/LookupModal.module.css";
+import lookupButtonStyles from "../../../components/LookupAddButton.module.css";
+import LookupModal from "../../../components/LookupModal";
 import PageHeader from "../../../components/PageHeader";
 import { GridQuickSearchProvider } from "../../../components/GridQuickSearchProvider";
 import { formatBooleanValue } from "../../../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../../../lib/normalizeBoolean";
 import { showToastMessage } from "../../../../lib/toast";
+import { useAddModal } from "../../../lib/useAddModal";
+import type { DropdownOption } from "../../../../lib/dropdownOptions";
+import {
+  createContact,
+  ContactFormValues,
+  EMPTY_CONTACT_FORM,
+  validateContactForm,
+} from "../../../customer-contacts/contactModalHelpers";
 
 const AgGridAll = dynamic(() => import("../../../components/AgGridAll"), {
   ssr: false,
@@ -51,15 +62,156 @@ const CONTACT_FIELD_LABELS: Record<string, string> = {
   Enabled: "Enabled",
 };
 
+const BOOLEAN_OPTIONS = [
+  { value: "1", label: "Yes" },
+  { value: "0", label: "No" },
+];
+
 type Props = {
   customerId: string;
   customerName: string | null;
+  statuses: string[];
+  importances: Array<string | number>;
+  titles: DropdownOption[];
 };
 
-export default function CustomerContactsClient({ customerId, customerName }: Props) {
+export default function CustomerContactsClient({ customerId, customerName, statuses, importances, titles }: Props) {
   const defaultEnabledFilterAppliedRef = useRef(false);
   const encodedCustomerId = encodeURIComponent(customerId);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
+  const statusOptions = useMemo(() => {
+    const unique = new Set(
+      statuses.map((entry) => (typeof entry === "string" ? entry.trim() : "")).filter(Boolean),
+    );
+    return Array.from(unique);
+  }, [statuses]);
+  const statusDropdownValues = useMemo(() => ["", ...statusOptions], [statusOptions]);
+  const importanceOptions = useMemo(() => {
+    const normalized = importances
+      .map((entry) => {
+        if (entry == null) return "";
+        if (typeof entry === "number") return String(entry);
+        return String(entry).trim();
+      })
+      .filter((value) => value.length > 0);
+    return Array.from(new Set(normalized));
+  }, [importances]);
+
+  const [refreshToken, setRefreshToken] = useState(0);
+  const {
+    values: contactForm,
+    setField: setContactField,
+    isOpen: isAddContactOpen,
+    open: rawOpenAddContact,
+    close: closeAddContact,
+    saving: contactSaving,
+    error: contactError,
+    setSaving: setContactSaving,
+    setError: setContactError,
+  } = useAddModal<ContactFormValues>(() => ({ ...EMPTY_CONTACT_FORM, customerId }));
+
+  const openAddContact = useCallback(() => {
+    rawOpenAddContact();
+    setContactField("customerId", customerId);
+  }, [rawOpenAddContact, setContactField, customerId]);
+
+  const [localTitleOptions, setLocalTitleOptions] = useState(titles);
+  useEffect(() => {
+    setLocalTitleOptions(titles);
+  }, [titles]);
+  const titleOptions = useMemo(() => localTitleOptions, [localTitleOptions]);
+  const [isAddTitleOpen, setIsAddTitleOpen] = useState(false);
+  const [newTitleName, setNewTitleName] = useState("");
+  const [newTitleEnabled, setNewTitleEnabled] = useState("1");
+  const [newTitleGreek, setNewTitleGreek] = useState("1");
+  const [newTitleDescription, setNewTitleDescription] = useState("");
+  const [titleSaving, setTitleSaving] = useState(false);
+  const [titleError, setTitleError] = useState<string | null>(null);
+  const openTitleModal = useCallback(() => {
+    setNewTitleName("");
+    setNewTitleEnabled("1");
+    setNewTitleGreek("1");
+    setNewTitleDescription("");
+    setTitleError(null);
+    setIsAddTitleOpen(true);
+  }, []);
+
+  const handleCreateTitle = useCallback(async () => {
+    const trimmed = newTitleName.trim();
+    if (!trimmed) {
+      setTitleError("Name is required");
+      return;
+    }
+    setTitleSaving(true);
+    setTitleError(null);
+    try {
+      const response = await fetch("/api/titles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trimmed,
+          enabled: newTitleEnabled === "1",
+          greek: newTitleGreek === "1",
+          description: newTitleDescription.trim() || null,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; option?: DropdownOption; error?: string }
+        | null;
+      const option = payload?.option;
+      if (!response.ok || !payload?.ok || !option) {
+        throw new Error(payload?.error ?? "Unable to add title");
+      }
+      setLocalTitleOptions((prev) => [...prev, option]);
+      setContactField("titleId", option.value);
+      showToastMessage("Title added", "success");
+      setIsAddTitleOpen(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to add title";
+      setTitleError(message);
+      showToastMessage(message, "error");
+    } finally {
+      setTitleSaving(false);
+    }
+  }, [newTitleName, newTitleEnabled, newTitleGreek, newTitleDescription, setContactField]);
+
+  const renderLookupAddButton = useCallback(
+    (fieldId: string) =>
+      fieldId === "title" ? (
+        <button
+          type="button"
+          className={lookupButtonStyles.lookupAddButton}
+          onClick={openTitleModal}
+          disabled={titleSaving}
+        >
+          Add Title
+        </button>
+      ) : null,
+    [openTitleModal, titleSaving],
+  );
+
+  const handleCreateContact = useCallback(async () => {
+    const validationError = validateContactForm(contactForm);
+    if (validationError) {
+      setContactError(validationError);
+      showToastMessage(validationError, "error");
+      return;
+    }
+    setContactSaving(true);
+    setContactError(null);
+    const result = await createContact(contactForm);
+    if (!result.ok) {
+      const message = result.error ?? "Unable to add contact.";
+      setContactError(message);
+      showToastMessage(message, "error");
+      setContactSaving(false);
+      return;
+    }
+    closeAddContact();
+    setContactSaving(false);
+    setRefreshToken((prev) => prev + 1);
+    showToastMessage("Contact added", "success");
+  }, [contactForm, closeAddContact, setContactError, setContactSaving, setRefreshToken]);
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     if (!api || defaultEnabledFilterAppliedRef.current) return;
@@ -224,6 +376,7 @@ export default function CustomerContactsClient({ customerId, customerName }: Pro
   const heading = customerName ? `${customerName} – Contacts` : "Customer Contacts";
 
   return (
+    <>
     <main className={styles.page}>
       <PageHeader
         title={heading}
@@ -237,9 +390,7 @@ export default function CustomerContactsClient({ customerId, customerName }: Pro
           <button
             type="button"
             className={`${styles.headerActionButton} page-header-button`}
-            onClick={() => {
-              /* add contact placeholder */
-            }}
+            onClick={openAddContact}
           >
             Add Contact
           </button>
@@ -255,10 +406,264 @@ export default function CustomerContactsClient({ customerId, customerName }: Pro
               onGridReady={handleGridReady}
               onCellValueChanged={handleCellEdit}
               getContextMenuItems={contactContextMenuItems}
+              refreshToken={refreshToken}
             />
           </div>
         </GridQuickSearchProvider>
       </PageHeader>
     </main>
+    <LookupModal
+      open={isAddContactOpen}
+      title="Add contact"
+      onClose={closeAddContact}
+      onConfirm={handleCreateContact}
+      confirmLabel="Add contact"
+      saving={contactSaving}
+      error={contactError}
+    >
+      <div className={styles.contactModalBody}>
+        <div className={styles.contactModalGrid}>
+          <div className={`${styles.contactModalField} ${styles.contactModalFieldFull}`}>
+            <label className={styles.fieldLabel} htmlFor="contact-title">
+              <div className={styles.lookupLabelRow}>
+                <div className={styles.labelText}>
+                  Title <span className={styles.requiredMark}>*</span>
+                </div>
+                {renderLookupAddButton("title")}
+              </div>
+            </label>
+            <select
+              id="contact-title"
+              className={styles.fieldControl}
+              value={contactForm.titleId}
+              required
+              onChange={(event) => setContactField("titleId", event.target.value)}
+            >
+              <option value="">Select title...</option>
+              {titleOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className={styles.contactModalField}>
+            <label className={styles.fieldLabel} htmlFor="contact-last-name">
+              Last name <span className={styles.requiredMark}>*</span>
+            </label>
+            <input
+              id="contact-last-name"
+              className={styles.fieldControl}
+              value={contactForm.lastName}
+              required
+              onChange={(event) => setContactField("lastName", event.target.value)}
+            />
+          </div>
+          <div className={styles.contactModalField}>
+            <label className={styles.fieldLabel} htmlFor="contact-first-name">
+              First name <span className={styles.requiredMark}>*</span>
+            </label>
+            <input
+              id="contact-first-name"
+              className={styles.fieldControl}
+              value={contactForm.firstName}
+              required
+              onChange={(event) => setContactField("firstName", event.target.value)}
+            />
+          </div>
+          <div className={styles.contactModalField}>
+            <label className={styles.fieldLabel} htmlFor="contact-position">
+              Position <span className={styles.requiredMark}>*</span>
+            </label>
+            <input
+              id="contact-position"
+              className={styles.fieldControl}
+              value={contactForm.position}
+              required
+              onChange={(event) => setContactField("position", event.target.value)}
+            />
+          </div>
+          <div className={styles.contactModalField}>
+            <label className={styles.fieldLabel} htmlFor="contact-importance">
+              Importance <span className={styles.requiredMark}>*</span>
+            </label>
+            <select
+              id="contact-importance"
+              className={styles.fieldControl}
+              value={contactForm.importance}
+              required
+              onChange={(event) => setContactField("importance", event.target.value)}
+            >
+              <option value="">Select importance...</option>
+              {importanceOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className={styles.contactModalField}>
+            <label className={styles.fieldLabel} htmlFor="contact-email">
+              Email
+            </label>
+            <input
+              id="contact-email"
+              className={styles.fieldControl}
+              value={contactForm.email}
+              onChange={(event) => setContactField("email", event.target.value)}
+            />
+          </div>
+          <div className={styles.contactModalField}>
+            <label className={styles.fieldLabel} htmlFor="contact-email-status">
+              Email status
+            </label>
+            <select
+              id="contact-email-status"
+              className={styles.fieldControl}
+              value={contactForm.emailStatus}
+              onChange={(event) => setContactField("emailStatus", event.target.value)}
+            >
+              {statusDropdownValues.map((option) => (
+                <option key={option} value={option}>
+                  {option || "Select status..."}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className={styles.contactModalField}>
+            <label className={styles.fieldLabel} htmlFor="contact-second-email">
+              Second email
+            </label>
+            <input
+              id="contact-second-email"
+              className={styles.fieldControl}
+              value={contactForm.secondEmail}
+              onChange={(event) => setContactField("secondEmail", event.target.value)}
+            />
+          </div>
+          <div className={styles.contactModalField}>
+            <label className={styles.fieldLabel} htmlFor="contact-second-email-status">
+              Second email status
+            </label>
+            <select
+              id="contact-second-email-status"
+              className={styles.fieldControl}
+              value={contactForm.secondEmailStatus}
+              onChange={(event) => setContactField("secondEmailStatus", event.target.value)}
+            >
+              {statusDropdownValues.map((option) => (
+                <option key={option} value={option}>
+                  {option || "Select status..."}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className={styles.contactModalField}>
+            <label className={styles.fieldLabel} htmlFor="contact-phone">
+              Phone
+            </label>
+            <input
+              id="contact-phone"
+              className={styles.fieldControl}
+              value={contactForm.phone}
+              onChange={(event) => setContactField("phone", event.target.value)}
+            />
+          </div>
+          <div className={styles.contactModalField}>
+            <label className={styles.fieldLabel} htmlFor="contact-mobile">
+              Mobile
+            </label>
+            <input
+              id="contact-mobile"
+              className={styles.fieldControl}
+              value={contactForm.mobile}
+              onChange={(event) => setContactField("mobile", event.target.value)}
+            />
+          </div>
+          <div className={`${styles.contactModalField} ${styles.contactModalToggle}`}>
+            <label className={styles.fieldLabel} htmlFor="contact-enabled">
+              Enabled <span className={styles.requiredMark}>*</span>
+            </label>
+            <label className={styles.contactToggleControl} htmlFor="contact-enabled">
+              <input
+                id="contact-enabled"
+                type="checkbox"
+                checked={contactForm.enabled}
+                onChange={(event) => setContactField("enabled", event.target.checked)}
+              />
+              {contactForm.enabled ? "Yes" : "No"}
+            </label>
+          </div>
+        </div>
+      </div>
+    </LookupModal>
+    <LookupModal
+      open={isAddTitleOpen}
+      title="Add Title"
+      onClose={() => setIsAddTitleOpen(false)}
+      onConfirm={handleCreateTitle}
+      confirmLabel="Create"
+      saving={titleSaving}
+      error={titleError}
+    >
+      <div className={lookupStyles.field}>
+        <label className={lookupStyles.fieldLabel} htmlFor="new-title-name">
+          Name
+        </label>
+        <input
+          id="new-title-name"
+          className={lookupStyles.fieldControl}
+          value={newTitleName}
+          required
+          onChange={(event) => setNewTitleName(event.target.value)}
+        />
+      </div>
+      <div className={lookupStyles.field}>
+        <label className={lookupStyles.fieldLabel} htmlFor="new-title-description">
+          Description
+        </label>
+        <textarea
+          id="new-title-description"
+          className={`${lookupStyles.fieldControl} ${lookupStyles.textarea}`}
+          value={newTitleDescription}
+          onChange={(event) => setNewTitleDescription(event.target.value)}
+        />
+      </div>
+      <div className={lookupStyles.field}>
+        <label className={lookupStyles.fieldLabel} htmlFor="new-title-greek">
+          Greek
+        </label>
+        <select
+          id="new-title-greek"
+          className={lookupStyles.fieldControl}
+          value={newTitleGreek}
+          onChange={(event) => setNewTitleGreek(event.target.value)}
+        >
+          {BOOLEAN_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className={lookupStyles.field}>
+        <label className={lookupStyles.fieldLabel} htmlFor="new-title-enabled">
+          Enabled
+        </label>
+        <select
+          id="new-title-enabled"
+          className={lookupStyles.fieldControl}
+          value={newTitleEnabled}
+          onChange={(event) => setNewTitleEnabled(event.target.value)}
+        >
+          {BOOLEAN_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </LookupModal>
+    </>
   );
 }

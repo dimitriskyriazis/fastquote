@@ -48,6 +48,9 @@ export const validateContactForm = (form: ContactFormValues): string | null => {
   if (!normalizeTextValue(form.firstName)) {
     return "First name is required.";
   }
+  if (!normalizeTextValue(form.position)) {
+    return "Position is required.";
+  }
   if (!normalizeDropdownValue(form.importance)) {
     return "Importance is required.";
   }
