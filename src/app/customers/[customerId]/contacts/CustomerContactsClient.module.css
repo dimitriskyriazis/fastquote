@@ -39,6 +39,14 @@
   cursor: pointer;
 }
 
+.headerActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .headerActionButton:active {
   box-shadow: 0 4px 10px rgba(15, 23, 42, 0.1);
 }

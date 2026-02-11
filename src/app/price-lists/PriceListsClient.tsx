@@ -19,6 +19,8 @@ import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import styles from "./PriceListsClient.module.css";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
+import { useAuditUser } from "../components/AuditUserProvider";
 import { formatDateUK } from "../lib/formatDateTime";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
@@ -65,6 +67,7 @@ const PRICE_LIST_FIELD_LABELS: Record<string, string> = {
 
 export default function PriceListsClient() {
   const router = useRouter();
+  const { roles } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
 
@@ -235,8 +238,9 @@ export default function PriceListsClient() {
           (isSingle ? 'Keep price list' : 'Keep price lists'),
         successToastMessage: 'Price list deleted',
         failureToastMessage: 'Unable to delete price list. Please try again.',
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'pricelists', 'managePriceLists'),
       }),
-    [],
+    [roles],
   );
 
   const priceListsContextMenuItems = useCallback(

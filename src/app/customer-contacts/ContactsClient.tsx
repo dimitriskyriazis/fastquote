@@ -10,6 +10,8 @@ import type {
   GridApi,
 } from "ag-grid-community";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
+import { useAuditUser } from "../components/AuditUserProvider";
 import styles from "./ContactsClient.module.css";
 import lookupStyles from "../components/LookupModal.module.css";
 import lookupButtonStyles from "../components/LookupAddButton.module.css";
@@ -77,6 +79,24 @@ const BOOLEAN_OPTIONS = [
   { value: "0", label: "No" },
 ];
 
+const TITLE_PRIORITY_ORDER = ["Mr", "Mrs", "\u039A\u03BF\u03C2", "\u039A\u03B1", "Dr", "\u0394\u03C1"] as const;
+
+const sortTitleOptions = (options: DropdownOption[]): DropdownOption[] => {
+  const priorityIndex = new Map<string, number>(
+    TITLE_PRIORITY_ORDER.map((label, index) => [label, index]),
+  );
+  return [...options].sort((a, b) => {
+    const aLabel = a.label.trim();
+    const bLabel = b.label.trim();
+    const aPriority = priorityIndex.get(aLabel);
+    const bPriority = priorityIndex.get(bLabel);
+    if (aPriority != null && bPriority != null) return aPriority - bPriority;
+    if (aPriority != null) return -1;
+    if (bPriority != null) return 1;
+    return aLabel.localeCompare(bLabel);
+  });
+};
+
 const normalizeTextInput = (value: unknown): string => {
   if (value == null) return "";
   if (typeof value === "string") return value.trim();
@@ -129,6 +149,7 @@ export default function ContactsClient({
   initialContactLastName,
 }: Props) {
   const router = useRouter();
+  const { roles } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const initialContactFilterAppliedRef = useRef(false);
   const statusOptions = useMemo(() => {
@@ -250,9 +271,9 @@ export default function ContactsClient({
     }
   }, [changeCustomerContactId, changeCustomerSelected, closeChangeCustomer]);
 
-  const [localTitleOptions, setLocalTitleOptions] = useState(titles);
+  const [localTitleOptions, setLocalTitleOptions] = useState(() => sortTitleOptions(titles));
   useEffect(() => {
-    setLocalTitleOptions(titles);
+    setLocalTitleOptions(sortTitleOptions(titles));
   }, [titles]);
   const titleOptions = useMemo(() => localTitleOptions, [localTitleOptions]);
   const [isAddTitleOpen, setIsAddTitleOpen] = useState(false);
@@ -297,7 +318,7 @@ export default function ContactsClient({
       if (!response.ok || !payload?.ok || !option) {
         throw new Error(payload?.error ?? "Unable to add title");
       }
-      setLocalTitleOptions((prev) => [...prev, option]);
+      setLocalTitleOptions((prev) => sortTitleOptions([...prev, option]));
       setContactField("titleId", option.value);
       showToastMessage("Title added", "success");
       setIsAddTitleOpen(false);
@@ -588,8 +609,9 @@ export default function ContactsClient({
           (isSingle ? "Keep contact" : "Keep contacts"),
         successToastMessage: "Contact deleted",
         failureToastMessage: "Unable to delete contact. Please try again.",
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageCustomersContacts'),
       }),
-    [],
+    [roles],
   );
 
   const contactContextMenuItems = useCallback(

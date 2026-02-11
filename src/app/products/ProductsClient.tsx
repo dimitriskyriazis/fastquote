@@ -14,6 +14,8 @@ import type {
   RowNode,
 } from "ag-grid-community";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
+import { useAuditUser } from "../components/AuditUserProvider";
 import { openLinkInNewTab } from "../../lib/navigation";
 import { showToastMessage } from "../../lib/toast";
 import styles from "./ProductsClient.module.css";
@@ -136,6 +138,7 @@ const PRODUCT_ROW_TYPE = "product";
 
 export default function ProductsClient() {
   const router = useRouter();
+  const { roles } = useAuditUser();
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
   const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null);
@@ -280,8 +283,9 @@ export default function ProductsClient() {
           (isSingle ? "Keep product" : "Keep products"),
         successToastMessage: "Product deleted",
         failureToastMessage: "Unable to delete product. Please try again.",
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageBrandsSuppliers'),
       }),
-    [],
+    [roles],
   );
 
   const getContextMenuItems = useCallback(

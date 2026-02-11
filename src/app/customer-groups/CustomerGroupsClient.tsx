@@ -11,6 +11,8 @@ import type {
   ValueFormatterParams,
 } from "ag-grid-community";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
+import { useAuditUser } from "../components/AuditUserProvider";
 import styles from "./CustomerGroupsClient.module.css";
 import LookupModal from "../components/LookupModal";
 import PageHeader from "../components/PageHeader";
@@ -69,6 +71,7 @@ const GROUP_FIELD_LABELS: Record<string, string> = {
 
 export default function CustomerGroupsClient() {
   const router = useRouter();
+  const { roles } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -162,8 +165,9 @@ export default function CustomerGroupsClient() {
           (isSingle ? "Keep group" : "Keep groups"),
         successToastMessage: "Customer group deleted",
         failureToastMessage: "Unable to delete group. Please try again.",
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', null),
       }),
-    [],
+    [roles],
   );
 
   const groupContextMenuItems = useCallback(

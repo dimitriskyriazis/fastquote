@@ -14,6 +14,8 @@ import type {
 import layoutStyles from "../../priceListDetail.module.css";
 import pageStyles from "./PriceListProductsPage.module.css";
 import { GridRowDeletion } from "../../../../lib/gridRowDeletion";
+import { checkDeletePermissionForClient } from "../../../../lib/deletePermissions";
+import { useAuditUser } from "../../../components/AuditUserProvider";
 import { getUserNumberLocale } from "../../../../lib/localeNumber";
 import { normalizeBoolean } from "../../../../lib/normalizeBoolean";
 import { showToastMessage } from "../../../../lib/toast";
@@ -108,6 +110,7 @@ export default function PriceListProductsClient({
   headingText,
   priceListLabel,
 }: Props) {
+  const { roles } = useAuditUser();
   const endpoint = useMemo(
     () => `/api/price-lists/${encodeURIComponent(priceListId)}/products`,
     [priceListId],
@@ -282,8 +285,9 @@ export default function PriceListProductsClient({
           (isSingle ? "Keep item" : "Keep items"),
         successToastMessage: "Price list item deleted",
         failureToastMessage: "Unable to delete price list item. Please try again.",
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'managePriceLists'),
       }),
-    [endpoint],
+    [endpoint, roles],
   );
 
   const priceListContextMenuItems = useCallback(

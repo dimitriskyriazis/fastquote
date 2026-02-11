@@ -16,6 +16,8 @@ import styles from "./BrandsClient.module.css";
 import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
+import { useAuditUser } from "../components/AuditUserProvider";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
 import AddBrandModal from "../components/AddBrandModal";
@@ -77,6 +79,7 @@ function normalizeBrandContextMenuItems(
 
 export default function BrandsClient() {
   const router = useRouter();
+  const { roles } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -113,8 +116,9 @@ export default function BrandsClient() {
             console.warn("Failed to refresh brands grid after deletion", err);
           }
         },
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageBrandsSuppliers'),
       }),
-    [],
+    [roles],
   );
 
   const getContextMenuItems = useCallback(

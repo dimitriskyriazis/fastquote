@@ -105,60 +105,39 @@ export const buildTextMatchPredicate = (
 
   const extraClauses: string[] = [];
 
-  if (mode === 'contains' && trimmed.length >= 4 && trimmed.length <= 6 && !hasDigits(trimmed)) {
+  if (mode === 'contains' && trimmed.length >= 4 && trimmed.length <= 9 && !hasDigits(trimmed)) {
     const upperTerm = trimmed.toUpperCase();
-    const firstLetterGuard = `LEFT(${ciExpr}, 1) = LEFT(UPPER(@${paramKey}_first), 1)`;
-    params.push({ key: `${paramKey}_first`, value: upperTerm });
-    const variants = buildAdjacentSwapVariants(trimmed).filter((v) => v !== trimmed);
+
+    // Swap variants: keep first letter intact, limit to 2
+    const variants = buildAdjacentSwapVariants(trimmed)
+      .filter((v) => v !== trimmed && v[0].toUpperCase() === upperTerm[0])
+      .slice(0, 2);
     variants.forEach((variant, idx) => {
       const key = `${paramKey}_sw${idx}`;
       params.push({ key, value: `%${variant.toUpperCase()}%` });
-      extraClauses.push(`(${ciExpr} LIKE @${key} AND ${firstLetterGuard})`);
+      extraClauses.push(`(${ciExpr} LIKE @${key})`);
     });
 
-    const insertionPatterns: string[] = [];
+    // Insertion: both fragments >= 3 (kicks in at 6+ char terms)
     for (let i = 0; i <= upperTerm.length; i += 1) {
-      insertionPatterns.push(`${upperTerm.slice(0, i)}%${upperTerm.slice(i)}`);
+      const left = upperTerm.slice(0, i);
+      const right = upperTerm.slice(i);
+      if (left.length < 3 || right.length < 3) continue;
+      const key = `${paramKey}_ins${i}`;
+      params.push({ key, value: `%${left}%${right}%` });
+      extraClauses.push(`(${ciExpr} LIKE @${key})`);
     }
-    insertionPatterns.forEach((pattern, idx) => {
-      const key = `${paramKey}_ins${idx}`;
-      params.push({ key, value: `%${pattern}%` });
-      extraClauses.push(`(${ciExpr} LIKE @${key} AND ${firstLetterGuard})`);
-    });
 
-    const substitutionPatterns: string[] = [];
+    // Substitution: both >= 1 and longer side >= 3 (kicks in at 5+ char terms)
     for (let i = 0; i < upperTerm.length; i += 1) {
-      substitutionPatterns.push(`${upperTerm.slice(0, i)}%${upperTerm.slice(i + 1)}`);
+      const left = upperTerm.slice(0, i);
+      const right = upperTerm.slice(i + 1);
+      if (left.length < 1 || right.length < 1) continue;
+      if (Math.max(left.length, right.length) < 3) continue;
+      const key = `${paramKey}_sub${i}`;
+      params.push({ key, value: `%${left}%${right}%` });
+      extraClauses.push(`(${ciExpr} LIKE @${key})`);
     }
-    substitutionPatterns.forEach((pattern, idx) => {
-      const key = `${paramKey}_sub${idx}`;
-      params.push({ key, value: `%${pattern}%` });
-      extraClauses.push(`(${ciExpr} LIKE @${key} AND ${firstLetterGuard})`);
-    });
-  } else if (mode === 'contains' && trimmed.length >= 7 && trimmed.length <= 9 && !hasDigits(trimmed)) {
-    // For longer terms, keep only mild typo tolerance to avoid noisy matches.
-    const upperTerm = trimmed.toUpperCase();
-    const firstLetterGuard = `LEFT(${ciExpr}, 1) = LEFT(UPPER(@${paramKey}_first), 1)`;
-    const lastLetterGuard = `RIGHT(${ciExpr}, 1) = RIGHT(UPPER(@${paramKey}_last), 1)`;
-    params.push({ key: `${paramKey}_first`, value: upperTerm });
-    params.push({ key: `${paramKey}_last`, value: upperTerm });
-
-    const variants = buildAdjacentSwapVariants(trimmed).filter((v) => v !== trimmed);
-    variants.forEach((variant, idx) => {
-      const key = `${paramKey}_sw${idx}`;
-      params.push({ key, value: `%${variant.toUpperCase()}%` });
-      extraClauses.push(`(${ciExpr} LIKE @${key} AND ${firstLetterGuard} AND ${lastLetterGuard})`);
-    });
-
-    const insertionPatterns: string[] = [];
-    for (let i = 0; i <= upperTerm.length; i += 1) {
-      insertionPatterns.push(`${upperTerm.slice(0, i)}%${upperTerm.slice(i)}`);
-    }
-    insertionPatterns.forEach((pattern, idx) => {
-      const key = `${paramKey}_ins${idx}`;
-      params.push({ key, value: `%${pattern}%` });
-      extraClauses.push(`(${ciExpr} LIKE @${key} AND ${firstLetterGuard} AND ${lastLetterGuard})`);
-    });
   }
 
   // Phonetic matching disabled due to frequent false positives in UI searches.

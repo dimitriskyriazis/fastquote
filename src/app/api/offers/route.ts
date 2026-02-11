@@ -9,6 +9,7 @@ import {
   QueryParam,
 } from '../../../lib/gridFilters';
 import { requirePermission } from '../../../lib/authz';
+import { checkDeletePermission } from '../../../lib/deletePermissions';
 import { KnownFilterModel } from '../../../lib/filterTypes';
 import { processFilter } from '../../../lib/filterProcessing';
 
@@ -468,6 +469,11 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'No offers selected for deletion' }, { status: 400 });
     }
 
+    const deleteCheck = checkDeletePermission(auth.roles, normalizedIds.length, 'offers', null);
+    if (!deleteCheck.allowed) {
+      return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
+    }
+
     const pool = await getPool();
     const chunkSize = 200;
     let deleted = 0;
@@ -495,6 +501,11 @@ export async function DELETE(req: NextRequest) {
 
         await bindParams(new sql.Request(transaction)).query(`
           DELETE FROM dbo.OfferDetails
+          WHERE OfferID IN (${idsSql});
+        `);
+
+        await bindParams(new sql.Request(transaction)).query(`
+          DELETE FROM dbo.OfferStatusHistory
           WHERE OfferID IN (${idsSql});
         `);
 

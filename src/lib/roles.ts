@@ -8,6 +8,7 @@ export type AppRole =
 
 export type Permission =
   | 'dangerousOps'
+  | 'criticalOps'
   | 'manageUsers'
   | 'managePriceLists'
   | 'managePricingPolicies'
@@ -73,7 +74,7 @@ export const sortRoleNames = (roles: readonly string[]): string[] => {
 export const roleHasPermission = (roles: readonly AppRole[], permission: Permission): boolean => {
   if (roles.includes('Developer')) return true;
   if (roles.includes('Administrator')) {
-    return permission !== 'dangerousOps';
+    return permission !== 'criticalOps';
   }
 
   switch (permission) {
@@ -108,6 +109,7 @@ export const roleHasPermission = (roles: readonly AppRole[], permission: Permiss
     case 'manageUsers':
       return false;
     case 'dangerousOps':
+    case 'criticalOps':
     default:
       return false;
   }

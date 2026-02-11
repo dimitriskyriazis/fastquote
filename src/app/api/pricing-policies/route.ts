@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool } from '../../../lib/sql';
 import { requirePermission } from '../../../lib/authz';
+import { checkDeletePermission } from '../../../lib/deletePermissions';
 
 type CreatePricingPolicyBody = {
   name?: unknown;
@@ -115,6 +116,11 @@ export async function DELETE(req: NextRequest) {
     const ids = singleId != null ? [singleId] : listIds;
     if (!ids || ids.length === 0) {
       return NextResponse.json({ ok: false, error: 'Pricing policy ID is required' }, { status: 400 });
+    }
+
+    const deleteCheck = checkDeletePermission(auth.roles, ids.length, 'pricingPolicies', null);
+    if (!deleteCheck.allowed) {
+      return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }
 
     const pool = await getPool();

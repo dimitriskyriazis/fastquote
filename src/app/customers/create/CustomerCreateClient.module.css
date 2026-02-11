@@ -41,7 +41,3 @@
 .lookupButtonRaised {
   flex: 0 0 auto;
 }
-
-.pricingPolicyNudgeUp {
-  transform: translateY(-10px);
-}

@@ -15,6 +15,8 @@ import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from '../c
 import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from '../components/useActionMenuCoordinator';
 import { useActionMenuPosition } from '../components/useActionMenuPosition';
 import { GridRowDeletion } from '../../lib/gridRowDeletion';
+import { checkDeletePermissionForClient } from '../../lib/deletePermissions';
+import { useAuditUser } from '../components/AuditUserProvider';
 import PageHeader from '../components/PageHeader';
 import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
 import { formatDateTime } from '../lib/formatDateTime';
@@ -105,6 +107,7 @@ const localeStringComparator = (a: unknown, b: unknown) => {
 
 export default function OffersClient() {
   const router = useRouter();
+  const { roles } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const [expandedVersionGroups, setExpandedVersionGroups] = useState<Set<number>>(new Set());
@@ -212,8 +215,9 @@ export default function OffersClient() {
           (isSingle ? 'Keep offer' : 'Keep offers'),
         successToastMessage: 'Offer deleted',
         failureToastMessage: 'Unable to delete offer. Please try again.',
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'offers', 'editOffers'),
       }),
-    [],
+    [roles],
   );
 
   const offersContextMenuItems = useCallback(

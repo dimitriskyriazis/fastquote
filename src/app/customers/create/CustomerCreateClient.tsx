@@ -243,14 +243,8 @@ export default function CustomerCreateClient({
   const router = useRouter();
   const [, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [pricingPolicyOptions, setPricingPolicyOptions] = useState(pricingPolicies);
   const [countryOptions, setCountryOptions] = useState(countries);
   const [cityOptions, setCityOptions] = useState(cities);
-  const [isAddPricingPolicyOpen, setIsAddPricingPolicyOpen] = useState(false);
-  const [newPricingPolicyName, setNewPricingPolicyName] = useState('');
-  const [newPricingPolicyEnabled, setNewPricingPolicyEnabled] = useState('1');
-  const [pricingPolicySaving, setPricingPolicySaving] = useState(false);
-  const [pricingPolicyError, setPricingPolicyError] = useState<string | null>(null);
   const [isAddCountryOpen, setIsAddCountryOpen] = useState(false);
   const [newCountryName, setNewCountryName] = useState('');
   const [newCountryEnabled, setNewCountryEnabled] = useState('1');
@@ -268,15 +262,15 @@ export default function CustomerCreateClient({
       buildFieldDefinitions(
         customerGroups,
         parentCustomers,
-        pricingPolicyOptions,
+        pricingPolicies,
         importanceOptions,
         countryOptions,
       ),
-    [customerGroups, parentCustomers, pricingPolicyOptions, importanceOptions, countryOptions],
+    [customerGroups, parentCustomers, pricingPolicies, importanceOptions, countryOptions],
   );
 
   const initialValues = useMemo(() => {
-    const defaultPricingPolicyId = resolveDefaultPricingPolicyId(pricingPolicyOptions);
+    const defaultPricingPolicyId = resolveDefaultPricingPolicyId(pricingPolicies);
     const next: Record<string, string> = {};
     fieldDefinitions.forEach((field) => {
       if (field.id === 'isParent') {
@@ -298,17 +292,13 @@ export default function CustomerCreateClient({
       next[field.id] = '';
     });
     return next;
-  }, [fieldDefinitions, pricingPolicyOptions]);
+  }, [fieldDefinitions, pricingPolicies]);
 
   const [values, setValues] = useState(initialValues);
 
   useEffect(() => {
     setValues(initialValues);
   }, [initialValues]);
-
-  useEffect(() => {
-    setPricingPolicyOptions(pricingPolicies);
-  }, [pricingPolicies]);
 
   useEffect(() => {
     setCountryOptions(countries);
@@ -423,50 +413,6 @@ export default function CustomerCreateClient({
     [router, values],
   );
 
-  const openPricingPolicyModal = useCallback(() => {
-    setNewPricingPolicyName('');
-    setNewPricingPolicyEnabled('1');
-    setPricingPolicyError(null);
-    setIsAddPricingPolicyOpen(true);
-  }, []);
-
-  const handleCreatePricingPolicy = useCallback(async () => {
-    const trimmedName = newPricingPolicyName.trim();
-    if (!trimmedName) {
-      setPricingPolicyError('Name is required');
-      return;
-    }
-    setPricingPolicySaving(true);
-    setPricingPolicyError(null);
-    try {
-      const response = await fetch('/api/pricing-policies', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: trimmedName,
-          enabled: newPricingPolicyEnabled === '1',
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | { ok?: boolean; option?: CustomerDropdownOption; error?: string }
-        | null;
-      const option = payload?.option;
-      if (!response.ok || !payload?.ok || !option) {
-        throw new Error(payload?.error ?? 'Unable to add pricing policy');
-      }
-      setPricingPolicyOptions((prev) => [...prev, option]);
-      setValues((prev) => ({ ...prev, pricingPolicy: option.value }));
-      showToastMessage('Pricing policy added', 'success');
-      setIsAddPricingPolicyOpen(false);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to add pricing policy';
-      setPricingPolicyError(message);
-      showToastMessage(message, 'error');
-    } finally {
-      setPricingPolicySaving(false);
-    }
-  }, [newPricingPolicyName, newPricingPolicyEnabled]);
-
   const openCountryModal = useCallback(() => {
     setNewCountryName('');
     setNewCountryEnabled('1');
@@ -570,18 +516,6 @@ export default function CustomerCreateClient({
 
   const renderLookupAddButton = useCallback(
     (fieldId: string) => {
-      if (fieldId === 'pricingPolicy') {
-        return (
-          <button
-            type="button"
-            className={lookupButtonStyles.lookupAddButton}
-            onClick={openPricingPolicyModal}
-            disabled={pricingPolicySaving}
-          >
-            Add New
-          </button>
-        );
-      }
       if (fieldId === 'country') {
         return (
           <button
@@ -612,8 +546,6 @@ export default function CustomerCreateClient({
       countryOptions.length,
       openCityModal,
       openCountryModal,
-      openPricingPolicyModal,
-      pricingPolicySaving,
       countrySaving,
       citySaving,
     ],
@@ -725,9 +657,8 @@ export default function CustomerCreateClient({
                   : '';
             const lookupButton = renderLookupAddButton(field.id);
             const hasLookupButton = Boolean(lookupButton);
-            const pricingPolicyNudgeClass = field.id === 'pricingPolicy' ? styles.pricingPolicyNudgeUp : '';
             return (
-              <div key={field.id} className={`${panelStyles.fieldBlock} ${spanClass} ${pricingPolicyNudgeClass}`}>
+              <div key={field.id} className={`${panelStyles.fieldBlock} ${spanClass}`}>
                 {hasLookupButton ? (
                   <div className={styles.fieldHeaderWithLookup}>
                     <label className={panelStyles.fieldLabel} htmlFor={`customer-create-${field.id}`}>
@@ -775,45 +706,6 @@ export default function CustomerCreateClient({
           </div>
         </section>
       </form>
-      <LookupModal
-        open={isAddPricingPolicyOpen}
-        title="Add Pricing Policy"
-        onClose={() => setIsAddPricingPolicyOpen(false)}
-        onConfirm={handleCreatePricingPolicy}
-        confirmLabel="Create"
-        saving={pricingPolicySaving}
-        error={pricingPolicyError}
-      >
-        <div className={lookupStyles.field}>
-          <label className={lookupStyles.fieldLabel} htmlFor="new-pricing-policy-name">
-            Name
-          </label>
-          <input
-            id="new-pricing-policy-name"
-            className={lookupStyles.fieldControl}
-            value={newPricingPolicyName}
-            required
-            onChange={(event) => setNewPricingPolicyName(event.target.value)}
-          />
-        </div>
-        <div className={lookupStyles.field}>
-          <label className={lookupStyles.fieldLabel} htmlFor="new-pricing-policy-enabled">
-            Enabled
-          </label>
-          <select
-            id="new-pricing-policy-enabled"
-            className={lookupStyles.fieldControl}
-            value={newPricingPolicyEnabled}
-            onChange={(event) => setNewPricingPolicyEnabled(event.target.value)}
-          >
-            {BOOLEAN_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </LookupModal>
       <LookupModal
         open={isAddCountryOpen}
         title="Add Country"

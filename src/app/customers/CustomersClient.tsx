@@ -15,6 +15,8 @@ import { createPortal } from "react-dom";
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from "../components/actionMenuMarkers";
 import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from "../components/useActionMenuCoordinator";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
+import { useAuditUser } from "../components/AuditUserProvider";
 import Link from "next/link";
 import styles from "./CustomersClient.module.css";
 import { useActionMenuPosition } from "../components/useActionMenuPosition";
@@ -73,6 +75,7 @@ const CUSTOMER_FIELD_LABELS: Record<string, string> = {
 
 export default function CustomersClient() {
   const router = useRouter();
+  const { roles } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
 
@@ -353,9 +356,10 @@ export default function CustomersClient() {
         confirmCancelLabel: ({ isSingle }) =>
           (isSingle ? "Keep customer" : "Keep customers"),
         successToastMessage: "Customer deleted",
-        failureToastMessage: "Unable to delete customer. Please try again.",
+        failureToastMessage: "Cannot delete customer: an offer already exists for this customer.",
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageCustomersContacts'),
       }),
-    [],
+    [roles],
   );
 
   const customerContextMenuItems = useCallback(

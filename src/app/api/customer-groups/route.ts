@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import { getPool } from "../../../lib/sql";
+import { buildAuditContext } from "../../../lib/auditTrail";
+import { fetchUserRoles } from "../../../lib/authz";
+import { checkDeletePermission } from "../../../lib/deletePermissions";
 import {
   buildQuickFilterClause,
   mergeWhereClauses,
@@ -272,6 +275,9 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    const audit = buildAuditContext(req);
+    const roles = await fetchUserRoles(audit.userId);
+
     const body = await req.json().catch(() => null);
     const ids = collectCustomerGroupIds(
       (body as { CustomerGroupIDs?: unknown } | null)?.CustomerGroupIDs ?? [],
@@ -281,6 +287,11 @@ export async function DELETE(req: NextRequest) {
         { ok: false, error: "No customer groups selected for deletion" },
         { status: 400 },
       );
+    }
+
+    const deleteCheck = checkDeletePermission(roles, ids.length, 'generic', null);
+    if (!deleteCheck.allowed) {
+      return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }
 
     const pool = await getPool();

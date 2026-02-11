@@ -3,6 +3,7 @@ import sql from "mssql";
 import { getPool } from "../../../lib/sql";
 import { resolveAuditUserId } from "../../../lib/auditTrail";
 import { requirePermission } from "../../../lib/authz";
+import { checkDeletePermission } from "../../../lib/deletePermissions";
 
 type UpdateInput = {
   CountryID?: number | string | null;
@@ -130,6 +131,11 @@ export async function DELETE(req: NextRequest) {
 
     if (ids.length === 0) {
       return NextResponse.json({ ok: false, error: "No countries selected for deletion" }, { status: 400 });
+    }
+
+    const deleteCheck = checkDeletePermission(auth.roles, ids.length, 'generic', null);
+    if (!deleteCheck.allowed) {
+      return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }
 
     const pool = await getPool();

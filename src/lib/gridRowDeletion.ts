@@ -1,6 +1,7 @@
 import type { GridApi, GetContextMenuItemsParams, MenuItemDef, DefaultMenuItem, RowNode, ServerSideRowSelectionState } from 'ag-grid-community';
 import { showConfirmDialog } from './confirm';
 import { showToastMessage } from './toast';
+import type { DeletePermissionResult } from './deletePermissions';
 
 const contextMenuSelectionSnapshots = new WeakMap<GridApi<unknown>, unknown[]>();
 
@@ -76,6 +77,7 @@ type GridRowDeletionConfig<RowData> = {
   successToastMessage?: string | ((typeLabel: string, label: string) => string);
   failureToastMessage?: string;
   refreshHandler?: (api: GridApi<RowData> | null) => void;
+  canDelete?: (count: number) => DeletePermissionResult;
 };
 
 export class GridRowDeletion<RowData> {
@@ -175,6 +177,13 @@ export class GridRowDeletion<RowData> {
 
   private async deleteRows(rows: (RowData | null)[], ids: number[], api: GridApi<RowData> | null) {
     if (ids.length === 0) return;
+    if (typeof this.config.canDelete === 'function') {
+      const check = this.config.canDelete(ids.length);
+      if (!check.allowed) {
+        showToastMessage(check.reason, 'error');
+        return;
+      }
+    }
     const isSingle = ids.length === 1;
     const fallbackLabel = isSingle ? `record #${ids[0]}` : `${ids.length} records`;
     const typeLabel = isSingle ? this.getRowTypeLabel(rows[0]) : this.getMultiRowTypeLabel(rows);
@@ -267,6 +276,11 @@ export class GridRowDeletion<RowData> {
       if (targetEntries.length === 0) {
         return baseItems;
       }
+      let deleteBlocked: string | null = null;
+      if (typeof this.config.canDelete === 'function') {
+        const check = this.config.canDelete(targetEntries.length);
+        if (!check.allowed) deleteBlocked = check.reason;
+      }
       if (baseItems.length > 0 && baseItems[baseItems.length - 1] !== 'separator') {
         baseItems.push('separator');
       }
@@ -277,6 +291,8 @@ export class GridRowDeletion<RowData> {
       const deleteItem: MenuItemDef<RowData> = {
         name: deleteLabel,
         icon: deleteRecordMenuIcon,
+        disabled: deleteBlocked != null,
+        tooltip: deleteBlocked ?? undefined,
         action: () => {
           const ids = targetEntries.map((entry) => entry.id);
           void this.deleteRows(rows, ids, params.api ?? null);

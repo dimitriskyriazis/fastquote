@@ -25,6 +25,8 @@ import {
 } from "./marketModalHelpers";
 import { useAddModal } from "../lib/useAddModal";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
+import { useAuditUser } from "../components/AuditUserProvider";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
 
@@ -93,6 +95,7 @@ const MARKET_FIELD_LABELS: Record<string, string> = {
 };
 
 export default function MarketsClient({ salesDivisions }: Props) {
+  const { roles } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const salesDivisionOptions = useMemo(() => {
     const unique = new Set(
@@ -145,8 +148,9 @@ export default function MarketsClient({ salesDivisions }: Props) {
             console.warn("Failed to refresh markets grid after deletion", err);
           }
         },
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', null),
       }),
-    [],
+    [roles],
   );
 
   const getContextMenuItems = useCallback(

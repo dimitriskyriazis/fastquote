@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import type { ConnectionPool, Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
-import { resolveAuditUserId } from "../../../lib/auditTrail";
+import { buildAuditContext, resolveAuditUserId } from "../../../lib/auditTrail";
+import { fetchUserRoles } from "../../../lib/authz";
+import { checkDeletePermission } from "../../../lib/deletePermissions";
 import {
   buildQuickFilterClause,
   mergeWhereClauses,
@@ -432,6 +434,9 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    const audit = buildAuditContext(req);
+    const roles = await fetchUserRoles(audit.userId);
+
     const body = (await req.json().catch(() => null)) as MarketDeleteBody | null;
     const rawIds = Array.isArray(body?.MarketIDs) ? body.MarketIDs : [];
     const ids = Array.from(
@@ -453,6 +458,12 @@ export async function DELETE(req: NextRequest) {
     if (ids.length === 0) {
       return NextResponse.json({ ok: false, error: "No markets provided" }, { status: 400 });
     }
+
+    const deleteCheck = checkDeletePermission(roles, ids.length, 'generic', null);
+    if (!deleteCheck.allowed) {
+      return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
+    }
+
     const pool = await getPool();
     const request = pool.request();
     ids.forEach((value, idx) => {

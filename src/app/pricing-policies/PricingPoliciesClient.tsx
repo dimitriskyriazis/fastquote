@@ -17,6 +17,7 @@ import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import styles from "./PricingPoliciesClient.module.css";
 import { showConfirmDialog } from "../../lib/confirm";
+import { checkDeletePermissionForClient, canDeleteAnyForClient } from "../../lib/deletePermissions";
 import { showToastMessage } from "../../lib/toast";
 import { getUserNumberLocale, parseLocaleNumber } from "../../lib/localeNumber";
 import LookupModal from "../components/LookupModal";
@@ -198,7 +199,7 @@ const isDefaultPricingPolicyName = (name: string): boolean => {
 
 export default function PricingPoliciesClient({ pricingPolicies, brands }: Props) {
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
-  const { userId } = useAuditUser();
+  const { userId, roles } = useAuditUser();
 
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
   const [localBrands, setLocalBrands] = useState(brands);
@@ -455,6 +456,12 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
       if (!Number.isFinite(pricingPolicyId) || pricingPolicyId <= 0) return;
       if (pricingPolicyDeleting || pricingPolicySaving) return;
 
+      const policyCheck = checkDeletePermissionForClient(roles, 1, 'pricingPolicies', 'managePricingPolicies');
+      if (!policyCheck.allowed) {
+        showToastMessage(policyCheck.reason, 'error');
+        return;
+      }
+
       const policyName =
         localPricingPolicies.find((policy) => policy.id === pricingPolicyId)?.name ?? `#${pricingPolicyId}`;
 
@@ -496,13 +503,19 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
         setPricingPolicyDeleting(false);
       }
     },
-    [localPricingPolicies, pricingPolicyDeleting, pricingPolicySaving],
+    [localPricingPolicies, pricingPolicyDeleting, pricingPolicySaving, roles],
   );
 
   const deleteBrand = useCallback(
     async (brandId: number, brandName: string | null) => {
       if (!Number.isFinite(brandId) || brandId <= 0) return;
       if (brandDeleting || pricingPolicyDeleting || pricingPolicySaving) return;
+
+      const brandCheck = checkDeletePermissionForClient(roles, 1, 'pricingPolicyRules', 'managePricingPolicies');
+      if (!brandCheck.allowed) {
+        showToastMessage(brandCheck.reason, 'error');
+        return;
+      }
 
       const label = brandName?.trim() || `Brand #${brandId}`;
       const confirmed = await showConfirmDialog({
@@ -543,7 +556,7 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
         setBrandDeleting(false);
       }
     },
-    [brandDeleting, pricingPolicyDeleting, pricingPolicySaving],
+    [brandDeleting, pricingPolicyDeleting, pricingPolicySaving, roles],
   );
 
   const getContextMenuItems = useCallback(
@@ -557,10 +570,13 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
         return defaultItems;
       }
 
+      const canDeleteBrand = canDeleteAnyForClient(roles, 'pricingPolicyRules', 'managePricingPolicies');
+
       const deleteBrandItem: MenuItemDef<Record<string, unknown>> = {
         name: "Delete brand",
         icon: deleteMenuIcon,
-        disabled: brandDeleting || pricingPolicyDeleting || pricingPolicySaving,
+        disabled: !canDeleteBrand || brandDeleting || pricingPolicyDeleting || pricingPolicySaving,
+        tooltip: !canDeleteBrand ? 'Only administrators and developers can delete pricing policy rules.' : undefined,
         action: () => {
           void deleteBrand(row.BrandID as number, row.BrandName ?? null);
         },
@@ -568,7 +584,7 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
 
       return [...defaultItems, "separator", deleteBrandItem];
     },
-    [brandDeleting, deleteBrand, pricingPolicyDeleting, pricingPolicySaving],
+    [brandDeleting, deleteBrand, pricingPolicyDeleting, pricingPolicySaving, roles],
   );
 
   const handleCreatePricingPolicy = useCallback(async () => {
@@ -630,9 +646,9 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
         headerGroupComponentParams: {
           disabled: pricingPolicyDeleting || pricingPolicySaving,
           pricingPolicyId: policy.id,
-          onDelete: (id: number) => {
-            void deletePricingPolicy(id);
-          },
+          onDelete: canDeleteAnyForClient(roles, 'pricingPolicies', 'managePricingPolicies')
+            ? (id: number) => { void deletePricingPolicy(id); }
+            : undefined,
         },
         suppressHeaderMenuButton: true,
         sortable: false,
@@ -716,7 +732,7 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
       },
       ...policyGroups,
     ];
-  }, [deletePricingPolicy, orderedPricingPolicies, pricingPolicyDeleting, pricingPolicySaving]);
+  }, [deletePricingPolicy, orderedPricingPolicies, pricingPolicyDeleting, pricingPolicySaving, roles]);
 
   return (
     <main className={styles.page}>

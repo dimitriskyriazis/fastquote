@@ -48,6 +48,7 @@ const AgGridAll = dynamic<AgGridAllProps>(() => import('../../components/AgGridA
 });
 import { showToastMessage } from '../../../lib/toast';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
+import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
 import { priceListStatusClassRules } from '../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
@@ -967,7 +968,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   hideTotals = false,
 }: Props, ref) => {
   const router = useRouter();
-  const { userId } = useAuditUser();
+  const { userId, roles } = useAuditUser();
   useEffect(() => {
     deferInitialHeavyWorkRef.current = true;
   }, [offerId]);
@@ -2766,8 +2767,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         successToastMessage: 'Row deleted',
         failureToastMessage: 'Unable to delete row. Please try again.',
         refreshHandler: (api) => refreshOfferProductGrid(api, { purge: true }),
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'editOffers'),
       }),
-    [resolvedEndpoint, refreshOfferProductGrid],
+    [resolvedEndpoint, refreshOfferProductGrid, roles],
   );
 
   const populateRequestedRowsToOffer = useCallback(async (nodes: RowNode<Record<string, unknown>>[]) => {

@@ -9,6 +9,7 @@ import { KnownFilterModel } from "../../../../lib/filterTypes";
 import { processFilter } from "../../../../lib/filterProcessing";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { requirePermission } from "../../../../lib/authz";
+import { checkDeletePermission } from "../../../../lib/deletePermissions";
 
 
 
@@ -413,6 +414,11 @@ export async function DELETE(req: NextRequest) {
     const brandId = normalizeInt(payload?.brandId);
     if (brandId == null) {
       return NextResponse.json({ ok: false, error: "Brand is required" }, { status: 400 });
+    }
+
+    const deleteCheck = checkDeletePermission(auth.roles, 1, 'pricingPolicyRules', null);
+    if (!deleteCheck.allowed) {
+      return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }
 
     const pool = await getPool();

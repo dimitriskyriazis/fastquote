@@ -8,6 +8,7 @@ import {
   QueryParam,
 } from "../../../lib/gridFilters";
 import { requirePermission } from "../../../lib/authz";
+import { checkDeletePermission } from "../../../lib/deletePermissions";
 import { KnownFilterModel } from "../../../lib/filterTypes";
 import { processFilter } from "../../../lib/filterProcessing";
 
@@ -303,6 +304,11 @@ export async function DELETE(req: NextRequest) {
 
     if (normalizedIds.length === 0) {
       return NextResponse.json({ ok: false, error: "No price lists selected for deletion" }, { status: 400 });
+    }
+
+    const deleteCheck = checkDeletePermission(auth.roles, normalizedIds.length, 'pricelists', null);
+    if (!deleteCheck.allowed) {
+      return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }
 
     const pool = await getPool();

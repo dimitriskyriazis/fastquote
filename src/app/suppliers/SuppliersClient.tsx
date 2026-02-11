@@ -17,6 +17,8 @@ import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { showToastMessage } from "../../lib/toast";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
+import { useAuditUser } from "../components/AuditUserProvider";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
 import AddSupplierModal from "../components/AddSupplierModal";
@@ -100,6 +102,7 @@ function normalizeSupplierContextMenuItems(
 
 export default function SuppliersClient({ cities, countries }: Props) {
   const router = useRouter();
+  const { roles } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
   const cityOptions = useMemo(() => ["", ...cities.map((c) => c.name)], [cities]);
@@ -138,8 +141,9 @@ export default function SuppliersClient({ cities, countries }: Props) {
             console.warn("Failed to refresh suppliers grid after deletion", err);
           }
         },
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageBrandsSuppliers'),
       }),
-    [],
+    [roles],
   );
 
   const getContextMenuItems = useCallback(

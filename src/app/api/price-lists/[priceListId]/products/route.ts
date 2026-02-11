@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
-import { resolveAuditUserId } from "../../../../../lib/auditTrail";
+import { buildAuditContext, resolveAuditUserId } from "../../../../../lib/auditTrail";
+import { fetchUserRoles } from "../../../../../lib/authz";
+import { checkDeletePermission } from "../../../../../lib/deletePermissions";
 import { KnownFilterModel } from "../../../../../lib/filterTypes";
 import { processFilter } from "../../../../../lib/filterProcessing";
 
@@ -308,6 +310,13 @@ export async function DELETE(
 
     if (normalizedIds.length === 0) {
       return NextResponse.json({ ok: false, error: "No rows selected for deletion" }, { status: 400 });
+    }
+
+    const audit = buildAuditContext(req);
+    const roles = await fetchUserRoles(audit.userId);
+    const deleteCheck = checkDeletePermission(roles, normalizedIds.length, 'generic', null);
+    if (!deleteCheck.allowed) {
+      return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }
 
     const pool = await getPool();

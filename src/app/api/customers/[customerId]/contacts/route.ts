@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
+import { buildAuditContext } from "../../../../../lib/auditTrail";
+import { fetchUserRoles } from "../../../../../lib/authz";
+import { checkDeletePermission } from "../../../../../lib/deletePermissions";
 import {
   buildQuickFilterClause,
   mergeWhereClauses,
@@ -317,6 +320,13 @@ export async function DELETE(
         { ok: false, error: "No contacts selected for deletion" },
         { status: 400 },
       );
+    }
+
+    const audit = buildAuditContext(req);
+    const roles = await fetchUserRoles(audit.userId);
+    const deleteCheck = checkDeletePermission(roles, ids.length, 'generic', null);
+    if (!deleteCheck.allowed) {
+      return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }
 
     const pool = await getPool();

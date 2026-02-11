@@ -9,6 +9,7 @@ import {
 import { KnownFilterModel } from "../../../lib/filterTypes";
 import { processFilter } from "../../../lib/filterProcessing";
 import { requirePermission } from "../../../lib/authz";
+import { checkDeletePermission } from "../../../lib/deletePermissions";
 
 
 
@@ -551,6 +552,11 @@ export async function DELETE(req: NextRequest) {
         { ok: false, error: "No contacts selected for deletion" },
         { status: 400 },
       );
+    }
+
+    const deleteCheck = checkDeletePermission(auth.roles, ids.length, 'generic', null);
+    if (!deleteCheck.allowed) {
+      return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }
 
     const pool = await getPool();
