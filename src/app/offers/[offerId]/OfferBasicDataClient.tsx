@@ -464,6 +464,13 @@ export default function OfferBasicDataClient({
     void saveField(def, latestValue);
   }, [saveField, values]);
 
+  const handleDateChange = useCallback((def: FieldDefinition, newValue: string) => {
+    handleValueChange(def.id, newValue);
+    if (!def.updateField) return;
+    if (newValue === savedValuesRef.current[def.id]) return;
+    void saveField(def, newValue);
+  }, [handleValueChange, saveField]);
+
   const renderLookupAddButton = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     (_: FieldDefinition) => null,
@@ -481,6 +488,7 @@ const renderFieldControl = (
   valueMap: Record<string, string>,
   pendingMap: Record<string, boolean>,
   handleValueChange: (fieldId: string, value: string) => void,
+  handleDateChange: (def: FieldDefinition, newValue: string) => void,
   handleBlur: (def: FieldDefinition) => void,
   record: OfferBasicRecord,
 ) => {
@@ -577,7 +585,7 @@ const renderFieldControl = (
       return (
         <UKDatePicker
           value={values[def.id] ?? ''}
-          onChange={(newValue) => handleValueChange(def.id, newValue)}
+          onChange={(newValue) => handleDateChange(def, newValue)}
           placeholder="DD/MM/YYYY"
           className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
           disabled={pending}
@@ -634,7 +642,7 @@ const renderFieldControl = (
                     }
                   }}
                 >
-                  {renderFieldControl(field, values, pendingFields, handleValueChange, handleBlur, record)}
+                  {renderFieldControl(field, values, pendingFields, handleValueChange, handleDateChange, handleBlur, record)}
                 </div>
               </div>
             );
@@ -685,7 +693,7 @@ const renderFieldControl = (
                         }
                       }}
                     >
-                      {renderFieldControl(field, values, pendingFields, handleValueChange, handleBlur, record)}
+                      {renderFieldControl(field, values, pendingFields, handleValueChange, handleDateChange, handleBlur, record)}
                     </div>
                   </div>
                 ))}
