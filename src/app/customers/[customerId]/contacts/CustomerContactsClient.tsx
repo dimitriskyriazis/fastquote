@@ -59,6 +59,7 @@ const resolveCustomerContactLabel = (
 };
 
 const CONTACT_FIELD_LABELS: Record<string, string> = {
+  Title: "Title",
   LastName: "Last name",
   FirstName: "First name",
   Position: "Position",
@@ -110,6 +111,15 @@ export default function CustomerContactsClient({ customerId, customerName, statu
       .filter((value) => value.length > 0);
     return Array.from(new Set(normalized));
   }, [importances]);
+  const titleDropdownValues = useMemo(() => {
+    const priority = ["Mr", "Mrs", "Κος", "Κα", "Dr", "Δρ"];
+    const labels = titles.map((t) => t.label);
+    const prioritized = priority.filter((p) => labels.includes(p));
+    const rest = labels
+      .filter((l) => !priority.includes(l))
+      .sort((a, b) => a.localeCompare(b));
+    return ["", ...prioritized, ...rest];
+  }, [titles]);
 
   const [refreshToken, setRefreshToken] = useState(0);
   const {
@@ -251,6 +261,9 @@ export default function CustomerContactsClient({ customerId, customerName, statu
         headerName: "Title",
         filter: "agTextColumnFilter",
         width: 120,
+        editable: true,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: { values: titleDropdownValues },
       },
       {
         field: "LastName",
@@ -326,7 +339,7 @@ export default function CustomerContactsClient({ customerId, customerName, statu
         },
       },
     ],
-    [enabledOptions, importanceDropdownValues],
+    [enabledOptions, importanceDropdownValues, titleDropdownValues],
   );
 
   const endpoint = `/api/customers/${encodedCustomerId}/contacts`;
@@ -454,6 +467,7 @@ export default function CustomerContactsClient({ customerId, customerName, statu
       title="Add contact"
       onClose={closeAddContact}
       onConfirm={handleCreateContact}
+      cardStyle={{ height: "85vh" }}
       confirmLabel="Add contact"
       saving={contactSaving}
       error={contactError}

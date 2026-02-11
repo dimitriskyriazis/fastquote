@@ -73,9 +73,11 @@ type ContactUpdateDefinition =
   | { kind: "contact-text"; column: string }
   | { kind: "contact-boolean"; column: string }
   | { kind: "status"; column: "EmailStatusID" | "SecondEmailStatusID" }
-  | { kind: "customer-name" };
+  | { kind: "customer-name" }
+  | { kind: "title" };
 
 const CONTACT_UPDATE_DEFINITIONS: Record<string, ContactUpdateDefinition> = {
+  Title: { kind: "title" },
   LastName: { kind: "contact-text", column: "LastName" },
   FirstName: { kind: "contact-text", column: "FirstName" },
   Position: { kind: "contact-text", column: "Position" },
@@ -326,6 +328,33 @@ const applyContactUpdate = async (
     await updateReq.query(`
       UPDATE dbo.Contacts
       SET ${def.column} = @statusId
+      WHERE ID = @contactId
+    `);
+    return;
+  }
+  if (def.kind === "title") {
+    const titleName = normalizeTextValue(rawValue);
+    let titleId: number | null = null;
+    if (titleName) {
+      const titleLookup = pool.request();
+      titleLookup.input("titleName", sql.NVarChar, titleName);
+      const titleResult = await titleLookup.query<{ ID: number }>(`
+        SELECT TOP 1 ID
+        FROM dbo.Titles
+        WHERE Name = @titleName
+        ORDER BY ID
+      `);
+      titleId = titleResult.recordset?.[0]?.ID ?? null;
+      if (titleId == null) {
+        throw new ContactUpdateError(`Title "${titleName}" not found`, 400);
+      }
+    }
+    const updateReq = pool.request();
+    updateReq.input("contactId", sql.Int, contactId);
+    updateReq.input("titleId", sql.Int, titleId);
+    await updateReq.query(`
+      UPDATE dbo.Contacts
+      SET TitleID = @titleId
       WHERE ID = @contactId
     `);
     return;
