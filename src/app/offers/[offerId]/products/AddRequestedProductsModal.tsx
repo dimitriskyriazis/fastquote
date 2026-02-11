@@ -315,18 +315,40 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const validationRunId = useRef(0);
+  const [showSheetSelector, setShowSheetSelector] = useState(false);
+  const [multiSelectEnabled, setMultiSelectEnabled] = useState(false);
 
   const applySheets = useCallback((sheets: SheetMapping[]) => {
-    const normalizedSheets = sheets.map(enrichSheet);
-    const evaluation = evaluateSelection(normalizedSheets, 0);
+    let normalizedSheets = sheets.map(enrichSheet);
+
+    let activeIndex = 0;
+    if (normalizedSheets.length > 1) {
+      let biggestRowCount = -1;
+      normalizedSheets.forEach((sheet, idx) => {
+        if (sheet.rowCount > biggestRowCount) {
+          biggestRowCount = sheet.rowCount;
+          activeIndex = idx;
+        }
+      });
+      normalizedSheets = normalizedSheets.map((sheet, idx) => ({
+        ...sheet,
+        enabled: idx === activeIndex,
+      }));
+    }
+
+    const evaluation = evaluateSelection(normalizedSheets, activeIndex);
     setFileValidation({
       status: evaluation.status,
       message: evaluation.message,
       columns: evaluation.columns,
       rowCount: evaluation.rowCount,
       sheets: normalizedSheets,
-      activeSheetIndex: 0,
+      activeSheetIndex: activeIndex,
     });
+
+    if (normalizedSheets.length > 1) {
+      setShowSheetSelector(true);
+    }
   }, []);
 
   const activeSheet = useMemo(
@@ -604,6 +626,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
   const canSubmit = fileValidation.status === 'valid' && !submitting;
 
   return (
+    <>
     <div className={styles.overlay} onPointerDown={handleOverlayPointerDown} onClick={handleOverlayClick}>
       <div className={styles.card} role="dialog" aria-modal="true" aria-label="Add requested products" onClick={(event) => event.stopPropagation()}>
         <div className={styles.header}>
@@ -659,41 +682,67 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
               />
             </div>
             {fileValidation.sheets.length > 0 ? (
-              <div className={styles.sheetTabs}>
-                {fileValidation.sheets.map((sheet, idx) => {
-                  const isActive = idx === fileValidation.activeSheetIndex;
-                  const included = sheet.enabled;
-                  const classNames = [styles.sheetTab];
-                  if (isActive) classNames.push(styles.sheetTabActive);
-                  if (included) classNames.push(styles.sheetTabIncluded);
-                  return (
+              <>
+                {fileValidation.sheets.length > 1 ? (
+                  <div className={styles.sheetToggle}>
+                    <span>Multi-select</span>
                     <button
                       type="button"
-                      key={sheet.name || idx}
-                      className={classNames.join(' ')}
-                      onClick={() => handleSheetChange(idx)}
+                      className={`${styles.toggleSwitch} ${multiSelectEnabled ? styles.toggleSwitchOn : ''}`}
+                      onClick={() => setMultiSelectEnabled((prev) => !prev)}
                     >
-                      {sheet.name || `Sheet ${idx + 1}`}
+                      <span className={styles.toggleKnob} />
                     </button>
-                  );
-                })}
-              </div>
-            ) : null}
-            {activeSheet && fileValidation.sheets.length > 1 ? (
-              <label className={styles.sheetToggle}>
-                <input
-                  autoComplete="off"
-                  type="checkbox"
-                  checked={activeSheet.enabled}
-                  onChange={(event) => toggleSheetEnabled(fileValidation.activeSheetIndex, event.target.checked)}
-                />
-                <span>{activeSheet.enabled ? 'Included in import' : 'Excluded from import'}</span>
-              </label>
+                  </div>
+                ) : null}
+                <div className={styles.sheetTabs}>
+                  {fileValidation.sheets.map((sheet, idx) => {
+                    const isActive = idx === fileValidation.activeSheetIndex;
+                    const included = sheet.enabled;
+                    const classNames = [styles.sheetTab];
+                    if (isActive) classNames.push(styles.sheetTabActive);
+                    if (included) classNames.push(styles.sheetTabIncluded);
+                    return (
+                      <button
+                        type="button"
+                        key={sheet.name || idx}
+                        className={classNames.join(' ')}
+                        onClick={() => {
+                          if (!multiSelectEnabled && fileValidation.sheets.length > 1) {
+                            setFileValidation((prev) => {
+                              const sheets = prev.sheets.map((s, i) => ({ ...s, enabled: i === idx }));
+                              const evaluation = evaluateSelection(sheets, idx);
+                              return { ...prev, ...evaluation, sheets, activeSheetIndex: idx };
+                            });
+                          } else {
+                            handleSheetChange(idx);
+                          }
+                        }}
+                      >
+                        {multiSelectEnabled && fileValidation.sheets.length > 1 ? (
+                          <input
+                            type="checkbox"
+                            checked={included}
+                            className={styles.sheetTabCheckbox}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              toggleSheetEnabled(idx, e.target.checked);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        ) : null}
+                        {sheet.name || `Sheet ${idx + 1}`}
+                        <span className={styles.sheetTabRows}>{sheet.rowCount} rows</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
             ) : null}
             {activeSheet ? (
               <>
                 <div className={styles.helpText}>
-                  Select the corresponding column for each field. Suggested matches appear at the top.
+                  <strong>{activeSheet.name || 'Sheet'}</strong> — Select the corresponding column for each field. Suggested matches appear at the top.
                 </div>
                 <div className={styles.mappingGrid}>
                   {COLUMN_DISPLAY.map((column) => {
@@ -765,5 +814,53 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
         </div>
       </div>
     </div>
+    {showSheetSelector && fileValidation.sheets.length > 1 ? (
+      <div className={styles.sheetSelectorOverlay}>
+        <div className={styles.sheetSelectorPopup} onClick={(e) => e.stopPropagation()}>
+          <div className={styles.sheetSelectorHeader}>
+            <div className={styles.sheetSelectorTitle}>Sheet Selection</div>
+            <button
+              type="button"
+              className={styles.sheetSelectorClose}
+              aria-label="Close dialog"
+              onClick={() => setShowSheetSelector(false)}
+            >
+              ×
+            </button>
+          </div>
+          <div className={styles.sheetSelectorDescription}>
+            {`I have found ${fileValidation.sheets.length} sheets. Please select the appropriate sheet or multiple ones, after you close this window.`}
+          </div>
+          <div className={styles.sheetSelectorList}>
+            {fileValidation.sheets.map((sheet, idx) => {
+              const selected = sheet.enabled;
+              return (
+                <div
+                  key={sheet.name || idx}
+                  className={`${styles.sheetSelectorItem} ${selected ? styles.sheetSelectorItemSelected : ''}`}
+                >
+                  <span className={styles.sheetSelectorItemName}>{sheet.name || `Sheet ${idx + 1}`}</span>
+                  <span className={styles.sheetSelectorItemRows}>{sheet.rowCount} rows</span>
+                </div>
+              );
+            })}
+          </div>
+          {(() => {
+            const enabled = fileValidation.sheets.filter((s) => s.enabled);
+            if (enabled.length === 1) {
+              return (
+                <div className={styles.sheetSelectorDescription}>
+                  {'Auto-selected '}
+                  <strong>{enabled[0].name}</strong>
+                  {` with ${enabled[0].rowCount} rows (largest sheet).`}
+                </div>
+              );
+            }
+            return null;
+          })()}
+        </div>
+      </div>
+    ) : null}
+    </>
   );
 }

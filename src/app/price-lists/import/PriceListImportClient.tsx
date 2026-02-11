@@ -497,7 +497,21 @@ const validateFileStructure = async (uploadFile: File): Promise<FileValidation> 
       };
     }
 
-    const evaluation = evaluateSelection(sheets, 0);
+    let activeIndex = 0;
+    if (sheets.length > 1) {
+      let biggestRowCount = -1;
+      sheets.forEach((sheet, idx) => {
+        if (sheet.rowCount > biggestRowCount) {
+          biggestRowCount = sheet.rowCount;
+          activeIndex = idx;
+        }
+      });
+      sheets.forEach((sheet, idx) => {
+        sheet.enabled = idx === activeIndex;
+      });
+    }
+
+    const evaluation = evaluateSelection(sheets, activeIndex);
 
     return {
       status: evaluation.status,
@@ -506,7 +520,7 @@ const validateFileStructure = async (uploadFile: File): Promise<FileValidation> 
       rowCount: evaluation.rowCount,
       sheetName: evaluation.sheetName,
       sheets,
-      activeSheetIndex: 0,
+      activeSheetIndex: activeIndex,
     };
   } catch (err) {
     console.error("Failed to validate uploaded file", err);
@@ -561,12 +575,15 @@ export default function PriceListImportClient({
   const [policyPickerSelection, setPolicyPickerSelection] = useState<Set<number>>(new Set());
   const [rulePickerError, setRulePickerError] = useState<string | null>(null);
   const [discountDrafts, setDiscountDrafts] = useState<Record<number, { telmaco: string; customer: string }>>({});
+  const policyPickerSelectionInitializedRef = useRef(false);
   const [policyDiscountOverrides, setPolicyDiscountOverrides] = useState<
     Record<string, { telmaco: number | null; customer: number | null }>
   >({});
   const [file, setFile] = useState<File | null>(null);
   const [fileValidation, setFileValidation] = useState<FileValidation>(INITIAL_VALIDATION);
   const validationRunId = useRef(0);
+  const [showSheetSelector, setShowSheetSelector] = useState(false);
+  const [multiSelectEnabled, setMultiSelectEnabled] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -819,12 +836,19 @@ export default function PriceListImportClient({
   }, [pricingPolicyNameById, values.pricingPolicies]);
 
   useEffect(() => {
-    if (!isRulePickerOpen) return;
+    if (!isRulePickerOpen) {
+      policyPickerSelectionInitializedRef.current = false;
+      return;
+    }
     setRulePickerError(null);
     const visiblePolicyIds = new Set(policiesForPicker.map((row) => row.pricingPolicyId));
-    setPolicyPickerSelection(
-      new Set(Array.from(selectedPolicyIds).filter((id) => visiblePolicyIds.has(id))),
-    );
+    setPolicyPickerSelection((prev) => {
+      if (!policyPickerSelectionInitializedRef.current) {
+        policyPickerSelectionInitializedRef.current = true;
+        return new Set(Array.from(selectedPolicyIds).filter((id) => visiblePolicyIds.has(id)));
+      }
+      return new Set(Array.from(prev).filter((id) => visiblePolicyIds.has(id)));
+    });
   }, [isRulePickerOpen, policiesForPicker, selectedPolicyIds]);
 
   useEffect(() => {
@@ -1172,6 +1196,9 @@ export default function PriceListImportClient({
       .then((result) => {
         if (runId !== validationRunId.current) return;
         setFileValidation(result);
+        if (result.sheets.length > 1) {
+          setShowSheetSelector(true);
+        }
       })
       .catch(() => {
         if (runId !== validationRunId.current) return;
@@ -1826,6 +1853,18 @@ export default function PriceListImportClient({
                         </div>
                         {fileValidation.sheets.length > 0 ? (
                           <div className={styles.sheetSelector}>
+                            {fileValidation.sheets.length > 1 ? (
+                              <div className={styles.sheetToggle}>
+                                <span>Multi-select</span>
+                                <button
+                                  type="button"
+                                  className={`${styles.toggleSwitch} ${multiSelectEnabled ? styles.toggleSwitchOn : ""}`}
+                                  onClick={() => setMultiSelectEnabled((prev) => !prev)}
+                                >
+                                  <span className={styles.toggleKnob} />
+                                </button>
+                              </div>
+                            ) : null}
                             <div className={styles.sheetTabs}>
                               {fileValidation.sheets.map((sheet, idx) => {
                                 const isActive = idx === fileValidation.activeSheetIndex;
@@ -1835,24 +1874,39 @@ export default function PriceListImportClient({
                                     type="button"
                                     key={sheet.name || idx}
                                     className={`${styles.sheetTab} ${isActive ? styles.sheetTabActive : ""} ${included ? styles.sheetTabIncluded : ""}`}
-                                    onClick={() => handleSheetChange(idx)}
+                                    onClick={() => {
+                                      if (!multiSelectEnabled && fileValidation.sheets.length > 1) {
+                                        setFileValidation((prev) => {
+                                          const sheets = prev.sheets.map((s, i) => ({ ...s, enabled: i === idx }));
+                                          const evaluation = evaluateSelection(sheets, idx);
+                                          return { ...prev, ...evaluation, sheets, activeSheetIndex: idx };
+                                        });
+                                      } else {
+                                        handleSheetChange(idx);
+                                      }
+                                    }}
                                   >
+                                    {multiSelectEnabled && fileValidation.sheets.length > 1 ? (
+                                      <input
+                                        type="checkbox"
+                                        checked={included}
+                                        className={styles.sheetTabCheckbox}
+                                        onChange={(e) => {
+                                          e.stopPropagation();
+                                          toggleSheetEnabled(idx, e.target.checked);
+                                        }}
+                                        onClick={(e) => e.stopPropagation()}
+                                      />
+                                    ) : null}
                                     {sheet.name || `Sheet ${idx + 1}`}
+                                    <span className={styles.sheetTabRows}>{sheet.rowCount} rows</span>
                                   </button>
                                 );
                               })}
                             </div>
-                            {activeSheet && fileValidation.sheets.length > 1 ? (
-                              <label className={styles.sheetToggle}>
-                                <input
-                                  autoComplete="off"
-                                  type="checkbox"
-                                  checked={activeSheet.enabled}
-                                  onChange={(e) => toggleSheetEnabled(fileValidation.activeSheetIndex, e.target.checked)}
-                                />
-                                <span>Include this sheet</span>
-                              </label>
-                            ) : null}
+                            <div className={styles.helpText}>
+                              <strong>{activeSheet?.name || "Sheet"}</strong> — Choose columns for the fields below.
+                            </div>
                             <div className={styles.mappingGrid}>
                               {COLUMN_DISPLAY.map((column) => {
                                 const selectionValue =
@@ -2196,6 +2250,53 @@ export default function PriceListImportClient({
           />
         </div>
       </LookupModal>
+      {showSheetSelector && fileValidation.sheets.length > 1 ? (
+        <div className={styles.sheetSelectorOverlay}>
+          <div className={styles.sheetSelectorPopup} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.sheetSelectorHeader}>
+              <div className={styles.sheetSelectorTitle}>Sheet Selection</div>
+              <button
+                type="button"
+                className={styles.sheetSelectorClose}
+                aria-label="Close dialog"
+                onClick={() => setShowSheetSelector(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className={styles.sheetSelectorDescription}>
+              {`I have found ${fileValidation.sheets.length} sheets. Please select the appropriate sheet or multiple ones, after you close this window.`}
+            </div>
+            <div className={styles.sheetSelectorList}>
+              {fileValidation.sheets.map((sheet, idx) => {
+                const selected = sheet.enabled;
+                return (
+                  <div
+                    key={sheet.name || idx}
+                    className={`${styles.sheetSelectorItem} ${selected ? styles.sheetSelectorItemSelected : ""}`}
+                  >
+                    <span className={styles.sheetSelectorItemName}>{sheet.name || `Sheet ${idx + 1}`}</span>
+                    <span className={styles.sheetSelectorItemRows}>{sheet.rowCount} rows</span>
+                  </div>
+                );
+              })}
+            </div>
+            {(() => {
+              const enabled = fileValidation.sheets.filter((s) => s.enabled);
+              if (enabled.length === 1) {
+                return (
+                  <div className={styles.sheetSelectorDescription}>
+                    {"Auto-selected "}
+                    <strong>{enabled[0].name}</strong>
+                    {` with ${enabled[0].rowCount} rows (largest sheet).`}
+                  </div>
+                );
+              }
+              return null;
+            })()}
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
