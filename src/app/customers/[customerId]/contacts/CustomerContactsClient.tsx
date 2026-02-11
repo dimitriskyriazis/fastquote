@@ -467,7 +467,6 @@ export default function CustomerContactsClient({ customerId, customerName, statu
       title="Add contact"
       onClose={closeAddContact}
       onConfirm={handleCreateContact}
-      cardStyle={{ height: "85vh" }}
       confirmLabel="Add contact"
       saving={contactSaving}
       error={contactError}
