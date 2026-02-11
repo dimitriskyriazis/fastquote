@@ -44,6 +44,17 @@ const normalizePriceListIdValue = (value: unknown): number | null => {
   return null;
 };
 
+const normalizeStringValue = (value: unknown): string | null => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return null;
+};
+
 const resolvePriceListRowLabel = (
   row: { Name?: string | null; SupplierName?: string | null } | null,
   fallback: string,
@@ -63,13 +74,36 @@ const PRICE_LIST_ROW_TYPE_LABEL = "price list";
 
 const PRICE_LIST_FIELD_LABELS: Record<string, string> = {
   Enabled: "Enabled",
+  ResponsibleUserName: "Responsible User",
 };
 
 export default function PriceListsClient() {
   const router = useRouter();
-  const { roles } = useAuditUser();
+  const { roles, users } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
+  const responsibleUserOptions = useMemo(
+    () => ["", ...Array.from(new Set(users.map((user) => user.label.trim()).filter(Boolean)))],
+    [users],
+  );
+  const responsibleUserIdByName = useMemo(() => {
+    const map = new Map<string, string>();
+    users.forEach((user) => {
+      const normalizedName = user.label.trim();
+      if (!normalizedName) return;
+      map.set(normalizedName, user.id);
+    });
+    return map;
+  }, [users]);
+  const responsibleUserNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    users.forEach((user) => {
+      const normalizedName = user.label.trim();
+      if (!normalizedName) return;
+      map.set(user.id, normalizedName);
+    });
+    return map;
+  }, [users]);
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     if (!api || defaultEnabledFilterAppliedRef.current) return;
@@ -272,6 +306,29 @@ export default function PriceListsClient() {
       { field: "BrandName", headerName: "Brand", filter: "agTextColumnFilter" },
       { field: "SupplierName", headerName: "Supplier", filter: "agTextColumnFilter", enableRowGroup: true },
       {
+        field: "ResponsibleUserName",
+        headerName: "Responsible User",
+        filter: "agTextColumnFilter",
+        editable: true,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: { values: responsibleUserOptions },
+        valueSetter: (params) => {
+          const selectedName = normalizeStringValue(params.newValue);
+          params.data = params.data ?? {};
+          const rowData = params.data as Record<string, unknown>;
+          rowData.ResponsibleUserName = selectedName;
+          rowData.ResponsibleUserId = selectedName ? (responsibleUserIdByName.get(selectedName) ?? null) : null;
+          return true;
+        },
+        valueFormatter: (params) => {
+          const explicitName = normalizeStringValue(params.value);
+          if (explicitName) return explicitName;
+          const row = params.data as { ResponsibleUserId?: unknown } | null | undefined;
+          const id = normalizeStringValue(row?.ResponsibleUserId ?? null);
+          return id ? (responsibleUserNameById.get(id) ?? "") : "";
+        },
+      },
+      {
         field: "ValidFromDate",
         headerName: "Valid From",
         filter: "agDateColumnFilter",
@@ -320,7 +377,7 @@ export default function PriceListsClient() {
         filter: "agTextColumnFilter"
       },
     ],
-    [ActionCell, enabledOptions]
+    [ActionCell, enabledOptions, responsibleUserIdByName, responsibleUserNameById, responsibleUserOptions]
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
@@ -332,7 +389,16 @@ export default function PriceListsClient() {
     );
     if (priceListId == null) return;
     const label = PRICE_LIST_FIELD_LABELS[field] ?? field;
+    const isResponsibleUserField = field === "ResponsibleUserName";
+    const oldResponsibleUserName = isResponsibleUserField ? normalizeStringValue(event.oldValue) : null;
+    const oldResponsibleUserId =
+      oldResponsibleUserName != null ? (responsibleUserIdByName.get(oldResponsibleUserName) ?? null) : null;
     const revertValue = () => {
+      if (isResponsibleUserField && event.node?.data) {
+        const rowData = event.node.data as Record<string, unknown>;
+        rowData.ResponsibleUserName = oldResponsibleUserName;
+        rowData.ResponsibleUserId = oldResponsibleUserId;
+      }
       if (event.node) {
         try {
           event.node.setDataValue(field, event.oldValue);
@@ -343,16 +409,21 @@ export default function PriceListsClient() {
       }
       event.api.refreshCells({ force: true });
     };
-    const value = normalizeBoolean(
-      (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
-    );
+    const value = field === "Enabled"
+      ? normalizeBoolean(
+          (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
+        )
+      : normalizeStringValue(
+          (event.data as { ResponsibleUserId?: unknown } | undefined)?.ResponsibleUserId ?? null,
+        );
+    const updateField = field === "ResponsibleUserName" ? "ResponsibleUserId" : field;
 
     const submit = async () => {
       try {
         const res = await fetch(`/api/price-lists/${priceListId}/basicdata`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ updates: [{ field, value }] }),
+          body: JSON.stringify({ updates: [{ field: updateField, value }] }),
         });
         const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
         if (!res.ok || !payload?.ok) {
@@ -368,7 +439,7 @@ export default function PriceListsClient() {
     };
 
     void submit();
-  }, []);
+  }, [responsibleUserIdByName]);
 
   return (
     <main className={styles.page}>

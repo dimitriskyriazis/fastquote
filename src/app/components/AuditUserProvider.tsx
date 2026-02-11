@@ -126,6 +126,7 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
         ok?: boolean;
         users?: Array<{
           id: number;
+          fullName?: string | null;
           userName: string | null;
           windowsUserName?: string | null;
           roles?: string[];
@@ -141,7 +142,7 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
       const mapped = payload.users
         .map((user) => ({
           id: String(user.id),
-          label: user.userName || '',
+          label: user.fullName?.trim() || user.userName || '',
           windowsUserName: user.windowsUserName ?? undefined,
           roles: Array.isArray(user.roles) ? user.roles : [],
           salesSeniorityName: user.salesSeniorityName ?? null,

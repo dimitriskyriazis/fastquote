@@ -34,6 +34,8 @@ type PriceListRow = {
   ValidToDate: string | Date | null;
   Enabled: boolean | number | null;
   SupplierName: string | null;
+  ResponsibleUserId: string | null;
+  ResponsibleUserName: string | null;
   SupplierComment: string | null;
 };
 
@@ -47,6 +49,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   ValidToDate: "dbo.PriceLists.ValidToDate",
   Enabled: "dbo.PriceLists.Enabled",
   SupplierName: "dbo.Suppliers.Name",
+  ResponsibleUserName: "COALESCE(NULLIF(LTRIM(RTRIM(responsible.FullName)), ''), responsible.UserName)",
   SupplierComment: "dbo.PriceLists.SupplierComment",
 };
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
@@ -185,6 +188,8 @@ export async function POST(req: NextRequest) {
         dbo.PriceLists.ValidToDate,
         dbo.PriceLists.Enabled,
         dbo.Suppliers.Name AS SupplierName,
+        dbo.PriceLists.ResponsibleUserId,
+        COALESCE(NULLIF(LTRIM(RTRIM(responsible.FullName)), ''), responsible.UserName) AS ResponsibleUserName,
         dbo.PriceLists.SupplierComment
     `;
 
@@ -192,6 +197,7 @@ export async function POST(req: NextRequest) {
       FROM dbo.PriceLists
       LEFT OUTER JOIN dbo.Suppliers ON dbo.PriceLists.SupplierID = dbo.Suppliers.ID
       LEFT OUTER JOIN dbo.Brands ON dbo.PriceLists.BrandID = dbo.Brands.ID
+      LEFT OUTER JOIN dbo.AspNetUsers AS responsible ON dbo.PriceLists.ResponsibleUserId = responsible.Id
     `;
 
     const normalizedFilterModel = ensureEnabledFilterModel(requestPayload.filterModel);

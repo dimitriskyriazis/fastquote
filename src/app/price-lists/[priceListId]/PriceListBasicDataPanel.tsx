@@ -44,7 +44,7 @@ export async function fetchPriceListBasicRecord(priceListId: number) {
         pl.CurrencyId AS CurrencyId,
         cur.Name AS CurrencyName,
         pl.ResponsibleUserId,
-        resp.UserName AS ResponsibleUserName,
+        COALESCE(NULLIF(LTRIM(RTRIM(resp.FullName)), ''), resp.UserName) AS ResponsibleUserName,
         pl.HasDuty,
         NULL AS PricingPolicyRuleID,
         NULL AS PricingPolicyID,
@@ -148,9 +148,11 @@ async function fetchUsers() {
   try {
     const pool = await getPool();
     const result = await pool.request().query<LookupRow & { UserName?: string | null }>(`
-      SELECT Id AS ID, UserName AS Name
+      SELECT
+        Id AS ID,
+        COALESCE(NULLIF(LTRIM(RTRIM(FullName)), ''), UserName) AS Name
       FROM dbo.AspNetUsers
-      ORDER BY UserName
+      ORDER BY COALESCE(NULLIF(LTRIM(RTRIM(FullName)), ''), UserName)
     `);
     return mapLookupRows(result.recordset);
   } catch (err) {

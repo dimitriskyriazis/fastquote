@@ -4,6 +4,7 @@ import { coerceRoles } from '../../../lib/roles';
 
 type UserRecord = {
   Id: number;
+  FullName: string | null;
   UserName: string | null;
   WindowsUserName: string | null;
   RoleName: string | null;
@@ -45,6 +46,7 @@ export async function GET() {
     const query = `
       SELECT
         u.Id,
+        u.FullName,
         u.UserName,
         u.WindowsUserName,
         r.Name AS RoleName,
@@ -53,12 +55,13 @@ export async function GET() {
       ${joinSql}
       LEFT JOIN dbo.SalesSeniorities ss ON ss.ID = u.SalesSeniorityID
       ORDER BY
-        CASE WHEN u.UserName IS NULL OR LTRIM(RTRIM(u.UserName)) = '' THEN 1 ELSE 0 END,
-        u.UserName
+        CASE WHEN u.FullName IS NULL OR LTRIM(RTRIM(u.FullName)) = '' THEN 1 ELSE 0 END,
+        COALESCE(NULLIF(LTRIM(RTRIM(u.FullName)), ''), u.UserName)
     `;
     const result = await request.query<UserRecord>(query);
     const byId = new Map<number, {
       id: number;
+      fullName: string | null;
       userName: string | null;
       windowsUserName: string | null;
       roles: Array<string | null>;
@@ -68,6 +71,7 @@ export async function GET() {
     (result.recordset ?? []).forEach((row) => {
       const existing = byId.get(row.Id) ?? {
         id: row.Id,
+        fullName: row.FullName ?? null,
         userName: row.UserName ?? null,
         windowsUserName: row.WindowsUserName ?? null,
         roles: [],
@@ -84,6 +88,7 @@ export async function GET() {
 
     const users = Array.from(byId.values()).map((user) => ({
       id: user.id,
+      fullName: user.fullName,
       userName: user.userName,
       windowsUserName: user.windowsUserName,
       roles: coerceRoles(user.roles),

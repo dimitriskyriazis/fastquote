@@ -97,7 +97,7 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   Role1: 2,
   Role2: 2,
   Qty: 1,
-
+  ResponsibleUserName: 2
 };
 
 export const resolveColumnWidthAssignments = (
