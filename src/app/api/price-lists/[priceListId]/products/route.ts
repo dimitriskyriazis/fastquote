@@ -95,6 +95,21 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
   return { where, params };
 };
 
+const ensureEnabledFilterModel = (
+  filterModel: GridRequest["filterModel"],
+) => {
+  const base =
+    (filterModel && typeof filterModel === "object" ? { ...filterModel } : {}) as Record<
+      string,
+      KnownFilterModel
+    >;
+  if ("Enabled" in base) {
+    return base;
+  }
+  base.Enabled = { filterType: "set", values: ["true"] };
+  return base;
+};
+
 
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "";
@@ -180,7 +195,8 @@ export async function POST(
     `;
 
     const baseWhere = "WHERE dbo.PriceListItems.PriceListID = @__priceListId";
-    const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);
+    const normalizedFilterModel = ensureEnabledFilterModel(requestPayload.filterModel);
+    const { where, params: whereParams } = buildWhereAndParams(normalizedFilterModel);
     const trimmedWhere = where.trim().replace(/^WHERE\s+/i, "");
     const combinedWhere = trimmedWhere
       ? `${baseWhere} AND ${trimmedWhere}`

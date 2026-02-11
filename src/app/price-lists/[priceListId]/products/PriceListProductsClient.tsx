@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -8,6 +8,7 @@ import type {
   CellValueChangedEvent,
   ColDef,
   GetContextMenuItemsParams,
+  GridApi,
   MenuItemDef,
   ValueFormatterParams,
 } from "ag-grid-community";
@@ -111,12 +112,28 @@ export default function PriceListProductsClient({
   priceListLabel,
 }: Props) {
   const { roles } = useAuditUser();
+  const defaultEnabledFilterAppliedRef = useRef(false);
   const endpoint = useMemo(
     () => `/api/price-lists/${encodeURIComponent(priceListId)}/products`,
     [priceListId],
   );
   const router = useRouter();
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
+
+  const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
+    if (!api || defaultEnabledFilterAppliedRef.current) return;
+    const existingModel = api.getFilterModel() as Record<string, unknown> | null;
+    const nextModel = existingModel && typeof existingModel === "object" ? { ...existingModel } : {};
+    if ("Enabled" in nextModel) {
+      defaultEnabledFilterAppliedRef.current = true;
+      return;
+    }
+    api.setFilterModel({
+      ...nextModel,
+      Enabled: { filterType: "set", values: ["true"] },
+    });
+    defaultEnabledFilterAppliedRef.current = true;
+  }, []);
 
   const columnDefs: ColDef[] = useMemo(
     () => [
@@ -366,6 +383,7 @@ export default function PriceListProductsClient({
             endpoint={endpoint}
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
+            onGridReady={handleGridReady}
             getContextMenuItems={priceListContextMenuItems}
             onCellValueChanged={handleCellEdit}
             rowGroupPanelShow="never"

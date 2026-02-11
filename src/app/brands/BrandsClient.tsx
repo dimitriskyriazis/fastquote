@@ -52,7 +52,25 @@ const normalizeBrandId = (value: unknown): number | null => {
   return null;
 };
 
+const normalizeTextValue = (value: unknown): string => {
+  if (value == null) return "";
+  if (typeof value === "string") return value.trim();
+  return String(value).trim();
+};
+
+const normalizeOptionalInt = (value: unknown): number | null => {
+  const text = normalizeTextValue(value);
+  if (!text) return null;
+  const parsed = Number.parseInt(text, 10);
+  if (Number.isFinite(parsed)) return parsed;
+  return null;
+};
+
 const BRAND_FIELD_LABELS: Record<string, string> = {
+  Name: "Brand name",
+  SoftOneID: "SoftOne ID",
+  SoftOneCode: "SoftOne Code",
+  Comment: "Comment",
   Enabled: "Enabled",
 };
 
@@ -156,23 +174,32 @@ export default function BrandsClient() {
         field: "Name",
         headerName: "Brand Name",
         filter: "agTextColumnFilter",
+        editable: true,
       },
       {
         field: "SoftOneID",
         headerName: "SoftOne ID",
         filter: "agTextColumnFilter",
         width: 130,
+        editable: true,
+        valueSetter: (params) => {
+          params.data = params.data ?? {};
+          (params.data as Record<string, unknown>).SoftOneID = normalizeOptionalInt(params.newValue);
+          return true;
+        },
       },
       {
         field: "SoftOneCode",
         headerName: "SoftOne Code",
         filter: "agTextColumnFilter",
         width: 150,
+        editable: true,
       },
       {
         field: "Comment",
         headerName: "Comment",
         filter: "agTextColumnFilter",
+        editable: true,
       },
       {
         field: "Enabled",
@@ -221,9 +248,16 @@ export default function BrandsClient() {
       }
       event.api.refreshCells({ force: true });
     };
-    const value = normalizeBoolean(
-      (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
-    );
+    const value =
+      field === "Enabled"
+        ? normalizeBoolean(
+            (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
+          )
+        : field === "SoftOneID"
+          ? normalizeOptionalInt(
+              (event.data as { SoftOneID?: unknown } | undefined)?.SoftOneID ?? event.newValue,
+            )
+          : normalizeTextValue(event.newValue);
 
     const submit = async () => {
       try {

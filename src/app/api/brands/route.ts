@@ -27,9 +27,19 @@ type BrandUpdateInput = {
 
 type NormalizedBrandUpdate = {
   brandId: number;
-  field: "Enabled";
+  field: "Name" | "Comment" | "SoftOneID" | "SoftOneCode" | "Enabled";
   value: unknown;
 };
+
+class BrandUpdateError extends Error {
+  status: number;
+
+  constructor(message: string, status = 400) {
+    super(message);
+    this.name = "BrandUpdateError";
+    this.status = status;
+  }
+}
 
 const normalizeBrandId = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
@@ -44,6 +54,32 @@ const normalizeBooleanInput = (value: unknown): boolean => {
   if (value === true || value === "true" || value === 1 || value === "1") return true;
   if (value === false || value === "false" || value === 0 || value === "0") return false;
   return Boolean(value);
+};
+
+const normalizeTextValue = (value: unknown): string => {
+  if (value == null) return "";
+  if (typeof value === "string") return value.trim();
+  return String(value).trim();
+};
+
+const normalizeNullableTextValue = (value: unknown): string | null => {
+  const normalized = normalizeTextValue(value);
+  return normalized.length > 0 ? normalized : null;
+};
+
+const normalizeOptionalIntInput = (value: unknown): number | null => {
+  if (value == null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  const text = normalizeTextValue(value);
+  if (!text) return null;
+  if (!/^-?\d+$/.test(text)) {
+    throw new BrandUpdateError("SoftOne ID must be a valid integer", 400);
+  }
+  const parsed = Number.parseInt(text, 10);
+  if (!Number.isFinite(parsed)) {
+    throw new BrandUpdateError("SoftOne ID must be a valid integer", 400);
+  }
+  return parsed;
 };
 
 export async function POST(req: NextRequest) {
@@ -154,8 +190,18 @@ export async function PATCH(req: NextRequest) {
       .map((entry) => {
         const brandId = normalizeBrandId(entry?.BrandID ?? null);
         const field = typeof entry?.field === "string" ? entry.field : null;
-        if (brandId == null || field !== "Enabled") return null;
-        return { brandId, field: "Enabled", value: entry?.value };
+        if (
+          brandId == null ||
+          !field ||
+          (field !== "Name" &&
+            field !== "Comment" &&
+            field !== "SoftOneID" &&
+            field !== "SoftOneCode" &&
+            field !== "Enabled")
+        ) {
+          return null;
+        }
+        return { brandId, field, value: entry?.value };
       })
       .filter((entry): entry is NormalizedBrandUpdate => entry != null);
 
@@ -168,14 +214,56 @@ export async function PATCH(req: NextRequest) {
       const request = pool.request();
       request.input("brandId", sql.Int, update.brandId);
       request.input("userId", sql.NVarChar(450), userId ?? null);
-      request.input("value", sql.Bit, normalizeBooleanInput(update.value) ? 1 : 0);
-      await request.query(`
-        UPDATE dbo.Brands
-        SET Enabled = @value,
-          ModifiedOn = SYSUTCDATETIME(),
-          ModifiedBy = @userId
-        WHERE ID = @brandId
-      `);
+      if (update.field === "Enabled") {
+        request.input("value", sql.Bit, normalizeBooleanInput(update.value) ? 1 : 0);
+        await request.query(`
+          UPDATE dbo.Brands
+          SET Enabled = @value,
+            ModifiedOn = SYSUTCDATETIME(),
+            ModifiedBy = @userId
+          WHERE ID = @brandId
+        `);
+      } else if (update.field === "SoftOneID") {
+        request.input("value", sql.Int, normalizeOptionalIntInput(update.value));
+        await request.query(`
+          UPDATE dbo.Brands
+          SET SoftOneID = @value,
+            ModifiedOn = SYSUTCDATETIME(),
+            ModifiedBy = @userId
+          WHERE ID = @brandId
+        `);
+      } else if (update.field === "SoftOneCode") {
+        request.input("value", sql.NVarChar(255), normalizeNullableTextValue(update.value));
+        await request.query(`
+          UPDATE dbo.Brands
+          SET SoftOneCode = @value,
+            ModifiedOn = SYSUTCDATETIME(),
+            ModifiedBy = @userId
+          WHERE ID = @brandId
+        `);
+      } else if (update.field === "Comment") {
+        request.input("value", sql.NVarChar(2000), normalizeNullableTextValue(update.value));
+        await request.query(`
+          UPDATE dbo.Brands
+          SET Comment = @value,
+            ModifiedOn = SYSUTCDATETIME(),
+            ModifiedBy = @userId
+          WHERE ID = @brandId
+        `);
+      } else {
+        const name = normalizeTextValue(update.value);
+        if (!name) {
+          throw new BrandUpdateError("Brand name is required", 400);
+        }
+        request.input("value", sql.NVarChar(255), name);
+        await request.query(`
+          UPDATE dbo.Brands
+          SET Name = @value,
+            ModifiedOn = SYSUTCDATETIME(),
+            ModifiedBy = @userId
+          WHERE ID = @brandId
+        `);
+      }
     }
 
     logger.info("Brand updated successfully", {
@@ -188,6 +276,9 @@ export async function PATCH(req: NextRequest) {
 
     return NextResponse.json({ ok: true, updated: normalized.length });
   } catch (err) {
+    if (err instanceof BrandUpdateError) {
+      return NextResponse.json({ ok: false, error: err.message }, { status: err.status });
+    }
     return await handleApiError(err, {
       requestId,
       endpoint: "/api/brands",
