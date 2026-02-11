@@ -270,6 +270,7 @@ export async function POST(req: NextRequest) {
 	        dbo.Offer.Description,
 	        dbo.Offer.Title,
 	        dbo.Offer.Comments,
+	        dbo.Offer.CustomerID,
 	        dbo.Customers.Name AS CustomerName,
 	        dbo.PricingPolicies.Name AS PricingPolicyName,
 	        dbo.Markets.Name AS SalesMarket,

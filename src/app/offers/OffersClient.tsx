@@ -55,6 +55,15 @@ const historyMenuIcon = `
   </span>
 `;
 
+const viewCustomerMenuIcon = `
+  <span class="fastquote-menu-icon" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+      <circle cx="12" cy="7" r="4"/>
+    </svg>
+  </span>
+`;
+
 const normalizeOfferIdValue = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isInteger(value)) return value;
   if (typeof value === 'string') {
@@ -218,6 +227,20 @@ export default function OffersClient() {
         return items;
       }
 
+      const customerId = normalizeOfferIdValue(
+        (params.node?.data as { CustomerID?: unknown } | null | undefined)?.CustomerID ?? null,
+      );
+
+      const viewCustomerMenuItem: MenuItemDef<Record<string, unknown>> | null = customerId != null
+        ? {
+            name: 'View Customer',
+            icon: viewCustomerMenuIcon,
+            action: () => {
+              router.push(`/customers/${customerId}/basicdata`);
+            },
+          }
+        : null;
+
       const statusHistoryMenuItem: MenuItemDef<Record<string, unknown>> = {
         name: 'View status history',
         icon: historyMenuIcon,
@@ -234,6 +257,12 @@ export default function OffersClient() {
         },
       };
 
+      const customItems: Array<MenuItemDef<Record<string, unknown>>> = [
+        ...(viewCustomerMenuItem ? [viewCustomerMenuItem] : []),
+        statusHistoryMenuItem,
+        versionMenuItem,
+      ];
+
       const deleteIndex = items.findIndex((item) => (
         typeof item === 'object'
         && item
@@ -241,22 +270,22 @@ export default function OffersClient() {
         && item.name.trim().toLowerCase().startsWith('delete')
       ));
       if (deleteIndex >= 0) {
-        items.splice(deleteIndex, 0, statusHistoryMenuItem, versionMenuItem);
+        items.splice(deleteIndex, 0, ...customItems);
       } else {
         const separatorIndex = items.lastIndexOf('separator');
         if (separatorIndex >= 0) {
-          items.splice(separatorIndex + 1, 0, statusHistoryMenuItem, versionMenuItem);
+          items.splice(separatorIndex + 1, 0, ...customItems);
         } else {
           if (items.length > 0 && items[items.length - 1] !== 'separator') {
             items.push('separator');
           }
-          items.push(statusHistoryMenuItem, versionMenuItem);
+          items.push(...customItems);
         }
       }
 
       return items;
     },
-    [offersRowDeletion, handleCreateNewVersion, handleViewStatusHistory],
+    [offersRowDeletion, handleCreateNewVersion, handleViewStatusHistory, router],
   );
 
   const formatDateDMY = (value: unknown): string => {

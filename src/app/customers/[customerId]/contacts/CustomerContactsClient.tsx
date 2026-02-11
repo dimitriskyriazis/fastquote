@@ -59,7 +59,21 @@ const resolveCustomerContactLabel = (
 };
 
 const CONTACT_FIELD_LABELS: Record<string, string> = {
+  LastName: "Last name",
+  FirstName: "First name",
+  Position: "Position",
+  Email: "Email",
+  SecondEmail: "Second email",
+  Phone: "Phone",
+  Mobile: "Mobile",
+  Importance: "Importance",
   Enabled: "Enabled",
+};
+
+const normalizeTextInput = (value: unknown): string => {
+  if (value == null) return "";
+  if (typeof value === "string") return value.trim();
+  return String(value).trim();
 };
 
 const BOOLEAN_OPTIONS = [
@@ -228,47 +242,65 @@ export default function CustomerContactsClient({ customerId, customerName, statu
     defaultEnabledFilterAppliedRef.current = true;
   }, []);
 
+  const importanceDropdownValues = useMemo(() => ["", ...importanceOptions], [importanceOptions]);
+
   const columnDefs = useMemo<ColDef[]>(
     () => [
+      {
+        field: "Title",
+        headerName: "Title",
+        filter: "agTextColumnFilter",
+        width: 120,
+      },
       {
         field: "LastName",
         headerName: "Last Name",
         filter: "agTextColumnFilter",
+        editable: true,
       },
       {
         field: "FirstName",
         headerName: "First Name",
         filter: "agTextColumnFilter",
+        editable: true,
       },
       {
         field: "Position",
         headerName: "Position",
         filter: "agTextColumnFilter",
+        editable: true,
       },
       {
         field: "Email",
         headerName: "Email",
         filter: "agTextColumnFilter",
+        editable: true,
       },
       {
         field: "SecondEmail",
         headerName: "Second Email",
         filter: "agTextColumnFilter",
+        editable: true,
       },
       {
         field: "Phone",
         headerName: "Phone",
         filter: "agTextColumnFilter",
+        editable: true,
       },
       {
         field: "Mobile",
         headerName: "Mobile",
         filter: "agTextColumnFilter",
+        editable: true,
       },
       {
         field: "Importance",
         headerName: "Importance",
         filter: "agTextColumnFilter",
+        editable: true,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: { values: importanceDropdownValues },
       },
       {
         field: "Enabled",
@@ -294,7 +326,7 @@ export default function CustomerContactsClient({ customerId, customerName, statu
         },
       },
     ],
-    [enabledOptions],
+    [enabledOptions, importanceDropdownValues],
   );
 
   const endpoint = `/api/customers/${encodedCustomerId}/contacts`;
@@ -319,9 +351,14 @@ export default function CustomerContactsClient({ customerId, customerName, statu
       }
       event.api.refreshCells({ force: true });
     };
-    const value = normalizeBoolean(
-      (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
-    );
+    let value: unknown;
+    if (field === "Enabled") {
+      value = normalizeBoolean(
+        (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
+      );
+    } else {
+      value = normalizeTextInput(event.newValue);
+    }
 
     const submit = async () => {
       try {
@@ -473,13 +510,12 @@ export default function CustomerContactsClient({ customerId, customerName, statu
           </div>
           <div className={styles.contactModalField}>
             <label className={styles.fieldLabel} htmlFor="contact-position">
-              Position <span className={styles.requiredMark}>*</span>
+              Position
             </label>
             <input
               id="contact-position"
               className={styles.fieldControl}
               value={contactForm.position}
-              required
               onChange={(event) => setContactField("position", event.target.value)}
             />
           </div>

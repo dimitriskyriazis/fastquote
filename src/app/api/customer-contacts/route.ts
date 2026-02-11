@@ -31,6 +31,7 @@ type GridRequest = {
 
 type ContactRow = {
   ContactID: number | null;
+  Title: string | null;
   LastName: string | null;
   FirstName: string | null;
   Position: string | null;
@@ -49,6 +50,7 @@ type ContactRowWithCount = ContactRow & { __totalCount: number | bigint | null }
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   ContactID: "dbo.Contacts.ID",
+  Title: "t.Name",
   LastName: "dbo.Contacts.LastName",
   FirstName: "dbo.Contacts.FirstName",
   Position: "dbo.Contacts.Position",
@@ -354,6 +356,8 @@ export async function POST(req: NextRequest) {
       SELECT
         COUNT_BIG(1) OVER () AS __totalCount,
         dbo.Contacts.ID AS ContactID,
+        dbo.Contacts.CustomerID,
+        t.Name AS Title,
         dbo.Contacts.LastName,
         dbo.Contacts.FirstName,
         dbo.Contacts.Position,
@@ -371,6 +375,7 @@ export async function POST(req: NextRequest) {
     const from = `
       FROM dbo.Contacts
       INNER JOIN dbo.Customers ON dbo.Contacts.CustomerID = dbo.Customers.ID
+      LEFT OUTER JOIN dbo.Titles AS t ON dbo.Contacts.TitleID = t.ID
       LEFT OUTER JOIN dbo.EmailStatuses AS es1 ON dbo.Contacts.EmailStatusID = es1.ID
       LEFT OUTER JOIN dbo.EmailStatuses AS es2 ON dbo.Contacts.SecondEmailStatusID = es2.ID
     `;

@@ -99,6 +99,15 @@ const resolveContactLabel = (
   return fallback;
 };
 
+const viewCustomerMenuIcon = `
+  <span class="fastquote-menu-icon" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+      <circle cx="12" cy="7" r="4"/>
+    </svg>
+  </span>
+`;
+
 export default function ContactsClient({
   statuses,
   importances,
@@ -355,6 +364,12 @@ export default function ContactsClient({
   const columnDefs = useMemo<ColDef[]>(() => {
     const orderedColumns: ColDef[] = [
       {
+        field: "Title",
+        headerName: "Title",
+        filter: "agTextColumnFilter",
+        width: 120,
+      },
+      {
         field: "LastName",
         headerName: "Last Name",
         filter: "agTextColumnFilter",
@@ -479,9 +494,24 @@ export default function ContactsClient({
   );
 
   const contactContextMenuItems = useCallback(
-    (params: GetContextMenuItemsParams<Record<string, unknown>>) =>
-      contactRowDeletion.getContextMenuItems(params),
-    [contactRowDeletion],
+    (params: GetContextMenuItemsParams<Record<string, unknown>>) => {
+      const deleteItems = contactRowDeletion.getContextMenuItems(params);
+      const customerId = normalizeContactId(
+        (params.node?.data as { CustomerID?: unknown } | undefined)?.CustomerID ?? null,
+      );
+      const viewCustomerItem = customerId != null
+        ? [
+            {
+              name: "View Customer",
+              icon: viewCustomerMenuIcon,
+              action: () => router.push(`/customers/${customerId}/basicdata`),
+            },
+            "separator" as const,
+          ]
+        : [];
+      return [...viewCustomerItem, ...deleteItems];
+    },
+    [contactRowDeletion, router],
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
@@ -713,13 +743,12 @@ export default function ContactsClient({
           </div>
           <div className={styles.contactModalField}>
             <label className={styles.fieldLabel} htmlFor="contact-position">
-              Position <span className={styles.requiredMark}>*</span>
+              Position
             </label>
             <input
               id="contact-position"
               className={styles.fieldControl}
               value={contactForm.position}
-              required
               onChange={(event) => setContactField("position", event.target.value)}
             />
           </div>

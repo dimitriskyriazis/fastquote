@@ -37,6 +37,12 @@ export default async function Page({
         <h1 className={`${layoutStyles.heading} ${layoutStyles.headingCentered}`}>{headingText}</h1>
         <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>
           <Link
+            href={`/offers/create?customerId=${encodedId}`}
+            className={`${layoutStyles.headerActionButton} page-header-button`}
+          >
+            Create Offer for Customer
+          </Link>
+          <Link
             href={`/customers/${encodedId}/contacts`}
             className={`${layoutStyles.headerActionButton} page-header-button`}
           >

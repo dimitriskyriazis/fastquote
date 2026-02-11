@@ -34,6 +34,7 @@ type GridRequest = {
 
 type CustomerContactRow = {
   ContactID: number | null;
+  Title: string | null;
   LastName: string | null;
   FirstName: string | null;
   Position: string | null;
@@ -73,6 +74,7 @@ const CONTACT_DELETE_BATCH = 200;
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   ContactID: "dbo.Contacts.ID",
+  Title: "t.Name",
   LastName: "dbo.Contacts.LastName",
   FirstName: "dbo.Contacts.FirstName",
   Position: "dbo.Contacts.Position",
@@ -254,6 +256,7 @@ export async function POST(
       SELECT
         COUNT_BIG(1) OVER () AS __totalCount,
         dbo.Contacts.ID AS ContactID,
+        t.Name AS Title,
         dbo.Contacts.LastName,
         dbo.Contacts.FirstName,
         dbo.Contacts.Position,
@@ -266,6 +269,7 @@ export async function POST(
         dbo.Contacts.Enabled
       FROM dbo.Contacts
       INNER JOIN dbo.Customers ON dbo.Contacts.CustomerID = dbo.Customers.ID
+      LEFT OUTER JOIN dbo.Titles AS t ON dbo.Contacts.TitleID = t.ID
     `;
 
     const appliedWhere = combineWhereClauses("WHERE dbo.Customers.ID = @__customerId", combinedWhere);
