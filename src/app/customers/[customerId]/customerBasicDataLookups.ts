@@ -8,7 +8,7 @@ type CityRow = { ID: number | null; Name: string | null; CountryID: number | nul
 const mapLookupRows = (rows: LookupRow[] | undefined | null): CustomerDropdownOption[] =>
   toDropdownOptions<LookupRow>(rows);
 
-export const IMPORTANCE_VALUES = ['', '0', '1', '2', '3'];
+export const IMPORTANCE_VALUES = ['', '1', '2', '3'];
 export const IMPORTANCE_OPTIONS: CustomerDropdownOption[] = IMPORTANCE_VALUES.map((value) => ({
   value,
   label: value === '' ? 'Empty' : value,
