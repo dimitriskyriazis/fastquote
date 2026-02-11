@@ -502,7 +502,9 @@ export async function generateOfferPdf(
     ? `${COMPANY.name}, ${COMPANY.address}`
     : `${COMPANY.nameEN}, ${COMPANY.addressEN}`;
   const companyContactLine = `${COMPANY.phone}  |  ${COMPANY.fax}  |  ${COMPANY.email}  |  ${COMPANY.website}`;
-  const companyTaxLine = `AΦΜ: ${COMPANY.afm}, ΔΟΥ: ${lang === 'el' ? COMPANY.doy : COMPANY.doyEN}`;
+  const companyTaxLine = lang === 'el'
+    ? `AΦΜ: ${COMPANY.afm}, ΔΟΥ: ${COMPANY.doy}`
+    : `Tax ID: ${COMPANY.afm}, Tax Office: ${COMPANY.doyEN}`;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const docDefinition: any = {

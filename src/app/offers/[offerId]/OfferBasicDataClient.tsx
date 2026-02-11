@@ -179,6 +179,15 @@ const buildFieldDefinitions = (
     valueType: 'number',
     options: fwcProjects,
   },
+  {
+    id: 'probability',
+    label: 'Probability',
+    section: 'code',
+    recordKey: 'Probability',
+    updateField: 'Probability',
+    valueType: 'number',
+    inputType: 'number',
+  },
   { id: 'offerId', label: 'Offer ID', section: 'code', recordKey: 'OfferID', readOnly: true },
   { id: 'customerRef', label: 'Customer Ref', section: 'code', recordKey: 'CustomerRef', updateField: 'CustomerRef' },
 

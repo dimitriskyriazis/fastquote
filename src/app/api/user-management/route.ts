@@ -32,6 +32,13 @@ type ColumnCheckRow = {
   name: string;
 };
 
+type UserTimestampSchema = {
+  hasCreatedAt: boolean;
+  hasModifiedAt: boolean;
+  hasCreatedOn: boolean;
+  hasModifiedOn: boolean;
+};
+
 class UserUpdateError extends Error {
   status: number;
 
@@ -96,6 +103,23 @@ const getRoleSchema = async (pool: ConnectionPool): Promise<RoleSchema> => {
     return { userColumn: "AspNetUsersID", roleColumn: "AspNetRolesID" };
   }
   throw new Error("AspNetUserRoles schema not recognized.");
+};
+
+const getUserTimestampSchema = async (pool: ConnectionPool): Promise<UserTimestampSchema> => {
+  const result = await pool.request().query<ColumnCheckRow>(`
+    SELECT name
+    FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.AspNetUsers')
+      AND name IN ('CreatedAt', 'ModifiedAt', 'CreatedOn', 'ModifiedOn')
+  `);
+
+  const names = new Set((result.recordset ?? []).map((row) => row.name));
+  return {
+    hasCreatedAt: names.has("CreatedAt"),
+    hasModifiedAt: names.has("ModifiedAt"),
+    hasCreatedOn: names.has("CreatedOn"),
+    hasModifiedOn: names.has("ModifiedOn"),
+  };
 };
 
 const resolveRoleIds = async (pool: ConnectionPool, roleNames: string[]) => {
@@ -278,29 +302,45 @@ export async function POST(req: NextRequest) {
     insertRequest.input("salesDivisionId", sql.Int, divisionId);
     insertRequest.input("salesSeniorityId", sql.Int, seniorityId);
 
+    const timestampSchema = await getUserTimestampSchema(pool);
+    const insertColumns = [
+      "UserName",
+      "WindowsUserName",
+      "FullName",
+      "FullNameGR",
+      "Email",
+      "SignTitle",
+      "NameCode",
+      "SalesDivisionID",
+      "SalesSeniorityID",
+      ...(timestampSchema.hasCreatedAt ? ["CreatedAt"] : []),
+      ...(timestampSchema.hasModifiedAt ? ["ModifiedAt"] : []),
+      ...(timestampSchema.hasCreatedOn ? ["CreatedOn"] : []),
+      ...(timestampSchema.hasModifiedOn ? ["ModifiedOn"] : []),
+    ];
+    const insertValues = [
+      "@userName",
+      "@windowsUserName",
+      "@fullName",
+      "@fullNameGR",
+      "@email",
+      "@signTitle",
+      "@nameCode",
+      "@salesDivisionId",
+      "@salesSeniorityId",
+      ...(timestampSchema.hasCreatedAt ? ["SYSUTCDATETIME()"] : []),
+      ...(timestampSchema.hasModifiedAt ? ["SYSUTCDATETIME()"] : []),
+      ...(timestampSchema.hasCreatedOn ? ["SYSUTCDATETIME()"] : []),
+      ...(timestampSchema.hasModifiedOn ? ["SYSUTCDATETIME()"] : []),
+    ];
+
     const insertResult = await insertRequest.query<{ ID: number }>(`
       INSERT INTO dbo.AspNetUsers (
-        UserName,
-        WindowsUserName,
-        FullName,
-        FullNameGR,
-        Email,
-        SignTitle,
-        NameCode,
-        SalesDivisionID,
-        SalesSeniorityID
+        ${insertColumns.join(",\n        ")}
       )
       OUTPUT INSERTED.Id AS ID
       VALUES (
-        @userName,
-        @windowsUserName,
-        @fullName,
-        @fullNameGR,
-        @email,
-        @signTitle,
-        @nameCode,
-        @salesDivisionId,
-        @salesSeniorityId
+        ${insertValues.join(",\n        ")}
       )
     `);
     const newUserId = insertResult.recordset?.[0]?.ID ?? null;

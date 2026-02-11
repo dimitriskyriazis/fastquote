@@ -32,6 +32,7 @@ type FormValues = {
   projectId: string;
   erpFwcProjectId: string;
   customerRef: string;
+  probability: string;
   initialRequest: string;
   draftOffer: string;
   officialRequest: string;
@@ -182,6 +183,7 @@ export default function OfferCreateClient({
     projectId: '0',
     erpFwcProjectId: '',
     customerRef: '',
+    probability: '',
     initialRequest: '',
     draftOffer: '',
     officialRequest: '',
@@ -433,6 +435,7 @@ export default function OfferCreateClient({
       projectId: toNumberOrNull(values.projectId),
       erpFwcProjectId: toNumberOrNull(values.erpFwcProjectId),
       customerRef: toNullableString(values.customerRef),
+      probability: toNumberOrNull(values.probability) ?? 0,
       initialRequest: toNullableString(values.initialRequest),
       draftOffer: toNullableString(values.draftOffer),
       officialRequest: toNullableString(values.officialRequest),
@@ -491,6 +494,7 @@ export default function OfferCreateClient({
       { id: 'projectId', label: 'ERP Project ID', section: 'code', inputType: 'number' },
       { id: 'erpFwcProjectId', label: 'ERP FWC Project', section: 'code', type: 'select', options: fwcProjects },
       { id: 'customerRef', label: 'Customer Ref', section: 'code' },
+      { id: 'probability', label: 'Probability', section: 'code', inputType: 'number' },
 
       { id: 'initialRequest', label: 'Initial Request', section: 'dates', type: 'date' },
       { id: 'officialRequest', label: 'Official Request', section: 'dates', type: 'date' },

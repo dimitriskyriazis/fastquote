@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import LookupModal from "./LookupModal";
 import lookupStyles from "./LookupModal.module.css";
 import { showToastMessage } from "../../lib/toast";
@@ -30,6 +30,34 @@ export default function AddUserModal({
   salesDivisions,
   salesSeniorities,
 }: Props) {
+  const salesSeniorityOrder = useMemo(
+    () =>
+      new Map<string, number>([
+        ["ceo", 0],
+        ["general director", 1],
+        ["director", 2],
+        ["manager", 3],
+        ["basic", 4],
+        ["not sales", 5],
+      ]),
+    [],
+  );
+
+  const orderedSalesSeniorities = useMemo(() => {
+    const withIndex = salesSeniorities.map((value, index) => ({
+      value,
+      index,
+      order: salesSeniorityOrder.get(value.trim().toLowerCase()) ?? Number.POSITIVE_INFINITY,
+    }));
+
+    withIndex.sort((a, b) => {
+      if (a.order !== b.order) return a.order - b.order;
+      return a.index - b.index;
+    });
+
+    return withIndex.map((entry) => entry.value);
+  }, [salesSeniorityOrder, salesSeniorities]);
+
   const [userName, setUserName] = useState("");
   const [windowsUserName, setWindowsUserName] = useState("");
   const [role, setRole] = useState("");
@@ -272,7 +300,7 @@ export default function AddUserModal({
             onChange={(event) => setSalesSeniority(event.target.value)}
           >
             <option value="">Select sales seniority...</option>
-            {salesSeniorities.map((option) => (
+            {orderedSalesSeniorities.map((option) => (
               <option key={option} value={option}>
                 {option}
               </option>

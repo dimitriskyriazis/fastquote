@@ -49,6 +49,7 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   ApprovalUserId: { column: 'ApprovalUserId', type: 'string', sqlType: sql.NVarChar, length: 450 },
   ERPProjectID: { column: 'ERPProjectID', type: 'number', sqlType: sql.Int },
   ERPFWCProjectID: { column: 'ERPFWCProjectID', type: 'number', sqlType: sql.Int },
+  Probability: { column: 'Probability', type: 'number', sqlType: sql.Int },
   CustomerRef: { column: 'CustomerRef', type: 'string', sqlType: sql.NVarChar, length: 500 },
   InitialRequest: { column: 'InitialRequest', type: 'date', sqlType: sql.DateTime2 },
   DraftOffer: { column: 'DraftOffer', type: 'date', sqlType: sql.DateTime2 },

@@ -33,6 +33,18 @@ type DeleteRequest = {
   OfferIDs?: Array<number | string | null | undefined>;
 };
 
+type OfferUpdateField = 'Probability';
+
+type OfferUpdateInput = {
+  OfferID?: number | string | null;
+  field?: OfferUpdateField;
+  value?: unknown;
+};
+
+type OfferPatchRequest = {
+  updates?: OfferUpdateInput[];
+};
+
 type OfferRow = {
   Description: string | null;
   Title: string | null;
@@ -59,6 +71,7 @@ type OfferRow = {
   Enabled: boolean | number | null;
   OfferDate: string | null;
   ModifiedOn: string | null;
+  Probability: number | null;
 };
 
 type OfferRowWithCount = OfferRow & { __totalCount: number | bigint | null };
@@ -99,6 +112,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Enabled: 'dbo.Offer.Enabled',
   OfferDate: 'dbo.Offer.OfferDate',
   ModifiedOn: LATEST_MODIFIED_EXPRESSION,
+  Probability: 'dbo.Offer.Probability',
 };
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
   colId,
@@ -299,6 +313,7 @@ export async function POST(req: NextRequest) {
         dbo.Offer.OfferVersion,
         dbo.Offer.Enabled,
         dbo.Offer.OfferDate,
+        dbo.Offer.Probability,
         ${LATEST_MODIFIED_EXPRESSION} AS ModifiedOn
     `;
 
@@ -441,6 +456,79 @@ export async function POST(req: NextRequest) {
       { ok: false, error: message },
       { status: 500 }
     );
+  }
+}
+
+const normalizeProbability = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
+};
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const auth = await requirePermission(req, "editOffers");
+    if (!auth.ok) return auth.response;
+
+    let body: OfferPatchRequest | null = null;
+    try {
+      body = (await req.json()) as OfferPatchRequest;
+    } catch {
+      body = null;
+    }
+
+    const rawUpdates = Array.isArray(body?.updates) ? body.updates : [];
+    if (rawUpdates.length === 0) {
+      return NextResponse.json({ ok: false, error: 'No updates provided' }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    const auditUserId = resolveAuditUserId(req);
+    let updated = 0;
+
+    for (const update of rawUpdates) {
+      if (!update || update.field !== 'Probability') continue;
+      const offerId = normalizeOfferId(update.OfferID);
+      if (offerId == null) continue;
+      const probability = normalizeProbability(update.value);
+      if (probability == null) {
+        return NextResponse.json(
+          { ok: false, error: 'Probability must be an integer value.' },
+          { status: 400 },
+        );
+      }
+
+      const request = pool.request();
+      request.input('__offerId', sql.Int, offerId);
+      request.input('__probability', sql.Int, probability);
+      if (auditUserId) {
+        request.input('__modifiedBy', sql.NVarChar(450), auditUserId);
+      }
+
+      const result = await request.query(`
+        UPDATE dbo.Offer
+        SET
+          Probability = @__probability,
+          ModifiedOn = SYSUTCDATETIME()
+          ${auditUserId ? ', ModifiedBy = @__modifiedBy' : ''}
+        WHERE ID = @__offerId;
+      `);
+
+      updated += result.rowsAffected?.[0] ?? 0;
+    }
+
+    if (updated <= 0) {
+      return NextResponse.json({ ok: false, error: 'No valid updates were applied' }, { status: 400 });
+    }
+
+    return NextResponse.json({ ok: true, updated });
+  } catch (err: unknown) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
 

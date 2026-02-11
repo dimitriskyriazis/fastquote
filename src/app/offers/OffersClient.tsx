@@ -9,6 +9,7 @@ import type {
   GetContextMenuItemsParams,
   GridApi,
   MenuItemDef,
+  CellValueChangedEvent,
 } from 'ag-grid-community';
 import { createPortal } from 'react-dom';
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from '../components/actionMenuMarkers';
@@ -103,6 +104,17 @@ const localeStringComparator = (a: unknown, b: unknown) => {
   if (!left) return 1;
   if (!right) return -1;
   return left.localeCompare(right, undefined, { sensitivity: 'base', numeric: true });
+};
+
+const normalizeProbability = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return 0;
+    const parsed = Number.parseInt(trimmed, 10);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
 };
 
 export default function OffersClient() {
@@ -467,6 +479,64 @@ export default function OffersClient() {
     );
   }, [expandedVersionGroups, toggleVersionGroup]);
 
+  const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    const field = event.colDef.field;
+    if (field !== 'Probability') return;
+    if (event.newValue === event.oldValue) return;
+    const offerId = normalizeOfferIdValue(
+      (event.data as { offerId?: unknown } | undefined)?.offerId ?? null,
+    );
+    if (offerId == null) return;
+    const normalizedValue = normalizeProbability(event.newValue);
+    const label = 'Probability';
+
+    const revertValue = () => {
+      if (event.node) {
+        try {
+          event.node.setDataValue(field, event.oldValue);
+          return;
+        } catch {
+          /* noop */
+        }
+      }
+      event.api.refreshCells({ force: true });
+    };
+
+    if (normalizedValue == null) {
+      showToastMessage('Probability must be an integer value.', 'error');
+      revertValue();
+      return;
+    }
+
+    if (event.node && event.node.data) {
+      (event.node.data as Record<string, unknown>).Probability = normalizedValue;
+    }
+
+    const submit = async () => {
+      try {
+        const res = await fetch('/api/offers', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: [{ OfferID: offerId, field, value: normalizedValue }],
+          }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update ${label}`);
+        }
+        showToastMessage(`${label} updated`, 'success');
+        event.api?.refreshServerSide?.({ purge: false });
+      } catch (err) {
+        console.error(`Failed to update ${label}`, err);
+        showToastMessage(`Unable to update ${label}. Please try again.`, 'error');
+        revertValue();
+      }
+    };
+
+    void submit();
+  }, []);
+
   const columnDefs: ColDef[] = useMemo(() => [
       {
         headerName: '',
@@ -501,6 +571,20 @@ export default function OffersClient() {
     { field: 'ERPProjectID', headerName: 'ERP Project ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'ERPFWCProjectShortName', headerName: 'ERP FWC Project', filter: 'agTextColumnFilter' },
     {field: 'Comments',  headerName: 'Comments', filter: 'agTextColumnFilter'},
+    {
+      field: 'Probability',
+      headerName: 'Probability',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      editable: true,
+      valueSetter: (params) => {
+        const normalizedValue = normalizeProbability(params.newValue);
+        if (normalizedValue == null) return false;
+        params.data = params.data ?? {};
+        (params.data as Record<string, unknown>).Probability = normalizedValue;
+        return true;
+      },
+    },
     { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn' },
     { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
     { 
@@ -574,6 +658,7 @@ export default function OffersClient() {
                 columnDefs={columnDefs}
                 getContextMenuItems={offersContextMenuItems}
                 onGridReady={handleGridReady}
+                onCellValueChanged={handleCellEdit}
                 requestPayload={{ expandedVersionGroupIds: expandedVersionGroupIds }}
                 rowGroupPanelShow="always"
                 rowSelection="multiple"

@@ -26,6 +26,7 @@ type CreateOfferRequestBody = {
   projectId?: number | string | null;
   erpFwcProjectId?: number | string | null;
   customerRef?: string | null;
+  probability?: number | string | null;
   initialRequest?: string | Date | null;
   draftOffer?: string | Date | null;
   officialRequest?: string | Date | null;
@@ -116,6 +117,7 @@ export async function POST(req: NextRequest) {
     const marketId = normalizeInt(body?.marketId);
     const salesDivisionId = normalizeInt(body?.salesDivisionId);
     const customerRef = normalizeString(body?.customerRef, 500);
+    const probability = normalizeInt(body?.probability) ?? 0;
     const installationSchedule = normalizeString(body?.installationSchedule, 500);
     const closingNote = normalizeString(body?.closingNote, 2000);
     const introNote = normalizeString(body?.introNote, 2000);
@@ -266,6 +268,7 @@ export async function POST(req: NextRequest) {
     request.input('ERPFWCProjectID', sql.Int, erpFwcProjectId);
     request.input('PrintLevelGroupingID', sql.Int, 1);
     request.input('CustomerRef', sql.NVarChar(500), customerRef);
+    request.input('Probability', sql.Int, probability);
     request.input('InitialRequest', sql.DateTime2, dateFields.initialRequest);
     request.input('DraftOffer', sql.DateTime2, dateFields.draftOffer);
     request.input('OfficialRequest', sql.DateTime2, dateFields.officialRequest);
@@ -303,6 +306,7 @@ export async function POST(req: NextRequest) {
         ERPFWCProjectID,
         PrintLevelGroupingID,
         CustomerRef,
+        Probability,
         InitialRequest,
         DraftOffer,
         OfficialRequest,
@@ -344,6 +348,7 @@ export async function POST(req: NextRequest) {
         @ERPFWCProjectID,
         @PrintLevelGroupingID,
         @CustomerRef,
+        @Probability,
         @InitialRequest,
         @DraftOffer,
         @OfficialRequest,
