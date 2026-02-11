@@ -242,7 +242,7 @@ export default function OffersClient() {
         : null;
 
       const statusHistoryMenuItem: MenuItemDef<Record<string, unknown>> = {
-        name: 'View status history',
+        name: 'View offer\'s status history',
         icon: historyMenuIcon,
         action: () => {
           void handleViewStatusHistory(clickedOfferId);
