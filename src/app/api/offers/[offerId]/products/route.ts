@@ -147,6 +147,7 @@ type ProductRow = {
   RequestedBrand: string | null;
   RequestedModelNo: string | null;
   RequestedPartNo: string | null;
+  RequestedWebLink: string | null;
   RequestedDescription: string | null;
   RequestedDescription2: string | null;
   RequestedDescription3: string | null;
@@ -160,6 +161,7 @@ type RequestedFieldKey =
   | 'RequestedBrand'
   | 'RequestedModelNo'
   | 'RequestedPartNo'
+  | 'RequestedWebLink'
   | 'RequestedDescription'
   | 'RequestedDescription2'
   | 'RequestedDescription3'
@@ -176,6 +178,7 @@ type ProductRowWithCount = ProductRow & {
   __hasRequestedBrand?: number | bigint | null;
   __hasRequestedModelNo?: number | bigint | null;
   __hasRequestedPartNo?: number | bigint | null;
+  __hasRequestedWebLink?: number | bigint | null;
   __hasRequestedDescription?: number | bigint | null;
   __hasRequestedDescription2?: number | bigint | null;
   __hasRequestedDescription3?: number | bigint | null;
@@ -221,6 +224,7 @@ type DetailUpdateInput = {
   RequestedBrand?: string | null;
   RequestedModelNo?: string | null;
   RequestedPartNo?: string | null;
+  RequestedWebLink?: string | null;
   RequestedDescription?: string | null;
   RequestedDescription2?: string | null;
   RequestedDescription3?: string | null;
@@ -285,6 +289,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   RequestedBrand: 'od.RequestedBrand',
   RequestedModelNo: 'od.RequestedModelNo',
   RequestedPartNo: 'od.RequestedPartNo',
+  RequestedWebLink: 'od.RequestedWebLink',
   RequestedDescription: 'od.RequestedDescription',
   RequestedDescription2: 'od.RequestedDescription2',
   RequestedDescription3: 'od.RequestedDescription3',
@@ -1226,6 +1231,7 @@ export async function POST(
       'RequestedBrand',
       'RequestedModelNo',
       'RequestedPartNo',
+      'RequestedWebLink',
       'RequestedDescription',
       'RequestedDescription2',
       'RequestedDescription3',
@@ -1291,6 +1297,7 @@ export async function POST(
               OR NULLIF(LTRIM(RTRIM(od.RequestedBrand)), '') IS NOT NULL
               OR NULLIF(LTRIM(RTRIM(od.RequestedModelNo)), '') IS NOT NULL
               OR NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL
+              OR NULLIF(LTRIM(RTRIM(od.RequestedWebLink)), '') IS NOT NULL
               OR NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL
               OR NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL
               OR NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL
@@ -1303,6 +1310,7 @@ export async function POST(
           MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedBrand)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedBrand,
           MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedModelNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedModelNo,
           MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedPartNo,
+          MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedWebLink)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedWebLink,
           MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription,
           MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription2,
           MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription3,
@@ -1359,6 +1367,7 @@ export async function POST(
         MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedBrand)), '') IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedBrand,
         MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedModelNo)), '') IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedModelNo,
         MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedPartNo,
+        MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedWebLink)), '') IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedWebLink,
         MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedDescription,
         MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedDescription2,
         MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL THEN 1 ELSE 0 END) AS __hasRequestedDescription3,
@@ -1373,6 +1382,7 @@ export async function POST(
       __hasRequestedBrand?: number | bigint | null;
       __hasRequestedModelNo?: number | bigint | null;
       __hasRequestedPartNo?: number | bigint | null;
+      __hasRequestedWebLink?: number | bigint | null;
       __hasRequestedDescription?: number | bigint | null;
       __hasRequestedDescription2?: number | bigint | null;
       __hasRequestedDescription3?: number | bigint | null;
@@ -1385,6 +1395,7 @@ export async function POST(
       RequestedBrand: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedBrand ?? 0),
       RequestedModelNo: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedModelNo ?? 0),
       RequestedPartNo: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedPartNo ?? 0),
+      RequestedWebLink: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedWebLink ?? 0),
       RequestedDescription: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedDescription ?? 0),
       RequestedDescription2: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedDescription2 ?? 0),
       RequestedDescription3: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedDescription3 ?? 0),
@@ -1401,6 +1412,7 @@ export async function POST(
       __hasRequestedBrand,
       __hasRequestedModelNo,
       __hasRequestedPartNo,
+      __hasRequestedWebLink,
       __hasRequestedDescription,
       __hasRequestedDescription2,
       __hasRequestedDescription3,
@@ -1415,6 +1427,7 @@ export async function POST(
       void __hasRequestedBrand;
       void __hasRequestedModelNo;
       void __hasRequestedPartNo;
+      void __hasRequestedWebLink;
       void __hasRequestedDescription;
       void __hasRequestedDescription2;
       void __hasRequestedDescription3;
@@ -1548,6 +1561,9 @@ export async function PATCH(
         const hasRequestedPartNo = entry
           ? Object.prototype.hasOwnProperty.call(entry, 'RequestedPartNo')
           : false;
+        const hasRequestedWebLink = entry
+          ? Object.prototype.hasOwnProperty.call(entry, 'RequestedWebLink')
+          : false;
         const hasRequestedDescription = entry
           ? Object.prototype.hasOwnProperty.call(entry, 'RequestedDescription')
           : false;
@@ -1577,6 +1593,7 @@ export async function PATCH(
           && !hasRequestedBrand
           && !hasRequestedModelNo
           && !hasRequestedPartNo
+          && !hasRequestedWebLink
           && !hasRequestedDescription
           && !hasRequestedDescription2
           && !hasRequestedDescription3
@@ -1608,6 +1625,9 @@ export async function PATCH(
           : null;
         const requestedPartNo = hasRequestedPartNo
           ? normalizeRequestedTextValue(entry?.RequestedPartNo ?? null)
+          : null;
+        const requestedWebLink = hasRequestedWebLink
+          ? normalizeRequestedTextValue(entry?.RequestedWebLink ?? null)
           : null;
         const requestedDescription = hasRequestedDescription
           ? normalizeRequestedTextValue(entry?.RequestedDescription ?? null)
@@ -1684,6 +1704,7 @@ export async function PATCH(
           hasRequestedBrand,
           hasRequestedModelNo,
           hasRequestedPartNo,
+          hasRequestedWebLink,
           hasRequestedDescription,
           hasRequestedDescription2,
           hasRequestedDescription3,
@@ -1707,6 +1728,7 @@ export async function PATCH(
           RequestedBrand: requestedBrand,
           RequestedModelNo: requestedModelNo,
           RequestedPartNo: requestedPartNo,
+          RequestedWebLink: requestedWebLink,
           RequestedDescription: requestedDescription,
           RequestedDescription2: requestedDescription2,
           RequestedDescription3: requestedDescription3,
@@ -1738,6 +1760,7 @@ export async function PATCH(
         hasRequestedBrand: boolean;
         hasRequestedModelNo: boolean;
         hasRequestedPartNo: boolean;
+        hasRequestedWebLink: boolean;
         hasRequestedDescription: boolean;
         hasRequestedDescription2: boolean;
         hasRequestedDescription3: boolean;
@@ -1759,6 +1782,7 @@ export async function PATCH(
         RequestedBrand: string | null;
         RequestedModelNo: string | null;
         RequestedPartNo: string | null;
+        RequestedWebLink: string | null;
         RequestedDescription: string | null;
         RequestedDescription2: string | null;
         RequestedDescription3: string | null;
@@ -1889,6 +1913,8 @@ export async function PATCH(
         HasRequestedModelNo: boolean;
         RequestedPartNo: string | null;
         HasRequestedPartNo: boolean;
+        RequestedWebLink: string | null;
+        HasRequestedWebLink: boolean;
         RequestedDescription: string | null;
         HasRequestedDescription: boolean;
         RequestedDescription2: string | null;
@@ -2066,6 +2092,8 @@ export async function PATCH(
           HasRequestedModelNo: entry.hasRequestedModelNo,
           RequestedPartNo: entry.RequestedPartNo,
           HasRequestedPartNo: entry.hasRequestedPartNo,
+          RequestedWebLink: entry.RequestedWebLink,
+          HasRequestedWebLink: entry.hasRequestedWebLink,
           RequestedDescription: entry.RequestedDescription,
           HasRequestedDescription: entry.hasRequestedDescription,
           RequestedDescription2: entry.RequestedDescription2,
@@ -2136,6 +2164,8 @@ export async function PATCH(
         const hasRequestedModelNoParam = `hasRequestedModelNo_${rowIdx}`;
         const requestedPartNoParam = `requestedPartNo_${rowIdx}`;
         const hasRequestedPartNoParam = `hasRequestedPartNo_${rowIdx}`;
+        const requestedWebLinkParam = `requestedWebLink_${rowIdx}`;
+        const hasRequestedWebLinkParam = `hasRequestedWebLink_${rowIdx}`;
         const requestedDescriptionParam = `requestedDescription_${rowIdx}`;
         const hasRequestedDescriptionParam = `hasRequestedDescription_${rowIdx}`;
         const requestedDescription2Param = `requestedDescription2_${rowIdx}`;
@@ -2186,6 +2216,8 @@ export async function PATCH(
         request.input(hasRequestedModelNoParam, sql.Bit, row.HasRequestedModelNo ? 1 : 0);
         request.input(requestedPartNoParam, sql.NVarChar(400), row.HasRequestedPartNo ? row.RequestedPartNo : null);
         request.input(hasRequestedPartNoParam, sql.Bit, row.HasRequestedPartNo ? 1 : 0);
+        request.input(requestedWebLinkParam, sql.NVarChar(4000), row.HasRequestedWebLink ? row.RequestedWebLink : null);
+        request.input(hasRequestedWebLinkParam, sql.Bit, row.HasRequestedWebLink ? 1 : 0);
         request.input(requestedDescriptionParam, sql.NVarChar(4000), row.HasRequestedDescription ? row.RequestedDescription : null);
         request.input(hasRequestedDescriptionParam, sql.Bit, row.HasRequestedDescription ? 1 : 0);
         request.input(requestedDescription2Param, sql.NVarChar(4000), row.HasRequestedDescription2 ? row.RequestedDescription2 : null);
@@ -2212,7 +2244,7 @@ export async function PATCH(
           row.HasIsComment ? (row.IsComment == null ? null : (row.IsComment ? 1 : 0)) : null,
         );
         request.input(hasIsCommentParam, sql.Bit, row.HasIsComment ? 1 : 0);
-        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam})`);
+        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam})`);
       });
 
       const query = `
@@ -2251,6 +2283,8 @@ export async function PATCH(
           HasRequestedModelNo,
           RequestedPartNo,
           HasRequestedPartNo,
+          RequestedWebLink,
+          HasRequestedWebLink,
           RequestedDescription,
           HasRequestedDescription,
           RequestedDescription2,
@@ -2302,6 +2336,8 @@ export async function PATCH(
             HasRequestedModelNo,
             RequestedPartNo,
             HasRequestedPartNo,
+            RequestedWebLink,
+            HasRequestedWebLink,
           RequestedDescription,
           HasRequestedDescription,
           RequestedDescription2,
@@ -2340,6 +2376,7 @@ export async function PATCH(
             od.RequestedBrand = CASE WHEN PendingUpdates.HasRequestedBrand = 1 THEN PendingUpdates.RequestedBrand ELSE od.RequestedBrand END,
             od.RequestedModelNo = CASE WHEN PendingUpdates.HasRequestedModelNo = 1 THEN PendingUpdates.RequestedModelNo ELSE od.RequestedModelNo END,
             od.RequestedPartNo = CASE WHEN PendingUpdates.HasRequestedPartNo = 1 THEN PendingUpdates.RequestedPartNo ELSE od.RequestedPartNo END,
+            od.RequestedWebLink = CASE WHEN PendingUpdates.HasRequestedWebLink = 1 THEN PendingUpdates.RequestedWebLink ELSE od.RequestedWebLink END,
             od.RequestedDescription = CASE WHEN PendingUpdates.HasRequestedDescription = 1 THEN PendingUpdates.RequestedDescription ELSE od.RequestedDescription END,
             od.RequestedDescription2 = CASE WHEN PendingUpdates.HasRequestedDescription2 = 1 THEN PendingUpdates.RequestedDescription2 ELSE od.RequestedDescription2 END,
             od.RequestedDescription3 = CASE WHEN PendingUpdates.HasRequestedDescription3 = 1 THEN PendingUpdates.RequestedDescription3 ELSE od.RequestedDescription3 END,

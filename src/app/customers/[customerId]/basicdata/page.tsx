@@ -45,6 +45,8 @@ export default async function Page({
           <Link
             href={`/customers/${encodedId}/contacts`}
             className={`${layoutStyles.headerActionButton} page-header-button`}
+            target="_blank"
+            rel="noopener noreferrer"
           >
             View Contacts
           </Link>

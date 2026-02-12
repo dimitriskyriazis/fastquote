@@ -51,10 +51,27 @@ type FieldDefinition = {
   datalistOptions?: OfferDropdownOption[];
 };
 
+const normalizeSortText = (value: string | null | undefined): string =>
+  (value ?? '')
+    .normalize('NFKD')
+    .replace(/\p{M}+/gu, '')
+    .toLowerCase()
+    .trim();
+
 const sortContacts = (list: OfferContactInfo[]) =>
-  [...list].sort((a, b) =>
-    (a.FullName || '').localeCompare(b.FullName || '', undefined, { sensitivity: 'base' })
-  );
+  [...list].sort((a, b) => {
+    const aName = normalizeSortText(a.FullName);
+    const bName = normalizeSortText(b.FullName);
+    if (aName < bName) return -1;
+    if (aName > bName) return 1;
+
+    const aRaw = (a.FullName ?? '').trim();
+    const bRaw = (b.FullName ?? '').trim();
+    if (aRaw < bRaw) return -1;
+    if (aRaw > bRaw) return 1;
+
+    return Number(a.ContactID) - Number(b.ContactID);
+  });
 
 const normalizeContactNamePart = (value: string | null | undefined): string => {
   if (typeof value !== 'string') return '';
@@ -98,6 +115,12 @@ const APPROVAL_USER_SENIORITIES = new Set([
 const PROBABILITY_MIN = 0;
 const PROBABILITY_MAX = 100;
 
+type CustomerContactsResponse = {
+  ok?: boolean;
+  error?: string;
+  contacts?: OfferContactInfo[];
+};
+
 const normalizeProbability = (rawValue: string): number | null => {
   const trimmed = rawValue.trim();
   if (!trimmed) return null;
@@ -106,6 +129,15 @@ const normalizeProbability = (rawValue: string): number | null => {
   if (!Number.isInteger(parsed)) return null;
   if (parsed < PROBABILITY_MIN || parsed > PROBABILITY_MAX) return null;
   return parsed;
+};
+
+const normalizePositiveInteger = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return null;
 };
 
 const buildFieldDefinitions = (
@@ -294,8 +326,13 @@ export default function OfferBasicDataClient({
     [users],
   );
 
+  const [contactEntries, setContactEntries] = useState<OfferContactInfo[]>(contacts);
+  const [isRefreshingContacts, setIsRefreshingContacts] = useState(false);
+  const [includeInitialContactOption, setIncludeInitialContactOption] = useState(true);
+  const contactRefreshTokenRef = useRef(0);
+
   const contactOptions = useMemo(() => {
-    const sortedContacts = sortContacts(contacts);
+    const sortedContacts = sortContacts(contactEntries);
     const options = sortedContacts.map((contact) => {
       const fallback = `Contact ${contact.ContactID}`;
       const fullName =
@@ -310,7 +347,7 @@ export default function OfferBasicDataClient({
       };
     });
 
-    const selectedId = record.ContactID;
+    const selectedId = includeInitialContactOption ? record.ContactID : null;
     if (
       selectedId != null &&
       !options.some((option) => Number(option.value) === Number(selectedId))
@@ -321,7 +358,7 @@ export default function OfferBasicDataClient({
     }
 
     return options;
-  }, [contacts, record.ContactFullName, record.ContactID]);
+  }, [contactEntries, includeInitialContactOption, record.ContactFullName, record.ContactID]);
 
   const fwcProjectOptions = useMemo(() => {
     const options = [...fwcProjects];
@@ -440,6 +477,11 @@ export default function OfferBasicDataClient({
     fieldId: 'customer' | 'contactId';
   } | null>(null);
 
+  useEffect(() => {
+    setContactEntries(contacts);
+    setIncludeInitialContactOption(true);
+  }, [contacts]);
+
   const activeContactId = useMemo(() => {
     const raw = values.contactId ?? '';
     if (!raw) return null;
@@ -448,18 +490,18 @@ export default function OfferBasicDataClient({
   }, [values.contactId]);
 
   const activeContactName = useMemo(() => {
+    if (activeContactId == null) return null;
     if (activeContactId != null) {
       const fromOptions = contactOptions.find((option) => Number(option.value) === activeContactId);
       const label = fromOptions?.label?.trim();
       if (label) return label;
     }
-    const fallback = (record.ContactFullName ?? '').trim();
-    return fallback.length > 0 ? fallback : null;
-  }, [activeContactId, contactOptions, record.ContactFullName]);
+    return `Contact ${activeContactId}`;
+  }, [activeContactId, contactOptions]);
 
   const activeContactNameParts = useMemo(() => {
     if (activeContactId != null) {
-      const selected = contacts.find((entry) => Number(entry.ContactID) === activeContactId);
+      const selected = contactEntries.find((entry) => Number(entry.ContactID) === activeContactId);
       const firstName = normalizeContactNamePart(selected?.FirstName);
       const lastName = normalizeContactNamePart(selected?.LastName);
       if (firstName || lastName) {
@@ -467,7 +509,7 @@ export default function OfferBasicDataClient({
       }
     }
     return splitContactName(activeContactName);
-  }, [activeContactId, activeContactName, contacts]);
+  }, [activeContactId, activeContactName, contactEntries]);
 
   const activeCustomerId = useMemo(() => {
     const raw = values.customer ?? '';
@@ -542,6 +584,32 @@ export default function OfferBasicDataClient({
     setValues((prev) => ({ ...prev, [fieldId]: value }));
   }, []);
 
+  const fetchContactsByCustomer = useCallback(async (customerId: number | null): Promise<OfferContactInfo[]> => {
+    if (!customerId) return [];
+    const response = await fetch(`/api/customers/${encodeURIComponent(String(customerId))}/contacts`, {
+      cache: 'no-store',
+    });
+    const payload = (await response.json().catch(() => null)) as CustomerContactsResponse | null;
+    if (!response.ok || !payload?.ok || !Array.isArray(payload.contacts)) {
+      throw new Error(payload?.error ?? 'Unable to load contacts');
+    }
+    return payload.contacts
+      .map((contact) => {
+        const contactId = normalizePositiveInteger(contact.ContactID);
+        if (!contactId) return null;
+        const firstName = typeof contact.FirstName === 'string' ? contact.FirstName.trim() : null;
+        const lastName = typeof contact.LastName === 'string' ? contact.LastName.trim() : null;
+        const fallbackName = [firstName, lastName].filter(Boolean).join(' ');
+        return {
+          ContactID: contactId,
+          FirstName: firstName,
+          LastName: lastName,
+          FullName: (typeof contact.FullName === 'string' ? contact.FullName.trim() : '') || fallbackName || `Contact ${String(contactId)}`,
+        };
+      })
+      .filter((contact): contact is OfferContactInfo => contact != null);
+  }, []);
+
   const saveField = useCallback(async (def: FieldDefinition, rawValue: string) => {
     if (!def.updateField) return;
     let payloadValue: string | number | null | undefined;
@@ -587,6 +655,39 @@ export default function OfferBasicDataClient({
         return next;
       });
       setValues((prev) => ({ ...prev, [def.id]: resolvedDisplayValue }));
+
+      if (def.id === 'customer') {
+        setIncludeInitialContactOption(false);
+        setSavedValues((prev) => {
+          const next = { ...prev, contactId: '' };
+          savedValuesRef.current = next;
+          return next;
+        });
+        setValues((prev) => ({ ...prev, contactId: '' }));
+
+        const nextCustomerId = normalizePositiveInteger(payloadValue);
+        const refreshToken = contactRefreshTokenRef.current + 1;
+        contactRefreshTokenRef.current = refreshToken;
+        setIsRefreshingContacts(true);
+        setContactEntries([]);
+        try {
+          const nextContacts = await fetchContactsByCustomer(nextCustomerId);
+          if (contactRefreshTokenRef.current === refreshToken) {
+            setContactEntries(nextContacts);
+          }
+        } catch (contactsErr) {
+          if (contactRefreshTokenRef.current === refreshToken) {
+            setContactEntries([]);
+          }
+          console.error(contactsErr);
+          showToastMessage('Customer updated but contacts could not be refreshed.', 'warning');
+        } finally {
+          if (contactRefreshTokenRef.current === refreshToken) {
+            setIsRefreshingContacts(false);
+          }
+        }
+      }
+
       showToastMessage(`${def.label} updated`, 'success');
     } catch (err) {
       setValues((prev) => ({ ...prev, [def.id]: savedValuesRef.current[def.id] ?? '' }));
@@ -595,7 +696,7 @@ export default function OfferBasicDataClient({
     } finally {
       setPendingFields((prev) => ({ ...prev, [def.id]: false }));
     }
-  }, [offerId]);
+  }, [fetchContactsByCustomer, offerId]);
 
   const handleBlur = useCallback((def: FieldDefinition) => {
     if (!def.updateField) return;
@@ -698,7 +799,7 @@ export default function OfferBasicDataClient({
     return null;
   }, [hasContactNavigation, hasCustomerNavigation]);
 
-const renderFieldControl = (
+  const renderFieldControl = (
   def: FieldDefinition,
   valueMap: Record<string, string>,
   pendingMap: Record<string, boolean>,
@@ -714,7 +815,7 @@ const renderFieldControl = (
     ? def.readOnlyDisplayValue(record)
     : null;
   const placeholder = !isEditable ? undefined : (value == null || value === '' ? '—' : undefined);
-  const pending = pendingMap[def.id];
+  const pending = pendingMap[def.id] || (def.id === 'contactId' && isRefreshingContacts);
 
   if (!isEditable) {
     if (def.options && def.options.length > 0) {

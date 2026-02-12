@@ -2247,6 +2247,16 @@ export default function AgGridAll({
 
       // Apply properties first (without order)
       api.applyColumnState({ state: stateToApply, applyOrder: false, defaultState: { hide: null } });
+      // Force selection column back to its defined width after state restore
+      if (rowSelection === 'multiple') {
+        api.applyColumnState({
+          state: [
+            { colId: 'ag-Grid-SelectionColumn', width: 42 },
+            { colId: 'agSelectionColumn', width: 42 },
+          ],
+          applyOrder: false,
+        });
+      }
 
       // Now apply column order using moveColumns API
       // Use requestAnimationFrame to ensure grid is ready
@@ -2328,7 +2338,7 @@ export default function AgGridAll({
       console.warn('Failed to apply saved column state', err);
       columnStateLoadedRef.current = true;
     }
-  }, [applyColumnStateOrder, columnStateStorageKey, shouldPersistColumnState]);
+  }, [applyColumnStateOrder, columnStateStorageKey, rowSelection, shouldPersistColumnState]);
 
   useEffect(() => {
     if (!shouldPersistColumnState) return;
@@ -3958,6 +3968,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           rowHeight={32}
           headerHeight={38}
           rowSelection={rowSelectionConfig}
+          selectionColumnDef={rowSelection === 'multiple' ? { width: 42, minWidth: 42, maxWidth: 42, lockPosition: true, suppressMovable: true, suppressHeaderMenuButton: true, resizable: false, suppressSizeToFit: true } : undefined}
 
           // Server-Side model
           rowModelType="serverSide"

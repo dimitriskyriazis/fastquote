@@ -439,7 +439,12 @@
   background-color: rgb(220, 220, 220) !important;
   padding-top: 0 !important;
   padding-bottom: 0 !important;
-  display: flex;
+}
+
+/* Keep category-row content centered without breaking AG Grid control wrappers
+   (selection checkbox / row-drag handle). */
+.offer-products-grid .offer-row--category .ag-cell .ag-cell-wrapper {
+  min-height: 100%;
   align-items: center;
 }
 
@@ -519,4 +524,3 @@
   font-weight: 400 !important;
   color: inherit !important;
 }
-

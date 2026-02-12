@@ -70,6 +70,7 @@ export async function GET(
         od.RequestedBrand,
         od.RequestedModelNo,
         od.RequestedPartNo,
+        od.RequestedWebLink,
       od.RequestedDescription,
       od.RequestedDescription2,
       od.RequestedDescription3,
@@ -89,6 +90,7 @@ export async function GET(
           OR NULLIF(LTRIM(RTRIM(od.RequestedBrand)), '') IS NOT NULL
           OR NULLIF(LTRIM(RTRIM(od.RequestedModelNo)), '') IS NOT NULL
           OR NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL
+          OR NULLIF(LTRIM(RTRIM(od.RequestedWebLink)), '') IS NOT NULL
           OR NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL
           OR NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL
           OR NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL
@@ -104,6 +106,7 @@ export async function GET(
       RequestedBrand: string | null;
       RequestedModelNo: string | null;
       RequestedPartNo: string | null;
+      RequestedWebLink: string | null;
       RequestedDescription: string | null;
       RequestedDescription2: string | null;
       RequestedDescription3: string | null;
@@ -117,6 +120,7 @@ export async function GET(
       RequestedBrand: row.RequestedBrand,
       RequestedModelNo: row.RequestedModelNo,
       RequestedPartNo: row.RequestedPartNo,
+      RequestedWebLink: row.RequestedWebLink,
       RequestedDescription: row.RequestedDescription,
       RequestedDescription2: row.RequestedDescription2,
       RequestedDescription3: row.RequestedDescription3,

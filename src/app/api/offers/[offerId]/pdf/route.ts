@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool } from '../../../../../lib/sql';
 import { requirePermission } from '../../../../../lib/authz';
-import { generateOfferPdf, type OfferPdfData, type OfferProductRow, type PdfLang, type PdfLayout, type PdfOrientation } from '../../../../../lib/pdfGenerator';
+import { generateOfferPdf, type OfferPdfData, type OfferProductRow, type PdfLang, type PdfOrientation } from '../../../../../lib/pdfGenerator';
+import { parsePdfProductColumnsParam } from '../../../../../lib/pdfColumns';
 
 type OfferHeaderRow = {
   ID: number;
@@ -41,7 +42,9 @@ type ProductRow = {
   IsPrintable: boolean | number | null;
   Quantity: number | null;
   ProductDescription: string | null;
+  Warranty: string | number | null;
   Comment: string | null;
+  Delivery: string | null;
   NetUnitPrice: number | null;
   TotalPrice: number | null;
   TotalNet: number | null;
@@ -70,10 +73,10 @@ export async function GET(
     const langParam = req.nextUrl.searchParams.get('lang');
     const lang: PdfLang = langParam === 'en' ? 'en' : 'el';
 
-    const layoutParam = req.nextUrl.searchParams.get('layout');
-    const layout: PdfLayout = layoutParam === 'detailed' ? 'detailed' : 'standard';
+    const columnsParam = req.nextUrl.searchParams.get('columns');
+    const productColumns = parsePdfProductColumnsParam(columnsParam);
 
-    const orientationParam = req.nextUrl.searchParams.get('orientation');
+    const orientationParam = req.nextUrl.searchParams.get('orientation')?.toLowerCase();
     const orientation: PdfOrientation = orientationParam === 'landscape' ? 'landscape' : 'portrait';
 
     const pool = await getPool();
@@ -142,7 +145,9 @@ export async function GET(
           od.IsPrintable,
           od.Quantity,
           od.ProductDescription,
+          od.Warranty,
           od.[Comment],
+          od.Delivery,
           od.NetUnitPrice,
           od.TotalPrice,
           od.TotalNet,
@@ -173,7 +178,9 @@ export async function GET(
       modelNumber: r.ModelNumber,
       partNumber: r.PartNumber,
       description: r.ProductDescription,
+      warranty: r.Warranty,
       comment: r.Comment,
+      delivery: r.Delivery,
       unitPrice: r.NetUnitPrice,
       totalPrice: r.TotalPrice,
       totalNet: r.TotalNet,
@@ -229,7 +236,7 @@ export async function GET(
     };
 
     // ── Generate PDF ───────────────────────────────────────────────────
-    const buffer = await generateOfferPdf(pdfData, lang, layout, orientation);
+    const buffer = await generateOfferPdf(pdfData, lang, orientation, productColumns);
 
     const customerSlug = (header.CustomerName ?? 'Offer')
       .replace(/[^a-zA-Z0-9\u0370-\u03FF\u0400-\u04FF _-]/g, '')

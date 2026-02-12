@@ -24,7 +24,7 @@ type Props = {
   onImported: (result: { inserted?: number; updated?: number; total?: number }) => void;
 };
 
-type HeaderColumnKey = 'itemNo' | 'brand' | 'modelNumber' | 'partNumber' | 'description' | 'description2' | 'description3' | 'quantity';
+type HeaderColumnKey = 'itemNo' | 'brand' | 'modelNumber' | 'partNumber' | 'webLink' | 'description' | 'description2' | 'description3' | 'quantity';
 
 type ColumnOption = { index: number; label: string; normalized: string };
 
@@ -38,6 +38,7 @@ type SheetMapping = {
   enabled: boolean;
   includeHeaderRow: boolean;
   rawRows: unknown[][];
+  hyperlinkTargets: Record<string, string>;
 };
 
 type FileValidation = {
@@ -54,6 +55,7 @@ type PayloadRow = {
   brand?: string | null;
   modelNumber?: string | null;
   partNumber?: string | null;
+  webLink?: string | null;
   description?: string | null;
   description2?: string | null;
   description3?: string | null;
@@ -65,6 +67,7 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
   brand: ['brand', 'maker', 'make', 'manufacturer', 'vendor'],
   modelNumber: ['model', 'series', 'model#'],
   partNumber: ['part', 'sku', 'code', 'p/n', 'article', 'product'],
+  webLink: ['weblink', 'web link', 'url', 'link', 'website', 'site'],
   description: ['description', 'desc', 'name', 'details', 'information', 'info', 'specs', 'specifications'],
   description2: ['description', 'desc', 'name', 'details', 'information', 'info', 'specs', 'specifications'],
   description3: ['description', 'desc', 'name', 'details', 'information', 'info', 'specs', 'specifications'],
@@ -76,6 +79,7 @@ const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string }> = [
   { key: 'brand', label: 'Brand' },
   { key: 'modelNumber', label: 'Model No' },
   { key: 'partNumber', label: 'Part No' },
+  { key: 'webLink', label: 'Web Link' },
   { key: 'description', label: 'Description' },
   { key: 'description2', label: 'Description 2' },
   { key: 'description3', label: 'Description 3' },
@@ -158,6 +162,7 @@ const buildSuggestions = (columns: ColumnOption[]) => {
     brand: makeSuggestions('brand'),
     modelNumber: makeSuggestions('modelNumber'),
     partNumber: makeSuggestions('partNumber'),
+    webLink: makeSuggestions('webLink'),
     description: makeSuggestions('description'),
     description2: makeSuggestions('description2'),
     description3: makeSuggestions('description3'),
@@ -193,7 +198,13 @@ const columnHasValue = (rows: unknown[][], headerRow: unknown[], columnIndex: nu
   return false;
 };
 
-const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: number, enabled: boolean): SheetMapping => {
+const analyzeSheet = (
+  sheetName: string,
+  rows: unknown[][],
+  fallbackIndex: number,
+  enabled: boolean,
+  hyperlinkTargets: Record<string, string> = {},
+): SheetMapping => {
   const headerRowIndex = detectHeaderRowIndex(rows);
   const headerRow = Array.isArray(rows[headerRowIndex]) ? rows[headerRowIndex] : [];
   const columnCount = Math.max(determineColumnCount(rows), headerRow.length);
@@ -215,6 +226,7 @@ const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: numbe
     enabled,
     includeHeaderRow,
     rawRows: rows,
+    hyperlinkTargets,
   };
   return enrichSheet(baseSheet);
 };
@@ -226,7 +238,8 @@ const analyzeWorkbook = (workbook: XLSXTypes.WorkBook, xlsx: XlsxModule): SheetM
     if (!sheet) continue;
     const rows = xlsx.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
     if (!Array.isArray(rows)) continue;
-    sheets.push(analyzeSheet(sheetName, rows, sheets.length, sheets.length === 0));
+    const hyperlinkTargets = extractSheetHyperlinkTargets(sheet, xlsx);
+    sheets.push(analyzeSheet(sheetName, rows, sheets.length, sheets.length === 0, hyperlinkTargets));
   }
   return sheets;
 };
@@ -274,6 +287,7 @@ const hasPayloadValues = (row: PayloadRow) => {
     || (row.brand && row.brand.trim())
     || (row.modelNumber && row.modelNumber.trim())
     || (row.partNumber && row.partNumber.trim())
+    || (row.webLink && row.webLink.trim())
     || (row.description && row.description.trim())
     || (row.description2 && row.description2.trim())
     || (row.description3 && row.description3.trim())
@@ -305,6 +319,35 @@ const parsePastedText = (text: string): unknown[][] => {
       return trimmed === '' ? null : trimmed;
     }))
     .filter((row) => row.some(hasCellValue));
+};
+
+const buildCellKey = (rowIndex: number, columnIndex: number) => `${rowIndex}:${columnIndex}`;
+
+const extractSheetHyperlinkTargets = (
+  sheet: XLSXTypes.WorkSheet,
+  xlsx: XlsxModule,
+): Record<string, string> => {
+  const targets: Record<string, string> = {};
+  const rangeRef = typeof sheet['!ref'] === 'string' ? sheet['!ref'] : null;
+  if (!rangeRef) return targets;
+  let range;
+  try {
+    range = xlsx.utils.decode_range(rangeRef);
+  } catch {
+    return targets;
+  }
+  for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
+    for (let columnIndex = range.s.c; columnIndex <= range.e.c; columnIndex += 1) {
+      const address = xlsx.utils.encode_cell({ r: rowIndex, c: columnIndex });
+      const cell = sheet[address] as (XLSXTypes.CellObject & { l?: { Target?: unknown } }) | undefined;
+      const target = cell?.l?.Target;
+      if (typeof target !== 'string') continue;
+      const trimmed = target.trim();
+      if (!trimmed) continue;
+      targets[buildCellKey(rowIndex, columnIndex)] = trimmed;
+    }
+  }
+  return targets;
 };
 
 export default function AddRequestedProductsModal({ offerId, onClose, onImported }: Props) {
@@ -504,14 +547,21 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
       const selection = sheet.selection;
       const hasSelection = (Object.values(selection) as Array<number | null | undefined>).some((value) => value != null);
       if (!hasSelection) return;
+      const startIndex = sheet.includeHeaderRow ? sheet.headerRowIndex + 1 : sheet.headerRowIndex;
       const dataRows = getSheetDataRows(sheet);
-      dataRows.forEach((row) => {
+      dataRows.forEach((row, rowOffset) => {
         if (!Array.isArray(row)) return;
         const getCell = (index: number | null | undefined) => (typeof index === 'number' ? row[index] : null);
+        const getHyperlink = (index: number | null | undefined) => {
+          if (typeof index !== 'number') return null;
+          const absoluteRowIndex = startIndex + rowOffset;
+          return sheet.hyperlinkTargets[buildCellKey(absoluteRowIndex, index)] ?? null;
+        };
         const itemNo = normalizeCellText(getCell(selection.itemNo ?? null));
         const brand = normalizeCellText(getCell(selection.brand ?? null));
         const modelNumber = normalizeCellText(getCell(selection.modelNumber ?? null));
         const partNumber = normalizeCellText(getCell(selection.partNumber ?? null));
+        const webLink = normalizeCellText(getHyperlink(selection.webLink ?? null) ?? getCell(selection.webLink ?? null));
         const description = normalizeCellText(getCell(selection.description ?? null));
         const description2 = normalizeCellText(getCell(selection.description2 ?? null));
         const description3 = normalizeCellText(getCell(selection.description3 ?? null));
@@ -522,6 +572,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
           brand,
           modelNumber,
           partNumber,
+          webLink,
           description,
           description2,
           description3,
@@ -677,7 +728,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
                 autoComplete="off"
                 value={pasteText}
                 onChange={(event) => handlePasteInput(event.target.value)}
-                placeholder="Item No Brand	Model No	Part No	Description	Description 2	Description 3	Quantity"
+                placeholder="Item No	Brand	Model No	Part No	Web Link	Description	Description 2	Description 3	Quantity"
                 className={styles.pasteTextarea}
               />
             </div>

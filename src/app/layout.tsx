@@ -8,6 +8,7 @@ import { AuditUserProvider } from "./components/AuditUserProvider";
 import DisableAutofill from "./components/DisableAutofill";
 import PreventBackspaceNavigation from "./components/PreventBackspaceNavigation";
 import CaretVisibilityManager from "./components/CaretVisibilityManager";
+import SpellcheckManager from "./components/SpellcheckManager";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -39,6 +40,7 @@ export default async function RootLayout({
         <CaretVisibilityManager />
         <AuditUserProvider>
           <DisableAutofill />
+          <SpellcheckManager />
           <PreventBackspaceNavigation />
           <div className="app-shell">
             <SideNav initialCollapsed={initialCollapsed} />

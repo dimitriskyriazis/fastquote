@@ -393,6 +393,14 @@ export default function MatchRequestedProductsModal({
     trySelectPendingProduct(api);
     applyRequestedFilterModel(api);
     autoSelectTopProduct(api);
+    // The grid restores persisted filter state asynchronously via requestAnimationFrame,
+    // which can overwrite the programmatic filters we just set for the current product.
+    // Schedule a re-application that runs after the persisted restoration.
+    requestAnimationFrame(() => {
+      if ((api as unknown as { isDestroyed?: () => boolean }).isDestroyed?.()) return;
+      hasAppliedRequestedFiltersRef.current = false;
+      applyRequestedFilterModel(api);
+    });
   }, [applyRequestedFilterModel, autoSelectTopProduct, ensureProductSort, trySelectPendingProduct]);
 
   const handleGridModelUpdated = useCallback(() => {

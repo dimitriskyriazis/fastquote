@@ -14,6 +14,7 @@ type RequestedRowInput = {
   brand?: unknown;
   modelNumber?: unknown;
   partNumber?: unknown;
+  webLink?: unknown;
   description?: unknown;
   description2?: unknown;
   description3?: unknown;
@@ -30,6 +31,7 @@ type NormalizedRow = {
   brand: string | null;
   modelNumber: string | null;
   partNumber: string | null;
+  webLink: string | null;
   description: string | null;
   description2: string | null;
   description3: string | null;
@@ -48,6 +50,7 @@ type RequestedFieldKey =
   | 'RequestedBrand'
   | 'RequestedModelNo'
   | 'RequestedPartNo'
+  | 'RequestedWebLink'
   | 'RequestedDescription'
   | 'RequestedDescription2'
   | 'RequestedDescription3'
@@ -61,6 +64,7 @@ const REQUESTED_COLUMN_METADATA: Array<{ key: ColumnLengthKey; column: string }>
   { key: 'RequestedBrand', column: 'RequestedBrand' },
   { key: 'RequestedModelNo', column: 'RequestedModelNo' },
   { key: 'RequestedPartNo', column: 'RequestedPartNo' },
+  { key: 'RequestedWebLink', column: 'RequestedWebLink' },
   { key: 'RequestedDescription', column: 'RequestedDescription' },
   { key: 'RequestedDescription2', column: 'RequestedDescription2' },
   { key: 'RequestedDescription3', column: 'RequestedDescription3' },
@@ -69,8 +73,8 @@ const REQUESTED_COLUMN_METADATA: Array<{ key: ColumnLengthKey; column: string }>
 ];
 
 const SQL_PARAMETER_LIMIT = 2100;
-const UPDATE_ROW_PARAM_COUNT = 10;
-const INSERT_ROW_PARAM_COUNT = 12;
+const UPDATE_ROW_PARAM_COUNT = 11;
+const INSERT_ROW_PARAM_COUNT = 13;
 const computeChunkSize = (baseParams: number, perRowParams: number) => {
   const available = SQL_PARAMETER_LIMIT - baseParams;
   if (available <= 0) return 1;
@@ -131,6 +135,11 @@ const normalizeRows = (rows: RequestedRowInput[] | undefined): NormalizedRow[] =
     const partNumber = normalizeString(
       row.partNumber ?? (row as Record<string, unknown>).PartNo ?? (row as Record<string, unknown>).PartNumber,
     );
+    const webLink = normalizeDescription(
+      row.webLink
+      ?? (row as Record<string, unknown>).WebLink
+      ?? (row as Record<string, unknown>).RequestedWebLink,
+    );
     const description = normalizeDescription(row.description ?? (row as Record<string, unknown>).Description);
     const description2 = normalizeDescription(row.description2 ?? (row as Record<string, unknown>).Description2);
     const description3 = normalizeDescription(row.description3 ?? (row as Record<string, unknown>).Description3);
@@ -140,6 +149,7 @@ const normalizeRows = (rows: RequestedRowInput[] | undefined): NormalizedRow[] =
       !brand &&
       !modelNumber &&
       !partNumber &&
+      !webLink &&
       !description &&
       !description2 &&
       !description3 &&
@@ -153,6 +163,7 @@ const normalizeRows = (rows: RequestedRowInput[] | undefined): NormalizedRow[] =
       brand,
       modelNumber,
       partNumber,
+      webLink,
       description,
       description2,
       description3,
@@ -268,6 +279,7 @@ const applyColumnLengthsToRow = (row: NormalizedRow, lengths: ColumnLengthMap): 
     brand: truncateStringValue(row.brand, lengths.RequestedBrand),
     modelNumber: truncateStringValue(row.modelNumber, lengths.RequestedModelNo),
     partNumber: truncateStringValue(row.partNumber, lengths.RequestedPartNo),
+    webLink: truncateStringValue(row.webLink, lengths.RequestedWebLink),
     description: truncateStringValue(row.description, combinedDescriptionLength ?? requestedDescriptionLength),
     description2: truncateStringValue(row.description2, lengths.RequestedDescription2),
     description3: truncateStringValue(row.description3, lengths.RequestedDescription3),
@@ -313,6 +325,7 @@ const readRequestedColumnLengths = async (pool: ConnectionPool): Promise<ColumnL
     RequestedBrand: null,
     RequestedModelNo: null,
     RequestedPartNo: null,
+    RequestedWebLink: null,
     RequestedDescription: null,
     RequestedDescription2: null,
     RequestedDescription3: null,
@@ -412,6 +425,7 @@ export async function POST(
           request.input(`brand_${chunkIdx}`, sql.NVarChar(255), row.brand);
           request.input(`model_${chunkIdx}`, sql.NVarChar(255), row.modelNumber);
           request.input(`part_${chunkIdx}`, sql.NVarChar(255), row.partNumber);
+          request.input(`webLink_${chunkIdx}`, sql.NVarChar(sql.MAX), row.webLink);
           request.input(`desc_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description);
           request.input(`desc2_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description2);
           request.input(`desc3_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description3);
@@ -420,7 +434,7 @@ export async function POST(
         });
         const values = chunk
           .map((_, chunkIdx) =>
-            `(@tree_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @qty_${chunkIdx}, @productDesc_${chunkIdx})`,
+            `(@tree_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @webLink_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @qty_${chunkIdx}, @productDesc_${chunkIdx})`,
           )
           .join(', ');
         const query = `
@@ -430,6 +444,7 @@ export async function POST(
             RequestedBrand NVARCHAR(255) NULL,
             RequestedModelNo NVARCHAR(255) NULL,
             RequestedPartNo NVARCHAR(255) NULL,
+            RequestedWebLink NVARCHAR(MAX) NULL,
             RequestedDescription NVARCHAR(MAX) NULL,
             RequestedDescription2 NVARCHAR(MAX) NULL,
             RequestedDescription3 NVARCHAR(MAX) NULL,
@@ -437,7 +452,7 @@ export async function POST(
             ProductDescription NVARCHAR(MAX) NULL
           );
 
-          INSERT INTO @payload (TreeOrdering, RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity, ProductDescription)
+          INSERT INTO @payload (TreeOrdering, RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo, RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity, ProductDescription)
           VALUES ${values};
 
           DECLARE @updated TABLE (TreeOrdering NVARCHAR(255) NOT NULL);
@@ -448,6 +463,7 @@ export async function POST(
             RequestedBrand = payload.RequestedBrand,
             RequestedModelNo = payload.RequestedModelNo,
             RequestedPartNo = payload.RequestedPartNo,
+            RequestedWebLink = payload.RequestedWebLink,
             RequestedDescription = payload.RequestedDescription,
             RequestedDescription2 = payload.RequestedDescription2,
             RequestedDescription3 = payload.RequestedDescription3,
@@ -468,6 +484,7 @@ export async function POST(
                  payload.RequestedBrand,
                  payload.RequestedModelNo,
                  payload.RequestedPartNo,
+                 payload.RequestedWebLink,
                  payload.RequestedDescription,
                  payload.RequestedDescription2,
                  payload.RequestedDescription3,
@@ -484,6 +501,7 @@ export async function POST(
           RequestedBrand: string | null;
           RequestedModelNo: string | null;
           RequestedPartNo: string | null;
+          RequestedWebLink: string | null;
           RequestedDescription: string | null;
           RequestedDescription2: string | null;
           RequestedDescription3: string | null;
@@ -500,6 +518,7 @@ export async function POST(
               brand: row.RequestedBrand ?? null,
               modelNumber: row.RequestedModelNo ?? null,
               partNumber: row.RequestedPartNo ?? null,
+              webLink: row.RequestedWebLink ?? null,
               description: row.RequestedDescription ?? null,
               description2: row.RequestedDescription2 ?? null,
               description3: row.RequestedDescription3 ?? null,
@@ -553,6 +572,7 @@ export async function POST(
         request.input(`brand_${chunkIdx}`, sql.NVarChar(255), row.brand);
         request.input(`model_${chunkIdx}`, sql.NVarChar(255), row.modelNumber);
         request.input(`part_${chunkIdx}`, sql.NVarChar(255), row.partNumber);
+        request.input(`webLink_${chunkIdx}`, sql.NVarChar(sql.MAX), row.webLink);
         request.input(`desc_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description);
         request.input(`desc2_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description2);
         request.input(`desc3_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description3);
@@ -562,7 +582,7 @@ export async function POST(
       });
         const values = chunk
           .map((_, chunkIdx) =>
-            `(@tree_${chunkIdx}, @parent_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @rqty_${chunkIdx}, @isCategory_${chunkIdx}, @productDesc_${chunkIdx})`,
+            `(@tree_${chunkIdx}, @parent_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @webLink_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @rqty_${chunkIdx}, @isCategory_${chunkIdx}, @productDesc_${chunkIdx})`,
           )
           .join(', ');
         const query = `
@@ -574,6 +594,7 @@ export async function POST(
           RequestedBrand NVARCHAR(255) NULL,
           RequestedModelNo NVARCHAR(255) NULL,
           RequestedPartNo NVARCHAR(255) NULL,
+          RequestedWebLink NVARCHAR(MAX) NULL,
           RequestedDescription NVARCHAR(MAX) NULL,
           RequestedDescription2 NVARCHAR(MAX) NULL,
           RequestedDescription3 NVARCHAR(MAX) NULL,
@@ -589,6 +610,7 @@ export async function POST(
           RequestedBrand,
           RequestedModelNo,
           RequestedPartNo,
+          RequestedWebLink,
           RequestedDescription,
           RequestedDescription2,
           RequestedDescription3,
@@ -612,6 +634,7 @@ export async function POST(
           RequestedBrand,
           RequestedModelNo,
           RequestedPartNo,
+          RequestedWebLink,
           RequestedDescription,
           RequestedDescription2,
           RequestedDescription3,
@@ -635,6 +658,7 @@ export async function POST(
           payload.RequestedBrand,
           payload.RequestedModelNo,
           payload.RequestedPartNo,
+          payload.RequestedWebLink,
           payload.RequestedDescription,
           payload.RequestedDescription2,
           payload.RequestedDescription3,

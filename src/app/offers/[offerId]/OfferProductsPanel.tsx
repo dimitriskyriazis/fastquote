@@ -185,6 +185,7 @@ type RequestedFieldKey =
   | 'RequestedBrand'
   | 'RequestedPartNo'
   | 'RequestedModelNo'
+  | 'RequestedWebLink'
   | 'RequestedDescription'
   | 'RequestedDescription2'
   | 'RequestedDescription3'
@@ -206,6 +207,7 @@ const REQUESTED_FIELD_LABELS: Record<RequestedFieldKey, string> = {
   RequestedBrand: 'requested brand',
   RequestedPartNo: 'requested part number',
   RequestedModelNo: 'requested model number',
+  RequestedWebLink: 'requested web link',
   RequestedDescription: 'requested description',
   RequestedDescription2: 'requested description 2',
   RequestedDescription3: 'requested description 3',
@@ -217,6 +219,7 @@ const REQUESTED_FIELD_SET = new Set<RequestedFieldKey>([
   'RequestedBrand',
   'RequestedPartNo',
   'RequestedModelNo',
+  'RequestedWebLink',
   'RequestedDescription',
   'RequestedDescription2',
   'RequestedDescription3',
@@ -371,6 +374,9 @@ const buildRequestedProductMatchEntry = (
   const requestedPart = normalizeRequestedLookupValue(
     (data as { RequestedPartNo?: unknown }).RequestedPartNo ?? null,
   );
+  const requestedWebLink = normalizeRequestedLookupValue(
+    (data as { RequestedWebLink?: unknown }).RequestedWebLink ?? null,
+  );
   const requestedDescription = normalizeDescriptionValue(
     (data as { RequestedDescription?: unknown }).RequestedDescription ?? null,
   );
@@ -411,6 +417,7 @@ const buildRequestedProductMatchEntry = (
   addDetail('Brand', requestedBrand);
   addDetail('Model', requestedModel);
   addDetail('Part number', requestedPart);
+  addDetail('Web link', requestedWebLink);
   addDetail('Requested item number', requestedItemNo);
   addDetail('Tree ordering', treeOrdering);
   addDetail('Requested description', requestedDescription);
@@ -435,7 +442,8 @@ const hasRequestedLookupIdentifiers = (row: Record<string, unknown> | null | und
   const part = normalizeRequestedLookupValue((row as { RequestedPartNo?: unknown }).RequestedPartNo ?? null);
   const model = normalizeRequestedLookupValue((row as { RequestedModelNo?: unknown }).RequestedModelNo ?? null);
   const brand = normalizeRequestedLookupValue((row as { RequestedBrand?: unknown }).RequestedBrand ?? null);
-  return Boolean(part || model || brand);
+  const webLink = normalizeRequestedLookupValue((row as { RequestedWebLink?: unknown }).RequestedWebLink ?? null);
+  return Boolean(part || model || brand || webLink);
 };
 
 const hasRequestedRowData = (row: Record<string, unknown> | null | undefined) => {
@@ -743,6 +751,7 @@ export type OfferProductsPanelHandle = {
   populateOffer: () => Promise<void>;
   getTemplateExportRows: () => Promise<OfferProductsTemplateExportRow[]>;
   getAddInsertionAnchor: () => { offerDetailId: number; parentPath: number[] } | null;
+  getSelectedOfferDetailIdsForPriceUpdate: () => number[];
 };
 
 export type OfferProductsTemplateExportRow = {
@@ -1129,6 +1138,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     RequestedBrand: false,
     RequestedModelNo: false,
     RequestedPartNo: false,
+    RequestedWebLink: false,
     RequestedDescription: false,
     RequestedDescription2: false,
     RequestedDescription3: false,
@@ -1239,6 +1249,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       RequestedBrand: false,
       RequestedModelNo: false,
       RequestedPartNo: false,
+      RequestedWebLink: false,
       RequestedDescription: false,
       RequestedDescription2: false,
       RequestedDescription3: false,
@@ -2133,6 +2144,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     headerName: string
   ) => {
     const isDescription = isRequestedDescriptionField(field);
+    const supportsWebLink = field === 'RequestedPartNo' || field === 'RequestedModelNo';
     const column: ColDef = {
       field,
       headerName,
@@ -2176,6 +2188,44 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         (data as Record<string, unknown>)[field] = normalized;
         return true;
       },
+      cellRenderer: supportsWebLink
+        ? (params: ICellRendererParams<Record<string, unknown>>) => {
+            const rawValue = params.value;
+            if (rawValue == null) return '';
+            const displayValue = String(rawValue).trim();
+            if (!displayValue) return '';
+
+            if (field === 'RequestedModelNo') {
+              const partNoRaw = (params.data as { RequestedPartNo?: unknown } | undefined)?.RequestedPartNo ?? null;
+              const partNo = normalizeRequestedLookupValue(partNoRaw);
+              if (partNo) return displayValue;
+            }
+
+            const rawLink = (params.data as { RequestedWebLink?: unknown } | undefined)?.RequestedWebLink ?? null;
+            const normalizedLink = normalizeRequestedLookupValue(rawLink);
+            if (!normalizedLink) return displayValue;
+
+            const stop = (event: React.SyntheticEvent) => {
+              event.stopPropagation();
+            };
+
+            return (
+              <a
+                href={normalizedLink}
+                target="_blank"
+                rel="noreferrer noopener"
+                className={styles.partNumberLink}
+                onClick={stop}
+                onMouseDown={stop}
+                onDoubleClick={stop}
+                onContextMenu={stop}
+                title="Open requested product link"
+              >
+                {displayValue}
+              </a>
+            );
+          }
+        : undefined,
       autoHeight: isDescription ? true : undefined,
     };
     return column;
@@ -2185,6 +2235,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     RequestedBrand: buildTextRequestedColumn('RequestedBrand', 'Req. Brand'),
     RequestedPartNo: buildTextRequestedColumn('RequestedPartNo', 'Req. Part Number'),
     RequestedModelNo: buildTextRequestedColumn('RequestedModelNo', 'Req. Model Number'),
+    RequestedWebLink: buildTextRequestedColumn('RequestedWebLink', 'Req. Web Link'),
     RequestedDescription: buildTextRequestedColumn('RequestedDescription', 'Req. Description'),
     RequestedDescription2: buildTextRequestedColumn('RequestedDescription2', 'Req. Description 2'),
     RequestedDescription3: buildTextRequestedColumn('RequestedDescription3', 'Req. Description 3'),
@@ -3221,10 +3272,37 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     return null;
   }, []);
 
+  const getSelectedOfferDetailIdsForPriceUpdate = useCallback((): number[] => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return [];
+    try {
+      const selectedNodes = typeof api.getSelectedNodes === 'function'
+        ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
+        : [];
+      if (selectedNodes.length === 0) return [];
+      const ids = selectedNodes
+        .filter((node) => isOfferProductProduct(node?.data ?? null))
+        .map((node) =>
+          normalizeOfferDetailId(
+            (node?.data as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null,
+          ),
+        )
+        .filter((id): id is number => id != null);
+      return Array.from(new Set(ids));
+    } catch {
+      return [];
+    }
+  }, []);
+
   useImperativeHandle(
     ref,
-    () => ({ populateOffer, getTemplateExportRows, getAddInsertionAnchor }),
-    [getAddInsertionAnchor, getTemplateExportRows, populateOffer],
+    () => ({
+      populateOffer,
+      getTemplateExportRows,
+      getAddInsertionAnchor,
+      getSelectedOfferDetailIdsForPriceUpdate,
+    }),
+    [getAddInsertionAnchor, getSelectedOfferDetailIdsForPriceUpdate, getTemplateExportRows, populateOffer],
   );
 
 

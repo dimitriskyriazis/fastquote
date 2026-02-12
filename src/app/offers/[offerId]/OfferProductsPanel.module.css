@@ -208,19 +208,19 @@
 }
 
 /* Fallback: force truncation for all non-description/comment cells in offer products. */
-:global(.offer-products-grid .ag-cell:not([col-id="Description"]):not([col-id="Comment"]):not([col-id="RequestedDescription"]):not([col-id="RequestedDescription2"]):not([col-id="RequestedDescription3"]):not([col-id="__row_drag__"])) {
+:global(.offer-products-grid .ag-cell:not([col-id="Description"]):not([col-id="Comment"]):not([col-id="RequestedDescription"]):not([col-id="RequestedDescription2"]):not([col-id="RequestedDescription3"]):not([col-id="__row_drag__"]):not([col-id="ag-Grid-SelectionColumn"]):not([col-id="agSelectionColumn"])) {
   overflow: hidden !important;
   min-width: 0 !important;
 }
 
-:global(.offer-products-grid .ag-cell:not([col-id="Description"]):not([col-id="Comment"]):not([col-id="RequestedDescription"]):not([col-id="RequestedDescription2"]):not([col-id="RequestedDescription3"]):not([col-id="__row_drag__"]) .ag-cell-wrapper) {
+:global(.offer-products-grid .ag-cell:not([col-id="Description"]):not([col-id="Comment"]):not([col-id="RequestedDescription"]):not([col-id="RequestedDescription2"]):not([col-id="RequestedDescription3"]):not([col-id="__row_drag__"]):not([col-id="ag-Grid-SelectionColumn"]):not([col-id="agSelectionColumn"]) .ag-cell-wrapper) {
   width: 100% !important;
   min-width: 0 !important;
   display: flex !important;
   overflow: hidden !important;
 }
 
-:global(.offer-products-grid .ag-cell:not([col-id="Description"]):not([col-id="Comment"]):not([col-id="RequestedDescription"]):not([col-id="RequestedDescription2"]):not([col-id="RequestedDescription3"]):not([col-id="__row_drag__"]) .ag-cell-value) {
+:global(.offer-products-grid .ag-cell:not([col-id="Description"]):not([col-id="Comment"]):not([col-id="RequestedDescription"]):not([col-id="RequestedDescription2"]):not([col-id="RequestedDescription3"]):not([col-id="__row_drag__"]):not([col-id="ag-Grid-SelectionColumn"]):not([col-id="agSelectionColumn"]) .ag-cell-value) {
   display: block !important;
   width: 100% !important;
   min-width: 0 !important;
@@ -231,12 +231,25 @@
   white-space: nowrap !important;
 }
 
-:global(.offer-products-grid .ag-cell:not([col-id="Description"]):not([col-id="Comment"]):not([col-id="RequestedDescription"]):not([col-id="RequestedDescription2"]):not([col-id="RequestedDescription3"]):not([col-id="__row_drag__"]) .ag-cell-value > *) {
+:global(.offer-products-grid .ag-cell:not([col-id="Description"]):not([col-id="Comment"]):not([col-id="RequestedDescription"]):not([col-id="RequestedDescription2"]):not([col-id="RequestedDescription3"]):not([col-id="__row_drag__"]):not([col-id="ag-Grid-SelectionColumn"]):not([col-id="agSelectionColumn"]) .ag-cell-value > *) {
   display: block !important;
   max-width: 100% !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
+}
+
+/* Keep AG Grid selection checkbox column layout untouched. */
+:global(.offer-products-grid .ag-cell[col-id="ag-Grid-SelectionColumn"]),
+:global(.offer-products-grid .ag-cell[col-id="agSelectionColumn"]) {
+  overflow: visible !important;
+}
+
+:global(.offer-products-grid .ag-cell[col-id="ag-Grid-SelectionColumn"] .ag-cell-wrapper),
+:global(.offer-products-grid .ag-cell[col-id="agSelectionColumn"] .ag-cell-wrapper) {
+  width: auto !important;
+  min-width: auto !important;
+  overflow: visible !important;
 }
 
 .requestedHeader {

@@ -154,22 +154,49 @@ export async function PATCH(
 
     const pool = await getPool();
 
-    // Check if status is being updated and store old value
+    // Check if status/customer are being updated and store old values
     const statusUpdate = normalizedUpdates.find((u) => u.field === 'StatusID');
+    const customerUpdate = normalizedUpdates.find((u) => u.field === 'CustomerID');
     let oldStatusID: number | null = null;
+    let oldCustomerID: number | null = null;
 
-    if (statusUpdate) {
-      const statusQuery = await pool.request()
+    if (statusUpdate || customerUpdate) {
+      const offerSnapshot = await pool.request()
         .input('__offerId', sql.Int, offerId)
-        .query<{ StatusID: number | null }>(`
-          SELECT StatusID FROM dbo.Offer WHERE ID = @__offerId
+        .query<{ StatusID: number | null; CustomerID: number | null }>(`
+          SELECT StatusID, CustomerID
+          FROM dbo.Offer
+          WHERE ID = @__offerId
         `);
-      oldStatusID = statusQuery.recordset[0]?.StatusID ?? null;
+      oldStatusID = offerSnapshot.recordset[0]?.StatusID ?? null;
+      oldCustomerID = offerSnapshot.recordset[0]?.CustomerID ?? null;
+    }
+
+    const hasContactUpdate = normalizedUpdates.some((entry) => entry.field === 'ContactID');
+    const hasOfferContactUpdate = normalizedUpdates.some((entry) => entry.field === 'OfferContact');
+    const nextCustomerID = (
+      customerUpdate && typeof customerUpdate.value === 'number' && Number.isInteger(customerUpdate.value)
+    ) ? customerUpdate.value : null;
+    const customerChanged = customerUpdate ? nextCustomerID !== oldCustomerID : false;
+
+    if (customerChanged && !hasContactUpdate) {
+      normalizedUpdates.push({
+        field: 'ContactID',
+        config: FIELD_CONFIG.ContactID,
+        value: null,
+      });
+      if (!hasOfferContactUpdate) {
+        normalizedUpdates.push({
+          field: 'OfferContact',
+          config: FIELD_CONFIG.OfferContact,
+          value: null,
+        });
+      }
     }
 
     const contactUpdate = normalizedUpdates.find((entry) => entry.field === 'ContactID');
-    const hasOfferContactUpdate = normalizedUpdates.some((entry) => entry.field === 'OfferContact');
-    if (contactUpdate && !hasOfferContactUpdate) {
+    const hasOfferContactAfterAdjustments = normalizedUpdates.some((entry) => entry.field === 'OfferContact');
+    if (contactUpdate && !hasOfferContactAfterAdjustments) {
       let contactFullName: string | null = null;
       const contactId = contactUpdate.value;
       if (typeof contactId === 'number' && Number.isInteger(contactId)) {

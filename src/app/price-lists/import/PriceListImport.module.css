@@ -811,11 +811,12 @@
 .sheetSelectorClose {
   width: 32px;
   height: 32px;
-  border: 1px solid #fecaca;
+  border: 1px solid #b91c1c;
   border-radius: 12px;
-  background: #fef2f2;
-  color: #991b1b;
+  background: #ffffff;
+  color: #b91c1c;
   font-size: 1.1rem;
+  font-weight: 700;
   line-height: 1;
   cursor: pointer;
   display: flex;

@@ -1,18 +1,24 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, type DragEvent } from 'react';
 import { showToastMessage } from '../../../../lib/toast';
 import LookupModal from '../../../components/LookupModal';
+import {
+  DEFAULT_PDF_PRODUCT_COLUMNS,
+  PDF_PRODUCT_COLUMNS,
+  type PdfProductColumn,
+} from '../../../../lib/pdfColumns';
 
 type Props = {
   offerId: string;
   className?: string;
 };
 
-type Layout = 'standard' | 'detailed';
 type Lang = 'el' | 'en';
 type Orientation = 'portrait' | 'landscape';
-type MenuStep = 'layout' | 'language' | 'orientation';
+type MenuStep = 'columns' | 'language' | 'orientation';
+type DropPosition = 'before' | 'after';
+type DropPreview = { column: PdfProductColumn; position: DropPosition } | null;
 
 const menuItemStyle: React.CSSProperties = {
   display: 'block',
@@ -35,18 +41,36 @@ const menuHeaderStyle: React.CSSProperties = {
   letterSpacing: '0.05em',
 };
 
+const columnLabels: Record<PdfProductColumn, string> = {
+  no: 'No',
+  qty: 'Qty',
+  brand: 'Brand',
+  type: 'Type',
+  description: 'Description',
+  warranty: 'Warranty',
+  comment: 'Comment',
+  delivery: 'Delivery',
+  listPrice: 'List Price',
+  totalList: 'Total List',
+  discount: 'Discount %',
+  unitPrice: 'Unit Price',
+  total: 'Total',
+};
+
 export default function ExportPdfButton({ offerId, className }: Props) {
   const [isExporting, setIsExporting] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
-  const [menuStep, setMenuStep] = useState<MenuStep>('layout');
-  const [selectedLayout, setSelectedLayout] = useState<Layout>('standard');
+  const [menuStep, setMenuStep] = useState<MenuStep>('columns');
+  const [selectedColumns, setSelectedColumns] = useState<PdfProductColumn[]>([...DEFAULT_PDF_PRODUCT_COLUMNS]);
+  const [draggingColumn, setDraggingColumn] = useState<PdfProductColumn | null>(null);
+  const draggingColumnRef = useRef<PdfProductColumn | null>(null);
+  const [dropPreview, setDropPreview] = useState<DropPreview>(null);
   const [selectedLang, setSelectedLang] = useState<Lang>('el');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFilename, setPreviewFilename] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
-  // Close menu when clicking outside
   useEffect(() => {
     if (!showMenu) return;
     const handleClickOutside = (e: MouseEvent) => {
@@ -57,16 +81,93 @@ export default function ExportPdfButton({ offerId, className }: Props) {
         !buttonRef.current.contains(e.target as Node)
       ) {
         setShowMenu(false);
-        setMenuStep('layout');
+        setMenuStep('columns');
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showMenu]);
 
-  const handleLayoutSelect = (layout: Layout) => {
-    setSelectedLayout(layout);
-    setMenuStep('language');
+  const toggleColumn = (column: PdfProductColumn) => {
+    setSelectedColumns((prev) => {
+      if (prev.includes(column)) {
+        if (prev.length === 1) return prev;
+        return prev.filter((entry) => entry !== column);
+      }
+      // Insert at the position that preserves the master column order
+      const masterIndex = PDF_PRODUCT_COLUMNS.indexOf(column);
+      const next = [...prev];
+      let insertAt = next.length;
+      for (let i = 0; i < next.length; i++) {
+        if (PDF_PRODUCT_COLUMNS.indexOf(next[i]!) > masterIndex) {
+          insertAt = i;
+          break;
+        }
+      }
+      next.splice(insertAt, 0, column);
+      return next;
+    });
+  };
+
+  const reorderColumn = useCallback((from: PdfProductColumn, to: PdfProductColumn, dropPosition: DropPosition) => {
+    setSelectedColumns((prev) => {
+      const sourceIndex = prev.indexOf(from);
+      const targetIndex = prev.indexOf(to);
+      if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(sourceIndex, 1);
+      if (!moved) return prev;
+      const normalizedTargetIndex = next.indexOf(to);
+      if (normalizedTargetIndex === -1) return prev;
+      const insertAt = dropPosition === 'after' ? normalizedTargetIndex + 1 : normalizedTargetIndex;
+      next.splice(insertAt, 0, moved);
+      return next;
+    });
+  }, []);
+
+  const clearDragState = () => {
+    draggingColumnRef.current = null;
+    setDraggingColumn(null);
+    setDropPreview(null);
+  };
+
+  const handleColumnDragStart = (event: DragEvent<HTMLButtonElement>, column: PdfProductColumn) => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', column);
+    draggingColumnRef.current = column;
+    setDraggingColumn(column);
+  };
+
+  const handleColumnDragOver = (event: DragEvent<HTMLDivElement>, targetColumn: PdfProductColumn) => {
+    const dragging = draggingColumnRef.current;
+    if (!dragging || dragging === targetColumn) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const rect = event.currentTarget.getBoundingClientRect();
+    const midpoint = rect.top + rect.height / 2;
+    const position: DropPosition = event.clientY < midpoint ? 'before' : 'after';
+
+    setDropPreview((prev) => {
+      if (prev?.column === targetColumn && prev.position === position) return prev;
+      return { column: targetColumn, position };
+    });
+  };
+
+  const handleColumnDrop = (event: DragEvent<HTMLDivElement>, targetColumn: PdfProductColumn) => {
+    event.preventDefault();
+    const sourceRaw = draggingColumnRef.current ?? event.dataTransfer.getData('text/plain');
+    if (!sourceRaw) {
+      clearDragState();
+      return;
+    }
+    const sourceColumn = sourceRaw as PdfProductColumn;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const midpoint = rect.top + rect.height / 2;
+    const fallbackPosition: DropPosition = event.clientY < midpoint ? 'before' : 'after';
+    const position = dropPreview?.column === targetColumn ? dropPreview.position : fallbackPosition;
+
+    reorderColumn(sourceColumn, targetColumn, position);
+    clearDragState();
   };
 
   const handleLangSelect = (lang: Lang) => {
@@ -77,11 +178,12 @@ export default function ExportPdfButton({ offerId, className }: Props) {
   const handleExport = useCallback(
     async (orientation: Orientation) => {
       setShowMenu(false);
-      setMenuStep('layout');
+      setMenuStep('columns');
       setIsExporting(true);
       try {
+        const columnsParam = encodeURIComponent(selectedColumns.join(','));
         const res = await fetch(
-          `/api/offers/${encodeURIComponent(offerId)}/pdf?lang=${selectedLang}&layout=${selectedLayout}&orientation=${orientation}`,
+          `/api/offers/${encodeURIComponent(offerId)}/pdf?lang=${selectedLang}&orientation=${orientation}&columns=${columnsParam}`,
         );
         if (!res.ok) {
           const body = await res.json().catch(() => null);
@@ -103,7 +205,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
         setIsExporting(false);
       }
     },
-    [offerId, selectedLayout, selectedLang],
+    [offerId, selectedColumns, selectedLang],
   );
 
   const handlePreviewClose = useCallback(() => {
@@ -130,6 +232,15 @@ export default function ExportPdfButton({ offerId, className }: Props) {
     (e.target as HTMLElement).style.backgroundColor = enter ? '#f1f5f9' : 'transparent';
   };
 
+  const isDefaultSelection =
+    selectedColumns.length === DEFAULT_PDF_PRODUCT_COLUMNS.length &&
+    selectedColumns.every((column, index) => column === DEFAULT_PDF_PRODUCT_COLUMNS[index]);
+
+  const orderedColumns = [
+    ...selectedColumns,
+    ...PDF_PRODUCT_COLUMNS.filter((col) => !selectedColumns.includes(col)),
+  ];
+
   return (
     <div style={{ position: 'relative', display: 'inline-block' }}>
       <button
@@ -139,7 +250,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
         disabled={isExporting}
         onClick={() => {
           setShowMenu((prev) => !prev);
-          setMenuStep('layout');
+          setMenuStep('columns');
         }}
       >
         {isExporting ? 'Printing...' : 'Print Offer in PDF'}
@@ -158,31 +269,171 @@ export default function ExportPdfButton({ offerId, className }: Props) {
             borderRadius: 8,
             boxShadow: '0 8px 24px rgba(15, 23, 42, 0.12)',
             zIndex: 100,
-            minWidth: 200,
+            minWidth: 260,
             overflow: 'hidden',
           }}
         >
-          {menuStep === 'layout' && (
+          {menuStep === 'columns' && (
             <>
-              <div style={menuHeaderStyle}>Layout</div>
-              <button
-                type="button"
-                onClick={() => handleLayoutSelect('standard')}
-                style={menuItemStyle}
-                onMouseEnter={(e) => handleHover(e, true)}
-                onMouseLeave={(e) => handleHover(e, false)}
+              <div style={menuHeaderStyle}>Columns</div>
+              <div
+                style={{
+                  padding: '0 16px 6px',
+                  fontSize: 11,
+                  color: '#64748b',
+                }}
               >
-                Standard
-              </button>
-              <button
-                type="button"
-                onClick={() => handleLayoutSelect('detailed')}
-                style={menuItemStyle}
-                onMouseEnter={(e) => handleHover(e, true)}
-                onMouseLeave={(e) => handleHover(e, false)}
-              >
-                Detailed (with Telmaco Discount)
-              </button>
+                Drag selected columns to change print order.
+              </div>
+              <div style={{ maxHeight: 260, overflowY: 'auto', padding: '2px 0 6px' }}>
+                {orderedColumns.map((column) => {
+                  const isSelected = selectedColumns.includes(column);
+                  const orderIndex = isSelected ? selectedColumns.indexOf(column) : -1;
+                  const isDropBefore =
+                    isSelected &&
+                    draggingColumn !== null &&
+                    draggingColumn !== column &&
+                    dropPreview?.column === column &&
+                    dropPreview.position === 'before';
+                  const isDropAfter =
+                    isSelected &&
+                    draggingColumn !== null &&
+                    draggingColumn !== column &&
+                    dropPreview?.column === column &&
+                    dropPreview.position === 'after';
+                  return (
+                    <div
+                      key={column}
+                      onDragOver={isSelected ? (event) => handleColumnDragOver(event, column) : undefined}
+                      onDrop={isSelected ? (event) => handleColumnDrop(event, column) : undefined}
+                      onDragEnd={isSelected ? clearDragState : undefined}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '6px 16px',
+                        fontSize: 13,
+                        color: '#0f172a',
+                        boxShadow: isDropBefore
+                          ? 'inset 0 2px 0 #2563eb'
+                          : isDropAfter
+                            ? 'inset 0 -2px 0 #2563eb'
+                            : undefined,
+                      }}
+                    >
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleColumn(column)}
+                        />
+                        <span>{columnLabels[column]}</span>
+                      </label>
+                      {isSelected && (
+                        <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                          <span
+                            style={{
+                              minWidth: 22,
+                              height: 22,
+                              borderRadius: 999,
+                              background: '#e2e8f0',
+                              color: '#0f172a',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: 11,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {orderIndex + 1}
+                          </span>
+                          <button
+                            type="button"
+                            draggable
+                            aria-label={`Drag ${columnLabels[column]} to reorder`}
+                            onDragStart={(event) => handleColumnDragStart(event, column)}
+                            onDragEnd={clearDragState}
+                            style={{
+                              border: '1px solid #cbd5e1',
+                              background: '#fff',
+                              color: '#334155',
+                              borderRadius: 4,
+                              width: 22,
+                              height: 22,
+                              lineHeight: '20px',
+                              padding: 0,
+                              cursor: 'grab',
+                              fontSize: 13,
+                            }}
+                            title="Drag to reorder"
+                          >
+                            ::
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ borderTop: '1px solid #e5e7eb', padding: '8px 12px', background: '#f8fafc' }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+                  Selected Order
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {selectedColumns.map((column, index) => (
+                    <span
+                      key={`selected-${column}`}
+                      style={{
+                        border: '1px solid #cbd5e1',
+                        background: '#ffffff',
+                        color: '#0f172a',
+                        borderRadius: 999,
+                        fontSize: 11,
+                        padding: '3px 8px',
+                      }}
+                    >
+                      {index + 1}. {columnLabels[column]}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div style={{ borderTop: '1px solid #e5e7eb', padding: 8 }}>
+                <button
+                  type="button"
+                  style={{
+                    width: '100%',
+                    border: '1px solid #292929',
+                    background: '#474747',
+                    color: '#fff',
+                    fontSize: 13,
+                    borderRadius: 6,
+                    padding: '8px 10px',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => setMenuStep('language')}
+                >
+                  Continue ({selectedColumns.length} selected)
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    width: '100%',
+                    border: '1px solid #e5e7eb',
+                    background: '#ffffff',
+                    color: '#334155',
+                    fontSize: 12,
+                    borderRadius: 6,
+                    padding: '7px 10px',
+                    cursor: isDefaultSelection ? 'default' : 'pointer',
+                    marginTop: 8,
+                    opacity: isDefaultSelection ? 0.6 : 1,
+                  }}
+                  disabled={isDefaultSelection}
+                  onClick={() => setSelectedColumns([...DEFAULT_PDF_PRODUCT_COLUMNS])}
+                >
+                  Reset to defaults
+                </button>
+              </div>
             </>
           )}
 
@@ -191,7 +442,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
               <div style={menuHeaderStyle}>
                 <button
                   type="button"
-                  onClick={() => setMenuStep('layout')}
+                  onClick={() => setMenuStep('columns')}
                   style={{
                     background: 'none',
                     border: 'none',
@@ -204,7 +455,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                     letterSpacing: '0.05em',
                   }}
                 >
-                  &larr; Language
+                  &larr; Columns
                 </button>
               </div>
               <button
@@ -246,7 +497,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                     letterSpacing: '0.05em',
                   }}
                 >
-                  &larr; Orientation
+                  &larr; Language
                 </button>
               </div>
               <button

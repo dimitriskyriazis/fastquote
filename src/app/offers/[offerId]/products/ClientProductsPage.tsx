@@ -214,9 +214,14 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
 
   const handleUpdatePrices = useCallback(async () => {
     if (isUpdatingPrices) return;
+    const selectedOfferDetailIds = offerProductsPanelRef.current?.getSelectedOfferDetailIdsForPriceUpdate?.() ?? [];
     setIsUpdatingPrices(true);
     try {
-      const response = await fetch(updatePricesEndpoint, { method: 'POST' });
+      const response = await fetch(updatePricesEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ offerDetailIds: selectedOfferDetailIds }),
+      });
       const payload = (await response.json().catch(() => null)) as
         | { ok?: boolean; error?: string; updated?: number }
         | null;
@@ -231,7 +236,10 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
       setRefreshToken((prev) => prev + 1);
     } catch (err) {
       console.error('Failed to update offer prices', err);
-      showToastMessage('Unable to update product prices. Please try again.', 'error');
+      const message = err instanceof Error
+        ? err.message
+        : 'Unable to update product prices. Please try again.';
+      showToastMessage(message, 'error');
     } finally {
       setIsUpdatingPrices(false);
     }

@@ -36,6 +36,7 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   RequestedBrand: 2,
   RequestedModelNo: 2,
   RequestedPartNo: 2,
+  RequestedWebLink: 3,
   RequestedDescription: 3,
   RequestedDescription2: 3,
   RequestedDescription3: 3,

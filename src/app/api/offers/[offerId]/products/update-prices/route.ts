@@ -25,12 +25,23 @@ const normalizeStringValue = (value: unknown): string | null => {
 };
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   try {
-    const auth = await requirePermission(_req, "editOffers");
+    const auth = await requirePermission(req, "editOffers");
     if (!auth.ok) return auth.response;
+
+    const body = (await req.json().catch(() => null)) as { offerDetailIds?: unknown } | null;
+    const selectedOfferDetailIds = Array.isArray(body?.offerDetailIds)
+      ? Array.from(
+          new Set(
+            body.offerDetailIds
+              .map((value) => normalizeOfferId(value))
+              .filter((id): id is number => id != null && id > 0),
+          ),
+        )
+      : [];
 
     const { offerId: offerIdParam } = await params;
     const normalizedId = normalizeOfferId(
@@ -44,10 +55,16 @@ export async function POST(
     }
 
     const pool = await getPool();
-    const auditUserId = normalizeStringValue(resolveAuditUserId(_req)) ?? null;
+    const auditUserId = normalizeStringValue(resolveAuditUserId(req)) ?? null;
     const request = pool.request();
     request.input('offerId', sql.Int, normalizedId);
     request.input('modifiedBy', sql.NVarChar(450), auditUserId);
+    const selectedDetailsFilterSql = selectedOfferDetailIds.length > 0
+      ? ` AND od.ID IN (${selectedOfferDetailIds.map((_, idx) => `@selectedOfferDetailId${idx}`).join(', ')})`
+      : '';
+    selectedOfferDetailIds.forEach((id, idx) => {
+      request.input(`selectedOfferDetailId${idx}`, sql.Int, id);
+    });
 
     const result = await request.query<{ updated: number }>(`
       DECLARE @PricingPolicyID INT = (
@@ -59,20 +76,34 @@ export async function POST(
       BEGIN
         THROW 50000, 'Offer has no pricing policy.', 1;
       END;
-      IF EXISTS (
-        SELECT 1
-        FROM dbo.OfferDetails od
-        WHERE od.OfferID = @offerId
-          AND od.ProductID IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1
-            FROM dbo.PricingPolicyRules ppr
-            WHERE ppr.PricingPolicyID = @PricingPolicyID
-              AND (ppr.BrandID = od.BrandID OR ppr.BrandID IS NULL)
-          )
-      )
+      DECLARE @MissingPricingRuleBrands NVARCHAR(MAX) = (
+        SELECT STRING_AGG(missing.BrandLabel, ', ')
+        FROM (
+          SELECT DISTINCT
+            COALESCE(
+              NULLIF(LTRIM(RTRIM(b.Name)), ''),
+              CASE
+                WHEN od.BrandID IS NULL THEN 'Unknown brand'
+                ELSE CONCAT('Brand ID ', CAST(od.BrandID AS NVARCHAR(20)))
+              END
+            ) AS BrandLabel
+          FROM dbo.OfferDetails od
+          LEFT JOIN dbo.Brands b ON b.ID = od.BrandID
+          WHERE od.OfferID = @offerId
+            AND od.ProductID IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM dbo.PricingPolicyRules ppr
+              WHERE ppr.PricingPolicyID = @PricingPolicyID
+                AND (ppr.BrandID = od.BrandID OR ppr.BrandID IS NULL)
+            )
+        ) missing
+      );
+      IF @MissingPricingRuleBrands IS NOT NULL
       BEGIN
-        THROW 50000, 'Missing pricing policy rule for one or more brands in this offer. Please add a default (All brands) rule or brand-specific rules.', 1;
+        DECLARE @MissingRulesErrorMessage NVARCHAR(2048) =
+          'Pricing policy rules missing for the following brands: ' + @MissingPricingRuleBrands;
+        THROW 50000, @MissingRulesErrorMessage, 1;
       END;
       WITH OfferContext AS (
         SELECT
@@ -245,7 +276,7 @@ export async function POST(
             )
           END AS ComputedNetCost
       ) computed
-      WHERE od.ProductID IS NOT NULL;
+      WHERE od.ProductID IS NOT NULL${selectedDetailsFilterSql};
       SELECT @@ROWCOUNT AS updated;
     `);
 

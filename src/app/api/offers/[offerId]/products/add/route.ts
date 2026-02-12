@@ -460,7 +460,12 @@ async function handleProductGrid(
     colId,
     expression,
   }));
-  const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, quickFilterColumns);
+  const quickFilterClause = buildQuickFilterClause(
+    gridRequest.quickFilterText,
+    quickFilterColumns,
+    'quickFilter',
+    { enableFuzzyText: false },
+  );
   const combinedWhereSql = quickFilterClause.clause
     ? `${whereSql} ${quickFilterClause.clause}`.trim()
     : whereSql;
@@ -979,6 +984,7 @@ const requestedRowCondition = `
         OR NULLIF(LTRIM(RTRIM(od.RequestedBrand)), '') IS NOT NULL
         OR NULLIF(LTRIM(RTRIM(od.RequestedModelNo)), '') IS NOT NULL
         OR NULLIF(LTRIM(RTRIM(od.RequestedPartNo)), '') IS NOT NULL
+        OR NULLIF(LTRIM(RTRIM(od.RequestedWebLink)), '') IS NOT NULL
         OR NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL
         OR NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL
         OR od.RequestedQuantity IS NOT NULL

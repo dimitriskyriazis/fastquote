@@ -77,9 +77,10 @@ type TextMatchMode = 'contains' | 'equals' | 'startsWith' | 'endsWith' | 'notEqu
 export const buildTextMatchPredicate = (
   expression: string,
   term: string,
-  options: { paramKey: string; mode?: TextMatchMode; enablePhonetic?: boolean },
+  options: { paramKey: string; mode?: TextMatchMode; enablePhonetic?: boolean; enableFuzzy?: boolean },
 ): { clause: string; params: QueryParam[] } => {
   const mode = options.mode ?? 'contains';
+  const enableFuzzy = options.enableFuzzy ?? true;
   const trimmed = term.trim();
   const upper = trimmed.toUpperCase();
   const safeExpr = `LTRIM(RTRIM(COALESCE(CAST(${expression} AS NVARCHAR(MAX)), '')))`;
@@ -111,7 +112,7 @@ export const buildTextMatchPredicate = (
 
   const extraClauses: string[] = [];
 
-  if (mode === 'contains' && trimmed.length >= 4 && trimmed.length <= 9 && !hasDigits(trimmed)) {
+  if (enableFuzzy && mode === 'contains' && trimmed.length >= 4 && trimmed.length <= 9 && !hasDigits(trimmed)) {
     const upperTerm = trimmed.toUpperCase();
 
     // Swap variants: keep first letter intact, limit to 2
@@ -172,7 +173,9 @@ export const buildQuickFilterClause = (
   quickFilterText: string | null | undefined,
   columnExpressions: Array<QuickFilterColumn | string>,
   paramPrefix = "quickFilter",
+  options?: { enableFuzzyText?: boolean },
 ): { clause: string; params: QueryParam[] } => {
+  const enableFuzzyText = options?.enableFuzzyText ?? true;
   const normalized = typeof quickFilterText === "string" ? quickFilterText.trim() : "";
   if (!normalized) return { clause: "", params: [] };
   // Split into terms first, then normalize each term for part/model numbers
@@ -254,7 +257,7 @@ export const buildQuickFilterClause = (
           const { clause, params: clauseParams } = buildTextMatchPredicate(
             expr,
             searchValue,
-            { paramKey, mode: 'contains', enablePhonetic: !sensitive },
+            { paramKey, mode: 'contains', enablePhonetic: !sensitive, enableFuzzy: enableFuzzyText },
           );
           likeParts.push(clause);
           clauseParams.forEach((p) => params.push(p));

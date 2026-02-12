@@ -86,10 +86,6 @@ const disableAutofillScript = `
       if (element.getAttribute("autocapitalize") !== "off") {
         element.setAttribute("autocapitalize", "off");
       }
-      if (element.getAttribute("spellcheck") !== "false") {
-        element.setAttribute("spellcheck", "false");
-      }
-
       if (typeof element.getAttribute === "function") {
       var currentName = element.getAttribute("name");
       var normalizedCurrentName = typeof currentName === "string" ? currentName : "";
