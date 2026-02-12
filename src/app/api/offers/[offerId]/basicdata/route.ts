@@ -31,6 +31,9 @@ type NormalizedUpdate = {
 };
 
 const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
+  CustomerID: { column: 'CustomerID', type: 'number', sqlType: sql.Int },
+  SalesDivitionID: { column: 'SalesDivitionID', type: 'number', sqlType: sql.Int },
+  CreatedBy: { column: 'CreatedBy', type: 'string', sqlType: sql.NVarChar, length: 450 },
   Title: { column: 'Title', type: 'string', sqlType: sql.NVarChar, length: 512 },
   Description: { column: 'Description', type: 'string', sqlType: sql.NVarChar, length: 2000 },
   PaymentTerms: { column: 'PaymentTerms', type: 'string', sqlType: sql.NVarChar, length: 500 },
@@ -61,6 +64,9 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   Delivery: { column: 'Delivery', type: 'date', sqlType: sql.DateTime2 },
   OfferDate: { column: 'OfferDate', type: 'date', sqlType: sql.DateTime2 },
 };
+
+const PROBABILITY_MIN = 0;
+const PROBABILITY_MAX = 100;
 
 const normalizeValue = (value: unknown, type: FieldType): NormalizedValue => {
   if (value === null || value === undefined) return null;
@@ -127,6 +133,23 @@ export async function PATCH(
 
     if (normalizedUpdates.length === 0) {
       return NextResponse.json({ ok: false, error: 'No valid updates provided' }, { status: 400 });
+    }
+
+    const probabilityUpdate = normalizedUpdates.find((entry) => entry.field === 'Probability');
+    if (probabilityUpdate) {
+      const value = probabilityUpdate.value;
+      const isValidProbability = (
+        typeof value === 'number' &&
+        Number.isInteger(value) &&
+        value >= PROBABILITY_MIN &&
+        value <= PROBABILITY_MAX
+      );
+      if (!isValidProbability) {
+        return NextResponse.json(
+          { ok: false, error: 'Probability must be an integer between 0 and 100.' },
+          { status: 400 },
+        );
+      }
     }
 
     const pool = await getPool();

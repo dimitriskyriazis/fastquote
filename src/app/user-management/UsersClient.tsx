@@ -84,7 +84,29 @@ export default function UsersClient() {
 
   const roleSelectOptions = useMemo(() => ["", ...roleOptions], [roleOptions]);
   const divisionSelectOptions = useMemo(() => ["", ...salesDivisionOptions], [salesDivisionOptions]);
-  const senioritySelectOptions = useMemo(() => ["", ...salesSeniorityOptions], [salesSeniorityOptions]);
+  const senioritySelectOptions = useMemo(() => {
+    const seniorityOrder = new Map<string, number>([
+      ["ceo", 0],
+      ["general director", 1],
+      ["director", 2],
+      ["manager", 3],
+      ["basic", 4],
+      ["not sales", 5],
+    ]);
+
+    const withIndex = salesSeniorityOptions.map((value, index) => ({
+      value,
+      index,
+      order: seniorityOrder.get(value.trim().toLowerCase()) ?? Number.POSITIVE_INFINITY,
+    }));
+
+    withIndex.sort((a, b) => {
+      if (a.order !== b.order) return a.order - b.order;
+      return a.index - b.index;
+    });
+
+    return ["", ...withIndex.map((entry) => entry.value)];
+  }, [salesSeniorityOptions]);
 
   const columnDefs = useMemo<ColDef[]>(
     () => [

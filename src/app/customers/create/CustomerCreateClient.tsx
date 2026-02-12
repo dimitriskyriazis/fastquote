@@ -11,6 +11,8 @@ import lookupStyles from '../../components/LookupModal.module.css';
 import LookupModal from '../../components/LookupModal';
 import lookupButtonStyles from '../../components/LookupAddButton.module.css';
 import { showToastMessage } from '../../../lib/toast';
+import { useDuplicateCheck } from '../../lib/useDuplicateCheck';
+import DuplicateWarning from '../../components/DuplicateWarning';
 
 type SectionKey = 'general' | 'business' | 'location' | 'contact' | 'notes';
 
@@ -295,10 +297,15 @@ export default function CustomerCreateClient({
   }, [fieldDefinitions, pricingPolicies]);
 
   const [values, setValues] = useState(initialValues);
+  const { warnings: duplicateWarnings, check: checkDuplicates } = useDuplicateCheck('customer');
 
   useEffect(() => {
     setValues(initialValues);
   }, [initialValues]);
+
+  useEffect(() => {
+    checkDuplicates({ name: values.name, taxId: values.taxId });
+  }, [values.name, values.taxId, checkDuplicates]);
 
   useEffect(() => {
     setCountryOptions(countries);
@@ -701,6 +708,7 @@ export default function CustomerCreateClient({
       >
         <section className={panelStyles.panel}>
           {renderSectionCard('general')}
+          <DuplicateWarning warnings={duplicateWarnings} />
           <div className={panelStyles.sectionsGrid}>
             {remainingSections.map((section) => renderSectionCard(section))}
           </div>

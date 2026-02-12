@@ -66,6 +66,7 @@ type OfferCreateDefaults = {
 };
 
 export type MarketOption = DropdownOption & { salesDivisionId: string | null };
+type UserOption = DropdownOption & { salesSeniorityName?: string | null };
 
 type Props = {
   customers: DropdownOption[];
@@ -73,11 +74,26 @@ type Props = {
   pricingPolicies: DropdownOption[];
   markets: MarketOption[];
   salesDivisions: DropdownOption[];
-  users: DropdownOption[];
+  users: UserOption[];
   fwcProjects: DropdownOption[];
   defaultValues: OfferCreateDefaults;
   formId?: string;
 };
+
+const SALES_USER_SENIORITIES = new Set([
+  'ceo',
+  'general director',
+  'director',
+  'manager',
+  'basic',
+]);
+
+const APPROVAL_USER_SENIORITIES = new Set([
+  'ceo',
+  'general director',
+  'director',
+  'manager',
+]);
 
 const SECTION_METADATA: Record<SectionKey, { title: string; gridClass: string }> = {
   general: { title: 'General', gridClass: panelStyles.generalGrid },
@@ -107,6 +123,19 @@ const toNumberOrNull = (value: string): number | null => {
   if (!trimmed) return null;
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const PROBABILITY_MIN = 0;
+const PROBABILITY_MAX = 100;
+
+const parseProbability = (value: string): number | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (!/^-?\d+$/.test(trimmed)) return null;
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isInteger(parsed)) return null;
+  if (parsed < PROBABILITY_MIN || parsed > PROBABILITY_MAX) return null;
+  return parsed;
 };
 
 const toNullableString = (value: string): string | null => {
@@ -161,6 +190,28 @@ export default function OfferCreateClient({
 
   const defaultStatusId = useMemo(() => resolveDefaultStatusId(statuses), [statuses]);
 
+  const salesUsers = useMemo(
+    () =>
+      users.filter((user) =>
+        SALES_USER_SENIORITIES.has((user.salesSeniorityName ?? '').trim().toLowerCase()),
+      ),
+    [users],
+  );
+
+  const approvalUsers = useMemo(
+    () =>
+      users.filter((user) =>
+        APPROVAL_USER_SENIORITIES.has((user.salesSeniorityName ?? '').trim().toLowerCase()),
+      ),
+    [users],
+  );
+
+  const defaultSuggestedUserId = useMemo(() => {
+    const suggestedUserId = (defaultValues.suggestedUserId ?? '').trim();
+    if (!suggestedUserId) return '';
+    return salesUsers.some((user) => user.value === suggestedUserId) ? suggestedUserId : '';
+  }, [defaultValues.suggestedUserId, salesUsers]);
+
   const initialValues = useMemo<FormValues>(() => ({
     title: 'Financial Proposal',
     description: '',
@@ -177,8 +228,8 @@ export default function OfferCreateClient({
     pricingPolicyId: defaultPricingPolicyId,
     marketId: '',
     salesDivisionId: '',
-    salesCreationPersonId: defaultValues.suggestedUserId ?? '',
-    salesPersonId: defaultValues.suggestedUserId ?? '',
+    salesCreationPersonId: defaultSuggestedUserId,
+    salesPersonId: defaultSuggestedUserId,
     approvalUserId: '',
     projectId: '0',
     erpFwcProjectId: '',
@@ -193,7 +244,14 @@ export default function OfferCreateClient({
     deliveryDue: '',
     delivery: '',
     offerDate: '',
-  }), [defaultPricingPolicyId, defaultStatusId, defaultValues]);
+  }), [
+    defaultPricingPolicyId,
+    defaultStatusId,
+    defaultSuggestedUserId,
+    defaultValues.deliveryTime,
+    defaultValues.offerValidity,
+    defaultValues.paymentTerms,
+  ]);
 
   const [values, setValues] = useState<FormValues>(initialValues);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormValues, string>>>({});
@@ -406,6 +464,10 @@ export default function OfferCreateClient({
         errors[field] = 'Required';
       }
     });
+    const normalizedProbability = parseProbability(values.probability);
+    if (values.probability.trim() && normalizedProbability == null) {
+      errors.probability = `Probability must be an integer between ${PROBABILITY_MIN} and ${PROBABILITY_MAX}`;
+    }
 
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
@@ -435,7 +497,7 @@ export default function OfferCreateClient({
       projectId: toNumberOrNull(values.projectId),
       erpFwcProjectId: toNumberOrNull(values.erpFwcProjectId),
       customerRef: toNullableString(values.customerRef),
-      probability: toNumberOrNull(values.probability) ?? 0,
+      probability: normalizedProbability ?? 0,
       initialRequest: toNullableString(values.initialRequest),
       draftOffer: toNullableString(values.draftOffer),
       officialRequest: toNullableString(values.officialRequest),
@@ -487,9 +549,9 @@ export default function OfferCreateClient({
       { id: 'pricingPolicyId', label: 'Pricing Policy', section: 'commercial', required: true, type: 'select', options: localPricingPolicies },
       { id: 'marketId', label: 'Market', section: 'commercial', required: true, type: 'select', options: markets },
       { id: 'salesDivisionId', label: 'Sales Division', section: 'commercial', required: true, type: 'select', options: salesDivisions },
-      { id: 'salesCreationPersonId', label: 'Sales Creation Person', section: 'commercial', required: true, type: 'select', options: users },
-      { id: 'salesPersonId', label: 'Sales Person', section: 'commercial', type: 'select', options: users },
-      { id: 'approvalUserId', label: 'Approval User', section: 'commercial', type: 'select', options: users },
+      { id: 'salesCreationPersonId', label: 'Sales Creation Person', section: 'commercial', required: true, type: 'select', options: salesUsers },
+      { id: 'salesPersonId', label: 'Sales Person', section: 'commercial', type: 'select', options: salesUsers },
+      { id: 'approvalUserId', label: 'Approval User', section: 'commercial', type: 'select', options: approvalUsers },
 
       { id: 'projectId', label: 'ERP Project ID', section: 'code', inputType: 'number' },
       { id: 'erpFwcProjectId', label: 'ERP FWC Project', section: 'code', type: 'select', options: fwcProjects },
@@ -513,7 +575,8 @@ export default function OfferCreateClient({
       localPricingPolicies,
       salesDivisions,
       statuses,
-      users,
+      salesUsers,
+      approvalUsers,
       fwcProjects,
     ],
   );
@@ -694,6 +757,10 @@ export default function OfferCreateClient({
           className={panelStyles.fieldControl}
           aria-invalid={invalid}
           type={field.inputType ?? 'text'}
+          min={field.id === 'probability' ? PROBABILITY_MIN : undefined}
+          max={field.id === 'probability' ? PROBABILITY_MAX : undefined}
+          step={field.id === 'probability' ? 1 : undefined}
+          inputMode={field.id === 'probability' ? 'numeric' : undefined}
           value={value}
           disabled={disabled}
           required={field.required}

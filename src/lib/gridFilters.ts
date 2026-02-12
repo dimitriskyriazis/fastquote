@@ -1,11 +1,12 @@
+import { clearPartModelNumberUpper } from "./partModelNumber";
+
 export type QueryParam = { key: string; value: string | number | boolean };
 
 export type QuickFilterColumn = { colId: string; expression: string };
 
 // Normalize part/model numbers by removing special characters
 const normalizePartModelNumber = (value: string): string => {
-  // Remove common special characters: dashes, underscores, spaces, periods, etc.
-  return value.replace(/[-_\s.]+/g, '').toUpperCase();
+  return clearPartModelNumberUpper(value);
 };
 
 // Helper to get the cleared column name for part/model numbers
@@ -46,6 +47,11 @@ const buildAdjacentSwapVariants = (value: string): string[] => {
     variants.add(chars.join(''));
   }
   return Array.from(variants);
+};
+
+const buildSubsequenceLikePattern = (value: string): string => {
+  if (!value) return '%';
+  return `%${value.split('').join('%')}%`;
 };
 
 export const isSensitiveColumn = (colId: string): boolean => {
@@ -128,14 +134,27 @@ export const buildTextMatchPredicate = (
       extraClauses.push(`(${ciExpr} LIKE @${key})`);
     }
 
-    // Substitution: both >= 1 and longer side >= 3 (kicks in at 5+ char terms)
+    // Substitution: keep the first two and last characters stable to reduce false positives.
+    // This avoids broad matches like "extron" -> "xrestron" while still allowing
+    // omissions in the middle (e.g. "exron" -> "crestron").
     for (let i = 0; i < upperTerm.length; i += 1) {
+      if (i < 2 || i >= upperTerm.length - 1) continue;
       const left = upperTerm.slice(0, i);
       const right = upperTerm.slice(i + 1);
       if (left.length < 1 || right.length < 1) continue;
       if (Math.max(left.length, right.length) < 3) continue;
       const key = `${paramKey}_sub${i}`;
       params.push({ key, value: `%${left}%${right}%` });
+      extraClauses.push(`(${ciExpr} LIKE @${key})`);
+    }
+
+    // Omitted-character subsequence match with the same positional guardrails.
+    for (let i = 0; i < upperTerm.length; i += 1) {
+      if (i < 2 || i >= upperTerm.length - 1) continue;
+      const remainder = `${upperTerm.slice(0, i)}${upperTerm.slice(i + 1)}`;
+      if (remainder.length < 4) continue;
+      const key = `${paramKey}_seq${i}`;
+      params.push({ key, value: buildSubsequenceLikePattern(remainder) });
       extraClauses.push(`(${ciExpr} LIKE @${key})`);
     }
   }

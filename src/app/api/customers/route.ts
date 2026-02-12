@@ -26,6 +26,7 @@ type CustomerRow = {
   CustomerID: number | null;
   CustomerName: string | null;
   BrandName: string | null;
+  TaxID: string | null;
   IsParent: boolean | number | null;
   ParentCustomer: string | null;
   PricingPolicy: string | null;
@@ -60,6 +61,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   CustomerID: "dbo.Customers.ID",
   CustomerName: "dbo.Customers.Name",
   BrandName: "dbo.Customers.BrandName",
+  TaxID: "dbo.Customers.TaxID",
   IsParent: "dbo.Customers.IsParent",
   ParentCustomer: "parentCustomer.Name",
   PricingPolicy: "dbo.PricingPolicies.Name",
@@ -230,6 +232,7 @@ export async function POST(req: NextRequest) {
         dbo.Customers.ID AS CustomerID,
         dbo.Customers.Name AS CustomerName,
         dbo.Customers.BrandName,
+        dbo.Customers.TaxID,
         dbo.Customers.IsParent,
         parentCustomer.Name AS ParentCustomer,
         dbo.PricingPolicies.Name AS PricingPolicy,

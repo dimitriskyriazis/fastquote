@@ -3995,6 +3995,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           onRowDragEnd={handleRowDragEnd}
           onRowDragMove={handleRowDragMove}
           onRowDragLeave={handleRowDragLeave}
+          suppressLastEmptyLineOnPaste
           onPasteStart={handlePasteStart}
           onPasteEnd={handlePasteEnd}
           onCellValueChanged={handleCellValueChanged}

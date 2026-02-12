@@ -4,6 +4,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import LookupModal from './LookupModal';
 import lookupStyles from './LookupModal.module.css';
 import { showToastMessage } from '../../lib/toast';
+import { useDuplicateCheck } from '../lib/useDuplicateCheck';
+import DuplicateWarning from './DuplicateWarning';
 
 const BRAND_CREATE_ENDPOINT = '/api/brands';
 
@@ -35,6 +37,7 @@ export default function AddBrandModal({ open, onClose, onCreated, overlayClassNa
   const [enabled, setEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { warnings: duplicateWarnings, check: checkDuplicates, clear: clearDuplicates } = useDuplicateCheck('brand');
 
   const resetForm = useCallback(() => {
     setName('');
@@ -48,8 +51,13 @@ export default function AddBrandModal({ open, onClose, onCreated, overlayClassNa
   useEffect(() => {
     if (!open) {
       resetForm();
+      clearDuplicates();
     }
-  }, [open, resetForm]);
+  }, [open, resetForm, clearDuplicates]);
+
+  useEffect(() => {
+    if (open) checkDuplicates({ name });
+  }, [name, checkDuplicates, open]);
 
   const isSoftOneIdValid = useMemo(() => {
     if (!softOneId.trim()) return true;
@@ -127,6 +135,9 @@ export default function AddBrandModal({ open, onClose, onCreated, overlayClassNa
             required
             onChange={(event) => setName(event.target.value)}
           />
+        </div>
+        <div className={lookupStyles.fieldFull}>
+          <DuplicateWarning warnings={duplicateWarnings} />
         </div>
         <div className={lookupStyles.fieldFull}>
           <label className={lookupStyles.fieldLabel} htmlFor="brand-comment">

@@ -9,6 +9,7 @@ import { getAuditFallbackUserId, resolveAuditUserId } from '../../../lib/auditTr
 
 type LookupRow = RawDropdownRow & { ID: number; Name: string | null };
 type MarketLookupRow = LookupRow & { SalesDivisionID?: number | null };
+type UserLookupRow = LookupRow & { SalesSeniorityName?: string | null };
 
 const mapOptions = (rows: LookupRow[] | undefined | null): DropdownOption[] =>
   toDropdownOptions<LookupRow>(rows);
@@ -111,14 +112,22 @@ async function fetchSalesDivisions() {
 async function fetchUsers() {
   try {
     const pool = await getPool();
-    const result = await pool.request().query<LookupRow>(`
+    const result = await pool.request().query<UserLookupRow>(`
       SELECT
-        Id AS ID,
-        COALESCE(NULLIF(LTRIM(RTRIM(FullName)), ''), UserName) AS Name
-      FROM dbo.AspNetUsers
-      ORDER BY COALESCE(NULLIF(LTRIM(RTRIM(FullName)), ''), UserName)
+        u.Id AS ID,
+        COALESCE(NULLIF(LTRIM(RTRIM(u.FullName)), ''), u.UserName) AS Name,
+        ss.Name AS SalesSeniorityName
+      FROM dbo.AspNetUsers u
+      LEFT JOIN dbo.SalesSeniorities ss ON ss.ID = u.SalesSeniorityID
+      ORDER BY COALESCE(NULLIF(LTRIM(RTRIM(u.FullName)), ''), u.UserName)
     `);
-    return mapOptions(result.recordset);
+    return (result.recordset ?? [])
+      .filter((row): row is UserLookupRow & { ID: number } => row?.ID != null)
+      .map((row) => ({
+        value: String(row.ID),
+        label: normalizeDropdownLabel(row.Name) ?? `Option ${String(row.ID)}`,
+        salesSeniorityName: normalizeDropdownLabel(row.SalesSeniorityName),
+      }));
   } catch (err) {
     console.error('Failed to load users', err);
     return [];

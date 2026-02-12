@@ -18,6 +18,7 @@ async function fetchOfferBasicRecord(offerId: number) {
       SELECT
         o.ID AS OfferID,
         o.CustomerID,
+        o.SalesDivitionID AS SalesDivisionID,
         o.Title,
         o.Description,
         o.PaymentTerms,
@@ -88,6 +89,7 @@ async function fetchOfferBasicRecord(offerId: number) {
 }
 
 type LookupRow = RawDropdownRow & { ID: number; Name: string | null };
+type UserLookupRow = LookupRow & { SalesSeniorityName?: string | null };
 
 const mapLookupRows = (rows: LookupRow[] | undefined | null): OfferDropdownOption[] =>
   toDropdownOptions<LookupRow>(rows);
@@ -140,18 +142,59 @@ async function fetchMarkets() {
   }
 }
 
-async function fetchAspNetUsers() {
+async function fetchCustomers() {
   try {
     const pool = await getPool();
     const request = pool.request();
     const result = await request.query<LookupRow>(`
-      SELECT
-        Id AS ID,
-        COALESCE(NULLIF(LTRIM(RTRIM(FullName)), ''), UserName) AS Name
-      FROM dbo.AspNetUsers
-      ORDER BY COALESCE(NULLIF(LTRIM(RTRIM(FullName)), ''), UserName)
+      SELECT ID, Name
+      FROM dbo.Customers
+      WHERE ISNULL(IsParent, 0) = 0
+      ORDER BY Name
     `);
     return mapLookupRows(result.recordset);
+  } catch (err) {
+    console.error('Failed to load customers', err);
+    return [];
+  }
+}
+
+async function fetchSalesDivisions() {
+  try {
+    const pool = await getPool();
+    const request = pool.request();
+    const result = await request.query<LookupRow>(`
+      SELECT ID, Name
+      FROM dbo.SalesDivision
+      ORDER BY Name
+    `);
+    return mapLookupRows(result.recordset);
+  } catch (err) {
+    console.error('Failed to load sales divisions', err);
+    return [];
+  }
+}
+
+async function fetchAspNetUsers() {
+  try {
+    const pool = await getPool();
+    const request = pool.request();
+    const result = await request.query<UserLookupRow>(`
+      SELECT
+        u.Id AS ID,
+        COALESCE(NULLIF(LTRIM(RTRIM(u.FullName)), ''), u.UserName) AS Name,
+        ss.Name AS SalesSeniorityName
+      FROM dbo.AspNetUsers u
+      LEFT JOIN dbo.SalesSeniorities ss ON ss.ID = u.SalesSeniorityID
+      ORDER BY COALESCE(NULLIF(LTRIM(RTRIM(u.FullName)), ''), u.UserName)
+    `);
+    return (result.recordset ?? [])
+      .filter((row): row is UserLookupRow & { ID: number } => row?.ID != null)
+      .map((row) => ({
+        value: String(row.ID),
+        label: row.Name?.trim() || `Option ${String(row.ID)}`,
+        salesSeniorityName: row.SalesSeniorityName?.trim() || null,
+      }));
   } catch (err) {
     console.error('Failed to load users', err);
     return [];
@@ -220,16 +263,20 @@ export default async function OfferBasicDataPanel({ offerId }: Props) {
 
   const [
     contacts,
+    customers,
     statuses,
     pricingPolicies,
     markets,
+    salesDivisions,
     users,
     fwcProjects,
   ] = await Promise.all([
     fetchCustomerContacts(record.CustomerID ?? null),
+    fetchCustomers(),
     fetchOfferStatuses(),
     fetchPricingPolicies(),
     fetchMarkets(),
+    fetchSalesDivisions(),
     fetchAspNetUsers(),
     fetchFwcProjects(),
   ]);
@@ -239,9 +286,11 @@ export default async function OfferBasicDataPanel({ offerId }: Props) {
       offerId={offerId}
       record={record}
       contacts={contacts}
+      customers={customers}
       statuses={statuses}
       pricingPolicies={pricingPolicies}
       markets={markets}
+      salesDivisions={salesDivisions}
       users={users}
       fwcProjects={fwcProjects}
     />

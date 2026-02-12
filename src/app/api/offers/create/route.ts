@@ -93,6 +93,25 @@ const normalizeDate = (value: unknown): Date | null => {
   return null;
 };
 
+const PROBABILITY_MIN = 0;
+const PROBABILITY_MAX = 100;
+
+const normalizeProbability = (value: unknown): number | null => {
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value)) return null;
+    return value >= PROBABILITY_MIN && value <= PROBABILITY_MAX ? value : null;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (!/^-?\d+$/.test(trimmed)) return null;
+    const parsed = Number.parseInt(trimmed, 10);
+    if (!Number.isInteger(parsed)) return null;
+    return parsed >= PROBABILITY_MIN && parsed <= PROBABILITY_MAX ? parsed : null;
+  }
+  return null;
+};
+
 export async function POST(req: NextRequest) {
   try {
     const auth = await requirePermission(req, "createOffers");
@@ -117,7 +136,14 @@ export async function POST(req: NextRequest) {
     const marketId = normalizeInt(body?.marketId);
     const salesDivisionId = normalizeInt(body?.salesDivisionId);
     const customerRef = normalizeString(body?.customerRef, 500);
-    const probability = normalizeInt(body?.probability) ?? 0;
+    const probabilityInput = body?.probability;
+    const probabilityWasProvided = !(
+      probabilityInput === undefined ||
+      probabilityInput === null ||
+      (typeof probabilityInput === 'string' && probabilityInput.trim() === '')
+    );
+    const normalizedProbability = normalizeProbability(probabilityInput);
+    const probability = normalizedProbability ?? 0;
     const installationSchedule = normalizeString(body?.installationSchedule, 500);
     const closingNote = normalizeString(body?.closingNote, 2000);
     const introNote = normalizeString(body?.introNote, 2000);
@@ -159,6 +185,9 @@ export async function POST(req: NextRequest) {
     if (!salesDivisionId) errors.push('Sales division is required.');
     if (!salesCreationPersonId) errors.push('Sales creation person is required.');
     if (!salesPersonId) errors.push('Sales person is required.');
+    if (probabilityWasProvided && normalizedProbability == null) {
+      errors.push('Probability must be an integer between 0 and 100.');
+    }
 
     if (errors.length > 0) {
       return NextResponse.json(

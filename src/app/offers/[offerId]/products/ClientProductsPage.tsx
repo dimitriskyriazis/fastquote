@@ -182,6 +182,10 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     void count;
     setRefreshToken((prev) => prev + 1);
   }, []);
+  const handleGetAddInsertionAnchor = useCallback(
+    () => offerProductsPanelRef.current?.getAddInsertionAnchor?.() ?? null,
+    [],
+  );
 
   const handleCloseModal = useCallback(() => setShowAddProductModal(false), []);
   const handleCloseRequestedModal = useCallback(() => setShowRequestedModal(false), []);
@@ -409,6 +413,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
               offerId={offerId}
               onAdded={handleProductsAdded}
               onClose={handleCloseModal}
+              getInsertionAnchor={handleGetAddInsertionAnchor}
               showRequestedColumns={showRequestedColumns}
               splitViewMode
               refreshToken={refreshToken}

@@ -30,6 +30,8 @@ import {
   EMPTY_CONTACT_FORM,
   validateContactForm,
 } from "./contactModalHelpers";
+import { useDuplicateCheck } from "../lib/useDuplicateCheck";
+import DuplicateWarning from "../components/DuplicateWarning";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -192,6 +194,16 @@ export default function ContactsClient({
     setSaving: setContactSaving,
     setError: setContactError,
   } = useAddModal<ContactFormValues>(() => ({ ...EMPTY_CONTACT_FORM }));
+  const { warnings: duplicateWarnings, check: checkDuplicates, clear: clearDuplicates } = useDuplicateCheck('contact');
+
+  useEffect(() => {
+    if (isAddContactOpen) {
+      checkDuplicates({ firstName: contactForm.firstName, lastName: contactForm.lastName });
+    } else {
+      clearDuplicates();
+    }
+  }, [contactForm.firstName, contactForm.lastName, isAddContactOpen, checkDuplicates, clearDuplicates]);
+
   const customerOptions = useMemo(() => customers, [customers]);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const [changeCustomerContactId, setChangeCustomerContactId] = useState<number | null>(null);
@@ -878,6 +890,9 @@ export default function ContactsClient({
               required
               onChange={(event) => setContactField("firstName", event.target.value)}
             />
+          </div>
+          <div className={`${styles.contactModalField} ${styles.contactModalFieldFull}`}>
+            <DuplicateWarning warnings={duplicateWarnings} />
           </div>
           <div className={styles.contactModalField}>
             <label className={styles.fieldLabel} htmlFor="contact-position">

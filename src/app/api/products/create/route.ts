@@ -7,10 +7,11 @@ import { getRequestId } from "../../../../lib/requestId";
 import { handleApiError } from "../../../../lib/errorHandler";
 import { logger } from "../../../../lib/logger";
 import { validateRequest, positiveIntSchema, stringSchema, urlSchema, partModelNumberSchema } from "../../../../lib/validation";
+import { clearPartModelNumberUpper } from "../../../../lib/partModelNumber";
 
 const toClearedPartModel = (value: string | null | undefined) => {
   if (!value) return null;
-  return value.replace(/[-_\s.]+/g, "").toUpperCase();
+  return clearPartModelNumberUpper(value);
 };
 
 // Strict schema-based validation with rejection of unknown fields

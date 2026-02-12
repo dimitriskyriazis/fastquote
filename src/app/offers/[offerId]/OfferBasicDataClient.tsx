@@ -15,14 +15,18 @@ import { formatDisplayValue } from '../../lib/formatDisplayValue';
 import { normalizeValueForApi } from '../../lib/normalizeValueForApi';
 import { formatDateInputValue } from '../../lib/formatDateInputValue';
 
+type UserOption = OfferDropdownOption & { salesSeniorityName?: string | null };
+
 type Props = {
   offerId: string;
   record: OfferBasicRecord;
   contacts: OfferContactInfo[];
+  customers: OfferDropdownOption[];
   statuses: OfferDropdownOption[];
   pricingPolicies: OfferDropdownOption[];
   markets: OfferDropdownOption[];
-  users: OfferDropdownOption[];
+  salesDivisions: OfferDropdownOption[];
+  users: UserOption[];
   fwcProjects: OfferDropdownOption[];
 };
 
@@ -76,11 +80,42 @@ const SECTION_METADATA: Record<SectionKey, { title: string; gridClass: string }>
   dates: { title: 'Dates', gridClass: styles.fieldGrid },
 };
 
+const SALES_USER_SENIORITIES = new Set([
+  'ceo',
+  'general director',
+  'director',
+  'manager',
+  'basic',
+]);
+
+const APPROVAL_USER_SENIORITIES = new Set([
+  'ceo',
+  'general director',
+  'director',
+  'manager',
+]);
+
+const PROBABILITY_MIN = 0;
+const PROBABILITY_MAX = 100;
+
+const normalizeProbability = (rawValue: string): number | null => {
+  const trimmed = rawValue.trim();
+  if (!trimmed) return null;
+  if (!/^-?\d+$/.test(trimmed)) return null;
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isInteger(parsed)) return null;
+  if (parsed < PROBABILITY_MIN || parsed > PROBABILITY_MAX) return null;
+  return parsed;
+};
+
 const buildFieldDefinitions = (
+  customers: OfferDropdownOption[],
   statuses: OfferDropdownOption[],
   pricingPolicies: OfferDropdownOption[],
   markets: OfferDropdownOption[],
-  users: OfferDropdownOption[],
+  salesDivisions: OfferDropdownOption[],
+  salesUsers: OfferDropdownOption[],
+  approvalUsers: OfferDropdownOption[],
   contacts: OfferDropdownOption[],
   fwcProjects: OfferDropdownOption[],
 ): FieldDefinition[] => [
@@ -92,7 +127,15 @@ const buildFieldDefinitions = (
   { id: 'offerValidity', label: 'Offer Validity', section: 'general', recordKey: 'OfferValidity', updateField: 'OfferValidity' },
   { id: 'deliveryTime', label: 'Delivery Time', section: 'general', recordKey: 'DeliveryTime', updateField: 'DeliveryTime' },
   { id: 'introNote', label: 'Introduction Note', section: 'general', recordKey: 'OfferNotesIntroduction', updateField: 'OfferNotesIntroduction', multiline: true },
-  { id: 'customer', label: 'Customer', section: 'general', recordKey: 'CustomerName', readOnly: true },
+  {
+    id: 'customer',
+    label: 'Customer',
+    section: 'general',
+    recordKey: 'CustomerID',
+    updateField: 'CustomerID',
+    valueType: 'number',
+    options: customers,
+  },
   {
     id: 'status',
     label: 'Status',
@@ -134,15 +177,23 @@ const buildFieldDefinitions = (
     valueType: 'number',
     options: markets,
   },
-  { id: 'division', label: 'Sales Division', section: 'commercial', recordKey: 'SalesDivisionName', readOnly: true },
+  {
+    id: 'division',
+    label: 'Sales Division',
+    section: 'commercial',
+    recordKey: 'SalesDivisionID',
+    updateField: 'SalesDivitionID',
+    valueType: 'number',
+    options: salesDivisions,
+  },
   {
     id: 'salesCreation',
     label: 'Sales Creation Person',
     section: 'commercial',
     recordKey: 'SalesCreationPersonId',
-    readOnly: true,
-    options: users,
-    readOnlyDisplayValue: (rec) => rec.SalesCreationPersonName ?? rec.SalesCreationPersonUserName ?? null,
+    updateField: 'CreatedBy',
+    valueType: 'string',
+    options: salesUsers,
   },
   {
     id: 'salesPersonId',
@@ -150,7 +201,7 @@ const buildFieldDefinitions = (
     section: 'commercial',
     recordKey: 'SalesPersonId',
     updateField: 'SalesPersonId',
-    options: users,
+    options: salesUsers,
     valueType: 'string',
   },
   {
@@ -159,7 +210,7 @@ const buildFieldDefinitions = (
     section: 'commercial',
     recordKey: 'ApprovalUserId',
     updateField: 'ApprovalUserId',
-    options: users,
+    options: approvalUsers,
     valueType: 'string',
   },
   {
@@ -219,12 +270,30 @@ export default function OfferBasicDataClient({
   offerId,
   record,
   contacts,
+  customers,
   statuses,
   pricingPolicies,
   markets,
+  salesDivisions,
   users,
   fwcProjects,
 }: Props) {
+  const salesUsers = useMemo(
+    () =>
+      users.filter((user) =>
+        SALES_USER_SENIORITIES.has((user.salesSeniorityName ?? '').trim().toLowerCase()),
+      ),
+    [users],
+  );
+
+  const approvalUsers = useMemo(
+    () =>
+      users.filter((user) =>
+        APPROVAL_USER_SENIORITIES.has((user.salesSeniorityName ?? '').trim().toLowerCase()),
+      ),
+    [users],
+  );
+
   const contactOptions = useMemo(() => {
     const sortedContacts = sortContacts(contacts);
     const options = sortedContacts.map((contact) => {
@@ -269,6 +338,36 @@ export default function OfferBasicDataClient({
     return options;
   }, [fwcProjects, record.ERPFWCProjectID]);
 
+  const customerOptions = useMemo(() => {
+    const options = [...customers];
+    const selectedId = record.CustomerID;
+    if (
+      selectedId != null &&
+      !options.some((option) => Number(option.value) === Number(selectedId))
+    ) {
+      options.push({
+        value: String(selectedId),
+        label: record.CustomerName?.trim() || `Customer ${selectedId}`,
+      });
+    }
+    return options;
+  }, [customers, record.CustomerID, record.CustomerName]);
+
+  const salesDivisionOptions = useMemo(() => {
+    const options = [...salesDivisions];
+    const selectedId = record.SalesDivisionID;
+    if (
+      selectedId != null &&
+      !options.some((option) => Number(option.value) === Number(selectedId))
+    ) {
+      options.push({
+        value: String(selectedId),
+        label: record.SalesDivisionName?.trim() || `Sales Division ${selectedId}`,
+      });
+    }
+    return options;
+  }, [record.SalesDivisionID, record.SalesDivisionName, salesDivisions]);
+
   useEffect(() => {
     const trimmedDescription = typeof record.Description === 'string'
       ? record.Description.trim()
@@ -292,14 +391,27 @@ export default function OfferBasicDataClient({
   const fieldDefinitions = useMemo(
     () =>
       buildFieldDefinitions(
+        customerOptions,
         statuses,
         pricingPolicies,
         markets,
-        users,
+        salesDivisionOptions,
+        salesUsers,
+        approvalUsers,
         contactOptions,
         fwcProjectOptions,
       ),
-    [statuses, pricingPolicies, markets, users, contactOptions, fwcProjectOptions],
+    [
+      customerOptions,
+      statuses,
+      pricingPolicies,
+      markets,
+      salesDivisionOptions,
+      salesUsers,
+      approvalUsers,
+      contactOptions,
+      fwcProjectOptions,
+    ],
   );
   const editableFields = useMemo(
     () => fieldDefinitions.filter((def) => def.updateField && !def.readOnly),
@@ -317,6 +429,9 @@ export default function OfferBasicDataClient({
   const [values, setValues] = useState(initialValues);
   const [pendingFields, setPendingFields] = useState<Record<string, boolean>>({});
   const [savedValues, setSavedValues] = useState(initialValues);
+  const [customerText, setCustomerText] = useState('');
+  const [showCustomerList, setShowCustomerList] = useState(false);
+  const customerListCloseTimerRef = useRef<NodeJS.Timeout | null>(null);
   const savedValuesRef = useRef(savedValues);
   savedValuesRef.current = savedValues;
   const [contextMenuState, setContextMenuState] = useState<{
@@ -354,7 +469,15 @@ export default function OfferBasicDataClient({
     return splitContactName(activeContactName);
   }, [activeContactId, activeContactName, contacts]);
 
-  const hasCustomerNavigation = Number.isInteger(record.CustomerID) && Number(record.CustomerID) > 0;
+  const activeCustomerId = useMemo(() => {
+    const raw = values.customer ?? '';
+    const parsed = Number.parseInt(String(raw), 10);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+    const fallback = Number(record.CustomerID);
+    return Number.isInteger(fallback) && fallback > 0 ? fallback : null;
+  }, [record.CustomerID, values.customer]);
+
+  const hasCustomerNavigation = activeCustomerId != null;
   const hasContactNavigation = typeof activeContactName === 'string' && activeContactName.length > 0;
 
   const closeContextMenu = useCallback(() => {
@@ -363,9 +486,8 @@ export default function OfferBasicDataClient({
 
   const handleContextMenuAction = useCallback((fieldId: 'customer' | 'contactId') => {
     if (fieldId === 'customer') {
-      if (!hasCustomerNavigation) return;
-      const customerId = Number(record.CustomerID);
-      const customerUrl = `/customers/${encodeURIComponent(String(customerId))}/basicdata`;
+      if (activeCustomerId == null) return;
+      const customerUrl = `/customers/${encodeURIComponent(String(activeCustomerId))}/basicdata`;
       window.open(customerUrl, '_blank', 'noopener,noreferrer');
       return;
     }
@@ -382,7 +504,7 @@ export default function OfferBasicDataClient({
     }
     const contactUrl = `/customer-contacts?${params.toString()}`;
     window.open(contactUrl, '_blank', 'noopener,noreferrer');
-  }, [activeContactName, activeContactNameParts.firstName, activeContactNameParts.lastName, hasContactNavigation, hasCustomerNavigation, record.CustomerID]);
+  }, [activeContactName, activeContactNameParts.firstName, activeContactNameParts.lastName, activeCustomerId, hasContactNavigation]);
 
   const handleFieldContextMenu = useCallback(
     (event: ReactMouseEvent, fieldId: 'customer' | 'contactId') => {
@@ -424,7 +546,16 @@ export default function OfferBasicDataClient({
     if (!def.updateField) return;
     let payloadValue: string | number | null | undefined;
     let resolvedDisplayValue = rawValue;
-    if (def.datalistOptions && def.datalistOptions.length > 0) {
+    if (def.id === 'probability') {
+      const parsed = normalizeProbability(rawValue);
+      if (parsed == null) {
+        showToastMessage(`Probability must be an integer between ${PROBABILITY_MIN} and ${PROBABILITY_MAX}`, 'error');
+        setValues((prev) => ({ ...prev, [def.id]: savedValuesRef.current[def.id] ?? '' }));
+        return;
+      }
+      payloadValue = parsed;
+      resolvedDisplayValue = String(parsed);
+    } else if (def.datalistOptions && def.datalistOptions.length > 0) {
       const trimmed = rawValue.trim().toLowerCase();
       const match = def.datalistOptions.find(
         (option) => option.label.trim().toLowerCase() === trimmed
@@ -480,6 +611,81 @@ export default function OfferBasicDataClient({
     void saveField(def, newValue);
   }, [handleValueChange, saveField]);
 
+  const customerFieldDefinition = useMemo(
+    () => fieldDefinitions.find((def) => def.id === 'customer'),
+    [fieldDefinitions],
+  );
+
+  useEffect(() => {
+    const selectedValue = values.customer ?? '';
+    const selectedOption = customerOptions.find((option) => option.value === selectedValue);
+    setCustomerText(selectedOption?.label ?? '');
+  }, [customerOptions, values.customer]);
+
+  useEffect(() => {
+    return () => {
+      if (customerListCloseTimerRef.current) {
+        clearTimeout(customerListCloseTimerRef.current);
+      }
+    };
+  }, []);
+
+  const filteredCustomerOptions = useMemo(() => {
+    const search = customerText.trim().toLowerCase();
+    if (!search) return customerOptions;
+    return customerOptions.filter((option) => {
+      const label = option.label?.toLowerCase() ?? '';
+      const value = option.value?.toLowerCase() ?? '';
+      return label.includes(search) || value.includes(search);
+    });
+  }, [customerOptions, customerText]);
+
+  const handleCustomerSelection = useCallback((option: OfferDropdownOption) => {
+    setShowCustomerList(false);
+    setValues((prev) => ({ ...prev, customer: option.value }));
+    setCustomerText(option.label);
+    if (customerFieldDefinition?.updateField && option.value !== savedValuesRef.current.customer) {
+      void saveField(customerFieldDefinition, option.value);
+    }
+  }, [customerFieldDefinition, saveField]);
+
+  const handleCustomerBlur = useCallback(() => {
+    customerListCloseTimerRef.current = setTimeout(() => setShowCustomerList(false), 120);
+    const trimmed = customerText.trim();
+    if (!customerFieldDefinition?.updateField) return;
+
+    if (!trimmed) {
+      if ((savedValuesRef.current.customer ?? '') !== '') {
+        setValues((prev) => ({ ...prev, customer: '' }));
+        void saveField(customerFieldDefinition, '');
+      }
+      return;
+    }
+
+    const selected = customerOptions.find((option) => {
+      const optionLabel = option.label.trim().toLowerCase();
+      const optionValue = option.value.trim().toLowerCase();
+      const normalized = trimmed.toLowerCase();
+      return optionLabel === normalized || optionValue === normalized;
+    });
+    if (!selected) {
+      const savedId = savedValuesRef.current.customer ?? '';
+      const savedLabel = customerOptions.find((option) => option.value === savedId)?.label ?? '';
+      setCustomerText(savedLabel);
+      setValues((prev) => ({ ...prev, customer: savedId }));
+      showToastMessage('Please choose a valid customer', 'error');
+      return;
+    }
+    if (selected.value !== (savedValuesRef.current.customer ?? '')) {
+      setValues((prev) => ({ ...prev, customer: selected.value }));
+      setCustomerText(selected.label);
+      void saveField(customerFieldDefinition, selected.value);
+      return;
+    }
+    setCustomerText(selected.label);
+    setValues((prev) => ({ ...prev, customer: selected.value }));
+  }, [customerFieldDefinition, customerOptions, customerText, saveField]);
+
   const renderLookupAddButton = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     (_: FieldDefinition) => null,
@@ -532,6 +738,45 @@ const renderFieldControl = (
   }
 
   if (isEditable && def.options && def.options.length > 0) {
+    if (def.id === 'customer') {
+      return (
+        <div className={styles.comboWrapper}>
+          <input
+            autoComplete="off"
+            id={controlId}
+            name={def.id}
+            className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
+            value={customerText}
+            placeholder="Type to filter customers"
+            onChange={(event) => {
+              setCustomerText(event.target.value);
+              setShowCustomerList(true);
+            }}
+            onBlur={handleCustomerBlur}
+            onFocus={(event) => {
+              event.target.select();
+              setShowCustomerList(true);
+            }}
+          />
+          {showCustomerList && filteredCustomerOptions.length > 0 ? (
+            <div className={styles.comboList}>
+              {filteredCustomerOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={styles.comboOption}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => handleCustomerSelection(option)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+
     return (
       <select
         id={controlId}
@@ -610,6 +855,10 @@ const renderFieldControl = (
           name={def.id}
           className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
           type={def.inputType ?? 'text'}
+          min={def.id === 'probability' ? PROBABILITY_MIN : undefined}
+          max={def.id === 'probability' ? PROBABILITY_MAX : undefined}
+          step={def.id === 'probability' ? 1 : undefined}
+          inputMode={def.id === 'probability' ? 'numeric' : undefined}
           value={values[def.id] ?? ''}
           placeholder={placeholder}
           onChange={(event) => handleValueChange(def.id, event.target.value)}

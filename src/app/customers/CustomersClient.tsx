@@ -70,6 +70,7 @@ const resolveCustomerLabel = (
 };
 
 const CUSTOMER_FIELD_LABELS: Record<string, string> = {
+  TaxID: "Tax ID",
   Enabled: "Enabled",
 };
 
@@ -234,6 +235,12 @@ export default function CustomersClient() {
         filter: "agTextColumnFilter",
       },
       {
+        field: "TaxID",
+        headerName: "Tax ID",
+        filter: "agTextColumnFilter",
+        editable: true,
+      },
+      {
         field: "IsParent",
         headerName: "Is Parent",
         filter: "agSetColumnFilter",
@@ -312,9 +319,12 @@ export default function CustomersClient() {
       }
       event.api.refreshCells({ force: true });
     };
-    const value = normalizeBoolean(
-      (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
-    );
+    const value =
+      field === "Enabled"
+        ? normalizeBoolean(
+            (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
+          )
+        : event.newValue;
 
     const submit = async () => {
       try {

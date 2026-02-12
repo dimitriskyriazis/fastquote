@@ -742,6 +742,7 @@ type Props = {
 export type OfferProductsPanelHandle = {
   populateOffer: () => Promise<void>;
   getTemplateExportRows: () => Promise<OfferProductsTemplateExportRow[]>;
+  getAddInsertionAnchor: () => { offerDetailId: number; parentPath: number[] } | null;
 };
 
 export type OfferProductsTemplateExportRow = {
@@ -3198,7 +3199,33 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     return buildTemplateExportRows(rows);
   }, [buildTemplateExportRows, fetchExportRows]);
 
-  useImperativeHandle(ref, () => ({ populateOffer, getTemplateExportRows }), [getTemplateExportRows, populateOffer]);
+  const getAddInsertionAnchor = useCallback((): { offerDetailId: number; parentPath: number[] } | null => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return null;
+    try {
+      const selectedNodes = typeof api.getSelectedNodes === 'function'
+        ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
+        : [];
+      if (selectedNodes.length === 0) return null;
+      for (let idx = selectedNodes.length - 1; idx >= 0; idx -= 1) {
+        const row = selectedNodes[idx]?.data ?? null;
+        const offerDetailId = normalizeOfferDetailId((row as { OfferDetailID?: unknown } | null)?.OfferDetailID ?? null);
+        if (offerDetailId == null) continue;
+        const path = parseTreeOrderingPath((row as { TreeOrdering?: unknown } | null)?.TreeOrdering ?? null);
+        if (path.length === 0) continue;
+        return { offerDetailId, parentPath: path.slice(0, -1) };
+      }
+    } catch {
+      /* noop */
+    }
+    return null;
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({ populateOffer, getTemplateExportRows, getAddInsertionAnchor }),
+    [getAddInsertionAnchor, getTemplateExportRows, populateOffer],
+  );
 
 
   const manualMatchTotal = processedRequestedMatches + requestedMatchQueue.length;

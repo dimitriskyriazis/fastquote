@@ -14,6 +14,7 @@ type Props = {
   offerId: string;
   onClose: () => void;
   onAdded: (inserted: number) => void;
+  getInsertionAnchor?: () => { offerDetailId: number; parentPath: number[] } | null;
   showRequestedColumns?: boolean;
   splitViewMode?: boolean;
   onRequestAddProduct?: () => void;
@@ -143,6 +144,7 @@ export default function AddProductsModal({
   offerId,
   onClose,
   onAdded,
+  getInsertionAnchor,
   showRequestedColumns = true,
   splitViewMode = false,
   onRequestAddProduct,
@@ -255,13 +257,6 @@ export default function AddProductsModal({
   useEffect(() => {
     setSelectedRequestedRowId(null);
     const categoryId = selectedCategory?.OfferDetailID ?? null;
-    if (categoryId == null) {
-      requestedRowsFetchIdRef.current += 1;
-      setRequestedRows([]);
-      setRequestedRowsError(null);
-      setRequestedRowsLoading(false);
-      return;
-    }
     void fetchRequestedRows(categoryId);
   }, [selectedCategory, fetchRequestedRows]);
 
@@ -434,6 +429,9 @@ export default function AddProductsModal({
     }
     setSubmitting(true);
     try {
+      const insertionAnchor = !isAssigningRequestedRow
+        ? (getInsertionAnchor?.() ?? null)
+        : null;
       const baseCategory = selectedCategory?.OfferDetailID ?? null;
       const payload = isAssigningRequestedRow
         ? {
@@ -452,14 +450,62 @@ export default function AddProductsModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      let data: { ok?: boolean; inserted?: number; updated?: number; error?: string } | null = null;
+      let data:
+        | {
+            ok?: boolean;
+            inserted?: number;
+            updated?: number;
+            insertedOfferDetailIds?: Array<number | string | null>;
+            error?: string;
+          }
+        | null = null;
       try {
-        data = (await res.json()) as { ok?: boolean; inserted?: number; updated?: number; error?: string } | null;
+        data = (await res.json()) as {
+          ok?: boolean;
+          inserted?: number;
+          updated?: number;
+          insertedOfferDetailIds?: Array<number | string | null>;
+          error?: string;
+        } | null;
       } catch {
         data = null;
       }
       if (!res.ok || !data?.ok) {
         throw new Error(data?.error ?? `Failed to add products (status ${res.status})`);
+      }
+      if (!isAssigningRequestedRow && insertionAnchor) {
+        const insertedIds = Array.isArray(data?.insertedOfferDetailIds)
+          ? data.insertedOfferDetailIds
+            .map((value: number | string | null) => {
+              if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+              if (typeof value === 'string') {
+                const parsed = Number.parseInt(value.trim(), 10);
+                return Number.isFinite(parsed) ? parsed : null;
+              }
+              return null;
+            })
+            .filter((value: number | null): value is number => value != null)
+          : [];
+        if (insertedIds.length > 0) {
+          const reorderRes = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'reorder',
+              sourceIds: insertedIds,
+              position: 'after',
+              beforeId: insertionAnchor.offerDetailId,
+              parentPath: insertionAnchor.parentPath,
+            }),
+          });
+          const reorderPayload = (await reorderRes.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+          if (!reorderRes.ok || !reorderPayload?.ok) {
+            showToastMessage(
+              'Products were added, but could not be positioned below the selected row.',
+              'error',
+            );
+          }
+        }
       }
       const addedCount = isAssigningRequestedRow
         ? 1
@@ -486,7 +532,9 @@ export default function AddProductsModal({
   }, [
     endpoint,
     fetchRequestedRows,
+    getInsertionAnchor,
     onAdded,
+    offerId,
     selectedCategory?.OfferDetailID,
     selectedProducts,
     selectedRequestedRowId,
@@ -652,13 +700,6 @@ export default function AddProductsModal({
     refreshCategoryGrid();
     refreshProductsGrid();
     const categoryId = selectedCategory?.OfferDetailID ?? null;
-    if (categoryId == null) {
-      requestedRowsFetchIdRef.current += 1;
-      setRequestedRows([]);
-      setRequestedRowsError(null);
-      setRequestedRowsLoading(false);
-      return;
-    }
     void fetchRequestedRows(categoryId, { force: true });
   }, [
     refreshToken,
@@ -709,8 +750,7 @@ export default function AddProductsModal({
     trySelectPendingProduct(api);
   }, [ensureProductSort, trySelectPendingProduct]);
 
-  const selectedCategoryLabel = selectedCategory?.Description?.trim() || selectedCategory?.TreeOrdering || 'None';
-  const hasSelectedCategory = selectedCategory?.OfferDetailID != null;
+  const selectedCategoryLabel = selectedCategory?.Description?.trim() || selectedCategory?.TreeOrdering || 'All';
 
   if (splitViewMode) {
     return (
@@ -724,7 +764,7 @@ export default function AddProductsModal({
           <div className={styles.header}>
           <div>
             <div className={styles.title}>Add Products</div>
-            <div className={styles.subtitle}>Choose a category and pick products to append.</div>
+            <div className={styles.subtitle}>Pick products to append. Category is optional.</div>
           </div>
           <div className={styles.headerActions}>
             <div className={styles.headerMeta}>
@@ -792,9 +832,7 @@ export default function AddProductsModal({
                 </div>
               </div>
               <div className={styles.requestedList}>
-                {!hasSelectedCategory ? (
-                  <div className={styles.requestedRowEmpty}>Select a category to view requested items.</div>
-                ) : requestedRowsLoading ? (
+                {requestedRowsLoading ? (
                   <div className={styles.requestedRowEmpty}>Loading requested rows…</div>
                 ) : requestedRowsError ? (
                   <div className={styles.requestedRowEmpty}>{requestedRowsError}</div>
@@ -886,7 +924,7 @@ export default function AddProductsModal({
         <div className={styles.header}>
           <div>
             <div className={styles.title}>Add Products</div>
-            <div className={styles.subtitle}>Choose a category and pick products to append.</div>
+            <div className={styles.subtitle}>Pick products to append. Category is optional.</div>
           </div>
           <div className={styles.headerActions}>
             <div className={styles.headerMeta}>
@@ -954,9 +992,7 @@ export default function AddProductsModal({
                 </div>
               </div>
               <div className={styles.requestedList}>
-                {!hasSelectedCategory ? (
-                  <div className={styles.requestedRowEmpty}>Select a category to view requested items.</div>
-                ) : requestedRowsLoading ? (
+                {requestedRowsLoading ? (
                   <div className={styles.requestedRowEmpty}>Loading requested rows…</div>
                 ) : requestedRowsError ? (
                   <div className={styles.requestedRowEmpty}>{requestedRowsError}</div>

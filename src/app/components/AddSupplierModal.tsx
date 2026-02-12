@@ -4,6 +4,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import LookupModal from './LookupModal';
 import lookupStyles from './LookupModal.module.css';
 import { showToastMessage } from '../../lib/toast';
+import { useDuplicateCheck } from '../lib/useDuplicateCheck';
+import DuplicateWarning from './DuplicateWarning';
 
 const SUPPLIER_CREATE_ENDPOINT = '/api/suppliers/create';
 
@@ -24,6 +26,7 @@ type Props = {
 
 export default function AddSupplierModal({ open, onClose, onCreated, cities, countries, overlayClassName }: Props) {
   const [name, setName] = useState('');
+  const [taxId, setTaxId] = useState('');
   const [address, setAddress] = useState('');
   const [cityId, setCityId] = useState<number | null>(null);
   const [countryId, setCountryId] = useState<number | null>(null);
@@ -34,9 +37,11 @@ export default function AddSupplierModal({ open, onClose, onCreated, cities, cou
   const [enabled, setEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { warnings: duplicateWarnings, check: checkDuplicates, clear: clearDuplicates } = useDuplicateCheck('supplier');
 
   const resetForm = useCallback(() => {
     setName('');
+    setTaxId('');
     setAddress('');
     setCityId(null);
     setCountryId(null);
@@ -51,8 +56,13 @@ export default function AddSupplierModal({ open, onClose, onCreated, cities, cou
   useEffect(() => {
     if (!open) {
       resetForm();
+      clearDuplicates();
     }
-  }, [open, resetForm]);
+  }, [open, resetForm, clearDuplicates]);
+
+  useEffect(() => {
+    if (open) checkDuplicates({ name, taxId });
+  }, [name, taxId, checkDuplicates, open]);
 
   const handleCreate = useCallback(async () => {
     const trimmedName = name.trim();
@@ -66,6 +76,7 @@ export default function AddSupplierModal({ open, onClose, onCreated, cities, cou
     try {
       const payload = {
         name: trimmedName,
+        taxId: taxId.trim() || null,
         address: address.trim() || null,
         cityId: cityId ?? null,
         countryId: countryId ?? null,
@@ -99,7 +110,7 @@ export default function AddSupplierModal({ open, onClose, onCreated, cities, cou
     } finally {
       setSaving(false);
     }
-  }, [name, address, cityId, countryId, postalCode, phone, webSite, comments, enabled, onClose, onCreated, resetForm]);
+  }, [name, taxId, address, cityId, countryId, postalCode, phone, webSite, comments, enabled, onClose, onCreated, resetForm]);
 
   return (
     <LookupModal
@@ -123,6 +134,20 @@ export default function AddSupplierModal({ open, onClose, onCreated, cities, cou
             value={name}
             required
             onChange={(event) => setName(event.target.value)}
+          />
+        </div>
+        <div className={lookupStyles.fieldFull}>
+          <DuplicateWarning warnings={duplicateWarnings} />
+        </div>
+        <div className={lookupStyles.fieldHalf}>
+          <label className={lookupStyles.fieldLabel} htmlFor="supplier-tax-id">
+            Tax ID
+          </label>
+          <input
+            id="supplier-tax-id"
+            className={lookupStyles.fieldControl}
+            value={taxId}
+            onChange={(event) => setTaxId(event.target.value)}
           />
         </div>
         <div className={lookupStyles.fieldHalf}>

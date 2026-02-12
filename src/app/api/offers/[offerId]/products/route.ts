@@ -9,6 +9,7 @@ import {
   mergeWhereClauses,
   QueryParam,
 } from '../../../../../lib/gridFilters';
+import { clearPartModelNumber } from '../../../../../lib/partModelNumber';
 import { realtimeEvents } from '../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../lib/authz';
 import { checkDeletePermission } from '../../../../../lib/deletePermissions';
@@ -934,8 +935,7 @@ async function handleCreateRow(
 
 // Normalize part/model numbers by removing special characters
 const normalizePartModelNumber = (value: string): string => {
-  // Remove common special characters: dashes, underscores, spaces, periods, etc.
-  return value.replace(/[-_\s.]+/g, '');
+  return clearPartModelNumber(value);
 };
 
 // Helper to get the cleared column name for part/model numbers

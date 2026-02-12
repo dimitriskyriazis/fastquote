@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool } from '../../../../../lib/sql';
 import { requirePermission } from '../../../../../lib/authz';
-import { generateOfferPdf, type OfferPdfData, type OfferProductRow, type PdfLang, type PdfLayout } from '../../../../../lib/pdfGenerator';
+import { generateOfferPdf, type OfferPdfData, type OfferProductRow, type PdfLang, type PdfLayout, type PdfOrientation } from '../../../../../lib/pdfGenerator';
 
 type OfferHeaderRow = {
   ID: number;
@@ -44,6 +44,7 @@ type ProductRow = {
   Comment: string | null;
   NetUnitPrice: number | null;
   TotalPrice: number | null;
+  TotalNet: number | null;
   BrandName: string | null;
   ModelNumber: string | null;
   PartNumber: string | null;
@@ -71,6 +72,9 @@ export async function GET(
 
     const layoutParam = req.nextUrl.searchParams.get('layout');
     const layout: PdfLayout = layoutParam === 'detailed' ? 'detailed' : 'standard';
+
+    const orientationParam = req.nextUrl.searchParams.get('orientation');
+    const orientation: PdfOrientation = orientationParam === 'landscape' ? 'landscape' : 'portrait';
 
     const pool = await getPool();
 
@@ -141,6 +145,7 @@ export async function GET(
           od.[Comment],
           od.NetUnitPrice,
           od.TotalPrice,
+          od.TotalNet,
           od.ListPrice,
           od.CustomerDiscount,
           b.Name AS BrandName,
@@ -171,6 +176,7 @@ export async function GET(
       comment: r.Comment,
       unitPrice: r.NetUnitPrice,
       totalPrice: r.TotalPrice,
+      totalNet: r.TotalNet,
       webLink: r.WebLink,
       listPrice: r.ListPrice,
       customerDiscount: r.CustomerDiscount,
@@ -223,7 +229,7 @@ export async function GET(
     };
 
     // ── Generate PDF ───────────────────────────────────────────────────
-    const buffer = await generateOfferPdf(pdfData, lang, layout);
+    const buffer = await generateOfferPdf(pdfData, lang, layout, orientation);
 
     const customerSlug = (header.CustomerName ?? 'Offer')
       .replace(/[^a-zA-Z0-9\u0370-\u03FF\u0400-\u04FF _-]/g, '')
@@ -235,7 +241,7 @@ export async function GET(
     return new NextResponse(new Uint8Array(buffer), {
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Disposition': `attachment; filename="${filename.replace(/[^\x20-\x7E]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
         'Content-Length': String(buffer.length),
       },
     });

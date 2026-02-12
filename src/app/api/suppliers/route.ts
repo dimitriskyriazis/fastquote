@@ -26,6 +26,7 @@ type GridRequest = {
 type SupplierRow = {
   SupplierID: number | null;
   Name: string | null;
+  TaxID: string | null;
   Address: string | null;
   AddressNo: string | null;
   City: string | null;
@@ -42,6 +43,7 @@ type SupplierRowWithCount = SupplierRow & { __totalCount: number | bigint | null
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   SupplierID: "dbo.Suppliers.ID",
   Name: "dbo.Suppliers.Name",
+  TaxID: "dbo.Suppliers.TaxID",
   Address: "dbo.Suppliers.Address",
   AddressNo: "dbo.Suppliers.AddressNo",
   City: "dbo.Cities.Name",
@@ -165,6 +167,9 @@ const normalizeTextValue = (value: unknown): string => {
   return String(value).trim();
 };
 
+const trimNullableText = (value: string | null | undefined): string | null =>
+  typeof value === "string" ? value.trim() : null;
+
 async function readGridRequest(req: NextRequest): Promise<GridRequest> {
   try {
     const payload = await req.json();
@@ -202,6 +207,7 @@ export async function POST(req: NextRequest) {
         COUNT_BIG(1) OVER () AS __totalCount,
         dbo.Suppliers.ID AS SupplierID,
         dbo.Suppliers.Name,
+        dbo.Suppliers.TaxID,
         dbo.Suppliers.Address,
         dbo.Suppliers.AddressNo,
         dbo.Cities.Name AS City,
@@ -233,7 +239,19 @@ export async function POST(req: NextRequest) {
     const rows = rowsWithCount.map((row) => {
       const { __totalCount, ...rest } = row;
       void __totalCount;
-      return rest;
+      return {
+        ...rest,
+        Name: trimNullableText(rest.Name),
+        TaxID: trimNullableText(rest.TaxID),
+        Address: trimNullableText(rest.Address),
+        AddressNo: trimNullableText(rest.AddressNo),
+        City: trimNullableText(rest.City),
+        Country: trimNullableText(rest.Country),
+        PostalCode: trimNullableText(rest.PostalCode),
+        Phone: trimNullableText(rest.Phone),
+        WebSite: trimNullableText(rest.WebSite),
+        Comments: trimNullableText(rest.Comments),
+      };
     });
 
     return NextResponse.json({ ok: true, rows, rowCount });

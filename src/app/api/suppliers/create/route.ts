@@ -12,6 +12,7 @@ import { requirePermission } from "../../../../lib/authz";
 const createSupplierSchema = z
   .object({
     name: z.string().trim().min(1, "Name is required").max(255, "Name must be at most 255 characters"),
+    taxId: stringSchema(128),
     address: stringSchema(500),
     addressNo: stringSchema(50),
     cityId: intSchema,
@@ -44,6 +45,7 @@ export async function POST(req: NextRequest) {
 
     const body = validation.data;
     const name = body.name.trim();
+    const taxId = body.taxId ?? null;
     const address = body.address ?? null;
     const addressNo = body.addressNo ?? null;
     const cityId = body.cityId ?? null;
@@ -58,6 +60,7 @@ export async function POST(req: NextRequest) {
     const request = pool.request();
     request.timeout = 30000;
     request.input("Name", sql.NVarChar(255), name);
+    request.input("TaxID", sql.NVarChar(128), taxId);
     request.input("Address", sql.NVarChar(500), address);
     request.input("AddressNo", sql.NVarChar(50), addressNo);
     request.input("CityID", sql.Int, cityId);
@@ -73,6 +76,7 @@ export async function POST(req: NextRequest) {
     const result = await request.query<{ SupplierID: number; SupplierName: string | null }>(`
       INSERT INTO dbo.Suppliers (
         [Name],
+        [TaxID],
         [Address],
         [AddressNo],
         [CityID],
@@ -90,6 +94,7 @@ export async function POST(req: NextRequest) {
       OUTPUT INSERTED.ID AS SupplierID, INSERTED.Name AS SupplierName
       VALUES (
         @Name,
+        @TaxID,
         @Address,
         @AddressNo,
         @CityID,

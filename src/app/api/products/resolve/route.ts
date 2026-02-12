@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool } from '../../../../lib/sql';
+import { clearPartModelNumber } from '../../../../lib/partModelNumber';
 
 const normalizeParam = (value: string | null): string | null => {
   if (!value) return null;
@@ -31,8 +32,7 @@ const brandKeySql = (expr: string) => (
 // Normalize part/model numbers by removing special characters (dashes, underscores, spaces, periods, etc.)
 const normalizePartModelNumber = (value: string | null): string | null => {
   if (!value) return null;
-  // Remove common special characters: dashes, underscores, spaces, periods, etc.
-  return value.replace(/[-_\s.]+/g, '');
+  return clearPartModelNumber(value);
 };
 
 // Helper to get the cleared column name for part/model numbers

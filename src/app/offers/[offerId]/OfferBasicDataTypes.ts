@@ -3,6 +3,7 @@ import type { DropdownOption } from '../../../lib/dropdownOptions';
 export type OfferBasicRecord = {
   OfferID: number | null;
   CustomerID: number | null;
+  SalesDivisionID: number | null;
   StatusID: number | null;
   PricingPolicyID: number | null;
   MarketID: number | null;
@@ -60,6 +61,9 @@ export type OfferContactInfo = {
 export type OfferDropdownOption = DropdownOption;
 
 export type OfferBasicUpdateField =
+  | 'CustomerID'
+  | 'SalesDivitionID'
+  | 'CreatedBy'
   | 'Title'
   | 'Description'
   | 'PaymentTerms'

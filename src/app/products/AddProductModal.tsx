@@ -6,6 +6,8 @@ import AddBrandModal from '../components/AddBrandModal';
 import lookupStyles from '../components/LookupModal.module.css';
 import lookupButtonStyles from '../components/LookupAddButton.module.css';
 import { showToastMessage } from '../../lib/toast';
+import { useDuplicateCheck } from '../lib/useDuplicateCheck';
+import DuplicateWarning from '../components/DuplicateWarning';
 
 type LookupOption = {
   id: number;
@@ -92,6 +94,15 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
   const [isBrandListOpen, setIsBrandListOpen] = useState(false);
   const brandListTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
+  const { warnings: duplicateWarnings, check: checkDuplicates, clear: clearDuplicates } = useDuplicateCheck('product');
+
+  useEffect(() => {
+    if (open) {
+      checkDuplicates({ partNumber: form.partNumber, modelNumber: form.modelNumber });
+    } else {
+      clearDuplicates();
+    }
+  }, [form.partNumber, form.modelNumber, checkDuplicates, clearDuplicates, open]);
 
   const loadLookups = useCallback(async () => {
     setLookupsLoading(true);
@@ -425,6 +436,9 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
           <div className={lookupStyles.fieldHint}>
             Provide either a model number or a part number.
           </div>
+        </div>
+        <div className={`${lookupStyles.field} ${lookupStyles.fieldFull}`}>
+          <DuplicateWarning warnings={duplicateWarnings} />
         </div>
         <div className={`${lookupStyles.field} ${lookupStyles.fieldHalf}`}>
           <label className={lookupStyles.fieldLabel} htmlFor="product-erp">

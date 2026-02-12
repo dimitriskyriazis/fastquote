@@ -5,6 +5,7 @@ import path from 'path';
 
 export type PdfLang = 'el' | 'en';
 export type PdfLayout = 'standard' | 'detailed';
+export type PdfOrientation = 'portrait' | 'landscape';
 
 export type OfferPdfData = {
   offerId: number;
@@ -48,6 +49,7 @@ export type OfferProductRow = {
   comment: string | null;
   unitPrice: number | null;
   totalPrice: number | null;
+  totalNet: number | null;
   webLink: string | null;
   listPrice: number | null;
   customerDiscount: number | null;
@@ -257,7 +259,8 @@ function buildStandardTable(data: OfferPdfData, L: Labels) {
         { text: str(row.treeOrdering), fontSize: 7.5, color: C.muted },
         { text: '' }, { text: '' }, { text: '' },
         { text: str(row.description) || str(row.comment), fontSize: 8, italics: true, color: C.muted },
-        { text: '' }, { text: '' },
+        { text: '' },
+        { text: row.totalNet != null ? formatEuropeanNumber(row.totalNet) : '', fontSize: 8, italics: true, color: C.muted, alignment: 'right' as const },
       ]);
     } else if (row.isCategory) {
       const depth = (row.treeOrdering || '').split('.').length;
@@ -265,11 +268,11 @@ function buildStandardTable(data: OfferPdfData, L: Labels) {
       const fillColor = depth <= 1 ? C.categoryBg : undefined;
       body.push([
         { text: str(row.treeOrdering), bold: true, fontSize, fillColor },
-        { text: row.quantity != null ? String(row.quantity) : '', bold: true, fontSize, alignment: 'center' as const, fillColor },
+        { text: '', fillColor },
         { text: '', fillColor }, { text: '', fillColor },
         { text: str(row.description), bold: true, fontSize, fillColor },
-        { text: row.unitPrice != null ? formatEuropeanNumber(row.unitPrice) : '', bold: true, fontSize, alignment: 'right' as const, fillColor },
-        { text: row.totalPrice != null ? formatEuropeanNumber(row.totalPrice) : '', bold: true, fontSize, alignment: 'right' as const, fillColor },
+        { text: '', fillColor },
+        { text: row.totalNet != null ? formatEuropeanNumber(row.totalNet) : '', bold: true, fontSize, alignment: 'right' as const, fillColor },
       ]);
     } else {
       body.push([
@@ -314,7 +317,8 @@ function buildDetailedTable(data: OfferPdfData, L: Labels) {
         { text: str(row.treeOrdering), fontSize: 7.5, color: C.muted },
         { text: '' }, { text: '' }, { text: '' },
         { text: str(row.description) || str(row.comment), fontSize: 7.5, italics: true, color: C.muted },
-        { text: '' }, { text: '' }, { text: '' }, { text: '' },
+        { text: '' }, { text: '' }, { text: '' },
+        { text: row.totalNet != null ? formatEuropeanNumber(row.totalNet) : '', fontSize: 7.5, italics: true, color: C.muted, alignment: 'right' as const },
       ]);
     } else if (row.isCategory) {
       const depth = (row.treeOrdering || '').split('.').length;
@@ -322,12 +326,12 @@ function buildDetailedTable(data: OfferPdfData, L: Labels) {
       const fillColor = depth <= 1 ? C.categoryBg : undefined;
       body.push([
         { text: str(row.treeOrdering), bold: true, fontSize, fillColor },
-        { text: row.quantity != null ? String(row.quantity) : '', bold: true, fontSize, alignment: 'center' as const, fillColor },
+        { text: '', fillColor },
         { text: '', fillColor }, { text: '', fillColor },
         { text: str(row.description), bold: true, fontSize, fillColor },
         { text: '', fillColor }, { text: '', fillColor },
-        { text: row.unitPrice != null ? formatEuropeanNumber(row.unitPrice) : '', bold: true, fontSize, alignment: 'right' as const, fillColor },
-        { text: row.totalPrice != null ? formatEuropeanNumber(row.totalPrice) : '', bold: true, fontSize, alignment: 'right' as const, fillColor },
+        { text: '', fillColor },
+        { text: row.totalNet != null ? formatEuropeanNumber(row.totalNet) : '', bold: true, fontSize, alignment: 'right' as const, fillColor },
       ]);
     } else {
       body.push([
@@ -357,6 +361,7 @@ export async function generateOfferPdf(
   data: OfferPdfData,
   lang: PdfLang,
   layout: PdfLayout = 'standard',
+  orientation: PdfOrientation = 'portrait',
 ): Promise<Buffer> {
   ensurePdfmake();
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -509,6 +514,7 @@ export async function generateOfferPdf(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const docDefinition: any = {
     pageSize: 'A4',
+    pageOrientation: orientation,
     pageMargins: [40, 160, 40, 50],
 
     // ── Page header ──────────────────────────────────────────────────────

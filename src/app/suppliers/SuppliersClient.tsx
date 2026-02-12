@@ -37,6 +37,7 @@ type RowData = Record<string, unknown>;
 type SupplierRow = {
   SupplierID: number | null;
   Name: string | null;
+  TaxID: string | null;
   Address: string | null;
   City: string | null;
   Country: string | null;
@@ -69,6 +70,7 @@ const normalizeTextValue = (value: unknown): string => {
 
 const SUPPLIER_FIELD_LABELS: Record<string, string> = {
   Name: "Supplier name",
+  TaxID: "Tax ID",
   Address: "Address",
   City: "City",
   Country: "Country",
@@ -182,6 +184,13 @@ export default function SuppliersClient({ cities, countries }: Props) {
         headerName: "Supplier Name",
         filter: "agTextColumnFilter",
         editable: true,
+      },
+      {
+        field: "TaxID",
+        headerName: "Tax ID",
+        filter: "agTextColumnFilter",
+        editable: true,
+        width: 150,
       },
       {
         field: "Address",

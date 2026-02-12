@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { showToastMessage } from '../../../../lib/toast';
+import LookupModal from '../../../components/LookupModal';
 
 type Props = {
   offerId: string;
@@ -10,7 +11,8 @@ type Props = {
 
 type Layout = 'standard' | 'detailed';
 type Lang = 'el' | 'en';
-type MenuStep = 'layout' | 'language';
+type Orientation = 'portrait' | 'landscape';
+type MenuStep = 'layout' | 'language' | 'orientation';
 
 const menuItemStyle: React.CSSProperties = {
   display: 'block',
@@ -38,6 +40,9 @@ export default function ExportPdfButton({ offerId, className }: Props) {
   const [showMenu, setShowMenu] = useState(false);
   const [menuStep, setMenuStep] = useState<MenuStep>('layout');
   const [selectedLayout, setSelectedLayout] = useState<Layout>('standard');
+  const [selectedLang, setSelectedLang] = useState<Lang>('el');
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewFilename, setPreviewFilename] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -64,14 +69,19 @@ export default function ExportPdfButton({ offerId, className }: Props) {
     setMenuStep('language');
   };
 
+  const handleLangSelect = (lang: Lang) => {
+    setSelectedLang(lang);
+    setMenuStep('orientation');
+  };
+
   const handleExport = useCallback(
-    async (lang: Lang) => {
+    async (orientation: Orientation) => {
       setShowMenu(false);
       setMenuStep('layout');
       setIsExporting(true);
       try {
         const res = await fetch(
-          `/api/offers/${encodeURIComponent(offerId)}/pdf?lang=${lang}&layout=${selectedLayout}`,
+          `/api/offers/${encodeURIComponent(offerId)}/pdf?lang=${selectedLang}&layout=${selectedLayout}&orientation=${orientation}`,
         );
         if (!res.ok) {
           const body = await res.json().catch(() => null);
@@ -79,17 +89,10 @@ export default function ExportPdfButton({ offerId, className }: Props) {
         }
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        // Try to use Content-Disposition filename
         const disposition = res.headers.get('Content-Disposition');
         const filenameMatch = disposition?.match(/filename="?([^"]+)"?/);
-        a.download = filenameMatch?.[1] ?? `Offer_${offerId}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-        showToastMessage('PDF printed successfully', 'success');
+        setPreviewFilename(filenameMatch?.[1] ?? `Offer_${offerId}.pdf`);
+        setPreviewUrl(url);
       } catch (err) {
         console.error('PDF printing failed:', err);
         showToastMessage(
@@ -100,8 +103,28 @@ export default function ExportPdfButton({ offerId, className }: Props) {
         setIsExporting(false);
       }
     },
-    [offerId, selectedLayout],
+    [offerId, selectedLayout, selectedLang],
   );
+
+  const handlePreviewClose = useCallback(() => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    setPreviewFilename('');
+  }, [previewUrl]);
+
+  const handlePreviewDownload = useCallback(() => {
+    if (!previewUrl) return;
+    const a = document.createElement('a');
+    a.href = previewUrl;
+    a.download = previewFilename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    setPreviewFilename('');
+    showToastMessage('PDF printed successfully', 'success');
+  }, [previewUrl, previewFilename]);
 
   const handleHover = (e: React.MouseEvent, enter: boolean) => {
     (e.target as HTMLElement).style.backgroundColor = enter ? '#f1f5f9' : 'transparent';
@@ -186,7 +209,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
               </div>
               <button
                 type="button"
-                onClick={() => handleExport('el')}
+                onClick={() => handleLangSelect('el')}
                 style={menuItemStyle}
                 onMouseEnter={(e) => handleHover(e, true)}
                 onMouseLeave={(e) => handleHover(e, false)}
@@ -195,7 +218,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
               </button>
               <button
                 type="button"
-                onClick={() => handleExport('en')}
+                onClick={() => handleLangSelect('en')}
                 style={menuItemStyle}
                 onMouseEnter={(e) => handleHover(e, true)}
                 onMouseLeave={(e) => handleHover(e, false)}
@@ -204,8 +227,68 @@ export default function ExportPdfButton({ offerId, className }: Props) {
               </button>
             </>
           )}
+
+          {menuStep === 'orientation' && (
+            <>
+              <div style={menuHeaderStyle}>
+                <button
+                  type="button"
+                  onClick={() => setMenuStep('language')}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: 10,
+                    fontWeight: 600,
+                    color: '#64748b',
+                    padding: 0,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                  }}
+                >
+                  &larr; Orientation
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleExport('portrait')}
+                style={menuItemStyle}
+                onMouseEnter={(e) => handleHover(e, true)}
+                onMouseLeave={(e) => handleHover(e, false)}
+              >
+                Portrait
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExport('landscape')}
+                style={menuItemStyle}
+                onMouseEnter={(e) => handleHover(e, true)}
+                onMouseLeave={(e) => handleHover(e, false)}
+              >
+                Landscape
+              </button>
+            </>
+          )}
         </div>
       )}
+      <LookupModal
+        open={!!previewUrl}
+        title="PDF Preview"
+        confirmLabel="Download"
+        cancelLabel="Close"
+        onConfirm={handlePreviewDownload}
+        onClose={handlePreviewClose}
+        overlayStyle={{ padding: 0 }}
+        cardStyle={{ width: '100vw', maxWidth: '100vw', height: '100vh', maxHeight: '100vh', borderRadius: 0 }}
+      >
+        {previewUrl && (
+          <iframe
+            src={previewUrl}
+            style={{ width: '100%', height: 'calc(100vh - 120px)', border: 'none' }}
+            title="PDF Preview"
+          />
+        )}
+      </LookupModal>
     </div>
   );
 }

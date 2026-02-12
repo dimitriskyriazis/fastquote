@@ -9,6 +9,7 @@ import {
   mergeWhereClauses,
   QueryParam,
 } from "../../../lib/gridFilters";
+import { clearPartModelNumberUpper } from "../../../lib/partModelNumber";
 import { KnownFilterModel, TextCondition, isCompoundFilter } from "../../../lib/filterTypes";
 import { processFilter } from "../../../lib/filterProcessing";
 
@@ -87,8 +88,7 @@ const ALLOWED_ROW_GROUP_FIELDS = new Set(["Brand", "Category", "SubCategory", "T
 
 // Normalize part/model numbers by removing special characters and uppercasing.
 const normalizePartModelNumber = (value: string): string => {
-  // Remove common special characters: dashes, underscores, spaces, periods, etc.
-  return value.replace(/[-_\s.]+/g, '').toUpperCase();
+  return clearPartModelNumberUpper(value);
 };
 
 // Helper to get the cleared column name for part/model numbers

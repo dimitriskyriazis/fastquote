@@ -6,6 +6,7 @@ import { getRequestId } from '../../../../lib/requestId';
 import { handleApiError, createErrorResponse } from '../../../../lib/errorHandler';
 import { logger } from '../../../../lib/logger';
 import { resolveAuditUserId } from '../../../../lib/auditTrail';
+import { clearPartModelNumberUpper } from '../../../../lib/partModelNumber';
 import {
   validateParams,
   validateRequest,
@@ -17,7 +18,7 @@ import {
 
 const toClearedPartModel = (value: string | null | undefined) => {
   if (!value) return null;
-  return value.replace(/[-_\s.]+/g, "").toUpperCase();
+  return clearPartModelNumberUpper(value);
 };
 
 // Validate productId parameter

@@ -9,6 +9,7 @@ import {
   mergeWhereClauses,
   QueryParam,
 } from '../../../../../../lib/gridFilters';
+import { clearPartModelNumberUpper } from '../../../../../../lib/partModelNumber';
 import { requirePermission } from '../../../../../../lib/authz';
 
 type TextFilterModel = {
@@ -118,8 +119,7 @@ const DEFAULT_PRODUCT_ORDER = 'ORDER BY bp.BrandName, bp.ModelNumber, bp.Product
 
 // Normalize part/model numbers by removing special characters and uppercasing.
 const normalizePartModelNumber = (value: string): string => {
-  // Remove common special characters: dashes, underscores, spaces, periods, etc.
-  return value.replace(/[-_\s.]+/g, '').toUpperCase();
+  return clearPartModelNumberUpper(value);
 };
 
 // Helper to get the cleared column name for part/model numbers
@@ -965,7 +965,12 @@ async function handleAddProducts(
 
   const result = await request.query(query);
   const inserted = result.rowsAffected?.[0] ?? 0;
-  return NextResponse.json({ ok: true, inserted });
+  const insertedOfferDetailIds = Array.isArray(result.recordset)
+    ? result.recordset
+      .map((row) => normalizeOfferDetailId((row as { OfferDetailID?: unknown })?.OfferDetailID ?? null))
+      .filter((id): id is number => id != null)
+    : [];
+  return NextResponse.json({ ok: true, inserted, insertedOfferDetailIds });
 }
 
 const requestedRowCondition = `
