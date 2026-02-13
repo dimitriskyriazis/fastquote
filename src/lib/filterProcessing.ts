@@ -18,6 +18,12 @@ export type FilterContext = {
   paramBase: string;
 };
 
+const buildBlankClause = (columnExpression: string): string =>
+  `(NULLIF(LTRIM(RTRIM(COALESCE(CAST(${columnExpression} AS NVARCHAR(MAX)), ''))), '') IS NULL)`;
+
+const buildNotBlankClause = (columnExpression: string): string =>
+  `(NULLIF(LTRIM(RTRIM(COALESCE(CAST(${columnExpression} AS NVARCHAR(MAX)), ''))), '') IS NOT NULL)`;
+
 /**
  * Process a text filter (single or compound) and return SQL clause + params
  */
@@ -64,6 +70,13 @@ function processSingleTextCondition(
   condition: TextCondition,
   context: FilterContext
 ): { clause: string; params: QueryParam[] } {
+  if (condition.type === 'blank') {
+    return { clause: buildBlankClause(context.columnExpression), params: [] };
+  }
+  if (condition.type === 'notBlank') {
+    return { clause: buildNotBlankClause(context.columnExpression), params: [] };
+  }
+
   const val = String(condition.filter ?? '');
   if (!val) return { clause: '', params: [] };
 
@@ -122,6 +135,13 @@ function processSingleNumberCondition(
   condition: NumberCondition,
   context: FilterContext
 ): { clause: string; params: QueryParam[] } {
+  if (condition.type === 'blank') {
+    return { clause: buildBlankClause(context.columnExpression), params: [] };
+  }
+  if (condition.type === 'notBlank') {
+    return { clause: buildNotBlankClause(context.columnExpression), params: [] };
+  }
+
   const val = condition.filter !== undefined ? Number(condition.filter) : Number.NaN;
   if (Number.isNaN(val)) return { clause: '', params: [] };
 
@@ -163,12 +183,6 @@ function processSingleNumberCondition(
       }
       break;
     }
-    case 'blank':
-      clause = `(${columnExpression} IS NULL)`;
-      break;
-    case 'notBlank':
-      clause = `(${columnExpression} IS NOT NULL)`;
-      break;
   }
 
   return { clause, params };
@@ -219,6 +233,13 @@ function processSingleDateCondition(
   condition: DateCondition,
   context: FilterContext
 ): { clause: string; params: QueryParam[] } {
+  if (condition.type === 'blank') {
+    return { clause: buildBlankClause(context.columnExpression), params: [] };
+  }
+  if (condition.type === 'notBlank') {
+    return { clause: buildNotBlankClause(context.columnExpression), params: [] };
+  }
+
   const val = condition.dateFrom || condition.filter;
   if (!val) return { clause: '', params: [] };
 
@@ -261,12 +282,6 @@ function processSingleDateCondition(
       }
       break;
     }
-    case 'blank':
-      clause = `(${columnExpression} IS NULL)`;
-      break;
-    case 'notBlank':
-      clause = `(${columnExpression} IS NOT NULL)`;
-      break;
   }
 
   return { clause, params };

@@ -18,6 +18,7 @@ import { useRouter } from "next/navigation";
 import type * as XLSXTypes from "xlsx";
 import type { DropdownOption } from "../../../lib/dropdownOptions";
 import { showToastMessage } from "../../../lib/toast";
+import { showConfirmDialog } from "../../../lib/confirm";
 import layoutStyles from "../priceListDetail.module.css";
 import styles from "./PriceListImport.module.css";
 import lookupStyles from "../../components/LookupModal.module.css";
@@ -241,7 +242,7 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
 const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string; required?: boolean }> = [
   { key: "partNumber", label: "Part Number", required: true },
   { key: "modelNumber", label: "Model Number (optional)", required: false },
-  { key: "description", label: "Name / Description", required: true },
+  { key: "description", label: "Name / Description (optional)", required: false },
   { key: "listPrice", label: "List Price", required: true },
   { key: "costPrice", label: "Cost Price (optional)", required: false },
   { key: "warning", label: "Warning (optional)", required: false },
@@ -347,6 +348,8 @@ const LIST_PRICE_POSITIVE_HINTS = [
   "κατάλογ",
   "καταλογ",
   "λιαν",
+  "€",
+  "eur",
 ];
 
 const LIST_PRICE_NEGATIVE_HINTS = [
@@ -402,10 +405,85 @@ const scoreHeaderRow = (row: unknown[]) => {
   return matchedKeys.size * 100 + keywordHits * 10 + normalizedCells.length;
 };
 
+const isLikelyHeaderRow = (row: unknown[]) => {
+  const matchedKeys = new Set<HeaderColumnKey>();
+  const normalizedCells = row
+    .map((cell) => normalizeHeaderText(cell))
+    .filter((value): value is string => Boolean(value));
+  if (normalizedCells.length < 2) return false;
+
+  normalizedCells.forEach((cell) => {
+    (Object.keys(columnKeywords) as HeaderColumnKey[]).forEach((key) => {
+      const matches = columnKeywords[key].some((keyword) => headerContainsKeyword(cell, keyword));
+      if (matches) matchedKeys.add(key);
+    });
+  });
+
+  const hasPartNumber = matchedKeys.has("partNumber");
+  const hasSecondaryKey =
+    matchedKeys.has("description") || matchedKeys.has("modelNumber") || matchedKeys.has("listPrice");
+  return hasPartNumber && hasSecondaryKey && matchedKeys.size >= 2;
+};
+
 const hasCellValue = (value: unknown) => {
   if (value === null || value === undefined) return false;
   if (typeof value === "string") return value.trim().length > 0;
   return true;
+};
+
+/** Check if a cell value looks numeric (numbers, prices, percentages). */
+const isCellNumeric = (value: unknown): boolean => {
+  if (typeof value === "number") return true;
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  // Strip currency symbols, thousands separators, whitespace, and percent
+  const cleaned = trimmed.replace(/[€$£¥%,.\s\u00a0]/g, "");
+  return cleaned.length > 0 && /^\d+$/.test(cleaned);
+};
+
+/**
+ * Score how "tabular" the data below a candidate header row looks.
+ * A true header row should have consistent, structured data rows following it.
+ */
+const scoreDataBelow = (rows: unknown[][], headerIdx: number): number => {
+  const sampleSize = Math.min(10, rows.length - headerIdx - 1);
+  if (sampleSize <= 0) return 0;
+
+  const headerRow = rows[headerIdx];
+  let headerWidth = 0;
+  if (Array.isArray(headerRow)) {
+    headerRow.forEach((cell) => { if (hasCellValue(cell)) headerWidth += 1; });
+  }
+  if (headerWidth < 2) return 0;
+
+  let nonEmptyRows = 0;
+  let totalNumericCells = 0;
+  let totalFilledCells = 0;
+
+  for (let offset = 1; offset <= sampleSize; offset += 1) {
+    const dataRow = rows[headerIdx + offset];
+    if (!Array.isArray(dataRow)) continue;
+    const filled = dataRow.filter(hasCellValue).length;
+    if (filled === 0) continue;
+    nonEmptyRows += 1;
+    totalFilledCells += filled;
+    dataRow.forEach((cell) => { if (isCellNumeric(cell)) totalNumericCells += 1; });
+  }
+
+  if (nonEmptyRows < 2) return 0;
+
+  // Bonus for having consistent data rows below
+  let bonus = nonEmptyRows * 5;
+
+  // Bonus if data contains numeric values (prices, quantities)
+  if (totalNumericCells > 0) bonus += Math.min(totalNumericCells * 2, 30);
+
+  // Bonus for width consistency: data rows should have similar width to header
+  const avgWidth = totalFilledCells / nonEmptyRows;
+  if (avgWidth >= headerWidth * 0.5) bonus += 20;
+
+  return bonus;
 };
 
 const stringifyCellValue = (value: unknown): string => {
@@ -416,15 +494,39 @@ const stringifyCellValue = (value: unknown): string => {
 };
 
 const detectHeaderRowIndex = (rows: unknown[][]) => {
-  let bestIdx = 0;
-  let bestScore = -1;
   const limit = Math.min(rows.length, 100);
+
+  // Prefer the first strongly matching header row so normal data rows are never treated as headers.
   for (let idx = 0; idx < limit; idx += 1) {
     const row = rows[idx];
     if (!Array.isArray(row)) continue;
+    if (isLikelyHeaderRow(row)) return idx;
+  }
+
+  let bestIdx = 0;
+  let bestScore = -1;
+  for (let idx = 0; idx < limit; idx += 1) {
+    const row = rows[idx];
+    if (!Array.isArray(row)) continue;
+
+    // 1. Keyword-based score (primary signal)
     const keywordScore = scoreHeaderRow(row);
-    const densityScore = row.reduce<number>((count, cell) => (hasCellValue(cell) ? count + 1 : count), 0);
-    const score = keywordScore >= 0 ? keywordScore : densityScore;
+    const base = keywordScore >= 0 ? keywordScore : 0;
+
+    // 2. "Tabular data below" bonus — a true header has consistent data rows after it
+    const dataBelow = scoreDataBelow(rows, idx);
+
+    // 3. Penalty for rows that look mostly numeric (likely data rows, not headers)
+    const filledCells = row.filter(hasCellValue);
+    const numericCount = filledCells.filter(isCellNumeric).length;
+    const numericPenalty =
+      filledCells.length >= 3 && numericCount / filledCells.length > 0.5 ? 50 : 0;
+
+    // 4. Penalty for very sparse rows (1-2 cells) without strong keyword matches —
+    //    these are likely title/metadata rows, not headers
+    const sparsePenalty = filledCells.length <= 2 && base <= 100 ? 30 : 0;
+
+    const score = base + dataBelow - numericPenalty - sparsePenalty;
     if (score > bestScore) {
       bestScore = score;
       bestIdx = idx;
@@ -547,7 +649,7 @@ const evaluateSelection = (sheets: SheetMapping[], activeSheetIndex: number) => 
   const enabledSheets = sheets.filter((sheet) => sheet.enabled);
   const validSheets = enabledSheets.filter((sheet) => {
     const selection = sheet.selection;
-    return selection.partNumber != null && selection.description != null && selection.listPrice != null;
+    return selection.partNumber != null && selection.listPrice != null;
   });
 
   const selection = active.selection;
@@ -564,7 +666,7 @@ const evaluateSelection = (sheets: SheetMapping[], activeSheetIndex: number) => 
   const status: FileValidation["status"] = validSheets.length > 0 ? "valid" : "invalid";
   const message =
     validSheets.length === 0
-      ? "Select columns for at least one enabled sheet (Part Number, Name/Description, List Price)."
+      ? "Select columns for at least one enabled sheet (Part Number, List Price)."
       : `Using ${validSheets.length} sheet${validSheets.length === 1 ? "" : "s"} with selected columns.`;
 
   const rowCount = validSheets.reduce((acc, sheet) => acc + sheet.rowCount, 0);
@@ -1470,6 +1572,7 @@ export default function PriceListImportClient({
         matchedProductCount?: number;
         skippedRows?: number;
         totalRows?: number;
+        descriptionMismatches?: { productId: number; newDescription: string }[];
       };
       const raw = await response.text().catch(() => "");
       const typedPayload: ImportResponse | null = (() => {
@@ -1495,6 +1598,34 @@ export default function PriceListImportClient({
         `${typedPayload.skippedRows ?? 0} skipped`,
       ].join(" • ");
       showToastMessage(summary);
+
+      // Prompt user if product descriptions don't match
+      const mismatches = typedPayload.descriptionMismatches;
+      if (mismatches && mismatches.length > 0) {
+        const confirmed = await showConfirmDialog({
+          title: "Description Mismatch",
+          message: `${mismatches.length} product(s) don't match the products' original descriptions. Do you want to overwrite them?`,
+          confirmLabel: "Yes",
+          cancelLabel: "No",
+        });
+        if (confirmed) {
+          try {
+            const updateRes = await fetch("/api/products/update-descriptions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ mismatches }),
+            });
+            const updateData = await updateRes.json().catch(() => null);
+            if (updateRes.ok && updateData?.ok) {
+              showToastMessage(`Updated ${updateData.updatedCount} product description(s).`);
+            } else {
+              showToastMessage(updateData?.error || "Failed to update descriptions.");
+            }
+          } catch {
+            showToastMessage("Failed to update descriptions.");
+          }
+        }
+      }
 
       const targetId =
         typedPayload.priceListId != null ? encodeURIComponent(String(typedPayload.priceListId)) : null;

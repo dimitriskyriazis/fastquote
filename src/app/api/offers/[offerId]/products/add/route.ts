@@ -14,7 +14,7 @@ import { requirePermission } from '../../../../../../lib/authz';
 
 type TextFilterModel = {
   filterType: 'text';
-  type?: 'contains' | 'equals' | 'notEqual' | 'startsWith' | 'endsWith';
+  type?: 'contains' | 'equals' | 'notEqual' | 'startsWith' | 'endsWith' | 'blank' | 'notBlank';
   filter?: string;
 };
 
@@ -33,7 +33,9 @@ type NumberFilterModel = {
     | 'greaterThan'
     | 'lessThanOrEqual'
     | 'greaterThanOrEqual'
-    | 'inRange';
+    | 'inRange'
+    | 'blank'
+    | 'notBlank';
   filter?: number;
   filterTo?: number;
 };
@@ -136,6 +138,12 @@ const partModelNumberSql = (expr: string) => {
   return `UPPER(ISNULL(${expr}, ''))`;
 };
 
+const buildBlankClause = (columnExpression: string): string =>
+  `(NULLIF(LTRIM(RTRIM(COALESCE(CAST(${columnExpression} AS NVARCHAR(MAX)), ''))), '') IS NULL)`;
+
+const buildNotBlankClause = (columnExpression: string): string =>
+  `(NULLIF(LTRIM(RTRIM(COALESCE(CAST(${columnExpression} AS NVARCHAR(MAX)), ''))), '') IS NOT NULL)`;
+
 const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpressions: Record<string, string>) => {
   if (!filterModel || Object.keys(filterModel).length === 0) {
     return { clauses: [] as string[], params: [] as QueryParam[] };
@@ -171,6 +179,14 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
       case 'text': {
         const buildTextConditionClause = (condition: TextFilterModel, conditionParamBase: string) => {
           const type = condition.type;
+
+          if (type === 'blank') {
+            return { clause: buildBlankClause(columnExpression), params: [] as QueryParam[] };
+          }
+          if (type === 'notBlank') {
+            return { clause: buildNotBlankClause(columnExpression), params: [] as QueryParam[] };
+          }
+
           const value = String(condition.filter ?? '');
           if (!value) return { clause: '', params: [] as QueryParam[] };
 
@@ -267,6 +283,14 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
       case 'number': {
         const buildNumberConditionClause = (condition: NumberFilterModel, conditionParamBase: string) => {
           const type = condition.type;
+
+          if (type === 'blank') {
+            return { clause: buildBlankClause(columnExpression), params: [] as QueryParam[] };
+          }
+          if (type === 'notBlank') {
+            return { clause: buildNotBlankClause(columnExpression), params: [] as QueryParam[] };
+          }
+
           const val = condition.filter !== undefined ? Number(condition.filter) : Number.NaN;
           const valTo = condition.filterTo !== undefined ? Number(condition.filterTo) : undefined;
           if (Number.isNaN(val)) return { clause: '', params: [] as QueryParam[] };

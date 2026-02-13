@@ -54,6 +54,15 @@ type ProductFormState = {
   enabled: boolean;
 };
 
+export type AddProductInitialValues = {
+  brandName?: string | null;
+  modelNumber?: string | null;
+  partNumber?: string | null;
+  description?: string | null;
+  weblink?: string | null;
+  comments?: string | null;
+};
+
 const PRODUCT_LOOKUP_ENDPOINT = '/api/products/lookups';
 const PRODUCT_CREATE_ENDPOINT = '/api/products/create';
 
@@ -81,9 +90,10 @@ type Props = {
   open: boolean;
   onClose: () => void;
   onAdded?: (result: { productId?: number | null }) => void;
+  initialValues?: AddProductInitialValues | null;
 };
 
-export default function AddProductModal({ open, onClose, onAdded }: Props) {
+export default function AddProductModal({ open, onClose, onAdded, initialValues }: Props) {
   const [lookups, setLookups] = useState<ProductLookups | null>(null);
   const [lookupsLoading, setLookupsLoading] = useState(false);
   const [lookupsError, setLookupsError] = useState<string | null>(null);
@@ -95,6 +105,7 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
   const brandListTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
   const { warnings: duplicateWarnings, check: checkDuplicates, clear: clearDuplicates } = useDuplicateCheck('product');
+  const wasOpenRef = useRef(false);
 
   useEffect(() => {
     if (open) {
@@ -131,6 +142,39 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
     if (!open) return;
     loadLookups();
   }, [loadLookups, open]);
+
+  const applyInitialValues = useCallback(() => {
+    if (!initialValues) return;
+    const nextBrandText = initialValues.brandName?.trim() ?? '';
+    const nextDescription = initialValues.description?.trim() ?? '';
+    const hasAnyInitialValue = Boolean(
+      nextBrandText
+      || (initialValues.modelNumber?.trim() ?? '')
+      || (initialValues.partNumber?.trim() ?? '')
+      || nextDescription
+      || (initialValues.weblink?.trim() ?? '')
+      || (initialValues.comments?.trim() ?? ''),
+    );
+    if (!hasAnyInitialValue) return;
+    setForm((prev) => ({
+      ...prev,
+      brandId: '',
+      modelNumber: initialValues.modelNumber?.trim() ?? '',
+      partNumber: initialValues.partNumber?.trim() ?? '',
+      description: nextDescription,
+      weblink: initialValues.weblink?.trim() ?? '',
+      comments: initialValues.comments?.trim() ?? '',
+    }));
+    setBrandText(nextBrandText);
+    setFormError(null);
+  }, [initialValues]);
+
+  useEffect(() => {
+    if (open && !wasOpenRef.current) {
+      applyInitialValues();
+    }
+    wasOpenRef.current = open;
+  }, [applyInitialValues, open]);
 
   const updateFormField = useCallback((field: keyof ProductFormState, value: string | boolean) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -292,6 +336,18 @@ export default function AddProductModal({ open, onClose, onAdded }: Props) {
       setBrandText(label);
     }
   }, [brandText, isBrandListOpen, selectedBrand]);
+
+  useEffect(() => {
+    if (!lookups || form.brandId) return;
+    const normalized = brandText.trim().toLocaleLowerCase();
+    if (!normalized) return;
+    const matched = lookups.brands.find((option) => (option.name || '').trim().toLocaleLowerCase() === normalized);
+    if (!matched) return;
+    setForm((prev) => {
+      if (prev.brandId) return prev;
+      return { ...prev, brandId: String(matched.id) };
+    });
+  }, [brandText, form.brandId, lookups]);
 
   useEffect(() => () => cancelBrandListClose(), [cancelBrandListClose]);
 

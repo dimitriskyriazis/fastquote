@@ -31,6 +31,7 @@ type ProductRow = {
   PartNumber: string | null;
   ModelNumber: string | null;
   BrandID: number | null;
+  Description: string | null;
 };
 
 type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning" | "weblink";
@@ -42,13 +43,40 @@ type ColumnMapping = {
 } | null;
 
 const HEADER_SYNONYMS: Record<HeaderColumnKey, string[]> = {
-  partNumber: ["partnumber", "part number", "partno", "part no"],
-  modelNumber: ["modelnumber", "model number", "modelno", "model no"],
-  description: ["name", "description"],
-  listPrice: ["listprice", "list price", "price"],
-  costPrice: ["costprice", "cost price", "cost"],
-  warning: ["warning"],
-  weblink: ["weblink", "web link", "weblnk", "url", "link"],
+  partNumber: [
+    "partnumber", "part number", "partno", "part no", "p/n",
+    "sku", "itemno", "item no", "item number", "itemnumber",
+    "articleno", "article no", "article number", "articlenumber",
+    "orderno", "order no", "order number", "ordernumber",
+    "code", "catalog", "catalogno", "catalog no",
+    "κωδικός", "κωδικος", "κωδικοσ",
+  ],
+  modelNumber: [
+    "modelnumber", "model number", "modelno", "model no",
+    "series", "mpn", "mfg", "family",
+    "μοντέλο", "μοντελο", "σειρά", "σειρα", "τύπος", "τυπος",
+  ],
+  description: [
+    "name", "description", "desc", "detail", "details",
+    "περιγραφή", "περιγραφη", "όνομα", "ονομα", "ονομασία", "ονομασια",
+  ],
+  listPrice: [
+    "listprice", "list price", "price", "msrp", "rrp",
+    "retail", "retailprice", "retail price",
+    "τιμή", "τιμη", "λιανική", "λιανικη", "κατάλογος", "καταλογος",
+  ],
+  costPrice: [
+    "costprice", "cost price", "cost",
+    "κόστος", "κοστος", "τιμή κόστους", "τιμη κοστους",
+  ],
+  warning: [
+    "warning", "warn", "note", "remark",
+    "σημείωση", "σημειωση", "προσοχή", "προσοχη",
+  ],
+  weblink: [
+    "weblink", "web link", "weblnk", "url", "link", "hyperlink",
+    "website", "σύνδεσμος", "συνδεσμος", "ιστοσελίδα", "ιστοσελιδα",
+  ],
 };
 
 const requirePriceListUploadRoot = (): string => {
@@ -160,9 +188,14 @@ const normalizeKey = (value: string | null | undefined): string | null => {
 const normalizeHeaderValue = (value: unknown): string | null => {
   if (typeof value !== "string" && typeof value !== "number") return null;
   const str = typeof value === "number" ? String(value) : value;
-  const trimmed = str.trim().toLowerCase();
+  const trimmed = str
+    .trim()
+    .toLowerCase()
+    .replace(/[\u00a0]+/g, " ")
+    .replace(/[|_/\\-]+/g, " ")
+    .replace(/\s+/g, " ");
   if (!trimmed) return null;
-  return trimmed.replace(/\s+/g, "");
+  return trimmed.replace(/[^\p{L}\p{N}]+/gu, "");
 };
 
 const formatNumericPortion = (numericPortion: string, format: PriceListDecimalFormat) => {
@@ -174,6 +207,15 @@ const formatNumericPortion = (numericPortion: string, format: PriceListDecimalFo
   }
   const commaCount = (numericPortion.match(/,/g) || []).length;
   const dotCount = (numericPortion.match(/\./g) || []).length;
+  if (commaCount > 0 && dotCount > 0) {
+    // Infer decimal separator from the right-most separator.
+    const lastComma = numericPortion.lastIndexOf(",");
+    const lastDot = numericPortion.lastIndexOf(".");
+    if (lastComma > lastDot) {
+      return numericPortion.replace(/\./g, "").replace(/,/g, ".");
+    }
+    return numericPortion.replace(/,/g, "");
+  }
   if (commaCount > 0 && dotCount === 0) {
     return numericPortion.replace(/,/g, ".");
   }
@@ -296,7 +338,55 @@ const parseColumnMappings = (value: unknown): ColumnMapping[] => {
 };
 
 const findHeaderRow = (rows: unknown[][]) => {
-  for (let idx = 0; idx < rows.length; idx += 1) {
+  let bestResult: { headerRowIndex: number; columnMap: Partial<Record<HeaderColumnKey, number>> } | null = null;
+  let bestScore = 0;
+  const limit = Math.min(rows.length, 100);
+
+  const matchesHeaderKey = (normalizedCell: string, key: HeaderColumnKey) =>
+    HEADER_SYNONYMS[key].some((candidate) => {
+      const normalizedCandidate = normalizeHeaderValue(candidate);
+      if (!normalizedCandidate) return false;
+      return (
+        normalizedCell === normalizedCandidate ||
+        normalizedCell.includes(normalizedCandidate) ||
+        normalizedCandidate.includes(normalizedCell)
+      );
+    });
+
+  const isLikelyHeaderRow = (row: unknown[]) => {
+    const matchedKeys = new Set<HeaderColumnKey>();
+    row.forEach((cell) => {
+      const normalized = normalizeHeaderValue(cell);
+      if (!normalized) return;
+      (Object.keys(HEADER_SYNONYMS) as HeaderColumnKey[]).forEach((key) => {
+        if (matchesHeaderKey(normalized, key)) matchedKeys.add(key);
+      });
+    });
+    const hasPart = matchedKeys.has("partNumber");
+    const hasSecondary =
+      matchedKeys.has("description") || matchedKeys.has("modelNumber") || matchedKeys.has("listPrice");
+    return hasPart && hasSecondary && matchedKeys.size >= 2;
+  };
+
+  // Prefer the first strongly matching header row to avoid treating data rows as headers.
+  for (let idx = 0; idx < limit; idx += 1) {
+    const row = rows[idx];
+    if (!Array.isArray(row)) continue;
+    if (isLikelyHeaderRow(row)) {
+      const columnMap: Partial<Record<HeaderColumnKey, number>> = {};
+      row.forEach((cell, colIdx) => {
+        const normalized = normalizeHeaderValue(cell);
+        if (!normalized) return;
+        (Object.keys(HEADER_SYNONYMS) as HeaderColumnKey[]).forEach((key) => {
+          if (columnMap[key] != null) return;
+          if (matchesHeaderKey(normalized, key)) columnMap[key] = colIdx;
+        });
+      });
+      return { headerRowIndex: idx, columnMap };
+    }
+  }
+
+  for (let idx = 0; idx < limit; idx += 1) {
     const row = rows[idx];
     if (!Array.isArray(row)) continue;
     const columnMap: Partial<Record<HeaderColumnKey, number>> = {};
@@ -305,9 +395,7 @@ const findHeaderRow = (rows: unknown[][]) => {
       if (!normalized) return;
       (Object.keys(HEADER_SYNONYMS) as HeaderColumnKey[]).forEach((key) => {
         if (columnMap[key] != null) return;
-        const matchesHeader = HEADER_SYNONYMS[key].some(
-          (candidate) => normalizeHeaderValue(candidate) === normalized,
-        );
+        const matchesHeader = matchesHeaderKey(normalized, key);
         if (matchesHeader) {
           columnMap[key] = colIdx;
         }
@@ -315,11 +403,15 @@ const findHeaderRow = (rows: unknown[][]) => {
     });
 
     const detectedCount = Object.keys(columnMap).length;
-    if (detectedCount > 0) {
-      return { headerRowIndex: idx, columnMap };
+    if (detectedCount > bestScore) {
+      bestScore = detectedCount;
+      bestResult = { headerRowIndex: idx, columnMap };
     }
   }
-  return null;
+
+  // Require at least 2 matched columns to avoid false positives from metadata rows
+  if (bestScore < 2) return null;
+  return bestResult;
 };
 
 const parseSheetWithMapping = (
@@ -329,7 +421,7 @@ const parseSheetWithMapping = (
   decimalFormat: PriceListDecimalFormat,
   sheet: XLSX.WorkSheet | null = null,
 ) => {
-  const requiredKeys: HeaderColumnKey[] = ["partNumber", "description", "listPrice"];
+  const requiredKeys: HeaderColumnKey[] = ["partNumber", "listPrice"];
   const hasAllRequired = requiredKeys.every((key) => typeof columnMap[key] === "number");
   if (!hasAllRequired) return [] as ParsedPriceListRow[];
 
@@ -367,7 +459,7 @@ const parseSheetWithMapping = (
     }
 
     if (!partNumber && !modelNumber && !description && listPrice == null && costPrice == null && !warning && !weblink) continue;
-    if (!partNumber || !description || listPrice == null) continue;
+    if (!partNumber || listPrice == null) continue;
 
     parsed.push({
       partNumber,
@@ -420,7 +512,7 @@ const parseSheet = (rows: unknown[][], decimalFormat: PriceListDecimalFormat, sh
     }
 
     if (!partNumber && !modelNumber && !description && listPrice == null && costPrice == null && !warning && !weblink) continue;
-    if (!partNumber || !description || listPrice == null) continue;
+    if (!partNumber || listPrice == null) continue;
 
     parsed.push({
       partNumber,
@@ -560,7 +652,7 @@ const fetchProductsByKeys = async (
     });
 
     const result = await request.query(`
-      SELECT ID, PartNumber, ModelNumber, BrandID
+      SELECT ID, PartNumber, ModelNumber, BrandID, Description
       FROM dbo.Products
       WHERE ${columnExpression} IN (${paramNames.join(", ")})
     `);
@@ -784,7 +876,7 @@ export async function POST(req: NextRequest) {
         {
           ok: false,
           error:
-            "No valid rows found. Please confirm your column selections include Part Number, Name/Description, and List Price data. Model Number is optional.",
+            "No valid rows found. Please confirm your column selections include Part Number and List Price data.",
         },
         { status: 400 },
       );
@@ -998,6 +1090,7 @@ export async function POST(req: NextRequest) {
       let createdProductCount = 0;
       let matchedProductCount = 0;
       let skippedRows = 0;
+      const descriptionMismatches: { productId: number; newDescription: string }[] = [];
 
       for (const row of parsedRows) {
         const partKey = normalizeKey(row.partNumber);
@@ -1013,12 +1106,15 @@ export async function POST(req: NextRequest) {
 
         let productId: number | null = null;
         let isExistingProduct = false;
+        let existingProduct: ProductRow | undefined;
 
         if (partKey && byPartNumber.has(partKey)) {
-          productId = byPartNumber.get(partKey)?.ID ?? null;
+          existingProduct = byPartNumber.get(partKey);
+          productId = existingProduct?.ID ?? null;
           isExistingProduct = productId != null;
         } else if (modelKey && byModelNumber.has(modelKey)) {
-          productId = byModelNumber.get(modelKey)?.ID ?? null;
+          existingProduct = byModelNumber.get(modelKey);
+          productId = existingProduct?.ID ?? null;
           isExistingProduct = productId != null;
         } else if (partKey && createdProducts.has(partKey)) {
           productId = createdProducts.get(partKey) ?? null;
@@ -1038,6 +1134,14 @@ export async function POST(req: NextRequest) {
 
         if (isExistingProduct) {
           matchedProductCount += 1;
+
+          // Detect description mismatches
+          const importDesc = row.description?.trim() || "";
+          const existingDesc = existingProduct?.Description?.trim() || "";
+          if (importDesc && existingDesc && importDesc.toLowerCase() !== existingDesc.toLowerCase()) {
+            descriptionMismatches.push({ productId: productId!, newDescription: row.description! });
+          }
+
           // Update WebLink if provided in the import
           if (row.weblink) {
             const updateRequest = createRequest(transaction);
@@ -1059,6 +1163,7 @@ export async function POST(req: NextRequest) {
           PartNumber: row.partNumber,
           ModelNumber: row.modelNumber,
           BrandID: brandId,
+          Description: row.description,
         };
 
         if (partKey) {
@@ -1083,6 +1188,7 @@ export async function POST(req: NextRequest) {
         matchedProductCount,
         skippedRows,
         totalRows: parsedRows.length,
+        descriptionMismatches,
       });
     } catch (err) {
       await transaction.rollback();

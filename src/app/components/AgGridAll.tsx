@@ -3537,8 +3537,13 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       return;
     }
     pendingExternalRefreshRef.current = null;
+    // Save scroll position before refresh so it's restored after data loads
+    const viewport = getViewportElement();
+    if (viewport) {
+      pendingScrollRestoreTopRef.current = viewport.scrollTop;
+    }
     requestRefresh(() => refreshServerSideData(api));
-  }, [refreshToken, requestRefresh]);
+  }, [refreshToken, requestRefresh, getViewportElement]);
 
   // TREE ORDERING - Persistence & Server Reordering
   const persistTreeOrderingChanges = useCallback(() => {

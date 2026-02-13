@@ -28,6 +28,10 @@ export type RequestedProductMatchEntry = {
   requestedBrand: string | null;
   requestedModelNumber: string | null;
   requestedPartNumber: string | null;
+  requestedWebLink: string | null;
+  requestedDescription: string | null;
+  requestedDescription2: string | null;
+  requestedDescription3: string | null;
 };
 
 type MatcherRowData = Record<string, unknown>;

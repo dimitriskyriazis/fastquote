@@ -67,6 +67,23 @@ type OfferCreateDefaults = {
 
 export type MarketOption = DropdownOption & { salesDivisionId: string | null };
 type UserOption = DropdownOption & { salesSeniorityName?: string | null };
+type LookupKey =
+  | 'customers'
+  | 'statuses'
+  | 'pricingPolicies'
+  | 'markets'
+  | 'salesDivisions'
+  | 'users'
+  | 'fwcProjects';
+type OfferLookupPayload = {
+  customers?: DropdownOption[];
+  statuses?: DropdownOption[];
+  pricingPolicies?: DropdownOption[];
+  markets?: MarketOption[];
+  salesDivisions?: DropdownOption[];
+  users?: UserOption[];
+  fwcProjects?: DropdownOption[];
+};
 
 type Props = {
   customers: DropdownOption[];
@@ -178,32 +195,41 @@ export default function OfferCreateClient({
   const [submitting, setSubmitting] = useState(false);
   const [customerText, setCustomerText] = useState('');
   const [showCustomerList, setShowCustomerList] = useState(false);
+  const [localCustomers, setLocalCustomers] = useState(customers);
+  const [localStatuses, setLocalStatuses] = useState(statuses);
+  const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
+  const [localMarkets, setLocalMarkets] = useState(markets);
+  const [localSalesDivisions, setLocalSalesDivisions] = useState(salesDivisions);
+  const [localUsers, setLocalUsers] = useState(users);
+  const [localFwcProjects, setLocalFwcProjects] = useState(fwcProjects);
   const lastCustomerRef = useRef<string>('');
   const listCloseTimerRef = useRef<NodeJS.Timeout | null>(null);
   const appliedCustomerParamRef = useRef(false);
+  const lookupRefreshInFlightRef = useRef(new Set<LookupKey>());
+  const contactRefreshTokenRef = useRef(0);
   const initialCustomerIdParam = (searchParams?.get('customerId') ?? '').trim();
 
   const defaultPricingPolicyId = useMemo(
-    () => resolveDefaultPricingPolicyId(pricingPolicies),
-    [pricingPolicies],
+    () => resolveDefaultPricingPolicyId(localPricingPolicies),
+    [localPricingPolicies],
   );
 
-  const defaultStatusId = useMemo(() => resolveDefaultStatusId(statuses), [statuses]);
+  const defaultStatusId = useMemo(() => resolveDefaultStatusId(localStatuses), [localStatuses]);
 
   const salesUsers = useMemo(
     () =>
-      users.filter((user) =>
+      localUsers.filter((user) =>
         SALES_USER_SENIORITIES.has((user.salesSeniorityName ?? '').trim().toLowerCase()),
       ),
-    [users],
+    [localUsers],
   );
 
   const approvalUsers = useMemo(
     () =>
-      users.filter((user) =>
+      localUsers.filter((user) =>
         APPROVAL_USER_SENIORITIES.has((user.salesSeniorityName ?? '').trim().toLowerCase()),
       ),
-    [users],
+    [localUsers],
   );
 
   const defaultSuggestedUserId = useMemo(() => {
@@ -255,31 +281,84 @@ export default function OfferCreateClient({
 
   const [values, setValues] = useState<FormValues>(initialValues);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormValues, string>>>({});
-  const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
+  useEffect(() => {
+    setLocalCustomers(customers);
+  }, [customers]);
+
+  useEffect(() => {
+    setLocalStatuses(statuses);
+  }, [statuses]);
+
   useEffect(() => {
     setLocalPricingPolicies(pricingPolicies);
   }, [pricingPolicies]);
 
+  useEffect(() => {
+    setLocalMarkets(markets);
+  }, [markets]);
+
+  useEffect(() => {
+    setLocalSalesDivisions(salesDivisions);
+  }, [salesDivisions]);
+
+  useEffect(() => {
+    setLocalUsers(users);
+  }, [users]);
+
+  useEffect(() => {
+    setLocalFwcProjects(fwcProjects);
+  }, [fwcProjects]);
+
+  const refreshLookups = useCallback(async (keys: LookupKey[]) => {
+    const uniqueKeys = Array.from(new Set(keys));
+    const pendingKeys = uniqueKeys.filter((key) => !lookupRefreshInFlightRef.current.has(key));
+    if (pendingKeys.length === 0) return;
+    pendingKeys.forEach((key) => lookupRefreshInFlightRef.current.add(key));
+    try {
+      const search = new URLSearchParams();
+      pendingKeys.forEach((key) => search.append('keys', key));
+      const response = await fetch(`/api/offers/lookups?${search.toString()}`, { cache: 'no-store' });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; lookups?: OfferLookupPayload }
+        | null;
+      if (!response.ok || !payload?.ok || !payload.lookups) {
+        throw new Error(payload?.error ?? 'Unable to refresh lookup options');
+      }
+      if (payload.lookups.customers) setLocalCustomers(payload.lookups.customers);
+      if (payload.lookups.statuses) setLocalStatuses(payload.lookups.statuses);
+      if (payload.lookups.pricingPolicies) setLocalPricingPolicies(payload.lookups.pricingPolicies);
+      if (payload.lookups.markets) setLocalMarkets(payload.lookups.markets);
+      if (payload.lookups.salesDivisions) setLocalSalesDivisions(payload.lookups.salesDivisions);
+      if (payload.lookups.users) setLocalUsers(payload.lookups.users);
+      if (payload.lookups.fwcProjects) setLocalFwcProjects(payload.lookups.fwcProjects);
+    } catch (err) {
+      console.error(err);
+      showToastMessage('Unable to refresh latest dropdown values.', 'warning');
+    } finally {
+      pendingKeys.forEach((key) => lookupRefreshInFlightRef.current.delete(key));
+    }
+  }, []);
+
   const salesDivisionLabelMap = useMemo(() => {
     const map = new Map<string, string>();
-    salesDivisions.forEach((division) => {
+    localSalesDivisions.forEach((division) => {
       if (!division?.value) return;
       const label = division.label?.trim();
       if (!label) return;
       map.set(division.value, label);
     });
     return map;
-  }, [salesDivisions]);
+  }, [localSalesDivisions]);
 
   const marketsWithDivisionLabel = useMemo(() => {
-    return markets.map((market) => {
+    return localMarkets.map((market) => {
       const divisionLabel = market.salesDivisionId
         ? salesDivisionLabelMap.get(market.salesDivisionId) ?? ''
         : '';
       const label = divisionLabel ? `${market.label} - ${divisionLabel}` : market.label;
       return { ...market, label };
     });
-  }, [markets, salesDivisionLabelMap]);
+  }, [localMarkets, salesDivisionLabelMap]);
 
   const filteredMarkets = useMemo(() => {
     if (!values.salesDivisionId) return marketsWithDivisionLabel;
@@ -290,12 +369,12 @@ export default function OfferCreateClient({
 
   const marketDivisionMap = useMemo(() => {
     const map = new Map<string, string>();
-    markets.forEach((market) => {
+    localMarkets.forEach((market) => {
       if (!market || !market.value) return;
       map.set(market.value, market.salesDivisionId ?? '');
     });
     return map;
-  }, [markets]);
+  }, [localMarkets]);
 
   const lastMarketSelectionRef = useRef<string>('');
   useEffect(() => {
@@ -327,12 +406,12 @@ export default function OfferCreateClient({
   const findCustomerOption = useCallback((text: string) => {
     const normalized = text.trim().toLowerCase();
     if (!normalized) return null;
-    return customers.find((option) => {
+    return localCustomers.find((option) => {
       const label = option.label?.trim().toLowerCase();
       const value = option.value?.trim().toLowerCase();
       return label === normalized || value === normalized;
     }) ?? null;
-  }, [customers]);
+  }, [localCustomers]);
 
   const setCustomerSelection = useCallback((option: DropdownOption | null, rawText: string) => {
     setCustomerText(rawText);
@@ -349,18 +428,18 @@ export default function OfferCreateClient({
   useEffect(() => {
     if (appliedCustomerParamRef.current) return;
     if (!initialCustomerIdParam) return;
-    if (customers.length === 0) return;
-    const match = customers.find((option) => {
+    if (localCustomers.length === 0) return;
+    const match = localCustomers.find((option) => {
       const value = option.value?.trim() ?? '';
       return value === initialCustomerIdParam;
-    }) ?? customers.find((option) => {
+    }) ?? localCustomers.find((option) => {
       const label = option.label?.trim().toLowerCase() ?? '';
       return label === initialCustomerIdParam.toLowerCase();
     });
     appliedCustomerParamRef.current = true;
     if (!match) return;
     setCustomerSelection(match, match.label ?? initialCustomerIdParam);
-  }, [customers, initialCustomerIdParam, setCustomerSelection]);
+  }, [localCustomers, initialCustomerIdParam, setCustomerSelection]);
 
   const handleCustomerInputChange = useCallback((text: string) => {
     const match = findCustomerOption(text);
@@ -390,6 +469,53 @@ export default function OfferCreateClient({
     setCustomerSelection(match, match.label);
   }, [customerText, findCustomerOption, setCustomerSelection]);
 
+  const loadContactsForCustomer = useCallback(async (customerId: string) => {
+    const refreshToken = contactRefreshTokenRef.current + 1;
+    contactRefreshTokenRef.current = refreshToken;
+    if (!customerId) {
+      if (contactRefreshTokenRef.current === refreshToken) {
+        setContactOptions([]);
+        setContactLoadError(null);
+        setContactsLoading(false);
+      }
+      return;
+    }
+
+    setContactsLoading(true);
+    try {
+      const res = await fetch(`/api/customers/${encodeURIComponent(customerId)}/contacts`, {
+        cache: 'no-store',
+      });
+      const data = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        contacts?: Array<{ ContactID: number; FullName: string }>;
+        error?: string;
+      } | null;
+      if (!res.ok || !data?.ok || !Array.isArray(data.contacts)) {
+        throw new Error(data?.error ?? 'Unable to load contacts');
+      }
+      if (contactRefreshTokenRef.current === refreshToken) {
+        setContactOptions(
+          data.contacts.map((contact) => ({
+            value: String(contact.ContactID),
+            label: contact.FullName ?? `Contact ${contact.ContactID}`,
+          })),
+        );
+        setContactLoadError(null);
+      }
+    } catch (err) {
+      if (contactRefreshTokenRef.current !== refreshToken) return;
+      const message = err instanceof Error ? err.message : 'Unable to load contacts';
+      setContactOptions([]);
+      setContactLoadError(message);
+      showToastMessage('Unable to load contacts for this customer.', 'error');
+    } finally {
+      if (contactRefreshTokenRef.current === refreshToken) {
+        setContactsLoading(false);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     const customerId = values.customerId.trim();
     if (customerId === lastCustomerRef.current) return;
@@ -407,32 +533,12 @@ export default function OfferCreateClient({
 
     let cancelled = false;
     const load = async () => {
-      setContactsLoading(true);
       try {
-        const res = await fetch(`/api/customers/${encodeURIComponent(customerId)}/contacts`);
-        const data = (await res.json().catch(() => null)) as {
-          ok?: boolean;
-          contacts?: Array<{ ContactID: number; FullName: string }>;
-          error?: string;
-        } | null;
+        await loadContactsForCustomer(customerId);
         if (cancelled) return;
-        if (!res.ok || !data?.ok || !Array.isArray(data.contacts)) {
-          throw new Error(data?.error ?? 'Unable to load contacts');
-        }
-        setContactOptions(
-          data.contacts.map((contact) => ({
-            value: String(contact.ContactID),
-            label: contact.FullName ?? `Contact ${contact.ContactID}`,
-          })),
-        );
       } catch (err) {
         if (cancelled) return;
-        const message = err instanceof Error ? err.message : 'Unable to load contacts';
-        setContactOptions([]);
-        setContactLoadError(message);
-        showToastMessage('Unable to load contacts for this customer.', 'error');
-      } finally {
-        if (!cancelled) setContactsLoading(false);
+        console.error(err);
       }
     };
     void load();
@@ -443,7 +549,7 @@ export default function OfferCreateClient({
         clearTimeout(listCloseTimerRef.current);
       }
     };
-  }, [values.customerId]);
+  }, [loadContactsForCustomer, values.customerId]);
 
   const handleChange = useCallback((field: keyof FormValues, value: string) => {
     setValues((prev) => ({ ...prev, [field]: value }));
@@ -540,21 +646,21 @@ export default function OfferCreateClient({
       { id: 'offerValidity', label: 'Offer Validity', section: 'general', required: true },
       { id: 'deliveryTime', label: 'Delivery Time', section: 'general', required: true },
       { id: 'introNote', label: 'Introduction Note', section: 'general', type: 'textarea' },
-      { id: 'customerId', label: 'Customer', section: 'general', required: true, type: 'select', options: customers },
-      { id: 'statusId', label: 'Status', section: 'general', required: true, type: 'select', options: statuses },
+      { id: 'customerId', label: 'Customer', section: 'general', required: true, type: 'select', options: localCustomers },
+      { id: 'statusId', label: 'Status', section: 'general', required: true, type: 'select', options: localStatuses },
 
       { id: 'contactId', label: 'Contact', section: 'info', required: true, type: 'select', options: contactOptions, fullWidth: true, dependsOnCustomer: true },
       { id: 'telmacoNote', label: 'Telmaco Note', section: 'info', type: 'textarea' },
 
       { id: 'pricingPolicyId', label: 'Pricing Policy', section: 'commercial', required: true, type: 'select', options: localPricingPolicies },
-      { id: 'marketId', label: 'Market', section: 'commercial', required: true, type: 'select', options: markets },
-      { id: 'salesDivisionId', label: 'Sales Division', section: 'commercial', required: true, type: 'select', options: salesDivisions },
+      { id: 'marketId', label: 'Market', section: 'commercial', required: true, type: 'select', options: localMarkets },
+      { id: 'salesDivisionId', label: 'Sales Division', section: 'commercial', required: true, type: 'select', options: localSalesDivisions },
       { id: 'salesCreationPersonId', label: 'Sales Creation Person', section: 'commercial', required: true, type: 'select', options: salesUsers },
       { id: 'salesPersonId', label: 'Sales Person', section: 'commercial', type: 'select', options: salesUsers },
       { id: 'approvalUserId', label: 'Approval User', section: 'commercial', type: 'select', options: approvalUsers },
 
       { id: 'projectId', label: 'ERP Project ID', section: 'code', inputType: 'number' },
-      { id: 'erpFwcProjectId', label: 'ERP FWC Project', section: 'code', type: 'select', options: fwcProjects },
+      { id: 'erpFwcProjectId', label: 'ERP FWC Project', section: 'code', type: 'select', options: localFwcProjects },
       { id: 'customerRef', label: 'Customer Ref', section: 'code' },
       { id: 'probability', label: 'Probability', section: 'code', inputType: 'number' },
 
@@ -570,14 +676,14 @@ export default function OfferCreateClient({
     ],
     [
       contactOptions,
-      customers,
-      markets,
+      localCustomers,
+      localMarkets,
       localPricingPolicies,
-      salesDivisions,
-      statuses,
+      localSalesDivisions,
+      localStatuses,
       salesUsers,
       approvalUsers,
-      fwcProjects,
+      localFwcProjects,
     ],
   );
 
@@ -597,6 +703,46 @@ export default function OfferCreateClient({
     </label>
   );
 
+  const refreshFieldLookups = useCallback((fieldId: keyof FormValues) => {
+    if (fieldId === 'customerId') {
+      void refreshLookups(['customers']);
+      return;
+    }
+    if (fieldId === 'statusId') {
+      void refreshLookups(['statuses']);
+      return;
+    }
+    if (fieldId === 'pricingPolicyId') {
+      void refreshLookups(['pricingPolicies']);
+      return;
+    }
+    if (fieldId === 'marketId') {
+      void refreshLookups(['markets']);
+      return;
+    }
+    if (fieldId === 'salesDivisionId') {
+      void refreshLookups(['salesDivisions']);
+      return;
+    }
+    if (
+      fieldId === 'salesCreationPersonId' ||
+      fieldId === 'salesPersonId' ||
+      fieldId === 'approvalUserId'
+    ) {
+      void refreshLookups(['users']);
+      return;
+    }
+    if (fieldId === 'erpFwcProjectId') {
+      void refreshLookups(['fwcProjects']);
+      return;
+    }
+    if (fieldId === 'contactId') {
+      const customerId = values.customerId.trim();
+      if (!customerId) return;
+      void loadContactsForCustomer(customerId);
+    }
+  }, [loadContactsForCustomer, refreshLookups, values.customerId]);
+
   const renderFieldControl = (field: FieldConfig) => {
     const fieldId = `offer-create-${field.id}`;
     const value = values[field.id as keyof FormValues];
@@ -607,13 +753,13 @@ export default function OfferCreateClient({
 
     if (field.id === 'customerId') {
       const filtered = customerText.trim()
-        ? customers.filter((option) => {
+        ? localCustomers.filter((option) => {
             const label = option.label?.toLowerCase() ?? '';
             const val = option.value?.toLowerCase() ?? '';
             const search = customerText.toLowerCase();
             return label.includes(search) || val.includes(search);
           })
-        : customers;
+        : localCustomers;
       return (
         <div className={`${styles.controlStack} ${styles.comboWrapper}`}>
           <input
@@ -628,6 +774,7 @@ export default function OfferCreateClient({
             onBlur={handleCustomerBlur}
             onFocus={(event) => {
               event.target.select();
+              refreshFieldLookups('customerId');
               setShowCustomerList(true);
             }}
           />
@@ -681,6 +828,8 @@ export default function OfferCreateClient({
               value={value}
               disabled={isDisabled}
               required={field.required}
+              onMouseDown={() => refreshFieldLookups(field.id)}
+              onFocus={() => refreshFieldLookups(field.id)}
               onChange={(event) => {
                 const newValue = event.target.value;
                 handleChange(field.id as keyof FormValues, newValue);

@@ -93,6 +93,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [isPopulatingOffer, setIsPopulatingOffer] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
+  const [savedSelectionIds, setSavedSelectionIds] = useState<number[]>([]);
   const [showRequestedModal, setShowRequestedModal] = useState(false);
   const [showAddProductFormModal, setShowAddProductFormModal] = useState(false);
   const [newProductId, setNewProductId] = useState<number | null>(null);
@@ -129,6 +130,8 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
 
   const handleAddAction = useCallback(async (action: AddActionType) => {
     if (action === 'product') {
+      const ids = offerProductsPanelRef.current?.getSelectedOfferDetailIds?.() ?? [];
+      setSavedSelectionIds(ids);
       setShowAddProductModal(true);
       return;
     }
@@ -448,6 +451,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
               showRequestedColumns={showRequestedColumns}
               tableLayout={tableLayout}
               hideTotals
+              initialSelectedOfferDetailIds={savedSelectionIds}
             />
           </div>
           <div className={toolbarStyles.splitRight}>

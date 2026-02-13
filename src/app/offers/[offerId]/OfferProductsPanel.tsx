@@ -56,7 +56,7 @@ import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
 import MatchRequestedProductsModal, {
   type RequestedProductMatchEntry,
 } from './products/MatchRequestedProductsModal';
-import AddProductModal from '../../products/AddProductModal';
+import AddProductModal, { type AddProductInitialValues } from '../../products/AddProductModal';
 import { useAuditUser } from '../../components/AuditUserProvider';
 import LookupModal from '../../components/LookupModal';
 import lookupStyles from '../../components/LookupModal.module.css';
@@ -434,6 +434,10 @@ const buildRequestedProductMatchEntry = (
     requestedBrand,
     requestedModelNumber: requestedModel,
     requestedPartNumber: requestedPart,
+    requestedWebLink,
+    requestedDescription,
+    requestedDescription2,
+    requestedDescription3,
   };
 };
 
@@ -745,6 +749,7 @@ type Props = {
   showRequestedColumns?: boolean;
   tableLayout?: 'cust' | 'wCost' | 'wReq';
   hideTotals?: boolean;
+  initialSelectedOfferDetailIds?: number[];
 };
 
 export type OfferProductsPanelHandle = {
@@ -752,6 +757,7 @@ export type OfferProductsPanelHandle = {
   getTemplateExportRows: () => Promise<OfferProductsTemplateExportRow[]>;
   getAddInsertionAnchor: () => { offerDetailId: number; parentPath: number[] } | null;
   getSelectedOfferDetailIdsForPriceUpdate: () => number[];
+  getSelectedOfferDetailIds: () => number[];
 };
 
 export type OfferProductsTemplateExportRow = {
@@ -976,6 +982,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   showRequestedColumns = true,
   tableLayout = 'wReq',
   hideTotals = false,
+  initialSelectedOfferDetailIds,
 }: Props, ref) => {
   const router = useRouter();
   const { userId, roles } = useAuditUser();
@@ -1745,6 +1752,8 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     [determineRowHeight],
   );
 
+  const pendingInitialSelectionRestoreRef = useRef<(() => void) | null>(null);
+
   const handleGridModelUpdated = useCallback(() => {
     if (skipModelUpdateRef.current) {
       skipModelUpdateRef.current = false;
@@ -1755,6 +1764,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       return;
     }
     updateCategoryAncestors();
+    pendingInitialSelectionRestoreRef.current?.();
   }, [updateCategoryAncestors]);
 
   const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
@@ -3073,6 +3083,23 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   }, [assignRequestedRowToProduct, promoteNodeToCategory, promoteNodeToProduct, refreshOfferProductGrid, resolvedEndpoint]);
 
   const currentRequestedMatch = requestedMatchQueue[0] ?? null;
+  const matchAddProductInitialValues = useMemo<AddProductInitialValues | null>(() => {
+    if (!currentRequestedMatch) return null;
+    const descriptionParts = [
+      currentRequestedMatch.requestedDescription,
+      currentRequestedMatch.requestedDescription2,
+      currentRequestedMatch.requestedDescription3,
+    ]
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .filter((value) => value.length > 0);
+    return {
+      brandName: currentRequestedMatch.requestedBrand,
+      modelNumber: currentRequestedMatch.requestedModelNumber,
+      partNumber: currentRequestedMatch.requestedPartNumber,
+      description: descriptionParts.join('\n'),
+      weblink: currentRequestedMatch.requestedWebLink,
+    };
+  }, [currentRequestedMatch]);
   const openMatchAddProduct = useCallback(() => setMatchAddProductOpen(true), []);
   const closeMatchAddProduct = useCallback(() => setMatchAddProductOpen(false), []);
   const handleMatchProductAdded = useCallback((result?: { productId?: number | null }) => {
@@ -3294,6 +3321,63 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
   }, []);
 
+  const getSelectedOfferDetailIds = useCallback((): number[] => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return [];
+    try {
+      const selectedNodes = typeof api.getSelectedNodes === 'function'
+        ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
+        : [];
+      if (selectedNodes.length === 0) return [];
+      const ids = selectedNodes
+        .map((node) =>
+          normalizeOfferDetailId(
+            (node?.data as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null,
+          ),
+        )
+        .filter((id): id is number => id != null);
+      return Array.from(new Set(ids));
+    } catch {
+      return [];
+    }
+  }, []);
+
+  // Restore selection from initialSelectedOfferDetailIds after grid data loads
+  const initialSelectionRestoredRef = useRef(false);
+  const pendingInitialSelectionRef = useRef<number[] | null>(
+    initialSelectedOfferDetailIds?.length ? initialSelectedOfferDetailIds : null,
+  );
+
+  const tryRestoreInitialSelection = useCallback(() => {
+    if (initialSelectionRestoredRef.current) return;
+    const ids = pendingInitialSelectionRef.current;
+    if (!ids || ids.length === 0) return;
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    const idSet = new Set(ids);
+    let found = false;
+    api.forEachNode((node) => {
+      if (!node.data) return;
+      const offerDetailId = normalizeOfferDetailId(
+        (node.data as { OfferDetailID?: unknown }).OfferDetailID ?? null,
+      );
+      if (offerDetailId != null && idSet.has(offerDetailId)) {
+        node.setSelected(true);
+        found = true;
+      }
+    });
+    if (found) {
+      initialSelectionRestoredRef.current = true;
+      pendingInitialSelectionRef.current = null;
+      pendingInitialSelectionRestoreRef.current = null;
+    }
+  }, []);
+
+  // Wire up the restore function so handleGridModelUpdated can call it
+  pendingInitialSelectionRestoreRef.current = pendingInitialSelectionRef.current?.length
+    ? tryRestoreInitialSelection
+    : null;
+
   useImperativeHandle(
     ref,
     () => ({
@@ -3301,8 +3385,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       getTemplateExportRows,
       getAddInsertionAnchor,
       getSelectedOfferDetailIdsForPriceUpdate,
+      getSelectedOfferDetailIds,
     }),
-    [getAddInsertionAnchor, getSelectedOfferDetailIdsForPriceUpdate, getTemplateExportRows, populateOffer],
+    [getAddInsertionAnchor, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getTemplateExportRows, populateOffer],
   );
 
 
@@ -4259,6 +4344,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         open={matchAddProductOpen}
         onAdded={handleMatchProductAdded}
         onClose={closeMatchAddProduct}
+        initialValues={matchAddProductInitialValues}
       />
       <LookupModal
         open={brandBulkEditOpen}

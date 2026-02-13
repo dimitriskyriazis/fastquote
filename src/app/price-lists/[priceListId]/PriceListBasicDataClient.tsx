@@ -43,6 +43,15 @@ type Props = {
     customerDiscountPercentage: number | null;
   }>;
 };
+type LookupKey = 'brands' | 'countries' | 'cities' | 'suppliers' | 'currencies' | 'users';
+type PriceListLookupsPayload = {
+  brands?: PriceListDropdownOption[];
+  countries?: PriceListDropdownOption[];
+  cities?: PriceListDropdownOption[];
+  suppliers?: PriceListDropdownOption[];
+  currencies?: PriceListDropdownOption[];
+  users?: PriceListDropdownOption[];
+};
 
 type SectionKey = 'general' | 'validity' | 'associations' | 'settings';
 
@@ -242,11 +251,16 @@ export default function PriceListBasicDataClient({
 
   // Local state for brands and suppliers (can be updated when new items are created)
   const [localBrands, setLocalBrands] = useState(brands);
+  const [localCountries, setLocalCountries] = useState(countries);
+  const [localCities, setLocalCities] = useState(cities);
   const [localSuppliers, setLocalSuppliers] = useState(suppliers);
+  const [localCurrencies, setLocalCurrencies] = useState(currencies);
+  const [localUsers, setLocalUsers] = useState(users);
+  const lookupRefreshInFlightRef = useRef(new Set<LookupKey>());
 
   const fieldDefinitions = useMemo(
-    () => buildFieldDefinitions(localBrands, countries, localSuppliers, currencies, users),
-    [localBrands, countries, localSuppliers, currencies, users]
+    () => buildFieldDefinitions(localBrands, localCountries, localSuppliers, localCurrencies, localUsers),
+    [localBrands, localCountries, localSuppliers, localCurrencies, localUsers]
   );
 
   const editableFields = useMemo(
@@ -289,23 +303,68 @@ export default function PriceListBasicDataClient({
   }, [brands]);
 
   useEffect(() => {
+    setLocalCountries(countries);
+  }, [countries]);
+
+  useEffect(() => {
+    setLocalCities(cities);
+  }, [cities]);
+
+  useEffect(() => {
     setLocalSuppliers(suppliers);
   }, [suppliers]);
 
+  useEffect(() => {
+    setLocalCurrencies(currencies);
+  }, [currencies]);
+
+  useEffect(() => {
+    setLocalUsers(users);
+  }, [users]);
+
+  const refreshLookups = useCallback(async (keys: LookupKey[]) => {
+    const uniqueKeys = Array.from(new Set(keys));
+    const pendingKeys = uniqueKeys.filter((key) => !lookupRefreshInFlightRef.current.has(key));
+    if (pendingKeys.length === 0) return;
+    pendingKeys.forEach((key) => lookupRefreshInFlightRef.current.add(key));
+    try {
+      const search = new URLSearchParams();
+      pendingKeys.forEach((key) => search.append('keys', key));
+      const response = await fetch(`/api/price-lists/lookups?${search.toString()}`, { cache: 'no-store' });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; lookups?: PriceListLookupsPayload }
+        | null;
+      if (!response.ok || !payload?.ok || !payload.lookups) {
+        throw new Error(payload?.error ?? 'Unable to refresh lookup options');
+      }
+      if (payload.lookups.brands) setLocalBrands(payload.lookups.brands);
+      if (payload.lookups.countries) setLocalCountries(payload.lookups.countries);
+      if (payload.lookups.cities) setLocalCities(payload.lookups.cities);
+      if (payload.lookups.suppliers) setLocalSuppliers(payload.lookups.suppliers);
+      if (payload.lookups.currencies) setLocalCurrencies(payload.lookups.currencies);
+      if (payload.lookups.users) setLocalUsers(payload.lookups.users);
+    } catch (err) {
+      console.error(err);
+      showToastMessage('Unable to refresh latest dropdown values.', 'warning');
+    } finally {
+      pendingKeys.forEach((key) => lookupRefreshInFlightRef.current.delete(key));
+    }
+  }, []);
+
   const citiesForModal = useMemo(() =>
-    cities.map((city) => ({
+    localCities.map((city) => ({
       id: Number(city.value),
       name: city.label,
     })),
-    [cities]
+    [localCities]
   );
 
   const countriesForModal = useMemo(() =>
-    countries.map((country) => ({
+    localCountries.map((country) => ({
       id: Number(country.value),
       name: country.label,
     })),
-    [countries]
+    [localCountries]
   );
 
   const handleValueChange = useCallback((fieldId: string, value: string) => {
@@ -663,6 +722,32 @@ export default function PriceListBasicDataClient({
     [discountDrafts],
   );
 
+  const refreshFieldLookups = useCallback((fieldId: string) => {
+    if (fieldId === 'brand') {
+      void refreshLookups(['brands']);
+      return;
+    }
+    if (fieldId === 'supplier') {
+      void refreshLookups(['suppliers']);
+      return;
+    }
+    if (fieldId === 'country') {
+      void refreshLookups(['countries']);
+      return;
+    }
+    if (fieldId === 'currency') {
+      void refreshLookups(['currencies']);
+      return;
+    }
+    if (fieldId === 'responsibleUser') {
+      void refreshLookups(['users']);
+      return;
+    }
+    if (fieldId === 'enabled' || fieldId === 'hasDuty') {
+      return;
+    }
+  }, [refreshLookups]);
+
   const renderFieldControl = (def: FieldDefinition) => {
     const isEditable = Boolean(def.updateField && !def.readOnly);
     const controlId = `price-list-field-${def.id}`;
@@ -687,6 +772,8 @@ export default function PriceListBasicDataClient({
           name={def.id}
           className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
           value={value}
+          onMouseDown={() => refreshFieldLookups(def.id)}
+          onFocus={() => refreshFieldLookups(def.id)}
           onChange={(event) => handleValueChange(def.id, event.target.value)}
           onBlur={() => handleBlur(def)}
         >
@@ -712,6 +799,7 @@ export default function PriceListBasicDataClient({
             value={value}
             list={listId}
             placeholder={placeholder}
+            onFocus={() => refreshFieldLookups(def.id)}
             onChange={(event) => handleValueChange(def.id, event.target.value)}
             onBlur={() => handleBlur(def)}
           />

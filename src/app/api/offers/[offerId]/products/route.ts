@@ -31,7 +31,7 @@ const getDecimalType = () => {
 
 type TextFilterModel = {
   filterType: 'text';
-  type?: 'contains' | 'equals' | 'notEqual' | 'startsWith' | 'endsWith';
+  type?: 'contains' | 'equals' | 'notEqual' | 'startsWith' | 'endsWith' | 'blank' | 'notBlank';
   filter?: string;
 };
 
@@ -50,7 +50,9 @@ type NumberFilterModel = {
     | 'greaterThan'
     | 'lessThanOrEqual'
     | 'greaterThanOrEqual'
-    | 'inRange';
+    | 'inRange'
+    | 'blank'
+    | 'notBlank';
   filter?: number;
   filterTo?: number;
 };
@@ -431,6 +433,7 @@ type PricingSnapshot = {
 
 type PricingInput = PricingSnapshot & {
   provided: {
+    listPrice: boolean;
     customerDiscount: boolean;
     telmacoDiscount: boolean;
     netUnitPrice: boolean;
@@ -562,7 +565,7 @@ const resolvePricing = (input: PricingInput): ResolvedPricing | null => {
 
   for (const scenario of scenarios) {
     const missingRequired = scenario.required.some((field) => values[field] == null);
-    const hasUserInput = scenario.required.some((field) => providedMap[field]);
+    const hasUserInput = providedMap.listPrice || scenario.required.some((field) => providedMap[field]);
     if (missingRequired || !hasUserInput) continue;
     const resolved = computeScenario(
       scenario.key,
@@ -957,6 +960,12 @@ const partModelNumberSql = (expr: string) => {
   return `ISNULL(${expr}, '')`;
 };
 
+const buildBlankClause = (columnExpression: string): string =>
+  `(NULLIF(LTRIM(RTRIM(COALESCE(CAST(${columnExpression} AS NVARCHAR(MAX)), ''))), '') IS NULL)`;
+
+const buildNotBlankClause = (columnExpression: string): string =>
+  `(NULLIF(LTRIM(RTRIM(COALESCE(CAST(${columnExpression} AS NVARCHAR(MAX)), ''))), '') IS NOT NULL)`;
+
 function buildFilterClauses(filterModel: GridRequest['filterModel']) {
   if (!filterModel || Object.keys(filterModel).length === 0) {
     return { clauses: [] as string[], params: [] as QueryParam[] };
@@ -993,6 +1002,14 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
       case 'text': {
         const buildTextConditionClause = (condition: TextFilterModel, conditionParamBase: string) => {
           const type = condition.type;
+
+          if (type === 'blank') {
+            return { clause: buildBlankClause(columnExpression), params: [] as QueryParam[] };
+          }
+          if (type === 'notBlank') {
+            return { clause: buildNotBlankClause(columnExpression), params: [] as QueryParam[] };
+          }
+
           const value = String(condition.filter ?? '');
           if (!value) return { clause: '', params: [] as QueryParam[] };
 
@@ -1088,6 +1105,14 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
       case 'number': {
         const buildNumberConditionClause = (condition: NumberFilterModel, conditionParamBase: string) => {
           const type = condition.type;
+
+          if (type === 'blank') {
+            return { clause: buildBlankClause(columnExpression), params: [] as QueryParam[] };
+          }
+          if (type === 'notBlank') {
+            return { clause: buildNotBlankClause(columnExpression), params: [] as QueryParam[] };
+          }
+
           const val = condition.filter !== undefined ? Number(condition.filter) : Number.NaN;
           const valTo = condition.filterTo !== undefined ? Number(condition.filterTo) : undefined;
           if (Number.isNaN(val)) return { clause: '', params: [] as QueryParam[] };
@@ -1962,7 +1987,7 @@ export async function PATCH(
           ? entry.Quantity
           : normalizeQuantityValue(current.Quantity ?? null);
         const safeQuantity = quantity == null ? 0 : quantity;
-        const pricingProvided = entry.hasCustomerDiscount || entry.hasTelmacoDiscount
+        const pricingProvided = entry.hasListPrice || entry.hasCustomerDiscount || entry.hasTelmacoDiscount
           || entry.hasNetUnitPrice || entry.hasNetCost || entry.hasMargin || costFieldsProvided;
         const isCommentRow = Boolean(current.IsComment);
 
@@ -2021,6 +2046,7 @@ export async function PATCH(
                 ? entry.margin
                 : normalizePercentValue(current.Margin ?? null, { allowNegative: true }),
               provided: {
+                listPrice: entry.hasListPrice,
                 customerDiscount: entry.hasCustomerDiscount,
                 telmacoDiscount: entry.hasTelmacoDiscount,
                 netUnitPrice: entry.hasNetUnitPrice,

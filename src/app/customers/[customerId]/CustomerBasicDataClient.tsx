@@ -29,6 +29,21 @@ type Props = {
   countries: CustomerDropdownOption[];
   cities: CustomerCityOption[];
 };
+type LookupKey =
+  | 'customerGroups'
+  | 'parentCustomers'
+  | 'pricingPolicies'
+  | 'importanceOptions'
+  | 'countries'
+  | 'cities';
+type CustomerLookupsPayload = {
+  customerGroups?: CustomerDropdownOption[];
+  parentCustomers?: CustomerDropdownOption[];
+  pricingPolicies?: CustomerDropdownOption[];
+  importanceOptions?: CustomerDropdownOption[];
+  countries?: CustomerDropdownOption[];
+  cities?: CustomerCityOption[];
+};
 
 type SectionKey = 'general' | 'business' | 'location' | 'contact' | 'notes';
 
@@ -275,8 +290,13 @@ export default function CustomerBasicDataClient({
   countries,
   cities,
 }: Props) {
+  const [localCustomerGroups, setLocalCustomerGroups] = useState(customerGroups);
+  const [localParentCustomers, setLocalParentCustomers] = useState(parentCustomers);
+  const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
+  const [localImportanceOptions, setLocalImportanceOptions] = useState(importanceOptions);
   const [countryOptions, setCountryOptions] = useState(countries);
   const [cityOptions, setCityOptions] = useState(cities);
+  const lookupRefreshInFlightRef = useRef(new Set<LookupKey>());
   const [openComboField, setOpenComboField] = useState<string | null>(null);
   const [comboErrors, setComboErrors] = useState<Record<string, string | null>>({});
   const comboCloseTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | null>>({});
@@ -309,12 +329,63 @@ export default function CustomerBasicDataClient({
   );
 
   useEffect(() => {
+    setLocalCustomerGroups(customerGroups);
+  }, [customerGroups]);
+
+  useEffect(() => {
+    setLocalParentCustomers(parentCustomers);
+  }, [parentCustomers]);
+
+  useEffect(() => {
+    setLocalPricingPolicies(pricingPolicies);
+  }, [pricingPolicies]);
+
+  useEffect(() => {
+    setLocalImportanceOptions(importanceOptions);
+  }, [importanceOptions]);
+
+  useEffect(() => {
     setCountryOptions(countries);
   }, [countries]);
 
   useEffect(() => {
     setCityOptions(cities);
   }, [cities]);
+
+  const refreshLookups = useCallback(async (keys: LookupKey[]) => {
+    const uniqueKeys = Array.from(new Set(keys));
+    const pendingKeys = uniqueKeys.filter((key) => !lookupRefreshInFlightRef.current.has(key));
+    if (pendingKeys.length === 0) return;
+    pendingKeys.forEach((key) => lookupRefreshInFlightRef.current.add(key));
+    try {
+      const search = new URLSearchParams();
+      pendingKeys.forEach((key) => search.append('keys', key));
+      const response = await fetch(`/api/customers/lookups?${search.toString()}`, { cache: 'no-store' });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; lookups?: CustomerLookupsPayload }
+        | null;
+      if (!response.ok || !payload?.ok || !payload.lookups) {
+        throw new Error(payload?.error ?? 'Unable to refresh lookup options');
+      }
+      const ownCustomerId = Number.parseInt(customerId, 10);
+      if (payload.lookups.customerGroups) setLocalCustomerGroups(payload.lookups.customerGroups);
+      if (payload.lookups.parentCustomers) {
+        const nextParents = Number.isInteger(ownCustomerId) && ownCustomerId > 0
+          ? payload.lookups.parentCustomers.filter((option) => option.value !== String(ownCustomerId))
+          : payload.lookups.parentCustomers;
+        setLocalParentCustomers(nextParents);
+      }
+      if (payload.lookups.pricingPolicies) setLocalPricingPolicies(payload.lookups.pricingPolicies);
+      if (payload.lookups.importanceOptions) setLocalImportanceOptions(payload.lookups.importanceOptions);
+      if (payload.lookups.countries) setCountryOptions(payload.lookups.countries);
+      if (payload.lookups.cities) setCityOptions(payload.lookups.cities);
+    } catch (err) {
+      console.error(err);
+      showToastMessage('Unable to refresh latest dropdown values.', 'warning');
+    } finally {
+      pendingKeys.forEach((key) => lookupRefreshInFlightRef.current.delete(key));
+    }
+  }, [customerId]);
 
   const [isAddCountryOpen, setIsAddCountryOpen] = useState(false);
   const [newCountryName, setNewCountryName] = useState('');
@@ -331,13 +402,13 @@ export default function CustomerBasicDataClient({
   const fieldDefinitions = useMemo(
     () =>
       buildFieldDefinitions(
-        customerGroups,
-        parentCustomers,
-        pricingPolicies,
-        importanceOptions,
+        localCustomerGroups,
+        localParentCustomers,
+        localPricingPolicies,
+        localImportanceOptions,
         countryOptions,
       ),
-    [customerGroups, parentCustomers, pricingPolicies, importanceOptions, countryOptions],
+    [countryOptions, localCustomerGroups, localImportanceOptions, localParentCustomers, localPricingPolicies],
   );
 
   const editableFields = useMemo(
@@ -588,6 +659,32 @@ export default function CustomerBasicDataClient({
     ],
   );
 
+  const refreshFieldLookups = useCallback((fieldId: string) => {
+    if (fieldId === 'customerGroup') {
+      void refreshLookups(['customerGroups']);
+      return;
+    }
+    if (fieldId === 'parentCustomer') {
+      void refreshLookups(['parentCustomers']);
+      return;
+    }
+    if (fieldId === 'pricingPolicy') {
+      void refreshLookups(['pricingPolicies']);
+      return;
+    }
+    if (fieldId === 'importance') {
+      void refreshLookups(['importanceOptions']);
+      return;
+    }
+    if (fieldId === 'country') {
+      void refreshLookups(['countries']);
+      return;
+    }
+    if (fieldId === 'city') {
+      void refreshLookups(['cities']);
+    }
+  }, [refreshLookups]);
+
   const renderFieldControl = (def: FieldDefinition) => {
     const isEditable = Boolean(def.updateField && !def.readOnly);
     const controlId = `customer-field-${def.id}`;
@@ -640,6 +737,8 @@ export default function CustomerBasicDataClient({
             className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
             value={value}
             disabled={cityDisabled}
+            onMouseDown={() => refreshFieldLookups(def.id)}
+            onFocus={() => refreshFieldLookups(def.id)}
             onChange={(event) => handleValueChange(def.id, event.target.value)}
             onBlur={() => handleBlur(def)}
           >
@@ -714,6 +813,7 @@ export default function CustomerBasicDataClient({
             }}
             onFocus={(event) => {
               event.target.select();
+              refreshFieldLookups(def.id);
               setOpenComboField(def.id);
             }}
             onBlur={handleComboBlur}

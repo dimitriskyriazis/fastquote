@@ -16,6 +16,23 @@ import { normalizeValueForApi } from '../../lib/normalizeValueForApi';
 import { formatDateInputValue } from '../../lib/formatDateInputValue';
 
 type UserOption = OfferDropdownOption & { salesSeniorityName?: string | null };
+type LookupKey =
+  | 'customers'
+  | 'statuses'
+  | 'pricingPolicies'
+  | 'markets'
+  | 'salesDivisions'
+  | 'users'
+  | 'fwcProjects';
+type OfferLookupPayload = {
+  customers?: OfferDropdownOption[];
+  statuses?: OfferDropdownOption[];
+  pricingPolicies?: OfferDropdownOption[];
+  markets?: OfferDropdownOption[];
+  salesDivisions?: OfferDropdownOption[];
+  users?: UserOption[];
+  fwcProjects?: OfferDropdownOption[];
+};
 
 type Props = {
   offerId: string;
@@ -310,20 +327,87 @@ export default function OfferBasicDataClient({
   users,
   fwcProjects,
 }: Props) {
+  const [localCustomers, setLocalCustomers] = useState(customers);
+  const [localStatuses, setLocalStatuses] = useState(statuses);
+  const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
+  const [localMarkets, setLocalMarkets] = useState(markets);
+  const [localSalesDivisions, setLocalSalesDivisions] = useState(salesDivisions);
+  const [localUsers, setLocalUsers] = useState(users);
+  const [localFwcProjects, setLocalFwcProjects] = useState(fwcProjects);
+  const lookupRefreshInFlightRef = useRef(new Set<LookupKey>());
+
+  useEffect(() => {
+    setLocalCustomers(customers);
+  }, [customers]);
+
+  useEffect(() => {
+    setLocalStatuses(statuses);
+  }, [statuses]);
+
+  useEffect(() => {
+    setLocalPricingPolicies(pricingPolicies);
+  }, [pricingPolicies]);
+
+  useEffect(() => {
+    setLocalMarkets(markets);
+  }, [markets]);
+
+  useEffect(() => {
+    setLocalSalesDivisions(salesDivisions);
+  }, [salesDivisions]);
+
+  useEffect(() => {
+    setLocalUsers(users);
+  }, [users]);
+
+  useEffect(() => {
+    setLocalFwcProjects(fwcProjects);
+  }, [fwcProjects]);
+
+  const refreshLookups = useCallback(async (keys: LookupKey[]) => {
+    const uniqueKeys = Array.from(new Set(keys));
+    const pendingKeys = uniqueKeys.filter((key) => !lookupRefreshInFlightRef.current.has(key));
+    if (pendingKeys.length === 0) return;
+    pendingKeys.forEach((key) => lookupRefreshInFlightRef.current.add(key));
+    try {
+      const search = new URLSearchParams();
+      pendingKeys.forEach((key) => search.append('keys', key));
+      const response = await fetch(`/api/offers/lookups?${search.toString()}`, { cache: 'no-store' });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; lookups?: OfferLookupPayload }
+        | null;
+      if (!response.ok || !payload?.ok || !payload.lookups) {
+        throw new Error(payload?.error ?? 'Unable to refresh lookup options');
+      }
+      if (payload.lookups.customers) setLocalCustomers(payload.lookups.customers);
+      if (payload.lookups.statuses) setLocalStatuses(payload.lookups.statuses);
+      if (payload.lookups.pricingPolicies) setLocalPricingPolicies(payload.lookups.pricingPolicies);
+      if (payload.lookups.markets) setLocalMarkets(payload.lookups.markets);
+      if (payload.lookups.salesDivisions) setLocalSalesDivisions(payload.lookups.salesDivisions);
+      if (payload.lookups.users) setLocalUsers(payload.lookups.users);
+      if (payload.lookups.fwcProjects) setLocalFwcProjects(payload.lookups.fwcProjects);
+    } catch (err) {
+      console.error(err);
+      showToastMessage('Unable to refresh latest dropdown values.', 'warning');
+    } finally {
+      pendingKeys.forEach((key) => lookupRefreshInFlightRef.current.delete(key));
+    }
+  }, []);
+
   const salesUsers = useMemo(
     () =>
-      users.filter((user) =>
+      localUsers.filter((user) =>
         SALES_USER_SENIORITIES.has((user.salesSeniorityName ?? '').trim().toLowerCase()),
       ),
-    [users],
+    [localUsers],
   );
 
   const approvalUsers = useMemo(
     () =>
-      users.filter((user) =>
+      localUsers.filter((user) =>
         APPROVAL_USER_SENIORITIES.has((user.salesSeniorityName ?? '').trim().toLowerCase()),
       ),
-    [users],
+    [localUsers],
   );
 
   const [contactEntries, setContactEntries] = useState<OfferContactInfo[]>(contacts);
@@ -361,7 +445,7 @@ export default function OfferBasicDataClient({
   }, [contactEntries, includeInitialContactOption, record.ContactFullName, record.ContactID]);
 
   const fwcProjectOptions = useMemo(() => {
-    const options = [...fwcProjects];
+    const options = [...localFwcProjects];
     const selectedId = record.ERPFWCProjectID;
     if (
       selectedId != null &&
@@ -373,10 +457,10 @@ export default function OfferBasicDataClient({
       });
     }
     return options;
-  }, [fwcProjects, record.ERPFWCProjectID]);
+  }, [localFwcProjects, record.ERPFWCProjectID]);
 
   const customerOptions = useMemo(() => {
-    const options = [...customers];
+    const options = [...localCustomers];
     const selectedId = record.CustomerID;
     if (
       selectedId != null &&
@@ -388,10 +472,10 @@ export default function OfferBasicDataClient({
       });
     }
     return options;
-  }, [customers, record.CustomerID, record.CustomerName]);
+  }, [localCustomers, record.CustomerID, record.CustomerName]);
 
   const salesDivisionOptions = useMemo(() => {
-    const options = [...salesDivisions];
+    const options = [...localSalesDivisions];
     const selectedId = record.SalesDivisionID;
     if (
       selectedId != null &&
@@ -403,7 +487,7 @@ export default function OfferBasicDataClient({
       });
     }
     return options;
-  }, [record.SalesDivisionID, record.SalesDivisionName, salesDivisions]);
+  }, [localSalesDivisions, record.SalesDivisionID, record.SalesDivisionName]);
 
   useEffect(() => {
     const trimmedDescription = typeof record.Description === 'string'
@@ -429,9 +513,9 @@ export default function OfferBasicDataClient({
     () =>
       buildFieldDefinitions(
         customerOptions,
-        statuses,
-        pricingPolicies,
-        markets,
+        localStatuses,
+        localPricingPolicies,
+        localMarkets,
         salesDivisionOptions,
         salesUsers,
         approvalUsers,
@@ -440,9 +524,9 @@ export default function OfferBasicDataClient({
       ),
     [
       customerOptions,
-      statuses,
-      pricingPolicies,
-      markets,
+      localStatuses,
+      localPricingPolicies,
+      localMarkets,
       salesDivisionOptions,
       salesUsers,
       approvalUsers,
@@ -787,6 +871,64 @@ export default function OfferBasicDataClient({
     setValues((prev) => ({ ...prev, customer: selected.value }));
   }, [customerFieldDefinition, customerOptions, customerText, saveField]);
 
+  const refreshFieldLookups = useCallback((fieldId: string) => {
+    if (fieldId === 'customer') {
+      void refreshLookups(['customers']);
+      return;
+    }
+    if (fieldId === 'status') {
+      void refreshLookups(['statuses']);
+      return;
+    }
+    if (fieldId === 'pricingPolicy') {
+      void refreshLookups(['pricingPolicies']);
+      return;
+    }
+    if (fieldId === 'market') {
+      void refreshLookups(['markets']);
+      return;
+    }
+    if (fieldId === 'division') {
+      void refreshLookups(['salesDivisions']);
+      return;
+    }
+    if (fieldId === 'salesCreation' || fieldId === 'salesPersonId' || fieldId === 'approvalUserId') {
+      void refreshLookups(['users']);
+      return;
+    }
+    if (fieldId === 'erpFwcProjectId') {
+      void refreshLookups(['fwcProjects']);
+      return;
+    }
+    if (fieldId === 'contactId') {
+      const customerId =
+        normalizePositiveInteger(values.customer) ?? normalizePositiveInteger(record.CustomerID);
+      if (customerId == null) return;
+      const refreshToken = contactRefreshTokenRef.current + 1;
+      contactRefreshTokenRef.current = refreshToken;
+      setIsRefreshingContacts(true);
+      void fetchContactsByCustomer(customerId)
+        .then((nextContacts) => {
+          if (contactRefreshTokenRef.current === refreshToken) {
+            setContactEntries(nextContacts);
+            setIncludeInitialContactOption(false);
+          }
+        })
+        .catch((err) => {
+          if (contactRefreshTokenRef.current === refreshToken) {
+            setContactEntries([]);
+          }
+          console.error(err);
+          showToastMessage('Unable to refresh contacts.', 'warning');
+        })
+        .finally(() => {
+          if (contactRefreshTokenRef.current === refreshToken) {
+            setIsRefreshingContacts(false);
+          }
+        });
+    }
+  }, [fetchContactsByCustomer, record.CustomerID, refreshLookups, values.customer]);
+
   const renderLookupAddButton = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     (_: FieldDefinition) => null,
@@ -856,6 +998,7 @@ export default function OfferBasicDataClient({
             onBlur={handleCustomerBlur}
             onFocus={(event) => {
               event.target.select();
+              refreshFieldLookups('customer');
               setShowCustomerList(true);
             }}
           />
@@ -884,6 +1027,8 @@ export default function OfferBasicDataClient({
         name={def.id}
         className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
         value={valueMap[def.id] ?? ''}
+        onMouseDown={() => refreshFieldLookups(def.id)}
+        onFocus={() => refreshFieldLookups(def.id)}
         onChange={(event) => handleValueChange(def.id, event.target.value)}
         onBlur={() => handleBlur(def)}
       >
