@@ -94,6 +94,7 @@ const TWO_CONDITION_FILTER_PARAMS = {
 
 const PRICE_LIST_FIELD_LABELS: Record<string, string> = {
   Enabled: "Enabled",
+  ModelNumber: "Model Number",
 };
 
 const productHistoryMenuIcon = `
@@ -167,6 +168,14 @@ export default function PriceListProductsClient({
         filter: "agTextColumnFilter",
         filterParams: TWO_CONDITION_FILTER_PARAMS,
         width: 160,
+      },
+      {
+        field: "ModelNumber",
+        headerName: "Model Number",
+        filter: "agTextColumnFilter",
+        filterParams: TWO_CONDITION_FILTER_PARAMS,
+        width: 160,
+        editable: true,
       },
       {
         field: "ListPrice",
@@ -246,9 +255,11 @@ export default function PriceListProductsClient({
       }
       event.api.refreshCells({ force: true });
     };
-    const value = normalizeBoolean(
-      (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
-    );
+    const value = field === "Enabled"
+      ? normalizeBoolean(
+        (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
+      )
+      : event.newValue;
 
     const submit = async () => {
       try {

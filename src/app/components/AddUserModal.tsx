@@ -6,6 +6,13 @@ import lookupStyles from "./LookupModal.module.css";
 import { showToastMessage } from "../../lib/toast";
 
 const USER_CREATE_ENDPOINT = "/api/user-management";
+const DEFAULT_WINDOWS_USER_PREFIX = "TELMACO\\";
+const DEFAULT_EMAIL_DOMAIN = "@telmaco.gr";
+
+const buildEmailFromUserName = (value: string) => {
+  const trimmed = value.trim();
+  return trimmed ? `${trimmed}${DEFAULT_EMAIL_DOMAIN}` : "";
+};
 
 type CreateUserResponse = {
   ok?: boolean;
@@ -59,7 +66,7 @@ export default function AddUserModal({
   }, [salesSeniorityOrder, salesSeniorities]);
 
   const [userName, setUserName] = useState("");
-  const [windowsUserName, setWindowsUserName] = useState("");
+  const [windowsUserName, setWindowsUserName] = useState(DEFAULT_WINDOWS_USER_PREFIX);
   const [role, setRole] = useState("");
   const [fullName, setFullName] = useState("");
   const [fullNameGR, setFullNameGR] = useState("");
@@ -70,10 +77,18 @@ export default function AddUserModal({
   const [salesSeniority, setSalesSeniority] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [emailManuallyEdited, setEmailManuallyEdited] = useState(false);
+
+  const handleUserNameBlur = useCallback(() => {
+    if (!emailManuallyEdited || !email.trim()) {
+      setEmail(buildEmailFromUserName(userName));
+      setEmailManuallyEdited(false);
+    }
+  }, [email, emailManuallyEdited, userName]);
 
   const resetForm = useCallback(() => {
     setUserName("");
-    setWindowsUserName("");
+    setWindowsUserName(DEFAULT_WINDOWS_USER_PREFIX);
     setRole("");
     setFullName("");
     setFullNameGR("");
@@ -82,6 +97,7 @@ export default function AddUserModal({
     setNameCode("");
     setSalesDivision("");
     setSalesSeniority("");
+    setEmailManuallyEdited(false);
     setError(null);
   }, []);
 
@@ -183,6 +199,7 @@ export default function AddUserModal({
             value={userName}
             required
             onChange={(event) => setUserName(event.target.value)}
+            onBlur={handleUserNameBlur}
           />
         </div>
         <div className={lookupStyles.fieldHalf}>
@@ -224,7 +241,10 @@ export default function AddUserModal({
             id="user-email"
             className={lookupStyles.fieldControl}
             value={email}
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(event) => {
+              setEmail(event.target.value);
+              setEmailManuallyEdited(true);
+            }}
           />
         </div>
         <div className={lookupStyles.fieldHalf}>

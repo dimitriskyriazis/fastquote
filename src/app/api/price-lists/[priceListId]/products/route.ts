@@ -6,6 +6,7 @@ import { fetchUserRoles } from "../../../../../lib/authz";
 import { checkDeletePermission } from "../../../../../lib/deletePermissions";
 import { KnownFilterModel } from "../../../../../lib/filterTypes";
 import { processFilter } from "../../../../../lib/filterProcessing";
+import { clearPartModelNumberUpper } from "../../../../../lib/partModelNumber";
 
 type GridRequest = {
   startRow: number;
@@ -41,7 +42,7 @@ type PriceListProductUpdateInput = {
 
 type NormalizedPriceListProductUpdate = {
   priceListItemId: number;
-  field: "Enabled";
+  field: "Enabled" | "ModelNumber";
   value: unknown;
 };
 
@@ -63,6 +64,13 @@ const normalizeBooleanInput = (value: unknown): boolean => {
   if (value === true || value === "true" || value === 1 || value === "1") return true;
   if (value === false || value === "false" || value === 0 || value === "0") return false;
   return Boolean(value);
+};
+
+const normalizeModelNumberInput = (value: unknown): string | null => {
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  return text;
 };
 
 const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
@@ -258,8 +266,13 @@ export async function PATCH(
       .map((entry) => {
         const itemId = normalizePriceListItemId(entry?.PriceListItemID ?? null);
         const field = typeof entry?.field === "string" ? entry.field : null;
-        if (itemId == null || field !== "Enabled") return null;
-        return { priceListItemId: itemId, field: "Enabled", value: entry?.value };
+        if (itemId == null || (field !== "Enabled" && field !== "ModelNumber")) return null;
+        if (field === "Enabled") {
+          return { priceListItemId: itemId, field: "Enabled", value: entry?.value };
+        }
+        const normalizedValue = normalizeModelNumberInput(entry?.value);
+        if (normalizedValue != null && normalizedValue.length > 255) return null;
+        return { priceListItemId: itemId, field: "ModelNumber", value: normalizedValue };
       })
       .filter((entry): entry is NormalizedPriceListProductUpdate => entry != null);
 
@@ -273,15 +286,37 @@ export async function PATCH(
       const request = pool.request();
       request.input("__priceListId", sql.Int, idValue);
       request.input("__itemId", sql.Int, update.priceListItemId);
-      request.input("__enabled", sql.Bit, normalizeBooleanInput(update.value) ? 1 : 0);
       request.input("__modifiedBy", sql.NVarChar(450), auditUserId ?? null);
+      if (update.field === "Enabled") {
+        request.input("__enabled", sql.Bit, normalizeBooleanInput(update.value) ? 1 : 0);
+        await request.query(`
+          UPDATE dbo.PriceListItems
+          SET Enabled = @__enabled,
+            ModifiedOn = SYSUTCDATETIME(),
+            ModifiedBy = @__modifiedBy
+          WHERE ID = @__itemId
+            AND PriceListID = @__priceListId
+        `);
+        continue;
+      }
+
+      const modelNumber = normalizeModelNumberInput(update.value);
+      request.input("__modelNumber", sql.NVarChar(255), modelNumber);
+      request.input(
+        "__modelNumberCleared",
+        sql.NVarChar(255),
+        modelNumber ? clearPartModelNumberUpper(modelNumber) : null,
+      );
       await request.query(`
-        UPDATE dbo.PriceListItems
-        SET Enabled = @__enabled,
-          ModifiedOn = SYSUTCDATETIME(),
-          ModifiedBy = @__modifiedBy
-        WHERE ID = @__itemId
-          AND PriceListID = @__priceListId
+        UPDATE p
+        SET p.ModelNumber = @__modelNumber,
+          p.ModelNumberCleared = @__modelNumberCleared,
+          p.ModifiedOn = SYSUTCDATETIME(),
+          p.ModifiedBy = @__modifiedBy
+        FROM dbo.Products p
+        INNER JOIN dbo.PriceListItems pli ON pli.ProductID = p.ID
+        WHERE pli.ID = @__itemId
+          AND pli.PriceListID = @__priceListId
       `);
     }
 

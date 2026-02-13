@@ -47,6 +47,7 @@ const AgGridAll = dynamic<AgGridAllProps>(() => import('../../components/AgGridA
   ),
 });
 import { showToastMessage } from '../../../lib/toast';
+import { showConfirmDialog } from '../../../lib/confirm';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
@@ -1320,7 +1321,16 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   }, []);
 
   const updateCategoryAncestors = useCallback(() => {
-    const rows = serverRowsRef.current;
+    const api = gridApiRef.current;
+    const loadedRows: Record<string, unknown>[] = [];
+    if (api && !api.isDestroyed?.()) {
+      api.forEachNode((node) => {
+        if (node?.data) {
+          loadedRows.push(node.data as Record<string, unknown>);
+        }
+      });
+    }
+    const rows = loadedRows.length > 0 ? loadedRows : serverRowsRef.current;
     if (rows.length === 0) {
       setCategoryPathsWithChildren((prev) => (prev.size === 0 ? prev : new Set()));
       setCollapsedCategoryPaths((prev) => (prev.size === 0 ? prev : new Set()));
@@ -1357,14 +1367,12 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       }
     });
     setCategoryPathsWithChildren((prev) => {
-      if (next.size === 0) {
+      if (prev.size === next.size && Array.from(next).every((value) => prev.has(value))) {
         return prev;
       }
-      const merged = new Set(prev);
-      next.forEach((value) => merged.add(value));
-      return merged;
+      return next;
     });
-    setCategoryChildrenKnown((prev) => prev || next.size > 0);
+    setCategoryChildrenKnown(true);
   }, []);
 
   useEffect(() => {
@@ -3244,6 +3252,50 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     return payload.rows;
   }, [dataEndpoint]);
 
+  const fetchAllFilteredOfferDetailIds = useCallback(async (): Promise<number[]> => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) {
+      throw new Error('Grid is not ready yet.');
+    }
+    const filterModel = api.getFilterModel?.() ?? {};
+    const sortModel = api.getColumnState?.()
+      ?.filter((col) => col.sort === 'asc' || col.sort === 'desc')
+      .map((col) => ({ colId: col.colId, sort: col.sort as 'asc' | 'desc' })) ?? [];
+    const quickFilterText = typeof lastServerRequestRef.current?.quickFilterText === 'string'
+      ? lastServerRequestRef.current.quickFilterText
+      : null;
+    const request: Record<string, unknown> = {
+      startRow: 0,
+      endRow: 1000,
+      allRows: true,
+      filterModel,
+      sortModel,
+    };
+    if (quickFilterText && quickFilterText.trim().length > 0) {
+      request.quickFilterText = quickFilterText.trim();
+    }
+
+    const response = await fetch(dataEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        request,
+        fields: ['OfferDetailID'],
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | { ok?: boolean; error?: string; rows?: Array<Record<string, unknown>> }
+      | null;
+    if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
+      throw new Error(payload?.error ?? `Failed to load selected rows (status ${response.status})`);
+    }
+    return Array.from(new Set(
+      payload.rows
+        .map((row) => normalizeOfferDetailId((row as { OfferDetailID?: unknown })?.OfferDetailID ?? null))
+        .filter((id): id is number => id != null),
+    ));
+  }, [dataEndpoint]);
+
   const buildTemplateExportRows = useCallback((rows: OfferExportRow[]): OfferProductsTemplateExportRow[] => {
     const includedRows = rows.filter((row) => {
       const rowType = resolveOfferProductRowType(row as unknown as Record<string, unknown>);
@@ -3655,6 +3707,61 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       deleteIndexAfterHistory = findDeleteMenuItemIndex(items);
     }
 
+    if (isSelectAllActive) {
+      const deleteItemIndex = findDeleteMenuItemIndex(items);
+      if (deleteItemIndex >= 0) {
+        const existingDeleteItem = items[deleteItemIndex];
+        if (existingDeleteItem && typeof existingDeleteItem === 'object') {
+          const totalSelected = Math.max(lastRowCountRef.current ?? 0, 0);
+          const deleteCheck = checkDeletePermissionForClient(roles, Math.max(totalSelected, 1), 'generic', 'editOffers');
+          items[deleteItemIndex] = {
+            ...(existingDeleteItem as MenuItemDef),
+            name: 'Delete Products',
+            disabled: !deleteCheck.allowed,
+            tooltip: deleteCheck.allowed ? undefined : deleteCheck.reason,
+            action: async () => {
+              try {
+                const ids = await fetchAllFilteredOfferDetailIds();
+                if (ids.length === 0) {
+                  showToastMessage('No products selected for deletion.', 'info');
+                  return;
+                }
+                const countLabel = ids.length === 1 ? 'product' : 'products';
+                const confirmLabel = ids.length === 1 ? 'Delete product' : 'Delete products';
+                const keepLabel = ids.length === 1 ? 'Keep product' : 'Keep products';
+                const confirmed = await showConfirmDialog({
+                  title: confirmLabel,
+                  message: `Delete ${ids.length} ${countLabel}? This action cannot be undone.`,
+                  confirmLabel,
+                  cancelLabel: keepLabel,
+                  tone: 'danger',
+                });
+                if (!confirmed) return;
+
+                const res = await fetch(resolvedEndpoint, {
+                  method: 'DELETE',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ OfferDetailIDs: ids }),
+                });
+                const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+                if (!res.ok || !payload?.ok) {
+                  throw new Error(payload?.error ?? `Failed to delete rows (status ${res.status})`);
+                }
+                showToastMessage(ids.length === 1 ? 'Product deleted' : `${ids.length} products deleted`, 'success');
+                refreshOfferProductGrid(params.api ?? null, { purge: true });
+              } catch (err) {
+                console.error('Failed to delete selected products', err);
+                showToastMessage(
+                  err instanceof Error ? err.message : 'Unable to delete selected products. Please try again.',
+                  'error',
+                );
+              }
+            },
+          } as MenuItemDef;
+        }
+      }
+    }
+
     const offerDetailId = normalizeOfferDetailId((rowData as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null);
     const canMarkCategory = (
       offerDetailId != null
@@ -3778,6 +3885,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 
     return items;
   }, [
+    fetchAllFilteredOfferDetailIds,
+    refreshOfferProductGrid,
+    roles,
     productRowDeletion,
     router,
     offerId,
