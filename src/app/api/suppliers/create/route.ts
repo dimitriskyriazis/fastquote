@@ -14,7 +14,6 @@ const createSupplierSchema = z
     name: z.string().trim().min(1, "Name is required").max(255, "Name must be at most 255 characters"),
     taxId: stringSchema(128),
     address: stringSchema(500),
-    addressNo: stringSchema(50),
     cityId: intSchema,
     countryId: intSchema,
     postalCode: stringSchema(20),
@@ -47,7 +46,6 @@ export async function POST(req: NextRequest) {
     const name = body.name.trim();
     const taxId = body.taxId ?? null;
     const address = body.address ?? null;
-    const addressNo = body.addressNo ?? null;
     const cityId = body.cityId ?? null;
     const countryId = body.countryId ?? null;
     const postalCode = body.postalCode ?? null;
@@ -62,7 +60,6 @@ export async function POST(req: NextRequest) {
     request.input("Name", sql.NVarChar(255), name);
     request.input("TaxID", sql.NVarChar(128), taxId);
     request.input("Address", sql.NVarChar(500), address);
-    request.input("AddressNo", sql.NVarChar(50), addressNo);
     request.input("CityID", sql.Int, cityId);
     request.input("CountryID", sql.Int, countryId);
     request.input("PostalCode", sql.NVarChar(20), postalCode);
@@ -78,7 +75,6 @@ export async function POST(req: NextRequest) {
         [Name],
         [TaxID],
         [Address],
-        [AddressNo],
         [CityID],
         [CountryID],
         [PostalCode],
@@ -96,7 +92,6 @@ export async function POST(req: NextRequest) {
         @Name,
         @TaxID,
         @Address,
-        @AddressNo,
         @CityID,
         @CountryID,
         @PostalCode,

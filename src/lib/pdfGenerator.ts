@@ -636,11 +636,11 @@ function computeColumnWidths(selectedColumns: PdfProductColumn[], orientation: P
 }
 
 function lineNetAmount(row: OfferProductRow): number {
-  if (row.totalPrice != null && Number.isFinite(row.totalPrice)) return row.totalPrice;
+  if (row.totalNet != null && Number.isFinite(row.totalNet)) return row.totalNet;
   if (row.quantity != null && row.unitPrice != null && Number.isFinite(row.quantity) && Number.isFinite(row.unitPrice)) {
     return row.quantity * row.unitPrice;
   }
-  if (row.totalNet != null && Number.isFinite(row.totalNet)) return row.totalNet;
+  if (row.totalPrice != null && Number.isFinite(row.totalPrice)) return row.totalPrice;
   return 0;
 }
 
@@ -818,22 +818,18 @@ function buildItemsTable(
   };
 }
 
-function calculateDiscountSummary(data: OfferPdfData): { listSubtotal: number; discountEur: number; totalUnit: number } {
+function calculateDiscountSummary(data: OfferPdfData): { listSubtotal: number; discountEur: number; totalNet: number } {
   const detailRows = data.products.filter((p) => !p.isCategory);
 
   let listSubtotal = 0;
-  let totalUnit = 0;
+  let totalNet = 0;
 
   for (const row of detailRows) {
-    const qty = row.quantity ?? null;
     const lineTotal = lineNetAmount(row);
+    const qty = row.quantity ?? null;
 
-    // Net total should come from unit price * qty when available.
-    if (qty != null && row.unitPrice != null) {
-      totalUnit += row.unitPrice * qty;
-    } else {
-      totalUnit += lineTotal;
-    }
+    // Net summary should follow the same source as the line Total column.
+    totalNet += lineTotal;
 
     if (qty != null && row.listPrice != null) {
       listSubtotal += row.listPrice * qty;
@@ -848,10 +844,10 @@ function calculateDiscountSummary(data: OfferPdfData): { listSubtotal: number; d
     listSubtotal += lineTotal;
   }
 
-  if (listSubtotal <= 0) listSubtotal = totalUnit;
+  if (listSubtotal <= 0) listSubtotal = totalNet;
 
-  const discountEur = Math.max(0, listSubtotal - totalUnit);
-  return { listSubtotal, discountEur, totalUnit };
+  const discountEur = Math.max(0, listSubtotal - totalNet);
+  return { listSubtotal, discountEur, totalNet };
 }
 
 function buildTotalsAndTerms(
@@ -903,13 +899,13 @@ function buildTotalsAndTerms(
         ],
         [
           { text: L.total, bold: true, fontSize: 11.8, color: COLORS.primaryText },
-          { text: formatCurrency(discountSummary.totalUnit), bold: true, fontSize: 11.8, color: COLORS.primaryText, alignment: 'right' },
+          { text: formatCurrency(discountSummary.totalNet), bold: true, fontSize: 11.8, color: COLORS.primaryText, alignment: 'right' },
         ],
       ]
     : [
         [
           { text: L.total, bold: true, fontSize: 11.8, color: COLORS.primaryText },
-          { text: formatCurrency(discountSummary.totalUnit), bold: true, fontSize: 11.8, color: COLORS.primaryText, alignment: 'right' },
+          { text: formatCurrency(discountSummary.totalNet), bold: true, fontSize: 11.8, color: COLORS.primaryText, alignment: 'right' },
         ],
       ];
 

@@ -138,6 +138,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     const nextIndex = (creationCountersRef.current[action] ?? 0) + 1;
     const baseLabel = addActionDescriptionLabels[action] ?? 'New Entry';
     const description = `${baseLabel} (${nextIndex})`;
+    const insertionAnchor = offerProductsPanelRef.current?.getAddInsertionAnchor?.() ?? null;
     setPendingAction(action);
     try {
       const endpoint = `/api/offers/${encodeURIComponent(offerId)}/products`;
@@ -150,14 +151,47 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
           description,
         }),
       });
-      let payload: { ok?: boolean; error?: string } | null = null;
+      let payload: { ok?: boolean; error?: string; created?: { OfferDetailID?: number | string | null } | null } | null = null;
       try {
-        payload = (await res.json()) as { ok?: boolean; error?: string } | null;
+        payload = (await res.json()) as {
+          ok?: boolean;
+          error?: string;
+          created?: { OfferDetailID?: number | string | null } | null;
+        } | null;
       } catch {
         payload = null;
       }
       if (!res.ok || !payload?.ok) {
         throw new Error(payload?.error ?? `Failed to add row (status ${res.status})`);
+      }
+      const createdIdRaw = payload.created?.OfferDetailID ?? null;
+      const createdId = typeof createdIdRaw === 'number'
+        ? (Number.isFinite(createdIdRaw) ? Math.trunc(createdIdRaw) : null)
+        : typeof createdIdRaw === 'string'
+          ? (() => {
+              const parsed = Number.parseInt(createdIdRaw.trim(), 10);
+              return Number.isFinite(parsed) ? parsed : null;
+            })()
+          : null;
+      if (insertionAnchor && createdId != null) {
+        const reorderRes = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'reorder',
+            sourceId: createdId,
+            position: 'after',
+            beforeId: insertionAnchor.offerDetailId,
+            parentPath: insertionAnchor.parentPath,
+          }),
+        });
+        const reorderPayload = (await reorderRes.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!reorderRes.ok || !reorderPayload?.ok) {
+          showToastMessage(
+            `${baseLabel} was added, but could not be positioned below the selected row.`,
+            'error',
+          );
+        }
       }
       creationCountersRef.current[action] = nextIndex;
       setRefreshToken((prev) => prev + 1);

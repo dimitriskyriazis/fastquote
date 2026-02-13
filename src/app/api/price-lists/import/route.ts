@@ -7,6 +7,7 @@ import type { ConnectionPool } from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { requirePermission } from "../../../../lib/authz";
+import { clearPartModelNumberUpper } from "../../../../lib/partModelNumber";
 import {
   DEFAULT_PRICE_LIST_DECIMAL_FORMAT,
   normalizePriceListDecimalFormat,
@@ -202,6 +203,11 @@ const normalizeCellString = (value: unknown, maxLength = 1000): string | null =>
     return str.length > maxLength ? str.slice(0, maxLength) : str;
   }
   return null;
+};
+
+const toClearedPartModel = (value: string | null | undefined) => {
+  if (!value) return null;
+  return clearPartModelNumberUpper(value);
 };
 
 // Extract hyperlink URL from Excel cell if it exists
@@ -605,10 +611,14 @@ const createProduct = async (
   brandId: number,
   auditUserId: string | null,
 ) => {
+  const partNumberCleared = toClearedPartModel(row.partNumber);
+  const modelNumberCleared = toClearedPartModel(row.modelNumber);
   const request = createRequest(transaction);
   request.input("BrandID", sql.Int, brandId);
   request.input("PartNumber", sql.NVarChar(255), row.partNumber);
   request.input("ModelNumber", sql.NVarChar(255), row.modelNumber);
+  request.input("PartNumberCleared", sql.NVarChar(255), partNumberCleared);
+  request.input("ModelNumberCleared", sql.NVarChar(255), modelNumberCleared);
   request.input("Description", sql.NVarChar(2000), row.description);
   request.input("WebLink", sql.NVarChar(1000), row.weblink);
   request.input("CreatedBy", sql.NVarChar(450), auditUserId);
@@ -619,6 +629,8 @@ const createProduct = async (
       BrandID,
       PartNumber,
       ModelNumber,
+      PartNumberCleared,
+      ModelNumberCleared,
       Description,
       WebLink,
       Enabled,
@@ -632,6 +644,8 @@ const createProduct = async (
       @BrandID,
       @PartNumber,
       @ModelNumber,
+      @PartNumberCleared,
+      @ModelNumberCleared,
       @Description,
       @WebLink,
       1,

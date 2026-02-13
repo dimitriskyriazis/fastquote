@@ -4212,6 +4212,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             rowMultiSelectWithClick
             rowDeselection
             useAgGridRowDrag
+            serverSideHeaderSelectMode="all"
             suppressColumnVirtualisation={false}
             cacheBlockSize={20}
             rowBuffer={5}

@@ -236,6 +236,7 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
             paramKey: conditionParamBase,
             mode,
             enablePhonetic: !isSensitiveColumn(col),
+            enableFuzzy: false,
           });
         };
 

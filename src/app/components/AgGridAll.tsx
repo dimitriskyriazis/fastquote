@@ -561,6 +561,7 @@ type Props = {
   allowCellSelectionInPerformanceMode?: boolean;
   useAgGridRowDrag?: boolean;
   suppressSideBar?: boolean;
+  serverSideHeaderSelectMode?: 'loaded' | 'all';
 };
 
 type RowData = Record<string, unknown>;
@@ -1140,6 +1141,7 @@ export default function AgGridAll({
   allowCellSelectionInPerformanceMode = performanceMode === true,
   useAgGridRowDrag = false,
   suppressSideBar = false,
+  serverSideHeaderSelectMode = 'loaded',
 }: Props) {
   // Initialize editor focus management hooks
   useMutationCaret();
@@ -1726,6 +1728,7 @@ export default function AgGridAll({
   }, [clearDropIndicatorDom]);
 
   useEffect(() => {
+    if (serverSideHeaderSelectMode === 'all') return;
     // Wait for grid to be ready
     if (!isGridReady) return;
     
@@ -1869,7 +1872,7 @@ export default function AgGridAll({
         headerCheckbox.removeEventListener('click', handleCheckboxClick, true);
       }
     };
-  }, [isGridReady, onHeaderSelectAllChange]);
+  }, [isGridReady, onHeaderSelectAllChange, serverSideHeaderSelectMode]);
 
   // GLOBAL EVENT HANDLERS - Click, Keyboard, Paste
   useEffect(() => {

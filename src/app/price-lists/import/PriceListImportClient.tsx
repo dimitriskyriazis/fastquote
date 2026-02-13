@@ -317,8 +317,89 @@ const normalizeDate = (value: string) => {
 const normalizeHeaderText = (value: unknown): string | null => {
   if (typeof value !== "string" && typeof value !== "number") return null;
   const str = typeof value === "number" ? String(value) : value;
-  const normalized = str.trim().toLowerCase();
+  const normalized = str
+    .trim()
+    .toLowerCase()
+    .replace(/[\u00a0]+/g, " ")
+    .replace(/[|_/\\-]+/g, " ")
+    .replace(/\s+/g, " ");
   return normalized || null;
+};
+
+const normalizeHeaderCompact = (value: string) => value.replace(/[^\p{L}\p{N}]+/gu, "");
+
+const headerContainsKeyword = (header: string, keyword: string) => {
+  const normalizedKeyword = normalizeHeaderText(keyword);
+  if (!normalizedKeyword) return false;
+  if (header.includes(normalizedKeyword)) return true;
+  const compactHeader = normalizeHeaderCompact(header);
+  const compactKeyword = normalizeHeaderCompact(normalizedKeyword);
+  if (!compactKeyword) return false;
+  return compactHeader.includes(compactKeyword);
+};
+
+const LIST_PRICE_POSITIVE_HINTS = [
+  "list",
+  "msrp",
+  "rrp",
+  "retail",
+  "catalog",
+  "κατάλογ",
+  "καταλογ",
+  "λιαν",
+];
+
+const LIST_PRICE_NEGATIVE_HINTS = [
+  "discount",
+  "disc",
+  "net",
+  "offer",
+  "promo",
+  "special",
+];
+
+const scoreColumnForKey = (column: ColumnOption, key: HeaderColumnKey) => {
+  const keywords = columnKeywords[key].map((kw) => kw.toLowerCase());
+  const matchCount = keywords.reduce<number>(
+    (count, keyword) => (headerContainsKeyword(column.normalized, keyword) ? count + 1 : count),
+    0,
+  );
+  if (matchCount === 0) return -1;
+
+  let score = matchCount * 10;
+  if (key === "listPrice") {
+    const hasPositiveHint = LIST_PRICE_POSITIVE_HINTS.some((hint) =>
+      headerContainsKeyword(column.normalized, hint),
+    );
+    const hasNegativeHint = LIST_PRICE_NEGATIVE_HINTS.some((hint) =>
+      headerContainsKeyword(column.normalized, hint),
+    );
+    if (hasPositiveHint) score += 40;
+    if (hasNegativeHint && !hasPositiveHint) score -= 30;
+  }
+
+  return score;
+};
+
+const scoreHeaderRow = (row: unknown[]) => {
+  const normalizedCells = row
+    .map((cell) => normalizeHeaderText(cell))
+    .filter((value): value is string => Boolean(value));
+  if (normalizedCells.length === 0) return -1;
+
+  const matchedKeys = new Set<HeaderColumnKey>();
+  let keywordHits = 0;
+
+  normalizedCells.forEach((cell) => {
+    (Object.keys(columnKeywords) as HeaderColumnKey[]).forEach((key) => {
+      const matches = columnKeywords[key].some((keyword) => headerContainsKeyword(cell, keyword));
+      if (!matches) return;
+      keywordHits += 1;
+      matchedKeys.add(key);
+    });
+  });
+
+  return matchedKeys.size * 100 + keywordHits * 10 + normalizedCells.length;
 };
 
 const hasCellValue = (value: unknown) => {
@@ -337,11 +418,13 @@ const stringifyCellValue = (value: unknown): string => {
 const detectHeaderRowIndex = (rows: unknown[][]) => {
   let bestIdx = 0;
   let bestScore = -1;
-  const limit = Math.min(rows.length, 25);
+  const limit = Math.min(rows.length, 100);
   for (let idx = 0; idx < limit; idx += 1) {
     const row = rows[idx];
     if (!Array.isArray(row)) continue;
-    const score = row.reduce<number>((count, cell) => (hasCellValue(cell) ? count + 1 : count), 0);
+    const keywordScore = scoreHeaderRow(row);
+    const densityScore = row.reduce<number>((count, cell) => (hasCellValue(cell) ? count + 1 : count), 0);
+    const score = keywordScore >= 0 ? keywordScore : densityScore;
     if (score > bestScore) {
       bestScore = score;
       bestIdx = idx;
@@ -365,8 +448,14 @@ const buildColumns = (headerRow: unknown[]): ColumnOption[] =>
 
 const buildSuggestions = (columns: ColumnOption[]) => {
   const makeSuggestions = (key: HeaderColumnKey) => {
-    const keywords = columnKeywords[key].map((kw) => kw.toLowerCase());
-    return columns.filter((col) => keywords.some((kw) => col.normalized.includes(kw)));
+    return columns
+      .map((col) => ({ col, score: scoreColumnForKey(col, key) }))
+      .filter((entry) => entry.score >= 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.col.index - b.col.index;
+      })
+      .map((entry) => entry.col);
   };
 
   return {
@@ -405,10 +494,11 @@ const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: numbe
   // Auto-select suggested columns, but do not map the same source column twice.
   const selection = autoSelectUniqueSuggestions(suggestions);
   
-  const dataRows = rows.slice(headerRowIndex + 1, headerRowIndex + 501);
-  const rowCount = dataRows.filter((row) => Array.isArray(row) && row.some(hasCellValue)).length;
-  const previewRows = dataRows
-    .filter((row) => Array.isArray(row) && row.some(hasCellValue))
+  const nonEmptyDataRows = rows
+    .slice(headerRowIndex + 1)
+    .filter((row) => Array.isArray(row) && row.some(hasCellValue));
+  const rowCount = nonEmptyDataRows.length;
+  const previewRows = nonEmptyDataRows
     .slice(0, 3)
     .map((row) => {
       const preview: Record<number, string> = {};
@@ -527,7 +617,7 @@ const validateFileStructure = async (uploadFile: File): Promise<FileValidation> 
     return {
       ...INITIAL_VALIDATION,
       status: "invalid",
-      message: "Unable to read the file. Please upload a valid .xlsx, .xls, or .csv.",
+      message: "Unable to read the file. Please upload a valid .xlsx, .xlsm, .xls, or .csv.",
     };
   }
 };
@@ -1779,7 +1869,7 @@ export default function PriceListImportClient({
                 <input
                   autoComplete="off"
                   type="file"
-                  accept=".xlsx,.xls,.csv"
+                  accept=".xlsx,.xlsm,.xls,.csv"
                   className={styles.fileInput}
                   onChange={handleFileChange}
                 />
@@ -1793,7 +1883,7 @@ export default function PriceListImportClient({
                         Selected: <strong>{file.name}</strong>
                       </div>
                     ) : (
-                      <div className={styles.selectedFile}>Accepted: .xlsx, .xls, .csv</div>
+                      <div className={styles.selectedFile}>Accepted: .xlsx, .xlsm, .xls, .csv</div>
                     )}
                     <div
                       className={`${styles.validationStatus} ${

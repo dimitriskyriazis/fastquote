@@ -28,7 +28,6 @@ type SupplierRow = {
   Name: string | null;
   TaxID: string | null;
   Address: string | null;
-  AddressNo: string | null;
   City: string | null;
   Country: string | null;
   PostalCode: string | null;
@@ -45,7 +44,6 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Name: "dbo.Suppliers.Name",
   TaxID: "dbo.Suppliers.TaxID",
   Address: "dbo.Suppliers.Address",
-  AddressNo: "dbo.Suppliers.AddressNo",
   City: "dbo.Cities.Name",
   Country: "dbo.Countries.Name",
   PostalCode: "dbo.Suppliers.PostalCode",
@@ -209,7 +207,6 @@ export async function POST(req: NextRequest) {
         dbo.Suppliers.Name,
         dbo.Suppliers.TaxID,
         dbo.Suppliers.Address,
-        dbo.Suppliers.AddressNo,
         dbo.Cities.Name AS City,
         dbo.Countries.Name AS Country,
         dbo.Suppliers.PostalCode,
@@ -244,7 +241,6 @@ export async function POST(req: NextRequest) {
         Name: trimNullableText(rest.Name),
         TaxID: trimNullableText(rest.TaxID),
         Address: trimNullableText(rest.Address),
-        AddressNo: trimNullableText(rest.AddressNo),
         City: trimNullableText(rest.City),
         Country: trimNullableText(rest.Country),
         PostalCode: trimNullableText(rest.PostalCode),

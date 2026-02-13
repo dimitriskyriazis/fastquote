@@ -56,6 +56,7 @@ type GrandAggRow = {
 };
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
+  BrandName: "dbo.Brands.Name",
   Name: "dbo.Brands.Name",
   BrandID: "dbo.Brands.ID",
 };

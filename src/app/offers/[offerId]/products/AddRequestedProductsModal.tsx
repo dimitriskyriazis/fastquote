@@ -704,12 +704,12 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
                 autoComplete="off"
                 id="requested-products-file"
                 type="file"
-                accept=".xlsx,.xls,.csv"
+                accept=".xlsx,.xlsm,.xls,.csv"
                 className={styles.fileInput}
                 onChange={handleFileChange}
               />
               <div className={styles.uploadTitle}>{file ? 'Replace file' : 'Drop Excel file or click to browse'}</div>
-              <div className={styles.uploadSubtitle}>Supported formats: .xlsx, .xls, .csv</div>
+              <div className={styles.uploadSubtitle}>Supported formats: .xlsx, .xlsm, .xls, .csv</div>
               {file ? <div className={styles.selectedFile}>{file.name}</div> : null}
             </label>
             <div className={styles.statusCard}>
