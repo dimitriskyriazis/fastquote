@@ -666,7 +666,7 @@ const evaluateSelection = (sheets: SheetMapping[], activeSheetIndex: number) => 
   const status: FileValidation["status"] = validSheets.length > 0 ? "valid" : "invalid";
   const message =
     validSheets.length === 0
-      ? "Select columns for at least one enabled sheet (Part Number, List Price)."
+      ? "Select columns for at least one enabled sheet (Part Number and List Price)."
       : `Using ${validSheets.length} sheet${validSheets.length === 1 ? "" : "s"} with selected columns.`;
 
   const rowCount = validSheets.reduce((acc, sheet) => acc + sheet.rowCount, 0);
@@ -1463,7 +1463,7 @@ export default function PriceListImportClient({
     if (fileValidation.status === "invalid") {
       setError(
         fileValidation.message ??
-          "Please attach a file with Part Number, Name/Description, and List Price columns (Model Number optional).",
+          "Please attach a file with Part Number and List Price columns (Model Number optional).",
       );
       return;
     }
@@ -1473,7 +1473,6 @@ export default function PriceListImportClient({
       (sheet) =>
         sheet.enabled &&
         sheet.selection.partNumber != null &&
-        sheet.selection.description != null &&
         sheet.selection.listPrice != null,
     );
     if (!activeSheet || selectedSheets.length === 0) {
@@ -2007,7 +2006,7 @@ export default function PriceListImportClient({
                 <div className={styles.uploadText}>
                   <div className={styles.uploadTitle}>Drop your Excel file here</div>
                     <div className={styles.uploadSubtitle}>
-                      Required columns: Part Number, Name/Description, and List Price. Model Number, Cost Price and Warning are optional.
+                      Required columns: Part Number and List Price. Model Number, Name/Description, Cost Price and Warning are optional.
                     </div>
                     {file ? (
                       <div className={styles.selectedFile}>
@@ -2191,7 +2190,7 @@ export default function PriceListImportClient({
                                 </div>
                                 {previewColumns.length === 0 ? (
                                   <div className={styles.previewEmpty}>
-                                    Select columns for Part Number, Name/Description, and List Price to see a preview.
+                                    Select columns for Part Number and List Price to see a preview.
                                   </div>
                                 ) : activeSheet.previewRows.length === 0 ? (
                                   <div className={styles.previewEmpty}>

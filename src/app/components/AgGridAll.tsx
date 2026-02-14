@@ -1250,6 +1250,7 @@ export default function AgGridAll({
   const sortStateLoadedRef = useRef(false);
   const filterStateRestoringRef = useRef(false);
   const sortStateRestoringRef = useRef(false);
+  const pendingSortRefreshAfterRestoreRef = useRef(false);
   const pendingFilterWidthRestoreRef = useRef<Array<{ colId: string; width: number }> | null>(null);
   const firstDataRenderedRef = useRef(false);
   const [isGridReady, setIsGridReady] = useState(false);
@@ -1331,6 +1332,7 @@ export default function AgGridAll({
     sortStateLoadedRef.current = false;
     filterStateRestoringRef.current = false;
     sortStateRestoringRef.current = false;
+    pendingSortRefreshAfterRestoreRef.current = false;
   }
   const resolvedPerformanceMode = performanceMode !== false;
   const resolvedDisableAutoSize = disableAutoSize;
@@ -2120,10 +2122,15 @@ export default function AgGridAll({
 
   useEffect(() => {
     if (!quickSearchEnabled) return;
-    quickSearchFilterRef.current = resolvedQuickSearchValue.trim();
+    const trimmedQuickSearch = resolvedQuickSearchValue.trim();
+    quickSearchFilterRef.current = trimmedQuickSearch;
     if (!isGridReady) return;
     const api = gridApiRef.current ?? gridRef.current?.api ?? null;
     if (!api || api.isDestroyed?.()) return;
+    if (!quickSearchEffectInitializedRef.current && trimmedQuickSearch.length === 0) {
+      quickSearchEffectInitializedRef.current = true;
+      return;
+    }
     quickSearchRefreshRequestedRef.current = true;
 
     if (quickSearchRefreshTimerRef.current) {
@@ -2404,6 +2411,7 @@ export default function AgGridAll({
     }
     try {
       sortStateRestoringRef.current = true;
+      pendingSortRefreshAfterRestoreRef.current = true;
       // Use applyColumnState to set sort since setSortModel may not work with server-side row model
       api.applyColumnState({
         state: persisted.map((entry, index) => ({
@@ -2416,9 +2424,14 @@ export default function AgGridAll({
       // Defer clearing the restoring flag to ensure event handlers have completed
       setTimeout(() => {
         sortStateRestoringRef.current = false;
+        if (pendingSortRefreshAfterRestoreRef.current) {
+          pendingSortRefreshAfterRestoreRef.current = false;
+          refreshServerSideData(api, { purge: false });
+        }
       }, 0);
     } catch (err) {
       sortStateRestoringRef.current = false;
+      pendingSortRefreshAfterRestoreRef.current = false;
       console.warn('Failed to apply saved sort model', err);
     }
   }, [sortStateStorageKey, shouldPersistColumnState]);
@@ -3382,6 +3395,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 
     if (mutated) {
       event.api.setFilterModel(nextModel);
+      return;
     }
 
     // Persist filter model (skip during restoration)
@@ -3402,6 +3416,13 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
   }, []);
 
   const handleSortChanged = useCallback((event: SortChangedEvent<RowData>) => {
+    if (!firstDataRenderedRef.current) return;
+    const source = (event as SortChangedEvent<RowData> & { source?: string }).source;
+    if (source === 'api') return;
+    if (sortStateRestoringRef.current) {
+      pendingSortRefreshAfterRestoreRef.current = true;
+      return;
+    }
     // Keep rows visible for responsiveness while requesting the sorted data set from the server
     refreshServerSideData(event.api, { purge: false });
 

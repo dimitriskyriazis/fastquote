@@ -4,7 +4,7 @@ import { getPool } from "../../../../../lib/sql";
 import { buildAuditContext, resolveAuditUserId } from "../../../../../lib/auditTrail";
 import { fetchUserRoles } from "../../../../../lib/authz";
 import { checkDeletePermission } from "../../../../../lib/deletePermissions";
-import { KnownFilterModel } from "../../../../../lib/filterTypes";
+import { KnownFilterModel, TextCondition, isCompoundFilter } from "../../../../../lib/filterTypes";
 import { processFilter } from "../../../../../lib/filterProcessing";
 import { clearPartModelNumberUpper } from "../../../../../lib/partModelNumber";
 
@@ -73,6 +73,20 @@ const normalizeModelNumberInput = (value: unknown): string | null => {
   return text;
 };
 
+// Normalize part/model numbers by removing special characters and uppercasing.
+const normalizePartModelNumber = (value: string): string => clearPartModelNumberUpper(value);
+
+// Uses the existing PartNumberCleared and ModelNumberCleared columns for better performance.
+const partModelNumberSql = (expr: string) => {
+  if (expr.includes(".PartNumber")) {
+    return `UPPER(ISNULL(${expr.replace(".PartNumber", ".PartNumberCleared")}, ''))`;
+  }
+  if (expr.includes(".ModelNumber")) {
+    return `UPPER(ISNULL(${expr.replace(".ModelNumber", ".ModelNumberCleared")}, ''))`;
+  }
+  return `UPPER(ISNULL(${expr}, ''))`;
+};
+
 const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
   if (!filterModel || Object.keys(filterModel).length === 0) {
     return { where: "", params: [] as QueryParam[] };
@@ -85,6 +99,51 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
     const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
+    const isPartNumber = col === "PartNumber";
+    const isModelNumber = col === "ModelNumber";
+    const isPartOrModel = isPartNumber || isModelNumber;
+
+    // Match products page behavior: cleared + reverse-search for part/model single text condition.
+    if (isPartOrModel && fm.filterType === "text" && !isCompoundFilter(fm)) {
+      const typedFm = fm as TextCondition;
+      const type = typedFm.type;
+      const val = String(typedFm.filter ?? "");
+      if (!val) return;
+
+      const normalizedVal = normalizePartModelNumber(val);
+      const otherColumnExpression = isPartNumber
+        ? COLUMN_EXPRESSIONS.ModelNumber
+        : COLUMN_EXPRESSIONS.PartNumber;
+
+      if (type === "contains") {
+        parts.push(
+          `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase})`,
+        );
+        params.push({ key: pBase, value: `%${normalizedVal}%` });
+        return;
+      }
+      if (type === "equals") {
+        parts.push(
+          `(${partModelNumberSql(columnExpression)} = @${pBase} OR ${partModelNumberSql(otherColumnExpression)} = @${pBase})`,
+        );
+        params.push({ key: pBase, value: normalizedVal });
+        return;
+      }
+      if (type === "startsWith") {
+        parts.push(
+          `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase})`,
+        );
+        params.push({ key: pBase, value: `${normalizedVal}%` });
+        return;
+      }
+      if (type === "endsWith") {
+        parts.push(
+          `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase})`,
+        );
+        params.push({ key: pBase, value: `%${normalizedVal}` });
+        return;
+      }
+    }
 
     // Use centralized filter processor
     const result = processFilter(fm, {

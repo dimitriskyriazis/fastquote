@@ -97,10 +97,12 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [showRequestedModal, setShowRequestedModal] = useState(false);
   const [showAddProductFormModal, setShowAddProductFormModal] = useState(false);
   const [newProductId, setNewProductId] = useState<number | null>(null);
+  const [initialProductsViewportScrollTop, setInitialProductsViewportScrollTop] = useState<number | null>(null);
   const [tableLayout, setTableLayout] = useState<ProductsTableLayout>('wReq');
   const [pivotView, setPivotView] = useState(false);
   const [pivotLayout, setPivotLayout] = useState<PivotLayout>('brand');
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
+  const splitLeftRef = useRef<HTMLDivElement | null>(null);
   const layoutStorageKey = useMemo(() => buildLayoutStorageKey(userId), [userId]);
   const layoutLoadedRef = useRef<string | null>(null);
   const creationCountersRef = useRef<Record<CreatableActionType, number>>({
@@ -128,10 +130,27 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     }
   }, [layoutStorageKey, tableLayout]);
 
+  const [initialRequestedRowId, setInitialRequestedRowId] = useState<number | null>(null);
+  const pageRef = useRef<HTMLElement | null>(null);
+  const pendingPageScrollRestoreRef = useRef<{ pageScrollTop: number; windowScrollY: number } | null>(null);
+
   const handleAddAction = useCallback(async (action: AddActionType) => {
     if (action === 'product') {
       const ids = offerProductsPanelRef.current?.getSelectedOfferDetailIds?.() ?? [];
+      const requestedId = offerProductsPanelRef.current?.getSelectedRequestedOfferDetailId?.() ?? null;
       setSavedSelectionIds(ids);
+      setInitialRequestedRowId(requestedId);
+      setInitialProductsViewportScrollTop(
+        offerProductsPanelRef.current?.getViewportScrollTop?.() ?? 0,
+      );
+      const page = pageRef.current;
+      pendingPageScrollRestoreRef.current = {
+        pageScrollTop: page?.scrollTop ?? 0,
+        windowScrollY: typeof window !== 'undefined' ? window.scrollY : 0,
+      };
+      if (requestedId != null) {
+        setTableLayout('wReq');
+      }
       setShowAddProductModal(true);
       return;
     }
@@ -206,6 +225,58 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
       setPendingAction(null);
     }
   }, [offerId, pendingAction]);
+
+  useEffect(() => {
+    if (!showAddProductModal) return;
+    const snapshot = pendingPageScrollRestoreRef.current;
+    if (!snapshot) return;
+    pendingPageScrollRestoreRef.current = null;
+    const restore = () => {
+      const page = pageRef.current;
+      if (page) {
+        page.scrollTop = snapshot.pageScrollTop;
+      }
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: snapshot.windowScrollY, behavior: 'auto' });
+      }
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(restore);
+    });
+    const t1 = window.setTimeout(restore, 40);
+    const t2 = window.setTimeout(restore, 120);
+    const t3 = window.setTimeout(restore, 280);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.clearTimeout(t3);
+    };
+  }, [showAddProductModal]);
+
+  useEffect(() => {
+    if (!showAddProductModal) return;
+    if (initialProductsViewportScrollTop == null) return;
+    const restoreGridViewport = () => {
+      const host = splitLeftRef.current;
+      if (!host) return;
+      const viewport = host.querySelector<HTMLElement>('.ag-body-viewport, .ag-center-cols-viewport');
+      if (!viewport) return;
+      viewport.scrollTop = initialProductsViewportScrollTop;
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(restoreGridViewport);
+    });
+    const t1 = window.setTimeout(restoreGridViewport, 50);
+    const t2 = window.setTimeout(restoreGridViewport, 140);
+    const t3 = window.setTimeout(restoreGridViewport, 280);
+    const t4 = window.setTimeout(restoreGridViewport, 520);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.clearTimeout(t3);
+      window.clearTimeout(t4);
+    };
+  }, [initialProductsViewportScrollTop, showAddProductModal]);
 
   const manualToggleClass = manualMode
     ? `${toolbarStyles.manualToggle} ${toolbarStyles.manualToggleActive} page-header-button`
@@ -440,9 +511,9 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
           layout={pivotLayout}
           onExitPivot={() => setPivotView(false)}
         />
-      ) : showAddProductModal ? (
+      ) : (
         <div className={toolbarStyles.splitLayout}>
-          <div className={toolbarStyles.splitLeft}>
+          <div className={toolbarStyles.splitLeft} ref={splitLeftRef}>
             <OfferProductsPanel
               ref={offerProductsPanelRef}
               offerId={offerId}
@@ -450,35 +521,31 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
               refreshToken={refreshToken}
               showRequestedColumns={showRequestedColumns}
               tableLayout={tableLayout}
-              hideTotals
+              hideTotals={showAddProductModal}
               initialSelectedOfferDetailIds={savedSelectionIds}
+              initialViewportScrollTop={initialProductsViewportScrollTop}
             />
           </div>
-          <div className={toolbarStyles.splitRight}>
-            <AddProductsModal
-              offerId={offerId}
-              onAdded={handleProductsAdded}
-              onClose={handleCloseModal}
-              getInsertionAnchor={handleGetAddInsertionAnchor}
-              showRequestedColumns={showRequestedColumns}
-              splitViewMode
-              refreshToken={refreshToken}
-              onRequestAddProduct={handleOpenAddProductForm}
-              newProductId={newProductId}
-              onClearNewProductId={handleClearNewProductId}
-              onRequestPayloadConsumed={handleClearNewProductId}
-            />
-          </div>
+          {showAddProductModal ? (
+            <div className={toolbarStyles.splitRight}>
+              <AddProductsModal
+                offerId={offerId}
+                onAdded={handleProductsAdded}
+                onClose={handleCloseModal}
+                getInsertionAnchor={handleGetAddInsertionAnchor}
+                showRequestedColumns={showRequestedColumns}
+                splitViewMode
+                refreshToken={refreshToken}
+                onRequestAddProduct={handleOpenAddProductForm}
+                newProductId={newProductId}
+                onClearNewProductId={handleClearNewProductId}
+                onRequestPayloadConsumed={handleClearNewProductId}
+                initialRequestedRowId={initialRequestedRowId}
+                onInitialRequestedRowConsumed={() => setInitialRequestedRowId(null)}
+              />
+            </div>
+          ) : null}
         </div>
-      ) : (
-        <OfferProductsPanel
-          ref={offerProductsPanelRef}
-          offerId={offerId}
-          manualMode={manualMode}
-          refreshToken={refreshToken}
-          showRequestedColumns={showRequestedColumns}
-          tableLayout={tableLayout}
-        />
       )}
     </div>
   );
@@ -514,7 +581,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   );
 
   return (
-    <main className={layoutStyles.page}>
+    <main className={layoutStyles.page} ref={pageRef}>
       <PageHeader
         title={headingText}
         className={headerRowTopClassName}

@@ -518,6 +518,22 @@ export default function PriceListBasicDataClient({
       .filter((rule): rule is (typeof localPricingPolicyRules)[number] => Boolean(rule));
   }, [priceListPricingPolicies, rulesById]);
 
+  const selectedPolicySummary = useMemo(() => {
+    const seen = new Set<number>();
+    return priceListPricingPolicies
+      .filter((entry) => entry.pricingPolicyRuleId == null)
+      .map((entry) => {
+        const id = entry.pricingPolicyId;
+        if (!Number.isFinite(id) || seen.has(id)) return null;
+        seen.add(id);
+        return {
+          id,
+          name: entry.pricingPolicyName ?? pricingPolicyNameById.get(id) ?? `Policy ${id}`,
+        };
+      })
+      .filter((entry): entry is { id: number; name: string } => Boolean(entry));
+  }, [priceListPricingPolicies, pricingPolicyNameById]);
+
   useEffect(() => {
     if (!isRulePickerOpen) return;
     setRulePickerError(null);
@@ -913,16 +929,21 @@ export default function PriceListBasicDataClient({
         {sectionKey === 'settings' ? (
           <div className={styles.chipListWrapper}>
             <div className={styles.chipListHeading}>Pricing Policy Rules</div>
-            {selectedRuleSummary.length > 0 ? (
+            {selectedRuleSummary.length > 0 || selectedPolicySummary.length > 0 ? (
               <div className={styles.ruleSummaryList}>
                 {selectedRuleSummary.map((rule) => (
                   <span key={rule.id} className={styles.ruleSummaryItem}>
                     {rule.name ?? `Rule ${rule.id}`}
                   </span>
                 ))}
+                {selectedPolicySummary.map((policy) => (
+                  <span key={`policy-${policy.id}`} className={styles.ruleSummaryItem}>
+                    {policy.name}
+                  </span>
+                ))}
               </div>
             ) : (
-              <div className={styles.chipListEmpty}>No pricing policy rules selected.</div>
+              <div className={styles.chipListEmpty}>No pricing policies selected.</div>
             )}
             <span
               className={styles.tooltipWrapper}

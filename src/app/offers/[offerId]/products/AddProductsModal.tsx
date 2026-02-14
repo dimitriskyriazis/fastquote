@@ -22,6 +22,8 @@ type Props = {
   onClearNewProductId?: () => void;
   onRequestPayloadConsumed?: () => void;
   refreshToken?: number;
+  initialRequestedRowId?: number | null;
+  onInitialRequestedRowConsumed?: () => void;
 };
 
 type CategoryRow = {
@@ -152,6 +154,8 @@ export default function AddProductsModal({
   onClearNewProductId,
   onRequestPayloadConsumed,
   refreshToken,
+  initialRequestedRowId,
+  onInitialRequestedRowConsumed,
 }: Props) {
   const showRequestedItemNo = Boolean(showRequestedColumns);
   const [selectedCategory, setSelectedCategory] = useState<CategoryRow | null>(null);
@@ -167,6 +171,30 @@ export default function AddProductsModal({
   const requestedRowsCacheRef = useRef<Record<string, RequestedRow[]>>({});
   const pendingSelectionProductIdRef = useRef<number | null>(null);
   const categoryRowClickHandlerRef = useRef<((event: { node?: RowNode }) => void) | null>(null);
+  const requestedListRef = useRef<HTMLDivElement | null>(null);
+  const initialRequestedRowConsumedRef = useRef(false);
+  const categoryGridShellRef = useRef<HTMLDivElement | null>(null);
+  const categoryLastScrollTopRef = useRef(0);
+
+  const getCategoryViewport = useCallback((): HTMLElement | null => {
+    const root = categoryGridShellRef.current;
+    if (!root) return null;
+    return root.querySelector('.ag-body-viewport, .ag-center-cols-viewport');
+  }, []);
+  const restoreCategoryViewportScroll = useCallback((scrollTop: number) => {
+    categoryLastScrollTopRef.current = scrollTop;
+    if (scrollTop === 0) return;
+    const restore = () => {
+      const nextViewport = getCategoryViewport();
+      if (nextViewport) {
+        nextViewport.scrollTop = scrollTop;
+      }
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(restore);
+    });
+    window.setTimeout(restore, 40);
+  }, [getCategoryViewport]);
 
   const categoryRequestPayload = useMemo(() => ({ action: 'categories' }), []);
   const productRequestPayload = useMemo(() => {
@@ -176,8 +204,12 @@ export default function AddProductsModal({
   }, [newProductId]);
 
   const handleCategorySelection = useCallback((rows: CategoryRow[]) => {
+    const viewport = getCategoryViewport();
+    const scrollTop = viewport?.scrollTop ?? 0;
+    categoryLastScrollTopRef.current = scrollTop;
     setSelectedCategory(rows[0] ?? null);
-  }, []);
+    restoreCategoryViewportScroll(scrollTop);
+  }, [getCategoryViewport, restoreCategoryViewportScroll]);
 
   const handleProductSelection = useCallback((rows: ProductRow[]) => {
     setSelectedProducts(rows ?? []);
@@ -260,6 +292,29 @@ export default function AddProductsModal({
     void fetchRequestedRows(categoryId);
   }, [selectedCategory, fetchRequestedRows]);
 
+  // Auto-select and scroll to the initial requested row when requested rows finish loading
+  useEffect(() => {
+    if (initialRequestedRowConsumedRef.current) return;
+    if (initialRequestedRowId == null) return;
+    if (requestedRowsLoading) return;
+    if (requestedRows.length === 0) return;
+    const match = requestedRows.find((r) => r.OfferDetailID === initialRequestedRowId);
+    if (match) {
+      initialRequestedRowConsumedRef.current = true;
+      setSelectedRequestedRowId(match.OfferDetailID);
+      onInitialRequestedRowConsumed?.();
+      // Scroll to the matched item in the requested list
+      requestAnimationFrame(() => {
+        const container = requestedListRef.current;
+        if (!container) return;
+        const button = container.querySelector(`[data-requested-id="${match.OfferDetailID}"]`);
+        if (button) {
+          button.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      });
+    }
+  }, [initialRequestedRowId, requestedRows, requestedRowsLoading, onInitialRequestedRowConsumed]);
+
   const categoryColumns: ColDef[] = useMemo(
     () => [
       {
@@ -273,6 +328,7 @@ export default function AddProductsModal({
         field: 'Description',
         headerName: 'Category',
         filter: 'agTextColumnFilter',
+        width: 375,
       },
     ],
     [],
@@ -719,15 +775,20 @@ export default function AddProductsModal({
     const handler = existingHandler ?? ((event: { node?: RowNode }) => {
       const node = event?.node;
       if (!node) return;
+      const viewport = getCategoryViewport();
+      const scrollTop = viewport?.scrollTop ?? 0;
+      categoryLastScrollTopRef.current = scrollTop;
       if (node.isSelected()) {
         node.setSelected(false, true);
+        restoreCategoryViewportScroll(scrollTop);
         return;
       }
       node.setSelected(true, true);
+      restoreCategoryViewportScroll(scrollTop);
     });
     categoryRowClickHandlerRef.current = handler;
     api.addEventListener('rowClicked', handler as unknown as (event: unknown) => void);
-  }, []);
+  }, [getCategoryViewport, restoreCategoryViewportScroll]);
 
   useEffect(() => () => {
     const api = categoryApiRef.current;
@@ -742,6 +803,10 @@ export default function AddProductsModal({
     ensureProductSort();
     trySelectPendingProduct(api as ProductsGridApi);
   }, [ensureProductSort, trySelectPendingProduct]);
+
+  const handleCategoryGridModelUpdated = useCallback(() => {
+    restoreCategoryViewportScroll(categoryLastScrollTopRef.current);
+  }, [restoreCategoryViewportScroll]);
 
   const handleProductsGridModelUpdated = useCallback(() => {
     const api = productsApiRef.current;
@@ -804,7 +869,7 @@ export default function AddProductsModal({
         <div className={styles.body}>
           <section className={`${styles.section} ${styles.splitPane}`}>
             <div className={`${styles.sectionInner} ${styles.categoriesColumn}`}>
-              <div className={styles.categoryGridShell}>
+              <div className={styles.categoryGridShell} ref={categoryGridShellRef}>
                 <AgGridAll
                   endpoint={endpoint}
                   columnDefs={categoryColumns}
@@ -818,6 +883,7 @@ export default function AddProductsModal({
                   autoSizeExclusions={['Description']}
                   suppressSideBar
                   onGridReady={handleCategoryGridReady}
+                  onModelUpdated={handleCategoryGridModelUpdated}
                 />
               </div>
             <div 
@@ -831,7 +897,7 @@ export default function AddProductsModal({
                   <div className={styles.sectionTitle}>Requested Items</div>
                 </div>
               </div>
-              <div className={styles.requestedList}>
+              <div className={styles.requestedList} ref={requestedListRef}>
                 {requestedRowsLoading ? (
                   <div className={styles.requestedRowEmpty}>Loading requested rows…</div>
                 ) : requestedRowsError ? (
@@ -849,6 +915,7 @@ export default function AddProductsModal({
                       <button
                         type="button"
                         key={row.OfferDetailID}
+                        data-requested-id={row.OfferDetailID}
                         className={`${styles.requestedRow} ${isSelected ? styles.requestedRowSelected : ''}`}
                         aria-pressed={isSelected}
                         onClick={(e) => {
@@ -964,7 +1031,7 @@ export default function AddProductsModal({
         <div className={styles.body}>
           <section className={`${styles.section} ${styles.splitPane}`}>
             <div className={`${styles.sectionInner} ${styles.categoriesColumn}`}>
-              <div className={styles.categoryGridShell}>
+              <div className={styles.categoryGridShell} ref={categoryGridShellRef}>
                 <AgGridAll
                   endpoint={endpoint}
                   columnDefs={categoryColumns}
@@ -978,6 +1045,7 @@ export default function AddProductsModal({
                   autoSizeExclusions={['Description']}
                   suppressSideBar
                   onGridReady={handleCategoryGridReady}
+                  onModelUpdated={handleCategoryGridModelUpdated}
                 />
               </div>
             <div 
@@ -991,7 +1059,7 @@ export default function AddProductsModal({
                   <div className={styles.sectionTitle}>Requested Items</div>
                 </div>
               </div>
-              <div className={styles.requestedList}>
+              <div className={styles.requestedList} ref={requestedListRef}>
                 {requestedRowsLoading ? (
                   <div className={styles.requestedRowEmpty}>Loading requested rows…</div>
                 ) : requestedRowsError ? (
@@ -1009,6 +1077,7 @@ export default function AddProductsModal({
                       <button
                         type="button"
                         key={row.OfferDetailID}
+                        data-requested-id={row.OfferDetailID}
                         className={`${styles.requestedRow} ${isSelected ? styles.requestedRowSelected : ''}`}
                         aria-pressed={isSelected}
                         onClick={(e) => {

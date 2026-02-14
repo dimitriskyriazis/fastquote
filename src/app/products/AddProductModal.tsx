@@ -264,8 +264,8 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
     }
     const trimmedModelNumber = form.modelNumber.trim();
     const trimmedPartNumber = form.partNumber.trim();
-    if (!trimmedModelNumber && !trimmedPartNumber) {
-      setFormError('Please provide a part number or model number.');
+    if (!trimmedPartNumber) {
+      setFormError('Part number is required.');
       return;
     }
     setFormError(null);
@@ -307,7 +307,7 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
     }
   }, [form, onAdded, onClose]);
 
-  const isModelOrPartInvalid = formError === 'Please provide a part number or model number.';
+  const isPartNumberInvalid = formError === 'Part number is required.';
 
   const brandOptions = useMemo(() => lookups?.brands ?? [], [lookups]);
   const selectedBrand = useMemo(
@@ -473,25 +473,21 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
           <input
             id="product-model"
             className={lookupStyles.fieldControl}
-            aria-invalid={isModelOrPartInvalid}
             value={form.modelNumber}
             onChange={(event) => updateFormField('modelNumber', event.target.value)}
           />
         </div>
         <div className={`${lookupStyles.field} ${lookupStyles.fieldHalf}`}>
           <label className={lookupStyles.fieldLabel} htmlFor="product-part">
-            Part number
+            Part number <span className={lookupStyles.requiredMark}>*</span>
           </label>
           <input
             id="product-part"
             className={lookupStyles.fieldControl}
-            aria-invalid={isModelOrPartInvalid}
+            aria-invalid={isPartNumberInvalid}
             value={form.partNumber}
             onChange={(event) => updateFormField('partNumber', event.target.value)}
           />
-          <div className={lookupStyles.fieldHint}>
-            Provide either a model number or a part number.
-          </div>
         </div>
         <div className={`${lookupStyles.field} ${lookupStyles.fieldFull}`}>
           <DuplicateWarning warnings={duplicateWarnings} />

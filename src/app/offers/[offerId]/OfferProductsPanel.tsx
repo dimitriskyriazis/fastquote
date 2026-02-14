@@ -751,6 +751,7 @@ type Props = {
   tableLayout?: 'cust' | 'wCost' | 'wReq';
   hideTotals?: boolean;
   initialSelectedOfferDetailIds?: number[];
+  initialViewportScrollTop?: number | null;
 };
 
 export type OfferProductsPanelHandle = {
@@ -759,6 +760,8 @@ export type OfferProductsPanelHandle = {
   getAddInsertionAnchor: () => { offerDetailId: number; parentPath: number[] } | null;
   getSelectedOfferDetailIdsForPriceUpdate: () => number[];
   getSelectedOfferDetailIds: () => number[];
+  getSelectedRequestedOfferDetailId: () => number | null;
+  getViewportScrollTop: () => number;
 };
 
 export type OfferProductsTemplateExportRow = {
@@ -984,6 +987,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   tableLayout = 'wReq',
   hideTotals = false,
   initialSelectedOfferDetailIds,
+  initialViewportScrollTop = null,
 }: Props, ref) => {
   const router = useRouter();
   const { userId, roles } = useAuditUser();
@@ -1087,27 +1091,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       return { savedColumnOrder: [] as string[], savedHiddenMap: {} as Record<string, boolean> };
     }
   }, [columnStateNamespace, columnStateStorageKey, userId]);
-  useEffect(() => {
-    warmupFetchedRef.current = false;
-  }, [dataEndpoint]);
-  useEffect(() => {
-    if (warmupFetchedRef.current) return;
-    if (typeof window === 'undefined') return;
-    const warmup = async () => {
-      try {
-        await fetch(dataEndpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ request: { startRow: 0, endRow: 1 }, __warmup: true }),
-        });
-      } catch {
-        /* noop */
-      } finally {
-        warmupFetchedRef.current = true;
-      }
-    };
-    void warmup();
-  }, [dataEndpoint]);
   const addProductsEndpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
     [offerId],
@@ -1154,7 +1137,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   });
   const [requestedItemNoVisible, setRequestedItemNoVisible] = useState(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
-  const warmupFetchedRef = useRef(false);
+  const gridWrapperRef = useRef<HTMLDivElement | null>(null);
   const [requestedColumnsReady, setRequestedColumnsReadyFlag] = useState(false);
   const [requestedMatchQueue, setRequestedMatchQueue] = useState<RequestedProductMatchEntry[]>([]);
   const [processedRequestedMatches, setProcessedRequestedMatches] = useState(0);
@@ -1284,6 +1267,62 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     });
   }, []);
 
+  const reapplyRequestedColumnsVisibility = useCallback((options?: { defer?: boolean }) => {
+    if (!requestedColumnsReady) return;
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    const keys = REQUESTED_DISPLAY_FIELD_KEYS;
+    const forceShowRequestedColumns = showRequestedColumns && tableLayout === 'wReq';
+    const savedRequestedHidden = (key: string) => savedHiddenMap[key] === true;
+    const effectiveVisibility = showRequestedColumns
+      ? keys.reduce<Record<RequestedDisplayFieldKey, boolean>>((acc, key) => {
+        const baseVisible = requestedColumnVisibility[key];
+        acc[key] = forceShowRequestedColumns
+          ? Boolean(baseVisible)
+          : Boolean(baseVisible) && !savedRequestedHidden(key);
+        return acc;
+      }, {} as Record<RequestedDisplayFieldKey, boolean>)
+      : keys.reduce<Record<RequestedDisplayFieldKey, boolean>>((acc, key) => {
+        acc[key] = false;
+        return acc;
+      }, {} as Record<RequestedDisplayFieldKey, boolean>);
+    const effectiveItemNoVisible = showRequestedColumns
+      ? forceShowRequestedColumns
+        ? requestedItemNoVisible
+        : requestedItemNoVisible && !savedRequestedHidden('RequestedItemNo')
+      : false;
+
+    const state: Array<{ colId: string; hide: boolean }> = keys.map((key) => ({
+      colId: key,
+      hide: !effectiveVisibility[key],
+    }));
+    state.push({ colId: 'RequestedItemNo', hide: !effectiveItemNoVisible });
+    const applyState = () => {
+      const activeApi = gridApiRef.current;
+      if (!activeApi || activeApi.isDestroyed?.()) return;
+      try {
+        activeApi.applyColumnState({ state, applyOrder: false });
+      } catch {
+        /* noop */
+      }
+    };
+
+    applyState();
+    if (!options?.defer || typeof window === 'undefined') return;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        applyState();
+      });
+    });
+  }, [
+    requestedColumnsReady,
+    requestedColumnVisibility,
+    requestedItemNoVisible,
+    savedHiddenMap,
+    showRequestedColumns,
+    tableLayout,
+  ]);
+
   const defaultColDef = useMemo<ColDef>(() => ({
     editable: (params) => (
       isOfferProductProduct(params?.data ?? null)
@@ -1387,15 +1426,20 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       return acc;
     }, {} as Record<RequestedDisplayFieldKey, boolean>);
     const savedRequestedHidden = (key: string) => savedHiddenMap[key] === true;
+    const forceShowRequestedColumns = showRequestedColumns && tableLayout === 'wReq';
     const effectiveVisibility = showRequestedColumns
       ? keys.reduce<Record<RequestedDisplayFieldKey, boolean>>((acc, key) => {
         const baseVisible = requestedColumnVisibility[key];
-        acc[key] = Boolean(baseVisible) && !savedRequestedHidden(key);
+        acc[key] = forceShowRequestedColumns
+          ? Boolean(baseVisible)
+          : Boolean(baseVisible) && !savedRequestedHidden(key);
         return acc;
       }, {} as Record<RequestedDisplayFieldKey, boolean>)
       : forcedHiddenVisibility;
     const effectiveItemNoVisible = showRequestedColumns
-      ? requestedItemNoVisible && !savedRequestedHidden('RequestedItemNo')
+      ? forceShowRequestedColumns
+        ? requestedItemNoVisible
+        : requestedItemNoVisible && !savedRequestedHidden('RequestedItemNo')
       : false;
 
     const previousVisibility = appliedRequestedColumnVisibilityRef.current;
@@ -1407,15 +1451,24 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       return;
     }
 
-    try {
-      const state: Array<{ colId: string; hide: boolean }> = keys.map((key) => ({
-        colId: key,
-        hide: !effectiveVisibility[key],
-      }));
-      if (itemNoVisibilityChanged || visibilityChanged) {
-        state.push({ colId: 'RequestedItemNo', hide: !effectiveItemNoVisible });
+    const visibilityState: Array<{ colId: string; hide: boolean }> = keys.map((key) => ({
+      colId: key,
+      hide: !effectiveVisibility[key],
+    }));
+    visibilityState.push({ colId: 'RequestedItemNo', hide: !effectiveItemNoVisible });
+
+    const applyVisibilityState = () => {
+      const activeApi = gridApiRef.current;
+      if (!activeApi || activeApi.isDestroyed?.()) return;
+      try {
+        activeApi.applyColumnState({ state: visibilityState, applyOrder: false });
+      } catch {
+        /* noop */
       }
-      api.applyColumnState({ state, applyOrder: false });
+    };
+
+    try {
+      applyVisibilityState();
     } catch {
       /* noop */
     }
@@ -1454,6 +1507,20 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     appliedRequestedColumnVisibilityRef.current = { ...effectiveVisibility };
     appliedRequestedItemNoVisibleRef.current = effectiveItemNoVisible;
     appliedShowRequestedColumnsRef.current = showRequestedColumns;
+
+    if (typeof window === 'undefined') return;
+    const rafId = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        applyVisibilityState();
+      });
+    });
+    const timeoutId = window.setTimeout(() => {
+      applyVisibilityState();
+    }, 120);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutId);
+    };
   }, [
     captureColumnWidths,
     columnStateStorageKey,
@@ -1463,6 +1530,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     restoreColumnWidths,
     savedHiddenMap,
     showRequestedColumns,
+    tableLayout,
   ]);
 
   useEffect(() => {
@@ -1761,6 +1829,45 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   );
 
   const pendingInitialSelectionRestoreRef = useRef<(() => void) | null>(null);
+  const pendingInitialViewportScrollTopRef = useRef<number | null>(
+    typeof initialViewportScrollTop === 'number' ? initialViewportScrollTop : null,
+  );
+  const initialViewportScrollRestoredRef = useRef(false);
+
+  const getGridViewportElement = useCallback((): HTMLElement | null => {
+    const root = gridWrapperRef.current;
+    if (!root) return null;
+    return root.querySelector('.ag-body-viewport, .ag-center-cols-viewport');
+  }, []);
+
+  const tryRestoreInitialViewportScroll = useCallback(() => {
+    if (initialViewportScrollRestoredRef.current) return;
+    const scrollTop = pendingInitialViewportScrollTopRef.current;
+    if (typeof scrollTop !== 'number') return;
+    const viewport = getGridViewportElement();
+    if (!viewport) return;
+    const restore = () => {
+      const currentViewport = getGridViewportElement();
+      if (!currentViewport) return;
+      currentViewport.scrollTop = scrollTop;
+    };
+    requestAnimationFrame(() => requestAnimationFrame(restore));
+    window.setTimeout(restore, 60);
+    initialViewportScrollRestoredRef.current = true;
+    pendingInitialViewportScrollTopRef.current = null;
+  }, [getGridViewportElement]);
+
+  useEffect(() => {
+    pendingInitialViewportScrollTopRef.current = typeof initialViewportScrollTop === 'number'
+      ? initialViewportScrollTop
+      : null;
+    initialViewportScrollRestoredRef.current = false;
+  }, [initialViewportScrollTop]);
+
+  useEffect(() => {
+    if (!gridReadyApi || gridReadyApi.isDestroyed?.()) return;
+    tryRestoreInitialViewportScroll();
+  }, [gridReadyApi, tryRestoreInitialViewportScroll]);
 
   const handleGridModelUpdated = useCallback(() => {
     if (skipModelUpdateRef.current) {
@@ -1772,8 +1879,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       return;
     }
     updateCategoryAncestors();
+    reapplyRequestedColumnsVisibility({ defer: true });
     pendingInitialSelectionRestoreRef.current?.();
-  }, [updateCategoryAncestors]);
+    tryRestoreInitialViewportScroll();
+  }, [reapplyRequestedColumnsVisibility, tryRestoreInitialViewportScroll, updateCategoryAncestors]);
 
   const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!isOfferProductCategory(row)) return;
@@ -3394,6 +3503,28 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
   }, []);
 
+  const getSelectedRequestedOfferDetailId = useCallback((): number | null => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return null;
+    try {
+      const selectedNodes = typeof api.getSelectedNodes === 'function'
+        ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
+        : [];
+      if (selectedNodes.length !== 1) return null;
+      const row = selectedNodes[0]?.data ?? null;
+      if (!row || typeof row !== 'object') return null;
+      if (!hasRequestedRowData(row)) return null;
+      return normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const getViewportScrollTop = useCallback((): number => {
+    const viewport = getGridViewportElement();
+    return viewport?.scrollTop ?? 0;
+  }, [getGridViewportElement]);
+
   // Restore selection from initialSelectedOfferDetailIds after grid data loads
   const initialSelectionRestoredRef = useRef(false);
   const pendingInitialSelectionRef = useRef<number[] | null>(
@@ -3438,8 +3569,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       getAddInsertionAnchor,
       getSelectedOfferDetailIdsForPriceUpdate,
       getSelectedOfferDetailIds,
+      getSelectedRequestedOfferDetailId,
+      getViewportScrollTop,
     }),
-    [getAddInsertionAnchor, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getTemplateExportRows, populateOffer],
+    [getAddInsertionAnchor, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getTemplateExportRows, getViewportScrollTop, populateOffer],
   );
 
 
@@ -4378,7 +4511,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   return (
     <>
       <div className={styles.panel}>
-        <div className={`${styles.gridWrapper} offer-products-grid`}>
+        <div className={`${styles.gridWrapper} offer-products-grid`} ref={gridWrapperRef}>
           <AgGridAll
             endpoint={dataEndpoint}
             persistenceEndpoint={persistenceEndpoint}

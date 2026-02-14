@@ -635,6 +635,7 @@ const fetchProductsByKeys = async (
   pool: ConnectionPool,
   keys: readonly string[],
   columnName: "PartNumber" | "ModelNumber",
+  brandId: number,
 ) => {
   if (keys.length === 0) return [] as ProductRow[];
 
@@ -645,6 +646,7 @@ const fetchProductsByKeys = async (
   for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
     const chunk = chunks[chunkIdx];
     const request = pool.request();
+    request.input("brandId", sql.Int, brandId);
     const paramNames = chunk.map((val, idx) => {
       const param = `${columnName.toLowerCase()}_${chunkIdx}_${idx}`;
       request.input(param, sql.NVarChar(255), val);
@@ -654,7 +656,8 @@ const fetchProductsByKeys = async (
     const result = await request.query(`
       SELECT ID, PartNumber, ModelNumber, BrandID, Description
       FROM dbo.Products
-      WHERE ${columnExpression} IN (${paramNames.join(", ")})
+      WHERE BrandID = @brandId
+        AND ${columnExpression} IN (${paramNames.join(", ")})
     `);
     rows.push(...((result.recordset ?? []) as ProductRow[]));
   }
@@ -662,7 +665,7 @@ const fetchProductsByKeys = async (
   return rows;
 };
 
-const loadExistingProducts = async (pool: ConnectionPool, parsedRows: ParsedPriceListRow[]) => {
+const loadExistingProducts = async (pool: ConnectionPool, parsedRows: ParsedPriceListRow[], brandId: number) => {
   const partKeys = Array.from(
     new Set(
       parsedRows
@@ -681,8 +684,8 @@ const loadExistingProducts = async (pool: ConnectionPool, parsedRows: ParsedPric
   if (partKeys.length === 0 && modelKeys.length === 0) return [] as ProductRow[];
 
   const [partProducts, modelProducts] = await Promise.all([
-    fetchProductsByKeys(pool, partKeys, "PartNumber"),
-    fetchProductsByKeys(pool, modelKeys, "ModelNumber"),
+    fetchProductsByKeys(pool, partKeys, "PartNumber", brandId),
+    fetchProductsByKeys(pool, modelKeys, "ModelNumber", brandId),
   ]);
 
   const allProducts = [...partProducts, ...modelProducts];
@@ -955,7 +958,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const existingProducts = await loadExistingProducts(pool, parsedRows);
+    const existingProducts = await loadExistingProducts(pool, parsedRows, brandId!);
 
     const byPartNumber = new Map<string, ProductRow>();
     const byModelNumber = new Map<string, ProductRow>();
@@ -1113,12 +1116,19 @@ export async function POST(req: NextRequest) {
           productId = existingProduct?.ID ?? null;
           isExistingProduct = productId != null;
         } else if (modelKey && byModelNumber.has(modelKey)) {
-          existingProduct = byModelNumber.get(modelKey);
-          productId = existingProduct?.ID ?? null;
-          isExistingProduct = productId != null;
-        } else if (partKey && createdProducts.has(partKey)) {
+          const candidate = byModelNumber.get(modelKey);
+          const candidatePartKey = normalizeKey(candidate?.PartNumber);
+          // Don't match by model number if both have part numbers and they differ
+          if (!partKey || !candidatePartKey || partKey === candidatePartKey) {
+            existingProduct = candidate;
+            productId = existingProduct?.ID ?? null;
+            isExistingProduct = productId != null;
+          }
+        }
+
+        if (!productId && partKey && createdProducts.has(partKey)) {
           productId = createdProducts.get(partKey) ?? null;
-        } else if (modelKey && createdProducts.has(modelKey)) {
+        } else if (!productId && modelKey && createdProducts.has(modelKey)) {
           productId = createdProducts.get(modelKey) ?? null;
         }
 
