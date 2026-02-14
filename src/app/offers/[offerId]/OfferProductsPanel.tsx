@@ -1291,6 +1291,14 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         ? requestedItemNoVisible
         : requestedItemNoVisible && !savedRequestedHidden('RequestedItemNo')
       : false;
+    const previousVisibility = appliedRequestedColumnVisibilityRef.current;
+    const visibilityChanged = !previousVisibility
+      || appliedShowRequestedColumnsRef.current !== showRequestedColumns
+      || keys.some((key) => previousVisibility?.[key] !== effectiveVisibility[key]);
+    const itemNoVisibilityChanged = appliedRequestedItemNoVisibleRef.current !== effectiveItemNoVisible;
+    if (!visibilityChanged && !itemNoVisibilityChanged) {
+      return;
+    }
 
     const state: Array<{ colId: string; hide: boolean }> = keys.map((key) => ({
       colId: key,
@@ -1308,6 +1316,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     };
 
     applyState();
+    appliedRequestedColumnVisibilityRef.current = { ...effectiveVisibility };
+    appliedRequestedItemNoVisibleRef.current = effectiveItemNoVisible;
+    appliedShowRequestedColumnsRef.current = showRequestedColumns;
     if (!options?.defer || typeof window === 'undefined') return;
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
@@ -1413,6 +1424,20 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     });
     setCategoryChildrenKnown(true);
   }, []);
+  const categoryAncestorsUpdateQueuedRef = useRef(false);
+  const scheduleCategoryAncestorsUpdate = useCallback(() => {
+    if (categoryAncestorsUpdateQueuedRef.current) return;
+    categoryAncestorsUpdateQueuedRef.current = true;
+    if (typeof window === 'undefined') {
+      categoryAncestorsUpdateQueuedRef.current = false;
+      updateCategoryAncestors();
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      categoryAncestorsUpdateQueuedRef.current = false;
+      updateCategoryAncestors();
+    });
+  }, [updateCategoryAncestors]);
 
   useEffect(() => {
     if (!requestedColumnsReady) return;
@@ -1580,7 +1605,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       && (Boolean(response?.requestedColumns?.RequestedItemNo) || hasRequestedItemInRows);
     setRequestedItemNoVisible(shouldShowRequestedItemNo);
     const runHeavyUpdates = () => {
-      updateCategoryAncestors();
+      scheduleCategoryAncestorsUpdate();
     };
     const shouldDeferHeavy = hasRows && deferInitialHeavyWorkRef.current;
     if (shouldDeferHeavy && typeof window !== 'undefined') {
@@ -1592,7 +1617,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       deferInitialHeavyWorkRef.current = false;
       runHeavyUpdates();
     }
-  }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, updateCategoryAncestors]);
+  }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, scheduleCategoryAncestorsUpdate]);
 
   const handleServerRequest = useCallback((request: ServerRequestWithQuickFilter) => {
     lastRequestStartRef.current = performance.now();
@@ -1829,6 +1854,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   );
 
   const pendingInitialSelectionRestoreRef = useRef<(() => void) | null>(null);
+  const modelUpdateRafRef = useRef<number | null>(null);
   const pendingInitialViewportScrollTopRef = useRef<number | null>(
     typeof initialViewportScrollTop === 'number' ? initialViewportScrollTop : null,
   );
@@ -1869,6 +1895,14 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     tryRestoreInitialViewportScroll();
   }, [gridReadyApi, tryRestoreInitialViewportScroll]);
 
+  useEffect(() => () => {
+    if (typeof window === 'undefined') return;
+    if (modelUpdateRafRef.current != null) {
+      window.cancelAnimationFrame(modelUpdateRafRef.current);
+      modelUpdateRafRef.current = null;
+    }
+  }, []);
+
   const handleGridModelUpdated = useCallback(() => {
     if (skipModelUpdateRef.current) {
       skipModelUpdateRef.current = false;
@@ -1878,11 +1912,15 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     if (typeof skipUntil === 'number' && Date.now() <= skipUntil) {
       return;
     }
-    updateCategoryAncestors();
-    reapplyRequestedColumnsVisibility({ defer: true });
-    pendingInitialSelectionRestoreRef.current?.();
-    tryRestoreInitialViewportScroll();
-  }, [reapplyRequestedColumnsVisibility, tryRestoreInitialViewportScroll, updateCategoryAncestors]);
+    scheduleCategoryAncestorsUpdate();
+    if (modelUpdateRafRef.current != null || typeof window === 'undefined') return;
+    modelUpdateRafRef.current = window.requestAnimationFrame(() => {
+      modelUpdateRafRef.current = null;
+      reapplyRequestedColumnsVisibility({ defer: true });
+      pendingInitialSelectionRestoreRef.current?.();
+      tryRestoreInitialViewportScroll();
+    });
+  }, [reapplyRequestedColumnsVisibility, scheduleCategoryAncestorsUpdate, tryRestoreInitialViewportScroll]);
 
   const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!isOfferProductCategory(row)) return;
@@ -2833,10 +2871,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     truncateCellStyle,
   ]);
 
-  const refreshOfferProductGrid = useCallback((api: GridApi<Record<string, unknown>> | null, options?: { refresh?: boolean; purge?: boolean }) => {
+  const refreshOfferProductGrid = useCallback((api: GridApi<Record<string, unknown>> | null, options?: { refresh?: boolean; purge?: boolean; redraw?: boolean }) => {
     const targetApi = api ?? gridApiRef.current;
     if (!targetApi) return;
     const shouldRefresh = options?.refresh ?? true;
+    const shouldRedraw = options?.redraw ?? false;
     if (shouldRefresh && typeof targetApi.refreshServerSide === 'function') {
       const requestedPurge = options?.purge ?? false;
       if (pendingRefreshPurgeRef.current == null) {
@@ -2860,17 +2899,14 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         });
       }
     }
-    try {
-      targetApi.redrawRows();
-    } catch (err) {
-      console.warn('Failed to refresh category metadata after row deletion', err);
+    if (shouldRedraw) {
+      try {
+        targetApi.redrawRows();
+      } catch (err) {
+        console.warn('Failed to refresh category metadata after row deletion', err);
+      }
     }
   }, []);
-
-  useEffect(() => {
-    if (refreshToken === 0) return;
-    refreshOfferProductGrid(null, { refresh: false });
-  }, [refreshOfferProductGrid, refreshToken]);
 
   useEffect(() => {
     if (requestedMatchQueue.length === 0 && processedRequestedMatches !== 0) {
@@ -4543,7 +4579,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             serverSideHeaderSelectMode="all"
             suppressColumnVirtualisation={false}
             cacheBlockSize={20}
-            rowBuffer={5}
+            rowBuffer={3}
             maxBlocksInCache={2}
           />
         </div>

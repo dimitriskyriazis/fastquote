@@ -672,6 +672,7 @@ function buildItemsTable(
   orientation: PdfOrientation,
   selectedColumns: PdfProductColumn[],
 ) {
+  const showCategoryTotals = selectedColumns.includes('total');
   const categoryTotalsMap = buildCategoryTotalsMap(data.products);
   const numericCols = new Set<PdfProductColumn>(['qty', 'listPrice', 'totalList', 'discount', 'unitPrice', 'total']);
 
@@ -695,15 +696,21 @@ function buildItemsTable(
           : (fallbackAmount != null && Number.isFinite(fallbackAmount) ? fallbackAmount : null);
       const categoryAmount = categoryAmountValue != null ? formatCurrency(categoryAmountValue) : '';
 
+      const categoryColumns = showCategoryTotals
+        ? [
+            { width: '*', text: categoryText, bold: true, fontSize: 9.3, color: COLORS.primaryText },
+            { width: 'auto', text: categoryAmount, bold: true, fontSize: 9.3, color: COLORS.primaryText, alignment: 'right' },
+          ]
+        : [
+            { width: '*', text: categoryText, bold: true, fontSize: 9.3, color: COLORS.primaryText },
+          ];
+
       const categoryFirst = {
         colSpan: selectedColumns.length,
         fillColor: COLORS.categoryBg,
         border: [false, false, false, false],
         rowKind: 'category',
-        columns: [
-          { width: '*', text: categoryText, bold: true, fontSize: 9.3, color: COLORS.primaryText },
-          { width: 'auto', text: categoryAmount, bold: true, fontSize: 9.3, color: COLORS.primaryText, alignment: 'right' },
-        ],
+        columns: categoryColumns,
       };
 
       body.push([categoryFirst, ...Array.from({ length: Math.max(0, selectedColumns.length - 1) }, () => ({ text: '' }))]);

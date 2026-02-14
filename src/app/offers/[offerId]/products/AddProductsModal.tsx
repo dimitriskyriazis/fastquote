@@ -175,25 +175,26 @@ export default function AddProductsModal({
   const initialRequestedRowConsumedRef = useRef(false);
   const categoryGridShellRef = useRef<HTMLDivElement | null>(null);
   const categoryLastScrollTopRef = useRef(0);
+  const pendingCategoryScrollRestoreRef = useRef<number | null>(null);
 
   const getCategoryViewport = useCallback((): HTMLElement | null => {
     const root = categoryGridShellRef.current;
     if (!root) return null;
     return root.querySelector('.ag-body-viewport, .ag-center-cols-viewport');
   }, []);
-  const restoreCategoryViewportScroll = useCallback((scrollTop: number) => {
+  const queueCategoryViewportScrollRestore = useCallback((scrollTop: number) => {
     categoryLastScrollTopRef.current = scrollTop;
     if (scrollTop === 0) return;
-    const restore = () => {
-      const nextViewport = getCategoryViewport();
-      if (nextViewport) {
-        nextViewport.scrollTop = scrollTop;
-      }
-    };
-    requestAnimationFrame(() => {
-      requestAnimationFrame(restore);
-    });
-    window.setTimeout(restore, 40);
+    pendingCategoryScrollRestoreRef.current = scrollTop;
+  }, []);
+  const flushCategoryViewportScrollRestore = useCallback(() => {
+    const pending = pendingCategoryScrollRestoreRef.current;
+    if (pending == null) return;
+    pendingCategoryScrollRestoreRef.current = null;
+    const nextViewport = getCategoryViewport();
+    if (!nextViewport) return;
+    if (Math.abs(nextViewport.scrollTop - pending) <= 1) return;
+    nextViewport.scrollTop = pending;
   }, [getCategoryViewport]);
 
   const categoryRequestPayload = useMemo(() => ({ action: 'categories' }), []);
@@ -208,8 +209,8 @@ export default function AddProductsModal({
     const scrollTop = viewport?.scrollTop ?? 0;
     categoryLastScrollTopRef.current = scrollTop;
     setSelectedCategory(rows[0] ?? null);
-    restoreCategoryViewportScroll(scrollTop);
-  }, [getCategoryViewport, restoreCategoryViewportScroll]);
+    queueCategoryViewportScrollRestore(scrollTop);
+  }, [getCategoryViewport, queueCategoryViewportScrollRestore]);
 
   const handleProductSelection = useCallback((rows: ProductRow[]) => {
     setSelectedProducts(rows ?? []);
@@ -780,15 +781,15 @@ export default function AddProductsModal({
       categoryLastScrollTopRef.current = scrollTop;
       if (node.isSelected()) {
         node.setSelected(false, true);
-        restoreCategoryViewportScroll(scrollTop);
+        queueCategoryViewportScrollRestore(scrollTop);
         return;
       }
       node.setSelected(true, true);
-      restoreCategoryViewportScroll(scrollTop);
+      queueCategoryViewportScrollRestore(scrollTop);
     });
     categoryRowClickHandlerRef.current = handler;
     api.addEventListener('rowClicked', handler as unknown as (event: unknown) => void);
-  }, [getCategoryViewport, restoreCategoryViewportScroll]);
+  }, [getCategoryViewport, queueCategoryViewportScrollRestore]);
 
   useEffect(() => () => {
     const api = categoryApiRef.current;
@@ -805,8 +806,8 @@ export default function AddProductsModal({
   }, [ensureProductSort, trySelectPendingProduct]);
 
   const handleCategoryGridModelUpdated = useCallback(() => {
-    restoreCategoryViewportScroll(categoryLastScrollTopRef.current);
-  }, [restoreCategoryViewportScroll]);
+    flushCategoryViewportScrollRestore();
+  }, [flushCategoryViewportScrollRestore]);
 
   const handleProductsGridModelUpdated = useCallback(() => {
     const api = productsApiRef.current;
@@ -952,8 +953,8 @@ export default function AddProductsModal({
                   columnWidthDefaults={emptyColumnWidthDefaults}
                   requestPayload={productRequestPayload}
                   cacheBlockSize={200}
-                  rowBuffer={40}
-                  maxBlocksInCache={10}
+                  rowBuffer={8}
+                  maxBlocksInCache={4}
                   rowSelection="multiple"
                   rowMultiSelectWithClick
                   rowDeselection
@@ -1114,8 +1115,8 @@ export default function AddProductsModal({
                   columnWidthDefaults={emptyColumnWidthDefaults}
                   requestPayload={productRequestPayload}
                   cacheBlockSize={200}
-                  rowBuffer={40}
-                  maxBlocksInCache={10}
+                  rowBuffer={8}
+                  maxBlocksInCache={4}
                   rowSelection="multiple"
                   rowMultiSelectWithClick
                   rowDeselection

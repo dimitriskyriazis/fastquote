@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import PageHeader from '../../../components/PageHeader';
 import { GridQuickSearchProvider } from '../../../components/GridQuickSearchProvider';
@@ -12,10 +13,11 @@ import { useAuditUser } from '../../../components/AuditUserProvider';
 import layoutStyles from '../../offersDetail.module.css';
 import pageHeaderStyles from '../../../components/PageHeader.module.css';
 import toolbarStyles from './ClientProductsPage.module.css';
-import AddProductsModal from './AddProductsModal';
 import AddRequestedProductsModal from './AddRequestedProductsModal';
 import ExportOfferProductsModal from './ExportOfferProductsModal';
 import AddProductModal from '../../../products/AddProductModal';
+
+const AddProductsModal = dynamic(() => import('./AddProductsModal'), { ssr: false });
 type Props = {
   offerId: string;
   headingText: string;
