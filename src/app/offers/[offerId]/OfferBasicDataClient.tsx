@@ -629,7 +629,7 @@ export default function OfferBasicDataClient({
     if (params.size === 0) {
       params.set('contactName', activeContactName);
     }
-    const contactUrl = `/customer-contacts?${params.toString()}`;
+    const contactUrl = `/contacts?${params.toString()}`;
     window.open(contactUrl, '_blank', 'noopener,noreferrer');
   }, [activeContactName, activeContactNameParts.firstName, activeContactNameParts.lastName, activeCustomerId, hasContactNavigation]);
 

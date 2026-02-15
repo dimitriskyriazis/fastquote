@@ -746,18 +746,6 @@ export default function ContactsClient({
       <main className={styles.page}>
         <PageHeader
           title="Contacts"
-          leftActions={
-            <button
-              type="button"
-              className={`${styles.backLink} page-header-button`}
-              onClick={() => {
-                router.push("/customers");
-              }}
-            >
-              <span aria-hidden="true">←</span>
-              Back to customers
-            </button>
-          }
           rightActions={
             <div className={styles.headerActions}>
               <button

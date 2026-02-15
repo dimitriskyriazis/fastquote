@@ -44,11 +44,14 @@ const addActionDescriptionLabels: Record<CreatableActionType, string> = {
   'non-printable-comment': 'New Non Printable Comment',
 };
 
-const addActionButtons: Array<{ key: AddActionType; label: string }> = [
+const addPrimaryButtons: Array<{ key: 'product' | 'category'; label: string }> = [
   { key: 'product', label: addActionLabels.product },
   { key: 'category', label: addActionLabels.category },
-  { key: 'printable-comment', label: addActionLabels['printable-comment'] },
-  { key: 'non-printable-comment', label: addActionLabels['non-printable-comment'] },
+];
+
+const addCommentOptions: Array<{ key: 'printable-comment' | 'non-printable-comment'; label: string }> = [
+  { key: 'printable-comment', label: 'Printable' },
+  { key: 'non-printable-comment', label: 'Non Printable' },
 ];
 
 const buttonVariantClass: Record<AddActionType, string> = {
@@ -416,13 +419,6 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
           </button>
           <button
             type="button"
-            className={manualToggleClass}
-            onClick={() => setManualMode((prev) => !prev)}
-          >
-            Manual Mode
-          </button>
-          <button
-            type="button"
             className={`${toolbarStyles.button} ${toolbarStyles.buttonExport} page-header-button`}
             onClick={handleOpenExportModal}
           >
@@ -430,13 +426,6 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
           </button>
         </>
       )}
-      <button
-        type="button"
-        className={pivotToggleClass}
-        onClick={() => setPivotView((prev) => !prev)}
-      >
-        Pivot Mode
-      </button>
       <Link
         href={`/offers/${encodeURIComponent(offerId)}/basicdata`}
         className={`${layoutStyles.headerActionButton} page-header-button`}
@@ -450,7 +439,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
 
   const addButtonGroup = (
     <div className={toolbarStyles.addButtons}>
-      {addActionButtons.map((action) => {
+      {addPrimaryButtons.map((action) => {
         const disabled = pendingAction != null;
         const variantClass = buttonVariantClass[action.key];
         return (
@@ -465,6 +454,35 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
           </button>
         );
       })}
+      <details className={toolbarStyles.commentDropdown}>
+        <summary
+          className={`${toolbarStyles.button} ${toolbarStyles.buttonComment} page-header-button`}
+          aria-label="Add comment"
+        >
+          Add Comment
+        </summary>
+        <div className={toolbarStyles.commentMenu} role="menu" aria-label="Add comment options">
+          {addCommentOptions.map((option) => (
+            <button
+              type="button"
+              key={option.key}
+              className={
+                option.key === 'non-printable-comment'
+                  ? `${toolbarStyles.commentMenuItem} ${toolbarStyles.commentMenuItemNonPrintable}`
+                  : `${toolbarStyles.commentMenuItem} ${toolbarStyles.commentMenuItemPrintable}`
+              }
+              onClick={(event) => {
+                event.currentTarget.closest('details')?.removeAttribute('open');
+                void handleAddAction(option.key);
+              }}
+              disabled={pendingAction != null}
+              role="menuitem"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </details>
     </div>
   );
 
@@ -501,6 +519,15 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
       <option value="category">Layout: Category</option>
     </select>
   ) : null;
+  const pivotToggleButton = (
+    <button
+      type="button"
+      className={pivotToggleClass}
+      onClick={() => setPivotView((prev) => !prev)}
+    >
+      Pivot Mode
+    </button>
+  );
 
   const topLeftActions = (
     <div className={toolbarStyles.leftColumn}>
@@ -508,6 +535,16 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
         <span aria-hidden="true">←</span>
         Back to offers
       </Link>
+      {pivotView ? null : (
+        <button
+          type="button"
+          className={manualToggleClass}
+          onClick={() => setManualMode((prev) => !prev)}
+        >
+          Manual Mode
+        </button>
+      )}
+      {pivotView ? pivotToggleButton : null}
       {pivotLayoutSelect}
     </div>
   );
@@ -609,6 +646,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
                 <div className={toolbarStyles.leftRequestedRow}>
                   {addRequestedButton}
                   {layoutSelect}
+                  {pivotToggleButton}
                 </div>
               }
               rightActions={addButtonGroup}

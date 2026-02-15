@@ -419,15 +419,6 @@ export default function CustomersClient() {
               type="button"
               className={`${styles.headerButton} page-header-button`}
               onClick={() => {
-                router.push("/customer-contacts");
-              }}
-            >
-              View All Contacts
-            </button>
-            <button
-              type="button"
-              className={`${styles.headerButton} page-header-button`}
-              onClick={() => {
                 router.push("/customer-groups");
               }}
             >

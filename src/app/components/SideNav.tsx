@@ -147,6 +147,29 @@ const navItems: NavItem[] = [
     ),
   },
   {
+    label: "Contacts",
+    href: "/contacts",
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <circle cx="12" cy="8.1" r="2.5" stroke="currentColor" strokeWidth="1.6" fill="none" />
+        <path
+          d="M7.6 18.6c0-2.3 1.9-4.2 4.4-4.2s4.4 1.9 4.4 4.2"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          fill="none"
+          strokeLinecap="round"
+        />
+        <path
+          d="M2.5 3.2h19v17.6h-19z"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinejoin="round"
+          fill="none"
+        />
+      </svg>
+    ),
+  },
+  {
     label: "Suppliers",
     href: "/suppliers",
     icon: (

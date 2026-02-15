@@ -224,6 +224,73 @@
   border-color: rgba(127, 29, 29, 0.4);
 }
 
+.buttonComment {
+  background-color: #ffffff;
+  color: #0f172a;
+  border-color: rgba(15, 23, 42, 0.15);
+}
+
+.commentDropdown {
+  position: relative;
+}
+
+.commentDropdown > summary {
+  list-style: none;
+}
+
+.commentDropdown > summary::-webkit-details-marker {
+  display: none;
+}
+
+.commentMenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 168px;
+  padding: 6px;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+  z-index: 20;
+}
+
+.commentMenuItem {
+  appearance: none;
+  width: 100%;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 8px;
+  text-align: left;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.commentMenuItemPrintable {
+  background: #e0f2fe;
+  color: #0c4a6e;
+}
+
+.commentMenuItemNonPrintable {
+  background: #fee2e2;
+  color: #7f1d1d;
+}
+
+.commentMenuItemPrintable:hover {
+  background: #cfe9ff;
+}
+
+.commentMenuItemNonPrintable:hover {
+  background: #fecaca;
+}
+
+.commentMenuItem:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .manualToggle {
   border: 1px solid rgba(15, 23, 42, 0.15);
   background: #ffffff;
