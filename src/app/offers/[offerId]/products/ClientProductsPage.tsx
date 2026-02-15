@@ -16,6 +16,8 @@ import toolbarStyles from './ClientProductsPage.module.css';
 import AddRequestedProductsModal from './AddRequestedProductsModal';
 import ExportOfferProductsModal from './ExportOfferProductsModal';
 import AddProductModal from '../../../products/AddProductModal';
+import PasteProductsDialog from './PasteProductsDialog';
+import { readClipboard } from './productClipboard';
 
 const AddProductsModal = dynamic(() => import('./AddProductsModal'), { ssr: false });
 type Props = {
@@ -107,6 +109,8 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [tableLayout, setTableLayout] = useState<ProductsTableLayout>('wReq');
   const [pivotView, setPivotView] = useState(false);
   const [pivotLayout, setPivotLayout] = useState<PivotLayout>('brand');
+  const [showPasteDialog, setShowPasteDialog] = useState(false);
+  const [pasteAnchor, setPasteAnchor] = useState<{ offerDetailId: number; treeOrdering: string } | null>(null);
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
   const splitLeftRef = useRef<HTMLDivElement | null>(null);
   const layoutStorageKey = useMemo(() => buildLayoutStorageKey(userId), [userId]);
@@ -397,6 +401,56 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     return panel.getTemplateExportRows();
   }, []);
 
+  const handleRequestPaste = useCallback((anchorOfferDetailId: number, anchorTreeOrdering: string) => {
+    setPasteAnchor({ offerDetailId: anchorOfferDetailId, treeOrdering: anchorTreeOrdering });
+    setShowPasteDialog(true);
+  }, []);
+
+  const handlePasteProducts = useCallback(async (keepPricing: boolean) => {
+    const clipboard = readClipboard();
+    if (!clipboard || clipboard.rows.length === 0) {
+      showToastMessage('Clipboard is empty or expired.', 'error');
+      setShowPasteDialog(false);
+      return;
+    }
+    setShowPasteDialog(false);
+    try {
+      const response = await fetch(
+        `/api/offers/${encodeURIComponent(offerId)}/products/paste`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rows: clipboard.rows,
+            keepPricing,
+            sourceOfferId: clipboard.sourceOfferId,
+            anchorOfferDetailId: pasteAnchor?.offerDetailId ?? null,
+          }),
+        },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; inserted?: number }
+        | null;
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? 'Failed to paste products');
+      }
+      const insertedCount = typeof payload.inserted === 'number' ? payload.inserted : clipboard.rows.length;
+      showToastMessage(
+        `Pasted ${insertedCount} row(s) into this offer.`,
+        'success',
+      );
+      setRefreshToken((prev) => prev + 1);
+    } catch (err) {
+      console.error('Paste failed', err);
+      showToastMessage(
+        err instanceof Error ? err.message : 'Unable to paste rows.',
+        'error',
+      );
+    } finally {
+      setPasteAnchor(null);
+    }
+  }, [offerId, pasteAnchor]);
+
   const headerRightControls = (
     <div className={toolbarStyles.topControls}>
       {pivotView ? null : (
@@ -571,6 +625,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
               hideTotals={showAddProductModal}
               initialSelectedOfferDetailIds={savedSelectionIds}
               initialViewportScrollTop={initialProductsViewportScrollTop}
+              onRequestPaste={handleRequestPaste}
             />
           </div>
           {showAddProductModal ? (
@@ -611,6 +666,15 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
         <ExportOfferProductsModal
           onClose={handleCloseExportModal}
           onRequestRows={handleRequestTemplateExportRows}
+        />
+      ) : null}
+      {showPasteDialog ? (
+        <PasteProductsDialog
+          onConfirm={handlePasteProducts}
+          onCancel={() => {
+            setShowPasteDialog(false);
+            setPasteAnchor(null);
+          }}
         />
       ) : null}
       <AddProductModal

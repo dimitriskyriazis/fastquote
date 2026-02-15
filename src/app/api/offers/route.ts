@@ -222,7 +222,6 @@ function buildOrder(sortModel: GridRequest['sortModel']) {
 function buildVersionGroupedOrder(sortModel: GridRequest['sortModel']) {
   if (!sortModel || sortModel.length === 0) return '';
   const parts = sortModel.map(s => {
-    const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
     const alias = `__sort_${s.colId}`;
     return `[${alias}] ${s.sort.toUpperCase()}`;
   });

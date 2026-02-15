@@ -38,6 +38,14 @@ import {
   writePersistedColumnState,
 } from '../../components/AgGridAll';
 
+import {
+  writeClipboard,
+  isClipboardPopulated,
+  mapRowToClipboardRow,
+  enrichWithParentCategories,
+  type ProductClipboard,
+} from './products/productClipboard';
+
 const AgGridAll = dynamic<AgGridAllProps>(() => import('../../components/AgGridAll'), {
   ssr: false,
   loading: () => (
@@ -697,6 +705,27 @@ const brandBulkEditMenuIcon = `
   </span>
 `;
 
+const copyRowsMenuIcon = `
+  <span class="fastquote-menu-icon fastquote-menu-icon--copy" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <rect x="4" y="4" width="11" height="11" rx="2" />
+    </svg>
+  </span>
+`;
+
+const pasteRowsMenuIcon = `
+  <span class="fastquote-menu-icon" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 4h8" />
+      <rect x="6" y="2" width="12" height="4" rx="1.5" />
+      <path d="M6 8h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z" />
+      <path d="M12 12v6" />
+      <path d="M9 15h6" />
+    </svg>
+  </span>
+`;
+
 const productAccentCellClassRules = {
   'offer-products-grid__cell--product-accent': (params: { data?: Record<string, unknown> | null }) =>
     isOfferProductProduct(params.data),
@@ -753,6 +782,7 @@ type Props = {
   hideTotals?: boolean;
   initialSelectedOfferDetailIds?: number[];
   initialViewportScrollTop?: number | null;
+  onRequestPaste?: (anchorOfferDetailId: number, anchorTreeOrdering: string) => void;
 };
 
 export type OfferProductsPanelHandle = {
@@ -763,6 +793,8 @@ export type OfferProductsPanelHandle = {
   getSelectedOfferDetailIds: () => number[];
   getSelectedRequestedOfferDetailId: () => number | null;
   getViewportScrollTop: () => number;
+  getSelectedRowData: () => Array<Record<string, unknown>>;
+  getAllVisibleRowData: () => Array<Record<string, unknown>>;
 };
 
 export type OfferProductsTemplateExportRow = {
@@ -989,6 +1021,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   hideTotals = false,
   initialSelectedOfferDetailIds,
   initialViewportScrollTop = null,
+  onRequestPaste,
 }: Props, ref) => {
   const router = useRouter();
   const { userId, roles } = useAuditUser();
@@ -3540,6 +3573,35 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
   }, []);
 
+  const getSelectedRowData = useCallback((): Array<Record<string, unknown>> => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return [];
+    try {
+      const selectedNodes = typeof api.getSelectedNodes === 'function'
+        ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
+        : [];
+      return selectedNodes
+        .filter((node) => node.data != null)
+        .map((node) => node.data as Record<string, unknown>);
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const getAllVisibleRowData = useCallback((): Array<Record<string, unknown>> => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return [];
+    try {
+      const rows: Array<Record<string, unknown>> = [];
+      api.forEachNode((node: IRowNode<Record<string, unknown>>) => {
+        if (node.data) rows.push(node.data as Record<string, unknown>);
+      });
+      return rows;
+    } catch {
+      return [];
+    }
+  }, []);
+
   const getSelectedRequestedOfferDetailId = useCallback((): number | null => {
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return null;
@@ -3608,8 +3670,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       getSelectedOfferDetailIds,
       getSelectedRequestedOfferDetailId,
       getViewportScrollTop,
+      getSelectedRowData,
+      getAllVisibleRowData,
     }),
-    [getAddInsertionAnchor, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getTemplateExportRows, getViewportScrollTop, populateOffer],
+    [getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getTemplateExportRows, getViewportScrollTop, populateOffer],
   );
 
 
@@ -3786,6 +3850,87 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     if (!rowData) {
       return items;
     }
+
+    // Copy/Paste clipboard items (placed first in custom actions section)
+    const selectedNodesForCopy = api && typeof api.getSelectedNodes === 'function'
+      ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
+      : [];
+    const hasSelection = selectedNodesForCopy.length > 0;
+    const copyItem: MenuItemDef = {
+      name: 'Copy Rows',
+      icon: copyRowsMenuIcon,
+      disabled: !hasSelection,
+      tooltip: hasSelection ? undefined : 'Select rows to copy first',
+      action: () => {
+        const selectedData = selectedNodesForCopy
+          .filter((node) => node.data != null)
+          .map((node) => node.data as Record<string, unknown>);
+        if (selectedData.length === 0) {
+          showToastMessage('No rows selected to copy.', 'error');
+          return;
+        }
+        const clipboardRows = selectedData.map(mapRowToClipboardRow);
+        const allRows: Array<Record<string, unknown>> = [];
+        try {
+          api?.forEachNode?.((node: IRowNode<Record<string, unknown>>) => {
+            if (node.data) allRows.push(node.data as Record<string, unknown>);
+          });
+        } catch {
+          /* noop */
+        }
+        const enrichedRows = enrichWithParentCategories(clipboardRows, allRows);
+        enrichedRows.sort((a, b) =>
+          a.treeOrdering.localeCompare(b.treeOrdering, undefined, { numeric: true }),
+        );
+        const clipboard: ProductClipboard = {
+          sourceOfferId: offerId,
+          copiedAt: new Date().toISOString(),
+          rows: enrichedRows,
+        };
+        writeClipboard(clipboard);
+        showToastMessage(`Copied ${enrichedRows.length} row(s) to clipboard.`, 'success');
+      },
+    };
+    const clipboardItems: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> = [copyItem];
+    if (onRequestPaste && isClipboardPopulated()) {
+      const anchorId = normalizeOfferDetailId(
+        (rowData as { OfferDetailID?: unknown }).OfferDetailID ?? null,
+      );
+      const anchorTree = typeof (rowData as { TreeOrdering?: unknown }).TreeOrdering === 'string'
+        ? String((rowData as { TreeOrdering?: unknown }).TreeOrdering).trim()
+        : '';
+      const pasteItem: MenuItemDef = {
+        name: 'Paste Rows',
+        icon: pasteRowsMenuIcon,
+        action: () => {
+          if (anchorId != null && anchorTree && onRequestPaste) {
+            onRequestPaste(anchorId, anchorTree);
+          } else {
+            showToastMessage('Unable to determine paste position.', 'error');
+          }
+        },
+      };
+      clipboardItems.push(pasteItem);
+    }
+    if (clipboardItems.length > 0) {
+      const deleteIndexForClipboard = findDeleteMenuItemIndex(items);
+      if (deleteIndexForClipboard >= 0) {
+        items.splice(
+          deleteIndexForClipboard,
+          0,
+          'separator' as unknown as DefaultMenuItem,
+          ...clipboardItems,
+          'separator' as unknown as DefaultMenuItem,
+        );
+      } else {
+        items.push(
+          'separator' as unknown as DefaultMenuItem,
+          ...clipboardItems,
+          'separator' as unknown as DefaultMenuItem,
+        );
+      }
+    }
+
     const rawProductId = (rowData as { ProductID?: unknown }).ProductID;
     const parsedProductId =
       typeof rawProductId === 'number'
@@ -4072,6 +4217,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     promoteNodeToCategory,
     resolvedEndpoint,
     openBrandBulkEdit,
+    onRequestPaste,
   ]);
 
   const getCellEditorRawValue = (
