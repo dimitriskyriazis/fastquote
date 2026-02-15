@@ -187,6 +187,23 @@ const buildFieldDefinitions = (
     options: currencies,
   },
   {
+    id: 'costCurrency',
+    label: 'Cost Currency',
+    section: 'associations',
+    recordKey: 'CostCurrencyID',
+    updateField: 'CostCurrencyID',
+    valueType: 'number',
+    options: currencies,
+  },
+  {
+    id: 'currencyCostModifier',
+    label: 'Currency Cost Modifier',
+    section: 'associations',
+    recordKey: 'CurrencyCostModifier',
+    updateField: 'CurrencyCostModifier',
+    valueType: 'number',
+  },
+  {
     id: 'responsibleUser',
     label: 'Responsible User',
     section: 'associations',
@@ -751,7 +768,7 @@ export default function PriceListBasicDataClient({
       void refreshLookups(['countries']);
       return;
     }
-    if (fieldId === 'currency') {
+    if (fieldId === 'currency' || fieldId === 'costCurrency') {
       void refreshLookups(['currencies']);
       return;
     }

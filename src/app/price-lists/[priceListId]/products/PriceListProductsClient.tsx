@@ -40,6 +40,8 @@ type PriceListProductRowGrid = {
   ModelNumber?: string | null;
   ListPrice?: string | number | null;
   CostPrice?: string | number | null;
+  CostPriceOtherCurrency?: string | number | null;
+  CostCurrencyName?: string | null;
   Warning?: string | number | boolean | null;
   Enabled?: boolean | number | null;
   PriceListID?: number | null;
@@ -196,6 +198,22 @@ export default function PriceListProductsClient({
         width: 140,
       },
       {
+        field: "CostPriceOtherCurrency",
+        headerName: "Cost Price (Other Currency)",
+        filter: "agNumberColumnFilter",
+        filterParams: TWO_CONDITION_FILTER_PARAMS,
+        valueFormatter: (params) => {
+          const value = params?.value;
+          if (value == null || value === "") return "";
+          const num = typeof value === "number" ? value : Number(value);
+          if (!Number.isFinite(num)) return String(value);
+          const currencyName = (params.data as PriceListProductRowGrid | undefined)?.CostCurrencyName ?? "";
+          return `${currencyFormatter.format(num)} ${currencyName}`.trim();
+        },
+        type: "numericColumn",
+        width: 200,
+      },
+      {
         field: "Warning",
         headerName: "Warning",
         filter: "agTextColumnFilter",
@@ -224,6 +242,11 @@ export default function PriceListProductsClient({
           (params.data as Record<string, unknown>).Enabled = normalizeBoolean(params.newValue);
           return true;
         },
+      },
+      {
+        field: "CostCurrencyName",
+        hide: true,
+        suppressColumnsToolPanel: true,
       },
       {
         field: "PriceListID",

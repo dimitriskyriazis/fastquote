@@ -22,6 +22,8 @@ type PriceListProductRow = {
   Description: string | null;
   ListPrice: string | number | null;
   CostPrice: string | number | null;
+  CostPriceOtherCurrency: string | number | null;
+  CostCurrencyName: string | null;
   Warning: string | number | boolean | null;
   Enabled: boolean | number | null;
   PartNumber: string | null;
@@ -54,6 +56,8 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   // Display cost in EUR by applying the price list's currency cost modifier.
   // PriceListItems.CostPrice stores the supplier cost in the price list's cost currency.
   CostPrice: "(dbo.PriceListItems.CostPrice * COALESCE(pl.CurrencyCostModifier, 1))",
+  CostPriceOtherCurrency: "dbo.PriceListItems.CostPrice",
+  CostCurrencyName: "costCur.Name",
   Warning: "dbo.PriceListItems.Warning",
   Enabled: "dbo.PriceListItems.Enabled",
   PartNumber: "dbo.Products.PartNumber",
@@ -248,6 +252,8 @@ export async function POST(
         dbo.Products.ModelNumber,
         dbo.PriceListItems.ListPrice,
         (dbo.PriceListItems.CostPrice * COALESCE(pl.CurrencyCostModifier, 1)) AS CostPrice,
+        dbo.PriceListItems.CostPrice AS CostPriceOtherCurrency,
+        costCur.Name AS CostCurrencyName,
         dbo.PriceListItems.Warning,
         dbo.PriceListItems.Enabled,
         dbo.Products.PartNumber,
@@ -259,6 +265,7 @@ export async function POST(
       FROM dbo.PriceListItems
       INNER JOIN dbo.PriceLists pl ON dbo.PriceListItems.PriceListID = pl.ID
       INNER JOIN dbo.Products ON dbo.PriceListItems.ProductID = dbo.Products.ID
+      LEFT JOIN dbo.Currencies costCur ON pl.CostCurrencyID = costCur.ID
     `;
 
     const baseWhere = "WHERE dbo.PriceListItems.PriceListID = @__priceListId";

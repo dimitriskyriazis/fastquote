@@ -43,6 +43,9 @@ export async function fetchPriceListBasicRecord(priceListId: number) {
         s.Name AS SupplierName,
         pl.CurrencyId AS CurrencyId,
         cur.Name AS CurrencyName,
+        pl.CostCurrencyID AS CostCurrencyID,
+        costCur.Name AS CostCurrencyName,
+        pl.CurrencyCostModifier AS CurrencyCostModifier,
         pl.ResponsibleUserId,
         COALESCE(NULLIF(LTRIM(RTRIM(resp.FullName)), ''), resp.UserName) AS ResponsibleUserName,
         pl.HasDuty,
@@ -58,6 +61,7 @@ export async function fetchPriceListBasicRecord(priceListId: number) {
       LEFT JOIN dbo.Countries AS c ON pl.CountryId = c.ID
       LEFT JOIN dbo.Suppliers AS s ON pl.SupplierID = s.ID
       LEFT JOIN dbo.Currencies AS cur ON pl.CurrencyId = cur.ID
+      LEFT JOIN dbo.Currencies AS costCur ON pl.CostCurrencyID = costCur.ID
       LEFT JOIN dbo.AspNetUsers AS resp ON pl.ResponsibleUserId = resp.Id
       LEFT JOIN dbo.AspNetUsers AS modified ON pl.ModifiedBy = modified.Id
       WHERE pl.ID = @priceListId
