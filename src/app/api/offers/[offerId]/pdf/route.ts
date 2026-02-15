@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool } from '../../../../../lib/sql';
 import { requirePermission } from '../../../../../lib/authz';
-import { generateOfferPdf, type OfferPdfData, type OfferProductRow, type PdfLang, type PdfOrientation } from '../../../../../lib/pdfGenerator';
+import { generateOfferPdf, type OfferPdfData, type OfferProductRow, type PdfLang, type PdfOrientation, type PdfPrintSettings } from '../../../../../lib/pdfGenerator';
 import { parsePdfProductColumnsParam } from '../../../../../lib/pdfColumns';
 
 type OfferHeaderRow = {
@@ -78,6 +78,11 @@ export async function GET(
 
     const orientationParam = req.nextUrl.searchParams.get('orientation')?.toLowerCase();
     const orientation: PdfOrientation = orientationParam === 'landscape' ? 'landscape' : 'portrait';
+
+    const printProducts = req.nextUrl.searchParams.get('printProducts') === '1' ? 1 : 0;
+    const printCategories = req.nextUrl.searchParams.get('printCategories') === '1' ? 1 : 0;
+    const printSubCategories = req.nextUrl.searchParams.get('printSubCategories') === '1' ? 1 : 0;
+    const printSubSubCategories = req.nextUrl.searchParams.get('printSubSubCategories') === '1' ? 1 : 0;
 
     const pool = await getPool();
 
@@ -168,6 +173,31 @@ export async function GET(
         ), od.TreeOrdering, od.ID
       `);
 
+    // ── Compute and save print settings ────────────────────────────────
+    const noOfLevels = (productsResult.recordset ?? []).reduce((max, r) => {
+      if (!r.TreeOrdering) return max;
+      const depth = r.TreeOrdering.split('.').length;
+      return depth > max ? depth : max;
+    }, 0);
+
+    await pool
+      .request()
+      .input('offerId2', sql.Int, numericId)
+      .input('noOfLevels', sql.Int, noOfLevels)
+      .input('printProducts', sql.Bit, printProducts)
+      .input('printCategories', sql.Bit, printCategories)
+      .input('printSubCategories', sql.Bit, printSubCategories)
+      .input('printSubSubCategories', sql.Bit, printSubSubCategories)
+      .query(`
+        UPDATE dbo.Offer
+        SET NoOfLevels = @noOfLevels,
+            PrintProducts = @printProducts,
+            PrintCategories = @printCategories,
+            PrintSubCategories = @printSubCategories,
+            PrintSubSubCategories = @printSubSubCategories
+        WHERE ID = @offerId2
+      `);
+
     // ── Transform to OfferPdfData ──────────────────────────────────────
     const products: OfferProductRow[] = (productsResult.recordset ?? []).map((r) => ({
       treeOrdering: r.TreeOrdering,
@@ -236,7 +266,15 @@ export async function GET(
     };
 
     // ── Generate PDF ───────────────────────────────────────────────────
-    const buffer = await generateOfferPdf(pdfData, lang, orientation, productColumns);
+    const pdfPrintSettings: PdfPrintSettings = {
+      noOfLevels,
+      printProducts: !!printProducts,
+      printCategories: !!printCategories,
+      printSubCategories: !!printSubCategories,
+      printSubSubCategories: !!printSubSubCategories,
+    };
+
+    const buffer = await generateOfferPdf(pdfData, lang, orientation, productColumns, pdfPrintSettings);
 
     const customerSlug = (header.CustomerName ?? 'Offer')
       .replace(/[^a-zA-Z0-9\u0370-\u03FF\u0400-\u04FF _-]/g, '')

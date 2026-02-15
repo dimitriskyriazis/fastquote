@@ -2,6 +2,7 @@ import type { DropdownOption } from '../../../lib/dropdownOptions';
 
 export type OfferBasicRecord = {
   OfferID: number | null;
+  OfferVersion: number | null;
   CustomerID: number | null;
   SalesDivisionID: number | null;
   StatusID: number | null;

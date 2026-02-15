@@ -1,13 +1,14 @@
 "use client";
 
 import React, { useMemo, useCallback, useState, useRef, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type {
   ColDef,
   ICellRendererParams,
   GetContextMenuItemsParams,
   GridApi,
+  ColumnState,
   MenuItemDef,
   CellValueChangedEvent,
 } from 'ag-grid-community';
@@ -119,16 +120,23 @@ const normalizeProbability = (value: unknown): number | null => {
 
 export default function OffersClient() {
   const router = useRouter();
-  const { roles } = useAuditUser();
+  const pathname = usePathname();
+  const routerRef = useRef(router);
+  routerRef.current = router;
+  const { roles, userId } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
+  const pendingColumnStateRestoreRef = useRef<ColumnState[] | null>(null);
   const [expandedVersionGroups, setExpandedVersionGroups] = useState<Set<number>>(new Set());
+  const expandedVersionGroupsRef = useRef<Set<number>>(expandedVersionGroups);
+  expandedVersionGroupsRef.current = expandedVersionGroups;
   const [statusHistoryModalOpen, setStatusHistoryModalOpen] = useState(false);
   const [statusHistoryOfferId, setStatusHistoryOfferId] = useState<number | null>(null);
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
-    if (!api || defaultEnabledFilterAppliedRef.current) return;
+    if (!api) return;
     gridApiRef.current = api;
+    if (defaultEnabledFilterAppliedRef.current) return;
     const existingModel = api.getFilterModel() as Record<string, unknown> | null;
     const nextModel = existingModel && typeof existingModel === 'object' ? { ...existingModel } : {};
     if ('Enabled' in nextModel) {
@@ -142,10 +150,17 @@ export default function OffersClient() {
     defaultEnabledFilterAppliedRef.current = true;
   }, []);
   const handleCreateOfferClick = useCallback(() => {
-    router.push('/offers/create');
-  }, [router]);
+    routerRef.current.push('/offers/create');
+  }, []);
   const toggleVersionGroup = useCallback((groupId: number | null) => {
     if (!groupId) return;
+    const api = gridApiRef.current;
+    if (api && !api.isDestroyed?.() && typeof api.getColumnState === 'function') {
+      const columnState = api.getColumnState();
+      pendingColumnStateRestoreRef.current = Array.isArray(columnState) && columnState.length > 0
+        ? columnState.map((entry) => ({ ...entry }))
+        : null;
+    }
     setExpandedVersionGroups((prev) => {
       const next = new Set(prev);
       if (next.has(groupId)) {
@@ -161,11 +176,100 @@ export default function OffersClient() {
     [expandedVersionGroups],
   );
 
+  const restorePendingColumnState = useCallback((api: GridApi<Record<string, unknown>> | null) => {
+    if (!api || api.isDestroyed?.()) return;
+    const state = pendingColumnStateRestoreRef.current;
+    if (!state || state.length === 0) return;
+    try {
+      api.applyColumnState({
+        state,
+        applyOrder: true,
+      });
+    } catch {
+      /* noop */
+    } finally {
+      pendingColumnStateRestoreRef.current = null;
+    }
+  }, []);
+
+  const persistOffersColumnStateNow = useCallback((api: GridApi<Record<string, unknown>> | null) => {
+    if (!api || api.isDestroyed?.() || typeof window === 'undefined') return;
+    const sanitize = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const normalizedEndpoint = sanitize('/api/offers');
+    const normalizedUser = userId && userId.trim() ? userId.trim() : 'anon';
+    const normalizedContext = sanitize(pathname || '');
+    const storageKey = `fastquote-grid-column-state:${normalizedUser}:${normalizedEndpoint || 'grid'}:${normalizedContext || 'grid'}`;
+
+    const state = typeof api.getColumnState === 'function' ? api.getColumnState() : [];
+    if (!Array.isArray(state) || state.length === 0) return;
+
+    const columnOrderMap = new Map<string, number>();
+    const apiWithAllGridColumns = api as unknown as { getAllGridColumns?: () => Array<{ getColId: () => string }> };
+    const allGridColumns = typeof apiWithAllGridColumns.getAllGridColumns === 'function'
+      ? apiWithAllGridColumns.getAllGridColumns()
+      : null;
+    if (Array.isArray(allGridColumns) && allGridColumns.length > 0) {
+      allGridColumns.forEach((column, index) => {
+        const colId = typeof column?.getColId === 'function' ? column.getColId() : '';
+        if (colId) columnOrderMap.set(colId, index);
+      });
+    } else {
+      state.forEach((entry, index) => {
+        const colId = typeof entry?.colId === 'string' ? entry.colId : '';
+        if (colId) columnOrderMap.set(colId, index);
+      });
+    }
+
+    const columns = state
+      .map((entry) => {
+        const colId = typeof entry?.colId === 'string' ? entry.colId : '';
+        if (!colId) return null;
+        const width = typeof entry.width === 'number' && Number.isFinite(entry.width) && entry.width > 0
+          ? entry.width
+          : undefined;
+        const order = columnOrderMap.get(colId);
+        return {
+          colId,
+          pinned: (entry.pinned ?? null) as 'left' | 'right' | null,
+          width,
+          flex: entry.flex ?? null,
+          rowGroup: entry.rowGroup ?? undefined,
+          rowGroupIndex: typeof entry.rowGroupIndex === 'number' && Number.isFinite(entry.rowGroupIndex)
+            ? entry.rowGroupIndex
+            : undefined,
+          hide: typeof entry.hide === 'boolean' ? entry.hide : undefined,
+          order: typeof order === 'number' && Number.isFinite(order) ? order : undefined,
+        };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry != null);
+
+    try {
+      if (columns.length === 0) {
+        window.localStorage.removeItem(storageKey);
+        return;
+      }
+      window.localStorage.setItem(storageKey, JSON.stringify({ columns }));
+    } catch {
+      /* noop */
+    }
+  }, [pathname, userId]);
+
   useEffect(() => {
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return;
+    persistOffersColumnStateNow(api);
+    api.refreshCells?.({ columns: ['OfferVersion'], force: true });
     api.refreshServerSide?.({ purge: false });
-  }, [expandedVersionGroups]);
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => restorePendingColumnState(api));
+    } else {
+      setTimeout(() => restorePendingColumnState(api), 0);
+    }
+  }, [expandedVersionGroups, persistOffersColumnStateNow, restorePendingColumnState]);
+
+  const handleModelUpdated = useCallback((api: GridApi<Record<string, unknown>>) => {
+    restorePendingColumnState(api);
+  }, [restorePendingColumnState]);
   const handleCreateNewVersion = useCallback(async (offerId: number | null) => {
     if (offerId == null) return;
     const encodedId = encodeURIComponent(String(offerId));
@@ -185,16 +289,16 @@ export default function OffersClient() {
         return;
       }
       showToastMessage('Created new offer version', 'success');
-      router.push(`/offers/${encodeURIComponent(String(payload.offerId))}/basicdata`);
+      routerRef.current.push(`/offers/${encodeURIComponent(String(payload.offerId))}/basicdata`);
     } catch (err) {
       console.error('Failed to create offer version', err);
       showToastMessage('Unable to create new version', 'error');
     }
-  }, [router]);
+  }, []);
 
   const handleViewMarketsClick = useCallback(() => {
-    router.push('/markets');
-  }, [router]);
+    routerRef.current.push('/markets');
+  }, []);
 
   const handleViewStatusHistory = useCallback((offerId: number | null) => {
     if (offerId == null) return;
@@ -252,7 +356,7 @@ export default function OffersClient() {
             name: 'View Customer',
             icon: viewCustomerMenuIcon,
             action: () => {
-              router.push(`/customers/${customerId}/basicdata`);
+              routerRef.current.push(`/customers/${customerId}/basicdata`);
             },
           }
         : null;
@@ -301,7 +405,7 @@ export default function OffersClient() {
 
       return items;
     },
-    [offersRowDeletion, handleCreateNewVersion, handleViewStatusHistory, router],
+    [offersRowDeletion, handleCreateNewVersion, handleViewStatusHistory],
   );
 
   const formatDateDMY = (value: unknown): string => {
@@ -343,7 +447,7 @@ export default function OffersClient() {
           window.open(url, '_blank', 'noopener,noreferrer');
           return;
         }
-        router.push(url);
+        routerRef.current.push(url);
       };
 
       useEffect(() => {
@@ -438,7 +542,7 @@ export default function OffersClient() {
     };
 
     return <ActionMenu />;
-  }, [router]);
+  }, []);
 
   const OfferVersionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     const data = params.data as Record<string, unknown> | null | undefined;
@@ -448,7 +552,7 @@ export default function OffersClient() {
     const hasOtherVersions = data?.HasOtherVersions === 1
       || data?.HasOtherVersions === true
       || data?.HasOtherVersions === 'true';
-    const isExpanded = groupId != null && expandedVersionGroups.has(groupId);
+    const isExpanded = groupId != null && expandedVersionGroupsRef.current.has(groupId);
     const showToggle = Boolean(groupId) && isLatest && hasOtherVersions;
     const isHistorical = Boolean(groupId) && !isLatest;
 
@@ -477,7 +581,7 @@ export default function OffersClient() {
         </span>
       </div>
     );
-  }, [expandedVersionGroups, toggleVersionGroup]);
+  }, [toggleVersionGroup]);
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
@@ -555,22 +659,35 @@ export default function OffersClient() {
         cellClass: styles.actionCellContainer,
         cellRenderer: ActionCell,
       },
+    { field: 'CustomerName', headerName: 'Customer Name', filter: 'agTextColumnFilter', enableRowGroup: true },
     {
       field: 'Description',
       headerName: 'Description',
       filter: 'agTextColumnFilter',
       comparator: localeStringComparator,
     },
-    { field: 'Title', headerName: 'Title', filter: 'agTextColumnFilter' },
-    { field: 'CustomerName', headerName: 'Customer Name', filter: 'agTextColumnFilter', enableRowGroup: true },
-    { field: 'PricingPolicyName', headerName: 'Pricing Policy', filter: 'agTextColumnFilter', enableRowGroup: true },
+    {
+      field: 'OfferVersion',
+      headerName: 'Offer Version',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      cellRenderer: OfferVersionCell,
+      suppressNavigable: true,
+    },
+    {
+      field: 'ModifiedOn',
+      headerName: 'Last Modified',
+      filter: 'agDateColumnFilter',
+      valueFormatter: (params) => formatLastModifiedValue(params.value),
+      filterParams: {
+        browserDatePicker: false,
+        minValidYear: 2000,
+      },
+    },
+    { field: 'OfferStatus', headerName: 'Status', filter: 'agTextColumnFilter', enableRowGroup: true },
+    { field: 'SalesPerson', headerName: 'Sales Person', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'SalesMarket', headerName: 'Market', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'SalesDivision', headerName: 'Sales Division', filter: 'agTextColumnFilter', enableRowGroup: true },
-    { field: 'SalesPerson', headerName: 'Sales Creation Person', filter: 'agTextColumnFilter', enableRowGroup: true },
-    { field: 'OfferStatus', headerName: 'Status', filter: 'agTextColumnFilter', enableRowGroup: true },
-    { field: 'ERPProjectID', headerName: 'ERP Project ID', filter: 'agNumberColumnFilter', type: 'numericColumn' },
-    { field: 'ERPFWCProjectShortName', headerName: 'ERP FWC Project', filter: 'agTextColumnFilter' },
-    {field: 'Comments',  headerName: 'Comments', filter: 'agTextColumnFilter'},
     {
       field: 'Probability',
       headerName: 'Probability',
@@ -585,36 +702,24 @@ export default function OffersClient() {
         return true;
       },
     },
-    { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn' },
-    { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
-    { 
-      field: 'OfferDate', 
-      headerName: 'Offer Date', 
-      filter: 'agDateColumnFilter', 
-      valueFormatter: (params) => formatDateDMY(params.value), 
-      filterParams: { 
-        browserDatePicker: false, 
+    { field: 'SalesCreationPerson', headerName: 'Sales Creation Person', filter: 'agTextColumnFilter', enableRowGroup: true },
+    {
+      field: 'OfferDate',
+      headerName: 'Offer Date',
+      filter: 'agDateColumnFilter',
+      valueFormatter: (params) => formatDateDMY(params.value),
+      filterParams: {
+        browserDatePicker: false,
         minValidYear: 2000,
       }
     },
-    {
-      field: 'ModifiedOn',
-      headerName: 'Last Modified',
-      filter: 'agDateColumnFilter',
-      valueFormatter: (params) => formatLastModifiedValue(params.value),
-      filterParams: { 
-        browserDatePicker: false, 
-        minValidYear: 2000,
-      },
-    },
-    {
-      field: 'OfferVersion',
-      headerName: 'Offer Version',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      cellRenderer: OfferVersionCell,
-      suppressNavigable: true,
-    },
+    { field: 'PricingPolicyName', headerName: 'Pricing Policy', filter: 'agTextColumnFilter', enableRowGroup: true, hide: true },
+    { field: 'ERPProjectID', headerName: 'ERP Project ID', filter: 'agNumberColumnFilter', type: 'numericColumn', hide: true },
+    { field: 'ERPFWCProjectShortName', headerName: 'ERP FWC Project', filter: 'agTextColumnFilter', hide: true },
+    { field: 'Title', headerName: 'Title', filter: 'agTextColumnFilter' },
+    {field: 'Comments',  headerName: 'Comments', filter: 'agTextColumnFilter'},
+    { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn' },
+    { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
     {
       field: 'Enabled',
       headerName: 'Enabled',
@@ -658,8 +763,10 @@ export default function OffersClient() {
                 columnDefs={columnDefs}
                 getContextMenuItems={offersContextMenuItems}
                 onGridReady={handleGridReady}
+                onModelUpdated={handleModelUpdated}
                 onCellValueChanged={handleCellEdit}
                 requestPayload={{ expandedVersionGroupIds: expandedVersionGroupIds }}
+                suppressColumnMoveAnimation
                 rowGroupPanelShow="always"
                 rowSelection="multiple"
                 rowMultiSelectWithClick

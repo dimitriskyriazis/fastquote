@@ -59,6 +59,14 @@ export type OfferProductRow = {
   customerDiscount: number | null;
 };
 
+export type PdfPrintSettings = {
+  noOfLevels: number;
+  printProducts: boolean;
+  printCategories: boolean;
+  printSubCategories: boolean;
+  printSubSubCategories: boolean;
+};
+
 const LABELS = {
   el: {
     title: 'QUOTATION',
@@ -122,10 +130,10 @@ const LABELS = {
     colTotalList: 'Total List',
     colDiscount: 'Discount %',
     colUnitPrice: 'Unit Price',
-    colTotal: 'Total',
+    colTotal: 'Total Net',
     subtotal: 'Subtotal',
     discountAmount: 'Discount',
-    total: 'TOTAL',
+    total: 'TOTAL NET',
     termsTitle: 'Commercial Terms',
     offerValidity: 'Offer Validity',
     paymentTerms: 'Payment Terms',
@@ -391,6 +399,7 @@ function buildDescriptionCell(
 function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientation: PdfOrientation, logo: string) {
   const meta = getOfferMeta(data, lang);
   const isLandscape = orientation === 'landscape';
+  const coverTitle = str(data.title) || L.title;
 
   // De-duplicate cover: do NOT include L.to here since the client identity is already centered.
   const leftInfo = [
@@ -445,7 +454,7 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
     },
     {
       stack: [
-        { text: L.title, style: 'titleCover', alignment: 'center' },
+        { text: coverTitle, style: 'titleCover', alignment: 'center' },
         {
           text: meta.customerName || ' ',
           fontSize: isLandscape ? 20 : 18,
@@ -571,6 +580,29 @@ function tableHeaderLabel(column: PdfProductColumn, L: Labels): string {
   }
 }
 
+/**
+ * Determines whether a row should display price values based on print settings.
+ * - For product rows (non-category): controlled by printProducts
+ * - For category rows: depth 1 = Categories, depth 2 = Sub-Categories, depth 3 = Sub-Sub-Categories
+ */
+function shouldShowPrices(row: OfferProductRow, printSettings: PdfPrintSettings | null): boolean {
+  if (!printSettings) return true;
+  const depth = row.treeOrdering ? row.treeOrdering.split('.').length : 1;
+
+  if (row.isCategory) {
+    // Category at depth 1 → "Categories" flag
+    // Category at depth 2 → "Sub-Categories" flag
+    // Category at depth 3 → "Sub-Sub-Categories" flag
+    if (depth === 1) return printSettings.printCategories;
+    if (depth === 2) return printSettings.printSubCategories;
+    if (depth === 3) return printSettings.printSubSubCategories;
+    return false;
+  }
+
+  // Non-category rows are "products"
+  return printSettings.printProducts;
+}
+
 function columnValue(row: OfferProductRow, column: PdfProductColumn): string {
   switch (column) {
     case 'no': return str(row.treeOrdering);
@@ -644,7 +676,19 @@ function lineNetAmount(row: OfferProductRow): number {
   return 0;
 }
 
-function buildCategoryTotalsMap(products: OfferProductRow[]): Map<string, number> {
+function lineListAmount(row: OfferProductRow): number {
+  if (row.totalPrice != null && Number.isFinite(row.totalPrice)) return row.totalPrice;
+  if (row.listPrice != null && row.quantity != null && Number.isFinite(row.listPrice) && Number.isFinite(row.quantity)) {
+    return row.listPrice * row.quantity;
+  }
+  if (row.listPrice != null && Number.isFinite(row.listPrice)) return row.listPrice;
+  return lineNetAmount(row);
+}
+
+function buildCategoryTotalsMap(
+  products: OfferProductRow[],
+  resolveAmount: (row: OfferProductRow) => number,
+): Map<string, number> {
   const categories = products.filter((p) => p.isCategory && str(p.treeOrdering));
   const detailRows = products.filter((p) => !p.isCategory && str(p.treeOrdering));
 
@@ -657,7 +701,7 @@ function buildCategoryTotalsMap(products: OfferProductRow[]): Map<string, number
     for (const row of detailRows) {
       const rowKey = str(row.treeOrdering);
       if (rowKey === key || rowKey.startsWith(`${key}.`)) {
-        sum += lineNetAmount(row);
+        sum += resolveAmount(row);
       }
     }
     totals.set(key, sum);
@@ -671,10 +715,18 @@ function buildItemsTable(
   L: Labels,
   orientation: PdfOrientation,
   selectedColumns: PdfProductColumn[],
+  printSettings: PdfPrintSettings | null = null,
 ) {
-  const showCategoryTotals = selectedColumns.includes('total');
-  const categoryTotalsMap = buildCategoryTotalsMap(data.products);
+  const showCategoryTotalNet = selectedColumns.includes('total');
+  const showCategoryTotalList = selectedColumns.includes('totalList');
+  const categoryNetTotalsMap = showCategoryTotalNet
+    ? buildCategoryTotalsMap(data.products, lineNetAmount)
+    : new Map<string, number>();
+  const categoryListTotalsMap = showCategoryTotalList
+    ? buildCategoryTotalsMap(data.products, lineListAmount)
+    : new Map<string, number>();
   const numericCols = new Set<PdfProductColumn>(['qty', 'listPrice', 'totalList', 'discount', 'unitPrice', 'total']);
+  const priceColumns = new Set<PdfProductColumn>(['listPrice', 'totalList', 'discount', 'unitPrice', 'total']);
 
   const headerRow = selectedColumns.map((col) => ({
     text: tableHeaderLabel(col, L),
@@ -689,17 +741,41 @@ function buildItemsTable(
     if (row.isCategory) {
       const categoryText = [str(row.treeOrdering), str(row.description)].filter(Boolean).join(' ');
       const categoryKey = str(row.treeOrdering);
-      const fallbackAmount = categoryKey ? categoryTotalsMap.get(categoryKey) : null;
-      const categoryAmountValue =
+      const fallbackNetAmount = categoryKey ? categoryNetTotalsMap.get(categoryKey) : null;
+      const categoryNetAmountValue =
         row.totalNet != null && Number.isFinite(row.totalNet)
           ? row.totalNet
-          : (fallbackAmount != null && Number.isFinite(fallbackAmount) ? fallbackAmount : null);
-      const categoryAmount = categoryAmountValue != null ? formatCurrency(categoryAmountValue) : '';
+          : (fallbackNetAmount != null && Number.isFinite(fallbackNetAmount) ? fallbackNetAmount : null);
 
-      const categoryColumns = showCategoryTotals
+      const fallbackListAmount = categoryKey ? categoryListTotalsMap.get(categoryKey) : null;
+      const categoryListAmountValue =
+        row.totalPrice != null && Number.isFinite(row.totalPrice)
+          ? row.totalPrice
+          : (fallbackListAmount != null && Number.isFinite(fallbackListAmount) ? fallbackListAmount : null);
+
+      const showCategoryPrices = shouldShowPrices(row, printSettings);
+      const amountLines: string[] = [];
+      if (showCategoryPrices && showCategoryTotalList && categoryListAmountValue != null) {
+        const formatted = formatCurrency(categoryListAmountValue);
+        amountLines.push(showCategoryTotalNet ? `${L.colTotalList}: ${formatted}` : formatted);
+      }
+      if (showCategoryPrices && showCategoryTotalNet && categoryNetAmountValue != null) {
+        const formatted = formatCurrency(categoryNetAmountValue);
+        amountLines.push(showCategoryTotalList ? `${L.colTotal}: ${formatted}` : formatted);
+      }
+
+      const categoryColumns = amountLines.length > 0
         ? [
             { width: '*', text: categoryText, bold: true, fontSize: 9.3, color: COLORS.primaryText },
-            { width: 'auto', text: categoryAmount, bold: true, fontSize: 9.3, color: COLORS.primaryText, alignment: 'right' },
+            {
+              width: 'auto',
+              text: amountLines.join('\n'),
+              bold: true,
+              fontSize: 9.3,
+              color: COLORS.primaryText,
+              alignment: 'right',
+              lineHeight: 1.18,
+            },
           ]
         : [
             { width: '*', text: categoryText, bold: true, fontSize: 9.3, color: COLORS.primaryText },
@@ -716,6 +792,8 @@ function buildItemsTable(
       body.push([categoryFirst, ...Array.from({ length: Math.max(0, selectedColumns.length - 1) }, () => ({ text: '' }))]);
       continue;
     }
+
+    const hidePrices = !shouldShowPrices(row, printSettings);
 
     body.push(
       selectedColumns.map((col) => {
@@ -735,7 +813,7 @@ function buildItemsTable(
           return cell;
         }
 
-        const value = columnValue(row, col);
+        const value = hidePrices && priceColumns.has(col) ? '' : columnValue(row, col);
         const dyn = dynamicCellFont(col, value);
 
         const baseCell: PdfCell = {
@@ -981,8 +1059,8 @@ function buildTotalsAndTerms(
 
 function buildSignatureBlock(data: OfferPdfData, L: Labels, lang: PdfLang, orientation: PdfOrientation) {
   const meta = getOfferMeta(data, lang);
-  const leftTitle = str(data.salesPerson.signTitle) || 'Software Engineer';
-  const rightTitle = str(data.approvalUser.signTitle) || 'CEO';
+  const leftTitle = str(data.salesPerson.signTitle);
+  const rightTitle = str(data.approvalUser.signTitle);
   const normalizeName = (name: string) => name.trim().replace(/\s+/g, ' ').toLowerCase();
   const sameSigner =
     !!meta.salesName &&
@@ -1042,6 +1120,7 @@ export async function generateOfferPdf(
   lang: PdfLang,
   orientation: PdfOrientation = 'portrait',
   selectedColumns: PdfProductColumn[] = DEFAULT_PDF_PRODUCT_COLUMNS,
+  printSettings: PdfPrintSettings | null = null,
 ): Promise<Buffer> {
   ensurePdfmake();
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -1051,7 +1130,7 @@ export async function generateOfferPdf(
   const L = LABELS[lang];
   const cols = selectedColumns.length > 0 ? selectedColumns : DEFAULT_PDF_PRODUCT_COLUMNS;
 
-  const itemsTable = buildItemsTable(data, L, orientation, cols);
+  const itemsTable = buildItemsTable(data, L, orientation, cols, printSettings);
   const totalsAndTerms = buildTotalsAndTerms(data, L, orientation, cols);
 
   const notes: unknown[] = [

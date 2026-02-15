@@ -16,7 +16,7 @@ type Props = {
 
 type Lang = 'el' | 'en';
 type Orientation = 'portrait' | 'landscape';
-type MenuStep = 'columns' | 'language' | 'orientation';
+type MenuStep = 'columns' | 'totals' | 'language' | 'orientation';
 type DropPosition = 'before' | 'after';
 type DropPreview = { column: PdfProductColumn; position: DropPosition } | null;
 
@@ -54,7 +54,7 @@ const columnLabels: Record<PdfProductColumn, string> = {
   totalList: 'Total List',
   discount: 'Discount %',
   unitPrice: 'Unit Price',
-  total: 'Total',
+  total: 'Total Net',
 };
 
 export default function ExportPdfButton({ offerId, className }: Props) {
@@ -68,6 +68,12 @@ export default function ExportPdfButton({ offerId, className }: Props) {
   const [selectedLang, setSelectedLang] = useState<Lang>('el');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFilename, setPreviewFilename] = useState('');
+  const [noOfLevels, setNoOfLevels] = useState(0);
+  const [printProducts, setPrintProducts] = useState(false);
+  const [printCategories, setPrintCategories] = useState(false);
+  const [printSubCategories, setPrintSubCategories] = useState(false);
+  const [printSubSubCategories, setPrintSubSubCategories] = useState(false);
+  const [loadingSettings, setLoadingSettings] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -182,8 +188,9 @@ export default function ExportPdfButton({ offerId, className }: Props) {
       setIsExporting(true);
       try {
         const columnsParam = encodeURIComponent(selectedColumns.join(','));
+        const printParams = `&printProducts=${printProducts ? '1' : '0'}&printCategories=${printCategories ? '1' : '0'}&printSubCategories=${printSubCategories ? '1' : '0'}&printSubSubCategories=${printSubSubCategories ? '1' : '0'}`;
         const res = await fetch(
-          `/api/offers/${encodeURIComponent(offerId)}/pdf?lang=${selectedLang}&orientation=${orientation}&columns=${columnsParam}`,
+          `/api/offers/${encodeURIComponent(offerId)}/pdf?lang=${selectedLang}&orientation=${orientation}&columns=${columnsParam}${printParams}`,
         );
         if (!res.ok) {
           const body = await res.json().catch(() => null);
@@ -205,7 +212,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
         setIsExporting(false);
       }
     },
-    [offerId, selectedColumns, selectedLang],
+    [offerId, selectedColumns, selectedLang, printProducts, printCategories, printSubCategories, printSubSubCategories],
   );
 
   const handlePreviewClose = useCallback(() => {
@@ -408,11 +415,42 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                     fontSize: 13,
                     borderRadius: 6,
                     padding: '8px 10px',
-                    cursor: 'pointer',
+                    cursor: loadingSettings ? 'wait' : 'pointer',
+                    opacity: loadingSettings ? 0.7 : 1,
                   }}
-                  onClick={() => setMenuStep('language')}
+                  disabled={loadingSettings}
+                  onClick={async () => {
+                    const hasTotalColumns = selectedColumns.includes('unitPrice') || selectedColumns.includes('total');
+                    if (!hasTotalColumns) {
+                      setMenuStep('language');
+                      return;
+                    }
+                    setLoadingSettings(true);
+                    try {
+                      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/pdf-settings`);
+                      if (res.ok) {
+                        const data = await res.json();
+                        setNoOfLevels(data.noOfLevels ?? 0);
+                        setPrintProducts(!!data.printProducts);
+                        setPrintCategories(!!data.printCategories);
+                        setPrintSubCategories(!!data.printSubCategories);
+                        setPrintSubSubCategories(!!data.printSubSubCategories);
+                        if ((data.noOfLevels ?? 0) > 0) {
+                          setMenuStep('totals');
+                        } else {
+                          setMenuStep('language');
+                        }
+                      } else {
+                        setMenuStep('language');
+                      }
+                    } catch {
+                      setMenuStep('language');
+                    } finally {
+                      setLoadingSettings(false);
+                    }
+                  }}
                 >
-                  Continue ({selectedColumns.length} selected)
+                  {loadingSettings ? 'Loading...' : `Continue (${selectedColumns.length} selected)`}
                 </button>
                 <button
                   type="button"
@@ -437,7 +475,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
             </>
           )}
 
-          {menuStep === 'language' && (
+          {menuStep === 'totals' && (
             <>
               <div style={menuHeaderStyle}>
                 <button
@@ -456,6 +494,78 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                   }}
                 >
                   &larr; Columns
+                </button>
+              </div>
+              <div style={{ padding: '4px 16px 2px', fontSize: 11, color: '#64748b' }}>
+                Show totals for:
+              </div>
+              <div style={{ padding: '6px 16px 10px' }}>
+                {noOfLevels >= 2 && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 13, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={printCategories} onChange={(e) => setPrintCategories(e.target.checked)} />
+                    <span>Categories</span>
+                  </label>
+                )}
+                {noOfLevels >= 3 && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 13, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={printSubCategories} onChange={(e) => setPrintSubCategories(e.target.checked)} />
+                    <span>Sub-Categories</span>
+                  </label>
+                )}
+                {noOfLevels >= 4 && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 13, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={printSubSubCategories} onChange={(e) => setPrintSubSubCategories(e.target.checked)} />
+                    <span>Sub-Sub-Categories</span>
+                  </label>
+                )}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 13, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={printProducts} onChange={(e) => setPrintProducts(e.target.checked)} />
+                  <span>Products</span>
+                </label>
+              </div>
+              <div style={{ borderTop: '1px solid #e5e7eb', padding: 8 }}>
+                <button
+                  type="button"
+                  style={{
+                    width: '100%',
+                    border: '1px solid #292929',
+                    background: '#474747',
+                    color: '#fff',
+                    fontSize: 13,
+                    borderRadius: 6,
+                    padding: '8px 10px',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => setMenuStep('language')}
+                >
+                  Continue
+                </button>
+              </div>
+            </>
+          )}
+
+          {menuStep === 'language' && (
+            <>
+              <div style={menuHeaderStyle}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const hasTotalColumns = selectedColumns.includes('unitPrice') || selectedColumns.includes('total');
+                    setMenuStep(hasTotalColumns && noOfLevels > 0 ? 'totals' : 'columns');
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: 10,
+                    fontWeight: 600,
+                    color: '#64748b',
+                    padding: 0,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                  }}
+                >
+                  &larr; {selectedColumns.includes('unitPrice') || selectedColumns.includes('total') ? (noOfLevels > 0 ? 'Totals' : 'Columns') : 'Columns'}
                 </button>
               </div>
               <button

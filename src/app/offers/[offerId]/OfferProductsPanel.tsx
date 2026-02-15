@@ -68,6 +68,7 @@ const decimalFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
   maximumFractionDigits: 2,
 });
 const DEFAULT_ROW_HEIGHT = 32;
+const MAX_CATEGORY_DEPTH = 3;
 
 const COLLAPSED_CATEGORIES_COOKIE_NAME = 'offer_products_collapsed';
 
@@ -2649,7 +2650,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       headerClass: 'ag-right-aligned-header',
       valueGetter: categoryTotalPriceGetter,
       valueFormatter: (params) => {
-        if (!isOfferProductCommentOrProduct(params.data ?? null)) return '';
+        if (!isOfferProductCommentOrProduct(params.data ?? null) && !isOfferProductCategory(params.data ?? null)) return '';
         return euroFormatter(params);
       },
       cellClassRules: totalPriceCellClassRules,
@@ -3932,10 +3933,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
 
     const offerDetailId = normalizeOfferDetailId((rowData as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null);
+    const rowCategoryDepth = parseTreeOrderingPath((rowData as { TreeOrdering?: unknown } | null | undefined)?.TreeOrdering ?? null).length;
+    const canPromoteAtDepth = rowCategoryDepth === 0 || rowCategoryDepth <= MAX_CATEGORY_DEPTH;
     const canMarkCategory = (
       offerDetailId != null
       && !isOfferProductCategory(rowData)
       && !rowHasRequestedFields
+      && canPromoteAtDepth
     );
     if (canMarkCategory) {
       const makeCategoryItem: MenuItemDef = {
@@ -3962,6 +3966,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           const treeOrderingValue = requestedTree || (typeof treeOrderingRaw === 'string'
             ? treeOrderingRaw.trim()
             : null);
+          const nextCategoryDepth = parseTreeOrderingPath(treeOrderingValue ?? null).length;
+          if (nextCategoryDepth > MAX_CATEGORY_DEPTH) {
+            showToastMessage('You can only create categories up to sub-sub category level.', 'error');
+            return;
+          }
           promoteNodeToCategory(
             rowNode,
             treeOrderingValue ?? null,

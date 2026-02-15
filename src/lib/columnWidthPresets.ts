@@ -21,6 +21,7 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   SalesMarket: 2,
   SalesDivision: 2,
   SalesPerson: 3,
+  SalesCreationPerson: 3,
   OfferStatus: 2,
   ERPProjectID: 2,
   ERPFWCProjectID: 2,

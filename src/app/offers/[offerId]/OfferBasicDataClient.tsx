@@ -288,6 +288,7 @@ const buildFieldDefinitions = (
     valueType: 'number',
     inputType: 'number',
   },
+  { id: 'offerVersion', label: 'Offer Version', section: 'code', recordKey: 'OfferVersion', readOnly: true },
   { id: 'offerId', label: 'Offer ID', section: 'code', recordKey: 'OfferID', readOnly: true },
   { id: 'customerRef', label: 'Customer Ref', section: 'code', recordKey: 'CustomerRef', updateField: 'CustomerRef' },
 

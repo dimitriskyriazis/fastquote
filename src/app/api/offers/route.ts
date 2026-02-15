@@ -219,6 +219,34 @@ function buildOrder(sortModel: GridRequest['sortModel']) {
   return `ORDER BY ${parts.join(', ')}`;
 }
 
+function buildVersionGroupedOrder(sortModel: GridRequest['sortModel']) {
+  if (!sortModel || sortModel.length === 0) return '';
+  const parts = sortModel.map(s => {
+    const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
+    const alias = `__sort_${s.colId}`;
+    return `[${alias}] ${s.sort.toUpperCase()}`;
+  });
+  parts.push(
+    'IsLatestVersion DESC',
+    'dbo.Offer.OfferVersion DESC',
+    'dbo.Offer.ID DESC',
+  );
+  return `ORDER BY ${parts.join(', ')}`;
+}
+
+function buildVersionGroupedSortColumns(sortModel: GridRequest['sortModel']) {
+  if (!sortModel || sortModel.length === 0) return '';
+  const columns = sortModel.map(s => {
+    const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
+    const alias = `__sort_${s.colId}`;
+    return `FIRST_VALUE(${expression}) OVER (
+          PARTITION BY COALESCE(versionTree.RootOfferID, dbo.Offer.ID)
+          ORDER BY dbo.Offer.OfferVersion DESC
+        ) AS [${alias}]`;
+  });
+  return ', ' + columns.join(', ');
+}
+
 async function readGridRequest(req: NextRequest): Promise<GridRequestPayload> {
   try {
     const payload = await req.json();
@@ -374,7 +402,15 @@ export async function POST(req: NextRequest) {
         dbo.Offer.OfferVersion DESC,
         dbo.Offer.ID DESC
     `.trim();
-    const orderClause = buildOrder(gridRequest.sortModel) || defaultOrder;
+    const hasExpandedGroups = expandedVersionGroupIds.length > 0;
+    const hasUserSort = Array.isArray(gridRequest.sortModel) && gridRequest.sortModel.length > 0;
+    const useVersionGroupedSort = hasExpandedGroups && hasUserSort;
+    const versionSortColumns = useVersionGroupedSort
+      ? buildVersionGroupedSortColumns(gridRequest.sortModel)
+      : '';
+    const orderClause = useVersionGroupedSort
+      ? buildVersionGroupedOrder(gridRequest.sortModel)
+      : (buildOrder(gridRequest.sortModel) || defaultOrder);
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
     const groupingFields = resolveGroupingFields(gridRequest.rowGroupCols);
@@ -432,7 +468,7 @@ export async function POST(req: NextRequest) {
       : combinedWhereWithVersions;
     const appliedParams = [...combinedParams, ...parentFilter.params];
 
-    const dataSql = `${versionTreeCte} ${select} ${from} ${appliedWhere} ${orderClause} ${paging}`;
+    const dataSql = `${versionTreeCte} ${select}${versionSortColumns} ${from} ${appliedWhere} ${orderClause} ${paging}`;
     const dataReq = bindParams(pool.request(), appliedParams);
     dataReq.input('__offset', sql.Int, offset);
     dataReq.input('__limit', sql.Int, pageSize);
@@ -445,7 +481,13 @@ export async function POST(req: NextRequest) {
     const rows = rowsWithCount.map((row: OfferRowWithCount) => {
       const { __totalCount, ...rest } = row;
       void __totalCount;
-      return rest;
+      const cleaned = rest as Record<string, unknown>;
+      for (const key of Object.keys(cleaned)) {
+        if (key.startsWith('__sort_')) {
+          delete cleaned[key];
+        }
+      }
+      return cleaned;
     });
 
     return NextResponse.json({ ok: true, rows, rowCount });

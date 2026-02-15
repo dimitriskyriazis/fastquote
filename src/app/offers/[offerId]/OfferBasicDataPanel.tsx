@@ -17,6 +17,7 @@ async function fetchOfferBasicRecord(offerId: number) {
     const result = await request.query<OfferBasicRecord>(`
       SELECT
         o.ID AS OfferID,
+        o.OfferVersion,
         o.CustomerID,
         o.SalesDivitionID AS SalesDivisionID,
         o.Title,

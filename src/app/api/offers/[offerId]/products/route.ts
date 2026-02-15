@@ -105,6 +105,7 @@ const TREE_ORDERING_ROOT_EXPRESSION = `
     ELSE ${TREE_ORDERING_RAW_EXPRESSION}
   END
 `;
+const MAX_CATEGORY_DEPTH = 3;
 
 const ALL_ROWS_LIMIT = 20000;
 
@@ -685,10 +686,35 @@ async function handleReorderRow(
 
   const position = payload.position === 'before' ? 'before' : 'after';
   const parentPath = normalizeParentPath(payload.parentPath);
+  const nextDepth = parentPath.length + 1;
   const beforeId = normalizeOfferDetailId(payload.beforeId ?? null);
   const afterId = normalizeOfferDetailId(payload.afterId ?? null);
 
   const pool = await getPool();
+  if (nextDepth > MAX_CATEGORY_DEPTH) {
+    const categoryCheckRequest = pool.request();
+    categoryCheckRequest.input('__offerId', sql.Int, offerId);
+    const sourceIdParams: string[] = [];
+    normalizedSourceIds.forEach((id, idx) => {
+      const paramName = `__sourceId_${idx}`;
+      categoryCheckRequest.input(paramName, sql.Int, id);
+      sourceIdParams.push(`@${paramName}`);
+    });
+    const categoryCheckResult = await categoryCheckRequest.query<{ OfferDetailID: number }>(`
+      SELECT od.ID AS OfferDetailID
+      FROM dbo.OfferDetails od
+      WHERE od.OfferID = @__offerId
+        AND od.ID IN (${sourceIdParams.join(', ')})
+        AND ISNULL(od.IsCategory, 0) = 1;
+    `);
+    if ((categoryCheckResult.recordset?.length ?? 0) > 0) {
+      return NextResponse.json(
+        { ok: false, error: 'Categories can only be created up to sub-sub category level' },
+        { status: 400 },
+      );
+    }
+  }
+
   const readRequest = pool.request();
   readRequest.input('__offerId', sql.Int, offerId);
   const readResult = await readRequest.query<TreeOrderingRow>(`

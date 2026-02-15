@@ -562,6 +562,7 @@ type Props = {
   useAgGridRowDrag?: boolean;
   suppressSideBar?: boolean;
   serverSideHeaderSelectMode?: 'loaded' | 'all';
+  suppressColumnMoveAnimation?: boolean;
 };
 
 type RowData = Record<string, unknown>;
@@ -1142,10 +1143,12 @@ export default function AgGridAll({
   useAgGridRowDrag = false,
   suppressSideBar = false,
   serverSideHeaderSelectMode = 'loaded',
+  suppressColumnMoveAnimation = false,
 }: Props) {
   // Initialize editor focus management hooks
   useMutationCaret();
   const { handleEditingStart, handleEditingStop, requestRefresh } = useEditorFocusHandlers();
+  const persistColumnStateNowRef = useRef<(() => void) | null>(null);
 
   // REFS - Grid References & State Tracking
   const wrapGridApiRefreshers = useCallback((api: GridApi<RowData> | null) => {
@@ -1158,6 +1161,13 @@ export default function AgGridAll({
       (api as unknown as Record<string, unknown>)[marker] = true;
       const boundOriginal = (original as (...args: unknown[]) => unknown).bind(api);
       (api as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => {
+        if (method === 'refreshServerSide') {
+          try {
+            persistColumnStateNowRef.current?.();
+          } catch {
+            /* noop */
+          }
+        }
         requestRefresh(() => boundOriginal(...args));
       };
     };
@@ -2500,6 +2510,7 @@ export default function AgGridAll({
     const nextState = collectPersistableColumnState(api.getColumnState(), columnOrderMap);
     writePersistedColumnState(columnStateStorageKey, nextState);
   }, [columnStateStorageKey, shouldPersistColumnState]);
+  persistColumnStateNowRef.current = persistColumnState;
 
   const queuePersistColumnState = useCallback(() => {
     if (!shouldAutoPersistColumnState || typeof window === 'undefined') return;
@@ -4048,6 +4059,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           onColumnResized={handleColumnResized}
           onColumnRowGroupChanged={handleColumnRowGroupChanged}
           onColumnPivotModeChanged={handleColumnPivotModeChanged}
+          suppressColumnMoveAnimation={suppressColumnMoveAnimation}
         />
       </div>
     </div>

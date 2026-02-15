@@ -29,6 +29,7 @@ type ProductsTableLayout = 'cust' | 'wCost' | 'wReq';
 type PivotLayout = 'category' | 'brand';
 
 const LAYOUT_STORAGE_PREFIX = 'fastquote-offer-products-layout';
+const MAX_CATEGORY_DEPTH = 3;
 
 const addActionLabels: Record<AddActionType, string> = {
   product: 'Add Products',
@@ -163,6 +164,13 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     const baseLabel = addActionDescriptionLabels[action] ?? 'New Entry';
     const description = `${baseLabel} (${nextIndex})`;
     const insertionAnchor = offerProductsPanelRef.current?.getAddInsertionAnchor?.() ?? null;
+    if (action === 'category') {
+      const nextCategoryDepth = (insertionAnchor?.parentPath.length ?? 0) + 1;
+      if (nextCategoryDepth > MAX_CATEGORY_DEPTH) {
+        showToastMessage('You can only create categories up to sub-sub category level.', 'error');
+        return;
+      }
+    }
     setPendingAction(action);
     try {
       const endpoint = `/api/offers/${encodeURIComponent(offerId)}/products`;

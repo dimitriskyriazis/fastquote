@@ -226,6 +226,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     // Common numeric values
     const enableTotals = () => {
       set('Quantity', { aggFunc: 'sum' });
+      set('TotalPrice', { aggFunc: 'sum' });
       set('TotalNet', { aggFunc: 'sum' });
       set('TotalCost', { aggFunc: 'sum' });
       set('GrossProfit', { aggFunc: 'sum' });
