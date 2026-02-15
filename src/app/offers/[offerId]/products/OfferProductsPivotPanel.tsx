@@ -404,19 +404,19 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
       </div>
       <div className={panelStyles.totalsBar}>
         <div className={panelStyles.totalItem}>
-          <span className={panelStyles.totalLabel}>Total Net Price</span>
+          <span className={panelStyles.totalLabel}>Total Net Price:</span>
           <span className={panelStyles.totalValue}>{formatEuroTotal(totals.totalNetPrice)}</span>
         </div>
         <div className={panelStyles.totalItem}>
-          <span className={panelStyles.totalLabel}>Total List Price</span>
+          <span className={panelStyles.totalLabel}>Total List Price:</span>
           <span className={panelStyles.totalValue}>{formatEuroTotal(totals.totalListPrice)}</span>
         </div>
         <div className={panelStyles.totalItem}>
-          <span className={panelStyles.totalLabel}>Total Cost</span>
+          <span className={panelStyles.totalLabel}>Total Cost:</span>
           <span className={panelStyles.totalValue}>{formatEuroTotal(totals.totalCost)}</span>
         </div>
         <div className={panelStyles.totalItem}>
-          <span className={panelStyles.totalLabel}>Total Margin</span>
+          <span className={panelStyles.totalLabel}>Total Margin:</span>
           <span className={panelStyles.totalValue}>{formatPercentTotal(totals.totalMargin)}</span>
         </div>
       </div>

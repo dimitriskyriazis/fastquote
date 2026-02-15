@@ -4586,19 +4586,19 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         {hideTotals ? null : (
           <div className={styles.totalsBar}>
             <div className={styles.totalItem}>
-              <span className={styles.totalLabel}>Total Net Price</span>
+              <span className={styles.totalLabel}>Total Net Price:</span>
               <span className={styles.totalValue}>{formatEuroTotal(totals?.totalNetPrice)}</span>
             </div>
             <div className={styles.totalItem}>
-              <span className={styles.totalLabel}>Total List Price</span>
+              <span className={styles.totalLabel}>Total List Price:</span>
               <span className={styles.totalValue}>{formatEuroTotal(totals?.totalListPrice)}</span>
             </div>
             <div className={styles.totalItem}>
-              <span className={styles.totalLabel}>Total Cost</span>
+              <span className={styles.totalLabel}>Total Cost:</span>
               <span className={styles.totalValue}>{formatEuroTotal(totals?.totalCost)}</span>
             </div>
             <div className={styles.totalItem}>
-              <span className={styles.totalLabel}>Total Margin</span>
+              <span className={styles.totalLabel}>Total Margin:</span>
               <span className={styles.totalValue}>{formatPercentTotal(totals?.totalMargin)}</span>
             </div>
           </div>

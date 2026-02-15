@@ -65,21 +65,23 @@
 
 .totalsBar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 32px;
-  padding: 16px 20px;
+  flex-wrap: nowrap;
+  gap: 24px;
+  padding: 10px 20px;
   border-top: 1px solid #e2e8f0;
   background: #f8fafc;
   font-weight: 600;
   justify-content: center;
-  text-align: center;
+  align-items: center;
+  overflow-x: auto;
 }
 
 .totalItem {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: center;
+  flex-direction: row;
+  gap: 8px;
+  align-items: baseline;
+  white-space: nowrap;
 }
 
 .totalLabel {
@@ -91,6 +93,7 @@
 
 .totalValue {
   font-size: 1rem;
+  line-height: 1;
   color: #0f172a;
 }
 
