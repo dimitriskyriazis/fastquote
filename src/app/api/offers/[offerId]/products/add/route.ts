@@ -1160,7 +1160,18 @@ async function handleAssignProductToRequestedRow(
         WHEN computed.ComputedNetUnitPrice IS NULL THEN NULL
         ELSE computed.ComputedNetUnitPrice * q.Quantity
       END,
-      od.TelmacoDiscount = COALESCE(discounts.TelmacoDiscountPercentage, 0),
+      od.TelmacoDiscount = CASE
+        WHEN p.CostPrice IS NOT NULL AND p.ListPrice IS NOT NULL AND p.ListPrice <> 0
+          THEN ROUND(
+            (CAST(1 AS DECIMAL(18, 8))
+              - (CAST(p.CostPrice * p.CurrencyCostModifier AS DECIMAL(18, 8))
+                / CAST(p.ListPrice AS DECIMAL(18, 8))
+              )
+            ) * 100,
+            4
+          )
+        ELSE COALESCE(discounts.TelmacoDiscountPercentage, 0)
+      END,
       od.CustomerDiscount = COALESCE(discounts.CustomerDiscountPercentage, 0),
       od.NetCostOtherCurrency = p.CostPrice,
       od.OtherCurrencyID = p.OtherCurrencyID,
@@ -1276,6 +1287,7 @@ async function handleAssignProductToRequestedRow(
             )
           END AS ComputedNetUnitPrice,
           CASE
+            WHEN p.CostPrice IS NOT NULL THEN p.CostPrice * p.CurrencyCostModifier
             WHEN p.ListPrice IS NULL THEN NULL
             ELSE ROUND(
               p.ListPrice

@@ -1986,8 +1986,19 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       reapplyRequestedColumnsVisibility({ defer: true });
       pendingInitialSelectionRestoreRef.current?.();
       tryRestoreInitialViewportScroll();
+      // Restore grid viewport scroll after refreshOfferProductGrid-triggered refreshes
+      const restoreTop = pendingGridScrollRestoreRef.current;
+      if (restoreTop != null) {
+        const viewport = getGridViewportElement();
+        if (viewport) {
+          viewport.scrollTop = restoreTop;
+          if (viewport.scrollTop > 0 || restoreTop === 0) {
+            pendingGridScrollRestoreRef.current = null;
+          }
+        }
+      }
     });
-  }, [reapplyRequestedColumnsVisibility, scheduleCategoryAncestorsUpdate, tryRestoreInitialViewportScroll]);
+  }, [getGridViewportElement, reapplyRequestedColumnsVisibility, scheduleCategoryAncestorsUpdate, tryRestoreInitialViewportScroll]);
 
   const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!isOfferProductCategory(row)) return;
@@ -2943,12 +2954,19 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     truncateCellStyle,
   ]);
 
+  const pendingGridScrollRestoreRef = useRef<number | null>(null);
+
   const refreshOfferProductGrid = useCallback((api: GridApi<Record<string, unknown>> | null, options?: { refresh?: boolean; purge?: boolean; redraw?: boolean }) => {
     const targetApi = api ?? gridApiRef.current;
     if (!targetApi) return;
     const shouldRefresh = options?.refresh ?? true;
     const shouldRedraw = options?.redraw ?? false;
     if (shouldRefresh && typeof targetApi.refreshServerSide === 'function') {
+      // Save grid viewport scroll before refresh so it can be restored after data loads
+      const viewport = getGridViewportElement();
+      if (viewport) {
+        pendingGridScrollRestoreRef.current = viewport.scrollTop;
+      }
       const requestedPurge = options?.purge ?? false;
       if (pendingRefreshPurgeRef.current == null) {
         pendingRefreshPurgeRef.current = requestedPurge;
@@ -2978,7 +2996,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         console.warn('Failed to refresh category metadata after row deletion', err);
       }
     }
-  }, []);
+  }, [getGridViewportElement]);
 
   useEffect(() => {
     if (requestedMatchQueue.length === 0 && processedRequestedMatches !== 0) {
@@ -3390,37 +3408,58 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
 
       let requestedNodes: Array<RowNode<Record<string, unknown>>> = [];
+      let selectedRequestedNodes: Array<RowNode<Record<string, unknown>>> = [];
+      let allRequestedNodes: Array<RowNode<Record<string, unknown>>> = [];
 
       // Prefer explicit selection when present.
       try {
         const selected = typeof api.getSelectedNodes === 'function'
           ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
           : [];
-        requestedNodes = selected.filter((node) => isRequestedRow(node?.data ?? null));
+        selectedRequestedNodes = selected.filter((node) => isRequestedRow(node?.data ?? null));
       } catch {
         /* noop */
       }
 
-      // Fallback: if nothing is selected, populate from all currently-loaded requested rows.
-      if (requestedNodes.length === 0) {
-        try {
-          if (typeof api.forEachNode === 'function') {
-            const allRequested: Array<RowNode<Record<string, unknown>>> = [];
-            api.forEachNode((node) => {
-              if (isRequestedRow(node?.data ?? null)) {
-                allRequested.push(node as RowNode<Record<string, unknown>>);
-              }
-            });
-            requestedNodes = allRequested;
-          }
-        } catch {
-          /* noop */
+      try {
+        if (typeof api.forEachNode === 'function') {
+          const allRequested: Array<RowNode<Record<string, unknown>>> = [];
+          api.forEachNode((node) => {
+            if (isRequestedRow(node?.data ?? null)) {
+              allRequested.push(node as RowNode<Record<string, unknown>>);
+            }
+          });
+          allRequestedNodes = allRequested;
         }
+      } catch {
+        /* noop */
       }
+
+      requestedNodes = selectedRequestedNodes.length > 0 ? selectedRequestedNodes : allRequestedNodes;
 
       if (requestedNodes.length === 0) {
         showToastMessage('No requested rows found to populate.', 'info');
         return;
+      }
+
+      const allRequestedCount = allRequestedNodes.length;
+      const selectedRequestedCount = selectedRequestedNodes.length;
+      const shouldWarnNoSelection = selectedRequestedCount === 0 && allRequestedCount > 0;
+      const shouldWarnAllSelected = selectedRequestedCount > 0 && selectedRequestedCount === allRequestedCount;
+      if (shouldWarnNoSelection || shouldWarnAllSelected) {
+        const title = shouldWarnNoSelection
+          ? 'Populate all requested rows?'
+          : 'Populate selected requested rows?';
+        const targetLabel = shouldWarnNoSelection
+          ? 'all currently loaded requested rows'
+          : 'all selected requested rows';
+        const confirmed = await showConfirmDialog({
+          title,
+          message: `Populate Offer will process ${targetLabel}. It will try to auto-match products by requested part/model queue unmatched rows for manual matching. Existing products manually matched with requested items will be lost. Continue?`,
+          confirmLabel: 'Proceed',
+          cancelLabel: 'Cancel',
+        });
+        if (!confirmed) return;
       }
 
       await populateRequestedRowsToOffer(requestedNodes);

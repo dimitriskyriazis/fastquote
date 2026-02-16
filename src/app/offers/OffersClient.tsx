@@ -50,6 +50,15 @@ const duplicateVersionMenuIcon = `
   </span>
 `;
 
+const duplicateOfferMenuIcon = `
+  <span class="fastquote-menu-icon fastquote-menu-icon--copy" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <rect x="4" y="4" width="11" height="11" rx="2" />
+    </svg>
+  </span>
+`;
+
 const historyMenuIcon = `
   <span class="fastquote-menu-icon" aria-hidden="true">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -295,6 +304,35 @@ export default function OffersClient() {
       showToastMessage('Unable to create new version', 'error');
     }
   }, []);
+  const handleCreateOfferCopy = useCallback(async (offerId: number | null) => {
+    if (offerId == null) return;
+    const encodedId = encodeURIComponent(String(offerId));
+    try {
+      const response = await fetch(`/api/offers/${encodedId}/duplicate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ mode: 'copy' }),
+      });
+      let payload: { ok?: boolean; error?: string; offerId?: number | string } | null = null;
+      try {
+        payload = (await response.json()) as { ok?: boolean; error?: string; offerId?: number | string };
+      } catch {
+        payload = null;
+      }
+      if (!response.ok || !payload?.ok || payload.offerId == null) {
+        const message = payload?.error ?? 'Unable to create offer copy';
+        showToastMessage(message, 'error');
+        return;
+      }
+      showToastMessage('Created offer copy', 'success');
+      routerRef.current.push(`/offers/${encodeURIComponent(String(payload.offerId))}/basicdata`);
+    } catch (err) {
+      console.error('Failed to create offer copy', err);
+      showToastMessage('Unable to create offer copy', 'error');
+    }
+  }, []);
 
   const handleViewMarketsClick = useCallback(() => {
     routerRef.current.push('/markets');
@@ -376,10 +414,18 @@ export default function OffersClient() {
           void handleCreateNewVersion(clickedOfferId);
         },
       };
+      const copyMenuItem: MenuItemDef<Record<string, unknown>> = {
+        name: 'Create copy of offer',
+        icon: duplicateOfferMenuIcon,
+        action: () => {
+          void handleCreateOfferCopy(clickedOfferId);
+        },
+      };
 
       const customItems: Array<MenuItemDef<Record<string, unknown>>> = [
         ...(viewCustomerMenuItem ? [viewCustomerMenuItem] : []),
         statusHistoryMenuItem,
+        copyMenuItem,
         versionMenuItem,
       ];
 
@@ -405,7 +451,7 @@ export default function OffersClient() {
 
       return items;
     },
-    [offersRowDeletion, handleCreateNewVersion, handleViewStatusHistory],
+    [offersRowDeletion, handleCreateNewVersion, handleCreateOfferCopy, handleViewStatusHistory],
   );
 
   const formatDateDMY = (value: unknown): string => {

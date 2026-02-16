@@ -3506,11 +3506,14 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     }
     const restoreTop = pendingScrollRestoreTopRef.current;
     if (restoreTop != null) {
-      pendingScrollRestoreTopRef.current = null;
       const viewport = getViewportElement();
       if (viewport) {
         const restore = () => {
           viewport.scrollTop = restoreTop;
+          // Only clear if the scroll actually stuck (viewport has enough content)
+          if (viewport.scrollTop > 0 || restoreTop === 0) {
+            pendingScrollRestoreTopRef.current = null;
+          }
         };
         if (typeof requestAnimationFrame === 'function') {
           requestAnimationFrame(restore);

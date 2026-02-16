@@ -69,6 +69,10 @@ type ExistingOfferRecord = {
   ModifiedBy: string | null;
 };
 
+type DuplicateOfferRequestBody = {
+  mode?: 'version' | 'copy' | null;
+};
+
 const duplicateOfferDetailsSql = `
 DECLARE @CopiedRows TABLE (OldId INT, NewId INT, Seq INT);
 DECLARE @InsertedRows TABLE (NewId INT, Seq INT IDENTITY(1,1));
@@ -281,6 +285,14 @@ export async function POST(
     }
 
     const pool = await getPool();
+    let body: DuplicateOfferRequestBody | null = null;
+    try {
+      body = (await req.json()) as DuplicateOfferRequestBody;
+    } catch {
+      body = null;
+    }
+    const duplicateMode = body?.mode === 'copy' ? 'copy' : 'version';
+
     const summaryRequest = pool.request();
     summaryRequest.input('offerId', sql.Int, normalizedId);
     const existingResult = await summaryRequest.query<ExistingOfferRecord>(`
@@ -340,7 +352,10 @@ export async function POST(
       normalizeNullableString(existingOffer.CreatedBy) ??
       normalizeNullableString(existingOffer.ModifiedBy) ??
       null;
-    const nextVersion = Math.max(0, Number(existingOffer.OfferVersion ?? 0)) + 1;
+    const existingVersion = Math.max(0, Number(existingOffer.OfferVersion ?? 0));
+    const nextVersion = existingVersion + 1;
+    const targetVersion = duplicateMode === 'copy' ? existingVersion : nextVersion;
+    const targetParentOfferId = duplicateMode === 'copy' ? null : normalizedId;
     const enabledValue = typeof existingOffer.Enabled === 'boolean'
       ? existingOffer.Enabled
       : existingOffer.Enabled != null
@@ -388,9 +403,9 @@ export async function POST(
       insertRequest.input('Delivery', sql.DateTime2, existingOffer.Delivery);
       insertRequest.input('OfferDate', sql.DateTime2, existingOffer.OfferDate);
       insertRequest.input('ApprovalUserId', sql.NVarChar(450), normalizedApprovalUserId);
-      insertRequest.input('ParentOfferID', sql.Int, normalizedId);
+      insertRequest.input('ParentOfferID', sql.Int, targetParentOfferId);
       insertRequest.input('ProtocolNo', sql.Int, existingOffer.ProtocolNo);
-      insertRequest.input('OfferVersion', sql.Int, nextVersion);
+      insertRequest.input('OfferVersion', sql.Int, targetVersion);
       insertRequest.input('Enabled', sql.Bit, enabledValue);
 
       const insertSql = `
