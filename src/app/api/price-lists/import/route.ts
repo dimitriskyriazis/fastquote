@@ -1118,8 +1118,10 @@ export async function POST(req: NextRequest) {
         } else if (modelKey && byModelNumber.has(modelKey)) {
           const candidate = byModelNumber.get(modelKey);
           const candidatePartKey = normalizeKey(candidate?.PartNumber);
-          // Don't match by model number if both have part numbers and they differ
-          if (!partKey || !candidatePartKey || partKey === candidatePartKey) {
+          // If import row has a part number, require exact part-number agreement for model fallback.
+          // This prevents different part numbers sharing the same model from collapsing into one product.
+          const canMatchByModel = !partKey || (candidatePartKey != null && partKey === candidatePartKey);
+          if (canMatchByModel) {
             existingProduct = candidate;
             productId = existingProduct?.ID ?? null;
             isExistingProduct = productId != null;
@@ -1128,7 +1130,7 @@ export async function POST(req: NextRequest) {
 
         if (!productId && partKey && createdProducts.has(partKey)) {
           productId = createdProducts.get(partKey) ?? null;
-        } else if (!productId && modelKey && createdProducts.has(modelKey)) {
+        } else if (!productId && modelKey && !partKey && createdProducts.has(modelKey)) {
           productId = createdProducts.get(modelKey) ?? null;
         }
 
