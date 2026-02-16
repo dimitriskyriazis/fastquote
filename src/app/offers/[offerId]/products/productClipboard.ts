@@ -1,3 +1,5 @@
+import { parseLocaleNumber } from '../../../../lib/localeNumber';
+
 export const CLIPBOARD_STORAGE_KEY = 'fastquote-product-clipboard';
 export const CLIPBOARD_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -94,12 +96,7 @@ export function isClipboardPopulated(): boolean {
 }
 
 const coerceNumber = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number.parseFloat(value.trim());
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
+  return parseLocaleNumber(value);
 };
 
 const coerceInt = (value: unknown): number | null => {

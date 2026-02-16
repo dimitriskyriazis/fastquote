@@ -4,6 +4,7 @@ import sql, { type ConnectionPool, type Transaction } from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
 import { requirePermission } from '../../../../../../lib/authz';
+import { parseLocaleNumber } from '../../../../../../lib/localeNumber';
 import {
   comparePaths,
   formatTreeOrderingPath,
@@ -74,12 +75,7 @@ const coerceInt = (value: unknown): number | null => {
 };
 
 const coerceNumber = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number.parseFloat(value.trim());
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
+  return parseLocaleNumber(value);
 };
 
 const coerceString = (value: unknown): string | null => {

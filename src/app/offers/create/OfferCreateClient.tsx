@@ -828,8 +828,8 @@ export default function OfferCreateClient({
               value={value}
               disabled={isDisabled}
               required={field.required}
-              onMouseDown={() => refreshFieldLookups(field.id)}
-              onFocus={() => refreshFieldLookups(field.id)}
+              onMouseDown={() => { if (!dependsOnCustomer) refreshFieldLookups(field.id); }}
+              onFocus={() => { if (!dependsOnCustomer) refreshFieldLookups(field.id); }}
               onChange={(event) => {
                 const newValue = event.target.value;
                 handleChange(field.id as keyof FormValues, newValue);
