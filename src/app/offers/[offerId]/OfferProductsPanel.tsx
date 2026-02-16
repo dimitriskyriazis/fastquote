@@ -1280,8 +1280,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       RequestedDescription3: false,
       RequestedQuantity: false,
     };
+    const stickyWReq = showRequestedColumns && tableLayout === 'wReq';
     if (!visibility) {
       if (!replace) return;
+      if (stickyWReq) return;
       setRequestedColumnVisibility((prev) => {
         const next = { ...resetState };
         const hasChanged = REQUESTED_DISPLAY_FIELD_KEYS.some((key) => prev[key] !== next[key]);
@@ -1290,16 +1292,18 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       return;
     }
     setRequestedColumnVisibility((prev) => {
-      const next = replace ? { ...resetState } : { ...prev };
+      const next = replace
+        ? (stickyWReq ? { ...prev } : { ...resetState })
+        : { ...prev };
       REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
         if (visibility[key] == null) return;
         const nextValue = Boolean(visibility[key]);
-        next[key] = nextValue;
+        next[key] = stickyWReq ? (Boolean(next[key]) || nextValue) : nextValue;
       });
       const hasChanged = REQUESTED_DISPLAY_FIELD_KEYS.some((key) => prev[key] !== next[key]);
       return hasChanged ? next : prev;
     });
-  }, []);
+  }, [showRequestedColumns, tableLayout]);
 
   const reapplyRequestedColumnsVisibility = useCallback((options?: { defer?: boolean }) => {
     if (!requestedColumnsReady) return;
@@ -1615,29 +1619,51 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   }, [captureColumnWidths, requestedColumnsReady, restoreColumnWidths, tableLayout]);
 
   const handleGridResponse = useCallback((response: GridResponse | null) => {
+    if (!response) return;
     lastRowCountRef.current = response?.rowCount ?? null;
     const hasRows = Boolean(response?.rowCount && response.rowCount > 0);
     serverRowsRef.current = response && Array.isArray(response.rows) ? response.rows : [];
     const shouldResetRoots = response?.request?.startRow === 0;
     rebuildTreeOrderingRootMap(response?.rows as Array<Record<string, unknown>> | undefined, shouldResetRoots);
-    const requestColumnVisibility: Partial<Record<RequestedDisplayFieldKey, boolean>> = {};
-    if (response?.requestedColumns) {
-      REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
-        const value = response.requestedColumns?.[key];
-        if (value != null) {
-          requestColumnVisibility[key] = Boolean(value);
-        }
-      });
-      applyRequestedColumnVisibility(requestColumnVisibility, true);
-    } else if (response) {
-      applyRequestedColumnVisibility(null, true);
+    const preserveWReqVisibility = showRequestedColumns && tableLayout === 'wReq';
+    if (preserveWReqVisibility) {
+      const previousVisibility = appliedRequestedColumnVisibilityRef.current ?? requestedColumnVisibility;
+      const mergedVisibility = REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
+        (acc, key) => {
+          const fromResponse = response?.requestedColumns?.[key];
+          const previous = Boolean(previousVisibility?.[key]);
+          acc[key] = previous || Boolean(fromResponse);
+          return acc;
+        },
+        {} as Record<RequestedDisplayFieldKey, boolean>,
+      );
+      applyRequestedColumnVisibility(mergedVisibility, true);
+
+      const hasRequestedItemInRows = (response?.rows ?? []).some((row) => normalizeRequestedItemNoValue(
+        (row as Record<string, unknown>)?.RequestedItemNo ?? null,
+      ) != null);
+      const responseRequestedItemNo = Boolean(response?.requestedColumns?.RequestedItemNo) || hasRequestedItemInRows;
+      setRequestedItemNoVisible((prev) => prev || responseRequestedItemNo);
+    } else {
+      const requestColumnVisibility: Partial<Record<RequestedDisplayFieldKey, boolean>> = {};
+      if (response?.requestedColumns) {
+        REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
+          const value = response.requestedColumns?.[key];
+          if (value != null) {
+            requestColumnVisibility[key] = Boolean(value);
+          }
+        });
+        applyRequestedColumnVisibility(requestColumnVisibility, true);
+      } else if (response) {
+        applyRequestedColumnVisibility(null, true);
+      }
+      const hasRequestedItemInRows = (response?.rows ?? []).some((row) => normalizeRequestedItemNoValue(
+        (row as Record<string, unknown>)?.RequestedItemNo ?? null,
+      ) != null);
+      const shouldShowRequestedItemNo = hasRows
+        && (Boolean(response?.requestedColumns?.RequestedItemNo) || hasRequestedItemInRows);
+      setRequestedItemNoVisible(shouldShowRequestedItemNo);
     }
-    const hasRequestedItemInRows = (response?.rows ?? []).some((row) => normalizeRequestedItemNoValue(
-      (row as Record<string, unknown>)?.RequestedItemNo ?? null,
-    ) != null);
-    const shouldShowRequestedItemNo = hasRows
-      && (Boolean(response?.requestedColumns?.RequestedItemNo) || hasRequestedItemInRows);
-    setRequestedItemNoVisible(shouldShowRequestedItemNo);
     const runHeavyUpdates = () => {
       scheduleCategoryAncestorsUpdate();
     };
@@ -1651,7 +1677,14 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       deferInitialHeavyWorkRef.current = false;
       runHeavyUpdates();
     }
-  }, [applyRequestedColumnVisibility, rebuildTreeOrderingRootMap, scheduleCategoryAncestorsUpdate]);
+  }, [
+    applyRequestedColumnVisibility,
+    rebuildTreeOrderingRootMap,
+    requestedColumnVisibility,
+    scheduleCategoryAncestorsUpdate,
+    showRequestedColumns,
+    tableLayout,
+  ]);
 
   const handleServerRequest = useCallback((request: ServerRequestWithQuickFilter) => {
     lastRequestStartRef.current = performance.now();
@@ -2875,6 +2908,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       });
     columnMap.forEach((column) => ordered.push(column));
     if (Object.keys(savedHiddenMap).length > 0) {
+      const lockRequestedHiddenState = showRequestedColumns && tableLayout === 'wReq';
+      const requestedColumnIds = new Set<string>(['RequestedItemNo', ...REQUESTED_DISPLAY_FIELD_KEYS]);
       return ordered.map((column) => {
         const id = typeof column.colId === 'string'
           ? column.colId
@@ -2883,6 +2918,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             : '';
         if (!id) return column;
         if (savedHiddenMap[id] == null) return column;
+        if (lockRequestedHiddenState && requestedColumnIds.has(id)) return column;
         return {
           ...column,
           hide: savedHiddenMap[id],
@@ -2901,6 +2937,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     RequestedItemNoCell,
     requestedCellClassRules,
     savedHiddenMap,
+    showRequestedColumns,
+    tableLayout,
     savedColumnOrder,
     truncateCellStyle,
   ]);
