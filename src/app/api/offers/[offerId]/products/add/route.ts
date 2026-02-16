@@ -792,6 +792,7 @@ async function handleAddProducts(
       WHERE pli.ProductID = p.ProductID
         AND pl.Enabled = 1
       ORDER BY
+        CASE WHEN pli.CostPrice IS NOT NULL THEN 0 ELSE 1 END,
         CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
         pl.ValidToDate,
         pl.ValidFromDate DESC,
@@ -1124,6 +1125,7 @@ async function handleAssignProductToRequestedRow(
       WHERE pli.ProductID = pr.ID
         AND pl.Enabled = 1
       ORDER BY
+        CASE WHEN pli.CostPrice IS NOT NULL THEN 0 ELSE 1 END,
         CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
         pl.ValidToDate,
         pl.ValidFromDate DESC,

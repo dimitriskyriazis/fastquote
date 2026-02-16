@@ -500,6 +500,7 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
         WHERE pli.ProductID = src.ProductID
           AND pl.Enabled = 1
         ORDER BY
+          CASE WHEN pli.CostPrice IS NOT NULL THEN 0 ELSE 1 END,
           CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
           pl.ValidToDate,
           pl.ValidFromDate DESC,

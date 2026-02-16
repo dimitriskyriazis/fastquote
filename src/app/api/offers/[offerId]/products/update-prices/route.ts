@@ -91,6 +91,7 @@ export async function POST(
           LEFT JOIN dbo.Brands b ON b.ID = od.BrandID
           WHERE od.OfferID = @offerId
             AND od.ProductID IS NOT NULL
+            ${selectedDetailsFilterSql}
             AND NOT EXISTS (
               SELECT 1
               FROM dbo.PricingPolicyRules ppr
@@ -190,6 +191,7 @@ export async function POST(
         WHERE pli.ProductID = od.ProductID
           AND pl.Enabled = 1
         ORDER BY
+          CASE WHEN pli.CostPrice IS NOT NULL THEN 0 ELSE 1 END,
           CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
           pl.ValidToDate DESC,
           pl.ValidFromDate DESC,
