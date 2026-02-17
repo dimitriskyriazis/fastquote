@@ -945,7 +945,7 @@ type Props = {
   hideTotals?: boolean;
   initialSelectedOfferDetailIds?: number[];
   initialViewportScrollTop?: number | null;
-  onRequestPaste?: (anchorOfferDetailId: number, anchorTreeOrdering: string) => void;
+  onRequestPaste?: (anchorOfferDetailId: number | null, anchorTreeOrdering: string | null) => void;
   onRequestAddStandardPackage?: (anchorOfferDetailId: number, anchorTreeOrdering: string) => void;
 };
 
@@ -4112,6 +4112,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   const pendingInitialSelectionRef = useRef<number[] | null>(
     initialSelectedOfferDetailIds?.length ? initialSelectedOfferDetailIds : null,
   );
+  const [emptyGridPasteMenu, setEmptyGridPasteMenu] = useState<{ x: number; y: number } | null>(null);
 
   const tryRestoreInitialSelection = useCallback(() => {
     if (initialSelectionRestoredRef.current) return;
@@ -4329,9 +4330,66 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       : rowNode && rowNode.data
         ? [rowNode as RowNode<Record<string, unknown>>]
         : [];
-    const rowData = rowNode?.data ?? relevantNodes[0]?.data ?? null;
+    const fallbackAnchorRowData = !rowNode?.data && api && typeof api.forEachNode === 'function'
+      ? (() => {
+          let candidate: Record<string, unknown> | null = null;
+          api.forEachNode((node) => {
+            const nodeData = node?.data as Record<string, unknown> | null | undefined;
+            if (!nodeData) return;
+            if (!candidate) {
+              candidate = nodeData;
+              return;
+            }
+            const treeCompare = compareTreeOrderingValues(
+              (nodeData as { TreeOrdering?: unknown }).TreeOrdering ?? null,
+              (candidate as { TreeOrdering?: unknown }).TreeOrdering ?? null,
+            );
+            if (treeCompare > 0) {
+              candidate = nodeData;
+              return;
+            }
+            if (treeCompare === 0) {
+              const nodeId = normalizeOfferDetailId((nodeData as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+              const candidateId = normalizeOfferDetailId((candidate as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+              if (nodeId != null && (candidateId == null || nodeId > candidateId)) {
+                candidate = nodeData;
+              }
+            }
+          });
+          return candidate;
+        })()
+      : null;
+    const rowData = rowNode?.data ?? relevantNodes[0]?.data ?? fallbackAnchorRowData ?? null;
+    const isEmptySpaceClick = !rowNode?.data;
     if (!rowData) {
       return items;
+    }
+    const anchorId = normalizeOfferDetailId(
+      (rowData as { OfferDetailID?: unknown }).OfferDetailID ?? null,
+    );
+    const anchorTree = typeof (rowData as { TreeOrdering?: unknown }).TreeOrdering === 'string'
+      ? String((rowData as { TreeOrdering?: unknown }).TreeOrdering).trim()
+      : '';
+    const clipboardHasRows = isClipboardPopulated();
+
+    if (isEmptySpaceClick) {
+      const canPaste = Boolean(onRequestPaste && clipboardHasRows);
+      const pasteOnlyItem: MenuItemDef = {
+        name: 'Paste Rows',
+        icon: pasteRowsMenuIcon,
+        disabled: !canPaste,
+        tooltip: canPaste ? undefined : 'Clipboard is empty.',
+        action: () => {
+          if (anchorId != null && anchorTree && onRequestPaste) {
+            onRequestPaste(anchorId, anchorTree);
+          } else if (onRequestPaste) {
+            onRequestPaste(null, null);
+          } else {
+            showToastMessage('Unable to determine paste position.', 'error');
+          }
+        },
+      };
+      return [pasteOnlyItem];
     }
 
     // Copy/Paste clipboard items (placed first in custom actions section)
@@ -4375,13 +4433,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       },
     };
     const clipboardItems: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> = [copyItem];
-    if (onRequestPaste && isClipboardPopulated()) {
-      const anchorId = normalizeOfferDetailId(
-        (rowData as { OfferDetailID?: unknown }).OfferDetailID ?? null,
-      );
-      const anchorTree = typeof (rowData as { TreeOrdering?: unknown }).TreeOrdering === 'string'
-        ? String((rowData as { TreeOrdering?: unknown }).TreeOrdering).trim()
-        : '';
+    if (onRequestPaste && clipboardHasRows) {
       const pasteItem: MenuItemDef = {
         name: 'Paste Rows',
         icon: pasteRowsMenuIcon,
@@ -4396,12 +4448,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       clipboardItems.push(pasteItem);
     }
     if (!standardPackageMode && onRequestAddStandardPackage) {
-      const anchorId = normalizeOfferDetailId(
-        (rowData as { OfferDetailID?: unknown }).OfferDetailID ?? null,
-      );
-      const anchorTree = typeof (rowData as { TreeOrdering?: unknown }).TreeOrdering === 'string'
-        ? String((rowData as { TreeOrdering?: unknown }).TreeOrdering).trim()
-        : '';
       const addStandardPackageItem: MenuItemDef = {
         name: 'Add Standard Package',
         icon: addStandardPackageMenuIcon,
@@ -4724,6 +4770,47 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     onRequestAddStandardPackage,
     standardPackageMode,
   ]);
+
+  const handleEmptyGridWrapperContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!onRequestPaste) return;
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.() || typeof api.forEachNode !== 'function') return;
+    let hasRows = false;
+    api.forEachNode(() => {
+      hasRows = true;
+    });
+    if (hasRows) {
+      setEmptyGridPasteMenu(null);
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setEmptyGridPasteMenu({ x: event.clientX, y: event.clientY });
+  }, [onRequestPaste]);
+
+  const handleEmptyGridPasteRows = useCallback(() => {
+    setEmptyGridPasteMenu(null);
+    if (!onRequestPaste) return;
+    onRequestPaste(null, null);
+  }, [onRequestPaste]);
+
+  useEffect(() => {
+    if (!emptyGridPasteMenu) return;
+    const closeMenu = () => setEmptyGridPasteMenu(null);
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu();
+    };
+    window.addEventListener('mousedown', closeMenu);
+    window.addEventListener('scroll', closeMenu, true);
+    window.addEventListener('resize', closeMenu);
+    window.addEventListener('keydown', handleEsc);
+    return () => {
+      window.removeEventListener('mousedown', closeMenu);
+      window.removeEventListener('scroll', closeMenu, true);
+      window.removeEventListener('resize', closeMenu);
+      window.removeEventListener('keydown', handleEsc);
+    };
+  }, [emptyGridPasteMenu]);
 
   const getCellEditorRawValue = (
     event: CellValueChangedEvent<Record<string, unknown>>,
@@ -5214,7 +5301,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   return (
     <>
       <div className={styles.panel}>
-        <div className={`${styles.gridWrapper} offer-products-grid`} ref={gridWrapperRef}>
+        <div
+          className={`${styles.gridWrapper} offer-products-grid`}
+          ref={gridWrapperRef}
+          onContextMenu={handleEmptyGridWrapperContextMenu}
+        >
           <AgGridAll
             endpoint={dataEndpoint}
             persistenceEndpoint={persistenceEndpoint}
@@ -5250,6 +5341,27 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             rowBuffer={3}
             maxBlocksInCache={2}
           />
+          {emptyGridPasteMenu ? (
+            <div
+              className={styles.emptyGridContextMenu}
+              style={{ left: `${emptyGridPasteMenu.x}px`, top: `${emptyGridPasteMenu.y}px` }}
+              role="menu"
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+            >
+              <button
+                type="button"
+                className={styles.emptyGridContextMenuItem}
+                role="menuitem"
+                disabled={!isClipboardPopulated()}
+                onClick={handleEmptyGridPasteRows}
+              >
+                Paste Rows
+              </button>
+            </div>
+          ) : null}
         </div>
         {hideTotals ? null : (
           <div className={styles.totalsBar}>

@@ -67,7 +67,6 @@ export async function POST(req: NextRequest) {
     const auditUserId = resolveAuditUserId(req);
     const request = pool.request();
     request.input('__description', sql.NVarChar(2000), description);
-    request.input('__title', sql.NVarChar(512), description.slice(0, 512));
     request.input('__comments', sql.NVarChar(2000), comments);
     request.input('__enabled', sql.Bit, enabled ? 1 : 0);
     request.input('__auditUserId', sql.NVarChar(450), auditUserId ?? null);
@@ -125,27 +124,27 @@ export async function POST(req: NextRequest) {
       )
       OUTPUT INSERTED.ID AS OfferID
       SELECT
-        src.CustomerID,
-        src.StatusID,
-        src.PricingPolicyID,
-        src.MarketID,
-        src.SalesDivitionID,
-        src.SalesPersonId,
-        src.SalesManagerID,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
         COALESCE(@__auditUserId, src.CreatedBy),
         COALESCE(@__auditUserId, src.ModifiedBy),
-        @__title,
+        NULL,
         @__description,
-        src.PaymentTerms,
-        src.InstallationSchedule,
-        src.OfferNotesClosing,
-        src.OfferValidity,
-        src.DeliveryTime,
-        src.OfferNotesIntroduction,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
         @__comments,
-        src.ContactID,
-        src.OfferContact,
-        src.ERPProjectID,
+        NULL,
+        NULL,
+        NULL,
         src.ERPFWCProjectID,
         src.PrintLevelGroupingID,
         src.CustomerRef,
@@ -158,7 +157,7 @@ export async function POST(req: NextRequest) {
         src.DeliveryDue,
         src.Delivery,
         src.OfferDate,
-        src.ApprovalUserId,
+        NULL,
         NULL,
         src.ProtocolNo,
         1,

@@ -12,6 +12,38 @@
   display: flex;
 }
 
+.emptyGridContextMenu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 160px;
+  padding: 6px;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
+}
+
+.emptyGridContextMenuItem {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.emptyGridContextMenuItem:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+.emptyGridContextMenuItem:disabled {
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
 .treeOrderingCell {
   display: inline-flex;
   align-items: center;

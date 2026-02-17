@@ -526,8 +526,12 @@ export default function ClientProductsPage({ offerId, headingText, isStandardPac
     return panel.getTemplateExportRows();
   }, []);
 
-  const handleRequestPaste = useCallback((anchorOfferDetailId: number, anchorTreeOrdering: string) => {
-    setPasteAnchor({ offerDetailId: anchorOfferDetailId, treeOrdering: anchorTreeOrdering });
+  const handleRequestPaste = useCallback((anchorOfferDetailId: number | null, anchorTreeOrdering: string | null) => {
+    if (anchorOfferDetailId != null && anchorTreeOrdering) {
+      setPasteAnchor({ offerDetailId: anchorOfferDetailId, treeOrdering: anchorTreeOrdering });
+    } else {
+      setPasteAnchor(null);
+    }
     setShowPasteDialog(true);
   }, []);
 

@@ -669,9 +669,6 @@ export async function POST(
     }
 
     const anchorOfferDetailId = normalizeOfferDetailId(body.anchorOfferDetailId ?? null);
-    if (anchorOfferDetailId == null) {
-      return NextResponse.json({ ok: false, error: 'Missing anchor row' }, { status: 400 });
-    }
 
     const clipboardRows = normalizeClipboardRows(body.rows ?? []);
     if (clipboardRows.length === 0) {
@@ -696,23 +693,35 @@ export async function POST(
     `);
     const existingRows = existingResult.recordset ?? [];
 
-    const anchor = existingRows.find((row) => row.OfferDetailID === anchorOfferDetailId) ?? null;
-    if (!anchor) {
-      await transaction.rollback();
-      transaction = null;
-      return NextResponse.json({ ok: false, error: 'Anchor row is not part of the target offer' }, { status: 400 });
-    }
+    let parentPath: number[] = [];
+    let insertSibling = 1;
+    if (anchorOfferDetailId != null) {
+      const anchor = existingRows.find((row) => row.OfferDetailID === anchorOfferDetailId) ?? null;
+      if (!anchor) {
+        await transaction.rollback();
+        transaction = null;
+        return NextResponse.json({ ok: false, error: 'Anchor row is not part of the target offer' }, { status: 400 });
+      }
 
-    const anchorTree = normalizeTreeOrderingValue(anchor.TreeOrdering);
-    const anchorPath = parseTreeOrderingPath(anchorTree);
-    if (anchorPath.length === 0) {
-      await transaction.rollback();
-      transaction = null;
-      return NextResponse.json({ ok: false, error: 'Anchor row has invalid TreeOrdering' }, { status: 400 });
-    }
+      const anchorTree = normalizeTreeOrderingValue(anchor.TreeOrdering);
+      const anchorPath = parseTreeOrderingPath(anchorTree);
+      if (anchorPath.length === 0) {
+        await transaction.rollback();
+        transaction = null;
+        return NextResponse.json({ ok: false, error: 'Anchor row has invalid TreeOrdering' }, { status: 400 });
+      }
 
-    const parentPath = anchorPath.slice(0, -1);
-    const insertSibling = anchorPath[anchorPath.length - 1] + 1;
+      parentPath = anchorPath.slice(0, -1);
+      insertSibling = anchorPath[anchorPath.length - 1] + 1;
+    } else {
+      if (existingRows.length > 0) {
+        await transaction.rollback();
+        transaction = null;
+        return NextResponse.json({ ok: false, error: 'Missing anchor row' }, { status: 400 });
+      }
+      parentPath = [];
+      insertSibling = 1;
+    }
 
     const roots = computeRoots(clipboardRows);
     if (roots.length === 0) {
