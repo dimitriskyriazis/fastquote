@@ -1090,7 +1090,7 @@ function buildSignatureBlock(data: OfferPdfData, L: Labels, lang: PdfLang, orien
         ? {
             stack: [
               { text: meta.salesName || meta.approvalName, style: 'body', bold: true },
-              { text: rightTitle || leftTitle, style: 'secondary' },
+              { text: rightTitle || leftTitle, style: 'body', margin: [0, 3, 0, 0] },
             ],
           }
         : {
@@ -1099,14 +1099,14 @@ function buildSignatureBlock(data: OfferPdfData, L: Labels, lang: PdfLang, orien
                 width: '50%',
                 stack: [
                   { text: meta.salesName , style: 'body', bold: true },
-                  { text: leftTitle, style: 'secondary' },
+                  { text: leftTitle, style: 'body', margin: [0, 3, 0, 0] },
                 ],
               },
               {
                 width: '50%',
                 stack: [
                   { text: meta.approvalName , style: 'body', bold: true, alignment: 'right' },
-                  { text: rightTitle, style: 'secondary', alignment: 'right' },
+                  { text: rightTitle, style: 'body', alignment: 'right', margin: [0, 3, 0, 0] },
                 ],
               },
             ],
@@ -1132,6 +1132,25 @@ export async function generateOfferPdf(
 
   const itemsTable = buildItemsTable(data, L, orientation, cols, printSettings);
   const totalsAndTerms = buildTotalsAndTerms(data, L, orientation, cols);
+  const openingNote = str(data.notesIntroduction)
+    ? [
+        { text: fixObviousTypos(str(data.notesIntroduction)), style: 'body', margin: [0, 0, 0, 8] },
+        {
+          canvas: [
+            {
+              type: 'line',
+              x1: 0,
+              y1: 0,
+              x2: innerContentWidth(orientation),
+              y2: 0,
+              lineWidth: 0.9,
+              lineColor: COLORS.sectionLine,
+            },
+          ],
+          margin: [0, 0, 0, 12],
+        },
+      ]
+    : [];
 
   const notes: unknown[] = [
     // Divider line for premium separation
@@ -1150,9 +1169,8 @@ export async function generateOfferPdf(
       margin: [0, 6, 0, 12],
     },
     { text: L.notesTitle, style: 'h2', margin: [0, 0, 0, 8] },
-    ...(str(data.notesIntroduction) ? [{ text: fixObviousTypos(str(data.notesIntroduction)), style: 'secondary', margin: [0, 0, 0, 6] }] : []),
-    ...(str(data.notesClosing) ? [{ text: fixObviousTypos(str(data.notesClosing)), style: 'secondary', margin: [0, 0, 0, 6] }] : []),
-    { text: L.vatNote, style: 'secondary' },
+    ...(str(data.notesClosing) ? [{ text: fixObviousTypos(str(data.notesClosing)), style: 'body', margin: [0, 0, 0, 6] }] : []),
+    { text: L.vatNote, style: 'body' },
   ];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1175,6 +1193,7 @@ export async function generateOfferPdf(
 
     content: [
       ...buildCoverPage(data, L, lang, orientation, logo),
+      ...openingNote,
       itemsTable,
       ...totalsAndTerms,
       ...notes,

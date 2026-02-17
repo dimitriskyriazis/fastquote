@@ -109,6 +109,7 @@ export default function AddUserModal({
     const trimmedUserName = userName.trim();
     const trimmedWindowsUserName = windowsUserName.trim();
     const trimmedRole = role.trim();
+    const trimmedFullName = fullName.trim();
 
     if (!trimmedUserName) {
       setError("User name is required.");
@@ -122,6 +123,10 @@ export default function AddUserModal({
       setError("Role is required.");
       return;
     }
+    if (!trimmedFullName) {
+      setError("Full name is required.");
+      return;
+    }
 
     setSaving(true);
     setError(null);
@@ -130,7 +135,7 @@ export default function AddUserModal({
         userName: trimmedUserName,
         windowsUserName: trimmedWindowsUserName,
         role: trimmedRole,
-        fullName: fullName.trim() || null,
+        fullName: trimmedFullName,
         fullNameGR: fullNameGR.trim() || null,
         email: email.trim() || null,
         signTitle: signTitle.trim() || null,
@@ -249,12 +254,13 @@ export default function AddUserModal({
         </div>
         <div className={lookupStyles.fieldHalf}>
           <label className={lookupStyles.fieldLabel} htmlFor="user-full-name">
-            Full Name
+            Full Name <span className={lookupStyles.requiredMark}>*</span>
           </label>
           <input
             id="user-full-name"
             className={lookupStyles.fieldControl}
             value={fullName}
+            required
             onChange={(event) => setFullName(event.target.value)}
           />
         </div>

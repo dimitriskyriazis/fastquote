@@ -116,7 +116,6 @@ export default function UsersClient() {
         filter: "agNumberColumnFilter",
         editable: false,
         width: 90,
-        sort: "asc",
       },
       {
         field: "UserName",
@@ -129,6 +128,7 @@ export default function UsersClient() {
         headerName: "Full Name",
         filter: "agTextColumnFilter",
         editable: true,
+        sort: "asc",
       },
       {
         field: "FullNameGR",

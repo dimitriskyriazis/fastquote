@@ -161,6 +161,16 @@ const applySort = (rows: Record<string, unknown>[], sortModel?: GridRequest["sor
   if (!sortModel || sortModel.length === 0) {
     const sorted = [...rows];
     sorted.sort((a, b) => {
+      const aFullName = String(a.FullName ?? "");
+      const bFullName = String(b.FullName ?? "");
+      const fullNameCmp = aFullName.localeCompare(bFullName, undefined, { sensitivity: "base" });
+      if (fullNameCmp !== 0) return fullNameCmp;
+
+      const aUserName = String(a.UserName ?? "");
+      const bUserName = String(b.UserName ?? "");
+      const userNameCmp = aUserName.localeCompare(bUserName, undefined, { sensitivity: "base" });
+      if (userNameCmp !== 0) return userNameCmp;
+
       const av = a.UserID;
       const bv = b.UserID;
       const aNum = typeof av === "number" ? av : Number(av);
@@ -253,7 +263,7 @@ export async function POST(req: NextRequest) {
       ${joinSql}
       LEFT JOIN dbo.SalesSeniorities ss ON ss.ID = u.SalesSeniorityID
       LEFT JOIN dbo.SalesDivision sd ON sd.ID = u.SalesDivisionID
-      ORDER BY u.UserName
+      ORDER BY u.FullName, u.UserName, u.Id
     `);
 
     const ordered: Array<{

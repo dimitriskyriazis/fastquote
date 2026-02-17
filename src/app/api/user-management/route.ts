@@ -250,6 +250,7 @@ export async function POST(req: NextRequest) {
     const userName = normalizeRequiredString(payload?.userName);
     const windowsUserName = normalizeRequiredString(payload?.windowsUserName);
     const roleName = normalizeRequiredString(payload?.role);
+    const fullName = normalizeRequiredString(payload?.fullName);
 
     if (!userName) {
       return NextResponse.json({ ok: false, error: "User name is required." }, { status: 400 });
@@ -260,8 +261,10 @@ export async function POST(req: NextRequest) {
     if (!roleName) {
       return NextResponse.json({ ok: false, error: "Role is required." }, { status: 400 });
     }
+    if (!fullName) {
+      return NextResponse.json({ ok: false, error: "Full name is required." }, { status: 400 });
+    }
 
-    const fullName = normalizeOptionalString(payload?.fullName);
     const fullNameGR = normalizeOptionalString(payload?.fullNameGR);
     const email = normalizeOptionalString(payload?.email);
     const signTitle = normalizeOptionalString(payload?.signTitle);
