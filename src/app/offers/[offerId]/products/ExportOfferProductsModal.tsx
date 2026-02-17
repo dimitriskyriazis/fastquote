@@ -70,7 +70,6 @@ const EXPORT_FIELDS: ExportFieldConfig[] = [
   { key: 'descriptionType', label: 'Description / Type', keywords: ['description / type', 'description', 'type', 'model', 'details'] },
   { key: 'qty', label: 'Qty', keywords: ['qty', 'quantity', 'pcs', 'pieces'] },
   { key: 'unitPrice', label: 'Unit price (RRP / Euro)', keywords: ['unit price', 'rrp', 'price', 'net unit price', 'euro'] },
-  { key: 'delayForDelivery', label: 'Delay for delivery', keywords: ['delay for delivery', 'delivery', 'lead time', 'delay'] },
   { key: 'comments', label: 'Comments', keywords: ['comments', 'comment', 'notes', 'remarks'] },
 ];
 
@@ -95,14 +94,30 @@ const hasCellValue = (value: unknown) => {
   return true;
 };
 
+const ALL_EXPORT_KEYWORDS: string[] = EXPORT_FIELDS.flatMap((field) =>
+  field.keywords.map((keyword) => keyword.toLowerCase()),
+);
+
 const detectHeaderRowIndex = (rows: unknown[][]): number => {
   let bestIndex = 0;
   let bestScore = -1;
-  const scanLimit = Math.min(rows.length, 25);
-  for (let idx = 0; idx < scanLimit; idx += 1) {
+  for (let idx = 0; idx < rows.length; idx += 1) {
     const row = rows[idx];
     if (!Array.isArray(row)) continue;
-    const score = row.reduce<number>((acc, cell) => (hasCellValue(cell) ? acc + 1 : acc), 0);
+    let keywordMatches = 0;
+    let filledCells = 0;
+    for (let colIdx = 0; colIdx < row.length; colIdx += 1) {
+      if (!hasCellValue(row[colIdx])) continue;
+      filledCells += 1;
+      const normalized = normalizeHeaderText(row[colIdx]);
+      if (normalized != null && ALL_EXPORT_KEYWORDS.some((kw) => normalized.includes(kw))) {
+        keywordMatches += 1;
+      }
+    }
+    // Heavily prefer rows that match export field keywords.
+    // Each keyword match is worth 100 points; filled cells count as 1 point each
+    // to break ties.
+    const score = keywordMatches * 100 + filledCells;
     if (score > bestScore) {
       bestScore = score;
       bestIndex = idx;
@@ -191,33 +206,10 @@ const countDataRows = (rows: unknown[][], headerRowIndex: number): number => {
   return count;
 };
 
-const getSelectedColumnIndexes = (
-  selection: Partial<Record<ExportFieldKey, number | null>>,
-): number[] => (
-  EXPORT_FIELDS
-    .map((field) => selection[field.key])
-    .filter((columnIndex): columnIndex is number => typeof columnIndex === 'number')
-);
-
 const findFirstWritableRowFromParsedRows = (sheet: SheetMapping): number => {
-  const selectedColumnIndexes = getSelectedColumnIndexes(sheet.selection);
-  const dataStartIndex = Math.max(sheet.headerRowIndex + 1, 0);
-  if (selectedColumnIndexes.length === 0) {
-    return dataStartIndex + 1;
-  }
-  let rowIndex = dataStartIndex;
-  while (rowIndex < sheet.rawRows.length) {
-    const row = sheet.rawRows[rowIndex];
-    const rowHasMappedData = selectedColumnIndexes.some((columnIndex) => {
-      const value = Array.isArray(row) ? row[columnIndex] : null;
-      return hasCellValue(value);
-    });
-    if (!rowHasMappedData) {
-      return rowIndex + 1;
-    }
-    rowIndex += 1;
-  }
-  return sheet.rawRows.length + 1;
+  // Start writing immediately after the header row. Template rows may contain
+  // placeholders (row numbers, formulas, formatting) that should be overwritten.
+  return Math.max(sheet.headerRowIndex + 1, 0) + 1;
 };
 
 const analyzeSheet = (name: string, rows: unknown[][], fallbackIndex: number): SheetMapping => {
@@ -292,8 +284,6 @@ const resolveFieldValue = (
       return row.qty === '' ? null : row.qty;
     case 'unitPrice':
       return row.unitPrice === '' ? null : row.unitPrice;
-    case 'delayForDelivery':
-      return row.delayForDelivery;
     case 'comments':
       return row.comments;
     default:
@@ -514,37 +504,9 @@ const patchWorksheetXmlWithAppendedRows = (
     });
   }
 
-  const selectedColumnIndexes = new Set<number>(selectedMappings.map((entry) => entry.columnIndex));
-  const rowHasMappedData = (rowIndex: number): boolean => {
-    const rowElement = rowByIndex.get(rowIndex);
-    if (!rowElement) return false;
-    const rowCells = uniqueElements((
-      Array.from(rowElement.getElementsByTagNameNS(ns, 'c')) as Element[]
-    ).concat(Array.from(rowElement.getElementsByTagName('c')) as Element[]));
-    return rowCells.some((cellElement) => {
-      const parsedRef = parseCellReference(cellElement.getAttribute('r'));
-      if (!parsedRef || !selectedColumnIndexes.has(parsedRef.col)) return false;
-      const formulaElement = cellElement.getElementsByTagNameNS(ns, 'f')[0]
-        ?? cellElement.getElementsByTagName('f')[0];
-      if (formulaElement && (formulaElement.textContent ?? '').trim().length > 0) {
-        return true;
-      }
-      const valueElement = cellElement.getElementsByTagNameNS(ns, 'v')[0]
-        ?? cellElement.getElementsByTagName('v')[0];
-      if (valueElement && (valueElement.textContent ?? '').trim().length > 0) {
-        return true;
-      }
-      const textElements = uniqueElements((
-        Array.from(cellElement.getElementsByTagNameNS(ns, 't')) as Element[]
-      ).concat(Array.from(cellElement.getElementsByTagName('t')) as Element[]));
-      return textElements.some((textElement) => (textElement.textContent ?? '').trim().length > 0);
-    });
-  };
-
-  let startRow = dataStartRow;
-  while (startRow <= maxRowIndex && rowHasMappedData(startRow)) {
-    startRow += 1;
-  }
+  // Start writing at the first row after the header. Template rows may contain
+  // placeholders (row numbers, formulas, formatting) that should be overwritten.
+  const startRow = dataStartRow;
   if (rows.length === 0) {
     return {
       sheetXml,
@@ -716,23 +678,9 @@ const applyRowsToSheet = (
   const dataStartRow = Math.max(mapping.headerRowIndex + 1, 0);
   const existingRef = typeof sheet['!ref'] === 'string' && sheet['!ref'].trim().length > 0 ? sheet['!ref'] : 'A1:A1';
   const range = xlsx.utils.decode_range(existingRef);
-  const selectedColumnIndexes = selectedMappings.map((entry) => entry.columnIndex);
-  const cellHasMappedData = (cell: XLSXTypes.CellObject | undefined): boolean => {
-    if (!cell) return false;
-    if (typeof cell.f === 'string' && cell.f.trim().length > 0) return true;
-    if (cell.v == null) return false;
-    if (typeof cell.v === 'string') return cell.v.trim().length > 0;
-    return true;
-  };
-  let startRow = dataStartRow;
-  while (startRow <= range.e.r) {
-    const rowHasMappedData = selectedColumnIndexes.some((columnIndex) => {
-      const address = xlsx.utils.encode_cell({ r: startRow, c: columnIndex });
-      return cellHasMappedData(sheet[address] as XLSXTypes.CellObject | undefined);
-    });
-    if (!rowHasMappedData) break;
-    startRow += 1;
-  }
+  // Start writing at the first row after the header. Template rows may contain
+  // placeholders (row numbers, formulas, formatting) that should be overwritten.
+  const startRow = dataStartRow;
   if (rows.length === 0) {
     return {
       startRow: startRow + 1,
@@ -1071,6 +1019,11 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
           throw new Error(`Worksheet "${activeSheet.name}" was not found in the selected file.`);
         }
         writeResult = applyRowsToSheet(xlsx, sheet, activeSheet, exportRows);
+        // Force Excel to recalculate all formulas when the file is opened.
+        if (!workbook.Workbook) workbook.Workbook = {};
+        const wbProps = workbook.Workbook as Record<string, unknown>;
+        if (!wbProps.CalcPr) wbProps.CalcPr = {};
+        (wbProps.CalcPr as Record<string, unknown>).fullCalcOnLoad = true;
         const binary = xlsx.write(workbook, {
           type: 'array',
           compression: true,
@@ -1090,6 +1043,22 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
         const patchResult = patchWorksheetXmlWithAppendedRows(worksheetXml, activeSheet, exportRows);
         writeResult = { startRow: patchResult.startRow, mappedColumnCount: patchResult.mappedColumnCount };
         archive.file(worksheetPath, patchResult.sheetXml);
+
+        // Force Excel to recalculate all formulas when the file is opened.
+        const workbookXmlFile = archive.file('xl/workbook.xml');
+        if (workbookXmlFile) {
+          let wbXml = await workbookXmlFile.async('string') as string;
+          if (wbXml.includes('<calcPr')) {
+            wbXml = wbXml.replace(/<calcPr([^/>]*)\/?>/g, (match, attrs: string) => {
+              const cleaned = attrs.replace(/\s*fullCalcOnLoad\s*=\s*"[^"]*"/g, '');
+              return `<calcPr${cleaned} fullCalcOnLoad="1"/>`;
+            });
+          } else {
+            wbXml = wbXml.replace(/<\/workbook>/i, '<calcPr fullCalcOnLoad="1"/></workbook>');
+          }
+          archive.file('xl/workbook.xml', wbXml);
+        }
+
         outputBuffer = await archive.generateAsync({
           type: 'arraybuffer',
           compression: 'DEFLATE',
