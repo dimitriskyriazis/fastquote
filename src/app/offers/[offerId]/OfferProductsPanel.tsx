@@ -565,6 +565,134 @@ const fetchProductSummary = async (productId: number): Promise<ProductSummary | 
   }
 };
 
+const isFarnellBrand = (brand: string | null | undefined): boolean => {
+  if (!brand || typeof brand !== 'string') return false;
+  return brand.replace(/\u00A0/g, ' ').trim().toLowerCase() === 'farnell';
+};
+
+type FarnellLookupResult = {
+  sku: string;
+  displayName: string;
+  manufacturerPartNumber: string | null;
+  brandName: string | null;
+  description: string | null;
+  productURL: string | null;
+  stock: number | null;
+  prices: { from: number; to: number; cost: number }[];
+  matchedPrice: number | null;
+};
+
+type FarnellLookupResponse = {
+  product: FarnellLookupResult;
+  farnellBrandId: number | null;
+};
+
+type AssignedRequestedPricing = {
+  quantity: number | null;
+  customerDiscount: number | null;
+  telmacoDiscount: number | null;
+};
+
+const fetchFarnellLookup = async (
+  sku: string,
+  quantity?: number,
+): Promise<FarnellLookupResponse | null> => {
+  try {
+    const params = new URLSearchParams({ sku });
+    if (quantity != null && quantity > 0) {
+      params.set('quantity', String(Math.trunc(quantity)));
+    }
+    const res = await fetch(`/api/farnell/lookup?${params.toString()}`);
+    if (!res.ok) return null;
+    const payload = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      product?: FarnellLookupResult;
+      farnellBrandId?: number | null;
+    } | null;
+    if (!payload?.ok || !payload.product) return null;
+    return {
+      product: payload.product,
+      farnellBrandId: typeof payload.farnellBrandId === 'number' ? payload.farnellBrandId : null,
+    };
+  } catch (err) {
+    console.error('Failed to fetch Farnell product', err);
+    return null;
+  }
+};
+
+const resolveFarnellProductByPartNumber = async (
+  partNumber: string,
+): Promise<number | null> => {
+  try {
+    const params = new URLSearchParams({
+      partNumber,
+      brand: 'Farnell',
+    });
+    const res = await fetch(`/api/products/resolve?${params.toString()}`);
+    if (!res.ok) return null;
+    const payload = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      productId?: number;
+      match?: string;
+    } | null;
+    // Only accept brand-matched results - reject fallback matches from other brands.
+    if (payload?.ok && typeof payload.productId === 'number' && payload.match !== 'fallbackNoBrand') {
+      return payload.productId;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const createFarnellProduct = async (
+  farnellBrandId: number,
+  farnellProduct: FarnellLookupResult,
+  sku: string,
+): Promise<number | null> => {
+  try {
+    const res = await fetch('/api/products/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        brandId: farnellBrandId,
+        partNumber: sku,
+        modelNumber: farnellProduct.manufacturerPartNumber ?? null,
+        erpCode: null,
+        description: farnellProduct.description ?? farnellProduct.displayName ?? null,
+        weblink: farnellProduct.productURL ?? null,
+        comments: null,
+        typeId: null,
+        categoryId: null,
+        subCategoryId: null,
+      }),
+    });
+    if (!res.ok) return null;
+    const payload = (await res.json().catch(() => null)) as { ok?: boolean; productId?: number } | null;
+    return payload?.ok && typeof payload.productId === 'number' ? payload.productId : null;
+  } catch (err) {
+    console.error('Failed to create Farnell product', err);
+    return null;
+  }
+};
+
+const buildFarnellPricingPatch = (
+  offerDetailId: number,
+  listPrice: number,
+  pricing: AssignedRequestedPricing | null,
+): Record<string, unknown> | null => {
+  if (!Number.isFinite(listPrice) || listPrice <= 0) return null;
+  const customerDiscount = pricing?.customerDiscount ?? 0;
+  const telmacoDiscount = pricing?.telmacoDiscount ?? 0;
+
+  return {
+    OfferDetailID: offerDetailId,
+    ListPrice: listPrice,
+    CustomerDiscount: customerDiscount,
+    TelmacoDiscount: telmacoDiscount,
+  };
+};
+
 const isOfferProductCommentOrProduct = (row: Record<string, unknown> | null | undefined) =>
   isOfferProductProduct(row) || isOfferProductComment(row);
 
@@ -1187,15 +1315,34 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
-        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        const payload = (await res.json().catch(() => null)) as {
+          ok?: boolean;
+          error?: string;
+          pricing?: {
+            quantity?: unknown;
+            customerDiscount?: unknown;
+            telmacoDiscount?: unknown;
+          } | null;
+        } | null;
         if (!res.ok || !payload?.ok) {
           console.error('Failed to assign requested row to product', payload?.error ?? `status ${res.status}`);
-          return false;
+          return null;
         }
-        return true;
+        const pricingPayload = payload.pricing && typeof payload.pricing === 'object'
+          ? payload.pricing
+          : null;
+        return {
+          pricing: pricingPayload
+            ? {
+                quantity: coerceNumber(pricingPayload.quantity ?? null),
+                customerDiscount: coerceNumber(pricingPayload.customerDiscount ?? null),
+                telmacoDiscount: coerceNumber(pricingPayload.telmacoDiscount ?? null),
+              }
+            : null,
+        };
       } catch (err) {
         console.error('Failed to assign requested row to product', err);
-        return false;
+        return null;
       }
     },
     [addProductsEndpoint],
@@ -3290,6 +3437,19 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     let categoriesAdded = 0;
     let productsAdded = 0;
     const unmatchedRequestedRows: RequestedProductMatchEntry[] = [];
+    const farnellProductCache = new Map<string, number>();
+    const farnellLookupCache = new Map<string, FarnellLookupResponse | null>();
+    const getFarnellLookupCacheKey = (partNumber: string, quantity: number) => `${partNumber}::${quantity}`;
+    const getFarnellLookupCached = async (partNumber: string, quantity: number) => {
+      const normalizedQuantity = quantity > 0 ? Math.trunc(quantity) : 1;
+      const cacheKey = getFarnellLookupCacheKey(partNumber, normalizedQuantity);
+      if (farnellLookupCache.has(cacheKey)) {
+        return farnellLookupCache.get(cacheKey) ?? null;
+      }
+      const response = await fetchFarnellLookup(partNumber, normalizedQuantity);
+      farnellLookupCache.set(cacheKey, response);
+      return response;
+    };
     const baseRootCategoryCount = treeOrderingRootMapRef.current.size;
     let sequentialCategoryCount = 0;
     let lastAssignedCategoryOrdinal: string | null = null;
@@ -3391,7 +3551,43 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         }
 
         try {
-          const productId = await resolveProductIdFromRequestedInfo(lookupInfo);
+          const brandIsFarnell = isFarnellBrand(lookupInfo.brand);
+          let farnellLookupResponse: FarnellLookupResponse | null = null;
+          let productId: number | null = null;
+
+          if (brandIsFarnell && lookupInfo.partNumber) {
+            const partKey = lookupInfo.partNumber;
+
+            // Check dedup cache first (same part number already processed in this batch)
+            if (farnellProductCache.has(partKey)) {
+              productId = farnellProductCache.get(partKey) ?? null;
+            } else {
+              // Strict brand-matched lookup to avoid cross-brand matches
+              productId = await resolveFarnellProductByPartNumber(partKey);
+            }
+
+            // Auto-create product if not found
+            if (productId == null) {
+              // Fetch from Farnell API (also returns the Farnell brand ID from DB)
+              farnellLookupResponse = await getFarnellLookupCached(partKey, 1);
+              const farnellBrandId = farnellLookupResponse?.farnellBrandId ?? null;
+              if (farnellBrandId != null && farnellLookupResponse) {
+                productId = await createFarnellProduct(
+                  farnellBrandId,
+                  farnellLookupResponse.product,
+                  partKey,
+                );
+              }
+            }
+
+            // Cache for dedup within this batch
+            if (productId != null) {
+              farnellProductCache.set(partKey, productId);
+            }
+          } else {
+            productId = await resolveProductIdFromRequestedInfo(lookupInfo);
+          }
+
           if (productId == null) {
             unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
             continue;
@@ -3399,12 +3595,39 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           const parentCategoryId = normalizeOfferDetailId(
             (data as { ParentOfferDetailID?: unknown }).ParentOfferDetailID ?? null,
           );
-          const assigned = await assignRequestedRowToProduct(offerDetailId, productId, parentCategoryId);
-          if (!assigned) {
+          const assignment = await assignRequestedRowToProduct(offerDetailId, productId, parentCategoryId);
+          if (!assignment) {
             unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
             continue;
           }
+
           const productMeta = await fetchProductSummary(productId);
+          const assignedProductBrandIsFarnell = brandIsFarnell || isFarnellBrand(productMeta?.BrandName ?? null);
+          const productPartNumber = typeof productMeta?.PartNumber === 'string'
+            ? productMeta.PartNumber.trim()
+            : '';
+          const assignedPartNumber = lookupInfo.partNumber
+            ?? (productPartNumber.length > 0 ? productPartNumber : null);
+
+          if (assignedProductBrandIsFarnell && assignedPartNumber) {
+            const quantityForLookupRaw = assignment.pricing?.quantity ?? requestedQuantityValue ?? actualQuantityValue ?? 1;
+            const quantityForLookup = quantityForLookupRaw > 0 ? Math.trunc(quantityForLookupRaw) : 1;
+            let lookupResponse = farnellLookupResponse;
+            if (!lookupResponse || quantityForLookup !== 1 || lookupInfo.partNumber !== assignedPartNumber) {
+              lookupResponse = await getFarnellLookupCached(assignedPartNumber, quantityForLookup);
+            }
+            if (lookupResponse?.product.matchedPrice != null) {
+              const farnellPatch = buildFarnellPricingPatch(
+                offerDetailId,
+                lookupResponse.product.matchedPrice,
+                assignment.pricing,
+              );
+              if (farnellPatch) {
+                updates.push(farnellPatch);
+              }
+            }
+          }
+
           const productDescription = normalizeDescriptionValue(productMeta?.Description ?? null);
           const description = productDescription ?? descriptionOverride ?? null;
           const requestedPartNumberRaw = getExactTextValue(
@@ -3464,7 +3687,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           }
         } catch (err) {
           console.error('Failed to populate requested rows', err);
-          showToastMessage('Unable to populate the offer with requested rows. Please try again.', 'error');
+          const message = err instanceof Error && err.message
+            ? err.message
+            : 'Unable to populate the offer with requested rows. Please try again.';
+          showToastMessage(message, 'error');
           return;
         }
       }
@@ -3544,12 +3770,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 
   const handleManualAssign = useCallback(async (productId: number) => {
     if (!currentRequestedMatch) return false;
-    const assigned = await assignRequestedRowToProduct(
+    const assignment = await assignRequestedRowToProduct(
       currentRequestedMatch.offerDetailId,
       productId,
       currentRequestedMatch.parentCategoryId,
     );
-    if (assigned) {
+    if (assignment) {
       showToastMessage('Requested item filled', 'success');
       try {
         refreshOfferProductGrid(null, { purge: true });
@@ -5107,4 +5333,3 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 OfferProductsPanel.displayName = 'OfferProductsPanel';
 
 export default React.memo(OfferProductsPanel);
-

@@ -1083,6 +1083,12 @@ async function handleAssignProductToRequestedRow(
       OtherCurrencyID INT NULL,
       CurrencyCostModifier DECIMAL(18, 8) NULL
     );
+    DECLARE @UpdatedRowPricing TABLE (
+      OfferDetailID INT NOT NULL,
+      Quantity DECIMAL(18, 4) NULL,
+      CustomerDiscount DECIMAL(18, 4) NULL,
+      TelmacoDiscount DECIMAL(18, 4) NULL
+    );
 
     INSERT INTO @ProductData (
       ProductID,
@@ -1211,6 +1217,17 @@ async function handleAssignProductToRequestedRow(
       od.PriceListItemID = p.PriceListItemID,
       od.ModifiedOn = SYSUTCDATETIME(),
       od.ModifiedBy = @__modifiedBy
+    OUTPUT
+      inserted.ID,
+      inserted.Quantity,
+      inserted.CustomerDiscount,
+      inserted.TelmacoDiscount
+    INTO @UpdatedRowPricing (
+      OfferDetailID,
+      Quantity,
+      CustomerDiscount,
+      TelmacoDiscount
+    )
     FROM dbo.OfferDetails od
       CROSS JOIN @ProductData p
       CROSS APPLY (
@@ -1310,6 +1327,12 @@ async function handleAssignProductToRequestedRow(
         )
       )
       AND ${requestedRowCondition};
+    SELECT TOP (1)
+      urp.OfferDetailID,
+      urp.Quantity,
+      urp.CustomerDiscount,
+      urp.TelmacoDiscount
+    FROM @UpdatedRowPricing urp;
   `;
 
   const result = await request.query(query);
@@ -1321,7 +1344,25 @@ async function handleAssignProductToRequestedRow(
     );
   }
 
-  return NextResponse.json({ ok: true, updated: rowsAffected });
+  const pricingRow = (result.recordset?.[0] ?? null) as {
+    OfferDetailID?: number | null;
+    Quantity?: number | null;
+    CustomerDiscount?: number | null;
+    TelmacoDiscount?: number | null;
+  } | null;
+
+  return NextResponse.json({
+    ok: true,
+    updated: rowsAffected,
+    pricing: pricingRow
+      ? {
+          offerDetailId: pricingRow.OfferDetailID ?? null,
+          quantity: pricingRow.Quantity ?? null,
+          customerDiscount: pricingRow.CustomerDiscount ?? null,
+          telmacoDiscount: pricingRow.TelmacoDiscount ?? null,
+        }
+      : null,
+  });
 }
 
 export async function POST(

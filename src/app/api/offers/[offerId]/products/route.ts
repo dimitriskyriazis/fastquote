@@ -356,7 +356,15 @@ const normalizeQuantityValue = (value: unknown): number | null => {
 };
 
 const normalizePercentValue = (value: unknown, { allowNegative = false }: { allowNegative?: boolean } = {}): number | null => {
-  const num = normalizeQuantityValue(value);
+  let num: number | null = null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    num = value;
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number.parseFloat(trimmed);
+    num = Number.isFinite(parsed) ? parsed : null;
+  }
   if (num == null) return null;
   if (!allowNegative && num < 0) return null;
   return num;
@@ -1715,8 +1723,12 @@ export async function PATCH(
           }
         }
 
-        const customerDiscount = hasCustomerDiscount ? normalizePercentValue(entry?.CustomerDiscount ?? null) : null;
-        const telmacoDiscount = hasTelmacoDiscount ? normalizePercentValue(entry?.TelmacoDiscount ?? null) : null;
+        const customerDiscount = hasCustomerDiscount
+          ? normalizePercentValue(entry?.CustomerDiscount ?? null, { allowNegative: true })
+          : null;
+        const telmacoDiscount = hasTelmacoDiscount
+          ? normalizePercentValue(entry?.TelmacoDiscount ?? null, { allowNegative: true })
+          : null;
         const netUnitPrice = hasNetUnitPrice ? normalizeMoneyValue(entry?.NetUnitPrice ?? null) : null;
         const netCostOtherCurrency = hasNetCostOtherCurrency ? normalizeMoneyValue(entry?.NetCostOtherCurrency ?? null) : null;
         const otherCurrencyId = hasOtherCurrencyID ? normalizeIntValue(entry?.OtherCurrencyID ?? null) : null;
@@ -2052,10 +2064,10 @@ export async function PATCH(
             resolvedPricing = {
               customerDiscount: entry.hasCustomerDiscount
                 ? entry.customerDiscount
-                : normalizePercentValue(current.CustomerDiscount ?? null),
+                : normalizePercentValue(current.CustomerDiscount ?? null, { allowNegative: true }),
               telmacoDiscount: entry.hasTelmacoDiscount
                 ? entry.telmacoDiscount
-                : normalizePercentValue(current.TelmacoDiscount ?? null),
+                : normalizePercentValue(current.TelmacoDiscount ?? null, { allowNegative: true }),
               netUnitPrice: entry.hasNetUnitPrice
                 ? entry.netUnitPrice
                 : normalizeMoneyValue(current.NetUnitPrice ?? null),
@@ -2074,10 +2086,10 @@ export async function PATCH(
               listPrice: fallbackListPrice,
               customerDiscount: entry.hasCustomerDiscount
                 ? entry.customerDiscount
-                : normalizePercentValue(current.CustomerDiscount ?? null),
+                : normalizePercentValue(current.CustomerDiscount ?? null, { allowNegative: true }),
               telmacoDiscount: entry.hasTelmacoDiscount
                 ? entry.telmacoDiscount
-                : normalizePercentValue(current.TelmacoDiscount ?? null),
+                : normalizePercentValue(current.TelmacoDiscount ?? null, { allowNegative: true }),
               netUnitPrice: entry.hasNetUnitPrice
                 ? entry.netUnitPrice
                 : normalizeMoneyValue(current.NetUnitPrice ?? null),
@@ -2103,8 +2115,8 @@ export async function PATCH(
           }
         } else {
           resolvedPricing = {
-            customerDiscount: normalizePercentValue(current.CustomerDiscount ?? null),
-            telmacoDiscount: normalizePercentValue(current.TelmacoDiscount ?? null),
+            customerDiscount: normalizePercentValue(current.CustomerDiscount ?? null, { allowNegative: true }),
+            telmacoDiscount: normalizePercentValue(current.TelmacoDiscount ?? null, { allowNegative: true }),
             netUnitPrice: normalizeMoneyValue(current.NetUnitPrice ?? null),
             netCost: normalizeMoneyValue(current.NetCost ?? null),
             margin: normalizePercentValue(current.Margin ?? null, { allowNegative: true }),

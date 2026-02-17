@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import sql from 'mssql';
+import sql, { type ConnectionPool } from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../../../lib/auditTrail';
 import { requirePermission } from '../../../../../../lib/authz';
+import { fetchFarnellProduct, matchPriceTier, type FarnellProduct } from '../../../../../../lib/farnell';
 
 const normalizeOfferId = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isInteger(value)) return value;
@@ -23,6 +24,173 @@ const normalizeStringValue = (value: unknown): string | null => {
   }
   return null;
 };
+
+type FarnellOfferRow = {
+  OfferDetailID: number;
+  PartNumber: string | null;
+  Quantity: number | null;
+};
+
+async function updateFarnellPrices(
+  pool: ConnectionPool,
+  offerId: number,
+  auditUserId: string | null,
+  selectedOfferDetailIds: number[],
+): Promise<number> {
+  // Find all Farnell-brand offer detail rows
+  const findRequest = pool.request();
+  findRequest.input('offerId', sql.Int, offerId);
+  const selectedFilter = selectedOfferDetailIds.length > 0
+    ? ` AND od.ID IN (${selectedOfferDetailIds.map((_, idx) => `@selId${idx}`).join(', ')})`
+    : '';
+  selectedOfferDetailIds.forEach((id, idx) => {
+    findRequest.input(`selId${idx}`, sql.Int, id);
+  });
+
+  const farnellRows = await findRequest.query<FarnellOfferRow>(`
+    SELECT
+      od.ID AS OfferDetailID,
+      p.PartNumber,
+      od.Quantity
+    FROM dbo.OfferDetails od
+    INNER JOIN dbo.Products p ON p.ID = od.ProductID
+    INNER JOIN dbo.Brands b ON b.ID = od.BrandID
+    WHERE od.OfferID = @offerId
+      AND od.ProductID IS NOT NULL
+      AND LTRIM(RTRIM(b.Name)) = 'Farnell'
+      ${selectedFilter}
+  `);
+
+  const rows = farnellRows.recordset ?? [];
+  if (rows.length === 0) return 0;
+
+  // Deduplicate Farnell API calls by part number.
+  const farnellProductCache = new Map<string, FarnellProduct | null>();
+  let updatedCount = 0;
+
+  for (const row of rows) {
+    if (!row.PartNumber) continue;
+    const quantity = row.Quantity != null && Number.isFinite(row.Quantity) && row.Quantity > 0
+      ? row.Quantity
+      : 1;
+
+    let farnellProduct: FarnellProduct | null;
+    if (farnellProductCache.has(row.PartNumber)) {
+      farnellProduct = farnellProductCache.get(row.PartNumber) ?? null;
+    } else {
+      farnellProduct = await fetchFarnellProduct(row.PartNumber, quantity);
+      farnellProductCache.set(row.PartNumber, farnellProduct);
+    }
+    const listPrice = farnellProduct && farnellProduct.prices.length > 0
+      ? matchPriceTier(farnellProduct.prices, quantity)
+      : farnellProduct?.matchedPrice ?? null;
+    if (listPrice == null) continue;
+
+    // Update ListPrice and recalculate all derived fields using pricing policy discounts
+    const updateRequest = pool.request();
+    updateRequest.input('detailId', sql.Int, row.OfferDetailID);
+    updateRequest.input('offerId', sql.Int, offerId);
+    updateRequest.input('listPrice', sql.Decimal(18, 4), listPrice);
+    updateRequest.input('modifiedBy', sql.NVarChar(450), auditUserId);
+
+    await updateRequest.query(`
+      DECLARE @PricingPolicyID INT = (
+        SELECT TOP (1) o.PricingPolicyID
+        FROM dbo.Offer o
+        WHERE o.ID = @offerId
+      );
+
+      DECLARE @CustomerDiscount DECIMAL(18, 6) = 0;
+      DECLARE @TelmacoDiscount DECIMAL(18, 6) = 0;
+
+      SELECT TOP (1)
+        @CustomerDiscount = COALESCE(ppr.CustomerDiscountPercentage, 0),
+        @TelmacoDiscount = COALESCE(ppr.TelmacoDiscountPercentage, 0)
+      FROM (
+        SELECT TOP (1)
+          ppr.CustomerDiscountPercentage,
+          ppr.TelmacoDiscountPercentage,
+          1 AS Priority
+        FROM dbo.OfferDetails od_inner
+        INNER JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = od_inner.PriceListID
+          AND plpp.PricingPolicyID = @PricingPolicyID
+          AND plpp.PricingPolicyRuleID IS NOT NULL
+        INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyRuleID = ppr.ID
+        WHERE od_inner.ID = @detailId
+          AND (ppr.BrandID = od_inner.BrandID OR ppr.BrandID IS NULL)
+        ORDER BY
+          CASE WHEN ppr.BrandID = od_inner.BrandID THEN 0 ELSE 1 END,
+          ppr.ID DESC
+
+        UNION ALL
+
+        SELECT TOP (1)
+          ppr.CustomerDiscountPercentage,
+          ppr.TelmacoDiscountPercentage,
+          2 AS Priority
+        FROM dbo.OfferDetails od_inner
+        INNER JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = od_inner.PriceListID
+          AND plpp.PricingPolicyID = @PricingPolicyID
+          AND plpp.PricingPolicyRuleID IS NULL
+        INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
+        WHERE od_inner.ID = @detailId
+          AND (ppr.BrandID = od_inner.BrandID OR ppr.BrandID IS NULL)
+        ORDER BY
+          CASE WHEN ppr.BrandID = od_inner.BrandID THEN 0 ELSE 1 END,
+          ppr.ID DESC
+
+        UNION ALL
+
+        SELECT TOP (1)
+          ppr.CustomerDiscountPercentage,
+          ppr.TelmacoDiscountPercentage,
+          3 AS Priority
+        FROM dbo.OfferDetails od_inner
+        INNER JOIN dbo.PricingPolicyRules ppr ON ppr.PricingPolicyID = @PricingPolicyID
+        WHERE od_inner.ID = @detailId
+          AND (ppr.BrandID = od_inner.BrandID OR ppr.BrandID IS NULL)
+        ORDER BY
+          CASE WHEN ppr.BrandID = od_inner.BrandID THEN 0 ELSE 1 END,
+          ppr.ID DESC
+      ) ppr
+      ORDER BY ppr.Priority;
+
+      DECLARE @NetUnitPrice DECIMAL(18, 4) = ROUND(
+        @listPrice * (CAST(1 AS DECIMAL(18, 8)) - (CAST(@CustomerDiscount AS DECIMAL(18, 8)) / 100)),
+        4
+      );
+      DECLARE @NetCost DECIMAL(18, 4) = ROUND(
+        @listPrice * (CAST(1 AS DECIMAL(18, 8)) - (CAST(@TelmacoDiscount AS DECIMAL(18, 8)) / 100)),
+        4
+      );
+
+      UPDATE dbo.OfferDetails
+      SET
+        [ListPrice] = @listPrice,
+        [CustomerDiscount] = @CustomerDiscount,
+        [TelmacoDiscount] = @TelmacoDiscount,
+        [NetUnitPrice] = @NetUnitPrice,
+        [NetCost] = @NetCost,
+        [TotalPrice] = CASE WHEN Quantity IS NULL THEN NULL ELSE ROUND(@listPrice * Quantity, 4) END,
+        [TotalNet] = CASE WHEN Quantity IS NULL THEN NULL ELSE ROUND(@NetUnitPrice * Quantity, 4) END,
+        [TotalCost] = CASE WHEN Quantity IS NULL THEN NULL ELSE ROUND(@NetCost * Quantity, 4) END,
+        [GrossProfit] = CASE
+          WHEN Quantity IS NULL THEN NULL
+          ELSE ROUND((@NetUnitPrice - @NetCost) * Quantity, 4)
+        END,
+        [Margin] = CASE
+          WHEN @NetUnitPrice = 0 THEN NULL
+          ELSE ROUND((CAST(1 AS DECIMAL(18, 8)) - (CAST(@NetCost AS DECIMAL(18, 8)) / CAST(@NetUnitPrice AS DECIMAL(18, 8)))) * 100, 4)
+        END,
+        [ModifiedOn] = SYSUTCDATETIME(),
+        [ModifiedBy] = @modifiedBy
+      WHERE ID = @detailId
+    `);
+    updatedCount += 1;
+  }
+
+  return updatedCount;
+}
 
 export async function POST(
   req: NextRequest,
@@ -56,6 +224,16 @@ export async function POST(
 
     const pool = await getPool();
     const auditUserId = normalizeStringValue(resolveAuditUserId(req)) ?? null;
+
+    // Step 1: Update Farnell-brand rows via live API
+    const farnellUpdated = await updateFarnellPrices(
+      pool,
+      normalizedId,
+      auditUserId,
+      selectedOfferDetailIds,
+    );
+
+    // Step 2: Update non-Farnell rows via standard price list logic
     const request = pool.request();
     request.input('offerId', sql.Int, normalizedId);
     request.input('modifiedBy', sql.NVarChar(450), auditUserId);
@@ -65,6 +243,15 @@ export async function POST(
     selectedOfferDetailIds.forEach((id, idx) => {
       request.input(`selectedOfferDetailId${idx}`, sql.Int, id);
     });
+
+    // Exclude Farnell brand from pricing policy checks and standard update
+    const excludeFarnellSql = `
+      AND NOT EXISTS (
+        SELECT 1
+        FROM dbo.Brands fb
+        WHERE fb.ID = od.BrandID
+          AND LTRIM(RTRIM(fb.Name)) = 'Farnell'
+      )`;
 
     const result = await request.query<{ updated: number }>(`
       DECLARE @PricingPolicyID INT = (
@@ -92,6 +279,7 @@ export async function POST(
           WHERE od.OfferID = @offerId
             AND od.ProductID IS NOT NULL
             ${selectedDetailsFilterSql}
+            ${excludeFarnellSql}
             AND NOT EXISTS (
               SELECT 1
               FROM dbo.PricingPolicyRules ppr
@@ -216,9 +404,9 @@ export async function POST(
           ORDER BY
             CASE WHEN ppr.BrandID = od.BrandID THEN 0 ELSE 1 END,
             ppr.ID DESC
-          
+
           UNION ALL
-          
+
           -- Priority 2: Use rules from policy specified in PriceListPricingPolicy
           SELECT TOP (1)
             ppr.TelmacoDiscountPercentage,
@@ -233,9 +421,9 @@ export async function POST(
           ORDER BY
             CASE WHEN ppr.BrandID = od.BrandID THEN 0 ELSE 1 END,
             ppr.ID DESC
-          
+
           UNION ALL
-          
+
           -- Priority 3: Fall back to Offer's PricingPolicyID
           SELECT TOP (1)
             ppr.TelmacoDiscountPercentage,
@@ -278,12 +466,12 @@ export async function POST(
             )
           END AS ComputedNetCost
       ) computed
-      WHERE od.ProductID IS NOT NULL${selectedDetailsFilterSql};
+      WHERE od.ProductID IS NOT NULL${selectedDetailsFilterSql}${excludeFarnellSql};
       SELECT @@ROWCOUNT AS updated;
     `);
 
-    const updated = Number(result.recordset?.[0]?.updated ?? 0);
-    return NextResponse.json({ ok: true, updated });
+    const standardUpdated = Number(result.recordset?.[0]?.updated ?? 0);
+    return NextResponse.json({ ok: true, updated: standardUpdated + farnellUpdated });
   } catch (err) {
     console.error('Failed to update offer prices', err);
     const message = err instanceof Error ? err.message : 'Server error';
