@@ -104,8 +104,8 @@ export const partModelNumberSchema = (maxLength: number) =>
     .max(maxLength, `Must be at most ${maxLength} characters`)
     .trim()
     .regex(
-      /^[a-zA-Z0-9\s\-_./,()"\'&+\u2019]+$/,
-      'Part/Model number can only contain alphanumeric characters, spaces, and -_./,()"\'+&',
+      /^[\p{L}\p{N}\s_./,()"'+&\u2013\u2014\u2019-]+$/u,
+      'Part/Model number can only contain letters, numbers, spaces, and -_./,()"\'+&',
     )
     .transform((val) => (val === '' ? null : val))
     .nullable()

@@ -8,6 +8,7 @@ import { handleApiError } from "../../../lib/errorHandler";
 import { logger } from "../../../lib/logger";
 import { validateRequest, intSchema, stringSchema, booleanSchema } from "../../../lib/validation";
 import { requirePermission } from "../../../lib/authz";
+import { checkDeletePermission } from "../../../lib/deletePermissions";
 
 const createBrandSchema = z
   .object({
@@ -23,6 +24,10 @@ type BrandUpdateInput = {
   BrandID?: number | string | null;
   field?: string | null;
   value?: unknown;
+};
+
+type BrandDeleteBody = {
+  BrandIDs?: unknown;
 };
 
 type NormalizedBrandUpdate = {
@@ -283,6 +288,62 @@ export async function PATCH(req: NextRequest) {
       requestId,
       endpoint: "/api/brands",
       method: "PATCH",
+      userId,
+    });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
+
+  try {
+    const auth = await requirePermission(req, "manageBrandsSuppliers");
+    if (!auth.ok) return auth.response;
+
+    const body = (await req.json().catch(() => null)) as BrandDeleteBody | null;
+    const rawIds = Array.isArray(body?.BrandIDs) ? body.BrandIDs : [];
+    const ids = Array.from(
+      new Set(
+        rawIds
+          .map((entry) => normalizeBrandId(entry))
+          .filter((value): value is number => value != null),
+      ),
+    );
+
+    if (ids.length === 0) {
+      return NextResponse.json({ ok: false, error: "No brands provided" }, { status: 400 });
+    }
+
+    const deleteCheck = checkDeletePermission(auth.roles, ids.length, "generic", null);
+    if (!deleteCheck.allowed) {
+      return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
+    }
+
+    const pool = await getPool();
+    const request = pool.request();
+    ids.forEach((value, idx) => {
+      request.input(`id${idx}`, sql.Int, value);
+    });
+    await request.query(`
+      DELETE FROM dbo.Brands
+      WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
+    `);
+
+    logger.info("Brand deleted successfully", {
+      requestId,
+      endpoint: "/api/brands",
+      method: "DELETE",
+      userId,
+      count: ids.length,
+    });
+
+    return NextResponse.json({ ok: true, deleted: ids.length });
+  } catch (err) {
+    return await handleApiError(err, {
+      requestId,
+      endpoint: "/api/brands",
+      method: "DELETE",
       userId,
     });
   }
