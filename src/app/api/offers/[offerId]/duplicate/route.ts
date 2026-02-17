@@ -65,6 +65,7 @@ type ExistingOfferRecord = {
   ProtocolNo: number | null;
   OfferVersion: number | null;
   Enabled: number | boolean | null;
+  IsStandardPackage: number | boolean | null;
   CreatedBy: string | null;
   ModifiedBy: string | null;
 };
@@ -332,6 +333,7 @@ export async function POST(
         ProtocolNo,
         OfferVersion,
         Enabled,
+        IsStandardPackage,
         CreatedBy,
         ModifiedBy
       FROM dbo.Offer
@@ -361,6 +363,11 @@ export async function POST(
       : existingOffer.Enabled != null
         ? Boolean(existingOffer.Enabled)
         : true;
+    const isStandardPackageValue = typeof existingOffer.IsStandardPackage === 'boolean'
+      ? existingOffer.IsStandardPackage
+      : existingOffer.IsStandardPackage != null
+        ? Boolean(existingOffer.IsStandardPackage)
+        : false;
 
     const transaction = new sql.Transaction(pool);
     await transaction.begin();
@@ -407,6 +414,7 @@ export async function POST(
       insertRequest.input('ProtocolNo', sql.Int, existingOffer.ProtocolNo);
       insertRequest.input('OfferVersion', sql.Int, targetVersion);
       insertRequest.input('Enabled', sql.Bit, enabledValue);
+      insertRequest.input('IsStandardPackage', sql.Bit, isStandardPackageValue);
 
       const insertSql = `
         INSERT INTO dbo.Offer (
@@ -448,6 +456,7 @@ export async function POST(
           ProtocolNo,
           OfferVersion,
           Enabled,
+          IsStandardPackage,
           CreatedOn,
           ModifiedOn
         )
@@ -491,6 +500,7 @@ export async function POST(
           @ProtocolNo,
           @OfferVersion,
           @Enabled,
+          @IsStandardPackage,
           SYSUTCDATETIME(),
           SYSUTCDATETIME()
         );

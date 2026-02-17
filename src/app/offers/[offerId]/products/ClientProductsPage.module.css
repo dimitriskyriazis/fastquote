@@ -43,6 +43,10 @@
   margin-left: 6px;
 }
 
+.standardPackageTopTitle {
+  transform: translateY(0%);
+}
+
 .addButtons {
   display: flex;
   align-items: center;

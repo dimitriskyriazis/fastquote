@@ -17,18 +17,26 @@ import AddRequestedProductsModal from './AddRequestedProductsModal';
 import ExportOfferProductsModal from './ExportOfferProductsModal';
 import AddProductModal from '../../../products/AddProductModal';
 import PasteProductsDialog from './PasteProductsDialog';
-import { readClipboard } from './productClipboard';
+import LookupModal from '../../../components/LookupModal';
+import lookupStyles from '../../../components/LookupModal.module.css';
+import { mapRowToClipboardRow, readClipboard } from './productClipboard';
 
 const AddProductsModal = dynamic(() => import('./AddProductsModal'), { ssr: false });
 type Props = {
   offerId: string;
   headingText: string;
+  isStandardPackage: boolean;
 };
 
 type AddActionType = 'product' | 'category' | 'printable-comment' | 'non-printable-comment';
 type CreatableActionType = Exclude<AddActionType, 'product'>;
 type ProductsTableLayout = 'cust' | 'wCost' | 'wReq';
 type PivotLayout = 'category' | 'brand';
+type StandardPackageOption = {
+  id: number;
+  description: string;
+  version: number | null;
+};
 
 const LAYOUT_STORAGE_PREFIX = 'fastquote-offer-products-layout';
 const MAX_CATEGORY_DEPTH = 3;
@@ -83,16 +91,17 @@ const readPersistedLayout = (key: string | null): ProductsTableLayout | null => 
   return null;
 };
 
-export default function ClientProductsPage({ offerId, headingText }: Props) {
+export default function ClientProductsPage({ offerId, headingText, isStandardPackage }: Props) {
   const { userId } = useAuditUser();
   useEffect(() => {
+    if (isStandardPackage) return;
     void addRecentOffer({
       id: offerId,
       label: headingText,
       description: headingText.replace(/ - Products$/i, '').trim(),
       title: headingText.replace(/ - Products$/i, '').trim(),
     });
-  }, [offerId, headingText]);
+  }, [offerId, headingText, isStandardPackage]);
 
   const [manualMode, setManualMode] = useState(false);
   const [pendingAction, setPendingAction] = useState<CreatableActionType | null>(null);
@@ -111,6 +120,13 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [pivotLayout, setPivotLayout] = useState<PivotLayout>('brand');
   const [showPasteDialog, setShowPasteDialog] = useState(false);
   const [pasteAnchor, setPasteAnchor] = useState<{ offerDetailId: number; treeOrdering: string } | null>(null);
+  const [showAddStandardPackageModal, setShowAddStandardPackageModal] = useState(false);
+  const [addStandardPackageAnchor, setAddStandardPackageAnchor] = useState<{ offerDetailId: number; treeOrdering: string } | null>(null);
+  const [standardPackageOptions, setStandardPackageOptions] = useState<StandardPackageOption[]>([]);
+  const [selectedStandardPackageId, setSelectedStandardPackageId] = useState<string>('');
+  const [loadingStandardPackageOptions, setLoadingStandardPackageOptions] = useState(false);
+  const [addingStandardPackage, setAddingStandardPackage] = useState(false);
+  const [addStandardPackageError, setAddStandardPackageError] = useState<string | null>(null);
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
   const splitLeftRef = useRef<HTMLDivElement | null>(null);
   const layoutStorageKey = useMemo(() => buildLayoutStorageKey(userId), [userId]);
@@ -143,6 +159,91 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const [initialRequestedRowId, setInitialRequestedRowId] = useState<number | null>(null);
   const pageRef = useRef<HTMLElement | null>(null);
   const pendingPageScrollRestoreRef = useRef<{ pageScrollTop: number; windowScrollY: number } | null>(null);
+
+  useEffect(() => {
+    if (!isStandardPackage) return;
+    setPivotView(false);
+  }, [isStandardPackage]);
+
+  useEffect(() => {
+    if (!showAddStandardPackageModal) {
+      setAddStandardPackageError(null);
+      return;
+    }
+    let cancelled = false;
+    const loadOptions = async () => {
+      setLoadingStandardPackageOptions(true);
+      setAddStandardPackageError(null);
+      try {
+        const response = await fetch('/api/standard-packages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            request: {
+              startRow: 0,
+              endRow: 2000,
+              sortModel: [
+                { colId: 'Description', sort: 'asc' },
+                { colId: 'OfferVersion', sort: 'desc' },
+              ],
+            },
+            includeAllVersions: false,
+          }),
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { ok?: boolean; rows?: Array<Record<string, unknown>>; error?: string }
+          | null;
+        if (!response.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? 'Unable to load standard packages.');
+        }
+        if (cancelled) return;
+        const options = (payload.rows ?? [])
+          .map((row) => {
+            const idRaw = row.ID ?? row.offerId ?? null;
+            const id = typeof idRaw === 'number'
+              ? idRaw
+              : typeof idRaw === 'string'
+                ? Number.parseInt(idRaw.trim(), 10)
+                : Number.NaN;
+            if (!Number.isInteger(id) || id <= 0) return null;
+            const description = typeof row.Description === 'string'
+              ? row.Description.trim()
+              : '';
+            const versionRaw = row.OfferVersion ?? null;
+            const version = typeof versionRaw === 'number'
+              ? versionRaw
+              : typeof versionRaw === 'string'
+                ? Number.parseInt(versionRaw.trim(), 10)
+                : null;
+            return {
+              id,
+              description: description || `Standard package ${id}`,
+              version: Number.isInteger(version) ? version : null,
+            } satisfies StandardPackageOption;
+          })
+          .filter((option): option is StandardPackageOption => option != null);
+        setStandardPackageOptions(options);
+        setSelectedStandardPackageId((current) => {
+          if (current && options.some((entry) => String(entry.id) === current)) return current;
+          return options[0] ? String(options[0].id) : '';
+        });
+      } catch (err) {
+        if (cancelled) return;
+        console.error('Failed to load standard package options', err);
+        setStandardPackageOptions([]);
+        setSelectedStandardPackageId('');
+        setAddStandardPackageError(err instanceof Error ? err.message : 'Unable to load standard packages.');
+      } finally {
+        if (!cancelled) {
+          setLoadingStandardPackageOptions(false);
+        }
+      }
+    };
+    void loadOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, [showAddStandardPackageModal]);
 
   const handleAddAction = useCallback(async (action: AddActionType) => {
     if (action === 'product') {
@@ -331,7 +432,9 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
   const headerRowBottomClassName = showAddProductModal
     ? `${pageHeaderStyles.headerRowBottom} ${toolbarStyles.compactHeaderRow}`
     : pageHeaderStyles.headerRowBottom;
-  const headingClassName = pivotView ? undefined : pageHeaderStyles.topTitle;
+  const headingClassName = pivotView
+    ? undefined
+    : `${pageHeaderStyles.topTitle} ${isStandardPackage ? toolbarStyles.standardPackageTopTitle : ''}`.trim();
   const updatePricesEndpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/update-prices`,
     [offerId],
@@ -406,6 +509,127 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     setShowPasteDialog(true);
   }, []);
 
+  const handleRequestAddStandardPackage = useCallback((anchorOfferDetailId: number, anchorTreeOrdering: string) => {
+    setAddStandardPackageAnchor({ offerDetailId: anchorOfferDetailId, treeOrdering: anchorTreeOrdering });
+    setShowAddStandardPackageModal(true);
+    setAddStandardPackageError(null);
+  }, []);
+
+  const handleConfirmAddStandardPackage = useCallback(async () => {
+    const sourcePackageId = Number.parseInt(selectedStandardPackageId, 10);
+    if (!Number.isInteger(sourcePackageId) || sourcePackageId <= 0) {
+      setAddStandardPackageError('Select a standard package first.');
+      return;
+    }
+    if (!addStandardPackageAnchor?.offerDetailId) {
+      setAddStandardPackageError('Missing insertion anchor.');
+      return;
+    }
+
+    setAddingStandardPackage(true);
+    setAddStandardPackageError(null);
+    try {
+      const sourceRowsResponse = await fetch(
+        `/api/offers/${encodeURIComponent(String(sourcePackageId))}/products`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            request: {
+              allRows: true,
+              startRow: 0,
+              endRow: 5000,
+              view: 'grid',
+              sortModel: [{ colId: 'TreeOrdering', sort: 'asc' }],
+            },
+            fields: [
+              'OfferDetailID',
+              'ProductID',
+              'IsCategory',
+              'IsComment',
+              'IsPrintable',
+              'TreeOrdering',
+              'BrandName',
+              'PartNumber',
+              'ModelNumber',
+              'Description',
+              'ProductDescription',
+              'Quantity',
+              'NetUnitPrice',
+              'ListPrice',
+              'CustomerDiscount',
+              'TelmacoDiscount',
+              'NetCost',
+              'NetCostOtherCurrency',
+              'Margin',
+              'GrossProfit',
+              'Comment',
+              'Delivery',
+              'Warranty',
+              'OtherCurrencyID',
+              'CurrencyCostModifier',
+              'PriceListID',
+              'PriceListItemID',
+              'RequestedItemNo',
+              'RequestedBrand',
+              'RequestedPartNo',
+              'RequestedModelNo',
+              'RequestedWebLink',
+              'RequestedDescription',
+              'RequestedDescription2',
+              'RequestedDescription3',
+              'RequestedQuantity',
+            ],
+          }),
+        },
+      );
+      const sourceRowsPayload = (await sourceRowsResponse.json().catch(() => null)) as
+        | { ok?: boolean; rows?: Array<Record<string, unknown>>; error?: string }
+        | null;
+      if (!sourceRowsResponse.ok || !sourceRowsPayload?.ok) {
+        throw new Error(sourceRowsPayload?.error ?? 'Unable to load standard package items.');
+      }
+
+      const clipboardRows = (sourceRowsPayload.rows ?? [])
+        .map((row) => mapRowToClipboardRow(row))
+        .filter((row) => typeof row.treeOrdering === 'string' && row.treeOrdering.trim().length > 0);
+      if (clipboardRows.length === 0) {
+        throw new Error('Selected standard package has no rows to insert.');
+      }
+
+      const pasteResponse = await fetch(
+        `/api/offers/${encodeURIComponent(offerId)}/products/paste`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rows: clipboardRows,
+            keepPricing: true,
+            anchorOfferDetailId: addStandardPackageAnchor.offerDetailId,
+          }),
+        },
+      );
+      const pastePayload = (await pasteResponse.json().catch(() => null)) as
+        | { ok?: boolean; inserted?: number; error?: string }
+        | null;
+      if (!pasteResponse.ok || !pastePayload?.ok) {
+        throw new Error(pastePayload?.error ?? 'Unable to add standard package.');
+      }
+      const insertedCount = typeof pastePayload.inserted === 'number'
+        ? pastePayload.inserted
+        : clipboardRows.length;
+      showToastMessage(`Added standard package (${insertedCount} row(s)).`, 'success');
+      setShowAddStandardPackageModal(false);
+      setAddStandardPackageAnchor(null);
+      setRefreshToken((prev) => prev + 1);
+    } catch (err) {
+      console.error('Failed to add standard package', err);
+      setAddStandardPackageError(err instanceof Error ? err.message : 'Unable to add standard package.');
+    } finally {
+      setAddingStandardPackage(false);
+    }
+  }, [addStandardPackageAnchor, offerId, selectedStandardPackageId]);
+
   const handlePasteProducts = useCallback(async (keepPricing: boolean) => {
     const clipboard = readClipboard();
     if (!clipboard || clipboard.rows.length === 0) {
@@ -453,7 +677,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
 
   const headerRightControls = (
     <div className={toolbarStyles.topControls}>
-      {pivotView ? null : (
+      {pivotView || isStandardPackage ? null : (
         <>
           <button
             type="button"
@@ -461,7 +685,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
             onClick={handlePopulateOffer}
             disabled={isPopulatingOffer}
           >
-            {isPopulatingOffer ? 'Populating…' : 'Populate Offer'}
+            {isPopulatingOffer ? 'Populating...' : 'Populate Offer'}
           </button>
           <button
             type="button"
@@ -469,7 +693,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
             onClick={handleUpdatePrices}
             disabled={isUpdatingPrices}
           >
-            {isUpdatingPrices ? 'Updating prices…' : 'Update Prices'}
+            {isUpdatingPrices ? 'Updating prices...' : 'Update Prices'}
           </button>
           <button
             type="button"
@@ -480,14 +704,16 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
           </button>
         </>
       )}
-      <Link
-        href={`/offers/${encodeURIComponent(offerId)}/basicdata`}
-        className={`${layoutStyles.headerActionButton} page-header-button`}
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        View Basic Data
-      </Link>
+      {isStandardPackage ? null : (
+        <Link
+          href={`/offers/${encodeURIComponent(offerId)}/basicdata`}
+          className={`${layoutStyles.headerActionButton} page-header-button`}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          View Basic Data
+        </Link>
+      )}
     </div>
   );
 
@@ -540,6 +766,10 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
     </div>
   );
 
+  const topRightActions = isStandardPackage && !pivotView
+    ? addButtonGroup
+    : headerRightControls;
+
   const addRequestedButton = (
     <button
       type="button"
@@ -573,7 +803,7 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
       <option value="category">Layout: Category</option>
     </select>
   ) : null;
-  const pivotToggleButton = (
+  const pivotToggleButton = isStandardPackage ? null : (
     <button
       type="button"
       className={pivotToggleClass}
@@ -585,9 +815,12 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
 
   const topLeftActions = (
     <div className={toolbarStyles.leftColumn}>
-      <Link href="/offers" className={`${layoutStyles.backLink} page-header-button`}>
-        <span aria-hidden="true">←</span>
-        Back to offers
+      <Link
+        href={isStandardPackage ? '/standard-packages' : '/offers'}
+        className={`${layoutStyles.backLink} page-header-button`}
+      >
+        <span aria-hidden="true">&larr;</span>
+        {isStandardPackage ? 'Back to standard packages' : 'Back to offers'}
       </Link>
       {pivotView ? null : (
         <button
@@ -600,6 +833,16 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
       )}
       {pivotView ? pivotToggleButton : null}
       {pivotLayoutSelect}
+    </div>
+  );
+
+  const secondaryHeaderLeftActions = isStandardPackage ? (
+    <div className={toolbarStyles.leftRequestedRow} />
+  ) : (
+    <div className={toolbarStyles.leftRequestedRow}>
+      {addRequestedButton}
+      {layoutSelect}
+      {pivotToggleButton}
     </div>
   );
 
@@ -620,12 +863,14 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
               offerId={offerId}
               manualMode={manualMode}
               refreshToken={refreshToken}
-              showRequestedColumns={showRequestedColumns}
+              showRequestedColumns={isStandardPackage ? false : showRequestedColumns}
+              standardPackageMode={isStandardPackage}
               tableLayout={tableLayout}
               hideTotals={showAddProductModal}
               initialSelectedOfferDetailIds={savedSelectionIds}
               initialViewportScrollTop={initialProductsViewportScrollTop}
               onRequestPaste={handleRequestPaste}
+              onRequestAddStandardPackage={handleRequestAddStandardPackage}
             />
           </div>
           {showAddProductModal ? (
@@ -635,7 +880,8 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
                 onAdded={handleProductsAdded}
                 onClose={handleCloseModal}
                 getInsertionAnchor={handleGetAddInsertionAnchor}
-                showRequestedColumns={showRequestedColumns}
+                standardPackageMode={isStandardPackage}
+                showRequestedColumns={isStandardPackage ? false : showRequestedColumns}
                 splitViewMode
                 refreshToken={refreshToken}
                 onRequestAddProduct={handleOpenAddProductForm}
@@ -677,6 +923,52 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
           }}
         />
       ) : null}
+      <LookupModal
+        open={showAddStandardPackageModal}
+        title="Add Standard Package"
+        onClose={() => {
+          if (addingStandardPackage) return;
+          setShowAddStandardPackageModal(false);
+          setAddStandardPackageAnchor(null);
+          setAddStandardPackageError(null);
+        }}
+        onConfirm={() => {
+          void handleConfirmAddStandardPackage();
+        }}
+        confirmLabel="Add"
+        saving={addingStandardPackage}
+        error={addStandardPackageError}
+      >
+        <div className={lookupStyles.fieldGrid}>
+          <div className={lookupStyles.fieldFull}>
+            <label className={lookupStyles.fieldLabel} htmlFor="standard-package-selector">
+              Standard Package
+            </label>
+            <select
+              id="standard-package-selector"
+              className={lookupStyles.fieldControl}
+              value={selectedStandardPackageId}
+              onChange={(event) => {
+                setSelectedStandardPackageId(event.target.value);
+                setAddStandardPackageError(null);
+              }}
+              disabled={loadingStandardPackageOptions || addingStandardPackage}
+            >
+              {loadingStandardPackageOptions ? (
+                <option value="">Loading standard packages...</option>
+              ) : standardPackageOptions.length === 0 ? (
+                <option value="">No standard packages found</option>
+              ) : (
+                standardPackageOptions.map((entry) => (
+                  <option key={entry.id} value={String(entry.id)}>
+                    {entry.description}{entry.version != null ? ` (v${entry.version})` : ''} [ID {entry.id}]
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
+        </div>
+      </LookupModal>
       <AddProductModal
         open={showAddProductFormModal}
         onClose={handleCloseAddProductForm}
@@ -698,21 +990,15 @@ export default function ClientProductsPage({ offerId, headingText }: Props) {
         className={headerRowTopClassName}
         headingClassName={headingClassName}
         leftActions={topLeftActions}
-        rightActions={headerRightControls}
+        rightActions={topRightActions}
       >
         <GridQuickSearchProvider>
-          {pivotView ? (
+          {pivotView || isStandardPackage ? (
             panelContent
           ) : (
             <PageHeader
               title={headingText}
-              leftActions={
-                <div className={toolbarStyles.leftRequestedRow}>
-                  {addRequestedButton}
-                  {layoutSelect}
-                  {pivotToggleButton}
-                </div>
-              }
+              leftActions={secondaryHeaderLeftActions}
               rightActions={addButtonGroup}
               className={headerRowBottomClassName}
               hideTitle

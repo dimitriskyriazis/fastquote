@@ -6,6 +6,7 @@ type OfferSummaryRow = {
   Title: string | null;
   Description: string | null;
   CustomerName: string | null;
+  IsStandardPackage: boolean | number | null;
 };
 
 export async function GET(
@@ -27,7 +28,8 @@ export async function GET(
       SELECT
         o.Title,
         o.Description,
-        c.Name AS CustomerName
+        c.Name AS CustomerName,
+        ISNULL(o.IsStandardPackage, 0) AS IsStandardPackage
       FROM dbo.Offer AS o
       LEFT JOIN dbo.Customers AS c ON o.CustomerID = c.ID
       WHERE o.ID = @__offerId
@@ -42,6 +44,7 @@ export async function GET(
         title: row.Title?.trim() ?? null,
         description: row.Description?.trim() ?? null,
         customerName: row.CustomerName?.trim() ?? null,
+        isStandardPackage: row.IsStandardPackage === true || row.IsStandardPackage === 1,
       },
     });
   } catch (error) {

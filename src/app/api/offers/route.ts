@@ -373,6 +373,10 @@ export async function POST(req: NextRequest) {
     const { where, params: whereParams } = buildWhereAndParams(gridRequest.filterModel);
     const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, QUICK_FILTER_COLUMNS);
     const combinedWhere = mergeWhereClauses(where, quickFilterClause.clause);
+    const combinedWhereWithStandardOffersOnly = mergeWhereClauses(
+      combinedWhere,
+      'AND ISNULL(dbo.Offer.IsStandardPackage, 0) = 0',
+    );
     const expandedParams: QueryParam[] = [];
     let versionVisibilityClause = '';
     if (!includeAllVersions) {
@@ -392,7 +396,7 @@ export async function POST(req: NextRequest) {
         versionVisibilityClause = 'AND NOT EXISTS (SELECT 1 FROM dbo.Offer child WHERE child.ParentOfferID = dbo.Offer.ID)';
       }
     }
-    const combinedWhereWithVersions = mergeWhereClauses(combinedWhere, versionVisibilityClause);
+    const combinedWhereWithVersions = mergeWhereClauses(combinedWhereWithStandardOffersOnly, versionVisibilityClause);
     const combinedParams = [...whereParams, ...quickFilterClause.params, ...expandedParams];
     const defaultOrder = `
       ORDER BY
@@ -555,7 +559,8 @@ export async function PATCH(req: NextRequest) {
           Probability = @__probability,
           ModifiedOn = SYSUTCDATETIME()
           ${auditUserId ? ', ModifiedBy = @__modifiedBy' : ''}
-        WHERE ID = @__offerId;
+        WHERE ID = @__offerId
+          AND ISNULL(IsStandardPackage, 0) = 0;
       `);
 
       updated += result.rowsAffected?.[0] ?? 0;
@@ -630,17 +635,28 @@ export async function DELETE(req: NextRequest) {
 
         await bindParams(new sql.Request(transaction)).query(`
           DELETE FROM dbo.OfferDetails
-          WHERE OfferID IN (${idsSql});
+          WHERE OfferID IN (
+            SELECT ID
+            FROM dbo.Offer
+            WHERE ID IN (${idsSql})
+              AND ISNULL(IsStandardPackage, 0) = 0
+          );
         `);
 
         await bindParams(new sql.Request(transaction)).query(`
           DELETE FROM dbo.OfferStatusHistory
-          WHERE OfferID IN (${idsSql});
+          WHERE OfferID IN (
+            SELECT ID
+            FROM dbo.Offer
+            WHERE ID IN (${idsSql})
+              AND ISNULL(IsStandardPackage, 0) = 0
+          );
         `);
 
         const deleteOffersResult = await bindParams(new sql.Request(transaction)).query(`
           DELETE FROM dbo.Offer
-          WHERE ID IN (${idsSql});
+          WHERE ID IN (${idsSql})
+            AND ISNULL(IsStandardPackage, 0) = 0;
         `);
 
         await transaction.commit();

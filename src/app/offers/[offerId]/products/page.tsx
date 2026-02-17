@@ -5,23 +5,32 @@ import { getPool } from '../../../../lib/sql';
 const buildHeading = (offerId: string) =>
   /^[0-9]+$/.test(offerId) ? `Offer ${offerId}` : offerId;
 
-async function fetchOfferTitle(offerId: number): Promise<string | null> {
+type OfferHeaderInfo = {
+  title: string | null;
+  isStandardPackage: boolean;
+};
+
+async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
+  type OfferHeaderRow = { Title: string | null; IsStandardPackage: number | boolean | null };
   try {
     const pool = await getPool();
     const request = pool.request();
     request.input('offerId', sql.Int, offerId);
-    const result = await request.query<{ Title: string | null }>(`
-      SELECT Title
+    const result = await request.query<OfferHeaderRow>(`
+      SELECT
+        Title,
+        IsStandardPackage
       FROM dbo.Offer
       WHERE ID = @offerId
     `);
-    const title = result.recordset?.[0]?.Title;
-    if (typeof title !== 'string') return null;
-    const trimmedTitle = title.trim();
-    return trimmedTitle.length > 0 ? trimmedTitle : null;
+    const row = result.recordset?.[0] ?? null;
+    return {
+      title: row?.Title?.trim() || null,
+      isStandardPackage: row?.IsStandardPackage === true || row?.IsStandardPackage === 1,
+    };
   } catch (err) {
     console.error('Failed to load offer title for products page', err);
-    return null;
+    return { title: null, isStandardPackage: false };
   }
 }
 
@@ -30,8 +39,18 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
   const decodedId = decodeURIComponent(offerId);
   const hasNumericOfferId = /^[0-9]+$/.test(decodedId);
   const normalizedId = Number.parseInt(decodedId, 10);
-  const offerTitle = hasNumericOfferId ? await fetchOfferTitle(normalizedId) : null;
+  const offerHeader = hasNumericOfferId
+    ? await fetchOfferHeaderInfo(normalizedId)
+    : { title: null, isStandardPackage: false };
+  const offerTitle = offerHeader.title;
+  const isStandardPackage = offerHeader.isStandardPackage;
   const headingText = `${offerTitle ?? buildHeading(decodedId)} - Products`;
 
-  return <ClientProductsPage offerId={decodedId} headingText={headingText} />;
+  return (
+    <ClientProductsPage
+      offerId={decodedId}
+      headingText={headingText}
+      isStandardPackage={isStandardPackage}
+    />
+  );
 }

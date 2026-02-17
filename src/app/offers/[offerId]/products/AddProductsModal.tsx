@@ -15,6 +15,7 @@ type Props = {
   onClose: () => void;
   onAdded: (inserted: number) => void;
   getInsertionAnchor?: () => { offerDetailId: number; parentPath: number[] } | null;
+  standardPackageMode?: boolean;
   showRequestedColumns?: boolean;
   splitViewMode?: boolean;
   onRequestAddProduct?: () => void;
@@ -147,6 +148,7 @@ export default function AddProductsModal({
   onClose,
   onAdded,
   getInsertionAnchor,
+  standardPackageMode = false,
   showRequestedColumns = true,
   splitViewMode = false,
   onRequestAddProduct,
@@ -335,8 +337,8 @@ export default function AddProductsModal({
     [],
   );
 
-  const productColumns: ColDef[] = useMemo(
-    () => [
+  const productColumns: ColDef[] = useMemo(() => {
+    const columns: ColDef[] = [
       {
         field: 'PartNumber',
         headerName: 'Part Number',
@@ -377,25 +379,29 @@ export default function AddProductsModal({
           return trimmed.length > 0 ? trimmed : null;
         },
       },
-      { field: 'PriceListName', headerName: 'Price List', filter: 'agTextColumnFilter', width: 170 },
-      {
-        field: 'ListPrice',
-        headerName: 'List Price',
-        filter: 'agNumberColumnFilter',
-        type: 'numericColumn',
-        valueFormatter: (params) => formatEuro(params.value),
-        cellClassRules: priceListStatusClassRules(),
-      },
-      {
-        field: 'UnitPrice',
-        headerName: 'Unit Price',
-        filter: 'agNumberColumnFilter',
-        type: 'numericColumn',
-        valueFormatter: (params) => formatEuro(params.value),
-      },
-    ],
-    [],
-  );
+    ];
+    if (!standardPackageMode) {
+      columns.push(
+        { field: 'PriceListName', headerName: 'Price List', filter: 'agTextColumnFilter', width: 170 },
+        {
+          field: 'ListPrice',
+          headerName: 'List Price',
+          filter: 'agNumberColumnFilter',
+          type: 'numericColumn',
+          valueFormatter: (params) => formatEuro(params.value),
+          cellClassRules: priceListStatusClassRules(),
+        },
+        {
+          field: 'UnitPrice',
+          headerName: 'Unit Price',
+          filter: 'agNumberColumnFilter',
+          type: 'numericColumn',
+          valueFormatter: (params) => formatEuro(params.value),
+        },
+      );
+    }
+    return columns;
+  }, [standardPackageMode]);
 
   const defaultColDef = useMemo<ColDef>(
     () => ({
@@ -900,7 +906,7 @@ export default function AddProductsModal({
               </div>
               <div className={styles.requestedList} ref={requestedListRef}>
                 {requestedRowsLoading ? (
-                  <div className={styles.requestedRowEmpty}>Loading requested rows…</div>
+                  <div className={styles.requestedRowEmpty}>Loading requested rows...</div>
                 ) : requestedRowsError ? (
                   <div className={styles.requestedRowEmpty}>{requestedRowsError}</div>
                 ) : requestedRows.length === 0 ? (
@@ -1062,7 +1068,7 @@ export default function AddProductsModal({
               </div>
               <div className={styles.requestedList} ref={requestedListRef}>
                 {requestedRowsLoading ? (
-                  <div className={styles.requestedRowEmpty}>Loading requested rows…</div>
+                  <div className={styles.requestedRowEmpty}>Loading requested rows...</div>
                 ) : requestedRowsError ? (
                   <div className={styles.requestedRowEmpty}>{requestedRowsError}</div>
                 ) : requestedRows.length === 0 ? (

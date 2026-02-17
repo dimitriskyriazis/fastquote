@@ -122,6 +122,25 @@ const navItems: NavItem[] = [
     ),
   },
   {
+    label: "Standard Packages",
+    href: "/standard-packages",
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <rect
+          x="4.5"
+          y="5.5"
+          width="15"
+          height="13"
+          rx="1.5"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          fill="none"
+        />
+        <path d="M7.5 9.5h9M7.5 12.5h9M7.5 15.5h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     label: "Customers",
     href: "/customers",
     icon: (

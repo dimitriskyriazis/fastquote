@@ -72,9 +72,14 @@ export default function RecentOffersSection() {
             if (!response.ok) return null;
             const payload = (await response.json()) as {
               ok?: boolean;
-              offer?: { description?: string | null; title?: string | null };
+              offer?: {
+                description?: string | null;
+                title?: string | null;
+                isStandardPackage?: boolean | null;
+              };
             } | null;
             if (!payload?.ok) return null;
+            if (payload.offer?.isStandardPackage) return null;
             const description = payload.offer?.description?.trim();
             const title = payload.offer?.title?.trim();
             return { entry, resolvedDescription: description || title || null };

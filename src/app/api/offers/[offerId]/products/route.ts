@@ -111,12 +111,19 @@ const ALL_ROWS_LIMIT = 20000;
 
 type ProductRow = {
   ProductID: number | null;
+  BrandID: number | null;
   OfferDetailID: number | null;
   ParentOfferDetailID: number | null;
+  Ordering: number | null;
   TreeOrdering: string | null;
   IsPrintable: boolean | null;
   IsComment: boolean | null;
   IsCategory: boolean | null;
+  Enabled: boolean | number | null;
+  CreatedOn: Date | string | null;
+  CreatedBy: string | null;
+  ModifiedOn: Date | string | null;
+  ModifiedBy: string | null;
   BrandName: string | null;
   PartNumber: string | null;
   ModelNumber: string | null;
@@ -255,10 +262,17 @@ const CREATE_TYPE_LABELS: Record<CreateRowType, string> = {
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferDetailID: 'od.ID',
   ParentOfferDetailID: 'od.ParentOfferDetailID',
+  Ordering: 'od.Ordering',
   TreeOrdering: 'od.TreeOrdering',
   IsPrintable: 'od.IsPrintable',
   IsComment: 'od.IsComment',
   IsCategory: 'od.IsCategory',
+  Enabled: 'od.Enabled',
+  CreatedOn: 'od.CreatedOn',
+  CreatedBy: 'od.CreatedBy',
+  ModifiedOn: 'od.ModifiedOn',
+  ModifiedBy: 'od.ModifiedBy',
+  BrandID: 'od.BrandID',
   BrandName: 'b.Name',
   PartNumber: 'p.PartNumber',
   WebLink: 'p.WebLink',

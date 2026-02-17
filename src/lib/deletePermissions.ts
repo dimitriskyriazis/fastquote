@@ -2,6 +2,7 @@ import { roleHasPermission, coerceRoles, type AppRole, type Permission } from '.
 
 export type DeleteCategory =
   | 'offers'
+  | 'standardPackages'
   | 'pricelists'
   | 'pricingPolicies'
   | 'pricingPolicyRules'
@@ -32,6 +33,16 @@ export function checkDeletePermission(
       } else if (count >= 1) {
         if (!hasDangerousOps)
           return { allowed: false, reason: 'Only administrators and developers can delete offers.' };
+      }
+      break;
+
+    case 'standardPackages':
+      if (count >= 2) {
+        if (!hasCriticalOps)
+          return { allowed: false, reason: 'Only developers can delete multiple standard packages at once.' };
+      } else if (count >= 1) {
+        if (!hasDangerousOps)
+          return { allowed: false, reason: 'Only administrators and developers can delete standard packages.' };
       }
       break;
 

@@ -726,6 +726,18 @@ const pasteRowsMenuIcon = `
   </span>
 `;
 
+const addStandardPackageMenuIcon = `
+  <span class="fastquote-menu-icon fastquote-menu-icon--copy" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 6h16" />
+      <path d="M4 12h16" />
+      <path d="M4 18h9" />
+      <path d="M17 15v6" />
+      <path d="M14 18h6" />
+    </svg>
+  </span>
+`;
+
 const productAccentCellClassRules = {
   'offer-products-grid__cell--product-accent': (params: { data?: Record<string, unknown> | null }) =>
     isOfferProductProduct(params.data),
@@ -762,6 +774,28 @@ const COST_ANALYSIS_COLUMNS = [
   'TotalCost',
 ];
 
+const STANDARD_PACKAGE_PRODUCTS_FIELDS = [
+  'OfferDetailID',
+  'ProductID',
+  'Quantity',
+  'PartNumber',
+  'ModelNumber',
+  'ProductDescription',
+  'Ordering',
+  'TreeOrdering',
+  'BrandID',
+  'Comment',
+  'IsCategory',
+  'IsComment',
+  'IsPrintable',
+  'WebLink',
+  'Enabled',
+  'CreatedOn',
+  'CreatedBy',
+  'ModifiedOn',
+  'ModifiedBy',
+];
+
 const findDeleteMenuItemIndex = (
   items: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string>,
 ) => items.findIndex((item) => {
@@ -776,6 +810,7 @@ type Props = {
   offerId: string;
   endpoint?: string;
   manualMode?: boolean;
+  standardPackageMode?: boolean;
   refreshToken?: number;
   showRequestedColumns?: boolean;
   tableLayout?: 'cust' | 'wCost' | 'wReq';
@@ -783,6 +818,7 @@ type Props = {
   initialSelectedOfferDetailIds?: number[];
   initialViewportScrollTop?: number | null;
   onRequestPaste?: (anchorOfferDetailId: number, anchorTreeOrdering: string) => void;
+  onRequestAddStandardPackage?: (anchorOfferDetailId: number, anchorTreeOrdering: string) => void;
 };
 
 export type OfferProductsPanelHandle = {
@@ -1015,6 +1051,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   offerId,
   endpoint,
   manualMode = false,
+  standardPackageMode = false,
   refreshToken = 0,
   showRequestedColumns = true,
   tableLayout = 'wReq',
@@ -1022,6 +1059,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   initialSelectedOfferDetailIds,
   initialViewportScrollTop = null,
   onRequestPaste,
+  onRequestAddStandardPackage,
 }: Props, ref) => {
   const router = useRouter();
   const { userId, roles } = useAuditUser();
@@ -1037,12 +1075,16 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   // Still separated per table layout via `columnStateNamespace`.
   const persistenceEndpoint = '/api/offers/products';
   const columnStateNamespace = useMemo(
-    () => `offer-products-${tableLayout}`,
-    [tableLayout],
+    () => (standardPackageMode ? 'standard-package-products' : `offer-products-${tableLayout}`),
+    [standardPackageMode, tableLayout],
   );
   const columnStateStorageKey = useMemo(
     () => buildGridColumnStateStorageKey(persistenceEndpoint, userId, columnStateNamespace),
     [columnStateNamespace, persistenceEndpoint, userId],
+  );
+  const standardPackageRequestPayload = useMemo(
+    () => (standardPackageMode ? { fields: [...STANDARD_PACKAGE_PRODUCTS_FIELDS] } : null),
+    [standardPackageMode],
   );
   const pricingToastDedupRef = useRef<Map<string, number>>(new Map());
   const realtimeCellUpdateRef = useRef<Map<string, number>>(new Map());
@@ -2505,6 +2547,143 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 }, [actualNumericCellStyle, requestedCellClassRules, truncateCellStyle]);
 
   const productColumnDefs: ColDef[] = useMemo(() => {
+    if (standardPackageMode) {
+      return [
+        {
+          headerName: '',
+          colId: '__row_drag__',
+          lockPosition: true,
+          suppressMovable: true,
+          suppressSizeToFit: true,
+          suppressColumnsToolPanel: true,
+          resizable: false,
+          sortable: false,
+          filter: false,
+          width: 44,
+          rowDrag: true,
+          cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+        },
+        {
+          field: 'ProductID',
+          hide: true,
+          lockVisible: true,
+          suppressColumnsToolPanel: true,
+        },
+        {
+          field: 'TreeOrdering',
+          headerName: 'Item No',
+          filter: 'agTextColumnFilter',
+          type: 'numericColumn',
+          comparator: compareTreeOrderingValues,
+          editable: manualMode,
+          cellRenderer: TreeOrderingCell,
+          headerClass: 'ag-right-aligned-header',
+          cellClass: [
+            'offer-products-tree-ordering-cell',
+            ACTUAL_COLUMN_GLOBAL_CLASS,
+            TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS,
+            'ag-right-aligned',
+          ],
+          cellStyle: truncateCellStyle,
+          valueGetter: ({ data }) => {
+            const row = data as { TreeOrdering?: unknown } | null | undefined;
+            const value = row?.TreeOrdering;
+            if (value == null) return '';
+            return typeof value === 'string' ? value.trim() : String(value);
+          },
+        },
+        {
+          field: 'BrandName',
+          headerName: 'Brand',
+          filter: 'agTextColumnFilter',
+          cellClassRules: productAccentCellClassRules,
+          cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS, TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS],
+          cellStyle: truncateCellStyle,
+        },
+        {
+          field: 'PartNumber',
+          headerName: 'Part Number',
+          filter: 'agTextColumnFilter',
+          cellRenderer: PartNumberCell,
+          cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS, TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS],
+          cellStyle: truncateCellStyle,
+        },
+        {
+          field: 'ModelNumber',
+          headerName: 'Model Number',
+          filter: 'agTextColumnFilter',
+          cellRenderer: ModelNumberCell,
+          cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS, TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS],
+          cellStyle: truncateCellStyle,
+        },
+        {
+          field: 'Description',
+          headerName: 'Description',
+          filter: 'agTextColumnFilter',
+          valueGetter: ({ data }) => {
+            const row = data as Record<string, unknown> | null | undefined;
+            const rawProductId = (row as { ProductID?: unknown } | null | undefined)?.ProductID ?? null;
+            const hasProductId =
+              typeof rawProductId === 'number'
+                ? Number.isFinite(rawProductId)
+                : typeof rawProductId === 'string'
+                  ? rawProductId.trim().length > 0
+                  : false;
+            const isAssignedProduct = isOfferProductProduct(row) || hasProductId;
+            if (isRequestedRow(row) && !isAssignedProduct) return '';
+            const manual = normalizeDescriptionValue(row?.ProductDescription ?? null);
+            if (manual != null) return manual;
+            if (!isOfferProductCategory(row) && !isOfferProductProduct(row) && !isOfferProductComment(row)) {
+              return '';
+            }
+            return normalizeDescriptionValue(row?.Description ?? null) ?? '';
+          },
+          valueSetter: ({ data, newValue }) => {
+            if (!data) return false;
+            const normalized = normalizeDescriptionValue(newValue);
+            (data as Record<string, unknown>).ProductDescription = normalized;
+            (data as Record<string, unknown>).Description = normalized;
+            return true;
+          },
+          editable: (params) => {
+            const row = params?.data ?? null;
+            return (
+              isOfferProductCategory(row)
+              || isOfferProductComment(row)
+              || isOfferProductProduct(row)
+            );
+          },
+          cellEditor: MultilineTextCellEditor,
+          cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
+          cellStyle: (params) => {
+            const row = params.data as Record<string, unknown> | null | undefined;
+            const description = (row?.ProductDescription ?? row?.Description ?? '') as string;
+            const hasLineBreaks = description.includes('\n');
+            return {
+              whiteSpace: hasLineBreaks ? 'pre' : 'nowrap',
+              lineHeight: '1.5',
+              display: 'flex',
+              alignItems: 'center',
+              overflow: 'hidden',
+              textOverflow: hasLineBreaks ? 'clip' : 'ellipsis',
+            };
+          },
+          autoHeight: true,
+        },
+        {
+          field: 'Quantity',
+          headerName: 'Qty',
+          filter: 'agNumberColumnFilter',
+          type: 'numericColumn',
+          headerClass: 'ag-right-aligned-header',
+          editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+          valueFormatter: zeroBlankNumberFormatter,
+          cellClass: actualNumericCellClass,
+          cellStyle: actualNumericCellStyle,
+        },
+      ];
+    }
+
     const requestedColumns: ColDef[] = [];
     REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
       const baseColDef = requestedColumnDefsMap[key];
@@ -2949,6 +3128,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     requestedCellClassRules,
     savedHiddenMap,
     showRequestedColumns,
+    standardPackageMode,
     tableLayout,
     savedColumnOrder,
     truncateCellStyle,
@@ -3989,6 +4169,26 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       };
       clipboardItems.push(pasteItem);
     }
+    if (!standardPackageMode && onRequestAddStandardPackage) {
+      const anchorId = normalizeOfferDetailId(
+        (rowData as { OfferDetailID?: unknown }).OfferDetailID ?? null,
+      );
+      const anchorTree = typeof (rowData as { TreeOrdering?: unknown }).TreeOrdering === 'string'
+        ? String((rowData as { TreeOrdering?: unknown }).TreeOrdering).trim()
+        : '';
+      const addStandardPackageItem: MenuItemDef = {
+        name: 'Add Standard Package',
+        icon: addStandardPackageMenuIcon,
+        action: () => {
+          if (anchorId != null && anchorTree && onRequestAddStandardPackage) {
+            onRequestAddStandardPackage(anchorId, anchorTree);
+          } else {
+            showToastMessage('Unable to determine insertion position.', 'error');
+          }
+        },
+      };
+      clipboardItems.push(addStandardPackageItem);
+    }
     if (clipboardItems.length > 0) {
       const deleteIndexForClipboard = findDeleteMenuItemIndex(items);
       if (deleteIndexForClipboard >= 0) {
@@ -4295,6 +4495,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     resolvedEndpoint,
     openBrandBulkEdit,
     onRequestPaste,
+    onRequestAddStandardPackage,
+    standardPackageMode,
   ]);
 
   const getCellEditorRawValue = (
@@ -4476,7 +4678,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   }, [resolvedEndpoint, shouldSkipRealtimeCellEdit]);
 
   const handleDescriptionEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
-    if (event.colDef.field !== 'Description') return;
+    const editedField = event.colDef.field;
+    if (editedField !== 'Description' && editedField !== 'ProductDescription') return;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
     if (shouldSkipRealtimeCellEdit(event)) return;
@@ -4489,12 +4692,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     const offerDetailId = normalizeOfferDetailId((event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null);
     if (offerDetailId == null) {
       showToastMessage('Unable to update description. Missing record identifier.', 'error');
-      event.node?.setDataValue?.('Description', normalizedOldValue ?? '');
+      event.node?.setDataValue?.(editedField, normalizedOldValue ?? '');
       return;
     }
     const revertValue = () => {
       try {
-        event.node?.setDataValue?.('Description', normalizedOldValue ?? '');
+        event.node?.setDataValue?.(editedField, normalizedOldValue ?? '');
       } catch {
         /* noop */
       }
@@ -4516,6 +4719,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         }
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update description (status ${res.status})`);
+        }
+        try {
+          event.node?.setDataValue?.('Description', normalizedNewValue ?? '');
+          event.node?.setDataValue?.('ProductDescription', normalizedNewValue ?? '');
+        } catch {
+          /* noop */
         }
         showToastMessage('Description updated', 'success');
       } catch (err) {
@@ -4801,6 +5010,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             onTotalsChange={handleTotalsChange}
             onResponse={handleGridResponse}
             onServerRequest={handleServerRequest}
+            requestPayload={standardPackageRequestPayload}
             getRowHeight={getRowHeight}
             floatingFilter
             rowGroupPanelShow="never"
@@ -4897,3 +5107,4 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 OfferProductsPanel.displayName = 'OfferProductsPanel';
 
 export default React.memo(OfferProductsPanel);
+
