@@ -5346,6 +5346,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
               className={styles.emptyGridContextMenu}
               style={{ left: `${emptyGridPasteMenu.x}px`, top: `${emptyGridPasteMenu.y}px` }}
               role="menu"
+              onMouseDown={(e) => e.stopPropagation()}
               onContextMenu={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -5358,6 +5359,14 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
                 disabled={!isClipboardPopulated()}
                 onClick={handleEmptyGridPasteRows}
               >
+                <span
+                  className="fastquote-menu-icon"
+                  aria-hidden="true"
+                  // biome-ignore lint: dangerouslySetInnerHTML needed for SVG icon
+                  dangerouslySetInnerHTML={{
+                    __html: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h8" /><rect x="6" y="2" width="12" height="4" rx="1.5" /><path d="M6 8h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z" /><path d="M12 12v6" /><path d="M9 15h6" /></svg>`,
+                  }}
+                />
                 Paste Rows
               </button>
             </div>

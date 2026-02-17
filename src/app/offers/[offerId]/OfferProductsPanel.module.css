@@ -16,31 +16,35 @@
   position: fixed;
   z-index: 10000;
   min-width: 160px;
-  padding: 6px;
-  background: #ffffff;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
+  padding: 4px 0;
+  background: var(--ag-background-color, #fff);
+  border: 1px solid var(--ag-border-color, #babfc7);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  font-family: inherit;
 }
 
 .emptyGridContextMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   border: none;
   background: transparent;
   text-align: left;
-  padding: 8px 10px;
-  border-radius: 6px;
-  font-size: 0.9rem;
-  color: #0f172a;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  color: var(--ag-foreground-color, #181d1f);
   cursor: pointer;
+  line-height: 1.4;
 }
 
 .emptyGridContextMenuItem:hover:not(:disabled) {
-  background: #f1f5f9;
+  background: var(--ag-row-hover-color, #ecf0f1);
 }
 
 .emptyGridContextMenuItem:disabled {
-  color: #9ca3af;
+  color: var(--ag-disabled-foreground-color, #9ca3af);
   cursor: not-allowed;
 }
 
