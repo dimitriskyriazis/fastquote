@@ -1,6 +1,10 @@
 export type ToastTone = 'info' | 'error' | 'success' | 'warning';
 
-export const showToastMessage = (message: string, tone: ToastTone = 'info') => {
+export const showToastMessage = (
+  message: string,
+  tone: ToastTone = 'info',
+  durationMs = 3200,
+) => {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
   const containerId = 'fastquote-drop-toast-container';
   let container = document.getElementById(containerId);
@@ -26,5 +30,5 @@ export const showToastMessage = (message: string, tone: ToastTone = 'info') => {
       }
     }, 220);
   };
-  window.setTimeout(removeToast, 3200);
+  window.setTimeout(removeToast, durationMs);
 };

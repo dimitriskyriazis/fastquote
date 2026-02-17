@@ -25,10 +25,27 @@ const normalizeStringValue = (value: unknown): string | null => {
   return null;
 };
 
+const parseBrandList = (value: unknown): string[] => {
+  if (typeof value !== 'string') return [];
+  return Array.from(
+    new Set(
+      value
+        .split('|~|')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0),
+    ),
+  );
+};
+
 type FarnellOfferRow = {
   OfferDetailID: number;
   PartNumber: string | null;
   Quantity: number | null;
+};
+
+type FarnellUpdateResult = {
+  updatedCount: number;
+  updatedBrands: string[];
 };
 
 async function updateFarnellPrices(
@@ -36,7 +53,7 @@ async function updateFarnellPrices(
   offerId: number,
   auditUserId: string | null,
   selectedOfferDetailIds: number[],
-): Promise<number> {
+): Promise<FarnellUpdateResult> {
   // Find all Farnell-brand offer detail rows
   const findRequest = pool.request();
   findRequest.input('offerId', sql.Int, offerId);
@@ -62,7 +79,7 @@ async function updateFarnellPrices(
   `);
 
   const rows = farnellRows.recordset ?? [];
-  if (rows.length === 0) return 0;
+  if (rows.length === 0) return { updatedCount: 0, updatedBrands: [] };
 
   // Deduplicate Farnell API calls by part number.
   const farnellProductCache = new Map<string, FarnellProduct | null>();
@@ -189,7 +206,10 @@ async function updateFarnellPrices(
     updatedCount += 1;
   }
 
-  return updatedCount;
+  return {
+    updatedCount,
+    updatedBrands: updatedCount > 0 ? ['Farnell'] : [],
+  };
 }
 
 export async function POST(
@@ -248,12 +268,17 @@ export async function POST(
     const excludeFarnellSql = `
       AND NOT EXISTS (
         SELECT 1
-        FROM dbo.Brands fb
-        WHERE fb.ID = od.BrandID
+        FROM dbo.Products pfb
+        INNER JOIN dbo.Brands fb ON fb.ID = COALESCE(od.BrandID, pfb.BrandID)
+        WHERE pfb.ID = od.ProductID
           AND LTRIM(RTRIM(fb.Name)) = 'Farnell'
       )`;
 
-    const result = await request.query<{ updated: number }>(`
+    const result = await request.query<{
+      updated: number;
+      updatedBrandsCsv: string | null;
+      failedBrandsCsv: string | null;
+    }>(`
       DECLARE @PricingPolicyID INT = (
         SELECT TOP (1) o.PricingPolicyID
         FROM dbo.Offer o
@@ -263,43 +288,63 @@ export async function POST(
       BEGIN
         THROW 50000, 'Offer has no pricing policy.', 1;
       END;
-      DECLARE @MissingPricingRuleBrands NVARCHAR(MAX) = (
-        SELECT STRING_AGG(missing.BrandLabel, ', ')
-        FROM (
-          SELECT DISTINCT
-            COALESCE(
-              NULLIF(LTRIM(RTRIM(b.Name)), ''),
-              CASE
-                WHEN od.BrandID IS NULL THEN 'Unknown brand'
-                ELSE CONCAT('Brand ID ', CAST(od.BrandID AS NVARCHAR(20)))
-              END
-            ) AS BrandLabel
-          FROM dbo.OfferDetails od
-          LEFT JOIN dbo.Brands b ON b.ID = od.BrandID
-          WHERE od.OfferID = @offerId
-            AND od.ProductID IS NOT NULL
-            ${selectedDetailsFilterSql}
-            ${excludeFarnellSql}
-            AND NOT EXISTS (
-              SELECT 1
-              FROM dbo.PricingPolicyRules ppr
-              WHERE ppr.PricingPolicyID = @PricingPolicyID
-                AND (ppr.BrandID = od.BrandID OR ppr.BrandID IS NULL)
-            )
-        ) missing
-      );
-      IF @MissingPricingRuleBrands IS NOT NULL
-      BEGIN
-        DECLARE @MissingRulesErrorMessage NVARCHAR(2048) =
-          'Pricing policy rules missing for the following brands: ' + @MissingPricingRuleBrands;
-        THROW 50000, @MissingRulesErrorMessage, 1;
-      END;
+      DECLARE @MissingBrandLabels TABLE (BrandLabel NVARCHAR(300) PRIMARY KEY);
+      DECLARE @UpdatedBrandLabels TABLE (BrandLabel NVARCHAR(300));
+
+      INSERT INTO @MissingBrandLabels (BrandLabel)
+      SELECT DISTINCT
+        COALESCE(
+          NULLIF(LTRIM(RTRIM(b.Name)), ''),
+          CASE
+            WHEN COALESCE(od.BrandID, p.BrandID) IS NULL THEN CONCAT('No brand selected (Offer detail ', CAST(od.ID AS NVARCHAR(20)), ')')
+            ELSE CONCAT('Brand ID ', CAST(COALESCE(od.BrandID, p.BrandID) AS NVARCHAR(20)))
+          END
+        ) AS BrandLabel
+      FROM dbo.OfferDetails od
+      LEFT JOIN dbo.Products p ON p.ID = od.ProductID
+      LEFT JOIN dbo.Brands b ON b.ID = COALESCE(od.BrandID, p.BrandID)
+      WHERE od.OfferID = @offerId
+        AND od.ProductID IS NOT NULL
+        ${selectedDetailsFilterSql}
+        ${excludeFarnellSql}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM dbo.PricingPolicyRules ppr
+          WHERE ppr.PricingPolicyID = @PricingPolicyID
+            AND (ppr.BrandID = COALESCE(od.BrandID, p.BrandID) OR ppr.BrandID IS NULL)
+        );
+
       WITH OfferContext AS (
         SELECT
           o.ID AS OfferID,
           o.PricingPolicyID
         FROM dbo.Offer o
         WHERE o.ID = @offerId
+      ),
+      EligibleDetails AS (
+        SELECT
+          od.ID AS OfferDetailID,
+          COALESCE(od.BrandID, p.BrandID) AS EffectiveBrandID,
+          COALESCE(
+            NULLIF(LTRIM(RTRIM(b.Name)), ''),
+            CASE
+              WHEN COALESCE(od.BrandID, p.BrandID) IS NULL THEN CONCAT('No brand selected (Offer detail ', CAST(od.ID AS NVARCHAR(20)), ')')
+              ELSE CONCAT('Brand ID ', CAST(COALESCE(od.BrandID, p.BrandID) AS NVARCHAR(20)))
+            END
+          ) AS BrandLabel
+        FROM dbo.OfferDetails od
+        INNER JOIN OfferContext oc ON od.OfferID = oc.OfferID
+        LEFT JOIN dbo.Products p ON p.ID = od.ProductID
+        LEFT JOIN dbo.Brands b ON b.ID = COALESCE(od.BrandID, p.BrandID)
+        WHERE od.ProductID IS NOT NULL
+          ${selectedDetailsFilterSql}
+          ${excludeFarnellSql}
+          AND EXISTS (
+            SELECT 1
+            FROM dbo.PricingPolicyRules ppr
+            WHERE ppr.PricingPolicyID = oc.PricingPolicyID
+              AND (ppr.BrandID = COALESCE(od.BrandID, p.BrandID) OR ppr.BrandID IS NULL)
+          )
       )
       UPDATE od
       SET
@@ -364,7 +409,9 @@ export async function POST(
         END,
         [ModifiedOn] = SYSUTCDATETIME(),
         [ModifiedBy] = @modifiedBy
+      OUTPUT eligible.BrandLabel INTO @UpdatedBrandLabels (BrandLabel)
       FROM dbo.OfferDetails od
+      INNER JOIN EligibleDetails eligible ON eligible.OfferDetailID = od.ID
       INNER JOIN OfferContext oc ON od.OfferID = oc.OfferID
       OUTER APPLY (
         SELECT TOP (1)
@@ -400,9 +447,9 @@ export async function POST(
           WHERE plpp.PriceListID = price.PriceListID
             AND plpp.PricingPolicyID = oc.PricingPolicyID
             AND plpp.PricingPolicyRuleID IS NOT NULL
-            AND (ppr.BrandID = od.BrandID OR ppr.BrandID IS NULL)
+            AND (ppr.BrandID = eligible.EffectiveBrandID OR ppr.BrandID IS NULL)
           ORDER BY
-            CASE WHEN ppr.BrandID = od.BrandID THEN 0 ELSE 1 END,
+            CASE WHEN ppr.BrandID = eligible.EffectiveBrandID THEN 0 ELSE 1 END,
             ppr.ID DESC
 
           UNION ALL
@@ -417,9 +464,9 @@ export async function POST(
           WHERE plpp.PriceListID = price.PriceListID
             AND plpp.PricingPolicyID = oc.PricingPolicyID
             AND plpp.PricingPolicyRuleID IS NULL
-            AND (ppr.BrandID = od.BrandID OR ppr.BrandID IS NULL)
+            AND (ppr.BrandID = eligible.EffectiveBrandID OR ppr.BrandID IS NULL)
           ORDER BY
-            CASE WHEN ppr.BrandID = od.BrandID THEN 0 ELSE 1 END,
+            CASE WHEN ppr.BrandID = eligible.EffectiveBrandID THEN 0 ELSE 1 END,
             ppr.ID DESC
 
           UNION ALL
@@ -431,9 +478,9 @@ export async function POST(
             3 AS Priority
           FROM dbo.PricingPolicyRules ppr
           WHERE ppr.PricingPolicyID = oc.PricingPolicyID
-            AND (ppr.BrandID = od.BrandID OR ppr.BrandID IS NULL)
+            AND (ppr.BrandID = eligible.EffectiveBrandID OR ppr.BrandID IS NULL)
           ORDER BY
-            CASE WHEN ppr.BrandID = od.BrandID THEN 0 ELSE 1 END,
+            CASE WHEN ppr.BrandID = eligible.EffectiveBrandID THEN 0 ELSE 1 END,
             ppr.ID DESC
         ) ppr
         ORDER BY ppr.Priority
@@ -467,11 +514,31 @@ export async function POST(
           END AS ComputedNetCost
       ) computed
       WHERE od.ProductID IS NOT NULL${selectedDetailsFilterSql}${excludeFarnellSql};
-      SELECT @@ROWCOUNT AS updated;
+      SELECT
+        @@ROWCOUNT AS updated,
+        (
+          SELECT STRING_AGG(updatedBrands.BrandLabel, '|~|')
+          FROM (
+            SELECT DISTINCT BrandLabel
+            FROM @UpdatedBrandLabels
+          ) updatedBrands
+        ) AS updatedBrandsCsv,
+        (
+          SELECT STRING_AGG(missingBrands.BrandLabel, '|~|')
+          FROM @MissingBrandLabels missingBrands
+        ) AS failedBrandsCsv;
     `);
 
     const standardUpdated = Number(result.recordset?.[0]?.updated ?? 0);
-    return NextResponse.json({ ok: true, updated: standardUpdated + farnellUpdated });
+    const standardUpdatedBrands = parseBrandList(result.recordset?.[0]?.updatedBrandsCsv);
+    const failedBrands = parseBrandList(result.recordset?.[0]?.failedBrandsCsv);
+    const updatedBrands = Array.from(new Set([...farnellUpdated.updatedBrands, ...standardUpdatedBrands]));
+    return NextResponse.json({
+      ok: true,
+      updated: standardUpdated + farnellUpdated.updatedCount,
+      updatedBrands,
+      failedBrands,
+    });
   } catch (err) {
     console.error('Failed to update offer prices', err);
     const message = err instanceof Error ? err.message : 'Server error';

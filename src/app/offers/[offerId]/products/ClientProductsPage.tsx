@@ -91,6 +91,17 @@ const readPersistedLayout = (key: string | null): ProductsTableLayout | null => 
   return null;
 };
 
+const normalizeBrandList = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+        .filter((entry) => entry.length > 0),
+    ),
+  );
+};
+
 export default function ClientProductsPage({ offerId, headingText, isStandardPackage }: Props) {
   const { userId } = useAuditUser();
   useEffect(() => {
@@ -451,16 +462,27 @@ export default function ClientProductsPage({ offerId, headingText, isStandardPac
         body: JSON.stringify({ offerDetailIds: selectedOfferDetailIds }),
       });
       const payload = (await response.json().catch(() => null)) as
-        | { ok?: boolean; error?: string; updated?: number }
+        | { ok?: boolean; error?: string; updated?: number; updatedBrands?: unknown; failedBrands?: unknown }
         | null;
       if (!response.ok || !payload?.ok) {
         throw new Error(payload?.error ?? `Unable to update prices (status ${response.status})`);
       }
       const updatedCount = typeof payload?.updated === 'number' ? payload.updated : null;
-      const message = updatedCount == null
-        ? 'Updated offer prices'
-        : `Updated prices for ${updatedCount} product${updatedCount === 1 ? '' : 's'}`;
-      showToastMessage(message, 'success');
+      const updatedBrands = normalizeBrandList(payload?.updatedBrands);
+      const failedBrands = normalizeBrandList(payload?.failedBrands);
+
+      if (updatedBrands.length > 0) {
+        showToastMessage(`Prices updated for brands: ${updatedBrands.join(', ')}`, 'success', 9000);
+      } else if (updatedCount == null || updatedCount > 0) {
+        const message = updatedCount == null
+          ? 'Updated offer prices'
+          : `Updated prices for ${updatedCount} product${updatedCount === 1 ? '' : 's'}`;
+        showToastMessage(message, 'success', 9000);
+      }
+      if (failedBrands.length > 0) {
+        showToastMessage(`Couldn't update prices for brands: ${failedBrands.join(', ')}`, 'error', 9000);
+      }
+
       setRefreshToken((prev) => prev + 1);
     } catch (err) {
       console.error('Failed to update offer prices', err);
