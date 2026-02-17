@@ -43,8 +43,51 @@
   margin-left: 6px;
 }
 
+.offerHeaderTopRow {
+  margin-bottom: -10px;
+}
+
+.offerHeaderBottomRow {
+  margin-top: -2px;
+}
+
+.standardPackageSpacerRow {
+  min-height: 14px;
+  margin-top: -4px;
+  margin-bottom: -10px;
+  gap: 0;
+}
+
+.standardPackageSpacerRow :global([class*="PageHeader-module__"][class*="__searchSlot"]) {
+  min-height: 14px;
+  margin-left: 0;
+}
+
 .standardPackageTopTitle {
   transform: translateY(0%);
+}
+
+.offerStackedTopTitle {
+  transform: translateY(14%);
+}
+
+.offerHeadingStack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.12;
+  gap: 2px;
+}
+
+.offerHeadingTop {
+  font-size: 30px;
+  font-weight: 500;
+}
+
+.offerHeadingBottom {
+  font-size: 30px;
+  font-weight: 500;
 }
 
 .addButtons {
@@ -160,9 +203,6 @@
   outline: none;
   box-shadow: 0 6px 14px rgba(15, 23, 42, 0.12);
   transform: translateY(-1px);
-}
-
-.pivotLayoutSelect {
 }
 
 .layoutSaveButton {

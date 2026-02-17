@@ -25,6 +25,8 @@ const AddProductsModal = dynamic(() => import('./AddProductsModal'), { ssr: fals
 type Props = {
   offerId: string;
   headingText: string;
+  headingTopText?: string | null;
+  headingBottomText?: string | null;
   isStandardPackage: boolean;
 };
 
@@ -102,17 +104,49 @@ const normalizeBrandList = (value: unknown): string[] => {
   );
 };
 
-export default function ClientProductsPage({ offerId, headingText, isStandardPackage }: Props) {
+export default function ClientProductsPage({
+  offerId,
+  headingText,
+  headingTopText,
+  headingBottomText,
+  isStandardPackage,
+}: Props) {
   const { userId } = useAuditUser();
+  const normalizedHeadingTop = typeof headingTopText === 'string' ? headingTopText.trim() : '';
+  const normalizedHeadingBottom = typeof headingBottomText === 'string' ? headingBottomText.trim() : '';
+  const hasStackedHeading = !isStandardPackage && (normalizedHeadingTop.length > 0 || normalizedHeadingBottom.length > 0);
+  const primaryHeadingLine = normalizedHeadingTop || headingText.replace(/ - Products$/i, '').trim();
+  const secondaryHeadingLine = normalizedHeadingBottom || headingText.replace(/ - Products$/i, '').trim();
+
+  const headingNode = hasStackedHeading
+    ? (
+      <span className={toolbarStyles.offerHeadingStack}>
+        <span className={toolbarStyles.offerHeadingTop}>{primaryHeadingLine}</span>
+        <span className={toolbarStyles.offerHeadingBottom}>{secondaryHeadingLine}</span>
+      </span>
+    )
+    : headingText;
+
   useEffect(() => {
     if (isStandardPackage) return;
+    const recentLabel = normalizedHeadingTop && normalizedHeadingBottom
+      ? `${normalizedHeadingTop} - ${normalizedHeadingBottom}`
+      : headingText;
     void addRecentOffer({
       id: offerId,
-      label: headingText,
-      description: headingText.replace(/ - Products$/i, '').trim(),
-      title: headingText.replace(/ - Products$/i, '').trim(),
+      label: recentLabel,
+      customerName: normalizedHeadingTop || null,
+      description: secondaryHeadingLine || null,
+      title: secondaryHeadingLine || null,
     });
-  }, [offerId, headingText, isStandardPackage]);
+  }, [
+    offerId,
+    headingText,
+    isStandardPackage,
+    normalizedHeadingTop,
+    normalizedHeadingBottom,
+    secondaryHeadingLine,
+  ]);
 
   const [manualMode, setManualMode] = useState(false);
   const [pendingAction, setPendingAction] = useState<CreatableActionType | null>(null);
@@ -435,17 +469,21 @@ export default function ClientProductsPage({ offerId, headingText, isStandardPac
     setRefreshToken((prev) => prev + 1);
   }, []);
   const showRequestedColumns = tableLayout === 'wReq';
-  const headerRowTopClassName = pivotView
-    ? undefined
-    : showAddProductModal
-      ? `${pageHeaderStyles.headerRowTop} ${toolbarStyles.compactHeaderRow}`
-      : pageHeaderStyles.headerRowTop;
+  const headerRowTopClassName = showAddProductModal
+    ? `${pageHeaderStyles.headerRowTop} ${toolbarStyles.compactHeaderRow}`
+    : `${pageHeaderStyles.headerRowTop} ${toolbarStyles.offerHeaderTopRow}`.trim();
   const headerRowBottomClassName = showAddProductModal
     ? `${pageHeaderStyles.headerRowBottom} ${toolbarStyles.compactHeaderRow}`
-    : pageHeaderStyles.headerRowBottom;
-  const headingClassName = pivotView
-    ? undefined
-    : `${pageHeaderStyles.topTitle} ${isStandardPackage ? toolbarStyles.standardPackageTopTitle : ''}`.trim();
+    : isStandardPackage
+      ? `${pageHeaderStyles.headerRowBottom} ${toolbarStyles.standardPackageSpacerRow}`.trim()
+      : `${pageHeaderStyles.headerRowBottom} ${toolbarStyles.offerHeaderBottomRow}`.trim();
+  const headingClassName = `${pageHeaderStyles.topTitle} ${
+    hasStackedHeading
+      ? toolbarStyles.offerStackedTopTitle
+      : isStandardPackage
+        ? toolbarStyles.standardPackageTopTitle
+        : ''
+  }`.trim();
   const updatePricesEndpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/update-prices`,
     [offerId],
@@ -857,8 +895,6 @@ export default function ClientProductsPage({ offerId, headingText, isStandardPac
           Manual Mode
         </button>
       )}
-      {pivotView ? pivotToggleButton : null}
-      {pivotLayoutSelect}
     </div>
   );
 
@@ -869,6 +905,12 @@ export default function ClientProductsPage({ offerId, headingText, isStandardPac
       {addRequestedButton}
       {layoutSelect}
       {pivotToggleButton}
+    </div>
+  );
+  const pivotSecondaryHeaderLeftActions = (
+    <div className={toolbarStyles.leftRequestedRow}>
+      {pivotToggleButton}
+      {pivotLayoutSelect}
     </div>
   );
 
@@ -892,7 +934,7 @@ export default function ClientProductsPage({ offerId, headingText, isStandardPac
               showRequestedColumns={isStandardPackage ? false : showRequestedColumns}
               standardPackageMode={isStandardPackage}
               tableLayout={tableLayout}
-              hideTotals={showAddProductModal}
+              hideTotals={isStandardPackage || showAddProductModal}
               initialSelectedOfferDetailIds={savedSelectionIds}
               initialViewportScrollTop={initialProductsViewportScrollTop}
               onRequestPaste={handleRequestPaste}
@@ -1012,20 +1054,27 @@ export default function ClientProductsPage({ offerId, headingText, isStandardPac
   return (
     <main className={layoutStyles.page} ref={pageRef}>
       <PageHeader
-        title={headingText}
+        title={headingNode}
         className={headerRowTopClassName}
         headingClassName={headingClassName}
         leftActions={topLeftActions}
         rightActions={topRightActions}
       >
         <GridQuickSearchProvider>
-          {pivotView || isStandardPackage ? (
-            panelContent
+          {pivotView ? (
+            <PageHeader
+              title={headingNode}
+              leftActions={pivotSecondaryHeaderLeftActions}
+              className={headerRowBottomClassName}
+              hideTitle
+            >
+              {panelContent}
+            </PageHeader>
           ) : (
             <PageHeader
-              title={headingText}
+              title={headingNode}
               leftActions={secondaryHeaderLeftActions}
-              rightActions={addButtonGroup}
+              rightActions={isStandardPackage ? null : addButtonGroup}
               className={headerRowBottomClassName}
               hideTitle
             >
