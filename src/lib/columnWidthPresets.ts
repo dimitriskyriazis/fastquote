@@ -66,7 +66,6 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   Enabled: 2,
   SupplierComment: 3,
   Description: 3,
-  Title: 3,
   LastName: 2,
   FirstName: 2,
   Position: 2,

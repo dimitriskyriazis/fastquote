@@ -498,7 +498,6 @@ export default function ContactsClient({
         field: "Title",
         headerName: "Title",
         filter: "agTextColumnFilter",
-        width: 120,
         editable: true,
         cellEditor: "agSelectCellEditor",
         cellEditorParams: { values: titleDropdownValues },
@@ -751,15 +750,6 @@ export default function ContactsClient({
               <button
                 type="button"
                 className={`${styles.headerButton} page-header-button`}
-                onClick={() => {
-                  router.push("/customer-groups");
-                }}
-              >
-                View Groups
-              </button>
-              <button
-                type="button"
-                className={`${styles.headerButton} page-header-button`}
                 onClick={openAddContact}
               >
                 Add Contact
@@ -778,6 +768,9 @@ export default function ContactsClient({
                 getContextMenuItems={contactContextMenuItems}
                 onCellValueChanged={handleCellEdit}
                 refreshToken={refreshToken}
+                rowSelection="multiple"
+                rowMultiSelectWithClick
+                rowDeselection
               />
             </div>
           </GridQuickSearchProvider>

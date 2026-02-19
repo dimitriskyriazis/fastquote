@@ -268,13 +268,6 @@ export default function CustomerGroupsClient() {
             <button
               type="button"
               className={`${styles.headerButton} page-header-button`}
-              onClick={() => router.push("/contacts")}
-            >
-              View Contacts
-            </button>
-            <button
-              type="button"
-              className={`${styles.headerButton} page-header-button`}
               onClick={openAddGroup}
             >
               Add Group
@@ -293,6 +286,9 @@ export default function CustomerGroupsClient() {
               getContextMenuItems={groupContextMenuItems}
               onCellValueChanged={handleCellEdit}
               refreshToken={refreshToken}
+              rowSelection="multiple"
+              rowMultiSelectWithClick
+              rowDeselection
             />
           </div>
         </GridQuickSearchProvider>
