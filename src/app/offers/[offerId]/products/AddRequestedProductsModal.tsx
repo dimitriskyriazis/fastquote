@@ -310,12 +310,61 @@ const enrichSheet = (sheet: SheetMapping): SheetMapping => ({
 });
 
 const parsePastedText = (text: string): unknown[][] => {
-  const lines = text.split(/\r?\n/);
-  return lines
-    .map((line) => line.split(/\t/).map((cell) => {
-      const cleaned = cell.replace(/\r/g, '');
-      const normalizedSpace = typeof cleaned === 'string' ? cleaned.replace(/\u00a0/g, ' ') : cleaned;
-      const trimmed = typeof normalizedSpace === 'string' ? normalizedSpace.trim() : normalizedSpace;
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentCell = '';
+  let inQuotes = false;
+
+  const pushCell = () => {
+    currentRow.push(currentCell);
+    currentCell = '';
+  };
+
+  const pushRow = () => {
+    pushCell();
+    rows.push(currentRow);
+    currentRow = [];
+  };
+
+  for (let idx = 0; idx < text.length; idx += 1) {
+    const char = text[idx];
+
+    if (char === '"') {
+      const nextChar = text[idx + 1];
+      if (inQuotes && nextChar === '"') {
+        currentCell += '"';
+        idx += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (!inQuotes && char === '\t') {
+      pushCell();
+      continue;
+    }
+
+    if (!inQuotes && (char === '\n' || char === '\r')) {
+      if (char === '\r' && text[idx + 1] === '\n') {
+        idx += 1;
+      }
+      pushRow();
+      continue;
+    }
+
+    currentCell += char;
+  }
+
+  // Capture the last row when clipboard text does not end with a newline.
+  if (currentCell.length > 0 || currentRow.length > 0) {
+    pushRow();
+  }
+
+  return rows
+    .map((row) => row.map((cell) => {
+      const normalizedSpace = cell.replace(/\u00a0/g, ' ');
+      const trimmed = normalizedSpace.trim();
       return trimmed === '' ? null : trimmed;
     }))
     .filter((row) => row.some(hasCellValue));
