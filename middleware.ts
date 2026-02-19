@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRequestId, setRequestIdHeader } from './src/lib/requestId';
-import { logger } from './src/lib/logger';
+import { logger } from './src/lib/loggerEdge';
+import { categoryFromRequest } from './src/lib/logCategory';
 import { applyRateLimitEdge, isWriteOperation } from './src/lib/rateLimiterEdge';
 import { SESSION_COOKIE_NAME } from './src/lib/authConstants';
 
@@ -53,11 +54,26 @@ export async function middleware(request: NextRequest) {
       return rateLimitResponse;
     }
 
+    // Decode session cookie to get userId for logging (no signature verification needed here)
+    let userId: string | null = null;
+    try {
+      const raw = request.cookies.get(SESSION_COOKIE_NAME)?.value ?? '';
+      const [encoded] = raw.split('.', 1);
+      if (encoded) {
+        const decoded = JSON.parse(atob(encoded.replace(/-/g, '+').replace(/_/g, '/'))) as { uid?: string };
+        userId = decoded?.uid ?? null;
+      }
+    } catch { /* ignore */ }
+
+    const category = categoryFromRequest(method, pathname);
+
     // Log API request
     logger.info('API request', {
       requestId,
       method,
       endpoint: pathname,
+      userId,
+      category,
       userAgent: request.headers.get('user-agent')?.substring(0, 100),
     });
   }

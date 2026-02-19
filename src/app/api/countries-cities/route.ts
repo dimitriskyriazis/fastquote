@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../lib/sql";
 import { resolveAuditUserId } from "../../../lib/auditTrail";
@@ -32,6 +33,7 @@ const normalizeText = (value: unknown): string => {
 };
 
 export async function PATCH(req: NextRequest) {
+  logRequest(req, '/api/countries-cities');
   try {
     const auth = await requirePermission(req, "manageCitiesCountries");
     if (!auth.ok) return auth.response;
@@ -105,6 +107,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  logRequest(req, '/api/countries-cities');
   let ids: number[] = [];
   try {
     const auth = await requirePermission(req, "manageCitiesCountries");

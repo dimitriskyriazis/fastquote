@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../lib/sql";
 import { buildAuditContext } from "../../../lib/auditTrail";
@@ -165,6 +166,7 @@ async function readGridRequest(req: NextRequest): Promise<GridRequest> {
 }
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/customer-groups');
   try {
     const requestPayload = await readGridRequest(req);
     const startRow = requestPayload.startRow ?? 0;
@@ -217,6 +219,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  logRequest(req, '/api/customer-groups');
   try {
     const body = await req.json().catch(() => null);
     const updates = Array.isArray((body as { updates?: GroupUpdateInput[] } | null)?.updates)
@@ -274,6 +277,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  logRequest(req, '/api/customer-groups');
   try {
     const audit = buildAuditContext(req);
     const roles = await fetchUserRoles(audit.userId);

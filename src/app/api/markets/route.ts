@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../lib/apiHelpers';
 import sql from "mssql";
 import type { ConnectionPool, Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
@@ -286,6 +287,7 @@ async function readGridRequest(req: NextRequest): Promise<GridRequest> {
 }
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/markets');
   try {
     const gridRequest = await readGridRequest(req);
     const startRow = gridRequest.startRow ?? 0;
@@ -387,6 +389,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  logRequest(req, '/api/markets');
   try {
     const body = await req.json().catch(() => null);
     const updates = Array.isArray((body as { updates?: MarketUpdateInput[] } | null)?.updates)
@@ -433,6 +436,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  logRequest(req, '/api/markets');
   try {
     const audit = buildAuditContext(req);
     const roles = await fetchUserRoles(audit.userId);

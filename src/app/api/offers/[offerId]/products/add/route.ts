@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
@@ -1369,6 +1370,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
 ) {
+  logRequest(req, '/api/offers/[offerId]/products/add');
   try {
     const { offerId: offerIdParam } = await params;
     const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();

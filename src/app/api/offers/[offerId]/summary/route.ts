@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../../../lib/sql';
 
@@ -13,6 +14,7 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
 ) {
+  logRequest(_request, '/api/offers/[offerId]/summary');
   try {
     const { offerId: rawId } = await params;
     const normalizedId = decodeURIComponent(String(rawId ?? '')).trim();

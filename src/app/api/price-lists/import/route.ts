@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../../lib/apiHelpers';
 import path from "node:path";
 import fs from "node:fs/promises";
 import * as XLSX from "xlsx";
@@ -804,6 +805,7 @@ const insertPriceListItem = async (
 };
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/price-lists/import');
   try {
     const auth = await requirePermission(req, "managePriceLists");
     if (!auth.ok) return auth.response;

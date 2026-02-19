@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../../../lib/apiHelpers';
 import sql, { type ISqlTypeFactory } from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../../lib/auditTrail";
@@ -82,6 +83,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
+  logRequest(req, '/api/price-lists/[priceListId]/basicdata');
   try {
     const auth = await requirePermission(req, "managePriceLists");
     if (!auth.ok) return auth.response;

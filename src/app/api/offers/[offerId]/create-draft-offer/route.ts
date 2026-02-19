@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool, getErpPool } from '../../../../../lib/sql';
 import { findProject, PROJECT_FIND_STATUS } from '../../../../../lib/projectValidation';
@@ -410,6 +411,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
 ) {
+  logRequest(req, '/api/offers/[offerId]/create-draft-offer');
   try {
     const auth = await requirePermission(req, "editOffers");
     if (!auth.ok) return auth.response;

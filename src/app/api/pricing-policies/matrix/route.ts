@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../../lib/apiHelpers';
 import type { Request as SqlRequest } from "mssql";
 import { getPool, sql } from "../../../../lib/sql";
 import {
@@ -138,6 +139,7 @@ const normalizeUpdateField = (value: unknown): "telmaco" | "customer" | null => 
 };
 
 export async function PATCH(req: NextRequest) {
+  logRequest(req, '/api/pricing-policies/matrix');
   try {
     const auth = await requirePermission(req, "managePricingPolicies");
     if (!auth.ok) return auth.response;
@@ -407,6 +409,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  logRequest(req, '/api/pricing-policies/matrix');
   try {
     const auth = await requirePermission(req, "managePricingPolicies");
     if (!auth.ok) return auth.response;
@@ -443,6 +446,7 @@ export async function DELETE(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/pricing-policies/matrix');
   try {
     const gridRequest = await readGridRequest(req);
     const startRow = gridRequest.startRow ?? 0;

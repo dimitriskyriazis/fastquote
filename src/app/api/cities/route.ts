@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../lib/sql";
 import { resolveAuditUserId } from "../../../lib/auditTrail";
@@ -33,6 +34,7 @@ const normalizeBoolean = (value: unknown): boolean | null => {
 };
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/cities');
   try {
     const auth = await requirePermission(req, "manageCitiesCountries");
     if (!auth.ok) return auth.response;
@@ -90,6 +92,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  logRequest(req, '/api/cities');
   try {
     const auth = await requirePermission(req, "manageCitiesCountries");
     if (!auth.ok) return auth.response;

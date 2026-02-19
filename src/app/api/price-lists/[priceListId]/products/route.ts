@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { buildAuditContext, resolveAuditUserId } from "../../../../../lib/auditTrail";
@@ -221,6 +222,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
+  logRequest(req, '/api/price-lists/[priceListId]/products');
   try {
     const { priceListId } = await params;
     const normalizedId = decodeURIComponent(String(priceListId ?? "")).trim();
@@ -312,6 +314,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
+  logRequest(req, '/api/price-lists/[priceListId]/products');
   try {
     const { priceListId } = await params;
     const normalizedId = decodeURIComponent(String(priceListId ?? "")).trim();
@@ -398,6 +401,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
+  logRequest(req, '/api/price-lists/[priceListId]/products');
   try {
     const { priceListId } = await params;
     const normalizedId = decodeURIComponent(String(priceListId ?? "")).trim();

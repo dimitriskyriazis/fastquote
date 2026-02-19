@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { buildAuditContext } from "../../../../../lib/auditTrail";
@@ -180,9 +181,10 @@ const normalizeCustomerId = (value: unknown): number | null => {
 };
 
 export async function GET(
-  _req: Request,
+  _req: NextRequest,
   { params }: { params: Promise<{ customerId: string }> },
 ) {
+  logRequest(_req, '/api/customers/[customerId]/contacts');
   try {
     const { customerId } = await params;
     const normalized = normalizeCustomerId(decodeURIComponent(customerId ?? ""));
@@ -233,6 +235,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ customerId: string }> },
 ) {
+  logRequest(req, '/api/customers/[customerId]/contacts');
   try {
     const { customerId } = await params;
     const normalized = normalizeCustomerId(decodeURIComponent(customerId ?? ""));
@@ -306,6 +309,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ customerId: string }> },
 ) {
+  logRequest(req, '/api/customers/[customerId]/contacts');
   try {
     const { customerId } = await params;
     const normalizedCustomerId = normalizeCustomerId(decodeURIComponent(customerId ?? ""));

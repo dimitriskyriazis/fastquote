@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../../lib/apiHelpers';
 import sql from "mssql";
 import type { ConnectionPool } from "mssql";
 import { getPool } from "../../../../lib/sql";
@@ -19,6 +20,7 @@ type TransactionLike = {
 };
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/products/update-descriptions');
   try {
     const auth = await requirePermission(req, "managePriceLists");
     if (!auth.ok) return auth.response;

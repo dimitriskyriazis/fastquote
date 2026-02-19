@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../lib/apiHelpers';
 import { requirePermission } from '../../../../lib/authz';
 import { fetchFarnellProduct } from '../../../../lib/farnell';
 import { getPool } from '../../../../lib/sql';
@@ -22,6 +23,7 @@ async function resolveFarnellBrandId(): Promise<number | null> {
 }
 
 export async function GET(req: NextRequest) {
+  logRequest(req, '/api/farnell/lookup');
   try {
     const auth = await requirePermission(req, 'editOffers');
     if (!auth.ok) return auth.response;

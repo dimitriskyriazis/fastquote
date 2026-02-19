@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { logRequest } from '../../../lib/apiHelpers';
 import { getWindowsIdentityFromHeaders } from '../../../lib/windowsIdentity';
 import { findUserByWindowsIdentity } from '../../../lib/windowsUserLookup';
 import { buildSessionCookie, getSessionCookieSecure } from '../../../lib/session';
@@ -6,6 +7,7 @@ import { fetchUserRoles } from '../../../lib/authz';
 import { AUDIT_USER_COOKIE_NAME } from '../../../lib/authConstants';
 
 export async function GET(request: NextRequest) {
+  logRequest(request, '/api/sso');
   try {
     const windowsUserName = getWindowsIdentityFromHeaders(request.headers);
     if (!windowsUserName) {

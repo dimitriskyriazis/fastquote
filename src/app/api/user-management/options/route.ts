@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../../lib/apiHelpers';
 import { getPool } from "../../../../lib/sql";
 import { requirePermission } from "../../../../lib/authz";
 import { sortRoleNames } from "../../../../lib/roles";
@@ -22,6 +23,7 @@ const normalizeRoleList = (rows: Array<{ Name: string | null }>) => {
 };
 
 export async function GET(req: NextRequest) {
+  logRequest(req, '/api/user-management/options');
   try {
     const auth = await requirePermission(req, "manageUsers");
     if (!auth.ok) return auth.response;

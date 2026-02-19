@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../lib/sql';
 import { requirePermission } from '../../../lib/authz';
@@ -57,6 +58,7 @@ const normalizeIntArray = (value: unknown): number[] => {
 };
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/pricing-policies');
   try {
     const auth = await requirePermission(req, "managePricingPolicies");
     if (!auth.ok) return auth.response;
@@ -106,6 +108,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  logRequest(req, '/api/pricing-policies');
   try {
     const auth = await requirePermission(req, "managePricingPolicies");
     if (!auth.ok) return auth.response;

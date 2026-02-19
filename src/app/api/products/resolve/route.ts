@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../../lib/sql';
 import { clearPartModelNumber } from '../../../../lib/partModelNumber';
@@ -50,6 +51,7 @@ const partModelNumberSql = (expr: string) => {
 };
 
 export async function GET(req: NextRequest) {
+  logRequest(req, '/api/products/resolve');
   try {
     const url = new URL(req.url);
     const partNumberRaw = normalizeParam(url.searchParams.get('partNumber'));

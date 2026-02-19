@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../lib/apiHelpers';
 import { getPool } from '../../../../lib/sql';
 import { requirePermission } from '../../../../lib/authz';
 import { toDropdownOptions, type DropdownOption, type RawDropdownRow } from '../../../../lib/dropdownOptions';
@@ -151,6 +152,7 @@ async function fetchFwcProjects() {
 }
 
 export async function GET(req: NextRequest) {
+  logRequest(req, '/api/offers/lookups');
   try {
     const auth = await requirePermission(req, 'editOffers');
     if (!auth.ok) return auth.response;

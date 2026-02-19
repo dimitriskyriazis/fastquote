@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../lib/apiHelpers';
 import { getPool } from '../../../lib/sql';
 import { coerceRoles } from '../../../lib/roles';
 
@@ -15,7 +16,8 @@ type ColumnCheckRow = {
   name: string;
 };
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  logRequest(req, '/api/users');
   try {
     const pool = await getPool();
     const columnCheck = await pool.request().query<ColumnCheckRow>(`

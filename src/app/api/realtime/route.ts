@@ -1,7 +1,9 @@
 import { NextRequest } from 'next/server';
+import { logRequest } from '../../../lib/apiHelpers';
 import { realtimeEvents, type RealtimeEvent } from '../../../lib/realtimeEvents';
 
 export async function GET(req: NextRequest) {
+  logRequest(req, '/api/realtime');
   const url = new URL(req.url);
   const resource = url.searchParams.get('resource');
 

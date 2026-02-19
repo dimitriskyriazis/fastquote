@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../../lib/apiHelpers';
 import { getPool } from '../../../../../lib/sql';
 import sql from 'mssql';
 import { requirePermission } from '../../../../../lib/authz';
@@ -17,6 +18,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> }
 ) {
+  logRequest(req, '/api/offers/[offerId]/status-history');
   try {
     const auth = await requirePermission(req, 'editOffers');
     if (!auth.ok) return auth.response;

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../lib/apiHelpers';
 import { getPool } from '../../../../lib/sql';
 import { requirePermission } from '../../../../lib/authz';
 import { toDropdownOptions, type DropdownOption, type RawDropdownRow } from '../../../../lib/dropdownOptions';
@@ -115,6 +116,7 @@ async function fetchCities() {
 }
 
 export async function GET(req: NextRequest) {
+  logRequest(req, '/api/customers/lookups');
   try {
     const auth = await requirePermission(req, 'manageCustomersContacts');
     if (!auth.ok) return auth.response;

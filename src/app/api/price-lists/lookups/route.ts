@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../lib/apiHelpers';
 import { getPool } from '../../../../lib/sql';
 import { requirePermission } from '../../../../lib/authz';
 import { toDropdownOptions, type DropdownOption, type RawDropdownRow } from '../../../../lib/dropdownOptions';
@@ -102,6 +103,7 @@ async function fetchUsers() {
 }
 
 export async function GET(req: NextRequest) {
+  logRequest(req, '/api/price-lists/lookups');
   try {
     const auth = await requirePermission(req, 'managePriceLists');
     if (!auth.ok) return auth.response;

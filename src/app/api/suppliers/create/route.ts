@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../../lib/apiHelpers';
 import sql from "mssql";
 import { z } from "zod";
 import { getPool } from "../../../../lib/sql";
@@ -6,6 +7,7 @@ import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { getRequestId } from "../../../../lib/requestId";
 import { handleApiError } from "../../../../lib/errorHandler";
 import { logger } from "../../../../lib/logger";
+import { logAddAuditDetails } from "../../../../lib/mutationAudit";
 import { validateRequest, intSchema, stringSchema, booleanSchema } from "../../../../lib/validation";
 import { requirePermission } from "../../../../lib/authz";
 
@@ -25,6 +27,7 @@ const createSupplierSchema = z
   .strict();
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/suppliers/create');
   const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
 
@@ -70,7 +73,7 @@ export async function POST(req: NextRequest) {
     request.input("CreatedBy", sql.NVarChar(450), userId ?? null);
     request.input("ModifiedBy", sql.NVarChar(450), userId ?? null);
 
-    const result = await request.query<{ SupplierID: number; SupplierName: string | null }>(`
+    const result = await request.query<{ SupplierID: number; SupplierName: string | null; TaxID: string | null }>(`
       INSERT INTO dbo.Suppliers (
         [Name],
         [TaxID],
@@ -87,7 +90,7 @@ export async function POST(req: NextRequest) {
         [ModifiedOn],
         [ModifiedBy]
       )
-      OUTPUT INSERTED.ID AS SupplierID, INSERTED.Name AS SupplierName
+      OUTPUT INSERTED.ID AS SupplierID, INSERTED.Name AS SupplierName, INSERTED.TaxID
       VALUES (
         @Name,
         @TaxID,
@@ -117,6 +120,21 @@ export async function POST(req: NextRequest) {
       method: "POST",
       userId,
       supplierId: inserted.SupplierID,
+    });
+    logAddAuditDetails({
+      endpoint: "/api/suppliers/create",
+      method: "POST",
+      requestId,
+      userId,
+      targetEntity: "suppliers",
+      createdRows: [
+        {
+          id: inserted.SupplierID,
+          name: inserted.SupplierName?.trim() || name,
+          taxId: inserted.TaxID?.trim() || null,
+        },
+      ],
+      message: "Supplier created",
     });
 
     return NextResponse.json({

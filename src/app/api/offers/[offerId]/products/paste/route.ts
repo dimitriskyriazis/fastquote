@@ -1,5 +1,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../../../lib/apiHelpers';
 import sql, { type ConnectionPool, type Transaction } from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
@@ -650,6 +651,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
 ) {
+  logRequest(req, '/api/offers/[offerId]/products/paste');
   let transaction: Transaction | null = null;
   try {
     const auth = await requirePermission(req, 'editOffers');

@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../lib/apiHelpers';
 import sql from "mssql";
 import type { Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
 import { resolveAuditUserId } from "../../../lib/auditTrail";
+import {
+  buildFieldChanges,
+  logDeleteAuditDetails,
+  logEditAuditDetails,
+  type FieldUpdate,
+} from "../../../lib/mutationAudit";
 import {
   buildQuickFilterClause,
   mergeWhereClauses,
@@ -39,7 +46,20 @@ type SupplierRow = {
 
 type SupplierRowWithCount = SupplierRow & { __totalCount: number | bigint | null };
 
-const COLUMN_EXPRESSIONS: Record<string, string> = {
+type SupplierField =
+  | "SupplierID"
+  | "Name"
+  | "TaxID"
+  | "Address"
+  | "City"
+  | "Country"
+  | "PostalCode"
+  | "Phone"
+  | "WebSite"
+  | "Comments"
+  | "Enabled";
+
+const COLUMN_EXPRESSIONS: Record<SupplierField, string> = {
   SupplierID: "dbo.Suppliers.ID",
   Name: "dbo.Suppliers.Name",
   TaxID: "dbo.Suppliers.TaxID",
@@ -52,6 +72,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Comments: "dbo.Suppliers.Comments",
   Enabled: "dbo.Suppliers.Enabled",
 };
+const COLUMN_EXPRESSIONS_BY_ID = COLUMN_EXPRESSIONS as Record<string, string>;
 
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
   colId,
@@ -66,12 +87,32 @@ type SupplierUpdateInput = {
 
 type NormalizedSupplierUpdate = {
   supplierId: number;
-  field: keyof typeof COLUMN_EXPRESSIONS;
+  field: SupplierField;
   value: unknown;
 };
 
 type SupplierDeleteBody = {
   SupplierIDs?: Array<number | string | null>;
+};
+
+type SupplierAuditRow = {
+  SupplierID: number;
+  Name: string | null;
+  TaxID: string | null;
+  Address: string | null;
+  City: string | null;
+  Country: string | null;
+  PostalCode: string | null;
+  Phone: string | null;
+  WebSite: string | null;
+  Comments: string | null;
+  Enabled: boolean | number | null;
+};
+
+type DeletedSupplierRow = {
+  SupplierID: number;
+  Name: string | null;
+  TaxID: string | null;
 };
 
 class SupplierUpdateError extends Error {
@@ -95,7 +136,7 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 
   Object.entries(typed).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
+    const columnExpression = COLUMN_EXPRESSIONS_BY_ID[col] ?? `[${col}]`;
 
     // Use centralized filter processor
     const result = processFilter(fm, {
@@ -119,7 +160,7 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "";
   const parts = sortModel.map((entry) => {
-    const expr = COLUMN_EXPRESSIONS[entry.colId] ?? `[${entry.colId}]`;
+    const expr = COLUMN_EXPRESSIONS_BY_ID[entry.colId] ?? `[${entry.colId}]`;
     return `${expr} ${entry.sort.toUpperCase()}`;
   });
   return `ORDER BY ${parts.join(", ")}`;
@@ -168,6 +209,71 @@ const normalizeTextValue = (value: unknown): string => {
 const trimNullableText = (value: string | null | undefined): string | null =>
   typeof value === "string" ? value.trim() : null;
 
+const normalizeBooleanOutput = (value: unknown): boolean | null => {
+  if (value == null) return null;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  return null;
+};
+
+const fetchSupplierAuditRows = async (
+  pool: Awaited<ReturnType<typeof getPool>>,
+  ids: number[],
+): Promise<Map<number, SupplierAuditRow>> => {
+  const rowsById = new Map<number, SupplierAuditRow>();
+  if (ids.length === 0) return rowsById;
+
+  const request = pool.request();
+  ids.forEach((id, idx) => {
+    request.input(`auditId${idx}`, sql.Int, id);
+  });
+  const result = await request.query<SupplierAuditRow>(`
+    SELECT
+      s.ID AS SupplierID,
+      s.Name,
+      s.TaxID,
+      s.Address,
+      c.Name AS City,
+      co.Name AS Country,
+      s.PostalCode,
+      s.Phone,
+      s.WebSite,
+      s.Comments,
+      s.Enabled
+    FROM dbo.Suppliers AS s
+    LEFT JOIN dbo.Cities AS c ON s.CityID = c.ID
+    LEFT JOIN dbo.Countries AS co ON s.CountryID = co.ID
+    WHERE s.ID IN (${ids.map((_, idx) => `@auditId${idx}`).join(", ")})
+  `);
+
+  for (const row of result.recordset ?? []) {
+    rowsById.set(row.SupplierID, {
+      SupplierID: row.SupplierID,
+      Name: trimNullableText(row.Name),
+      TaxID: trimNullableText(row.TaxID),
+      Address: trimNullableText(row.Address),
+      City: trimNullableText(row.City),
+      Country: trimNullableText(row.Country),
+      PostalCode: trimNullableText(row.PostalCode),
+      Phone: trimNullableText(row.Phone),
+      WebSite: trimNullableText(row.WebSite),
+      Comments: trimNullableText(row.Comments),
+      Enabled: normalizeBooleanOutput(row.Enabled),
+    });
+  }
+
+  return rowsById;
+};
+
+const resolveSupplierFieldValue = (
+  row: SupplierAuditRow | undefined,
+  field: SupplierField,
+): unknown => {
+  if (!row) return null;
+  if (field === "Enabled") return normalizeBooleanOutput(row.Enabled);
+  return row[field];
+};
+
 async function readGridRequest(req: NextRequest): Promise<GridRequest> {
   try {
     const payload = await req.json();
@@ -182,6 +288,7 @@ async function readGridRequest(req: NextRequest): Promise<GridRequest> {
 }
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/suppliers');
   try {
     const auth = await requirePermission(req, "manageBrandsSuppliers");
     if (!auth.ok) return auth.response;
@@ -259,6 +366,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  logRequest(req, '/api/suppliers');
   try {
     const auth = await requirePermission(req, "manageBrandsSuppliers");
     if (!auth.ok) return auth.response;
@@ -280,7 +388,7 @@ export async function PATCH(req: NextRequest) {
         }
         return {
           supplierId,
-          field: field as keyof typeof COLUMN_EXPRESSIONS,
+          field: field as SupplierField,
           value: entry?.value,
         } as NormalizedSupplierUpdate;
       })
@@ -292,6 +400,8 @@ export async function PATCH(req: NextRequest) {
 
     const pool = await getPool();
     const auditUserId = resolveAuditUserId(req);
+    const targetSupplierIds = Array.from(new Set(normalized.map((entry) => entry.supplierId)));
+    const beforeById = await fetchSupplierAuditRows(pool, targetSupplierIds);
 
     for (const update of normalized) {
       const request = pool.request();
@@ -386,6 +496,32 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
+    const afterById = await fetchSupplierAuditRows(pool, targetSupplierIds);
+    const changes = buildFieldChanges({
+      updates: normalized.map(
+        (entry) =>
+          ({
+            targetId: entry.supplierId,
+            field: entry.field,
+          }) satisfies FieldUpdate<SupplierField, number>,
+      ),
+      beforeById,
+      afterById,
+      getFieldValue: resolveSupplierFieldValue,
+      getTargetName: (before, after) => after?.Name ?? before?.Name ?? null,
+    });
+    if (changes.length > 0) {
+      logEditAuditDetails({
+        endpoint: "/api/suppliers",
+        method: "PATCH",
+        userId: auditUserId,
+        targetEntity: "suppliers",
+        targetIds: targetSupplierIds,
+        changes,
+        message: "Supplier fields updated",
+      });
+    }
+
     return NextResponse.json({ ok: true, updated: normalized.length });
   } catch (err) {
     console.error(err);
@@ -398,6 +534,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  logRequest(req, '/api/suppliers');
   try {
     const auth = await requirePermission(req, "manageBrandsSuppliers");
     if (!auth.ok) return auth.response;
@@ -434,11 +571,30 @@ export async function DELETE(req: NextRequest) {
     ids.forEach((value, idx) => {
       request.input(`id${idx}`, sql.Int, value);
     });
-    await request.query(`
+    const deleteResult = await request.query<DeletedSupplierRow>(`
       DELETE FROM dbo.Suppliers
+      OUTPUT
+        DELETED.ID AS SupplierID,
+        DELETED.Name,
+        DELETED.TaxID
       WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
     `);
-    return NextResponse.json({ ok: true, deleted: ids.length });
+    const deletedRows = (deleteResult.recordset ?? []).map((row) => ({
+      id: row.SupplierID,
+      name: trimNullableText(row.Name),
+      taxId: trimNullableText(row.TaxID),
+    }));
+    const auditUserId = resolveAuditUserId(req);
+    logDeleteAuditDetails({
+      endpoint: "/api/suppliers",
+      userId: auditUserId,
+      targetEntity: "suppliers",
+      requestedIds: ids,
+      deletedRows,
+      message: "Suppliers deleted",
+    });
+
+    return NextResponse.json({ ok: true, deleted: deletedRows.length });
   } catch (err) {
     console.error("Failed to delete suppliers", err);
     const message = err instanceof Error ? err.message : "Unable to delete suppliers.";

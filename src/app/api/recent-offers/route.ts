@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../lib/apiHelpers';
 import { buildAuditContext } from "../../../lib/auditTrail";
 import type { RecentOfferSummary } from "../../../lib/recentOfferTypes";
 import { RECENT_OFFERS_MAX } from "../../../lib/recentOfferTypes";
@@ -76,12 +77,14 @@ const saveRecentOfferForUser = (userId: string, entry: RecentOfferSummary) => {
 };
 
 export async function GET(req: NextRequest) {
+  logRequest(req, '/api/recent-offers');
   const userId = resolveUserId(req);
   const offers = getRecentOffersForUser(userId);
   return NextResponse.json({ ok: true, offers });
 }
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/recent-offers');
   const userId = resolveUserId(req);
   const payload = await req.json().catch(() => null);
   const entry = normalizeEntry(payload);

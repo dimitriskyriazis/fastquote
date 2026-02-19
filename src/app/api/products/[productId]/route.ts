@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../lib/apiHelpers';
 import sql, { type Request as SqlRequest } from "mssql";
 import { z } from 'zod';
 import { getPool } from '../../../../lib/sql';
@@ -62,6 +63,7 @@ export async function GET(
   req: NextRequest,
   context: { params: Promise<{ productId: string }> },
 ) {
+  logRequest(req, '/api/products/[productId]');
   const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
   
@@ -136,6 +138,7 @@ export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ productId: string }> },
 ) {
+  logRequest(req, '/api/products/[productId]');
   const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
 

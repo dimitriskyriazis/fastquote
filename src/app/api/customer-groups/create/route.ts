@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
@@ -30,6 +31,7 @@ const normalizeBoolean = (value: unknown): boolean => {
 };
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/customer-groups/create');
   try {
     const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../lib/apiHelpers';
 import sql from "mssql";
 import { z } from "zod";
 import { getPool } from "../../../lib/sql";
@@ -6,6 +7,14 @@ import { resolveAuditUserId } from "../../../lib/auditTrail";
 import { getRequestId } from "../../../lib/requestId";
 import { handleApiError } from "../../../lib/errorHandler";
 import { logger } from "../../../lib/logger";
+import {
+  buildFieldChanges,
+  indexRowsById,
+  logAddAuditDetails,
+  logDeleteAuditDetails,
+  logEditAuditDetails,
+  type FieldUpdate,
+} from "../../../lib/mutationAudit";
 import { validateRequest, intSchema, stringSchema, booleanSchema } from "../../../lib/validation";
 import { requirePermission } from "../../../lib/authz";
 import { checkDeletePermission } from "../../../lib/deletePermissions";
@@ -28,6 +37,15 @@ type BrandUpdateInput = {
 
 type BrandDeleteBody = {
   BrandIDs?: unknown;
+};
+
+type BrandAuditRow = {
+  BrandID: number;
+  Name: string | null;
+  Comment: string | null;
+  SoftOneID: number | null;
+  SoftOneCode: string | null;
+  Enabled: boolean | number | null;
 };
 
 type NormalizedBrandUpdate = {
@@ -87,7 +105,57 @@ const normalizeOptionalIntInput = (value: unknown): number | null => {
   return parsed;
 };
 
+const normalizeBooleanOutput = (value: unknown): boolean | null => {
+  if (value == null) return null;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  return null;
+};
+
+const normalizeTextOutput = (value: string | null | undefined): string | null =>
+  typeof value === "string" ? value.trim() : null;
+
+const fetchBrandAuditRows = async (ids: number[]) => {
+  if (ids.length === 0) return new Map<number, BrandAuditRow>();
+  const pool = await getPool();
+  const request = pool.request();
+  ids.forEach((id, idx) => {
+    request.input(`auditId${idx}`, sql.Int, id);
+  });
+  const result = await request.query<BrandAuditRow>(`
+    SELECT
+      ID AS BrandID,
+      Name,
+      Comment,
+      SoftOneID,
+      SoftOneCode,
+      Enabled
+    FROM dbo.Brands
+    WHERE ID IN (${ids.map((_, idx) => `@auditId${idx}`).join(", ")})
+  `);
+
+  const normalizedRows = (result.recordset ?? []).map((row) => ({
+    BrandID: row.BrandID,
+    Name: normalizeTextOutput(row.Name),
+    Comment: normalizeTextOutput(row.Comment),
+    SoftOneID: row.SoftOneID ?? null,
+    SoftOneCode: normalizeTextOutput(row.SoftOneCode),
+    Enabled: normalizeBooleanOutput(row.Enabled),
+  }));
+  return indexRowsById(normalizedRows, (row) => row.BrandID);
+};
+
+const resolveBrandFieldValue = (
+  row: BrandAuditRow | undefined,
+  field: NormalizedBrandUpdate["field"],
+): unknown => {
+  if (!row) return null;
+  if (field === "Enabled") return normalizeBooleanOutput(row.Enabled);
+  return row[field];
+};
+
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/brands');
   const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
 
@@ -161,6 +229,20 @@ export async function POST(req: NextRequest) {
       userId,
       brandId: inserted.BrandID,
     });
+    logAddAuditDetails({
+      endpoint: "/api/brands",
+      method: "POST",
+      requestId,
+      userId,
+      targetEntity: "brands",
+      createdRows: [
+        {
+          id: inserted.BrandID,
+          name: inserted.BrandName?.trim() || name,
+        },
+      ],
+      message: "Brand created",
+    });
 
     return NextResponse.json({
       ok: true,
@@ -180,6 +262,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  logRequest(req, '/api/brands');
   const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
 
@@ -214,6 +297,8 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "No valid updates provided" }, { status: 400 });
     }
 
+    const targetBrandIds = Array.from(new Set(normalized.map((entry) => entry.brandId)));
+    const beforeById = await fetchBrandAuditRows(targetBrandIds);
     const pool = await getPool();
     for (const update of normalized) {
       const request = pool.request();
@@ -271,13 +356,32 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
-    logger.info("Brand updated successfully", {
-      requestId,
-      endpoint: "/api/brands",
-      method: "PATCH",
-      userId,
-      count: normalized.length,
+    const afterById = await fetchBrandAuditRows(targetBrandIds);
+    const changes = buildFieldChanges({
+      updates: normalized.map(
+        (entry) =>
+          ({
+            targetId: entry.brandId,
+            field: entry.field,
+          }) satisfies FieldUpdate<NormalizedBrandUpdate["field"], number>,
+      ),
+      beforeById,
+      afterById,
+      getFieldValue: resolveBrandFieldValue,
+      getTargetName: (before, after) => after?.Name ?? before?.Name ?? null,
     });
+    if (changes.length > 0) {
+      logEditAuditDetails({
+        endpoint: "/api/brands",
+        method: "PATCH",
+        requestId,
+        userId,
+        targetEntity: "brands",
+        targetIds: targetBrandIds,
+        changes,
+        message: "Brand fields updated",
+      });
+    }
 
     return NextResponse.json({ ok: true, updated: normalized.length });
   } catch (err) {
@@ -294,6 +398,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  logRequest(req, '/api/brands');
   const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
 
@@ -325,20 +430,27 @@ export async function DELETE(req: NextRequest) {
     ids.forEach((value, idx) => {
       request.input(`id${idx}`, sql.Int, value);
     });
-    await request.query(`
+    const deleteResult = await request.query<{ BrandID: number; Name: string | null }>(`
       DELETE FROM dbo.Brands
+      OUTPUT DELETED.ID AS BrandID, DELETED.Name
       WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
     `);
 
-    logger.info("Brand deleted successfully", {
-      requestId,
+    const deletedRows = (deleteResult.recordset ?? []).map((row) => ({
+      id: row.BrandID,
+      name: normalizeTextOutput(row.Name),
+    }));
+    logDeleteAuditDetails({
       endpoint: "/api/brands",
-      method: "DELETE",
+      requestId,
       userId,
-      count: ids.length,
+      targetEntity: "brands",
+      requestedIds: ids,
+      deletedRows,
+      message: "Brands deleted",
     });
 
-    return NextResponse.json({ ok: true, deleted: ids.length });
+    return NextResponse.json({ ok: true, deleted: deletedRows.length });
   } catch (err) {
     return await handleApiError(err, {
       requestId,

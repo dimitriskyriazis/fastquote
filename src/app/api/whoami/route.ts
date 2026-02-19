@@ -1,8 +1,10 @@
 import os from 'os';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../lib/apiHelpers';
 import { getWindowsIdentityFromHeaders } from '../../../lib/windowsIdentity';
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
+  logRequest(req, '/api/whoami');
   try {
     const headerUser = getWindowsIdentityFromHeaders(req.headers);
     if (headerUser) {

@@ -1,9 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../lib/apiHelpers';
 import { getPool } from '../../../lib/sql';
 import { logger } from '../../../lib/logger';
 import { getRequestId } from '../../../lib/requestId';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  logRequest(req, '/api/health');
   const requestId = await getRequestId();
   const startTime = Date.now();
 

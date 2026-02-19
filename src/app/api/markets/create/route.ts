@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../../lib/apiHelpers';
 import sql, { ConnectionPool } from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
@@ -39,6 +40,7 @@ const findSalesDivisionId = async (pool: ConnectionPool, divisionName: string): 
 };
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/markets/create');
   try {
     const payload = (await req.json().catch(() => null)) as
       | {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../lib/auditTrail';
@@ -113,6 +114,7 @@ const normalizeProbability = (value: unknown): number | null => {
 };
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/offers/create');
   try {
     const auth = await requirePermission(req, "createOffers");
     if (!auth.ok) return auth.response;

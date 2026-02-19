@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../../../lib/sql';
 import { requirePermission } from '../../../../../lib/authz';
@@ -16,6 +17,7 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
+  logRequest(_req, '/api/price-lists/[priceListId]/pricing-policies');
   try {
     const { priceListId } = await params;
     const normalizedId = decodeURIComponent(String(priceListId ?? '')).trim();
@@ -79,6 +81,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
+  logRequest(req, '/api/price-lists/[priceListId]/pricing-policies');
   try {
     const auth = await requirePermission(req, "managePriceLists");
     if (!auth.ok) return auth.response;
@@ -139,6 +142,7 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
+  logRequest(req, '/api/price-lists/[priceListId]/pricing-policies');
   try {
     const auth = await requirePermission(req, "managePriceLists");
     if (!auth.ok) return auth.response;
@@ -194,6 +198,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
+  logRequest(req, '/api/price-lists/[priceListId]/pricing-policies');
   try {
     const auth = await requirePermission(req, "managePriceLists");
     if (!auth.ok) return auth.response;

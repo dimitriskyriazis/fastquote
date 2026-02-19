@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../../lib/apiHelpers';
 import { getPool } from "../../../../lib/sql";
 import { requirePermission } from "../../../../lib/authz";
 
@@ -214,6 +215,7 @@ const applySort = (rows: Record<string, unknown>[], sortModel?: GridRequest["sor
 };
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/user-management/grid');
   try {
     const auth = await requirePermission(req, "manageUsers");
     if (!auth.ok) return auth.response;

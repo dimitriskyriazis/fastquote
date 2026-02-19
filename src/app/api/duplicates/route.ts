@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../lib/sql";
 import { getRequestId } from "../../../lib/requestId";
@@ -19,6 +20,7 @@ type WarningGroup = {
 };
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/duplicates');
   const requestId = await getRequestId(req);
 
   try {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../lib/sql';
 import { resolveAuditUserId } from '../../../lib/auditTrail';
@@ -30,6 +31,7 @@ const normalizeBoolean = (value: unknown): boolean | null => {
 };
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/titles');
   try {
     const payload = (await req.json().catch(() => null)) as CreateTitleBody | null;
     const name = normalizeString(payload?.name, 512);

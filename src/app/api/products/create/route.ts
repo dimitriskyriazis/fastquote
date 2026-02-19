@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../../lib/apiHelpers';
 import sql from "mssql";
 import { z } from "zod";
 import { getPool } from "../../../../lib/sql";
@@ -32,6 +33,7 @@ const createProductSchema = z.object({
 }).strict(); // Reject unknown fields
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/products/create');
   const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
   

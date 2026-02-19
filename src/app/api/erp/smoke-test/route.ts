@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getErpPool, getPool } from '../../../../lib/sql';
 import { findProject, PROJECT_FIND_STATUS } from '../../../../lib/projectValidation';
@@ -12,6 +13,7 @@ type SmokeTestPostBody = {
 };
 
 export async function GET(_req: NextRequest) {
+  logRequest(_req, '/api/erp/smoke-test');
   try {
     void _req;
     const erpPool = await getErpPool();
@@ -53,6 +55,7 @@ export async function GET(_req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/erp/smoke-test');
   let body: SmokeTestPostBody | null = null;
 
   try {

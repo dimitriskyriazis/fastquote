@@ -1,6 +1,6 @@
 import { RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
 import { NextRequest, NextResponse } from 'next/server';
-import { logger } from './logger';
+import { logger } from './loggerEdge';
 import { getRequestId } from './requestId';
 
 const createRateLimiter = (points: number, duration: number) =>

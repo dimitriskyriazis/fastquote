@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../../lib/apiHelpers';
 import sql, { ConnectionPool } from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
@@ -78,6 +79,7 @@ const ensureTitleExists = async (pool: ConnectionPool, titleId: number): Promise
 };
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/customer-contacts/create');
   try {
     const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;

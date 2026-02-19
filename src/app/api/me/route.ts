@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { logRequest } from '../../../lib/apiHelpers';
 import { fetchUserRoles } from '../../../lib/authz';
 import { getWindowsIdentityFromHeaders } from '../../../lib/windowsIdentity';
 import { findUserByWindowsIdentity } from '../../../lib/windowsUserLookup';
@@ -16,6 +17,7 @@ type MeRequestBody = {
  * sets the FastQuote session cookie.
  */
 export async function POST(request: NextRequest) {
+  logRequest(request, '/api/me');
   try {
     const headerIdentity = getWindowsIdentityFromHeaders(request.headers);
     let windowsUserName = headerIdentity ?? '';

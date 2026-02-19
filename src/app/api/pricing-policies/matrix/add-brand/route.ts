@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../../../lib/apiHelpers';
 import { getPool, sql } from "../../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../../lib/auditTrail";
 import { requirePermission } from "../../../../../lib/authz";
@@ -33,6 +34,7 @@ const normalizeString = (value: unknown, maxLength: number): string | null => {
 };
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/pricing-policies/matrix/add-brand');
   try {
     const auth = await requirePermission(req, "managePricingPolicies");
     if (!auth.ok) return auth.response;

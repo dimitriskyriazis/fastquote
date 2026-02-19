@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { buildAuditContext } from '../../../../../lib/auditTrail';
 import { getPool } from '../../../../../lib/sql';
@@ -272,6 +273,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
 ) {
+  logRequest(req, '/api/offers/[offerId]/duplicate');
   try {
     const auth = await requirePermission(req, "createOffers");
     if (!auth.ok) return auth.response;

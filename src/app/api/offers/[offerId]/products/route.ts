@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../../lib/apiHelpers';
 import sql, { ConnectionPool } from 'mssql';
 import { buildAuditContext, type AuditContext } from '../../../../../lib/auditTrail';
 import { getPool } from '../../../../../lib/sql';
@@ -1254,6 +1255,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
 ) {
+  logRequest(req, '/api/offers/[offerId]/products');
   try {
     let body: (GridRequestEnvelope & (CreateRowRequest | ReorderRequest)) | null = null;
     try {
@@ -1520,6 +1522,7 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
 ) {
+  logRequest(req, '/api/offers/[offerId]/products');
   try {
     const auth = await requirePermission(req, "editOffers");
     if (!auth.ok) return auth.response;
@@ -1574,6 +1577,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
 ) {
+  logRequest(req, '/api/offers/[offerId]/products');
   try {
     const auth = await requirePermission(req, "editOffers");
     if (!auth.ok) return auth.response;
@@ -2555,6 +2559,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
 ) {
+  logRequest(req, '/api/offers/[offerId]/products');
   try {
     const auth = await requirePermission(req, "editOffers");
     if (!auth.ok) return auth.response;

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequest } from '../../../lib/apiHelpers';
 import sql from "mssql";
 import type { Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
@@ -219,6 +220,7 @@ const ensureEnabledFilterModel = (
 };
 
 export async function POST(req: NextRequest) {
+  logRequest(req, '/api/customers');
   try {
     const requestPayload = await readGridRequest(req);
     const startRow = requestPayload.startRow ?? 0;
@@ -333,6 +335,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  logRequest(req, '/api/customers');
   try {
     const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;

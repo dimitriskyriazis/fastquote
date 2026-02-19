@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../../../lib/sql';
 import { requirePermission } from '../../../../../lib/authz';
@@ -7,6 +8,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
 ) {
+  logRequest(req, '/api/offers/[offerId]/pdf-settings');
   try {
     const auth = await requirePermission(req, 'editOffers');
     if (!auth.ok) return auth.response;
