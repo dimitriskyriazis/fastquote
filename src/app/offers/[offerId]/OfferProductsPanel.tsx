@@ -1815,24 +1815,42 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const shouldResetRoots = response?.request?.startRow === 0;
     rebuildTreeOrderingRootMap(response?.rows as Array<Record<string, unknown>> | undefined, shouldResetRoots);
     const preserveWReqVisibility = showRequestedColumns && tableLayout === 'wReq';
+    const isFirstPage = (response?.request?.startRow ?? 0) === 0;
     if (preserveWReqVisibility) {
-      const previousVisibility = appliedRequestedColumnVisibilityRef.current ?? requestedColumnVisibility;
-      const mergedVisibility = REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
-        (acc, key) => {
-          const fromResponse = response?.requestedColumns?.[key];
-          const previous = Boolean(previousVisibility?.[key]);
-          acc[key] = previous || Boolean(fromResponse);
-          return acc;
-        },
-        {} as Record<RequestedDisplayFieldKey, boolean>,
-      );
-      applyRequestedColumnVisibility(mergedVisibility, true);
-
       const hasRequestedItemInRows = (response?.rows ?? []).some((row) => normalizeRequestedItemNoValue(
         (row as Record<string, unknown>)?.RequestedItemNo ?? null,
       ) != null);
       const responseRequestedItemNo = Boolean(response?.requestedColumns?.RequestedItemNo) || hasRequestedItemInRows;
-      setRequestedItemNoVisible((prev) => prev || responseRequestedItemNo);
+      if (isFirstPage) {
+        // First page of a new load or refresh: reset visibility to exactly what the data says.
+        // This ensures empty columns are hidden on launch and after re-importing requested products.
+        const freshVisibility = REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
+          (acc, key) => {
+            acc[key] = Boolean(response?.requestedColumns?.[key]);
+            return acc;
+          },
+          {} as Record<RequestedDisplayFieldKey, boolean>,
+        );
+        setRequestedColumnVisibility((prev) => {
+          const hasChanged = REQUESTED_DISPLAY_FIELD_KEYS.some((key) => prev[key] !== freshVisibility[key]);
+          return hasChanged ? freshVisibility : prev;
+        });
+        setRequestedItemNoVisible(responseRequestedItemNo);
+      } else {
+        // Subsequent pages: OR-merge so columns don't disappear while scrolling through pages.
+        const previousVisibility = appliedRequestedColumnVisibilityRef.current ?? requestedColumnVisibility;
+        const mergedVisibility = REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
+          (acc, key) => {
+            const fromResponse = response?.requestedColumns?.[key];
+            const previous = Boolean(previousVisibility?.[key]);
+            acc[key] = previous || Boolean(fromResponse);
+            return acc;
+          },
+          {} as Record<RequestedDisplayFieldKey, boolean>,
+        );
+        applyRequestedColumnVisibility(mergedVisibility, true);
+        setRequestedItemNoVisible((prev) => prev || responseRequestedItemNo);
+      }
     } else {
       const requestColumnVisibility: Partial<Record<RequestedDisplayFieldKey, boolean>> = {};
       if (response?.requestedColumns) {
