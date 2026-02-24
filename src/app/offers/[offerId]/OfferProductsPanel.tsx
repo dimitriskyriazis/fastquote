@@ -55,7 +55,7 @@ const AgGridAll = dynamic<AgGridAllProps>(() => import('../../components/AgGridA
   ),
 });
 import { showToastMessage } from '../../../lib/toast';
-import { showConfirmDialog } from '../../../lib/confirm';
+import { showConfirmDialog, showMultiChoiceDialog } from '../../../lib/confirm';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
@@ -815,6 +815,15 @@ const productHistoryMenuIcon = `
   </span>
 `;
 
+const addWebLinkMenuIcon = `
+  <span class="fastquote-menu-icon" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+    </svg>
+  </span>
+`;
+
 const categoryMenuIcon = `
   <span class="fastquote-menu-icon fastquote-menu-icon--category" aria-hidden="true">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -1359,6 +1368,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     RequestedQuantity: false,
   });
   const [requestedItemNoVisible, setRequestedItemNoVisible] = useState(false);
+  const [isAddingWebLinks, setIsAddingWebLinks] = useState(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const gridWrapperRef = useRef<HTMLDivElement | null>(null);
   const [requestedColumnsReady, setRequestedColumnsReadyFlag] = useState(false);
@@ -4773,9 +4783,104 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
     }
 
+    // --- Add web links item (product rows only) ---
+    const selectedNodes = getContextMenuSelectionSnapshot(params.api ?? null);
+    const targetNodes = selectedNodes.length > 0 ? selectedNodes : (params.node ? [params.node] : []);
+    const targetProductNodes = targetNodes.filter((n) => isOfferProductProduct(n.data));
+    const targetProducts = targetProductNodes.map((n) => n.data).filter(Boolean) as Record<string, unknown>[];
+    const targetIds = targetProducts
+      .map((p) => {
+        const raw = p.ProductID;
+        if (typeof raw === 'number' && Number.isInteger(raw)) return raw;
+        if (typeof raw === 'string') {
+          const parsed = Number.parseInt(raw.trim(), 10);
+          if (Number.isInteger(parsed)) return parsed;
+        }
+        return null;
+      })
+      .filter((id): id is number => id !== null);
+
+    if (targetIds.length > 0) {
+      const productsWithLinks = targetProducts.filter((p) => !!p.WebLink);
+      const webLinkItem: MenuItemDef = {
+        name: targetIds.length > 1 ? `Add web links (${targetIds.length})` : 'Add web link',
+        icon: addWebLinkMenuIcon,
+        disabled: isAddingWebLinks,
+        action: async () => {
+          let idsToProcess = [...targetIds];
+
+          if (productsWithLinks.length > 0) {
+            const choice = await showMultiChoiceDialog({
+              title: 'Existing web links found',
+              message:
+                productsWithLinks.length === targetIds.length
+                  ? `All ${targetIds.length} selected product(s) already have a web link. Overwrite them?`
+                  : `${productsWithLinks.length} of ${targetIds.length} selected product(s) already have a web link.`,
+              choices: [
+                { label: 'Overwrite all', value: 'overwrite' },
+                { label: 'Skip existing', value: 'skip' },
+                { label: 'Cancel', value: 'cancel' },
+              ],
+            });
+            if (!choice || choice === 'cancel') return;
+            if (choice === 'skip') {
+              idsToProcess = targetProducts
+                .filter((p) => !p.WebLink)
+                .map((p) => {
+                  const raw = p.ProductID;
+                  if (typeof raw === 'number' && Number.isInteger(raw)) return raw;
+                  if (typeof raw === 'string') {
+                    const parsed = Number.parseInt(raw.trim(), 10);
+                    if (Number.isInteger(parsed)) return parsed;
+                  }
+                  return null;
+                })
+                .filter((id): id is number => id !== null);
+            }
+          }
+
+          if (idsToProcess.length === 0) return;
+
+          setIsAddingWebLinks(true);
+          const dismissLoadingToast = showToastMessage('Searching for web links\u2026', 'info', 60000);
+          try {
+            const res = await fetch('/api/products/add-weblinks', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ productIds: idsToProcess }),
+            });
+            const data = (await res.json()) as {
+              ok: boolean;
+              updatedCount?: number;
+              failedCount?: number;
+              error?: string;
+            };
+            dismissLoadingToast();
+            if (data.ok) {
+              const msg = data.failedCount
+                ? `Updated ${data.updatedCount} web link(s), ${data.failedCount} could not be found.`
+                : `Updated ${data.updatedCount} web link(s).`;
+              showToastMessage(msg, 'success');
+              refreshOfferProductGrid(null);
+            } else {
+              showToastMessage(data.error ?? 'Failed to find web links. Please try again.', 'error');
+            }
+          } catch {
+            dismissLoadingToast();
+            showToastMessage('Failed to find web links. Please try again.', 'error');
+          } finally {
+            setIsAddingWebLinks(false);
+          }
+        },
+      };
+      const deleteIdx = findDeleteMenuItemIndex(items);
+      items.splice(deleteIdx >= 0 ? deleteIdx : items.length, 0, webLinkItem);
+    }
+
     return items;
   }, [
     fetchAllFilteredOfferDetailIds,
+    isAddingWebLinks,
     refreshOfferProductGrid,
     roles,
     productRowDeletion,

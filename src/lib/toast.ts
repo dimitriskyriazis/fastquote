@@ -4,8 +4,8 @@ export const showToastMessage = (
   message: string,
   tone: ToastTone = 'info',
   durationMs = 3200,
-) => {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+): (() => void) => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
   const containerId = 'fastquote-drop-toast-container';
   let container = document.getElementById(containerId);
   if (!container) {
@@ -21,7 +21,10 @@ export const showToastMessage = (
   requestAnimationFrame(() => {
     toast.classList.add('visible');
   });
+  let dismissed = false;
   const removeToast = () => {
+    if (dismissed) return;
+    dismissed = true;
     toast.classList.remove('visible');
     window.setTimeout(() => {
       toast.remove();
@@ -31,4 +34,5 @@ export const showToastMessage = (
     }, 220);
   };
   window.setTimeout(removeToast, durationMs);
+  return removeToast;
 };

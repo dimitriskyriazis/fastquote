@@ -13,11 +13,12 @@ import type {
   MenuItemDef,
   RowNode,
 } from "ag-grid-community";
-import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import { GridRowDeletion, getContextMenuSelectionSnapshot } from "../../lib/gridRowDeletion";
 import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
 import { useAuditUser } from "../components/AuditUserProvider";
 import { openLinkInNewTab } from "../../lib/navigation";
 import { showToastMessage } from "../../lib/toast";
+import { showMultiChoiceDialog } from "../../lib/confirm";
 import styles from "./ProductsClient.module.css";
 import AddProductModal from "./AddProductModal";
 import PageHeader from "../components/PageHeader";
@@ -36,6 +37,15 @@ const productHistoryMenuIcon = `
       <path d="M12 5a7 7 0 1 1-7 7" />
       <path d="M12 9v4l2.6 1.5" />
       <path d="M5 7 4 4l3 1" />
+    </svg>
+  </span>
+`;
+
+const addWebLinkMenuIcon = `
+  <span class="fastquote-menu-icon" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
     </svg>
   </span>
 `;
@@ -140,6 +150,7 @@ export default function ProductsClient() {
   const router = useRouter();
   const { roles } = useAuditUser();
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
+  const [isAddingWebLinks, setIsAddingWebLinks] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
   const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null);
   const [lookups, setLookups] = useState<ProductLookups | null>(null);
@@ -333,9 +344,88 @@ export default function ProductsClient() {
         items.push(historyItem);
       }
 
+      // --- Add web links item ---
+      const selectedNodes = getContextMenuSelectionSnapshot(params.api);
+      const targetNodes = selectedNodes.length > 0 ? selectedNodes : (params.node ? [params.node] : []);
+      const targetProducts = targetNodes.map((n) => n.data).filter(Boolean) as Record<string, unknown>[];
+      const targetIds = targetProducts
+        .map((p) => normalizeProductId(p.ProductID))
+        .filter((id): id is number => id !== null);
+
+      if (targetIds.length > 0) {
+        const webLinkItem: MenuItemDef = {
+          name: targetIds.length > 1 ? `Add web links (${targetIds.length})` : "Add web link",
+          icon: addWebLinkMenuIcon,
+          disabled: isAddingWebLinks,
+          action: async () => {
+            const productsWithLinks = targetProducts.filter((p) => !!p.WebLink);
+            let idsToProcess = [...targetIds];
+
+            if (productsWithLinks.length > 0) {
+              const choice = await showMultiChoiceDialog({
+                title: "Existing web links found",
+                message:
+                  productsWithLinks.length === targetIds.length
+                    ? `All ${targetIds.length} selected product(s) already have a web link. Overwrite them?`
+                    : `${productsWithLinks.length} of ${targetIds.length} selected product(s) already have a web link.`,
+                choices: [
+                  { label: "Overwrite all", value: "overwrite" },
+                  { label: "Skip existing", value: "skip" },
+                  { label: "Cancel", value: "cancel" },
+                ],
+              });
+              if (!choice || choice === "cancel") return;
+              if (choice === "skip") {
+                idsToProcess = targetProducts
+                  .filter((p) => !p.WebLink)
+                  .map((p) => normalizeProductId(p.ProductID))
+                  .filter((id): id is number => id !== null);
+              }
+            }
+
+            if (idsToProcess.length === 0) return;
+
+            setIsAddingWebLinks(true);
+            const dismissLoadingToast = showToastMessage("Searching for web links\u2026", "info", 60000);
+            try {
+              const res = await fetch("/api/products/add-weblinks", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ productIds: idsToProcess }),
+              });
+              const data = (await res.json()) as {
+                ok: boolean;
+                updatedCount?: number;
+                failedCount?: number;
+                error?: string;
+              };
+              dismissLoadingToast();
+              if (data.ok) {
+                const msg =
+                  data.failedCount
+                    ? `Updated ${data.updatedCount} web link(s), ${data.failedCount} could not be found.`
+                    : `Updated ${data.updatedCount} web link(s).`;
+                showToastMessage(msg, "success");
+                productsApiRef.current?.refreshServerSide({ purge: false });
+              } else {
+                showToastMessage(data.error ?? "Failed to find web links. Please try again.", "error");
+              }
+            } catch {
+              dismissLoadingToast();
+              showToastMessage("Failed to find web links. Please try again.", "error");
+            } finally {
+              setIsAddingWebLinks(false);
+            }
+          },
+        };
+
+        const insertAt = deleteIndex >= 0 ? deleteIndex : items.length;
+        items.splice(insertAt, 0, webLinkItem);
+      }
+
       return items;
     },
-    [productRowDeletion],
+    [productRowDeletion, isAddingWebLinks],
   );
 
   const openAddProduct = useCallback(() => {
