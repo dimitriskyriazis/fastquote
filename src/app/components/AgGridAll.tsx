@@ -3032,16 +3032,14 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
   const onGridReady = useCallback((e: GridReadyEvent) => {
     e.api.setGridOption('serverSideDatasource', datasource);
     
-    // Apply saved filters and sort AFTER setting datasource but BEFORE first data load
-    // Use requestAnimationFrame to ensure columns are initialized, then apply filters/sort
+    // Apply saved filters and sort before external grid-ready handlers run.
+    // This prevents page-level default filters from overwriting persisted filters.
     if (shouldPersistColumnState) {
-      const applySavedStates = () => {
-        if (e.api.isDestroyed?.()) return;
-        // Apply filters first, then sort
+      if (!e.api.isDestroyed?.()) {
         if (!filterStateLoadedRef.current && filterStateStorageKey) {
           const persisted = readPersistedFilterModel(filterStateStorageKey);
+          filterStateLoadedRef.current = true;
           if (persisted && Object.keys(persisted).length > 0) {
-            filterStateLoadedRef.current = true;
             filterStateRestoringRef.current = true;
             e.api.setFilterModel(persisted);
             setTimeout(() => {
@@ -3052,11 +3050,6 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
         if (!sortStateLoadedRef.current && sortStateStorageKey) {
           applySavedSortModel(e.api);
         }
-      };
-      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-        window.requestAnimationFrame(applySavedStates);
-      } else {
-        setTimeout(applySavedStates, 0);
       }
     }
     

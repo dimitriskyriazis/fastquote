@@ -191,15 +191,28 @@ export async function POST(req: NextRequest) {
               if (path.includes(partNumber.toLowerCase())) score += 6;
               else if (path.replace(/[\s\-_]+/g, "").includes(normPart)) score += 3;
               else {
-                // If a different numeric code appears where ours should be, this is likely the wrong product
+                // If a different numeric product code appears in the URL path, this is likely the wrong product.
+                // Skip UUID-like segments to avoid false positives from GUID-based category filters
+                // (e.g. /category/327C3621-DB53-... or pipe-joined GUIDs like UUID|UUID|UUID).
+                const isUuidLike = (s: string) =>
+                  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s) ||
+                  s.includes("|") ||
+                  (s.length > 20 && /^[0-9a-f\-]+$/.test(s));
                 const partPattern = /\d{3}[.\-]\d{4}[.\-]\d{3}|\d{6,}/g;
-                const pathCodes = path.match(partPattern) ?? [];
+                const pathCodes = segments
+                  .filter(s => !isUuidLike(s))
+                  .flatMap(s => s.match(partPattern) ?? []);
                 if (pathCodes.length > 0 && !pathCodes.some(c => normalize(c) === normPart)) score -= 8;
               }
             }
             if (segments.length >= 2) score += 1; // deeper path = more specific page
             const lastSeg = segments[segments.length - 1] ?? "";
             if (/search|results|catalog|category|products?$/.test(lastSeg)) score -= 4;
+            // Prefer canonical/base-language URLs over locale-specific variants (e.g. /nb/, /zh/, /en-KY/)
+            const firstSeg = segments[0] ?? "";
+            if (/^[a-z]{2}(-[a-zA-Z]{2,4})?$/.test(firstSeg)) score -= 2;
+            // Penalise documentation, guide, and support paths — prefer product listing/spec pages
+            if (/\/docs\/|\/guide\/|\/guides\/|\/support\/|\/kb\/|\/faq\/|\/help\/|\/articulos\//.test(path)) score -= 5;
           } catch { /* ignore */ }
           return score;
         };
@@ -231,7 +244,8 @@ export async function POST(req: NextRequest) {
           return { productId: product.ID, webLink: null, status: "not_found" };
         }
 
-        // Hard-filter: only keep URLs on the manufacturer's domain, exclude staging subdomains and non-product pages.
+        // Hard-filter: only keep URLs on the manufacturer's domain, excluding staging subdomains,
+        // non-product pages, and document files (PDFs, datasheets, etc.).
         const domainFilter = (r: { link: string }) => {
           try {
             const parsed = new URL(r.link);
@@ -240,46 +254,107 @@ export async function POST(req: NextRequest) {
             const subdomain = host.split(".")[0];
             if (/stage|staging|rhythm|dev|test|sandbox/.test(subdomain)) return false;
             if (/\/shop\/|\/brand-filter\/|\/cart\/|\/checkout\/|\/account\//.test(path)) return false;
+            // Reject document/file URLs — we want product web pages, not PDFs or downloads
+            if (/\.(pdf|doc|docx|xls|xlsx|ppt|pptx|csv|zip)(\?[^/]*)?$/i.test(path)) return false;
             return host.replace(/^www\./i, "").endsWith(domain!);
           } catch { return false; }
         };
 
+        // Ask GPT-4o-mini to confirm the URL is an individual product detail page,
+        // not a category, family overview, or search results page.
+        // The LLM does NOT try to match the part number — it has no web access and
+        // manufacturers often use different numbering schemes in URLs (e.g. biamp maps
+        // 912.1946.900 → 920-01946-00001). The heuristic scoring handles product matching;
+        // the LLM's job is only to catch generic/non-product pages that pass the score filter.
+        const validateUrlForProduct = async (url: string): Promise<boolean> => {
+          try {
+            const res = await openai.responses.create({
+              model: "gpt-4o-mini",
+              input: [
+                `Is this URL a specific individual product detail or specification page?`,
+                `Manufacturer domain: ${domain}`,
+                `URL: ${url}`,
+                ``,
+                `Reply YES if the URL appears to be a page for one specific product (e.g. a product detail, spec, or listing page).`,
+                `Reply NO if the URL is:`,
+                `- A product family or product line overview (e.g. /products/families/voltera)`,
+                `- A category, collection, or search results page`,
+                `- A brand, company, or support homepage`,
+                `- A news, blog, or press release page`,
+                ``,
+                `Do NOT try to match the URL to the specific model or part number — manufacturers`,
+                `often use internal codes in URLs that differ from customer-facing part numbers.`,
+                ``,
+                `Reply YES or NO only.`,
+              ].join("\n"),
+              stream: false,
+            });
+            const valid = (res.output_text?.trim().toUpperCase() ?? "").startsWith("YES");
+            console.log(`[weblink] product ${product.ID}: url=${url} llm_valid=${valid}`);
+            return valid;
+          } catch {
+            return true; // if LLM call fails, don't block the URL
+          }
+        };
+
+        const tryVerifyCandidates = async (candidateList: Array<{ link: string }>): Promise<string | null> => {
+          const sorted = candidateList
+            .map((c) => ({ ...c, score: scoreUrl(c.link) }))
+            .filter((c) => c.score > -5)
+            .sort((a, b) => b.score - a.score);
+          for (const candidate of sorted) {
+            const reachable = await verifyUrl(candidate.link);
+            console.log(`[weblink] product ${product.ID}: url=${candidate.link} reachable=${reachable}`);
+            if (!reachable) continue;
+            if (await validateUrlForProduct(candidate.link)) return candidate.link;
+          }
+          return null;
+        };
+
         // Step 2a: Site-constrained search on the manufacturer's domain.
         const query2a = `site:${domain} ${effectiveTerms}`;
-        let candidates = (await serperSearch(query2a)).filter(domainFilter);
-
+        const candidates = (await serperSearch(query2a)).filter(domainFilter);
         console.log(`[weblink] product ${product.ID}: query="${query2a}" candidates=${candidates.length}`);
 
-        // Step 2b: If no results on the domain, broaden without site: constraint.
-        if (candidates.length === 0) {
+        let webLink: string | null = null;
+
+        if (candidates.length > 0) {
+          webLink = await tryVerifyCandidates(candidates);
+          if (!webLink) {
+            console.log(`[weblink] product ${product.ID}: site-constrained candidates failed, trying fallback`);
+          }
+        }
+
+        // Step 2b: If no results or all unreachable, broaden without site: constraint.
+        if (!webLink) {
           const fallbackQuery = `${brand} ${effectiveTerms} product specifications`.trim();
           const fallbackResults = await serperSearch(fallbackQuery);
-          candidates = fallbackResults.filter(domainFilter);
-          console.log(`[weblink] product ${product.ID}: fallback query="${fallbackQuery}" candidates=${candidates.length}`);
-        }
-
-        if (candidates.length === 0) {
-          console.log(`[weblink] product ${product.ID}: no candidate URL found`);
-          return { productId: product.ID, webLink: null, status: "not_found" };
-        }
-
-        // Try candidates in score order until one passes verifyUrl.
-        // Discard candidates with strongly negative scores — they're almost certainly wrong pages.
-        const sorted = candidates
-          .map((c) => ({ ...c, score: scoreUrl(c.link) }))
-          .filter((c) => c.score > -5)
-          .sort((a, b) => b.score - a.score);
-        let webLink: string | null = null;
-        for (const candidate of sorted) {
-          const reachable = await verifyUrl(candidate.link);
-          console.log(`[weblink] product ${product.ID}: url=${candidate.link} reachable=${reachable}`);
-          if (reachable) { webLink = candidate.link; break; }
+          const fallbackCandidates = fallbackResults.filter(domainFilter);
+          console.log(`[weblink] product ${product.ID}: fallback query="${fallbackQuery}" candidates=${fallbackCandidates.length}`);
+          if (fallbackCandidates.length > 0) {
+            webLink = await tryVerifyCandidates(fallbackCandidates);
+          }
         }
 
         if (!webLink) {
-          console.log(`[weblink] product ${product.ID}: all candidates unreachable`);
+          console.log(`[weblink] product ${product.ID}: no reachable URL found`);
           return { productId: product.ID, webLink: null, status: "not_found" };
         }
+
+        // If the accepted URL has a locale prefix (e.g. /nb/, /zh/, /en-KY/), try the
+        // canonical version without it — a base-language URL is cleaner for end users.
+        try {
+          const parsed = new URL(webLink);
+          const segs = parsed.pathname.split("/").filter(Boolean);
+          if (segs.length > 1 && /^[a-z]{2}(-[a-zA-Z]{2,4})?$/.test(segs[0])) {
+            const canonicalPath = "/" + segs.slice(1).join("/");
+            const canonicalUrl = `${parsed.origin}${canonicalPath}`;
+            if (await verifyUrl(canonicalUrl)) {
+              console.log(`[weblink] product ${product.ID}: de-localized ${webLink} → ${canonicalUrl}`);
+              webLink = canonicalUrl;
+            }
+          }
+        } catch { /* ignore */ }
 
         const updateReq = pool.request();
         updateReq.input("ProductID", sql.Int, product.ID);

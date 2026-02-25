@@ -13,12 +13,13 @@ import type {
   MenuItemDef,
   RowNode,
 } from "ag-grid-community";
+import type { ServerRequestWithQuickFilter } from "../components/AgGridAll";
 import { GridRowDeletion, getContextMenuSelectionSnapshot } from "../../lib/gridRowDeletion";
 import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
 import { useAuditUser } from "../components/AuditUserProvider";
 import { openLinkInNewTab } from "../../lib/navigation";
 import { showToastMessage } from "../../lib/toast";
-import { showMultiChoiceDialog } from "../../lib/confirm";
+import { showConfirmDialog, showMultiChoiceDialog } from "../../lib/confirm";
 import styles from "./ProductsClient.module.css";
 import AddProductModal from "./AddProductModal";
 import PageHeader from "../components/PageHeader";
@@ -145,6 +146,7 @@ type ProductRowNode = RowNode<Record<string, unknown>> & {
 };
 
 const PRODUCT_ROW_TYPE = "product";
+const ADD_WEBLINK_MAX_PRODUCTS = 200;
 
 export default function ProductsClient() {
   const router = useRouter();
@@ -155,6 +157,56 @@ export default function ProductsClient() {
   const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null);
   const [lookups, setLookups] = useState<ProductLookups | null>(null);
   const lookupsLoadingRef = useRef(false);
+  const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
+
+  const handleServerRequest = useCallback((request: ServerRequestWithQuickFilter) => {
+    lastServerRequestRef.current = request;
+  }, []);
+
+  const fetchAllFilteredProductIds = useCallback(async (): Promise<number[]> => {
+    const api = productsApiRef.current;
+    if (!api || api.isDestroyed?.()) {
+      throw new Error("Grid is not ready yet.");
+    }
+    const baseRequest: Record<string, unknown> = {
+      filterModel: api.getFilterModel?.() ?? {},
+      sortModel: api.getColumnState?.()
+        ?.filter((col) => col.sort === "asc" || col.sort === "desc")
+        .map((col) => ({ colId: col.colId, sort: col.sort as "asc" | "desc" })) ?? [],
+    };
+    const quickFilterText = typeof lastServerRequestRef.current?.quickFilterText === "string"
+      ? lastServerRequestRef.current.quickFilterText.trim()
+      : "";
+    if (quickFilterText.length > 0) {
+      baseRequest.quickFilterText = quickFilterText;
+    }
+    const response = await fetch("/api/products", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        request: {
+          ...baseRequest,
+          startRow: 0,
+          endRow: ADD_WEBLINK_MAX_PRODUCTS,
+        },
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | { ok?: boolean; error?: string; rows?: Array<Record<string, unknown>>; rowCount?: number }
+      | null;
+    if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
+      throw new Error(payload?.error ?? `Failed to load selected rows (status ${response.status})`);
+    }
+    const rowCount = Number(payload.rowCount ?? payload.rows.length);
+    if (Number.isFinite(rowCount) && rowCount > ADD_WEBLINK_MAX_PRODUCTS) {
+      throw new Error(`Cannot process more than ${ADD_WEBLINK_MAX_PRODUCTS} products at once. Please filter first.`);
+    }
+    return Array.from(new Set(
+      payload.rows
+        .map((row) => normalizeProductId((row as { ProductID?: unknown }).ProductID ?? null))
+        .filter((id): id is number => id != null),
+    ));
+  }, []);
 
   const loadLookups = useCallback(async () => {
     if (lookupsLoadingRef.current) return;
@@ -344,6 +396,13 @@ export default function ProductsClient() {
         items.push(historyItem);
       }
 
+      const isSelectAllActive = params.api && typeof params.api.getServerSideSelectionState === "function"
+        ? (() => {
+            const state = params.api.getServerSideSelectionState();
+            return Boolean(state && "selectAll" in state && Boolean((state as { selectAll?: boolean }).selectAll));
+          })()
+        : false;
+
       // --- Add web links item ---
       const selectedNodes = getContextMenuSelectionSnapshot(params.api);
       const targetNodes = selectedNodes.length > 0 ? selectedNodes : (params.node ? [params.node] : []);
@@ -352,38 +411,65 @@ export default function ProductsClient() {
         .map((p) => normalizeProductId(p.ProductID))
         .filter((id): id is number => id !== null);
 
-      if (targetIds.length > 0) {
+      if (targetIds.length > 0 || isSelectAllActive) {
         const webLinkItem: MenuItemDef = {
-          name: targetIds.length > 1 ? `Add web links (${targetIds.length})` : "Add web link",
+          name: isSelectAllActive
+            ? "Add web links (all filtered)"
+            : targetIds.length > 1
+              ? `Add web links (${targetIds.length})`
+              : "Add web link",
           icon: addWebLinkMenuIcon,
           disabled: isAddingWebLinks,
           action: async () => {
-            const productsWithLinks = targetProducts.filter((p) => !!p.WebLink);
-            let idsToProcess = [...targetIds];
-
-            if (productsWithLinks.length > 0) {
-              const choice = await showMultiChoiceDialog({
-                title: "Existing web links found",
-                message:
-                  productsWithLinks.length === targetIds.length
-                    ? `All ${targetIds.length} selected product(s) already have a web link. Overwrite them?`
-                    : `${productsWithLinks.length} of ${targetIds.length} selected product(s) already have a web link.`,
-                choices: [
-                  { label: "Overwrite all", value: "overwrite" },
-                  { label: "Skip existing", value: "skip" },
-                  { label: "Cancel", value: "cancel" },
-                ],
+            let idsToProcess: number[] = [];
+            if (isSelectAllActive) {
+              const confirmed = await showConfirmDialog({
+                title: "Add web links for all filtered products",
+                message: "This will overwrite any existing web links for the filtered rows. Continue?",
+                confirmLabel: "Continue",
+                cancelLabel: "Cancel",
               });
-              if (!choice || choice === "cancel") return;
-              if (choice === "skip") {
-                idsToProcess = targetProducts
-                  .filter((p) => !p.WebLink)
-                  .map((p) => normalizeProductId(p.ProductID))
-                  .filter((id): id is number => id !== null);
+              if (!confirmed) return;
+              try {
+                idsToProcess = await fetchAllFilteredProductIds();
+              } catch (err) {
+                showToastMessage(
+                  err instanceof Error ? err.message : "Failed to resolve selected products.",
+                  "error",
+                );
+                return;
+              }
+            } else {
+              const productsWithLinks = targetProducts.filter((p) => !!p.WebLink);
+              idsToProcess = [...targetIds];
+
+              if (productsWithLinks.length > 0) {
+                const choice = await showMultiChoiceDialog({
+                  title: "Existing web links found",
+                  message:
+                    productsWithLinks.length === targetIds.length
+                      ? `All ${targetIds.length} selected product(s) already have a web link. Overwrite them?`
+                      : `${productsWithLinks.length} of ${targetIds.length} selected product(s) already have a web link.`,
+                  choices: [
+                    { label: "Overwrite all", value: "overwrite" },
+                    { label: "Skip existing", value: "skip" },
+                    { label: "Cancel", value: "cancel" },
+                  ],
+                });
+                if (!choice || choice === "cancel") return;
+                if (choice === "skip") {
+                  idsToProcess = targetProducts
+                    .filter((p) => !p.WebLink)
+                    .map((p) => normalizeProductId(p.ProductID))
+                    .filter((id): id is number => id !== null);
+                }
               }
             }
 
-            if (idsToProcess.length === 0) return;
+            if (idsToProcess.length === 0) {
+              showToastMessage("No products selected for web link lookup.", "info");
+              return;
+            }
 
             setIsAddingWebLinks(true);
             const dismissLoadingToast = showToastMessage("Searching for web links\u2026", "info", 60000);
@@ -407,6 +493,7 @@ export default function ProductsClient() {
                     : `Updated ${data.updatedCount} web link(s).`;
                 showToastMessage(msg, "success");
                 productsApiRef.current?.refreshServerSide({ purge: false });
+                router.refresh();
               } else {
                 showToastMessage(data.error ?? "Failed to find web links. Please try again.", "error");
               }
@@ -425,7 +512,7 @@ export default function ProductsClient() {
 
       return items;
     },
-    [productRowDeletion, isAddingWebLinks],
+    [fetchAllFilteredProductIds, isAddingWebLinks, productRowDeletion, router],
   );
 
   const openAddProduct = useCallback(() => {
@@ -723,6 +810,7 @@ export default function ProductsClient() {
                 onRequestPayloadConsumed={() => {
                   setHighlightedProductId(null);
                 }}
+                onServerRequest={handleServerRequest}
               />
             </div>
           </GridQuickSearchProvider>

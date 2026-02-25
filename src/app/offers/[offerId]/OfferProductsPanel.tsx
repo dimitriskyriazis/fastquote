@@ -77,6 +77,7 @@ const decimalFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
 });
 const DEFAULT_ROW_HEIGHT = 32;
 const MAX_CATEGORY_DEPTH = 3;
+const ADD_WEBLINK_MAX_PRODUCTS = 200;
 
 const COLLAPSED_CATEGORIES_COOKIE_NAME = 'offer_products_collapsed';
 
@@ -238,6 +239,15 @@ const REQUESTED_FIELD_SET = new Set<RequestedFieldKey>([
 
 const isRequestedFieldKey = (value: string | null | undefined): value is RequestedFieldKey =>
   typeof value === 'string' && REQUESTED_FIELD_SET.has(value as RequestedFieldKey);
+
+const normalizeProductId = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
+};
 
 const compareTreeOrderingValues = (a: unknown, b: unknown) => {
   const sa = String(a ?? '').trim();
@@ -3986,6 +3996,50 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     ));
   }, [dataEndpoint]);
 
+  const fetchAllFilteredOfferProductIds = useCallback(async (): Promise<number[]> => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) {
+      throw new Error('Grid is not ready yet.');
+    }
+    const filterModel = api.getFilterModel?.() ?? {};
+    const sortModel = api.getColumnState?.()
+      ?.filter((col) => col.sort === 'asc' || col.sort === 'desc')
+      .map((col) => ({ colId: col.colId, sort: col.sort as 'asc' | 'desc' })) ?? [];
+    const quickFilterText = typeof lastServerRequestRef.current?.quickFilterText === 'string'
+      ? lastServerRequestRef.current.quickFilterText
+      : null;
+    const request: Record<string, unknown> = {
+      startRow: 0,
+      endRow: 1000,
+      allRows: true,
+      filterModel,
+      sortModel,
+    };
+    if (quickFilterText && quickFilterText.trim().length > 0) {
+      request.quickFilterText = quickFilterText.trim();
+    }
+
+    const response = await fetch(dataEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        request,
+        fields: ['ProductID'],
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | { ok?: boolean; error?: string; rows?: Array<Record<string, unknown>> }
+      | null;
+    if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
+      throw new Error(payload?.error ?? `Failed to load selected rows (status ${response.status})`);
+    }
+    return Array.from(new Set(
+      payload.rows
+        .map((row) => normalizeProductId((row as { ProductID?: unknown })?.ProductID ?? null))
+        .filter((id): id is number => id != null),
+    ));
+  }, [dataEndpoint]);
+
   const buildTemplateExportRows = useCallback((rows: OfferExportRow[]): OfferProductsTemplateExportRow[] => {
     const includedRows = rows.filter((row) => {
       const rowType = resolveOfferProductRowType(row as unknown as Record<string, unknown>);
@@ -4800,46 +4854,76 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       })
       .filter((id): id is number => id !== null);
 
-    if (targetIds.length > 0) {
+    if (targetIds.length > 0 || isSelectAllActive) {
       const productsWithLinks = targetProducts.filter((p) => !!p.WebLink);
       const webLinkItem: MenuItemDef = {
-        name: targetIds.length > 1 ? `Add web links (${targetIds.length})` : 'Add web link',
+        name: isSelectAllActive
+          ? 'Add web links (all filtered)'
+          : targetIds.length > 1
+            ? `Add web links (${targetIds.length})`
+            : 'Add web link',
         icon: addWebLinkMenuIcon,
         disabled: isAddingWebLinks,
         action: async () => {
-          let idsToProcess = [...targetIds];
-
-          if (productsWithLinks.length > 0) {
-            const choice = await showMultiChoiceDialog({
-              title: 'Existing web links found',
-              message:
-                productsWithLinks.length === targetIds.length
-                  ? `All ${targetIds.length} selected product(s) already have a web link. Overwrite them?`
-                  : `${productsWithLinks.length} of ${targetIds.length} selected product(s) already have a web link.`,
-              choices: [
-                { label: 'Overwrite all', value: 'overwrite' },
-                { label: 'Skip existing', value: 'skip' },
-                { label: 'Cancel', value: 'cancel' },
-              ],
+          let idsToProcess: number[] = [];
+          if (isSelectAllActive) {
+            const confirmed = await showConfirmDialog({
+              title: 'Add web links for all filtered products',
+              message: 'This will overwrite any existing web links for the filtered rows. Continue?',
+              confirmLabel: 'Continue',
+              cancelLabel: 'Cancel',
             });
-            if (!choice || choice === 'cancel') return;
-            if (choice === 'skip') {
-              idsToProcess = targetProducts
-                .filter((p) => !p.WebLink)
-                .map((p) => {
-                  const raw = p.ProductID;
-                  if (typeof raw === 'number' && Number.isInteger(raw)) return raw;
-                  if (typeof raw === 'string') {
-                    const parsed = Number.parseInt(raw.trim(), 10);
-                    if (Number.isInteger(parsed)) return parsed;
-                  }
-                  return null;
-                })
-                .filter((id): id is number => id !== null);
+            if (!confirmed) return;
+            try {
+              idsToProcess = await fetchAllFilteredOfferProductIds();
+            } catch (err) {
+              showToastMessage(
+                err instanceof Error ? err.message : 'Failed to resolve selected products.',
+                'error',
+              );
+              return;
+            }
+          } else {
+            idsToProcess = [...targetIds];
+            if (productsWithLinks.length > 0) {
+              const choice = await showMultiChoiceDialog({
+                title: 'Existing web links found',
+                message:
+                  productsWithLinks.length === targetIds.length
+                    ? `All ${targetIds.length} selected product(s) already have a web link. Overwrite them?`
+                    : `${productsWithLinks.length} of ${targetIds.length} selected product(s) already have a web link.`,
+                choices: [
+                  { label: 'Overwrite all', value: 'overwrite' },
+                  { label: 'Skip existing', value: 'skip' },
+                  { label: 'Cancel', value: 'cancel' },
+                ],
+              });
+              if (!choice || choice === 'cancel') return;
+              if (choice === 'skip') {
+                idsToProcess = targetProducts
+                  .filter((p) => !p.WebLink)
+                  .map((p) => {
+                    const raw = p.ProductID;
+                    if (typeof raw === 'number' && Number.isInteger(raw)) return raw;
+                    if (typeof raw === 'string') {
+                      const parsed = Number.parseInt(raw.trim(), 10);
+                      if (Number.isInteger(parsed)) return parsed;
+                    }
+                    return null;
+                  })
+                  .filter((id): id is number => id !== null);
+              }
             }
           }
 
-          if (idsToProcess.length === 0) return;
+          if (idsToProcess.length === 0) {
+            showToastMessage('No products selected for web link lookup.', 'info');
+            return;
+          }
+          if (idsToProcess.length > ADD_WEBLINK_MAX_PRODUCTS) {
+            showToastMessage(`Cannot process more than ${ADD_WEBLINK_MAX_PRODUCTS} products at once. Please filter first.`, 'error');
+            return;
+          }
 
           setIsAddingWebLinks(true);
           const dismissLoadingToast = showToastMessage('Searching for web links\u2026', 'info', 60000);
@@ -4862,6 +4946,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
                 : `Updated ${data.updatedCount} web link(s).`;
               showToastMessage(msg, 'success');
               refreshOfferProductGrid(null);
+              router.refresh();
             } else {
               showToastMessage(data.error ?? 'Failed to find web links. Please try again.', 'error');
             }
@@ -4880,6 +4965,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     return items;
   }, [
     fetchAllFilteredOfferDetailIds,
+    fetchAllFilteredOfferProductIds,
     isAddingWebLinks,
     refreshOfferProductGrid,
     roles,

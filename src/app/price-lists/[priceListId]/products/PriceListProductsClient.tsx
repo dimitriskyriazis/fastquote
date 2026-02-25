@@ -12,10 +12,11 @@ import type {
   MenuItemDef,
   ValueFormatterParams,
 } from "ag-grid-community";
+import type { ServerRequestWithQuickFilter } from "../../../components/AgGridAll";
 import layoutStyles from "../../priceListDetail.module.css";
 import pageStyles from "./PriceListProductsPage.module.css";
 import { GridRowDeletion, getContextMenuSelectionSnapshot } from "../../../../lib/gridRowDeletion";
-import { showMultiChoiceDialog } from "../../../../lib/confirm";
+import { showConfirmDialog, showMultiChoiceDialog } from "../../../../lib/confirm";
 import { checkDeletePermissionForClient } from "../../../../lib/deletePermissions";
 import { useAuditUser } from "../../../components/AuditUserProvider";
 import { getUserNumberLocale } from "../../../../lib/localeNumber";
@@ -76,6 +77,15 @@ const normalizePriceListItemId = (value: unknown): number | null => {
   return null;
 };
 
+const normalizeProductId = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
+};
+
 const resolvePriceListRowLabel = (row: PriceListProductRowGrid | null | undefined, fallback: string) => {
   if (!row) return fallback;
   const normalize = (value: string | null | undefined) =>
@@ -118,6 +128,7 @@ const addWebLinkMenuIcon = `
     </svg>
   </span>
 `;
+const ADD_WEBLINK_MAX_PRODUCTS = 200;
 
 export default function PriceListProductsClient({
   priceListId,
@@ -128,12 +139,62 @@ export default function PriceListProductsClient({
   const [isAddingWebLinks, setIsAddingWebLinks] = useState(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const defaultEnabledFilterAppliedRef = useRef(false);
+  const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
   const endpoint = useMemo(
     () => `/api/price-lists/${encodeURIComponent(priceListId)}/products`,
     [priceListId],
   );
   const router = useRouter();
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
+
+  const handleServerRequest = useCallback((request: ServerRequestWithQuickFilter) => {
+    lastServerRequestRef.current = request;
+  }, []);
+
+  const fetchAllFilteredProductIds = useCallback(async (): Promise<number[]> => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) {
+      throw new Error("Grid is not ready yet.");
+    }
+    const baseRequest: Record<string, unknown> = {
+      filterModel: api.getFilterModel?.() ?? {},
+      sortModel: api.getColumnState?.()
+        ?.filter((col) => col.sort === "asc" || col.sort === "desc")
+        .map((col) => ({ colId: col.colId, sort: col.sort as "asc" | "desc" })) ?? [],
+    };
+    const quickFilterText = typeof lastServerRequestRef.current?.quickFilterText === "string"
+      ? lastServerRequestRef.current.quickFilterText.trim()
+      : "";
+    if (quickFilterText.length > 0) {
+      baseRequest.quickFilterText = quickFilterText;
+    }
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        request: {
+          ...baseRequest,
+          startRow: 0,
+          endRow: ADD_WEBLINK_MAX_PRODUCTS,
+        },
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | { ok?: boolean; error?: string; rows?: Array<Record<string, unknown>>; rowCount?: number }
+      | null;
+    if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
+      throw new Error(payload?.error ?? `Failed to load selected rows (status ${response.status})`);
+    }
+    const rowCount = Number(payload.rowCount ?? payload.rows.length);
+    if (Number.isFinite(rowCount) && rowCount > ADD_WEBLINK_MAX_PRODUCTS) {
+      throw new Error(`Cannot process more than ${ADD_WEBLINK_MAX_PRODUCTS} products at once. Please filter first.`);
+    }
+    return Array.from(new Set(
+      payload.rows
+        .map((row) => normalizeProductId((row as { ProductID?: unknown }).ProductID ?? null))
+        .filter((id): id is number => id != null),
+    ));
+  }, [endpoint]);
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     gridApiRef.current = api;
@@ -401,62 +462,80 @@ export default function PriceListProductsClient({
         items.push(historyItem);
       }
 
+      const isSelectAllActive = params.api && typeof params.api.getServerSideSelectionState === "function"
+        ? (() => {
+            const state = params.api.getServerSideSelectionState();
+            return Boolean(state && "selectAll" in state && Boolean((state as { selectAll?: boolean }).selectAll));
+          })()
+        : false;
+
       // --- Add web links item ---
       const selectedNodes = getContextMenuSelectionSnapshot(params.api);
       const targetNodes = selectedNodes.length > 0 ? selectedNodes : (params.node ? [params.node] : []);
       const targetProducts = targetNodes.map((n) => n.data).filter(Boolean) as Record<string, unknown>[];
       const targetIds = targetProducts
-        .map((p) => {
-          const raw = p.ProductID;
-          if (typeof raw === "number" && Number.isInteger(raw)) return raw;
-          if (typeof raw === "string") {
-            const parsed = Number.parseInt(raw.trim(), 10);
-            if (Number.isInteger(parsed)) return parsed;
-          }
-          return null;
-        })
+        .map((p) => normalizeProductId(p.ProductID))
         .filter((id): id is number => id !== null);
 
-      if (targetIds.length > 0) {
+      if (targetIds.length > 0 || isSelectAllActive) {
         const productsWithLinks = targetProducts.filter((p) => !!p.WebLink);
         const webLinkItem: MenuItemDef = {
-          name: targetIds.length > 1 ? `Add web links (${targetIds.length})` : "Add web link",
+          name: isSelectAllActive
+            ? "Add web links (all filtered)"
+            : targetIds.length > 1
+              ? `Add web links (${targetIds.length})`
+              : "Add web link",
           icon: addWebLinkMenuIcon,
           disabled: isAddingWebLinks,
           action: async () => {
-            let idsToProcess = [...targetIds];
-
-            if (productsWithLinks.length > 0) {
-              const choice = await showMultiChoiceDialog({
-                title: "Existing web links found",
-                message:
-                  productsWithLinks.length === targetIds.length
-                    ? `All ${targetIds.length} selected product(s) already have a web link. Overwrite them?`
-                    : `${productsWithLinks.length} of ${targetIds.length} selected product(s) already have a web link.`,
-                choices: [
-                  { label: "Overwrite all", value: "overwrite" },
-                  { label: "Skip existing", value: "skip" },
-                  { label: "Cancel", value: "cancel" },
-                ],
+            let idsToProcess: number[] = [];
+            if (isSelectAllActive) {
+              const confirmed = await showConfirmDialog({
+                title: "Add web links for all filtered products",
+                message: "This will overwrite any existing web links for the filtered rows. Continue?",
+                confirmLabel: "Continue",
+                cancelLabel: "Cancel",
               });
-              if (!choice || choice === "cancel") return;
-              if (choice === "skip") {
-                idsToProcess = targetProducts
-                  .filter((p) => !p.WebLink)
-                  .map((p) => {
-                    const raw = p.ProductID;
-                    if (typeof raw === "number" && Number.isInteger(raw)) return raw;
-                    if (typeof raw === "string") {
-                      const parsed = Number.parseInt(raw.trim(), 10);
-                      if (Number.isInteger(parsed)) return parsed;
-                    }
-                    return null;
-                  })
-                  .filter((id): id is number => id !== null);
+              if (!confirmed) return;
+              try {
+                idsToProcess = await fetchAllFilteredProductIds();
+              } catch (err) {
+                showToastMessage(
+                  err instanceof Error ? err.message : "Failed to resolve selected products.",
+                  "error",
+                );
+                return;
+              }
+            } else {
+              idsToProcess = [...targetIds];
+
+              if (productsWithLinks.length > 0) {
+                const choice = await showMultiChoiceDialog({
+                  title: "Existing web links found",
+                  message:
+                    productsWithLinks.length === targetIds.length
+                      ? `All ${targetIds.length} selected product(s) already have a web link. Overwrite them?`
+                      : `${productsWithLinks.length} of ${targetIds.length} selected product(s) already have a web link.`,
+                  choices: [
+                    { label: "Overwrite all", value: "overwrite" },
+                    { label: "Skip existing", value: "skip" },
+                    { label: "Cancel", value: "cancel" },
+                  ],
+                });
+                if (!choice || choice === "cancel") return;
+                if (choice === "skip") {
+                  idsToProcess = targetProducts
+                    .filter((p) => !p.WebLink)
+                    .map((p) => normalizeProductId(p.ProductID))
+                    .filter((id): id is number => id !== null);
+                }
               }
             }
 
-            if (idsToProcess.length === 0) return;
+            if (idsToProcess.length === 0) {
+              showToastMessage("No products selected for web link lookup.", "info");
+              return;
+            }
 
             setIsAddingWebLinks(true);
             const dismissLoadingToast = showToastMessage("Searching for web links\u2026", "info", 60000);
@@ -479,6 +558,7 @@ export default function PriceListProductsClient({
                   : `Updated ${data.updatedCount} web link(s).`;
                 showToastMessage(msg, "success");
                 gridApiRef.current?.refreshServerSide({ purge: false });
+                router.refresh();
               } else {
                 showToastMessage(data.error ?? "Failed to find web links. Please try again.", "error");
               }
@@ -495,7 +575,7 @@ export default function PriceListProductsClient({
 
       return items;
     },
-    [historyBackHref, historyBackLabel, isAddingWebLinks, priceListRowDeletion, router],
+    [fetchAllFilteredProductIds, historyBackHref, historyBackLabel, isAddingWebLinks, priceListRowDeletion, router],
   );
 
   return (
@@ -530,6 +610,7 @@ export default function PriceListProductsClient({
             rowSelection="multiple"
             rowMultiSelectWithClick
             rowDeselection
+            onServerRequest={handleServerRequest}
           />
         </div>
       </div>
