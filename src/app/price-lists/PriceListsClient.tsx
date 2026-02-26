@@ -74,7 +74,6 @@ const PRICE_LIST_ROW_TYPE_LABEL = "price list";
 
 const PRICE_LIST_FIELD_LABELS: Record<string, string> = {
   Enabled: "Enabled",
-  ResponsibleUserName: "Responsible User",
 };
 
 export default function PriceListsClient() {
@@ -82,19 +81,6 @@ export default function PriceListsClient() {
   const { roles, users } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
-  const responsibleUserOptions = useMemo(
-    () => ["", ...Array.from(new Set(users.map((user) => user.label.trim()).filter(Boolean)))],
-    [users],
-  );
-  const responsibleUserIdByName = useMemo(() => {
-    const map = new Map<string, string>();
-    users.forEach((user) => {
-      const normalizedName = user.label.trim();
-      if (!normalizedName) return;
-      map.set(normalizedName, user.id);
-    });
-    return map;
-  }, [users]);
   const responsibleUserNameById = useMemo(() => {
     const map = new Map<string, string>();
     users.forEach((user) => {
@@ -309,17 +295,6 @@ export default function PriceListsClient() {
         field: "ResponsibleUserName",
         headerName: "Responsible User",
         filter: "agTextColumnFilter",
-        editable: true,
-        cellEditor: "agSelectCellEditor",
-        cellEditorParams: { values: responsibleUserOptions },
-        valueSetter: (params) => {
-          const selectedName = normalizeStringValue(params.newValue);
-          params.data = params.data ?? {};
-          const rowData = params.data as Record<string, unknown>;
-          rowData.ResponsibleUserName = selectedName;
-          rowData.ResponsibleUserId = selectedName ? (responsibleUserIdByName.get(selectedName) ?? null) : null;
-          return true;
-        },
         valueFormatter: (params) => {
           const explicitName = normalizeStringValue(params.value);
           if (explicitName) return explicitName;
@@ -349,6 +324,11 @@ export default function PriceListsClient() {
         },
       },
       {
+        field: "ValidityComment",
+        headerName: "Validity Comment",
+        filter: "agTextColumnFilter"
+      },
+      {
         field: "Enabled",
         headerName: "Enabled",
         filter: "agSetColumnFilter",
@@ -371,13 +351,8 @@ export default function PriceListsClient() {
           return true;
         },
       },
-      {
-        field: "SupplierComment",
-        headerName: "Supplier Comment",
-        filter: "agTextColumnFilter"
-      },
     ],
-    [ActionCell, enabledOptions, responsibleUserIdByName, responsibleUserNameById, responsibleUserOptions]
+    [ActionCell, enabledOptions, responsibleUserNameById]
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
@@ -389,16 +364,7 @@ export default function PriceListsClient() {
     );
     if (priceListId == null) return;
     const label = PRICE_LIST_FIELD_LABELS[field] ?? field;
-    const isResponsibleUserField = field === "ResponsibleUserName";
-    const oldResponsibleUserName = isResponsibleUserField ? normalizeStringValue(event.oldValue) : null;
-    const oldResponsibleUserId =
-      oldResponsibleUserName != null ? (responsibleUserIdByName.get(oldResponsibleUserName) ?? null) : null;
     const revertValue = () => {
-      if (isResponsibleUserField && event.node?.data) {
-        const rowData = event.node.data as Record<string, unknown>;
-        rowData.ResponsibleUserName = oldResponsibleUserName;
-        rowData.ResponsibleUserId = oldResponsibleUserId;
-      }
       if (event.node) {
         try {
           event.node.setDataValue(field, event.oldValue);
@@ -413,10 +379,8 @@ export default function PriceListsClient() {
       ? normalizeBoolean(
           (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
         )
-      : normalizeStringValue(
-          (event.data as { ResponsibleUserId?: unknown } | undefined)?.ResponsibleUserId ?? null,
-        );
-    const updateField = field === "ResponsibleUserName" ? "ResponsibleUserId" : field;
+      : null;
+    const updateField = field;
 
     const submit = async () => {
       try {
@@ -439,7 +403,7 @@ export default function PriceListsClient() {
     };
 
     void submit();
-  }, [responsibleUserIdByName]);
+  }, []);
 
   return (
     <main className={styles.page}>

@@ -2,13 +2,15 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import type { CellValueChangedEvent, ColDef } from "ag-grid-community";
+import type { CellValueChangedEvent, ColDef, GridApi } from "ag-grid-community";
 import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { useAuditUser } from "../components/AuditUserProvider";
 import AccessDeniedPage from "../components/AccessDeniedPage";
 import AddUserModal from "../components/AddUserModal";
 import { showToastMessage } from "../../lib/toast";
+import { formatBooleanValue } from "../lib/formatBooleanValue";
+import { normalizeBoolean } from "../../lib/normalizeBoolean";
 import styles from "./UsersClient.module.css";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
@@ -220,9 +222,43 @@ export default function UsersClient() {
           return true;
         },
       },
+      {
+        field: "Enabled",
+        headerName: "Enabled",
+        filter: "agSetColumnFilter",
+        filterParams: {
+          values: ["true", "false"],
+          valueFormatter: (params: { value?: unknown }) => formatBooleanValue(params.value),
+          comparator: (a: string, b: string) => {
+            if (a === b) return 0;
+            return a === "true" ? -1 : 1;
+          },
+        },
+        valueFormatter: (params) => formatBooleanValue(params.value),
+        editable: true,
+        width: 110,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: {
+          values: ["Yes", "No"],
+        },
+        valueSetter: (params) => {
+          params.data = params.data ?? {};
+          (params.data as Record<string, unknown>).Enabled = normalizeBoolean(params.newValue);
+          return true;
+        },
+      },
     ],
     [divisionSelectOptions, roleSelectOptions, senioritySelectOptions],
   );
+
+  const handleGridReady = useCallback((api: GridApi) => {
+    const existing = api.getFilterModel() as Record<string, unknown> | null;
+    if (!existing || Object.keys(existing).length === 0) {
+      api.setFilterModel({
+        Enabled: { filterType: "set", values: ["true"] },
+      });
+    }
+  }, []);
 
   const revertCell = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.node) {
@@ -356,6 +392,7 @@ export default function UsersClient() {
                 }}
                 columnStateNamespace="users"
                 onCellValueChanged={handleCellEdit}
+                onGridReady={handleGridReady}
                 refreshToken={refreshToken}
                 suppressRowClickSelection
                 suppressMovableColumns

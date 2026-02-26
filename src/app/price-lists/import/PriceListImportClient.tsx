@@ -1922,7 +1922,7 @@ export default function PriceListImportClient({
                   />
                 </label>
                 <label className={styles.field}>
-                  <span className={styles.label}>Supplier Comments</span>
+                  <span className={styles.label}>Validity Comments</span>
                   <textarea
                     autoComplete="off"
                     className={`${styles.input} ${styles.textarea}`}

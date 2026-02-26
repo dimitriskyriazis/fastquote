@@ -37,7 +37,7 @@ type PriceListRow = {
   SupplierName: string | null;
   ResponsibleUserId: string | null;
   ResponsibleUserName: string | null;
-  SupplierComment: string | null;
+  ValidityComment: string | null;
 };
 
 type PriceListRowWithCount = PriceListRow & { __totalCount: number | bigint | null };
@@ -51,7 +51,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Enabled: "dbo.PriceLists.Enabled",
   SupplierName: "dbo.Suppliers.Name",
   ResponsibleUserName: "COALESCE(NULLIF(LTRIM(RTRIM(responsible.FullName)), ''), responsible.UserName)",
-  SupplierComment: "dbo.PriceLists.SupplierComment",
+  ValidityComment: "dbo.PriceLists.ValidityComment",
 };
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
   colId,
@@ -192,7 +192,7 @@ export async function POST(req: NextRequest) {
         dbo.Suppliers.Name AS SupplierName,
         dbo.PriceLists.ResponsibleUserId,
         COALESCE(NULLIF(LTRIM(RTRIM(responsible.FullName)), ''), responsible.UserName) AS ResponsibleUserName,
-        dbo.PriceLists.SupplierComment
+        dbo.PriceLists.ValidityComment
     `;
 
     const from = `

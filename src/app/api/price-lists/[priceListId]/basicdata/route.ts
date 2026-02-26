@@ -36,7 +36,7 @@ const FIELD_CONFIG: Record<PriceListBasicUpdateField, FieldConfig> = {
   ValidFromDate: { column: "ValidFromDate", type: "date", sqlType: sql.DateTime2 },
   ValidToDate: { column: "ValidToDate", type: "date", sqlType: sql.DateTime2 },
   Comments: { column: "Comments", type: "string", sqlType: sql.NVarChar, length: 2000 },
-  SupplierComment: { column: "SupplierComment", type: "string", sqlType: sql.NVarChar, length: 2000 },
+  ValidityComment: { column: "ValidityComment", type: "string", sqlType: sql.NVarChar, length: 2000 },
   FilePath: { column: "FilePath", type: "string", sqlType: sql.NVarChar, length: 1000 },
   BrandID: { column: "BrandID", type: "number", sqlType: sql.Int },
   CountryId: { column: "CountryId", type: "number", sqlType: sql.Int },

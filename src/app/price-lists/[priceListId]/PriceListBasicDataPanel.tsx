@@ -32,7 +32,7 @@ export async function fetchPriceListBasicRecord(priceListId: number) {
         pl.ValidFromDate,
         pl.ValidToDate,
         pl.Comments,
-        pl.SupplierComment,
+        pl.ValidityComment,
         pl.Enabled,
         pl.FilePath,
         pl.BrandID AS BrandID,

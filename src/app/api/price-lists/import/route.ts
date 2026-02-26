@@ -991,7 +991,7 @@ export async function POST(req: NextRequest) {
       priceListRequest.input("Name", sql.NVarChar(255), name);
       priceListRequest.input("BrandID", sql.Int, brandId);
       priceListRequest.input("Comments", sql.NVarChar(2000), comments);
-      priceListRequest.input("SupplierComment", sql.NVarChar(2000), supplierComments);
+      priceListRequest.input("ValidityComment", sql.NVarChar(2000), supplierComments);
       priceListRequest.input("ResponsibleUserId", sql.NVarChar(450), responsibleUserId);
       priceListRequest.input("SupplierID", sql.Int, supplierId);
       priceListRequest.input("HasDuty", sql.Bit, hasDuty ?? false);
@@ -1010,7 +1010,7 @@ export async function POST(req: NextRequest) {
           Name,
           BrandID,
           Comments,
-          SupplierComment,
+          ValidityComment,
           ResponsibleUserId,
           SupplierID,
           HasDuty,
@@ -1033,7 +1033,7 @@ export async function POST(req: NextRequest) {
           @Name,
           @BrandID,
           @Comments,
-          @SupplierComment,
+          @ValidityComment,
           @ResponsibleUserId,
           @SupplierID,
           @HasDuty,

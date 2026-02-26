@@ -28,6 +28,7 @@ type RawRow = {
   NameCode: string | null;
   WindowsUserName: string | null;
   RoleName: string | null;
+  Enabled: boolean | number | null;
 };
 
 type ColumnCheckRow = {
@@ -224,15 +225,32 @@ export async function POST(req: NextRequest) {
     const request = body?.request ?? {};
 
     const pool = await getPool();
-    const columnCheck = await pool.request().query<ColumnCheckRow>(`
-      SELECT name
-      FROM sys.columns
-      WHERE object_id = OBJECT_ID(N'dbo.AspNetUserRoles')
-        AND name IN ('UserId', 'RoleId', 'AspNetUsersID', 'AspNetRolesID')
-    `);
+    const [columnCheck, enabledColumnCheck] = await Promise.all([
+      pool.request().query<ColumnCheckRow>(`
+        SELECT name
+        FROM sys.columns
+        WHERE object_id = OBJECT_ID(N'dbo.AspNetUserRoles')
+          AND name IN ('UserId', 'RoleId', 'AspNetUsersID', 'AspNetRolesID')
+      `),
+      pool.request().query<ColumnCheckRow>(`
+        SELECT name
+        FROM sys.columns
+        WHERE object_id = OBJECT_ID(N'dbo.AspNetUsers')
+          AND name IN ('IsActive', 'IsEnabled', 'Enabled')
+      `),
+    ]);
     const columnNames = new Set((columnCheck.recordset ?? []).map((row) => row.name));
     const hasLegacy = columnNames.has("UserId") && columnNames.has("RoleId");
     const hasAspNet = columnNames.has("AspNetUsersID") && columnNames.has("AspNetRolesID");
+    const enabledColNames = new Set((enabledColumnCheck.recordset ?? []).map((row) => row.name));
+    const enabledColumn = enabledColNames.has("IsActive")
+      ? "IsActive"
+      : enabledColNames.has("IsEnabled")
+        ? "IsEnabled"
+        : enabledColNames.has("Enabled")
+          ? "Enabled"
+          : null;
+    const enabledSelectSql = enabledColumn ? `,\n        u.${enabledColumn} AS Enabled` : `,\n        NULL AS Enabled`;
 
     const joinSql = hasLegacy
       ? `
@@ -260,7 +278,7 @@ export async function POST(req: NextRequest) {
         u.SignTitle,
         u.NameCode,
         u.WindowsUserName,
-        r.Name AS RoleName
+        r.Name AS RoleName${enabledSelectSql}
       FROM dbo.AspNetUsers u
       ${joinSql}
       LEFT JOIN dbo.SalesSeniorities ss ON ss.ID = u.SalesSeniorityID
@@ -280,6 +298,7 @@ export async function POST(req: NextRequest) {
       NameCode: string | null;
       WindowsUserName: string | null;
       roles: string[];
+      Enabled: boolean | number | null;
     }> = [];
     const indexById = new Map<number, (typeof ordered)[number]>();
 
@@ -300,6 +319,7 @@ export async function POST(req: NextRequest) {
           NameCode: normalizeText(row.NameCode),
           WindowsUserName: normalizeText(row.WindowsUserName),
           roles: [],
+          Enabled: row.Enabled,
         };
         indexById.set(id, entry);
         ordered.push(entry);
@@ -312,6 +332,12 @@ export async function POST(req: NextRequest) {
 
     const rows = ordered.map((entry) => {
       const roles = normalizeRoles(entry.roles);
+      const enabledVal = entry.Enabled;
+      const enabledText = enabledColumn === null
+        ? null
+        : (enabledVal === true || enabledVal === 1)
+          ? "true"
+          : "false";
       return {
         UserID: entry.UserID,
         UserName: entry.UserName,
@@ -325,6 +351,7 @@ export async function POST(req: NextRequest) {
         WindowsUserName: entry.WindowsUserName,
         Role1: roles[0] ?? "",
         Role2: roles[1] ?? "",
+        Enabled: enabledText,
       };
     });
 

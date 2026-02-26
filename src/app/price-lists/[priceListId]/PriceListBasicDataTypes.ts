@@ -6,7 +6,7 @@ export type PriceListBasicRecord = {
   ValidFromDate: Date | string | null;
   ValidToDate: Date | string | null;
   Comments: string | null;
-  SupplierComment: string | null;
+  ValidityComment: string | null;
   Enabled: boolean | number | null;
   FilePath: string | null;
   BrandID: number | null;
@@ -56,7 +56,7 @@ export type PriceListBasicUpdateField =
   | "ValidFromDate"
   | "ValidToDate"
   | "Comments"
-  | "SupplierComment"
+  | "ValidityComment"
   | "FilePath"
   | "BrandID"
   | "CountryId"

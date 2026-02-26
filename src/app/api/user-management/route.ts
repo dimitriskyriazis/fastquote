@@ -33,6 +33,22 @@ type ColumnCheckRow = {
   name: string;
 };
 
+type EnabledColumn = "IsActive" | "IsEnabled" | "Enabled" | null;
+
+const getEnabledColumn = async (pool: ConnectionPool): Promise<EnabledColumn> => {
+  const result = await pool.request().query<ColumnCheckRow>(`
+    SELECT name
+    FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.AspNetUsers')
+      AND name IN ('IsActive', 'IsEnabled', 'Enabled')
+  `);
+  const names = new Set((result.recordset ?? []).map((row) => row.name));
+  if (names.has("IsActive")) return "IsActive";
+  if (names.has("IsEnabled")) return "IsEnabled";
+  if (names.has("Enabled")) return "Enabled";
+  return null;
+};
+
 type UserTimestampSchema = {
   hasCreatedAt: boolean;
   hasModifiedAt: boolean;
@@ -307,7 +323,13 @@ export async function POST(req: NextRequest) {
     insertRequest.input("salesDivisionId", sql.Int, divisionId);
     insertRequest.input("salesSeniorityId", sql.Int, seniorityId);
 
-    const timestampSchema = await getUserTimestampSchema(pool);
+    const [timestampSchema, enabledColumn] = await Promise.all([
+      getUserTimestampSchema(pool),
+      getEnabledColumn(pool),
+    ]);
+    if (enabledColumn) {
+      insertRequest.input("enabled", sql.Bit, 1);
+    }
     const insertColumns = [
       "UserName",
       "WindowsUserName",
@@ -322,6 +344,7 @@ export async function POST(req: NextRequest) {
       ...(timestampSchema.hasModifiedAt ? ["ModifiedAt"] : []),
       ...(timestampSchema.hasCreatedOn ? ["CreatedOn"] : []),
       ...(timestampSchema.hasModifiedOn ? ["ModifiedOn"] : []),
+      ...(enabledColumn ? [enabledColumn] : []),
     ];
     const insertValues = [
       "@userName",
@@ -337,6 +360,7 @@ export async function POST(req: NextRequest) {
       ...(timestampSchema.hasModifiedAt ? ["SYSUTCDATETIME()"] : []),
       ...(timestampSchema.hasCreatedOn ? ["SYSUTCDATETIME()"] : []),
       ...(timestampSchema.hasModifiedOn ? ["SYSUTCDATETIME()"] : []),
+      ...(enabledColumn ? ["@enabled"] : []),
     ];
 
     const insertResult = await insertRequest.query<{ ID: number }>(`
@@ -412,6 +436,11 @@ export async function PATCH(req: NextRequest) {
           return { kind: "lookup", userId, field, value } as const;
         }
 
+        if (field === "Enabled") {
+          const value = normalizeOptionalString(entry?.value);
+          return { kind: "enabled", userId, value } as const;
+        }
+
         if (FIELD_COLUMN_MAP[field]) {
           const value = normalizeOptionalString(entry?.value);
           if ((field === "UserName" || field === "WindowsUserName") && !value) {
@@ -431,9 +460,27 @@ export async function PATCH(req: NextRequest) {
     }
 
     const pool = await getPool();
-    const schema = await getRoleSchema(pool);
+    const [schema, enabledCol] = await Promise.all([
+      getRoleSchema(pool),
+      getEnabledColumn(pool),
+    ]);
 
     for (const update of normalized) {
+      if (update.kind === "enabled") {
+        if (!enabledCol) continue;
+        const v = update.value?.toLowerCase() ?? "";
+        const bitValue = (v === "yes" || v === "true" || v === "1") ? 1 : 0;
+        const request = pool.request();
+        request.input("userId", sql.Int, update.userId);
+        request.input("enabled", sql.Bit, bitValue);
+        await request.query(`
+          UPDATE dbo.AspNetUsers
+          SET ${enabledCol} = @enabled
+          WHERE Id = @userId
+        `);
+        continue;
+      }
+
       if (update.kind === "roles") {
         await replaceUserRoles(pool, schema, update.userId, update.roles);
         continue;
