@@ -563,6 +563,7 @@ type Props = {
   suppressSideBar?: boolean;
   serverSideHeaderSelectMode?: 'loaded' | 'all';
   suppressColumnMoveAnimation?: boolean;
+  onColumnStateRestored?: () => void;
 };
 
 type RowData = Record<string, unknown>;
@@ -1144,6 +1145,7 @@ export default function AgGridAll({
   suppressSideBar = false,
   serverSideHeaderSelectMode = 'loaded',
   suppressColumnMoveAnimation = false,
+  onColumnStateRestored,
 }: Props) {
   // Initialize editor focus management hooks
   useMutationCaret();
@@ -2185,6 +2187,7 @@ export default function AgGridAll({
     const persisted = readPersistedColumnState(columnStateStorageKey);
     if (!persisted || persisted.length === 0) {
       columnStateLoadedRef.current = true;
+      onColumnStateRestored?.();
       return;
     }
     
@@ -2200,6 +2203,7 @@ export default function AgGridAll({
     const currentState = api.getColumnState();
     if (!currentState || currentState.length === 0) {
       columnStateLoadedRef.current = true;
+      onColumnStateRestored?.();
       return;
     }
     
@@ -2262,6 +2266,7 @@ export default function AgGridAll({
           }
         }
         columnStateLoadedRef.current = true;
+        onColumnStateRestored?.();
         return;
       }
 
@@ -2354,11 +2359,13 @@ export default function AgGridAll({
       }
 
       columnStateLoadedRef.current = true;
+      onColumnStateRestored?.();
     } catch (err) {
       console.warn('Failed to apply saved column state', err);
       columnStateLoadedRef.current = true;
+      onColumnStateRestored?.();
     }
-  }, [applyColumnStateOrder, columnStateStorageKey, rowSelection, shouldPersistColumnState]);
+  }, [applyColumnStateOrder, columnStateStorageKey, onColumnStateRestored, rowSelection, shouldPersistColumnState]);
 
   useEffect(() => {
     if (!shouldPersistColumnState) return;
@@ -3565,6 +3572,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       return;
     }
     pendingExternalRefreshRef.current = null;
+    requestCacheRef.current.clear();
     // Save scroll position before refresh so it's restored after data loads
     const viewport = getViewportElement();
     if (viewport) {

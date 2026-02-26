@@ -204,6 +204,33 @@ export default function ClientProductsPage({
   const [initialRequestedRowId, setInitialRequestedRowId] = useState<number | null>(null);
   const pageRef = useRef<HTMLElement | null>(null);
   const pendingPageScrollRestoreRef = useRef<{ pageScrollTop: number; windowScrollY: number } | null>(null);
+  const forceReapplyRequestedColumnsVisibility = useCallback(() => {
+    offerProductsPanelRef.current?.forceReapplyRequestedColumnsVisibility?.();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      forceReapplyRequestedColumnsVisibility();
+      return undefined;
+    }
+    const run = () => {
+      forceReapplyRequestedColumnsVisibility();
+    };
+    const rafId = window.requestAnimationFrame(() => {
+      run();
+      window.requestAnimationFrame(run);
+    });
+    const timeoutId = window.setTimeout(run, 120);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    forceReapplyRequestedColumnsVisibility,
+    showAddProductModal,
+    showRequestedModal,
+    tableLayout,
+  ]);
 
   useEffect(() => {
     if (!isStandardPackage) return;
@@ -838,7 +865,7 @@ export default function ClientProductsPage({
     <button
       type="button"
       className={`${toolbarStyles.button} ${toolbarStyles.buttonAddRequested} page-header-button`}
-      onClick={() => setShowRequestedModal(true)}
+      onClick={() => { setTableLayout('wReq'); setShowRequestedModal(true); }}
     >
       Add Requested Products
     </button>

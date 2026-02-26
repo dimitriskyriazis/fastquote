@@ -975,6 +975,7 @@ export type OfferProductsPanelHandle = {
   getSelectedOfferDetailIdsForPriceUpdate: () => number[];
   getSelectedOfferDetailIds: () => number[];
   getSelectedRequestedOfferDetailId: () => number | null;
+  forceReapplyRequestedColumnsVisibility: () => void;
   getViewportScrollTop: () => number;
   getSelectedRowData: () => Array<Record<string, unknown>>;
   getAllVisibleRowData: () => Array<Record<string, unknown>>;
@@ -1514,8 +1515,11 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     });
   }, [showRequestedColumns, tableLayout]);
 
-  const reapplyRequestedColumnsVisibility = useCallback((options?: { defer?: boolean }) => {
-    if (!requestedColumnsReady) return;
+  const applyRequestedVisibilityToGrid = useCallback((
+    visibility: Record<RequestedDisplayFieldKey, boolean>,
+    itemNoVisible: boolean,
+    options?: { defer?: boolean; force?: boolean },
+  ) => {
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return;
     const keys = REQUESTED_DISPLAY_FIELD_KEYS;
@@ -1523,7 +1527,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const savedRequestedHidden = (key: string) => savedHiddenMap[key] === true;
     const effectiveVisibility = showRequestedColumns
       ? keys.reduce<Record<RequestedDisplayFieldKey, boolean>>((acc, key) => {
-        const baseVisible = requestedColumnVisibility[key];
+        const baseVisible = visibility[key];
         acc[key] = forceShowRequestedColumns
           ? Boolean(baseVisible)
           : Boolean(baseVisible) && !savedRequestedHidden(key);
@@ -1535,15 +1539,15 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       }, {} as Record<RequestedDisplayFieldKey, boolean>);
     const effectiveItemNoVisible = showRequestedColumns
       ? forceShowRequestedColumns
-        ? requestedItemNoVisible
-        : requestedItemNoVisible && !savedRequestedHidden('RequestedItemNo')
+        ? Boolean(itemNoVisible)
+        : Boolean(itemNoVisible) && !savedRequestedHidden('RequestedItemNo')
       : false;
     const previousVisibility = appliedRequestedColumnVisibilityRef.current;
     const visibilityChanged = !previousVisibility
       || appliedShowRequestedColumnsRef.current !== showRequestedColumns
       || keys.some((key) => previousVisibility?.[key] !== effectiveVisibility[key]);
     const itemNoVisibilityChanged = appliedRequestedItemNoVisibleRef.current !== effectiveItemNoVisible;
-    if (!visibilityChanged && !itemNoVisibilityChanged) {
+    if (!options?.force && !visibilityChanged && !itemNoVisibilityChanged) {
       return;
     }
 
@@ -1552,6 +1556,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       hide: !effectiveVisibility[key],
     }));
     state.push({ colId: 'RequestedItemNo', hide: !effectiveItemNoVisible });
+
     const applyState = () => {
       const activeApi = gridApiRef.current;
       if (!activeApi || activeApi.isDestroyed?.()) return;
@@ -1572,13 +1577,16 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         applyState();
       });
     });
+  }, [savedHiddenMap, showRequestedColumns, tableLayout]);
+
+  const reapplyRequestedColumnsVisibility = useCallback((options?: { defer?: boolean }) => {
+    if (!requestedColumnsReady) return;
+    applyRequestedVisibilityToGrid(requestedColumnVisibility, requestedItemNoVisible, options);
   }, [
+    applyRequestedVisibilityToGrid,
     requestedColumnsReady,
     requestedColumnVisibility,
     requestedItemNoVisible,
-    savedHiddenMap,
-    showRequestedColumns,
-    tableLayout,
   ]);
 
   const defaultColDef = useMemo<ColDef>(() => ({
@@ -1856,6 +1864,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           return hasChanged ? freshVisibility : prev;
         });
         setRequestedItemNoVisible(responseRequestedItemNo);
+        applyRequestedVisibilityToGrid(freshVisibility, responseRequestedItemNo, { force: true, defer: true });
       } else {
         // Subsequent pages: OR-merge so columns don't disappear while scrolling through pages.
         const previousVisibility = appliedRequestedColumnVisibilityRef.current ?? requestedColumnVisibility;
@@ -1868,11 +1877,20 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           },
           {} as Record<RequestedDisplayFieldKey, boolean>,
         );
+        const mergedItemNoVisible = (appliedRequestedItemNoVisibleRef.current ?? requestedItemNoVisible) || responseRequestedItemNo;
         applyRequestedColumnVisibility(mergedVisibility, true);
         setRequestedItemNoVisible((prev) => prev || responseRequestedItemNo);
+        applyRequestedVisibilityToGrid(mergedVisibility, mergedItemNoVisible, { force: true, defer: true });
       }
     } else {
       const requestColumnVisibility: Partial<Record<RequestedDisplayFieldKey, boolean>> = {};
+      const normalizedVisibility = REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
+        (acc, key) => {
+          acc[key] = Boolean(response?.requestedColumns?.[key]);
+          return acc;
+        },
+        {} as Record<RequestedDisplayFieldKey, boolean>,
+      );
       if (response?.requestedColumns) {
         REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
           const value = response.requestedColumns?.[key];
@@ -1890,6 +1908,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       const shouldShowRequestedItemNo = hasRows
         && (Boolean(response?.requestedColumns?.RequestedItemNo) || hasRequestedItemInRows);
       setRequestedItemNoVisible(shouldShowRequestedItemNo);
+      applyRequestedVisibilityToGrid(normalizedVisibility, shouldShowRequestedItemNo, { force: true, defer: true });
     }
     const runHeavyUpdates = () => {
       scheduleCategoryAncestorsUpdate();
@@ -1905,9 +1924,11 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       runHeavyUpdates();
     }
   }, [
+    applyRequestedVisibilityToGrid,
     applyRequestedColumnVisibility,
     rebuildTreeOrderingRootMap,
     requestedColumnVisibility,
+    requestedItemNoVisible,
     scheduleCategoryAncestorsUpdate,
     showRequestedColumns,
     tableLayout,
@@ -1927,6 +1948,18 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     setRequestedColumnsReadyFlag(true);
   }, [setRequestedColumnsReadyFlag]);
 
+  // Called by AgGridAll after it restores persisted column state (hide/show/width).
+  // AgGridAll may restore stale hide:true values for req columns from a previous session.
+  // Resetting the applied-visibility ref forces the next reapply call to re-apply the
+  // correct data-driven visibility, overriding whatever AgGridAll just restored.
+  const forceReapplyRequestedColumnsVisibility = useCallback(() => {
+    appliedRequestedColumnVisibilityRef.current = null;
+    appliedRequestedItemNoVisibleRef.current = null;
+    reapplyRequestedColumnsVisibility({ defer: true });
+  }, [reapplyRequestedColumnsVisibility]);
+  const handleColumnStateRestored = useCallback(() => {
+    forceReapplyRequestedColumnsVisibility();
+  }, [forceReapplyRequestedColumnsVisibility]);
 
   const saveLayout = useCallback((options?: { silent?: boolean }) => {
     if (typeof window === 'undefined') return false;
@@ -2003,14 +2036,23 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       /* noop */
     }
 
+    const reqColumnIdSet = new Set<string>(['RequestedItemNo', ...REQUESTED_DISPLAY_FIELD_KEYS]);
     const nextState = collectPersistableColumnState(currentState, columnOrderMap).map((entry) => {
       const widthCandidate = typeof entry.width === 'number' && Number.isFinite(entry.width) && entry.width > 0
         ? entry.width
         : actualWidthByColId.get(entry.colId) ?? existingWidthByColId.get(entry.colId);
-      if (widthCandidate != null && Number.isFinite(widthCandidate) && widthCandidate > 0) {
-        return { ...entry, width: widthCandidate };
+      const withWidth = widthCandidate != null && Number.isFinite(widthCandidate) && widthCandidate > 0
+        ? { ...entry, width: widthCandidate }
+        : entry;
+      // Never persist hide state for req columns — their visibility is always driven
+      // by data (requestedColumns from the API) and managed by the visibility effect.
+      // Persisting hide would cause applySavedColumnState to override the effect on load.
+      if (reqColumnIdSet.has(withWidth.colId)) {
+        const { hide: _hide, ...withoutHide } = withWidth;
+        void _hide;
+        return withoutHide;
       }
-      return entry;
+      return withWidth;
     });
     writePersistedColumnState(columnStateStorageKey, nextState);
     if (!options?.silent) {
@@ -4238,11 +4280,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       getSelectedOfferDetailIdsForPriceUpdate,
       getSelectedOfferDetailIds,
       getSelectedRequestedOfferDetailId,
+      forceReapplyRequestedColumnsVisibility,
       getViewportScrollTop,
       getSelectedRowData,
       getAllVisibleRowData,
     }),
-    [getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getTemplateExportRows, getViewportScrollTop, populateOffer],
+    [forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getTemplateExportRows, getViewportScrollTop, populateOffer],
   );
 
 
@@ -5538,6 +5581,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             columnStateNamespace={columnStateNamespace}
             onTotalsChange={handleTotalsChange}
             onResponse={handleGridResponse}
+            onColumnStateRestored={handleColumnStateRestored}
             onServerRequest={handleServerRequest}
             requestPayload={standardPackageRequestPayload}
             getRowHeight={getRowHeight}
