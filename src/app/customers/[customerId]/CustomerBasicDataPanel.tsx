@@ -1,107 +1,141 @@
-import sql from 'mssql';
-import { getPool } from '../../../lib/sql';
+'use client';
+
+import { useEffect, useState } from 'react';
 import CustomerBasicDataClient from './CustomerBasicDataClient';
 import styles from './CustomerBasicDataPanel.module.css';
 import type { CustomerBasicRecord, CustomerDropdownOption, CustomerCityOption } from './CustomerBasicDataTypes';
-import {
-  fetchCities,
-  fetchCountries,
-  fetchCustomerGroups,
-  fetchCustomers,
-  fetchImportanceOptions,
-  fetchPricingPolicies,
-} from './customerBasicDataLookups';
 
 type Props = {
   customerId: string;
   initialRecord?: CustomerBasicRecord | null;
 };
 
-export async function fetchCustomerBasicRecord(customerId: number) {
-  try {
-    const pool = await getPool();
-    const request = pool.request();
-    request.input('customerId', sql.Int, customerId);
-    const result = await request.query<CustomerBasicRecord>(`
-      SELECT TOP 1
-        c.ID AS CustomerID,
-        c.Name,
-        c.BrandName,
-        c.TaxID,
-        c.TaxOffice,
-        c.Profession,
-        c.CustomerGroupID,
-        cg.Name AS CustomerGroupName,
-        c.ActivityCode,
-        c.ERPID,
-        c.IsParent,
-        c.ParentCustomerID,
-        parent.Name AS ParentCustomerName,
-        c.PricingPolicyID,
-        pp.Name AS PricingPolicyName,
-        c.Importance,
-        c.Enabled,
-        c.Address,
-        c.CountryID,
-        country.Name AS CountryName,
-        c.CityID,
-        city.Name AS CityName,
-        c.Phone,
-        c.Email,
-        c.WebSite,
-        c.Notes
-      FROM dbo.Customers AS c
-      LEFT JOIN dbo.CustomerGroups AS cg ON c.CustomerGroupID = cg.ID
-      LEFT JOIN dbo.Customers AS parent ON c.ParentCustomerID = parent.ID
-      LEFT JOIN dbo.Countries AS country ON c.CountryID = country.ID
-      LEFT JOIN dbo.Cities AS city ON c.CityID = city.ID
-      LEFT JOIN dbo.PricingPolicies AS pp ON c.PricingPolicyID = pp.ID
-      WHERE c.ID = @customerId
-    `);
-    return result.recordset?.[0] ?? null;
-  } catch (err) {
-    console.error('Failed to load customer basic data', err);
-    return null;
-  }
-}
+type LookupKey =
+  | 'customerGroups'
+  | 'parentCustomers'
+  | 'pricingPolicies'
+  | 'importanceOptions'
+  | 'countries'
+  | 'cities';
 
-export default async function CustomerBasicDataPanel({ customerId, initialRecord }: Props) {
-  const decodedId = decodeURIComponent(customerId);
-  const numericId = Number(decodedId);
-  const record =
-    initialRecord ??
-    (Number.isInteger(numericId) && numericId > 0 ? await fetchCustomerBasicRecord(numericId) : null);
+type CustomerLookupsPayload = {
+  customerGroups?: CustomerDropdownOption[];
+  parentCustomers?: CustomerDropdownOption[];
+  pricingPolicies?: CustomerDropdownOption[];
+  importanceOptions?: CustomerDropdownOption[];
+  countries?: CustomerDropdownOption[];
+  cities?: CustomerCityOption[];
+};
+
+type CustomerBasicDataResponse = {
+  ok?: boolean;
+  error?: string;
+  record?: CustomerBasicRecord | null;
+};
+
+type CustomerLookupsResponse = {
+  ok?: boolean;
+  error?: string;
+  lookups?: CustomerLookupsPayload;
+};
+
+const LOOKUP_KEYS: LookupKey[] = [
+  'customerGroups',
+  'parentCustomers',
+  'pricingPolicies',
+  'importanceOptions',
+  'countries',
+  'cities',
+];
+
+export default function CustomerBasicDataPanel({ customerId, initialRecord }: Props) {
+  const decodedId = customerId;
+  const encodedId = encodeURIComponent(decodedId);
+  const [record, setRecord] = useState<CustomerBasicRecord | null>(initialRecord ?? null);
+  const [customerGroups, setCustomerGroups] = useState<CustomerDropdownOption[]>([]);
+  const [parentCustomers, setParentCustomers] = useState<CustomerDropdownOption[]>([]);
+  const [pricingPolicies, setPricingPolicies] = useState<CustomerDropdownOption[]>([]);
+  const [importanceOptions, setImportanceOptions] = useState<CustomerDropdownOption[]>([]);
+  const [countries, setCountries] = useState<CustomerDropdownOption[]>([]);
+  const [cities, setCities] = useState<CustomerCityOption[]>([]);
+  const [loading, setLoading] = useState(initialRecord == null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadData = async () => {
+      setLoading(true);
+      setLoadError(null);
+      try {
+        const params = new URLSearchParams();
+        LOOKUP_KEYS.forEach((key) => params.append('keys', key));
+
+        const [recordResponse, lookupsResponse] = await Promise.all([
+          fetch(`/api/customers/${encodedId}/basicdata`, { cache: 'no-store' }),
+          fetch(`/api/customers/lookups?${params.toString()}`, { cache: 'no-store' }),
+        ]);
+
+        const recordPayload = (await recordResponse
+          .json()
+          .catch(() => null)) as CustomerBasicDataResponse | null;
+        if (!recordResponse.ok || !recordPayload?.ok || !recordPayload.record) {
+          throw new Error(recordPayload?.error ?? 'Unable to load customer basic data.');
+        }
+
+        const lookupsPayload = (await lookupsResponse
+          .json()
+          .catch(() => null)) as CustomerLookupsResponse | null;
+        if (!lookupsResponse.ok || !lookupsPayload?.ok || !lookupsPayload.lookups) {
+          throw new Error(lookupsPayload?.error ?? 'Unable to load customer lookups.');
+        }
+
+        if (!active) return;
+
+        setRecord(recordPayload.record);
+        setCustomerGroups(
+          Array.isArray(lookupsPayload.lookups.customerGroups) ? lookupsPayload.lookups.customerGroups : [],
+        );
+        setParentCustomers(
+          Array.isArray(lookupsPayload.lookups.parentCustomers) ? lookupsPayload.lookups.parentCustomers : [],
+        );
+        setPricingPolicies(
+          Array.isArray(lookupsPayload.lookups.pricingPolicies) ? lookupsPayload.lookups.pricingPolicies : [],
+        );
+        setImportanceOptions(
+          Array.isArray(lookupsPayload.lookups.importanceOptions) ? lookupsPayload.lookups.importanceOptions : [],
+        );
+        setCountries(Array.isArray(lookupsPayload.lookups.countries) ? lookupsPayload.lookups.countries : []);
+        setCities(Array.isArray(lookupsPayload.lookups.cities) ? lookupsPayload.lookups.cities : []);
+      } catch (err) {
+        if (!active) return;
+        console.error('Failed to load customer basic data page payload', err);
+        setRecord(null);
+        setLoadError(err instanceof Error ? err.message : 'Unable to load customer basic data.');
+      } finally {
+        if (!active) return;
+        setLoading(false);
+      }
+    };
+
+    void loadData();
+
+    return () => {
+      active = false;
+    };
+  }, [encodedId]);
+
+  if (loading && !record) {
+    return <section className={styles.emptyState}>Loading customer basic data…</section>;
+  }
 
   if (!record) {
     return (
       <section className={styles.emptyState}>
-        This customer could not be found or has been removed.
+        {loadError ?? 'This customer could not be found or has been removed.'}
       </section>
     );
   }
-
-  const [
-    customerGroups,
-    parentCustomers,
-    pricingPolicies,
-    importanceOptions,
-    countries,
-    cities,
-  ]: [
-    CustomerDropdownOption[],
-    CustomerDropdownOption[],
-    CustomerDropdownOption[],
-    CustomerDropdownOption[],
-    CustomerDropdownOption[],
-    CustomerCityOption[],
-  ] = await Promise.all([
-    fetchCustomerGroups(),
-    fetchCustomers(),
-    fetchPricingPolicies(),
-    fetchImportanceOptions(),
-    fetchCountries(),
-    fetchCities(),
-  ]);
 
   const filteredParents =
     record.CustomerID != null

@@ -3,7 +3,10 @@ import { logRequest } from '../../../../../lib/apiHelpers';
 import sql, { type ISqlTypeFactory } from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../../lib/auditTrail";
-import type { CustomerBasicUpdateField } from "../../../../customers/[customerId]/CustomerBasicDataTypes";
+import type {
+  CustomerBasicRecord,
+  CustomerBasicUpdateField,
+} from "../../../../customers/[customerId]/CustomerBasicDataTypes";
 import { requirePermission } from "../../../../../lib/authz";
 
 type UpdateInput = {
@@ -80,6 +83,88 @@ const normalizeValue = (value: unknown, type: FieldType): NormalizedValue => {
   return null;
 };
 
+const parseCustomerId = async (
+  params: Promise<{ customerId: string }>,
+): Promise<number | null> => {
+  const { customerId } = await params;
+  let normalizedId = String(customerId ?? "");
+  try {
+    normalizedId = decodeURIComponent(normalizedId);
+  } catch {
+    normalizedId = String(customerId ?? "");
+  }
+  normalizedId = normalizedId.trim();
+  if (!normalizedId) return null;
+  const parsedId = Number(normalizedId);
+  if (!Number.isInteger(parsedId)) return null;
+  return parsedId;
+};
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ customerId: string }> },
+) {
+  logRequest(req, '/api/customers/[customerId]/basicdata');
+  try {
+    const auth = await requirePermission(req, "manageCustomersContacts");
+    if (!auth.ok) return auth.response;
+
+    const parsedId = await parseCustomerId(params);
+    if (!parsedId) {
+      return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    const request = pool.request();
+    request.input("customerId", sql.Int, parsedId);
+    const result = await request.query<CustomerBasicRecord>(`
+      SELECT TOP 1
+        c.ID AS CustomerID,
+        c.Name,
+        c.BrandName,
+        c.TaxID,
+        c.TaxOffice,
+        c.Profession,
+        c.CustomerGroupID,
+        cg.Name AS CustomerGroupName,
+        c.ActivityCode,
+        c.ERPID,
+        c.IsParent,
+        c.ParentCustomerID,
+        parent.Name AS ParentCustomerName,
+        c.PricingPolicyID,
+        pp.Name AS PricingPolicyName,
+        c.Importance,
+        c.Enabled,
+        c.Address,
+        c.CountryID,
+        country.Name AS CountryName,
+        c.CityID,
+        city.Name AS CityName,
+        c.Phone,
+        c.Email,
+        c.WebSite,
+        c.Notes
+      FROM dbo.Customers AS c
+      LEFT JOIN dbo.CustomerGroups AS cg ON c.CustomerGroupID = cg.ID
+      LEFT JOIN dbo.Customers AS parent ON c.ParentCustomerID = parent.ID
+      LEFT JOIN dbo.Countries AS country ON c.CountryID = country.ID
+      LEFT JOIN dbo.Cities AS city ON c.CityID = city.ID
+      LEFT JOIN dbo.PricingPolicies AS pp ON c.PricingPolicyID = pp.ID
+      WHERE c.ID = @customerId
+    `);
+    const record = result.recordset?.[0] ?? null;
+    if (!record) {
+      return NextResponse.json({ ok: false, error: "Customer not found" }, { status: 404 });
+    }
+    return NextResponse.json({ ok: true, record });
+  } catch (err) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ customerId: string }> },
@@ -89,13 +174,8 @@ export async function PATCH(
     const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;
 
-    const { customerId } = await params;
-    const normalizedId = decodeURIComponent(String(customerId ?? "")).trim();
-    if (!normalizedId) {
-      return NextResponse.json({ ok: false, error: "Missing id" }, { status: 400 });
-    }
-    const parsedId = Number(normalizedId);
-    if (!Number.isInteger(parsedId)) {
+    const parsedId = await parseCustomerId(params);
+    if (!parsedId) {
       return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
     }
 

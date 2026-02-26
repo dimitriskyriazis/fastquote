@@ -2,7 +2,7 @@
 
 import React, { useMemo, useCallback, useRef, useState, useEffect } from "react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type {
   CellValueChangedEvent,
   ColDef,
@@ -51,6 +51,19 @@ type Props = {
   initialContactFirstName?: string | null;
   initialContactLastName?: string | null;
 };
+
+type ContactLookupsResponse = {
+  ok?: boolean;
+  error?: string;
+  lookups?: {
+    statuses?: string[];
+    customers?: CustomerDropdownOption[];
+    titles?: DropdownOption[];
+    importances?: Array<string | number>;
+  };
+};
+
+const DEFAULT_IMPORTANCE_VALUES: Array<string | number> = ["", "1", "2", "3"];
 
 const CONTACT_FIELD_LABELS: Record<string, string> = {
   Title: "Title",
@@ -1126,5 +1139,64 @@ export default function ContactsClient({
         </div>
       </LookupModal>
     </>
+  );
+}
+
+export function ContactsPageContainer() {
+  const searchParams = useSearchParams();
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const [customers, setCustomers] = useState<CustomerDropdownOption[]>([]);
+  const [titles, setTitles] = useState<DropdownOption[]>([]);
+  const [importances, setImportances] = useState<Array<string | number>>(DEFAULT_IMPORTANCE_VALUES);
+
+  const initialContactName = (searchParams.get("contactName") ?? "").trim();
+  const initialContactFirstName = (searchParams.get("firstName") ?? "").trim();
+  const initialContactLastName = (searchParams.get("lastName") ?? "").trim();
+
+  useEffect(() => {
+    let active = true;
+
+    const loadLookups = async () => {
+      try {
+        const response = await fetch("/api/customer-contacts?mode=lookups", {
+          method: "GET",
+          cache: "no-store",
+        });
+        const payload = (await response.json().catch(() => null)) as ContactLookupsResponse | null;
+        if (!response.ok || !payload?.ok || !payload.lookups) {
+          throw new Error(payload?.error ?? "Unable to load contact lookups.");
+        }
+        if (!active) return;
+        setStatuses(Array.isArray(payload.lookups.statuses) ? payload.lookups.statuses : []);
+        setCustomers(Array.isArray(payload.lookups.customers) ? payload.lookups.customers : []);
+        setTitles(Array.isArray(payload.lookups.titles) ? payload.lookups.titles : []);
+        setImportances(
+          Array.isArray(payload.lookups.importances) && payload.lookups.importances.length > 0
+            ? payload.lookups.importances
+            : DEFAULT_IMPORTANCE_VALUES,
+        );
+      } catch (err) {
+        if (!active) return;
+        console.error("Failed to load contact lookups", err);
+        showToastMessage("Unable to load contact lookups.", "warning");
+      }
+    };
+
+    void loadLookups();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return (
+    <ContactsClient
+      statuses={statuses}
+      importances={importances}
+      customers={customers}
+      titles={titles}
+      initialContactName={initialContactName}
+      initialContactFirstName={initialContactFirstName}
+      initialContactLastName={initialContactLastName}
+    />
   );
 }

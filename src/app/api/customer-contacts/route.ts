@@ -11,6 +11,8 @@ import { KnownFilterModel } from "../../../lib/filterTypes";
 import { processFilter } from "../../../lib/filterProcessing";
 import { requirePermission } from "../../../lib/authz";
 import { checkDeletePermission } from "../../../lib/deletePermissions";
+import { toDropdownOptions, type DropdownOption } from "../../../lib/dropdownOptions";
+import { IMPORTANCE_VALUES, fetchCustomers } from "../../customers/[customerId]/customerBasicDataLookups";
 
 
 
@@ -49,6 +51,7 @@ type ContactRow = {
 };
 
 type ContactRowWithCount = ContactRow & { __totalCount: number | bigint | null };
+type LookupRow = { ID: number | string | null; Name: string | null };
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   ContactID: "dbo.Contacts.ID",
@@ -252,6 +255,32 @@ const collectContactIds = (values: unknown): number[] => {
 };
 
 const CONTACT_DELETE_BATCH = 200;
+
+const fetchEmailStatuses = async (): Promise<string[]> => {
+  const pool = await getPool();
+  const result = await pool.request().query<{ Name: string | null }>(`
+    SELECT Name
+    FROM dbo.EmailStatuses
+    ORDER BY Name
+  `);
+  const rows = result.recordset ?? [];
+  const unique = new Set<string>();
+  rows.forEach((row) => {
+    const name = row.Name?.trim();
+    if (name) unique.add(name);
+  });
+  return Array.from(unique);
+};
+
+const fetchTitles = async (): Promise<DropdownOption[]> => {
+  const pool = await getPool();
+  const result = await pool.request().query<LookupRow>(`
+    SELECT ID, Name
+    FROM dbo.Titles
+    ORDER BY Name
+  `);
+  return toDropdownOptions(result.recordset);
+};
 
 const normalizeStatusName = (value: unknown): string => {
   if (typeof value === "string") return value.trim();
@@ -494,6 +523,39 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     console.error(err);
     const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+export async function GET(req: NextRequest) {
+  logRequest(req, '/api/customer-contacts');
+  try {
+    const mode = req.nextUrl.searchParams.get("mode");
+    if (mode !== "lookups") {
+      return NextResponse.json({ ok: false, error: "Unsupported mode" }, { status: 400 });
+    }
+
+    const auth = await requirePermission(req, "manageCustomersContacts");
+    if (!auth.ok) return auth.response;
+
+    const [statuses, customers, titles] = await Promise.all([
+      fetchEmailStatuses(),
+      fetchCustomers(),
+      fetchTitles(),
+    ]);
+
+    return NextResponse.json({
+      ok: true,
+      lookups: {
+        statuses,
+        customers,
+        titles,
+        importances: IMPORTANCE_VALUES,
+      },
+    });
+  } catch (err) {
+    console.error("Failed to load contact lookups", err);
+    const message = err instanceof Error ? err.message : "Unable to load contact lookups.";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

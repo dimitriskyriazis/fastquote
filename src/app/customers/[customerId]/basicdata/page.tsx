@@ -1,5 +1,8 @@
+"use client";
+
 import Link from "next/link";
-import CustomerBasicDataPanel, { fetchCustomerBasicRecord } from "../CustomerBasicDataPanel";
+import { useParams } from "next/navigation";
+import CustomerBasicDataPanel from "../CustomerBasicDataPanel";
 import layoutStyles from "../../customerDetail.module.css";
 
 const buildFallbackHeading = (customerId: string) => {
@@ -7,21 +10,16 @@ const buildFallbackHeading = (customerId: string) => {
   return /^[0-9]+$/.test(customerId) ? `Customer ${customerId}` : customerId;
 };
 
-export default async function Page({
-  params,
-}: {
-  params: Promise<{ customerId: string }>;
-}) {
-  const { customerId } = await params;
-  const decodedId = decodeURIComponent(customerId);
-  const numericId = Number(decodedId);
-
-  const record =
-    Number.isInteger(numericId) && numericId > 0
-      ? await fetchCustomerBasicRecord(numericId)
-      : null;
-
-  const headingBase = record?.Name ?? buildFallbackHeading(decodedId);
+export default function Page() {
+  const params = useParams<{ customerId: string }>();
+  const rawCustomerId = typeof params?.customerId === "string" ? params.customerId : "";
+  let decodedId = rawCustomerId;
+  try {
+    decodedId = decodeURIComponent(rawCustomerId);
+  } catch {
+    decodedId = rawCustomerId;
+  }
+  const headingBase = buildFallbackHeading(decodedId);
   const headingText = `${headingBase} - Basic Data`;
   const encodedId = encodeURIComponent(decodedId);
 
@@ -53,7 +51,7 @@ export default async function Page({
         </div>
       </div>
       <div className={layoutStyles.pageBody}>
-        <CustomerBasicDataPanel customerId={decodedId} initialRecord={record} />
+        <CustomerBasicDataPanel customerId={decodedId} />
       </div>
     </main>
   );
