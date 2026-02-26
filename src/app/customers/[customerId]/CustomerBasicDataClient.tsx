@@ -118,7 +118,9 @@ const buildFieldDefinitions = (
     recordKey: 'ParentCustomerID',
     updateField: 'ParentCustomerID',
     valueType: 'number',
-    options: parentCustomers,
+    comboBox: true,
+    datalistOptions: parentCustomers,
+    datalistRecordKey: 'ParentCustomerName',
   },
   {
     id: 'importance',
@@ -263,6 +265,16 @@ const parseDateValue = (value: unknown): Date | null => {
 };
 
 const formatInitialValue = (record: CustomerBasicRecord, def: FieldDefinition) => {
+  if (def.comboBox && def.datalistOptions && def.datalistOptions.length > 0) {
+    const comboValue = record[def.datalistRecordKey ?? def.recordKey];
+    if (comboValue === null || comboValue === undefined) return '';
+    if (typeof comboValue === 'string') return comboValue;
+    if (typeof comboValue === 'number') {
+      const matchingOption = def.datalistOptions.find((option) => option.value === String(comboValue));
+      return matchingOption?.label ?? String(comboValue);
+    }
+    return String(comboValue);
+  }
   const raw = record[def.recordKey];
   if (def.inputType === 'date' || def.valueType === 'date') {
     return formatDateInputValue(raw as Date | string | null | undefined);

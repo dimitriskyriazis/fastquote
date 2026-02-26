@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useCallback, useEffect } from 'react';
+import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import type { FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CustomerCityOption, CustomerDropdownOption } from '../[customerId]/CustomerBasicDataTypes';
@@ -223,7 +223,38 @@ type Props = {
   formId?: string;
 };
 
+type LookupKey =
+  | 'customerGroups'
+  | 'parentCustomers'
+  | 'pricingPolicies'
+  | 'importanceOptions'
+  | 'countries'
+  | 'cities';
+
+type CustomerLookupsPayload = {
+  customerGroups?: CustomerDropdownOption[];
+  parentCustomers?: CustomerDropdownOption[];
+  pricingPolicies?: CustomerDropdownOption[];
+  importanceOptions?: CustomerDropdownOption[];
+  countries?: CustomerDropdownOption[];
+  cities?: CustomerCityOption[];
+};
+
+type CustomerLookupsResponse = {
+  ok?: boolean;
+  error?: string;
+  lookups?: CustomerLookupsPayload;
+};
+
 const requiredFieldIds = ['name', 'pricingPolicy', 'importance'];
+const LOOKUP_KEYS: LookupKey[] = [
+  'customerGroups',
+  'parentCustomers',
+  'pricingPolicies',
+  'importanceOptions',
+  'countries',
+  'cities',
+];
 
 const resolveDefaultPricingPolicyId = (options: CustomerDropdownOption[]): string => {
   const normalizedTarget = 'default pricing policy';
@@ -245,6 +276,10 @@ export default function CustomerCreateClient({
   const router = useRouter();
   const [, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [localCustomerGroups, setLocalCustomerGroups] = useState(customerGroups);
+  const [localParentCustomers, setLocalParentCustomers] = useState(parentCustomers);
+  const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
+  const [localImportanceOptions, setLocalImportanceOptions] = useState(importanceOptions);
   const [countryOptions, setCountryOptions] = useState(countries);
   const [cityOptions, setCityOptions] = useState(cities);
   const [isAddCountryOpen, setIsAddCountryOpen] = useState(false);
@@ -258,21 +293,26 @@ export default function CustomerCreateClient({
   const [newCityEnabled, setNewCityEnabled] = useState('1');
   const [citySaving, setCitySaving] = useState(false);
   const [cityError, setCityError] = useState<string | null>(null);
+  const [parentCustomerText, setParentCustomerText] = useState('');
+  const [showParentCustomerList, setShowParentCustomerList] = useState(false);
+  const [isParentCustomerEditing, setIsParentCustomerEditing] = useState(false);
+  const parentListCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialValuesSyncedRef = useRef(false);
 
   const fieldDefinitions = useMemo(
     () =>
       buildFieldDefinitions(
-        customerGroups,
-        parentCustomers,
-        pricingPolicies,
-        importanceOptions,
+        localCustomerGroups,
+        localParentCustomers,
+        localPricingPolicies,
+        localImportanceOptions,
         countryOptions,
       ),
-    [customerGroups, parentCustomers, pricingPolicies, importanceOptions, countryOptions],
+    [countryOptions, localCustomerGroups, localImportanceOptions, localParentCustomers, localPricingPolicies],
   );
 
   const initialValues = useMemo(() => {
-    const defaultPricingPolicyId = resolveDefaultPricingPolicyId(pricingPolicies);
+    const defaultPricingPolicyId = resolveDefaultPricingPolicyId(localPricingPolicies);
     const next: Record<string, string> = {};
     fieldDefinitions.forEach((field) => {
       if (field.id === 'isParent') {
@@ -294,18 +334,42 @@ export default function CustomerCreateClient({
       next[field.id] = '';
     });
     return next;
-  }, [fieldDefinitions, pricingPolicies]);
+  }, [fieldDefinitions, localPricingPolicies]);
 
   const [values, setValues] = useState(initialValues);
   const { warnings: duplicateWarnings, check: checkDuplicates } = useDuplicateCheck('customer');
 
   useEffect(() => {
-    setValues(initialValues);
+    if (!initialValuesSyncedRef.current) {
+      setValues(initialValues);
+      initialValuesSyncedRef.current = true;
+      return;
+    }
+    setValues((prev) => {
+      if (prev.pricingPolicy || !initialValues.pricingPolicy) return prev;
+      return { ...prev, pricingPolicy: initialValues.pricingPolicy };
+    });
   }, [initialValues]);
 
   useEffect(() => {
     checkDuplicates({ name: values.name, taxId: values.taxId });
   }, [values.name, values.taxId, checkDuplicates]);
+
+  useEffect(() => {
+    setLocalCustomerGroups(customerGroups);
+  }, [customerGroups]);
+
+  useEffect(() => {
+    setLocalParentCustomers(parentCustomers);
+  }, [parentCustomers]);
+
+  useEffect(() => {
+    setLocalPricingPolicies(pricingPolicies);
+  }, [pricingPolicies]);
+
+  useEffect(() => {
+    setLocalImportanceOptions(importanceOptions);
+  }, [importanceOptions]);
 
   useEffect(() => {
     setCountryOptions(countries);
@@ -315,8 +379,74 @@ export default function CustomerCreateClient({
     setCityOptions(cities);
   }, [cities]);
 
+  const clearParentListCloseTimer = useCallback(() => {
+    if (parentListCloseTimerRef.current) {
+      clearTimeout(parentListCloseTimerRef.current);
+      parentListCloseTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(
+    () => () => {
+      clearParentListCloseTimer();
+    },
+    [clearParentListCloseTimer],
+  );
+
+  useEffect(() => {
+    let active = true;
+
+    const loadLookups = async () => {
+      try {
+        const params = new URLSearchParams();
+        LOOKUP_KEYS.forEach((key) => params.append('keys', key));
+        const response = await fetch(`/api/customers/lookups?${params.toString()}`, { cache: 'no-store' });
+        const payload = (await response.json().catch(() => null)) as CustomerLookupsResponse | null;
+        if (!response.ok || !payload?.ok || !payload.lookups) {
+          throw new Error(payload?.error ?? 'Unable to load customer lookups.');
+        }
+        if (!active) return;
+        setLocalCustomerGroups(
+          Array.isArray(payload.lookups.customerGroups) ? payload.lookups.customerGroups : [],
+        );
+        setLocalParentCustomers(
+          Array.isArray(payload.lookups.parentCustomers) ? payload.lookups.parentCustomers : [],
+        );
+        setLocalPricingPolicies(
+          Array.isArray(payload.lookups.pricingPolicies) ? payload.lookups.pricingPolicies : [],
+        );
+        setLocalImportanceOptions(
+          Array.isArray(payload.lookups.importanceOptions) ? payload.lookups.importanceOptions : [],
+        );
+        setCountryOptions(Array.isArray(payload.lookups.countries) ? payload.lookups.countries : []);
+        setCityOptions(Array.isArray(payload.lookups.cities) ? payload.lookups.cities : []);
+      } catch (err) {
+        if (!active) return;
+        console.error('Failed to load create-customer lookups', err);
+        showToastMessage('Unable to load customer lookups.', 'warning');
+      }
+    };
+
+    void loadLookups();
+    return () => {
+      active = false;
+    };
+  }, []);
+
 
   const selectedCountryId = values.country ?? '';
+
+  useEffect(() => {
+    if (isParentCustomerEditing) return;
+    const selectedValue = values.parentCustomer ?? '';
+    if (!selectedValue) {
+      setParentCustomerText((prev) => (prev ? '' : prev));
+      return;
+    }
+    const selectedOption = localParentCustomers.find((option) => option.value === selectedValue);
+    const nextText = selectedOption?.label ?? selectedValue;
+    setParentCustomerText((prev) => (prev === nextText ? prev : nextText));
+  }, [isParentCustomerEditing, localParentCustomers, values.parentCustomer]);
 
   useEffect(() => {
     if (!isAddCityOpen) return;
@@ -337,6 +467,16 @@ export default function CustomerCreateClient({
     [cityOptions, selectedCountryId],
   );
 
+  const filteredParentCustomers = useMemo(() => {
+    const search = parentCustomerText.trim().toLowerCase();
+    if (!search) return localParentCustomers;
+    return localParentCustomers.filter((option) => {
+      const label = option.label?.toLowerCase() ?? '';
+      const value = option.value?.toLowerCase() ?? '';
+      return label.includes(search) || value.includes(search);
+    });
+  }, [localParentCustomers, parentCustomerText]);
+
   useEffect(() => {
     if (!values.city) return;
     if (!filteredCityOptions.some((option) => option.value === values.city)) {
@@ -353,6 +493,70 @@ export default function CustomerCreateClient({
       return next;
     });
   }, []);
+
+  const findParentCustomerOption = useCallback((text: string): CustomerDropdownOption | null => {
+    const normalized = text.trim().toLowerCase();
+    if (!normalized) return null;
+    return localParentCustomers.find((option) => {
+      const label = option.label?.trim().toLowerCase() ?? '';
+      const value = option.value?.trim().toLowerCase() ?? '';
+      return label === normalized || value === normalized;
+    }) ?? null;
+  }, [localParentCustomers]);
+
+  const setParentCustomerSelection = useCallback((option: CustomerDropdownOption | null, text: string) => {
+    setParentCustomerText(text);
+    setValues((prev) => ({ ...prev, parentCustomer: option?.value ?? '' }));
+    setShowParentCustomerList(false);
+    setErrors((prev) => {
+      if (!prev.parentCustomer) return prev;
+      const next = { ...prev };
+      delete next.parentCustomer;
+      return next;
+    });
+  }, []);
+
+  const handleParentCustomerInputChange = useCallback((text: string) => {
+    clearParentListCloseTimer();
+    setParentCustomerText(text);
+    setShowParentCustomerList(true);
+    const exactMatch = findParentCustomerOption(text);
+    setValues((prev) => ({ ...prev, parentCustomer: exactMatch?.value ?? '' }));
+    setErrors((prev) => {
+      if (!prev.parentCustomer) return prev;
+      const next = { ...prev };
+      delete next.parentCustomer;
+      return next;
+    });
+  }, [clearParentListCloseTimer, findParentCustomerOption]);
+
+  const handleParentCustomerBlur = useCallback(() => {
+    setIsParentCustomerEditing(false);
+    clearParentListCloseTimer();
+    parentListCloseTimerRef.current = setTimeout(() => {
+      setShowParentCustomerList(false);
+      parentListCloseTimerRef.current = null;
+    }, 120);
+    const trimmed = parentCustomerText.trim();
+    if (!trimmed) {
+      setParentCustomerSelection(null, '');
+      return;
+    }
+    const match = findParentCustomerOption(trimmed);
+    if (!match) {
+      const selectedOption = localParentCustomers.find((option) => option.value === values.parentCustomer);
+      setParentCustomerText(selectedOption?.label ?? '');
+      return;
+    }
+    setParentCustomerSelection(match, match.label);
+  }, [
+    clearParentListCloseTimer,
+    findParentCustomerOption,
+    localParentCustomers,
+    parentCustomerText,
+    setParentCustomerSelection,
+    values.parentCustomer,
+  ]);
 
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
@@ -564,6 +768,48 @@ export default function CustomerCreateClient({
     const hasError = Boolean(fieldError);
     const showErrorText = typeof fieldError === 'string' && fieldError.length > 0 && fieldError !== 'Required';
     const className = `${panelStyles.fieldControl} ${hasError ? panelStyles.fieldControlError : ''}`;
+
+    if (field.id === 'parentCustomer') {
+      return (
+        <div className={`${styles.controlStack} ${styles.comboWrapper}`}>
+          <input
+            autoComplete="off"
+            id={`customer-create-${field.id}`}
+            name={field.id}
+            className={`${className} ${styles.comboInput}`}
+            value={parentCustomerText}
+            placeholder="Type to filter parent customers"
+            onChange={(event) => handleParentCustomerInputChange(event.target.value)}
+            onBlur={handleParentCustomerBlur}
+            onFocus={(event) => {
+              setIsParentCustomerEditing(true);
+              clearParentListCloseTimer();
+              event.target.select();
+              setShowParentCustomerList(true);
+            }}
+          />
+          {showParentCustomerList && filteredParentCustomers.length > 0 ? (
+            <div className={styles.comboList}>
+              {filteredParentCustomers.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={styles.comboOption}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    clearParentListCloseTimer();
+                    setParentCustomerSelection(option, option.label);
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {showErrorText ? <div className={styles.fieldError}>{fieldError}</div> : null}
+        </div>
+      );
+    }
 
     if (field.type === 'select') {
       const options = field.id === 'city' ? filteredCityOptions : field.options ?? [];

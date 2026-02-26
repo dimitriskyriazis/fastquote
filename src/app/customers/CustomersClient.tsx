@@ -238,7 +238,6 @@ export default function CustomersClient() {
         field: "TaxID",
         headerName: "Tax ID",
         filter: "agTextColumnFilter",
-        editable: true,
       },
       {
         field: "IsParent",
@@ -272,6 +271,16 @@ export default function CustomersClient() {
         headerName: "Importance",
         filter: "agTextColumnFilter",
         enableRowGroup: true,
+      },
+      {
+        field: "Country",
+        headerName: "Country",
+        filter: "agTextColumnFilter",
+      },
+      {
+        field: "City",
+        headerName: "City",
+        filter: "agTextColumnFilter",
       },
       {
         field: "Enabled",

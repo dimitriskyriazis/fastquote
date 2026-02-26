@@ -32,6 +32,8 @@ type CustomerRow = {
   ParentCustomer: string | null;
   PricingPolicy: string | null;
   Importance: string | null;
+  Country: string | null;
+  City: string | null;
   Enabled: boolean | number | null;
 };
 
@@ -67,6 +69,8 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   ParentCustomer: "parentCustomer.Name",
   PricingPolicy: "dbo.PricingPolicies.Name",
   Importance: "dbo.Customers.Importance",
+  Country: "country.Name",
+  City: "city.Name",
   Enabled: "dbo.Customers.Enabled",
 };
 
@@ -239,6 +243,8 @@ export async function POST(req: NextRequest) {
         parentCustomer.Name AS ParentCustomer,
         dbo.PricingPolicies.Name AS PricingPolicy,
         dbo.Customers.Importance,
+        country.Name AS Country,
+        city.Name AS City,
         dbo.Customers.Enabled
     `;
 
@@ -246,6 +252,8 @@ export async function POST(req: NextRequest) {
       FROM dbo.Customers
       INNER JOIN dbo.PricingPolicies ON dbo.Customers.PricingPolicyID = dbo.PricingPolicies.ID
       LEFT OUTER JOIN dbo.Customers AS parentCustomer ON dbo.Customers.ParentCustomerID = parentCustomer.ID
+      LEFT OUTER JOIN dbo.Countries AS country ON dbo.Customers.CountryID = country.ID
+      LEFT OUTER JOIN dbo.Cities AS city ON dbo.Customers.CityID = city.ID
     `;
 
     const normalizedFilterModel = ensureEnabledFilterModel(requestPayload.filterModel);

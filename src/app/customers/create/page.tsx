@@ -1,32 +1,8 @@
 import Link from 'next/link';
 import CustomerCreateClient from './CustomerCreateClient';
 import layoutStyles from '../customerDetail.module.css';
-import {
-  fetchCities,
-  fetchCountries,
-  fetchCustomerGroups,
-  fetchCustomers,
-  fetchImportanceOptions,
-  fetchPricingPolicies,
-} from '../[customerId]/customerBasicDataLookups';
 
-export default async function Page() {
-  const [
-    customerGroups,
-    parentCustomers,
-    pricingPolicies,
-    importanceOptions,
-    countries,
-    cities,
-  ] = await Promise.all([
-    fetchCustomerGroups(),
-    fetchCustomers(),
-    fetchPricingPolicies(),
-    fetchImportanceOptions(),
-    fetchCountries(),
-    fetchCities(),
-  ]);
-
+export default function Page() {
   const formId = 'customer-create-form';
 
   return (
@@ -51,12 +27,12 @@ export default async function Page() {
       </div>
       <div className={layoutStyles.pageBody}>
         <CustomerCreateClient
-          customerGroups={customerGroups}
-          parentCustomers={parentCustomers}
-          pricingPolicies={pricingPolicies}
-          importanceOptions={importanceOptions}
-          countries={countries}
-          cities={cities}
+          customerGroups={[]}
+          parentCustomers={[]}
+          pricingPolicies={[]}
+          importanceOptions={[]}
+          countries={[]}
+          cities={[]}
           formId={formId}
         />
       </div>

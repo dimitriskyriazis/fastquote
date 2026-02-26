@@ -84,7 +84,7 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   WebLink: 3,
   Warning: 2,
   Address: 3,
-  Country: 3,
+  Country: 2,
   City1: 2,
   City2: 2,
   Website: 3,
