@@ -2618,6 +2618,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     const column: ColDef = {
       field,
       headerName,
+      hide: true,
       filter: 'agTextColumnFilter',
       headerClass: styles.requestedHeader,
       cellClassRules: requestedCellClassRules,
@@ -2712,6 +2713,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     RequestedQuantity: {
       field: 'RequestedQuantity',
       headerName: 'Req. Qty',
+      hide: true,
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: zeroBlankNumberFormatter,
@@ -2908,6 +2910,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     const requestedItemNoColumn: ColDef = {
       field: 'RequestedItemNo',
       headerName: 'Req. Item No',
+      hide: true,
       filter: 'agTextColumnFilter',
       headerClass: [styles.requestedHeader, 'ag-right-aligned-header'],
       cellClassRules: requestedCellClassRules,
