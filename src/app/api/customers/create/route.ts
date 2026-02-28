@@ -38,7 +38,7 @@ const createCustomerSchema = z.object({
   }).optional().default(1),
   address: stringSchema(2000),
   countryId: positiveIntSchema,
-  cityId: positiveIntSchema,
+  city: stringSchema(256),
   phone: stringSchema(128),
   email: emailSchema,
   webSite: urlSchema,
@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
     const enabled = body.enabled ?? 1;
     const address = body.address;
     const countryId = body.countryId;
-    const cityId = body.cityId;
+    const city = body.city ?? null;
     const phone = body.phone;
     const email = body.email;
     const webSite = body.webSite;
@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
     request.input('Enabled', sql.Bit, enabled ?? 1);
     request.input('Address', sql.NVarChar(2000), address);
     request.input('CountryID', sql.Int, countryId);
-    request.input('CityID', sql.Int, cityId);
+    request.input('City', sql.NVarChar(256), city);
     request.input('Phone', sql.NVarChar(128), phone);
     request.input('Email', sql.NVarChar(256), email);
     request.input('WebSite', sql.NVarChar(512), webSite);
@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
         Enabled,
         Address,
         CountryID,
-        CityID,
+        City,
         Phone,
         Email,
         WebSite,
@@ -175,7 +175,7 @@ export async function POST(req: NextRequest) {
         @Enabled,
         @Address,
         @CountryID,
-        @CityID,
+        @City,
         @Phone,
         @Email,
         @WebSite,

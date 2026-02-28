@@ -13,31 +13,12 @@ type GridRequest = {
 
 type GridBody = {
   request?: GridRequest | null;
-  fields?: string[] | null;
 };
 
 type RawRow = {
   CountryID: number | null;
   Country: string | null;
-  CityID: number | null;
-  City: string | null;
-};
-
-type CountryRow = {
-  CountryID: number;
-  Country: string;
-  cities: Array<{ id: number; name: string }>;
-};
-
-const CITY_FIELD_PREFIX = "City";
-
-const parseCityFieldIndex = (field: string): number | null => {
-  if (!field.startsWith(CITY_FIELD_PREFIX)) return null;
-  const suffix = field.slice(CITY_FIELD_PREFIX.length);
-  if (!suffix) return null;
-  const parsed = Number.parseInt(suffix, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return parsed;
+  Enabled: boolean | number | null;
 };
 
 type TextFilterModel = {
@@ -160,55 +141,21 @@ export async function POST(req: NextRequest) {
 
     const body = (await req.json().catch(() => null)) as GridBody | null;
     const request = body?.request ?? {};
-    const fields = Array.isArray(body?.fields) ? body?.fields.filter((f) => typeof f === "string") : [];
 
     const pool = await getPool();
     const dbResult = await pool.request().query<RawRow>(`
-      SELECT c.ID AS CountryID, c.Name AS Country, ct.ID AS CityID, ct.Name AS City
-      FROM dbo.Countries c
-      LEFT JOIN dbo.Cities ct
-        ON c.ID = ct.CountryID
-       AND ct.Enabled = 1
-      WHERE c.Enabled = 1
-      ORDER BY c.Name, ct.Name
+      SELECT ID AS CountryID, Name AS Country, Enabled
+      FROM dbo.Countries
+      ORDER BY Name
     `);
 
-    const ordered: CountryRow[] = [];
-    const indexById = new Map<number, CountryRow>();
-    for (const row of dbResult.recordset ?? []) {
-      const id = row.CountryID;
-      const name = row.Country?.trim() ?? "";
-      if (id == null || !name) continue;
-      let entry = indexById.get(id);
-      if (!entry) {
-        entry = { CountryID: id, Country: name, cities: [] };
-        indexById.set(id, entry);
-        ordered.push(entry);
-      }
-      const cityName = row.City?.trim();
-      const cityId = row.CityID;
-      if (cityName && typeof cityId === "number") entry.cities.push({ id: cityId, name: cityName });
-    }
-
-    const maxCityField = fields
-      .map((field) => parseCityFieldIndex(field) ?? 0)
-      .reduce((max, idx) => Math.max(max, idx), 0);
-
-    const maxCities = maxCityField > 0
-      ? maxCityField
-      : ordered.reduce((max, row) => Math.max(max, row.cities.length), 0);
-
-    const rows = ordered.map((row) => {
-      const record: Record<string, unknown> = {
+    const rows: Record<string, unknown>[] = (dbResult.recordset ?? [])
+      .filter((row) => row.CountryID != null)
+      .map((row) => ({
         CountryID: row.CountryID,
-        Country: row.Country,
-      };
-      for (let i = 0; i < maxCities; i += 1) {
-        record[`City${i + 1}`] = row.cities[i]?.name ?? "";
-        record[`City${i + 1}Id`] = row.cities[i]?.id ?? null;
-      }
-      return record;
-    });
+        Country: row.Country?.trim() ?? "",
+        Enabled: row.Enabled,
+      }));
 
     const quickFiltered = request?.quickFilterText ? applyQuickFilter(rows, request.quickFilterText) : rows;
     const filtered = applyFilterModel(quickFiltered, request?.filterModel ?? null);

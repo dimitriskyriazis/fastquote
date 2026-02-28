@@ -49,7 +49,6 @@ type SupplierRow = {
 };
 
 type Props = {
-  cities: Array<{ id: number; name: string }>;
   countries: Array<{ id: number; name: string }>;
 };
 
@@ -102,12 +101,11 @@ function normalizeSupplierContextMenuItems(
   });
 }
 
-export default function SuppliersClient({ cities, countries }: Props) {
+export default function SuppliersClient({ countries }: Props) {
   const router = useRouter();
   const { roles } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
-  const cityOptions = useMemo(() => ["", ...cities.map((c) => c.name)], [cities]);
   const countryOptions = useMemo(() => ["", ...countries.map((c) => c.name)], [countries]);
   const [refreshToken, setRefreshToken] = useState(0);
   const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
@@ -221,16 +219,6 @@ export default function SuppliersClient({ cities, countries }: Props) {
         filter: "agTextColumnFilter",
         enableRowGroup: true,
         editable: true,
-        cellEditor: "agSelectCellEditor",
-        cellEditorParams: {
-          values: cityOptions,
-        },
-        valueSetter: (params) => {
-          const next = typeof params.newValue === "string" ? params.newValue : "";
-          params.data = params.data ?? {};
-          (params.data as Record<string, unknown>).City = next;
-          return true;
-        },
       },
       {
         field: "PostalCode",
@@ -285,7 +273,7 @@ export default function SuppliersClient({ cities, countries }: Props) {
         },
       },
     ],
-    [enabledOptions, cityOptions, countryOptions],
+    [enabledOptions, countryOptions],
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
@@ -385,7 +373,6 @@ export default function SuppliersClient({ cities, countries }: Props) {
         open={isAddSupplierOpen}
         onClose={() => setIsAddSupplierOpen(false)}
         onCreated={handleSupplierCreated}
-        cities={cities}
         countries={countries}
       />
     </>

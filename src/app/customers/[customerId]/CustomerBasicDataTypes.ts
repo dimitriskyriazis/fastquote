@@ -21,8 +21,7 @@ export type CustomerBasicRecord = {
   Address: string | null;
   CountryID: number | null;
   CountryName: string | null;
-  CityID: number | null;
-  CityName: string | null;
+  City: string | null;
   Phone: string | null;
   Email: string | null;
   WebSite: string | null;
@@ -30,10 +29,6 @@ export type CustomerBasicRecord = {
 };
 
 export type CustomerDropdownOption = DropdownOption;
-
-export type CustomerCityOption = CustomerDropdownOption & {
-  countryId: number | null;
-};
 
 export type CustomerBasicUpdateField =
   | 'Name'
@@ -51,7 +46,7 @@ export type CustomerBasicUpdateField =
   | 'Enabled'
   | 'Address'
   | 'CountryID'
-  | 'CityID'
+  | 'City'
   | 'Phone'
   | 'Email'
   | 'WebSite'

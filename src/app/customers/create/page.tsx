@@ -32,7 +32,6 @@ export default function Page() {
           pricingPolicies={[]}
           importanceOptions={[]}
           countries={[]}
-          cities={[]}
           formId={formId}
         />
       </div>

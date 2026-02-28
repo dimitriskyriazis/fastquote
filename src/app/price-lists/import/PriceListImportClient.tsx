@@ -56,7 +56,6 @@ type Props = {
   suppliers: DropdownOption[];
   currencies: DropdownOption[];
   countries: DropdownOption[];
-  cities: DropdownOption[];
   pricingPolicies: DropdownOption[];
   pricingPolicyRules: PricingPolicyRuleOption[];
   users: DropdownOption[];
@@ -729,7 +728,6 @@ export default function PriceListImportClient({
   suppliers,
   currencies,
   countries,
-  cities,
   pricingPolicies,
   pricingPolicyRules,
   users,
@@ -825,14 +823,6 @@ export default function PriceListImportClient({
     }
   }, [currentUserId, values.responsibleUserId]);
 
-  // Convert dropdown options to the format expected by AddSupplierModal
-  const citiesForModal = useMemo(() =>
-    cities.map((city) => ({
-      id: Number(city.value),
-      name: city.label,
-    })),
-    [cities]
-  );
 
   const countriesForModal = useMemo(() =>
     countries.map((country) => ({
@@ -2274,7 +2264,6 @@ export default function PriceListImportClient({
         open={isAddSupplierOpen}
         onClose={() => setIsAddSupplierOpen(false)}
         onCreated={handleSupplierCreated}
-        cities={citiesForModal}
         countries={countriesForModal}
       />
     </main>

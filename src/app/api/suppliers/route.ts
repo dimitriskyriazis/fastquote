@@ -64,7 +64,7 @@ const COLUMN_EXPRESSIONS: Record<SupplierField, string> = {
   Name: "dbo.Suppliers.Name",
   TaxID: "dbo.Suppliers.TaxID",
   Address: "dbo.Suppliers.Address",
-  City: "dbo.Cities.Name",
+  City: "dbo.Suppliers.City",
   Country: "dbo.Countries.Name",
   PostalCode: "dbo.Suppliers.PostalCode",
   Phone: "dbo.Suppliers.Phone",
@@ -233,7 +233,7 @@ const fetchSupplierAuditRows = async (
       s.Name,
       s.TaxID,
       s.Address,
-      c.Name AS City,
+      s.City,
       co.Name AS Country,
       s.PostalCode,
       s.Phone,
@@ -241,7 +241,6 @@ const fetchSupplierAuditRows = async (
       s.Comments,
       s.Enabled
     FROM dbo.Suppliers AS s
-    LEFT JOIN dbo.Cities AS c ON s.CityID = c.ID
     LEFT JOIN dbo.Countries AS co ON s.CountryID = co.ID
     WHERE s.ID IN (${ids.map((_, idx) => `@auditId${idx}`).join(", ")})
   `);
@@ -314,7 +313,7 @@ export async function POST(req: NextRequest) {
         dbo.Suppliers.Name,
         dbo.Suppliers.TaxID,
         dbo.Suppliers.Address,
-        dbo.Cities.Name AS City,
+        dbo.Suppliers.City,
         dbo.Countries.Name AS Country,
         dbo.Suppliers.PostalCode,
         dbo.Suppliers.Phone,
@@ -322,7 +321,6 @@ export async function POST(req: NextRequest) {
         dbo.Suppliers.Comments,
         dbo.Suppliers.Enabled
       FROM dbo.Suppliers
-      LEFT OUTER JOIN dbo.Cities ON dbo.Suppliers.CityID = dbo.Cities.ID
       LEFT OUTER JOIN dbo.Countries ON dbo.Suppliers.CountryID = dbo.Countries.ID
     `;
 
@@ -418,38 +416,15 @@ export async function PATCH(req: NextRequest) {
           WHERE ID = @supplierId
         `);
       } else if (update.field === "City") {
-        const cityName = normalizeTextValue(update.value);
-        if (!cityName) {
-          request.input("cityId", sql.Int, null);
-          await request.query(`
-            UPDATE dbo.Suppliers
-            SET CityID = @cityId,
-              ModifiedOn = SYSUTCDATETIME(),
-              ModifiedBy = @userId
-            WHERE ID = @supplierId
-          `);
-        } else {
-          const lookup = pool.request();
-          lookup.input("cityName", sql.NVarChar, cityName);
-          const lookupResult = await lookup.query<{ ID: number }>(`
-            SELECT TOP 1 ID
-            FROM dbo.Cities
-            WHERE Name = @cityName
-            ORDER BY ID
-          `);
-          const cityId = lookupResult.recordset?.[0]?.ID ?? null;
-          if (cityId == null) {
-            throw new SupplierUpdateError(`City "${cityName}" not found`, 400);
-          }
-          request.input("cityId", sql.Int, cityId);
-          await request.query(`
-            UPDATE dbo.Suppliers
-            SET CityID = @cityId,
-              ModifiedOn = SYSUTCDATETIME(),
-              ModifiedBy = @userId
-            WHERE ID = @supplierId
-          `);
-        }
+        const cityValue = normalizeTextValue(update.value) || null;
+        request.input("cityValue", sql.NVarChar, cityValue);
+        await request.query(`
+          UPDATE dbo.Suppliers
+          SET City = @cityValue,
+            ModifiedOn = SYSUTCDATETIME(),
+            ModifiedBy = @userId
+          WHERE ID = @supplierId
+        `);
       } else if (update.field === "Country") {
         const countryName = normalizeTextValue(update.value);
         if (!countryName) {

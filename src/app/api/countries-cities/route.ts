@@ -10,12 +10,9 @@ type UpdateInput = {
   CountryID?: number | string | null;
   field?: string | null;
   value?: unknown;
-  cityId?: number | string | null;
 };
 
-type NormalizedUpdate =
-  | { kind: "Country"; countryId: number; value: string }
-  | { kind: "City"; countryId: number; cityId: number; value: string };
+type NormalizedUpdate = { kind: "Country"; countryId: number; value: string };
 
 const normalizeId = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
@@ -48,17 +45,8 @@ export async function PATCH(req: NextRequest) {
         const countryId = normalizeId(entry?.CountryID ?? null);
         const field = typeof entry?.field === "string" ? entry.field : null;
         const value = normalizeText(entry?.value);
-        if (!countryId || !field) return null;
-        if (field === "Country") {
-          if (!value) return null;
-          return { kind: "Country", countryId, value };
-        }
-        if (field.startsWith("City")) {
-          const cityId = normalizeId(entry?.cityId ?? null);
-          if (!cityId || !value) return null;
-          return { kind: "City", countryId, cityId, value };
-        }
-        return null;
+        if (!countryId || field !== "Country" || !value) return null;
+        return { kind: "Country" as const, countryId, value };
       })
       .filter((entry): entry is NormalizedUpdate => entry != null);
 
@@ -70,32 +58,17 @@ export async function PATCH(req: NextRequest) {
     const userId = resolveAuditUserId(req);
 
     for (const update of normalized) {
-      if (update.kind === "Country") {
-        const request = pool.request();
-        request.input("countryId", sql.Int, update.countryId);
-        request.input("name", sql.NVarChar(512), update.value);
-        request.input("userId", sql.NVarChar(450), userId ?? null);
-        await request.query(`
-          UPDATE dbo.Countries
-          SET Name = @name,
-              ModifiedOn = SYSUTCDATETIME(),
-              ModifiedBy = @userId
-          WHERE ID = @countryId
-        `);
-      } else if (update.kind === "City") {
-        const request = pool.request();
-        request.input("cityId", sql.Int, update.cityId);
-        request.input("countryId", sql.Int, update.countryId);
-        request.input("name", sql.NVarChar(512), update.value);
-        request.input("userId", sql.NVarChar(450), userId ?? null);
-        await request.query(`
-          UPDATE dbo.Cities
-          SET Name = @name,
-              ModifiedOn = SYSUTCDATETIME(),
-              ModifiedBy = @userId
-          WHERE ID = @cityId AND CountryID = @countryId
-        `);
-      }
+      const request = pool.request();
+      request.input("countryId", sql.Int, update.countryId);
+      request.input("name", sql.NVarChar(512), update.value);
+      request.input("userId", sql.NVarChar(450), userId ?? null);
+      await request.query(`
+        UPDATE dbo.Countries
+        SET Name = @name,
+            ModifiedOn = SYSUTCDATETIME(),
+            ModifiedBy = @userId
+        WHERE ID = @countryId
+      `);
     }
 
     return NextResponse.json({ ok: true, updated: normalized.length });
@@ -168,10 +141,6 @@ export async function DELETE(req: NextRequest) {
         return NextResponse.json({ ok: false, error: message }, { status: 409 });
       }
 
-      const deleteCities = await request.query(`
-        DELETE FROM dbo.Cities
-        WHERE CountryID IN (${placeholders});
-      `);
       const deleteCountries = await request.query(`
         DELETE FROM dbo.Countries
         WHERE ID IN (${placeholders});
@@ -181,7 +150,6 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({
         ok: true,
         deletedCountries: deleteCountries.rowsAffected?.[0] ?? 0,
-        deletedCities: deleteCities.rowsAffected?.[0] ?? 0,
       });
     } catch (err) {
       await transaction.rollback().catch(() => {});

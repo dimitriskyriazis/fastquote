@@ -5,14 +5,12 @@ import { requirePermission } from '../../../../lib/authz';
 import { toDropdownOptions, type DropdownOption, type RawDropdownRow } from '../../../../lib/dropdownOptions';
 
 type LookupRow = RawDropdownRow & { ID: number | string | null; Name: string | null };
-type CityRow = { ID: number | null; Name: string | null; CountryID: number | null };
 type LookupKey =
   | 'customerGroups'
   | 'parentCustomers'
   | 'pricingPolicies'
   | 'importanceOptions'
-  | 'countries'
-  | 'cities';
+  | 'countries';
 
 type CustomerLookupsPayload = {
   customerGroups?: DropdownOption[];
@@ -20,7 +18,6 @@ type CustomerLookupsPayload = {
   pricingPolicies?: DropdownOption[];
   importanceOptions?: DropdownOption[];
   countries?: DropdownOption[];
-  cities?: Array<DropdownOption & { countryId: number | null }>;
 };
 
 const LOOKUP_KEYS: LookupKey[] = [
@@ -29,7 +26,6 @@ const LOOKUP_KEYS: LookupKey[] = [
   'pricingPolicies',
   'importanceOptions',
   'countries',
-  'cities',
 ];
 
 const IMPORTANCE_VALUES = ['', '1', '2', '3'];
@@ -99,22 +95,6 @@ async function fetchCountries() {
   return mapLookupRows(result.recordset);
 }
 
-async function fetchCities() {
-  const pool = await getPool();
-  const result = await pool.request().query<CityRow>(`
-    SELECT ID, Name, CountryID
-    FROM dbo.Cities
-    ORDER BY Name
-  `);
-  return (result.recordset ?? [])
-    .filter((row) => row.ID != null)
-    .map((row) => ({
-      value: String(row.ID),
-      label: row.Name?.trim() || `City ${String(row.ID)}`,
-      countryId: row.CountryID ?? null,
-    }));
-}
-
 export async function GET(req: NextRequest) {
   logRequest(req, '/api/customers/lookups');
   try {
@@ -144,9 +124,7 @@ export async function GET(req: NextRequest) {
         }
         if (key === 'countries') {
           payload.countries = await fetchCountries();
-          return;
         }
-        payload.cities = await fetchCities();
       }),
     );
 

@@ -6,18 +6,17 @@ import { toDropdownOptions, type DropdownOption, type RawDropdownRow } from '../
 
 type LookupRow = RawDropdownRow & { ID: number | null; Name: string | null };
 type UserLookupRow = LookupRow & { UserName?: string | null };
-type LookupKey = 'brands' | 'countries' | 'cities' | 'suppliers' | 'currencies' | 'users';
+type LookupKey = 'brands' | 'countries' | 'suppliers' | 'currencies' | 'users';
 
 type PriceListLookupsPayload = {
   brands?: DropdownOption[];
   countries?: DropdownOption[];
-  cities?: DropdownOption[];
   suppliers?: DropdownOption[];
   currencies?: DropdownOption[];
   users?: DropdownOption[];
 };
 
-const LOOKUP_KEYS: LookupKey[] = ['brands', 'countries', 'cities', 'suppliers', 'currencies', 'users'];
+const LOOKUP_KEYS: LookupKey[] = ['brands', 'countries', 'suppliers', 'currencies', 'users'];
 
 const mapLookupRows = (rows: LookupRow[] | undefined | null): DropdownOption[] =>
   toDropdownOptions<LookupRow>(rows);
@@ -55,16 +54,6 @@ async function fetchCountries() {
   const result = await pool.request().query<LookupRow>(`
     SELECT ID, Name
     FROM dbo.Countries
-    ORDER BY Name
-  `);
-  return mapLookupRows(result.recordset);
-}
-
-async function fetchCities() {
-  const pool = await getPool();
-  const result = await pool.request().query<LookupRow>(`
-    SELECT ID, Name
-    FROM dbo.Cities
     ORDER BY Name
   `);
   return mapLookupRows(result.recordset);
@@ -119,10 +108,6 @@ export async function GET(req: NextRequest) {
         }
         if (key === 'countries') {
           payload.countries = await fetchCountries();
-          return;
-        }
-        if (key === 'cities') {
-          payload.cities = await fetchCities();
           return;
         }
         if (key === 'suppliers') {

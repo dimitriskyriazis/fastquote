@@ -50,7 +50,7 @@ const FIELD_CONFIG: Record<CustomerBasicUpdateField, FieldConfig> = {
   Enabled: { column: "Enabled", type: "number", sqlType: sql.Bit },
   Address: { column: "Address", type: "string", sqlType: sql.NVarChar, length: 2000 },
   CountryID: { column: "CountryID", type: "number", sqlType: sql.Int },
-  CityID: { column: "CityID", type: "number", sqlType: sql.Int },
+  City: { column: "City", type: "string", sqlType: sql.NVarChar, length: 256 },
   Phone: { column: "Phone", type: "string", sqlType: sql.NVarChar, length: 128 },
   Email: { column: "Email", type: "string", sqlType: sql.NVarChar, length: 256 },
   WebSite: { column: "WebSite", type: "string", sqlType: sql.NVarChar, length: 512 },
@@ -139,8 +139,7 @@ export async function GET(
         c.Address,
         c.CountryID,
         country.Name AS CountryName,
-        c.CityID,
-        city.Name AS CityName,
+        c.City,
         c.Phone,
         c.Email,
         c.WebSite,
@@ -149,7 +148,6 @@ export async function GET(
       LEFT JOIN dbo.CustomerGroups AS cg ON c.CustomerGroupID = cg.ID
       LEFT JOIN dbo.Customers AS parent ON c.ParentCustomerID = parent.ID
       LEFT JOIN dbo.Countries AS country ON c.CountryID = country.ID
-      LEFT JOIN dbo.Cities AS city ON c.CityID = city.ID
       LEFT JOIN dbo.PricingPolicies AS pp ON c.PricingPolicyID = pp.ID
       WHERE c.ID = @customerId
     `);

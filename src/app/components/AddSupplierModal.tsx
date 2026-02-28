@@ -19,16 +19,15 @@ type Props = {
   open: boolean;
   onClose: () => void;
   onCreated?: (supplier: { id: number; name: string }) => void;
-  cities: Array<{ id: number; name: string }>;
   countries: Array<{ id: number; name: string }>;
   overlayClassName?: string;
 };
 
-export default function AddSupplierModal({ open, onClose, onCreated, cities, countries, overlayClassName }: Props) {
+export default function AddSupplierModal({ open, onClose, onCreated, countries, overlayClassName }: Props) {
   const [name, setName] = useState('');
   const [taxId, setTaxId] = useState('');
   const [address, setAddress] = useState('');
-  const [cityId, setCityId] = useState<number | null>(null);
+  const [city, setCity] = useState('');
   const [countryId, setCountryId] = useState<number | null>(null);
   const [postalCode, setPostalCode] = useState('');
   const [phone, setPhone] = useState('');
@@ -43,7 +42,7 @@ export default function AddSupplierModal({ open, onClose, onCreated, cities, cou
     setName('');
     setTaxId('');
     setAddress('');
-    setCityId(null);
+    setCity('');
     setCountryId(null);
     setPostalCode('');
     setPhone('');
@@ -78,7 +77,7 @@ export default function AddSupplierModal({ open, onClose, onCreated, cities, cou
         name: trimmedName,
         taxId: taxId.trim() || null,
         address: address.trim() || null,
-        cityId: cityId ?? null,
+        city: city.trim() || null,
         countryId: countryId ?? null,
         postalCode: postalCode.trim() || null,
         phone: phone.trim() || null,
@@ -110,7 +109,7 @@ export default function AddSupplierModal({ open, onClose, onCreated, cities, cou
     } finally {
       setSaving(false);
     }
-  }, [name, taxId, address, cityId, countryId, postalCode, phone, webSite, comments, enabled, onClose, onCreated, resetForm]);
+  }, [name, taxId, address, city, countryId, postalCode, phone, webSite, comments, enabled, onClose, onCreated, resetForm]);
 
   return (
     <LookupModal
@@ -165,22 +164,12 @@ export default function AddSupplierModal({ open, onClose, onCreated, cities, cou
           <label className={lookupStyles.fieldLabel} htmlFor="supplier-city">
             City
           </label>
-          <select
+          <input
             id="supplier-city"
             className={lookupStyles.fieldControl}
-            value={cityId ?? ''}
-            onChange={(event) => {
-              const value = event.target.value;
-              setCityId(value ? Number.parseInt(value, 10) : null);
-            }}
-          >
-            <option value="">Select city...</option>
-            {cities.map((city) => (
-              <option key={city.id} value={city.id}>
-                {city.name}
-              </option>
-            ))}
-          </select>
+            value={city}
+            onChange={(event) => setCity(event.target.value)}
+          />
         </div>
         <div className={lookupStyles.fieldHalf}>
           <label className={lookupStyles.fieldLabel} htmlFor="supplier-country">

@@ -103,21 +103,6 @@ async function fetchCountries() {
   }
 }
 
-async function fetchCities() {
-  try {
-    const pool = await getPool();
-    const result = await pool.request().query<LookupRow>(`
-      SELECT ID, Name
-      FROM dbo.Cities
-      ORDER BY Name
-    `);
-    return mapLookupRows(result.recordset);
-  } catch (err) {
-    console.error('Failed to load cities', err);
-    return [];
-  }
-}
-
 async function fetchSuppliers() {
   try {
     const pool = await getPool();
@@ -325,10 +310,9 @@ export default async function PriceListBasicDataPanel({ priceListId, initialReco
     );
   }
 
-  const [brands, countries, cities, suppliers, currencies, users, pricingPoliciesByBrand, priceListPricingPolicies, allPricingPolicies, allPricingPolicyRules] = await Promise.all([
+  const [brands, countries, suppliers, currencies, users, pricingPoliciesByBrand, priceListPricingPolicies, allPricingPolicies, allPricingPolicyRules] = await Promise.all([
     fetchBrands(),
     fetchCountries(),
-    fetchCities(),
     fetchSuppliers(),
     fetchCurrencies(),
     fetchUsers(),
@@ -344,7 +328,6 @@ export default async function PriceListBasicDataPanel({ priceListId, initialReco
       record={record}
       brands={brands}
       countries={countries}
-      cities={cities}
       suppliers={suppliers}
       currencies={currencies}
       users={users}

@@ -25,7 +25,6 @@ type Props = {
   record: PriceListBasicRecord;
   brands: PriceListDropdownOption[];
   countries: PriceListDropdownOption[];
-  cities: PriceListDropdownOption[];
   suppliers: PriceListDropdownOption[];
   currencies: PriceListDropdownOption[];
   users: PriceListDropdownOption[];
@@ -43,11 +42,10 @@ type Props = {
     customerDiscountPercentage: number | null;
   }>;
 };
-type LookupKey = 'brands' | 'countries' | 'cities' | 'suppliers' | 'currencies' | 'users';
+type LookupKey = 'brands' | 'countries' | 'suppliers' | 'currencies' | 'users';
 type PriceListLookupsPayload = {
   brands?: PriceListDropdownOption[];
   countries?: PriceListDropdownOption[];
-  cities?: PriceListDropdownOption[];
   suppliers?: PriceListDropdownOption[];
   currencies?: PriceListDropdownOption[];
   users?: PriceListDropdownOption[];
@@ -254,7 +252,6 @@ export default function PriceListBasicDataClient({
   record,
   brands,
   countries,
-  cities,
   suppliers,
   currencies,
   users,
@@ -269,7 +266,6 @@ export default function PriceListBasicDataClient({
   // Local state for brands and suppliers (can be updated when new items are created)
   const [localBrands, setLocalBrands] = useState(brands);
   const [localCountries, setLocalCountries] = useState(countries);
-  const [localCities, setLocalCities] = useState(cities);
   const [localSuppliers, setLocalSuppliers] = useState(suppliers);
   const [localCurrencies, setLocalCurrencies] = useState(currencies);
   const [localUsers, setLocalUsers] = useState(users);
@@ -324,10 +320,6 @@ export default function PriceListBasicDataClient({
   }, [countries]);
 
   useEffect(() => {
-    setLocalCities(cities);
-  }, [cities]);
-
-  useEffect(() => {
     setLocalSuppliers(suppliers);
   }, [suppliers]);
 
@@ -356,7 +348,6 @@ export default function PriceListBasicDataClient({
       }
       if (payload.lookups.brands) setLocalBrands(payload.lookups.brands);
       if (payload.lookups.countries) setLocalCountries(payload.lookups.countries);
-      if (payload.lookups.cities) setLocalCities(payload.lookups.cities);
       if (payload.lookups.suppliers) setLocalSuppliers(payload.lookups.suppliers);
       if (payload.lookups.currencies) setLocalCurrencies(payload.lookups.currencies);
       if (payload.lookups.users) setLocalUsers(payload.lookups.users);
@@ -367,14 +358,6 @@ export default function PriceListBasicDataClient({
       pendingKeys.forEach((key) => lookupRefreshInFlightRef.current.delete(key));
     }
   }, []);
-
-  const citiesForModal = useMemo(() =>
-    localCities.map((city) => ({
-      id: Number(city.value),
-      name: city.label,
-    })),
-    [localCities]
-  );
 
   const countriesForModal = useMemo(() =>
     localCountries.map((country) => ({
@@ -1091,7 +1074,6 @@ export default function PriceListBasicDataClient({
         open={isAddSupplierOpen}
         onClose={() => setIsAddSupplierOpen(false)}
         onCreated={handleSupplierCreated}
-        cities={citiesForModal}
         countries={countriesForModal}
       />
     </>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import CustomerBasicDataClient from './CustomerBasicDataClient';
 import styles from './CustomerBasicDataPanel.module.css';
-import type { CustomerBasicRecord, CustomerDropdownOption, CustomerCityOption } from './CustomerBasicDataTypes';
+import type { CustomerBasicRecord, CustomerDropdownOption } from './CustomerBasicDataTypes';
 
 type Props = {
   customerId: string;
@@ -15,8 +15,7 @@ type LookupKey =
   | 'parentCustomers'
   | 'pricingPolicies'
   | 'importanceOptions'
-  | 'countries'
-  | 'cities';
+  | 'countries';
 
 type CustomerLookupsPayload = {
   customerGroups?: CustomerDropdownOption[];
@@ -24,7 +23,6 @@ type CustomerLookupsPayload = {
   pricingPolicies?: CustomerDropdownOption[];
   importanceOptions?: CustomerDropdownOption[];
   countries?: CustomerDropdownOption[];
-  cities?: CustomerCityOption[];
 };
 
 type CustomerBasicDataResponse = {
@@ -45,7 +43,6 @@ const LOOKUP_KEYS: LookupKey[] = [
   'pricingPolicies',
   'importanceOptions',
   'countries',
-  'cities',
 ];
 
 export default function CustomerBasicDataPanel({ customerId, initialRecord }: Props) {
@@ -57,7 +54,6 @@ export default function CustomerBasicDataPanel({ customerId, initialRecord }: Pr
   const [pricingPolicies, setPricingPolicies] = useState<CustomerDropdownOption[]>([]);
   const [importanceOptions, setImportanceOptions] = useState<CustomerDropdownOption[]>([]);
   const [countries, setCountries] = useState<CustomerDropdownOption[]>([]);
-  const [cities, setCities] = useState<CustomerCityOption[]>([]);
   const [loading, setLoading] = useState(initialRecord == null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -106,7 +102,6 @@ export default function CustomerBasicDataPanel({ customerId, initialRecord }: Pr
           Array.isArray(lookupsPayload.lookups.importanceOptions) ? lookupsPayload.lookups.importanceOptions : [],
         );
         setCountries(Array.isArray(lookupsPayload.lookups.countries) ? lookupsPayload.lookups.countries : []);
-        setCities(Array.isArray(lookupsPayload.lookups.cities) ? lookupsPayload.lookups.cities : []);
       } catch (err) {
         if (!active) return;
         console.error('Failed to load customer basic data page payload', err);
@@ -151,7 +146,6 @@ export default function CustomerBasicDataPanel({ customerId, initialRecord }: Pr
       pricingPolicies={pricingPolicies}
       importanceOptions={importanceOptions}
       countries={countries}
-      cities={cities}
     />
   );
 }

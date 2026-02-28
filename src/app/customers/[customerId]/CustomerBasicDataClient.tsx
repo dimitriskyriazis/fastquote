@@ -4,7 +4,6 @@ import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import styles from './CustomerBasicDataPanel.module.css';
 import offerFormStyles from '../../offers/create/OfferCreateClient.module.css';
 import offerPanelStyles from '../../offers/[offerId]/OfferBasicDataPanel.module.css';
-import type { DropdownOption } from '../../../lib/dropdownOptions';
 import lookupStyles from '../../components/LookupModal.module.css';
 import LookupModal from '../../components/LookupModal';
 import lookupButtonStyles from '../../components/LookupAddButton.module.css';
@@ -12,7 +11,6 @@ import type {
   CustomerBasicRecord,
   CustomerDropdownOption,
   CustomerBasicUpdateField,
-  CustomerCityOption,
 } from './CustomerBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
 import { formatDisplayValue } from '../../lib/formatDisplayValue';
@@ -27,22 +25,19 @@ type Props = {
   pricingPolicies: CustomerDropdownOption[];
   importanceOptions: CustomerDropdownOption[];
   countries: CustomerDropdownOption[];
-  cities: CustomerCityOption[];
 };
 type LookupKey =
   | 'customerGroups'
   | 'parentCustomers'
   | 'pricingPolicies'
   | 'importanceOptions'
-  | 'countries'
-  | 'cities';
+  | 'countries';
 type CustomerLookupsPayload = {
   customerGroups?: CustomerDropdownOption[];
   parentCustomers?: CustomerDropdownOption[];
   pricingPolicies?: CustomerDropdownOption[];
   importanceOptions?: CustomerDropdownOption[];
   countries?: CustomerDropdownOption[];
-  cities?: CustomerCityOption[];
 };
 
 type SectionKey = 'general' | 'business' | 'location' | 'contact' | 'notes';
@@ -214,9 +209,8 @@ const buildFieldDefinitions = (
     id: 'city',
     label: 'City',
     section: 'location',
-    recordKey: 'CityID',
-    updateField: 'CityID',
-    valueType: 'number',
+    recordKey: 'City',
+    updateField: 'City',
   },
   {
     id: 'phone',
@@ -300,14 +294,12 @@ export default function CustomerBasicDataClient({
   pricingPolicies,
   importanceOptions,
   countries,
-  cities,
 }: Props) {
   const [localCustomerGroups, setLocalCustomerGroups] = useState(customerGroups);
   const [localParentCustomers, setLocalParentCustomers] = useState(parentCustomers);
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
   const [localImportanceOptions, setLocalImportanceOptions] = useState(importanceOptions);
   const [countryOptions, setCountryOptions] = useState(countries);
-  const [cityOptions, setCityOptions] = useState(cities);
   const lookupRefreshInFlightRef = useRef(new Set<LookupKey>());
   const [openComboField, setOpenComboField] = useState<string | null>(null);
   const [comboErrors, setComboErrors] = useState<Record<string, string | null>>({});
@@ -360,10 +352,6 @@ export default function CustomerBasicDataClient({
     setCountryOptions(countries);
   }, [countries]);
 
-  useEffect(() => {
-    setCityOptions(cities);
-  }, [cities]);
-
   const refreshLookups = useCallback(async (keys: LookupKey[]) => {
     const uniqueKeys = Array.from(new Set(keys));
     const pendingKeys = uniqueKeys.filter((key) => !lookupRefreshInFlightRef.current.has(key));
@@ -390,7 +378,6 @@ export default function CustomerBasicDataClient({
       if (payload.lookups.pricingPolicies) setLocalPricingPolicies(payload.lookups.pricingPolicies);
       if (payload.lookups.importanceOptions) setLocalImportanceOptions(payload.lookups.importanceOptions);
       if (payload.lookups.countries) setCountryOptions(payload.lookups.countries);
-      if (payload.lookups.cities) setCityOptions(payload.lookups.cities);
     } catch (err) {
       console.error(err);
       showToastMessage('Unable to refresh latest dropdown values.', 'warning');
@@ -404,12 +391,6 @@ export default function CustomerBasicDataClient({
   const [newCountryEnabled, setNewCountryEnabled] = useState('1');
   const [countrySaving, setCountrySaving] = useState(false);
   const [countryError, setCountryError] = useState<string | null>(null);
-  const [isAddCityOpen, setIsAddCityOpen] = useState(false);
-  const [newCityName, setNewCityName] = useState('');
-  const [newCityCountryId, setNewCityCountryId] = useState('');
-  const [newCityEnabled, setNewCityEnabled] = useState('1');
-  const [citySaving, setCitySaving] = useState(false);
-  const [cityError, setCityError] = useState<string | null>(null);
 
   const fieldDefinitions = useMemo(
     () =>
@@ -443,17 +424,6 @@ export default function CustomerBasicDataClient({
   savedValuesRef.current = savedValues;
   const valuesRef = useRef(values);
   valuesRef.current = values;
-  const selectedCountryId = values.country ?? '';
-
-  useEffect(() => {
-    if (!isAddCityOpen) return;
-    const fallback =
-      selectedCountryId &&
-      countryOptions.some((option) => option.value === selectedCountryId)
-        ? selectedCountryId
-        : countryOptions[0]?.value ?? '';
-    setNewCityCountryId(fallback);
-  }, [isAddCityOpen, selectedCountryId, countryOptions]);
 
   const handleValueChange = useCallback((fieldId: string, value: string) => {
     setValues((prev) => ({ ...prev, [fieldId]: value }));
@@ -577,63 +547,6 @@ export default function CustomerBasicDataClient({
     }
   }, [newCountryName, newCountryEnabled]);
 
-  const openCityModal = useCallback(() => {
-    setNewCityName('');
-    setNewCityEnabled('1');
-    setCityError(null);
-    setIsAddCityOpen(true);
-  }, []);
-
-  const handleCreateCity = useCallback(async () => {
-    const trimmed = newCityName.trim();
-    if (!trimmed) {
-      setCityError('Name is required');
-      return;
-    }
-    if (!newCityCountryId) {
-      setCityError('Country is required');
-      return;
-    }
-    setCitySaving(true);
-    setCityError(null);
-    try {
-      const response = await fetch('/api/cities', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: trimmed,
-          countryId: newCityCountryId,
-          enabled: newCityEnabled === '1',
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | { ok?: boolean; option?: DropdownOption & { countryId?: number | null }; error?: string }
-        | null;
-      const resultOption = payload?.option;
-      if (!response.ok || !payload?.ok || !resultOption) {
-        throw new Error(payload?.error ?? 'Unable to add city');
-      }
-      const option = {
-        ...resultOption,
-        countryId:
-          resultOption.countryId ??
-          (countryOptions.find((option) => option.value === newCityCountryId)
-            ? Number(newCityCountryId)
-            : null),
-      };
-      setCityOptions((prev) => [...prev, option]);
-      setValues((prev) => ({ ...prev, city: option.value }));
-      showToastMessage('City added', 'success');
-      setIsAddCityOpen(false);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to add city';
-      setCityError(message);
-      showToastMessage(message, 'error');
-    } finally {
-      setCitySaving(false);
-    }
-  }, [newCityName, newCityCountryId, newCityEnabled, countryOptions]);
-
   const renderLookupAddButton = useCallback(
     (fieldId: string) => {
       if (fieldId === 'country') {
@@ -648,27 +561,9 @@ export default function CustomerBasicDataClient({
           </button>
         );
       }
-      if (fieldId === 'city') {
-        return (
-          <button
-            type="button"
-            className={lookupButtonStyles.lookupAddButton}
-            onClick={openCityModal}
-            disabled={citySaving || countryOptions.length === 0}
-          >
-            Add City
-          </button>
-        );
-      }
       return null;
     },
-    [
-      countryOptions.length,
-      openCityModal,
-      openCountryModal,
-      countrySaving,
-      citySaving,
-    ],
+    [openCountryModal, countrySaving],
   );
 
   const refreshFieldLookups = useCallback((fieldId: string) => {
@@ -690,10 +585,6 @@ export default function CustomerBasicDataClient({
     }
     if (fieldId === 'country') {
       void refreshLookups(['countries']);
-      return;
-    }
-    if (fieldId === 'city') {
-      void refreshLookups(['cities']);
     }
   }, [refreshLookups]);
 
@@ -714,55 +605,28 @@ export default function CustomerBasicDataClient({
     const value = values[def.id] ?? '';
     const placeholder = value === '' ? '—' : undefined;
 
-    const isCityField = def.id === 'city';
-    const filteredCityOptions = isCityField
-      ? cityOptions.filter((option) => {
-          if (option.countryId == null || !selectedCountryId) return false;
-          return String(option.countryId) === selectedCountryId;
-        })
-      : [];
-    const fieldOptions = isCityField ? filteredCityOptions : def.options ?? [];
-    const shouldRenderSelect = isCityField || (fieldOptions && fieldOptions.length > 0);
+    const fieldOptions = def.options ?? [];
+    const shouldRenderSelect = fieldOptions.length > 0;
 
     if (shouldRenderSelect) {
-      const cityDisabled = isCityField && (!selectedCountryId || pending);
-      const placeholderText = isCityField
-        ? !selectedCountryId
-          ? 'Select a country first'
-          : filteredCityOptions.length > 0
-            ? 'Select city...'
-            : 'No cities available'
-        : 'Select...';
-      const cityStatusMessage =
-        isCityField && !pending
-          ? !selectedCountryId
-            ? 'Select a country to choose a city.'
-            : filteredCityOptions.length === 0
-              ? 'No cities found for the selected country.'
-              : null
-          : null;
       return (
-        <>
-          <select
-            id={controlId}
-            name={def.id}
-            className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
-            value={value}
-            disabled={cityDisabled}
-            onMouseDown={() => refreshFieldLookups(def.id)}
-            onFocus={() => refreshFieldLookups(def.id)}
-            onChange={(event) => handleValueChange(def.id, event.target.value)}
-            onBlur={() => handleBlur(def)}
-          >
-            <option value="">{placeholderText}</option>
-            {(fieldOptions ?? []).map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          {cityStatusMessage ? <div className={styles.inlineHint}>{cityStatusMessage}</div> : null}
-        </>
+        <select
+          id={controlId}
+          name={def.id}
+          className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
+          value={value}
+          onMouseDown={() => refreshFieldLookups(def.id)}
+          onFocus={() => refreshFieldLookups(def.id)}
+          onChange={(event) => handleValueChange(def.id, event.target.value)}
+          onBlur={() => handleBlur(def)}
+        >
+          <option value="">Select...</option>
+          {fieldOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
       );
     }
 
@@ -924,26 +788,6 @@ export default function CustomerBasicDataClient({
     );
   };
 
-  useEffect(() => {
-    const cityField = fieldDefinitions.find((field) => field.id === 'city');
-    if (!cityField || !cityField.updateField) return;
-    const currentCityValue = valuesRef.current?.[cityField.id] ?? '';
-    if (!selectedCountryId) {
-      if (currentCityValue) {
-        setValues((prev) => ({ ...prev, [cityField.id]: '' }));
-        void saveField(cityField, '');
-      }
-      return;
-    }
-    const allowedCityIds = cityOptions
-      .filter((option) => option.countryId != null && String(option.countryId) === selectedCountryId)
-      .map((option) => option.value);
-    if (currentCityValue && !allowedCityIds.includes(currentCityValue)) {
-      setValues((prev) => ({ ...prev, [cityField.id]: '' }));
-      void saveField(cityField, '');
-    }
-  }, [cityOptions, fieldDefinitions, saveField, selectedCountryId]);
-
   const remainingSections = SECTION_ORDER.filter((section) => section !== 'general');
 
   return (
@@ -984,64 +828,6 @@ export default function CustomerBasicDataClient({
             className={lookupStyles.fieldControl}
             value={newCountryEnabled}
             onChange={(event) => setNewCountryEnabled(event.target.value)}
-          >
-            {BOOLEAN_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </LookupModal>
-      <LookupModal
-        open={isAddCityOpen}
-        title="Add City"
-        onClose={() => setIsAddCityOpen(false)}
-        onConfirm={handleCreateCity}
-        confirmLabel="Create"
-        saving={citySaving}
-        error={cityError}
-      >
-        <div className={lookupStyles.field}>
-          <label className={lookupStyles.fieldLabel} htmlFor="customer-city-name">
-            Name
-          </label>
-          <input
-            id="customer-city-name"
-            className={lookupStyles.fieldControl}
-            value={newCityName}
-            required
-            onChange={(event) => setNewCityName(event.target.value)}
-          />
-        </div>
-        <div className={lookupStyles.field}>
-          <label className={lookupStyles.fieldLabel} htmlFor="customer-city-country">
-            Country
-          </label>
-          <select
-            id="customer-city-country"
-            className={lookupStyles.fieldControl}
-            value={newCityCountryId}
-            required
-            onChange={(event) => setNewCityCountryId(event.target.value)}
-          >
-            <option value="">Select country</option>
-            {countryOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className={lookupStyles.field}>
-          <label className={lookupStyles.fieldLabel} htmlFor="customer-city-enabled">
-            Enabled
-          </label>
-          <select
-            id="customer-city-enabled"
-            className={lookupStyles.fieldControl}
-            value={newCityEnabled}
-            onChange={(event) => setNewCityEnabled(event.target.value)}
           >
             {BOOLEAN_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>

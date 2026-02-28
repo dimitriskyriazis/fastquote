@@ -1,9 +1,8 @@
 import { getPool } from '../../../lib/sql';
 import { toDropdownOptions, type RawDropdownRow } from '../../../lib/dropdownOptions';
-import type { CustomerDropdownOption, CustomerCityOption } from './CustomerBasicDataTypes';
+import type { CustomerDropdownOption } from './CustomerBasicDataTypes';
 
 type LookupRow = RawDropdownRow & { ID: number | string | null; Name: string | null };
-type CityRow = { ID: number | null; Name: string | null; CountryID: number | null };
 
 const mapLookupRows = (rows: LookupRow[] | undefined | null): CustomerDropdownOption[] =>
   toDropdownOptions<LookupRow>(rows);
@@ -70,30 +69,6 @@ export async function fetchCountries() {
     return mapLookupRows(result.recordset);
   } catch (err) {
     console.error('Failed to load countries', err);
-    return [];
-  }
-}
-
-export async function fetchCities(): Promise<CustomerCityOption[]> {
-  try {
-    const pool = await getPool();
-    const result = await pool.request().query<CityRow>(`
-      SELECT ID, Name, CountryID
-      FROM dbo.Cities
-      ORDER BY Name
-    `);
-    return (result.recordset ?? [])
-      .filter((row) => row.ID != null)
-      .map(
-        (row) =>
-          ({
-            value: String(row.ID),
-            label: row.Name?.trim() || `City ${row.ID}`,
-            countryId: row.CountryID ?? null,
-          }) satisfies CustomerCityOption,
-      );
-  } catch (err) {
-    console.error('Failed to load cities', err);
     return [];
   }
 }

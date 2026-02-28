@@ -219,8 +219,8 @@ const navItems: NavItem[] = [
     ),
   },
   {
-    label: "Countries & Cities",
-    href: "/countries-cities",
+    label: "Countries",
+    href: "/countries",
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.6" fill="none" />
