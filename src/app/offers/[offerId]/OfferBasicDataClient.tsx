@@ -263,12 +263,12 @@ const buildFieldDefinitions = (
     valueType: 'string',
   },
   {
-    id: 'erpProjectId',
-    label: 'ERP Project ID',
+    id: 'erpProjectCode',
+    label: 'ERP Project Code',
     section: 'code',
-    recordKey: 'ERPProjectID',
-    updateField: 'ERPProjectID',
-    valueType: 'number',
+    recordKey: 'ERPProjectCode',
+    updateField: 'ERPProjectCode',
+    valueType: 'string',
   },
   {
     id: 'erpFwcProjectId',

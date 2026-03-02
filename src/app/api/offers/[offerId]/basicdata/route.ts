@@ -51,7 +51,7 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   MarketID: { column: 'MarketID', type: 'number', sqlType: sql.Int },
   SalesPersonId: { column: 'SalesPersonId', type: 'string', sqlType: sql.NVarChar, length: 450 },
   ApprovalUserId: { column: 'ApprovalUserId', type: 'string', sqlType: sql.NVarChar, length: 450 },
-  ERPProjectID: { column: 'ERPProjectID', type: 'number', sqlType: sql.Int },
+  ERPProjectCode: { column: 'ERPProjectCode', type: 'string', sqlType: sql.NVarChar, length: 500 },
   ERPFWCProjectID: { column: 'ERPFWCProjectID', type: 'number', sqlType: sql.Int },
   Probability: { column: 'Probability', type: 'number', sqlType: sql.Int },
   CustomerRef: { column: 'CustomerRef', type: 'string', sqlType: sql.NVarChar, length: 500 },

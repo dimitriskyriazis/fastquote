@@ -49,7 +49,7 @@ type ExistingOfferRecord = {
   Comments: string | null;
   ContactID: number | null;
   OfferContact: string | null;
-  ERPProjectID: number | null;
+  ERPProjectCode: string | null;
   ERPFWCProjectID: number | null;
   PrintLevelGroupingID: number | null;
   CustomerRef: string | null;
@@ -318,7 +318,7 @@ export async function POST(
         Comments,
         ContactID,
         OfferContact,
-        ERPProjectID,
+        ERPProjectCode,
         ERPFWCProjectID,
         PrintLevelGroupingID,
         CustomerRef,
@@ -398,7 +398,7 @@ export async function POST(
       insertRequest.input('Comments', sql.NVarChar(2000), existingOffer.Comments);
       insertRequest.input('ContactID', sql.Int, existingOffer.ContactID);
       insertRequest.input('OfferContact', sql.NVarChar(500), existingOffer.OfferContact);
-      insertRequest.input('ERPProjectID', sql.Int, existingOffer.ERPProjectID);
+      insertRequest.input('ERPProjectCode', sql.NVarChar(500), existingOffer.ERPProjectCode);
       insertRequest.input('ERPFWCProjectID', sql.Int, existingOffer.ERPFWCProjectID);
       insertRequest.input('PrintLevelGroupingID', sql.Int, existingOffer.PrintLevelGroupingID);
       insertRequest.input('CustomerRef', sql.NVarChar(500), existingOffer.CustomerRef);
@@ -440,7 +440,7 @@ export async function POST(
           Comments,
           ContactID,
           OfferContact,
-          ERPProjectID,
+          ERPProjectCode,
           ERPFWCProjectID,
           PrintLevelGroupingID,
           CustomerRef,
@@ -484,7 +484,7 @@ export async function POST(
           @Comments,
           @ContactID,
           @OfferContact,
-          @ERPProjectID,
+          @ERPProjectCode,
           @ERPFWCProjectID,
           @PrintLevelGroupingID,
           @CustomerRef,

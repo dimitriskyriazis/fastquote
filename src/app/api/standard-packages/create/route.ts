@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
         Comments,
         ContactID,
         OfferContact,
-        ERPProjectID,
+        ERPProjectCode,
         ERPFWCProjectID,
         PrintLevelGroupingID,
         CustomerRef,

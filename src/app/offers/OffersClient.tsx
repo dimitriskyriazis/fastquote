@@ -760,7 +760,7 @@ export default function OffersClient() {
       }
     },
     { field: 'PricingPolicyName', headerName: 'Pricing Policy', filter: 'agTextColumnFilter', enableRowGroup: true, hide: true },
-    { field: 'ERPProjectID', headerName: 'ERP Project ID', filter: 'agNumberColumnFilter', type: 'numericColumn', hide: true },
+    { field: 'ERPProjectCode', headerName: 'ERP Project Code', filter: 'agTextColumnFilter', hide: true },
     { field: 'ERPFWCProjectShortName', headerName: 'ERP FWC Project', filter: 'agTextColumnFilter', hide: true },
     { field: 'Title', headerName: 'Title', filter: 'agTextColumnFilter' },
     {field: 'Comments',  headerName: 'Comments', filter: 'agTextColumnFilter'},

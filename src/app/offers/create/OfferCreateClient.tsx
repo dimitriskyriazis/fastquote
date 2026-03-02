@@ -29,7 +29,7 @@ type FormValues = {
   salesCreationPersonId: string;
   salesPersonId: string;
   approvalUserId: string;
-  projectId: string;
+  projectCode: string;
   erpFwcProjectId: string;
   customerRef: string;
   probability: string;
@@ -257,7 +257,7 @@ export default function OfferCreateClient({
     salesCreationPersonId: defaultSuggestedUserId,
     salesPersonId: defaultSuggestedUserId,
     approvalUserId: '',
-    projectId: '0',
+    projectCode: '',
     erpFwcProjectId: '',
     customerRef: '',
     probability: '',
@@ -600,7 +600,7 @@ export default function OfferCreateClient({
       closingNote: toNullableString(values.closingNote),
       introNote: toNullableString(values.introNote),
       telmacoNote: toNullableString(values.telmacoNote),
-      projectId: toNumberOrNull(values.projectId),
+      projectCode: toNullableString(values.projectCode),
       erpFwcProjectId: toNumberOrNull(values.erpFwcProjectId),
       customerRef: toNullableString(values.customerRef),
       probability: normalizedProbability ?? 0,
@@ -659,7 +659,7 @@ export default function OfferCreateClient({
       { id: 'salesPersonId', label: 'Sales Person', section: 'commercial', type: 'select', options: salesUsers },
       { id: 'approvalUserId', label: 'Approval User', section: 'commercial', type: 'select', options: approvalUsers },
 
-      { id: 'projectId', label: 'ERP Project ID', section: 'code', inputType: 'number' },
+      { id: 'projectCode', label: 'ERP Project Code', section: 'code' },
       { id: 'erpFwcProjectId', label: 'ERP FWC Project', section: 'code', type: 'select', options: localFwcProjects },
       { id: 'customerRef', label: 'Customer Ref', section: 'code' },
       { id: 'probability', label: 'Probability', section: 'code', inputType: 'number' },

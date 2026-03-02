@@ -10,6 +10,41 @@ export const runtime = "nodejs";
 
 const MAX_PRODUCT_IDS = 200;
 
+// Limits concurrent outgoing Serper API calls to avoid 429 rate-limit errors.
+class Semaphore {
+  private queue: Array<() => void> = [];
+  private active = 0;
+  constructor(private readonly max: number) {}
+
+  async acquire(): Promise<void> {
+    if (this.active < this.max) {
+      this.active++;
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this.queue.push(() => {
+        this.active++;
+        resolve();
+      });
+    });
+  }
+
+  release(): void {
+    this.active--;
+    const next = this.queue.shift();
+    if (next) next();
+  }
+}
+
+const serperSemaphore = new Semaphore(5);
+
+// Hardcoded domain cache for brands where GPT-4o resolution is unreliable or slow.
+// Keys are lowercase brand names; values are the canonical bare domain.
+const KNOWN_BRAND_DOMAINS: Record<string, string> = {
+  "grass valley": "grassvalley.com",
+  "grassvalley": "grassvalley.com",
+};
+
 const normalizeProductId = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
   if (typeof value === "string") {
@@ -33,23 +68,31 @@ type ProductRow = {
 // Tries HEAD first; falls back to a minimal GET if the server doesn't allow HEAD.
 // Accepts any 2xx or 3xx (after following redirects). Rejects 404/410/451.
 const verifyUrl = async (url: string): Promise<boolean> => {
-  const UA = "Mozilla/5.0 (compatible; product-link-checker/1.0)";
+  // Use a realistic browser User-Agent — portal sites (e.g. community.grassvalley.com)
+  // block bot-like UAs or return unexpected responses.
+  const UA =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
   const tryFetch = async (method: "HEAD" | "GET"): Promise<number | null> => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timer = setTimeout(() => controller.abort(), 12000);
     try {
       const res = await fetch(url, {
         method,
         signal: controller.signal,
         redirect: "follow",
-        headers: { "User-Agent": UA, ...(method === "GET" ? { Range: "bytes=0-0" } : {}) },
+        headers: {
+          "User-Agent": UA,
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.5",
+          ...(method === "GET" ? { Range: "bytes=0-0" } : {}),
+        },
       });
       return res.status;
     } catch {
       return null;
     } finally {
-      clearTimeout(timeout);
+      clearTimeout(timer);
     }
   };
 
@@ -134,10 +177,17 @@ export async function POST(req: NextRequest) {
           return { productId: product.ID, webLink: null, status: "not_found" };
         }
 
-        // Step 1: Resolve the manufacturer's domain from the model's training knowledge.
-        // No web search needed — the model knows most major AV/broadcast manufacturer domains.
+        // Step 1: Resolve the manufacturer's domain.
+        // Check the hardcoded cache first to avoid intermittent GPT-4o failures for known brands.
         let domain: string | null = null;
         if (brand) {
+          const cached = KNOWN_BRAND_DOMAINS[brand.toLowerCase()];
+          if (cached) {
+            domain = cached;
+            console.log(`[weblink] product ${product.ID} (${brand}): domain=${domain} (cached)`);
+          }
+        }
+        if (!domain && brand) {
           const domainRes = await openai.responses.create({
             model: "gpt-4o",
             input:
@@ -187,9 +237,12 @@ export async function POST(req: NextRequest) {
             }
             if (partNumber) {
               const normPart = normalize(partNumber);
+              const normPrefix = usePartPrefix ? normalize(partPrefix) : "";
               // Full exact match of part number in path (e.g. ecom-item/911.1520.900)
               if (path.includes(partNumber.toLowerCase())) score += 6;
               else if (path.replace(/[\s\-_]+/g, "").includes(normPart)) score += 3;
+              // Part number prefix in URL path (e.g. Z5012 from Z5012.500 matches /accessories/z5012/)
+              else if (normPrefix && path.includes(normPrefix)) score += 4;
               else {
                 // If a different numeric product code appears in the URL path, this is likely the wrong product.
                 // Skip UUID-like segments to avoid false positives from GUID-based category filters
@@ -208,39 +261,86 @@ export async function POST(req: NextRequest) {
             if (segments.length >= 2) score += 1; // deeper path = more specific page
             const lastSeg = segments[segments.length - 1] ?? "";
             if (/search|results|catalog|category|products?$/.test(lastSeg)) score -= 4;
-            // Prefer canonical/base-language URLs over locale-specific variants (e.g. /nb/, /zh/, /en-KY/)
+            // Prefer English/canonical URLs over locale-specific variants (e.g. /nb/, /zh/, /es-LATAM/)
+            const localePattern = /^[a-z]{2}(-[a-zA-Z]{2,8})?$/;
             const firstSeg = segments[0] ?? "";
-            if (/^[a-z]{2}(-[a-zA-Z]{2,4})?$/.test(firstSeg)) score -= 2;
-            // Penalise documentation, guide, and support paths — prefer product listing/spec pages
-            if (/\/docs\/|\/guide\/|\/guides\/|\/support\/|\/kb\/|\/faq\/|\/help\/|\/articulos\//.test(path)) score -= 5;
+            const secondSeg = segments[1] ?? "";
+            const locSeg = localePattern.test(firstSeg) ? firstSeg
+              : (/^(global|region|site)$/i.test(firstSeg) && localePattern.test(secondSeg)) ? secondSeg
+              : null;
+            if (locSeg && locSeg !== "en" && !locSeg.startsWith("en-")) score -= 3;
+            // Penalise documentation, guide, and support paths — prefer product listing/spec pages.
+            // Exception: /support/s/portalproduct/ (e.g. community.grassvalley.com) is a product page.
+            if (/\/support\/s\/portalproduct\//.test(path)) { /* no penalty — this is a product portal page */ }
+            else if (/\/docs\/|\/guide\/|\/guides\/|\/support\/|\/kb\/|\/faq\/|\/help\/|\/articulos\//.test(path)) score -= 5;
           } catch { /* ignore */ }
           return score;
         };
 
         const serperSearch = async (q: string): Promise<Array<{ link: string }>> => {
-          const res = await fetch("https://google.serper.dev/search", {
-            method: "POST",
-            headers: {
-              "X-API-KEY": process.env.SERPER_API_KEY ?? "",
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ q, num: 10 }),
-          });
-          if (!res.ok) {
-            console.error(`Serper API error for product ${product.ID}: ${res.status}`);
+          const MAX_RETRIES = 3;
+          const BASE_DELAY_MS = 1000;
+
+          await serperSemaphore.acquire();
+          try {
+            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+              const res = await fetch("https://google.serper.dev/search", {
+                method: "POST",
+                headers: {
+                  "X-API-KEY": process.env.SERPER_API_KEY ?? "",
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ q, num: 10, hl: "en", gl: "us" }),
+              });
+
+              if (res.ok) {
+                const data = await res.json() as { organic?: Array<{ link: string }> };
+                return data.organic ?? [];
+              }
+
+              if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES - 1) {
+                const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+                console.warn(
+                  `[weblink] Serper ${res.status} for product ${product.ID}, ` +
+                  `attempt ${attempt + 1}/${MAX_RETRIES}, retrying in ${delay}ms`
+                );
+                await new Promise((resolve) => setTimeout(resolve, delay));
+                continue;
+              }
+
+              console.error(`Serper API error for product ${product.ID}: ${res.status}`);
+              return [];
+            }
             return [];
+          } finally {
+            serperSemaphore.release();
           }
-          const data = await res.json() as { organic?: Array<{ link: string }> };
-          return data.organic ?? [];
         };
 
-        const searchTerms = [modelNumber, partNumber].filter(Boolean).join(" ");
+        // Build multiple sets of search terms with decreasing specificity:
+        // 1. Quoted part number (exact match for precision)
+        // 2. Unquoted part number (for recall when exact match fails)
+        // 3. Part number prefix — some manufacturers use shortened codes in URLs
+        //    (e.g. d&b audiotechnik: Z5012.500 → /accessories/z5012/)
+        const quotedPartNumber = partNumber ? `"${partNumber}"` : "";
+        const searchTermsQuoted = [modelNumber, quotedPartNumber].filter(Boolean).join(" ");
+        const searchTermsUnquoted = [modelNumber, partNumber].filter(Boolean).join(" ");
+        // Extract part number prefix (before first dot) if it's meaningful (4+ chars)
+        const partPrefix = partNumber ? partNumber.split(".")[0] : "";
+        const usePartPrefix = partPrefix.length >= 4 && partPrefix !== partNumber;
+        const searchTermsPrefix = usePartPrefix
+          ? [modelNumber, partPrefix].filter(Boolean).join(" ")
+          : "";
         // Always include description words — part numbers alone (e.g. "910-001390-00") rarely
         // appear in URLs, but the description contains the human-readable product name that does.
-        const descWords = description ? description.split(/\s+/).slice(0, 6).join(" ") : "";
-        const effectiveTerms = [searchTerms, descWords].filter(Boolean).join(" ").trim();
+        const descWords = description ? description.split(/\s+/).slice(0, 10).join(" ") : "";
+        const effectiveTermsQuoted = [searchTermsQuoted, descWords].filter(Boolean).join(" ").trim();
+        const effectiveTermsUnquoted = [searchTermsUnquoted, descWords].filter(Boolean).join(" ").trim();
+        const effectiveTermsPrefix = searchTermsPrefix
+          ? [searchTermsPrefix, descWords].filter(Boolean).join(" ").trim()
+          : "";
 
-        if (!effectiveTerms) {
+        if (!effectiveTermsUnquoted) {
           return { productId: product.ID, webLink: null, status: "not_found" };
         }
 
@@ -271,18 +371,26 @@ export async function POST(req: NextRequest) {
             const res = await openai.responses.create({
               model: "gpt-4o-mini",
               input: [
-                `Is this URL a specific individual product detail or specification page?`,
+                `Evaluate whether this URL is a useful product page for finding specifications of a specific product.`,
                 `Manufacturer domain: ${domain}`,
                 `URL: ${url}`,
                 ``,
-                `Reply YES if the URL appears to be a page for one specific product (e.g. a product detail, spec, or listing page).`,
+                `Reply YES if the URL appears to be ANY of the following:`,
+                `- A page for one specific product (product detail, spec sheet, datasheet page)`,
+                `- A product family or product line page that lists individual product variants with their specifications`,
+                `- A product configuration page showing different models or SKUs within a product series`,
+                ``,
                 `Reply NO if the URL is:`,
-                `- A product family or product line overview (e.g. /products/families/voltera)`,
-                `- A category, collection, or search results page`,
+                `- A top-level category or catalog page listing many unrelated product families`,
+                `- A search results page`,
                 `- A brand, company, or support homepage`,
                 `- A news, blog, or press release page`,
+                `- A generic "all products" listing with no specific product details`,
                 ``,
-                `Do NOT try to match the URL to the specific model or part number — manufacturers`,
+                `The key distinction: YES if the page shows specs/details for a specific product or a closely related`,
+                `group of product variants. NO if it is a broad listing or navigation page with no product-level detail.`,
+                ``,
+                `Do NOT try to match the URL to a specific model or part number — manufacturers`,
                 `often use internal codes in URLs that differ from customer-facing part numbers.`,
                 ``,
                 `Reply YES or NO only.`,
@@ -297,6 +405,11 @@ export async function POST(req: NextRequest) {
           }
         };
 
+        // For domains resolved from the hardcoded cache we trust Google results
+        // even when our server-side fetch can't reach the page (e.g. Salesforce portals
+        // like community.grassvalley.com that block Node.js fetch but work in browsers).
+        const isCachedDomain = !!KNOWN_BRAND_DOMAINS[brand.toLowerCase()];
+
         const tryVerifyCandidates = async (candidateList: Array<{ link: string }>): Promise<string | null> => {
           const sorted = candidateList
             .map((c) => ({ ...c, score: scoreUrl(c.link) }))
@@ -305,16 +418,34 @@ export async function POST(req: NextRequest) {
           for (const candidate of sorted) {
             const reachable = await verifyUrl(candidate.link);
             console.log(`[weblink] product ${product.ID}: url=${candidate.link} reachable=${reachable}`);
-            if (!reachable) continue;
+            if (!reachable && !isCachedDomain) continue;
+            if (!reachable && isCachedDomain) {
+              console.log(`[weblink] product ${product.ID}: trusting Google result for cached domain despite verify failure`);
+            }
             if (await validateUrlForProduct(candidate.link)) return candidate.link;
           }
           return null;
         };
 
-        // Step 2a: Site-constrained search on the manufacturer's domain.
-        const query2a = `site:${domain} ${effectiveTerms}`;
-        const candidates = (await serperSearch(query2a)).filter(domainFilter);
-        console.log(`[weblink] product ${product.ID}: query="${query2a}" candidates=${candidates.length}`);
+        // Step 2a: Site-constrained search — try quoted part number first for precision,
+        // then retry unquoted if quoting yields no results (some sites don't index exact part numbers).
+        let candidates: Array<{ link: string }> = [];
+        const query2aQuoted = `site:${domain} ${effectiveTermsQuoted}`;
+        candidates = (await serperSearch(query2aQuoted)).filter(domainFilter);
+        console.log(`[weblink] product ${product.ID}: query="${query2aQuoted}" candidates=${candidates.length}`);
+
+        if (candidates.length === 0 && effectiveTermsQuoted !== effectiveTermsUnquoted) {
+          const query2aUnquoted = `site:${domain} ${effectiveTermsUnquoted}`;
+          candidates = (await serperSearch(query2aUnquoted)).filter(domainFilter);
+          console.log(`[weblink] product ${product.ID}: unquoted query="${query2aUnquoted}" candidates=${candidates.length}`);
+        }
+
+        // Try with part number prefix — covers manufacturers that use shortened codes in URLs
+        if (candidates.length === 0 && effectiveTermsPrefix) {
+          const query2aPrefix = `site:${domain} ${effectiveTermsPrefix}`;
+          candidates = (await serperSearch(query2aPrefix)).filter(domainFilter);
+          console.log(`[weblink] product ${product.ID}: prefix query="${query2aPrefix}" candidates=${candidates.length}`);
+        }
 
         let webLink: string | null = null;
 
@@ -327,7 +458,7 @@ export async function POST(req: NextRequest) {
 
         // Step 2b: If no results or all unreachable, broaden without site: constraint.
         if (!webLink) {
-          const fallbackQuery = `${brand} ${effectiveTerms} product specifications`.trim();
+          const fallbackQuery = `${brand} ${effectiveTermsUnquoted} product specifications`.trim();
           const fallbackResults = await serperSearch(fallbackQuery);
           const fallbackCandidates = fallbackResults.filter(domainFilter);
           console.log(`[weblink] product ${product.ID}: fallback query="${fallbackQuery}" candidates=${fallbackCandidates.length}`);
@@ -336,22 +467,81 @@ export async function POST(req: NextRequest) {
           }
         }
 
+        // Step 2c: Last-resort — search with just the part or model number.
+        if (!webLink) {
+          const identifier = partNumber || modelNumber;
+          if (identifier) {
+            // Try quoted first for precision
+            const lastResortQuery = `${brand} "${identifier}" product specifications`.trim();
+            const lastResortResults = await serperSearch(lastResortQuery);
+            let lastResortCandidates = lastResortResults.filter(domainFilter);
+            console.log(
+              `[weblink] product ${product.ID}: last-resort query="${lastResortQuery}" candidates=${lastResortCandidates.length}`
+            );
+            // Fall back to unquoted if quoted yields nothing
+            if (lastResortCandidates.length === 0) {
+              const unquotedQuery = `${brand} ${identifier} product specifications`.trim();
+              const unquotedResults = await serperSearch(unquotedQuery);
+              lastResortCandidates = unquotedResults.filter(domainFilter);
+              console.log(
+                `[weblink] product ${product.ID}: last-resort unquoted query="${unquotedQuery}" candidates=${lastResortCandidates.length}`
+              );
+            }
+            if (lastResortCandidates.length > 0) {
+              webLink = await tryVerifyCandidates(lastResortCandidates);
+            }
+          }
+        }
+
         if (!webLink) {
           console.log(`[weblink] product ${product.ID}: no reachable URL found`);
           return { productId: product.ID, webLink: null, status: "not_found" };
         }
 
-        // If the accepted URL has a locale prefix (e.g. /nb/, /zh/, /en-KY/), try the
-        // canonical version without it — a base-language URL is cleaner for end users.
+        // Normalize URL to English. Handles common locale patterns:
+        //   Pattern 1: /{locale}/rest/of/path       (e.g. /fr/products/..., /es-LATAM/productos/...)
+        //   Pattern 2: /{prefix}/{locale}/rest       (e.g. /global/de/produkte/..., /global/ru/...)
+        //   Pattern 3: /{country}/{lang}/rest        (e.g. /jp/ja/products/... → /global/en/products/...)
         try {
           const parsed = new URL(webLink);
           const segs = parsed.pathname.split("/").filter(Boolean);
-          if (segs.length > 1 && /^[a-z]{2}(-[a-zA-Z]{2,4})?$/.test(segs[0])) {
-            const canonicalPath = "/" + segs.slice(1).join("/");
-            const canonicalUrl = `${parsed.origin}${canonicalPath}`;
-            if (await verifyUrl(canonicalUrl)) {
-              console.log(`[weblink] product ${product.ID}: de-localized ${webLink} → ${canonicalUrl}`);
-              webLink = canonicalUrl;
+          const isLocale = (s: string) => /^[a-z]{2}(-[a-zA-Z]{2,8})?$/.test(s);
+          const isEnglish = (s: string) => s === "en" || s.startsWith("en-");
+
+          // Detect how many leading segments are locale-like
+          // Pattern 3: two consecutive locales (country + language), e.g. /jp/ja/...
+          // Pattern 2: prefix + locale, e.g. /global/de/...
+          // Pattern 1: single locale, e.g. /fr/...
+          const hasDoubleLocale = segs.length > 2 && isLocale(segs[0]) && isLocale(segs[1]);
+          const hasPrefixLocale = !hasDoubleLocale && segs.length > 2
+            && /^(global|region|site)$/i.test(segs[0]) && isLocale(segs[1]);
+          const hasSingleLocale = !hasDoubleLocale && !hasPrefixLocale
+            && segs.length > 1 && isLocale(segs[0]);
+
+          // Build English URL candidates to try, in order of preference
+          const rest = hasDoubleLocale ? segs.slice(2)
+            : hasPrefixLocale ? segs.slice(2)
+            : hasSingleLocale ? segs.slice(1)
+            : [];
+
+          const needsFix = (hasDoubleLocale && !(isEnglish(segs[0]) || isEnglish(segs[1])))
+            || (hasPrefixLocale && !isEnglish(segs[1]))
+            || (hasSingleLocale && !isEnglish(segs[0]));
+
+          if (needsFix && rest.length > 0) {
+            // Try multiple English URL patterns in order
+            const candidates = [
+              `${parsed.origin}/global/en/${rest.join("/")}`,
+              `${parsed.origin}/en/${rest.join("/")}`,
+              `${parsed.origin}/${rest.join("/")}`,
+            ];
+            for (const candidate of candidates) {
+              if (candidate === webLink) continue;
+              if (await verifyUrl(candidate)) {
+                console.log(`[weblink] product ${product.ID}: localized to English ${webLink} → ${candidate}`);
+                webLink = candidate;
+                break;
+              }
             }
           }
         } catch { /* ignore */ }

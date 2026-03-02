@@ -57,7 +57,7 @@ type OfferRow = {
   SalesPerson: string | null;
   SalesCreationPerson: string | null;
   OfferStatus: string | null;
-  ERPProjectID: number | null;
+  ERPProjectCode: string | null;
   ERPFWCProjectID: number | null;
   ERPFWCProjectShortName: string | null;
   offerId: number | null;
@@ -102,7 +102,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   SalesPerson: 'sales.FullName',
   SalesCreationPerson: 'created.FullName',
   OfferStatus: 'dbo.OfferStatus.Name',
-  ERPProjectID: 'dbo.Offer.ERPProjectID',
+  ERPProjectCode: 'dbo.Offer.ERPProjectCode',
   ERPFWCProjectID: 'dbo.Offer.ERPFWCProjectID',
   ERPFWCProjectShortName: 'fwc.ShortName',
   offerId: 'dbo.Offer.ID',
@@ -322,7 +322,7 @@ export async function POST(req: NextRequest) {
 	        sales.FullName AS SalesPerson,
 	        created.FullName AS SalesCreationPerson,
 	        dbo.OfferStatus.Name AS OfferStatus,
-	        dbo.Offer.ERPProjectID AS ERPProjectID,
+	        dbo.Offer.ERPProjectCode AS ERPProjectCode,
 	        dbo.Offer.ERPFWCProjectID AS ERPFWCProjectID,
 	        fwc.ShortName AS ERPFWCProjectShortName,
 	        dbo.Offer.ID AS offerId,

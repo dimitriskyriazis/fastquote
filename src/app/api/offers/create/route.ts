@@ -24,7 +24,7 @@ type CreateOfferRequestBody = {
   closingNote?: string | null;
   introNote?: string | null;
   telmacoNote?: string | null;
-  projectId?: number | string | null;
+  projectCode?: string | null;
   erpFwcProjectId?: number | string | null;
   customerRef?: string | null;
   probability?: number | string | null;
@@ -158,7 +158,7 @@ export async function POST(req: NextRequest) {
   const salesPersonId =
     normalizeUserId(body?.salesPersonId) ?? salesCreationPersonId ?? auditUserId ?? null;
   const salesManagerId = salesCreationPersonId;
-  const erpProjectId = normalizeInt(body?.projectId) ?? 0;
+  const erpProjectCode = body?.projectCode?.trim() || null;
   const erpFwcProjectId = normalizeInt(body?.erpFwcProjectId);
 
     const dateFields = {
@@ -295,7 +295,7 @@ export async function POST(req: NextRequest) {
     request.input('Comments', sql.NVarChar(2000), telmacoNote);
     request.input('ContactID', sql.Int, contactId);
     request.input('OfferContact', sql.NVarChar(500), offerContact);
-    request.input('ERPProjectID', sql.Int, erpProjectId);
+    request.input('ERPProjectCode', sql.NVarChar(500), erpProjectCode);
     request.input('ERPFWCProjectID', sql.Int, erpFwcProjectId);
     request.input('PrintLevelGroupingID', sql.Int, 1);
     request.input('CustomerRef', sql.NVarChar(500), customerRef);
@@ -333,7 +333,7 @@ export async function POST(req: NextRequest) {
         Comments,
         ContactID,
         OfferContact,
-        ERPProjectID,
+        ERPProjectCode,
         ERPFWCProjectID,
         PrintLevelGroupingID,
         CustomerRef,
@@ -375,7 +375,7 @@ export async function POST(req: NextRequest) {
         @Comments,
         @ContactID,
         @OfferContact,
-        @ERPProjectID,
+        @ERPProjectCode,
         @ERPFWCProjectID,
         @PrintLevelGroupingID,
         @CustomerRef,
