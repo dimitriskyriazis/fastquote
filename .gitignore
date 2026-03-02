@@ -54,3 +54,6 @@ next-env.d.ts
 
 # docs
 docs/
+
+# bat files
+*.bat
