@@ -771,6 +771,13 @@ export default function OfferCreateClient({
             disabled={submitting}
             placeholder="Type to filter customers"
             onChange={(event) => handleCustomerInputChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && showCustomerList && filtered.length > 0) {
+                event.preventDefault();
+                setCustomerSelection(filtered[0], filtered[0].label);
+                setShowCustomerList(false);
+              }
+            }}
             onBlur={handleCustomerBlur}
             onFocus={(event) => {
               event.target.select();

@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import LookupModal from './LookupModal';
 import lookupStyles from './LookupModal.module.css';
 import { showToastMessage } from '../../lib/toast';
 import { useDuplicateCheck } from '../lib/useDuplicateCheck';
 import DuplicateWarning from './DuplicateWarning';
+import { matchesCountrySearch } from '../../lib/countryAliases';
 
 const SUPPLIER_CREATE_ENDPOINT = '/api/suppliers/create';
 
@@ -36,6 +37,11 @@ export default function AddSupplierModal({ open, onClose, onCreated, countries, 
   const [enabled, setEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [countryText, setCountryText] = useState('');
+  const [showCountryList, setShowCountryList] = useState(false);
+  const countryListCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [localCountries, setLocalCountries] = useState(countries);
+  const countryRefreshInFlightRef = useRef(false);
   const { warnings: duplicateWarnings, check: checkDuplicates, clear: clearDuplicates } = useDuplicateCheck('supplier');
 
   const resetForm = useCallback(() => {
@@ -44,6 +50,7 @@ export default function AddSupplierModal({ open, onClose, onCreated, countries, 
     setAddress('');
     setCity('');
     setCountryId(null);
+    setCountryText('');
     setPostalCode('');
     setPhone('');
     setWebSite('');
@@ -62,6 +69,91 @@ export default function AddSupplierModal({ open, onClose, onCreated, countries, 
   useEffect(() => {
     if (open) checkDuplicates({ name, taxId });
   }, [name, taxId, checkDuplicates, open]);
+
+  const clearCountryListCloseTimer = useCallback(() => {
+    if (countryListCloseTimerRef.current) {
+      clearTimeout(countryListCloseTimerRef.current);
+      countryListCloseTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(
+    () => () => { clearCountryListCloseTimer(); },
+    [clearCountryListCloseTimer],
+  );
+
+  useEffect(() => {
+    setLocalCountries(countries);
+  }, [countries]);
+
+  const refreshCountries = useCallback(async () => {
+    if (countryRefreshInFlightRef.current) return;
+    countryRefreshInFlightRef.current = true;
+    try {
+      const response = await fetch('/api/customers/lookups?keys=countries', { cache: 'no-store' });
+      const payload = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        lookups?: { countries?: Array<{ value: string; label: string }> };
+      } | null;
+      if (!response.ok || !payload?.ok || !payload.lookups?.countries) return;
+      const fresh = payload.lookups.countries
+        .map((opt) => ({ id: Number(opt.value), name: opt.label }))
+        .filter((c) => Number.isFinite(c.id) && c.name.length > 0);
+      setLocalCountries(fresh);
+    } catch (err) {
+      console.error('Failed to refresh countries', err);
+    } finally {
+      countryRefreshInFlightRef.current = false;
+    }
+  }, []);
+
+  const filteredCountries = useMemo(() => {
+    const search = countryText.trim();
+    if (!search) return localCountries;
+    return localCountries.filter((c) => matchesCountrySearch(c.name, search));
+  }, [localCountries, countryText]);
+
+  const handleCountryInputChange = useCallback((text: string) => {
+    clearCountryListCloseTimer();
+    setCountryText(text);
+    setShowCountryList(true);
+    const normalized = text.trim().toLowerCase();
+    const exactMatch = normalized
+      ? localCountries.find((c) => c.name.trim().toLowerCase() === normalized)
+      : null;
+    setCountryId(exactMatch?.id ?? null);
+  }, [clearCountryListCloseTimer, localCountries]);
+
+  const handleCountrySelect = useCallback((country: { id: number; name: string }) => {
+    clearCountryListCloseTimer();
+    setCountryText(country.name);
+    setShowCountryList(false);
+    setCountryId(country.id);
+  }, [clearCountryListCloseTimer]);
+
+  const handleCountryBlur = useCallback(() => {
+    clearCountryListCloseTimer();
+    countryListCloseTimerRef.current = setTimeout(() => {
+      setShowCountryList(false);
+      countryListCloseTimerRef.current = null;
+    }, 120);
+    const trimmed = countryText.trim();
+    if (!trimmed) {
+      setCountryText('');
+      setCountryId(null);
+      return;
+    }
+    const match = localCountries.find(
+      (c) => c.name.trim().toLowerCase() === trimmed.toLowerCase(),
+    );
+    if (match) {
+      setCountryText(match.name);
+      setCountryId(match.id);
+    } else {
+      const selected = localCountries.find((c) => c.id === countryId);
+      setCountryText(selected?.name ?? '');
+    }
+  }, [clearCountryListCloseTimer, localCountries, countryId, countryText]);
 
   const handleCreate = useCallback(async () => {
     const trimmedName = name.trim();
@@ -175,22 +267,44 @@ export default function AddSupplierModal({ open, onClose, onCreated, countries, 
           <label className={lookupStyles.fieldLabel} htmlFor="supplier-country">
             Country
           </label>
-          <select
-            id="supplier-country"
-            className={lookupStyles.fieldControl}
-            value={countryId ?? ''}
-            onChange={(event) => {
-              const value = event.target.value;
-              setCountryId(value ? Number.parseInt(value, 10) : null);
-            }}
-          >
-            <option value="">Select country...</option>
-            {countries.map((country) => (
-              <option key={country.id} value={country.id}>
-                {country.name}
-              </option>
-            ))}
-          </select>
+          <div className={lookupStyles.comboWrapper}>
+            <input
+              autoComplete="off"
+              id="supplier-country"
+              className={`${lookupStyles.fieldControl} ${lookupStyles.comboInput}`}
+              value={countryText}
+              placeholder="Type to filter countries"
+              onChange={(event) => handleCountryInputChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && showCountryList && filteredCountries.length > 0) {
+                  event.preventDefault();
+                  handleCountrySelect(filteredCountries[0]);
+                }
+              }}
+              onBlur={handleCountryBlur}
+              onFocus={(event) => {
+                clearCountryListCloseTimer();
+                event.target.select();
+                setShowCountryList(true);
+                refreshCountries();
+              }}
+            />
+            {showCountryList && filteredCountries.length > 0 ? (
+              <div className={lookupStyles.comboList}>
+                {filteredCountries.map((country) => (
+                  <button
+                    key={country.id}
+                    type="button"
+                    className={lookupStyles.comboOption}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => handleCountrySelect(country)}
+                  >
+                    {country.name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
         <div className={lookupStyles.fieldHalf}>
           <label className={lookupStyles.fieldLabel} htmlFor="supplier-postal-code">

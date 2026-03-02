@@ -162,8 +162,8 @@ export async function DELETE(req: NextRequest) {
     if (errorNumber === 547) {
       message =
         ids.length === 1
-          ? "Cannot delete country because it is referenced by other records. Reassign customers first."
-          : "Cannot delete countries because they are referenced by other records. Reassign customers first.";
+          ? "Cannot delete country because it is referenced by other records. Remove those references first."
+          : "Cannot delete countries because they are referenced by other records. Remove those references first.";
     }
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }

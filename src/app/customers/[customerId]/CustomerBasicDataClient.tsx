@@ -7,6 +7,7 @@ import offerPanelStyles from '../../offers/[offerId]/OfferBasicDataPanel.module.
 import lookupStyles from '../../components/LookupModal.module.css';
 import LookupModal from '../../components/LookupModal';
 import lookupButtonStyles from '../../components/LookupAddButton.module.css';
+import { matchesCountrySearch } from '../../../lib/countryAliases';
 import type {
   CustomerBasicRecord,
   CustomerDropdownOption,
@@ -203,7 +204,9 @@ const buildFieldDefinitions = (
     recordKey: 'CountryID',
     updateField: 'CountryID',
     valueType: 'number',
-    options: countries,
+    comboBox: true,
+    datalistOptions: countries,
+    datalistRecordKey: 'CountryName',
   },
   {
     id: 'city',
@@ -631,12 +634,14 @@ export default function CustomerBasicDataClient({
     }
 
     if (def.comboBox && def.datalistOptions && def.datalistOptions.length > 0) {
-      const search = value.trim().toLowerCase();
+      const search = value.trim();
       const filteredOptions = search
         ? def.datalistOptions.filter((option) => {
+            if (def.id === 'country') return matchesCountrySearch(option.label, search);
             const label = option.label.toLowerCase();
             const val = option.value.toLowerCase();
-            return label.includes(search) || val.includes(search);
+            const searchLower = search.toLowerCase();
+            return label.includes(searchLower) || val.includes(searchLower);
           })
         : def.datalistOptions;
       const isOpen = openComboField === def.id;
@@ -691,6 +696,21 @@ export default function CustomerBasicDataClient({
               event.target.select();
               refreshFieldLookups(def.id);
               setOpenComboField(def.id);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && isOpen && filteredOptions.length > 0) {
+                event.preventDefault();
+                cancelComboClose(def.id);
+                setOpenComboField(null);
+                setComboErrors((prev) => {
+                  if (!prev[def.id]) return prev;
+                  const next = { ...prev };
+                  delete next[def.id];
+                  return next;
+                });
+                handleValueChange(def.id, filteredOptions[0].label);
+                void saveField(def, filteredOptions[0].label);
+              }
             }}
             onBlur={handleComboBlur}
           />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LookupModal from "./LookupModal";
 import lookupStyles from "./LookupModal.module.css";
 import { showToastMessage } from "../../lib/toast";
@@ -37,6 +37,37 @@ export default function AddUserModal({
   salesDivisions,
   salesSeniorities,
 }: Props) {
+  const [localRoles, setLocalRoles] = useState(roles);
+  const [localSalesDivisions, setLocalSalesDivisions] = useState(salesDivisions);
+  const [localSalesSeniorities, setLocalSalesSeniorities] = useState(salesSeniorities);
+  const optionsRefreshInFlightRef = useRef(false);
+
+  useEffect(() => { setLocalRoles(roles); }, [roles]);
+  useEffect(() => { setLocalSalesDivisions(salesDivisions); }, [salesDivisions]);
+  useEffect(() => { setLocalSalesSeniorities(salesSeniorities); }, [salesSeniorities]);
+
+  const refreshOptions = useCallback(async () => {
+    if (optionsRefreshInFlightRef.current) return;
+    optionsRefreshInFlightRef.current = true;
+    try {
+      const res = await fetch("/api/user-management/options", { cache: 'no-store' });
+      const payload = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        roles?: string[];
+        salesDivisions?: string[];
+        salesSeniorities?: string[];
+      } | null;
+      if (!res.ok || !payload?.ok) return;
+      if (Array.isArray(payload.roles)) setLocalRoles(payload.roles);
+      if (Array.isArray(payload.salesDivisions)) setLocalSalesDivisions(payload.salesDivisions);
+      if (Array.isArray(payload.salesSeniorities)) setLocalSalesSeniorities(payload.salesSeniorities);
+    } catch (err) {
+      console.error('Failed to refresh user options', err);
+    } finally {
+      optionsRefreshInFlightRef.current = false;
+    }
+  }, []);
+
   const salesSeniorityOrder = useMemo(
     () =>
       new Map<string, number>([
@@ -51,7 +82,7 @@ export default function AddUserModal({
   );
 
   const orderedSalesSeniorities = useMemo(() => {
-    const withIndex = salesSeniorities.map((value, index) => ({
+    const withIndex = localSalesSeniorities.map((value, index) => ({
       value,
       index,
       order: salesSeniorityOrder.get(value.trim().toLowerCase()) ?? Number.POSITIVE_INFINITY,
@@ -63,7 +94,7 @@ export default function AddUserModal({
     });
 
     return withIndex.map((entry) => entry.value);
-  }, [salesSeniorityOrder, salesSeniorities]);
+  }, [salesSeniorityOrder, localSalesSeniorities]);
 
   const [userName, setUserName] = useState("");
   const [windowsUserName, setWindowsUserName] = useState(DEFAULT_WINDOWS_USER_PREFIX);
@@ -228,10 +259,12 @@ export default function AddUserModal({
             className={lookupStyles.fieldControl}
             value={role}
             required
+            onMouseDown={() => refreshOptions()}
+            onFocus={() => refreshOptions()}
             onChange={(event) => setRole(event.target.value)}
           >
             <option value="">Select role...</option>
-            {roles.map((option) => (
+            {localRoles.map((option) => (
               <option key={option} value={option}>
                 {option}
               </option>
@@ -305,10 +338,12 @@ export default function AddUserModal({
             id="user-sales-division"
             className={lookupStyles.fieldControl}
             value={salesDivision}
+            onMouseDown={() => refreshOptions()}
+            onFocus={() => refreshOptions()}
             onChange={(event) => setSalesDivision(event.target.value)}
           >
             <option value="">Select sales division...</option>
-            {salesDivisions.map((option) => (
+            {localSalesDivisions.map((option) => (
               <option key={option} value={option}>
                 {option}
               </option>
@@ -323,6 +358,8 @@ export default function AddUserModal({
             id="user-sales-seniority"
             className={lookupStyles.fieldControl}
             value={salesSeniority}
+            onMouseDown={() => refreshOptions()}
+            onFocus={() => refreshOptions()}
             onChange={(event) => setSalesSeniority(event.target.value)}
           >
             <option value="">Select sales seniority...</option>

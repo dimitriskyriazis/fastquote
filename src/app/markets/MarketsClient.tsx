@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useMemo, useCallback, useRef, useState } from "react";
+import React, { useEffect, useMemo, useCallback, useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import type {
+  CellEditingStartedEvent,
   CellValueChangedEvent,
   ColDef,
   DefaultMenuItem,
@@ -97,12 +98,13 @@ const MARKET_FIELD_LABELS: Record<string, string> = {
 export default function MarketsClient({ salesDivisions }: Props) {
   const { roles } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
-  const salesDivisionOptions = useMemo(() => {
+  const [salesDivisionOptions, setSalesDivisionOptions] = useState(() => {
     const unique = new Set(
       salesDivisions.map((name) => (typeof name === "string" ? name.trim() : "")).filter(Boolean),
     );
     return Array.from(unique);
-  }, [salesDivisions]);
+  });
+  const divisionsRefreshInFlightRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
   const [refreshToken, setRefreshToken] = useState(0);
   const {
@@ -116,6 +118,43 @@ export default function MarketsClient({ salesDivisions }: Props) {
     setSaving: setMarketSaving,
     setError: setMarketError,
   } = useAddModal<MarketFormValues>(() => ({ ...EMPTY_MARKET_FORM }));
+
+  useEffect(() => {
+    const unique = new Set(
+      salesDivisions.map((name) => (typeof name === "string" ? name.trim() : "")).filter(Boolean),
+    );
+    setSalesDivisionOptions(Array.from(unique));
+  }, [salesDivisions]);
+
+  const refreshSalesDivisions = useCallback(async () => {
+    if (divisionsRefreshInFlightRef.current) return;
+    divisionsRefreshInFlightRef.current = true;
+    try {
+      const res = await fetch("/api/user-management/options", { cache: 'no-store' });
+      const payload = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        salesDivisions?: string[];
+      } | null;
+      if (!res.ok || !payload?.ok || !Array.isArray(payload.salesDivisions)) return;
+      const unique = new Set(
+        payload.salesDivisions.map((name) => (typeof name === "string" ? name.trim() : "")).filter(Boolean),
+      );
+      setSalesDivisionOptions(Array.from(unique));
+    } catch (err) {
+      console.error('Failed to refresh sales divisions', err);
+    } finally {
+      divisionsRefreshInFlightRef.current = false;
+    }
+  }, []);
+
+  const handleCellEditingStarted = useCallback(
+    (event: CellEditingStartedEvent<Record<string, unknown>>) => {
+      if (event.colDef.field === 'SalesDivision') {
+        void refreshSalesDivisions();
+      }
+    },
+    [refreshSalesDivisions],
+  );
 
   const marketRowDeletion = useMemo(
     () =>
@@ -336,6 +375,7 @@ export default function MarketsClient({ salesDivisions }: Props) {
                 columnStateNamespace="markets"
                 onGridReady={handleGridReady}
                 onCellValueChanged={handleCellEdit}
+                onCellEditingStarted={handleCellEditingStarted}
                 refreshToken={refreshToken}
                 getContextMenuItems={getContextMenuItems}
               />
@@ -374,6 +414,8 @@ export default function MarketsClient({ salesDivisions }: Props) {
               id="market-sales-division"
               className={styles.fieldControl}
               value={marketForm.salesDivision}
+              onMouseDown={() => refreshSalesDivisions()}
+              onFocus={() => refreshSalesDivisions()}
               onChange={(event) => setMarketField("salesDivision", event.target.value)}
             >
               <option value="">Select division...</option>

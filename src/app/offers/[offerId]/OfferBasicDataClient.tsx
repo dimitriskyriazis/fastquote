@@ -996,6 +996,12 @@ export default function OfferBasicDataClient({
               setCustomerText(event.target.value);
               setShowCustomerList(true);
             }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && showCustomerList && filteredCustomerOptions.length > 0) {
+                event.preventDefault();
+                handleCustomerSelection(filteredCustomerOptions[0]);
+              }
+            }}
             onBlur={handleCustomerBlur}
             onFocus={(event) => {
               event.target.select();

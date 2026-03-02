@@ -4,6 +4,7 @@ import React, { useMemo, useCallback, useRef, useState, useEffect } from "react"
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import type {
+  CellEditingStartedEvent,
   CellValueChangedEvent,
   ColDef,
   GetContextMenuItemsParams,
@@ -167,34 +168,37 @@ export default function ContactsClient({
   const { roles } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const initialContactFilterAppliedRef = useRef(false);
-  const statusOptions = useMemo(() => {
+  const buildStatusDropdownValues = useCallback((raw: string[]) => {
     const unique = new Set(
-      statuses.map((entry) => (typeof entry === "string" ? entry.trim() : "")).filter(Boolean),
+      raw.map((entry) => (typeof entry === "string" ? entry.trim() : "")).filter(Boolean),
     );
-    return Array.from(unique);
-  }, [statuses]);
-  const statusDropdownValues = useMemo(() => ["", ...statusOptions], [statusOptions]);
-  const importanceOptions = useMemo(() => {
-    const normalized = importances
+    return ["", ...Array.from(unique)];
+  }, []);
+  const buildImportanceDropdownValues = useCallback((raw: Array<string | number>) => {
+    const normalized = raw
       .map((entry) => {
         if (entry == null) return "";
         if (typeof entry === "number") return String(entry);
         return String(entry).trim();
       })
       .filter((value) => value.length > 0);
-    return Array.from(new Set(normalized));
-  }, [importances]);
-  const importanceDropdownValues = useMemo(() => ["", ...importanceOptions], [importanceOptions]);
-  const enabledOptions = useMemo(() => ["Yes", "No"], []);
-  const titleDropdownValues = useMemo(() => {
-    const priority = ["Mr", "Mrs", "Κος", "Κα", "Dr", "Δρ"];
-    const labels = titles.map((t) => t.label);
+    return ["", ...Array.from(new Set(normalized))];
+  }, []);
+  const buildTitleDropdownValues = useCallback((raw: DropdownOption[]) => {
+    const priority = ["Mr", "Mrs", "\u039A\u03BF\u03C2", "\u039A\u03B1", "Dr", "\u0394\u03C1"];
+    const labels = raw.map((t) => t.label);
     const prioritized = priority.filter((p) => labels.includes(p));
     const rest = labels
       .filter((l) => !priority.includes(l))
       .sort((a, b) => a.localeCompare(b));
     return ["", ...prioritized, ...rest];
-  }, [titles]);
+  }, []);
+  const [statusDropdownValues, setStatusDropdownValues] = useState(() => buildStatusDropdownValues(statuses));
+  const [importanceDropdownValues, setImportanceDropdownValues] = useState(() => buildImportanceDropdownValues(importances));
+  const enabledOptions = useMemo(() => ["Yes", "No"], []);
+  const [titleDropdownValues, setTitleDropdownValues] = useState(() => buildTitleDropdownValues(titles));
+  const importanceOptions = useMemo(() => importanceDropdownValues.filter((v) => v.length > 0), [importanceDropdownValues]);
+  const contactLookupsRefreshInFlightRef = useRef(false);
   const [refreshToken, setRefreshToken] = useState(0);
   const {
     values: contactForm,
@@ -216,6 +220,37 @@ export default function ContactsClient({
       clearDuplicates();
     }
   }, [contactForm.firstName, contactForm.lastName, isAddContactOpen, checkDuplicates, clearDuplicates]);
+
+  useEffect(() => { setStatusDropdownValues(buildStatusDropdownValues(statuses)); }, [statuses, buildStatusDropdownValues]);
+  useEffect(() => { setImportanceDropdownValues(buildImportanceDropdownValues(importances)); }, [importances, buildImportanceDropdownValues]);
+  useEffect(() => { setTitleDropdownValues(buildTitleDropdownValues(titles)); }, [titles, buildTitleDropdownValues]);
+
+  const refreshContactLookups = useCallback(async () => {
+    if (contactLookupsRefreshInFlightRef.current) return;
+    contactLookupsRefreshInFlightRef.current = true;
+    try {
+      const response = await fetch("/api/customer-contacts?mode=lookups", { cache: 'no-store' });
+      const payload = (await response.json().catch(() => null)) as ContactLookupsResponse | null;
+      if (!response.ok || !payload?.ok || !payload.lookups) return;
+      if (Array.isArray(payload.lookups.statuses)) setStatusDropdownValues(buildStatusDropdownValues(payload.lookups.statuses));
+      if (Array.isArray(payload.lookups.titles)) setTitleDropdownValues(buildTitleDropdownValues(payload.lookups.titles));
+      if (Array.isArray(payload.lookups.importances)) setImportanceDropdownValues(buildImportanceDropdownValues(payload.lookups.importances));
+    } catch (err) {
+      console.error('Failed to refresh contact lookups', err);
+    } finally {
+      contactLookupsRefreshInFlightRef.current = false;
+    }
+  }, [buildStatusDropdownValues, buildTitleDropdownValues, buildImportanceDropdownValues]);
+
+  const handleContactCellEditingStarted = useCallback(
+    (event: CellEditingStartedEvent<Record<string, unknown>>) => {
+      const field = event.colDef.field;
+      if (field === 'Title' || field === 'EmailStatus' || field === 'SecondEmailStatus' || field === 'Importance') {
+        void refreshContactLookups();
+      }
+    },
+    [refreshContactLookups],
+  );
 
   const customerOptions = useMemo(() => customers, [customers]);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
@@ -780,6 +815,7 @@ export default function ContactsClient({
                 onGridReady={handleGridReady}
                 getContextMenuItems={contactContextMenuItems}
                 onCellValueChanged={handleCellEdit}
+                onCellEditingStarted={handleContactCellEditingStarted}
                 refreshToken={refreshToken}
                 rowSelection="multiple"
                 rowMultiSelectWithClick
@@ -816,6 +852,12 @@ export default function ContactsClient({
                 onFocus={handleCustomerInputFocus}
                 onBlur={handleCustomerInputBlur}
                 onChange={handleCustomerInputChange}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && isCustomerListOpen && filteredCustomerOptions.length > 0) {
+                    event.preventDefault();
+                    handleCustomerOptionSelect(filteredCustomerOptions[0]);
+                  }
+                }}
               />
               {isCustomerListOpen ? (
                 <div className={styles.comboList}>
@@ -851,6 +893,8 @@ export default function ContactsClient({
                 className={styles.fieldControl}
                 value={contactForm.titleId}
                 required
+                onMouseDown={() => refreshContactLookups()}
+                onFocus={() => refreshContactLookups()}
                 onChange={(event) => setContactField("titleId", event.target.value)}
               >
                 <option value="">Select title...</option>
@@ -1109,6 +1153,15 @@ export default function ContactsClient({
                 setChangeCustomerText(event.target.value);
                 setChangeCustomerSelected(null);
                 setIsChangeCustomerListOpen(true);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && isChangeCustomerListOpen && filteredChangeCustomerOptions.length > 0) {
+                  event.preventDefault();
+                  cancelChangeCustomerListClose();
+                  setChangeCustomerSelected(filteredChangeCustomerOptions[0]);
+                  setChangeCustomerText(filteredChangeCustomerOptions[0].label);
+                  setIsChangeCustomerListOpen(false);
+                }
               }}
             />
             {isChangeCustomerListOpen ? (

@@ -30,6 +30,7 @@ import {
   type PriceListDecimalFormat,
 } from "../../../lib/priceListDecimalFormats";
 import { getUserNumberLocale, parseLocaleNumber } from "../../../lib/localeNumber";
+import { matchesCountrySearch } from "../../../lib/countryAliases";
 import { useAuditUser } from "../../components/AuditUserProvider";
 
 type XlsxModule = typeof import("xlsx");
@@ -785,6 +786,9 @@ export default function PriceListImportClient({
   const [localSuppliers, setLocalSuppliers] = useState<DropdownOption[]>(suppliers);
   const [brandsLoading, setBrandsLoading] = useState(false);
   const [brandsError, setBrandsError] = useState<string | null>(null);
+  const [countryText, setCountryText] = useState("");
+  const [showCountryList, setShowCountryList] = useState(false);
+  const countryListCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
   const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
@@ -1094,6 +1098,61 @@ export default function PriceListImportClient({
   const updateField = useCallback(<K extends keyof FormValues>(key: K, value: FormValues[K]) => {
     setValues((prev) => ({ ...prev, [key]: value }));
   }, []);
+
+  const clearCountryListCloseTimer = useCallback(() => {
+    if (countryListCloseTimerRef.current) {
+      clearTimeout(countryListCloseTimerRef.current);
+      countryListCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const filteredCountries = useMemo(() => {
+    const search = countryText.trim();
+    if (!search) return countries;
+    return countries.filter((option) => matchesCountrySearch(option.label, search));
+  }, [countries, countryText]);
+
+  const handleCountryInputChange = useCallback((text: string) => {
+    clearCountryListCloseTimer();
+    setCountryText(text);
+    setShowCountryList(true);
+    const normalized = text.trim().toLowerCase();
+    const exactMatch = normalized
+      ? countries.find((opt) => opt.label.trim().toLowerCase() === normalized)
+      : null;
+    updateField("countryId", exactMatch?.value ?? "");
+  }, [clearCountryListCloseTimer, countries, updateField]);
+
+  const handleCountrySelect = useCallback((option: DropdownOption) => {
+    clearCountryListCloseTimer();
+    setCountryText(option.label);
+    setShowCountryList(false);
+    updateField("countryId", option.value);
+  }, [clearCountryListCloseTimer, updateField]);
+
+  const handleCountryBlur = useCallback(() => {
+    clearCountryListCloseTimer();
+    countryListCloseTimerRef.current = setTimeout(() => {
+      setShowCountryList(false);
+      countryListCloseTimerRef.current = null;
+    }, 120);
+    const trimmed = countryText.trim();
+    if (!trimmed) {
+      setCountryText("");
+      updateField("countryId", "");
+      return;
+    }
+    const match = countries.find(
+      (opt) => opt.label.trim().toLowerCase() === trimmed.toLowerCase(),
+    );
+    if (match) {
+      setCountryText(match.label);
+      updateField("countryId", match.value);
+    } else {
+      const selectedOption = countries.find((opt) => opt.value === values.countryId);
+      setCountryText(selectedOption?.label ?? "");
+    }
+  }, [clearCountryListCloseTimer, countries, countryText, updateField, values.countryId]);
 
   const handleBrandCreated = useCallback(
     (brand: { id: number; name: string }) => {
@@ -1702,6 +1761,13 @@ export default function PriceListImportClient({
                     aria-invalid={showValidationErrors && !values.brandId.trim()}
                     placeholder="Type to filter brands"
                     onChange={(e) => handleBrandInputChange(e.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && showBrandList && filteredBrandOptions.length > 0) {
+                        event.preventDefault();
+                        setBrandSelection(filteredBrandOptions[0], filteredBrandOptions[0].label);
+                        setBrandError(null);
+                      }
+                    }}
                     onFocus={(e) => {
                       e.target.select();
                       void refreshBrands();
@@ -1827,14 +1893,42 @@ export default function PriceListImportClient({
               <div className={styles.fieldRow}>
                 <label className={styles.field}>
                   <span className={styles.label}>Country</span>
-                  <select
-                    className={styles.input}
-                    value={values.countryId}
-                    onChange={(e) => updateField("countryId", e.target.value)}
-                  >
-                    <option value="">No country</option>
-                    {countries.map(renderOption)}
-                  </select>
+                  <div className={`${styles.controlStack ?? ''} ${styles.comboWrapper}`}>
+                    <input
+                      autoComplete="off"
+                      className={`${styles.input} ${styles.comboInput}`}
+                      value={countryText}
+                      placeholder="Type to filter countries"
+                      onChange={(e) => handleCountryInputChange(e.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && showCountryList && filteredCountries.length > 0) {
+                          event.preventDefault();
+                          handleCountrySelect(filteredCountries[0]);
+                        }
+                      }}
+                      onBlur={handleCountryBlur}
+                      onFocus={(e) => {
+                        clearCountryListCloseTimer();
+                        e.target.select();
+                        setShowCountryList(true);
+                      }}
+                    />
+                    {showCountryList && filteredCountries.length > 0 ? (
+                      <div className={styles.comboList}>
+                        {filteredCountries.map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className={styles.comboOption}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => handleCountrySelect(option)}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 </label>
                 <label className={styles.field}>
                   <span className={styles.label}>Cost Currency</span>

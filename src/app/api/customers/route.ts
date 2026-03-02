@@ -250,7 +250,7 @@ export async function POST(req: NextRequest) {
 
     const from = `
       FROM dbo.Customers
-      INNER JOIN dbo.PricingPolicies ON dbo.Customers.PricingPolicyID = dbo.PricingPolicies.ID
+      LEFT OUTER JOIN dbo.PricingPolicies ON dbo.Customers.PricingPolicyID = dbo.PricingPolicies.ID
       LEFT OUTER JOIN dbo.Customers AS parentCustomer ON dbo.Customers.ParentCustomerID = parentCustomer.ID
       LEFT OUTER JOIN dbo.Countries AS country ON dbo.Customers.CountryID = country.ID
     `;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import type {
   CellEditingStartedEvent,
@@ -35,6 +36,7 @@ const deleteMenuIcon = `
 `;
 
 export default function CountriesClient() {
+  const router = useRouter();
   const [isAddCountryOpen, setIsAddCountryOpen] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
 
@@ -287,6 +289,16 @@ export default function CountriesClient() {
       <main className={styles.page}>
         <PageHeader
           title="Countries"
+          leftActions={
+            <button
+              type="button"
+              className={`page-header-button ${styles.headerButton}`}
+              onClick={() => router.push("/suppliers")}
+            >
+              <span aria-hidden="true">←</span>
+              Back to Suppliers
+            </button>
+          }
           rightActions={
             <div className={styles.headerActions}>
               <button

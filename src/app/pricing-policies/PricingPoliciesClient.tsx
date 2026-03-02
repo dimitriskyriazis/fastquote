@@ -844,6 +844,12 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
               value={brandText}
               placeholder="Type to filter brands..."
               onChange={handleBrandInputChange}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && isBrandListOpen && filteredBrandOptions.length > 0) {
+                  event.preventDefault();
+                  handleBrandOptionSelect(filteredBrandOptions[0]);
+                }
+              }}
               onFocus={handleBrandInputFocus}
               onBlur={handleBrandInputBlur}
               required

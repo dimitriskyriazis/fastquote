@@ -94,6 +94,7 @@ import {
   SideBarModule,
   StatusBarModule,
   ExcelExportModule,
+  RichSelectModule,
 } from 'ag-grid-enterprise';
 import { usePathname } from 'next/navigation';
 import { showToastMessage } from '../../lib/toast';
@@ -472,6 +473,7 @@ if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
     DateFilterModule,
     TextEditorModule,
     SelectEditorModule,
+    RichSelectModule,
     CustomEditorModule,
     RowSelectionModule,
     RowDragModule,

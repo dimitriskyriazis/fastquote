@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useMemo, useCallback, useRef, useState } from "react";
+import React, { useEffect, useMemo, useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import type {
+  CellEditingStartedEvent,
   CellValueChangedEvent,
   ColDef,
   DefaultMenuItem,
@@ -106,9 +107,42 @@ export default function SuppliersClient({ countries }: Props) {
   const { roles } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
-  const countryOptions = useMemo(() => ["", ...countries.map((c) => c.name)], [countries]);
+  const [countryOptions, setCountryOptions] = useState(() => ["", ...countries.map((c) => c.name)]);
+  const countryRefreshInFlightRef = useRef(false);
   const [refreshToken, setRefreshToken] = useState(0);
   const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
+
+  useEffect(() => {
+    setCountryOptions(["", ...countries.map((c) => c.name)]);
+  }, [countries]);
+
+  const refreshCountryOptions = useCallback(async () => {
+    if (countryRefreshInFlightRef.current) return;
+    countryRefreshInFlightRef.current = true;
+    try {
+      const response = await fetch('/api/customers/lookups?keys=countries', { cache: 'no-store' });
+      const payload = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        lookups?: { countries?: Array<{ value: string; label: string }> };
+      } | null;
+      if (!response.ok || !payload?.ok || !payload.lookups?.countries) return;
+      const freshNames = payload.lookups.countries.map((opt) => opt.label);
+      setCountryOptions(["", ...freshNames]);
+    } catch (err) {
+      console.error('Failed to refresh country options', err);
+    } finally {
+      countryRefreshInFlightRef.current = false;
+    }
+  }, []);
+
+  const handleCellEditingStarted = useCallback(
+    (event: CellEditingStartedEvent<Record<string, unknown>>) => {
+      if (event.colDef.field === 'Country') {
+        void refreshCountryOptions();
+      }
+    },
+    [refreshCountryOptions],
+  );
 
   const supplierRowDeletion = useMemo(
     () =>
@@ -202,9 +236,11 @@ export default function SuppliersClient({ countries }: Props) {
         filter: "agTextColumnFilter",
         enableRowGroup: true,
         editable: true,
-        cellEditor: "agSelectCellEditor",
+        cellEditor: "agRichSelectCellEditor",
         cellEditorParams: {
           values: countryOptions,
+          allowTyping: true,
+          filterList: true,
         },
         valueSetter: (params) => {
           const next = typeof params.newValue === "string" ? params.newValue : "";
@@ -336,6 +372,13 @@ export default function SuppliersClient({ countries }: Props) {
               <button
                 type="button"
                 className={`page-header-button ${styles.headerButton}`}
+                onClick={() => router.push("/countries")}
+              >
+                View Countries
+              </button>
+              <button
+                type="button"
+                className={`page-header-button ${styles.headerButton}`}
                 onClick={() => router.push("/brands")}
               >
                 View Brands
@@ -359,6 +402,7 @@ export default function SuppliersClient({ countries }: Props) {
                 columnStateNamespace="suppliers"
                 onGridReady={handleGridReady}
                 onCellValueChanged={handleCellEdit}
+                onCellEditingStarted={handleCellEditingStarted}
                 refreshToken={refreshToken}
                 getContextMenuItems={getContextMenuItems}
                 rowSelection="multiple"

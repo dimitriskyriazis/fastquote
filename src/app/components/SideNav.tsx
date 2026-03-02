@@ -219,22 +219,6 @@ const navItems: NavItem[] = [
     ),
   },
   {
-    label: "Countries",
-    href: "/countries",
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.6" fill="none" />
-        <path
-          d="M4 12h16M12 4a12 12 0 0 1 0 16M12 4a12 12 0 0 0 0 16"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-          fill="none"
-        />
-      </svg>
-    ),
-  },
-  {
     label: "User Management",
     href: "/user-management",
     icon: (

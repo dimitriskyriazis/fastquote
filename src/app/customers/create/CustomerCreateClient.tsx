@@ -12,6 +12,7 @@ import lookupButtonStyles from '../../components/LookupAddButton.module.css';
 import { showToastMessage } from '../../../lib/toast';
 import { useDuplicateCheck } from '../../lib/useDuplicateCheck';
 import DuplicateWarning from '../../components/DuplicateWarning';
+import { matchesCountrySearch } from '../../../lib/countryAliases';
 
 type SectionKey = 'general' | 'business' | 'location' | 'contact' | 'notes';
 
@@ -19,7 +20,7 @@ type FieldDefinition = {
   id: string;
   label: string;
   section: SectionKey;
-  type?: 'text' | 'textarea' | 'select';
+  type?: 'text' | 'textarea' | 'select' | 'combobox';
   inputType?: string;
   required?: boolean;
   options?: CustomerDropdownOption[];
@@ -151,7 +152,7 @@ const buildFieldDefinitions = (
     id: 'country',
     label: 'Country',
     section: 'location',
-    type: 'select',
+    type: 'combobox',
     options: countries,
   },
   {
@@ -282,7 +283,58 @@ export default function CustomerCreateClient({
   const [showParentCustomerList, setShowParentCustomerList] = useState(false);
   const [isParentCustomerEditing, setIsParentCustomerEditing] = useState(false);
   const parentListCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [countryText, setCountryText] = useState('');
+  const [showCountryList, setShowCountryList] = useState(false);
+  const countryListCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialValuesSyncedRef = useRef(false);
+  const lookupRefreshInFlightRef = useRef(new Set<LookupKey>());
+
+  const refreshLookups = useCallback(async (keys: LookupKey[]) => {
+    const uniqueKeys = Array.from(new Set(keys));
+    const pendingKeys = uniqueKeys.filter((key) => !lookupRefreshInFlightRef.current.has(key));
+    if (pendingKeys.length === 0) return;
+    pendingKeys.forEach((key) => lookupRefreshInFlightRef.current.add(key));
+    try {
+      const search = new URLSearchParams();
+      pendingKeys.forEach((key) => search.append('keys', key));
+      const response = await fetch(`/api/customers/lookups?${search.toString()}`, { cache: 'no-store' });
+      const payload = (await response.json().catch(() => null)) as CustomerLookupsResponse | null;
+      if (!response.ok || !payload?.ok || !payload.lookups) {
+        throw new Error(payload?.error ?? 'Unable to refresh lookup options');
+      }
+      if (payload.lookups.customerGroups) setLocalCustomerGroups(payload.lookups.customerGroups);
+      if (payload.lookups.parentCustomers) setLocalParentCustomers(payload.lookups.parentCustomers);
+      if (payload.lookups.pricingPolicies) setLocalPricingPolicies(payload.lookups.pricingPolicies);
+      if (payload.lookups.importanceOptions) setLocalImportanceOptions(payload.lookups.importanceOptions);
+      if (payload.lookups.countries) setCountryOptions(payload.lookups.countries);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      pendingKeys.forEach((key) => lookupRefreshInFlightRef.current.delete(key));
+    }
+  }, []);
+
+  const refreshFieldLookups = useCallback((fieldId: string) => {
+    if (fieldId === 'customerGroup') {
+      void refreshLookups(['customerGroups']);
+      return;
+    }
+    if (fieldId === 'parentCustomer') {
+      void refreshLookups(['parentCustomers']);
+      return;
+    }
+    if (fieldId === 'pricingPolicy') {
+      void refreshLookups(['pricingPolicies']);
+      return;
+    }
+    if (fieldId === 'importance') {
+      void refreshLookups(['importanceOptions']);
+      return;
+    }
+    if (fieldId === 'country') {
+      void refreshLookups(['countries']);
+    }
+  }, [refreshLookups]);
 
   const fieldDefinitions = useMemo(
     () =>
@@ -367,11 +419,19 @@ export default function CustomerCreateClient({
     }
   }, []);
 
+  const clearCountryListCloseTimer = useCallback(() => {
+    if (countryListCloseTimerRef.current) {
+      clearTimeout(countryListCloseTimerRef.current);
+      countryListCloseTimerRef.current = null;
+    }
+  }, []);
+
   useEffect(
     () => () => {
       clearParentListCloseTimer();
+      clearCountryListCloseTimer();
     },
-    [clearParentListCloseTimer],
+    [clearParentListCloseTimer, clearCountryListCloseTimer],
   );
 
   useEffect(() => {
@@ -435,6 +495,66 @@ export default function CustomerCreateClient({
       return label.includes(search) || value.includes(search);
     });
   }, [localParentCustomers, parentCustomerText]);
+
+  const filteredCountries = useMemo(() => {
+    const search = countryText.trim();
+    if (!search) return countryOptions;
+    return countryOptions.filter((option) => matchesCountrySearch(option.label, search));
+  }, [countryOptions, countryText]);
+
+  const handleCountryInputChange = useCallback((text: string) => {
+    clearCountryListCloseTimer();
+    setCountryText(text);
+    setShowCountryList(true);
+    const normalized = text.trim().toLowerCase();
+    const exactMatch = normalized
+      ? countryOptions.find((opt) => (opt.label?.trim().toLowerCase() ?? '') === normalized)
+      : null;
+    setValues((prev) => ({ ...prev, country: exactMatch?.value ?? '' }));
+    setErrors((prev) => {
+      if (!prev.country) return prev;
+      const next = { ...prev };
+      delete next.country;
+      return next;
+    });
+  }, [clearCountryListCloseTimer, countryOptions]);
+
+  const handleCountrySelect = useCallback((option: CustomerDropdownOption) => {
+    clearCountryListCloseTimer();
+    setCountryText(option.label);
+    setShowCountryList(false);
+    setValues((prev) => ({ ...prev, country: option.value }));
+    setErrors((prev) => {
+      if (!prev.country) return prev;
+      const next = { ...prev };
+      delete next.country;
+      return next;
+    });
+  }, [clearCountryListCloseTimer]);
+
+  const handleCountryBlur = useCallback(() => {
+    clearCountryListCloseTimer();
+    countryListCloseTimerRef.current = setTimeout(() => {
+      setShowCountryList(false);
+      countryListCloseTimerRef.current = null;
+    }, 120);
+    const trimmed = countryText.trim();
+    if (!trimmed) {
+      setCountryText('');
+      setValues((prev) => ({ ...prev, country: '' }));
+      return;
+    }
+    const match = countryOptions.find(
+      (opt) => (opt.label?.trim().toLowerCase() ?? '') === trimmed.toLowerCase(),
+    );
+    if (match) {
+      setCountryText(match.label);
+      setValues((prev) => ({ ...prev, country: match.value }));
+    } else {
+      const selectedOption = countryOptions.find((opt) => opt.value === values.country);
+      setCountryText(selectedOption?.label ?? '');
+    }
+  }, [clearCountryListCloseTimer, countryOptions, countryText, values.country]);
 
   const handleChange = useCallback((fieldId: string, value: string) => {
     setValues((prev) => ({ ...prev, [fieldId]: value }));
@@ -660,12 +780,20 @@ export default function CustomerCreateClient({
             value={parentCustomerText}
             placeholder="Type to filter parent customers"
             onChange={(event) => handleParentCustomerInputChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && showParentCustomerList && filteredParentCustomers.length > 0) {
+                event.preventDefault();
+                clearParentListCloseTimer();
+                setParentCustomerSelection(filteredParentCustomers[0], filteredParentCustomers[0].label);
+              }
+            }}
             onBlur={handleParentCustomerBlur}
             onFocus={(event) => {
               setIsParentCustomerEditing(true);
               clearParentListCloseTimer();
               event.target.select();
               setShowParentCustomerList(true);
+              refreshFieldLookups('parentCustomer');
             }}
           />
           {showParentCustomerList && filteredParentCustomers.length > 0 ? (
@@ -691,6 +819,52 @@ export default function CustomerCreateClient({
       );
     }
 
+    if (field.type === 'combobox') {
+      const filtered = filteredCountries;
+      return (
+        <div className={`${styles.controlStack} ${styles.comboWrapper}`}>
+          <input
+            autoComplete="off"
+            id={`customer-create-${field.id}`}
+            name={field.id}
+            className={`${className} ${styles.comboInput}`}
+            value={countryText}
+            placeholder="Type to filter countries"
+            onChange={(event) => handleCountryInputChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && showCountryList && filtered.length > 0) {
+                event.preventDefault();
+                handleCountrySelect(filtered[0]);
+              }
+            }}
+            onBlur={handleCountryBlur}
+            onFocus={(event) => {
+              clearCountryListCloseTimer();
+              event.target.select();
+              setShowCountryList(true);
+              refreshFieldLookups('country');
+            }}
+          />
+          {showCountryList && filtered.length > 0 ? (
+            <div className={styles.comboList}>
+              {filtered.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={styles.comboOption}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => handleCountrySelect(option)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {showErrorText ? <div className={styles.fieldError}>{fieldError}</div> : null}
+        </div>
+      );
+    }
+
     if (field.type === 'select') {
       const options = field.options ?? [];
       const showEmptyOption = field.id !== 'importance' || options.length === 0;
@@ -704,6 +878,8 @@ export default function CustomerCreateClient({
             value={value}
             required={Boolean(field.required)}
             aria-invalid={hasError}
+            onMouseDown={() => refreshFieldLookups(field.id)}
+            onFocus={() => refreshFieldLookups(field.id)}
             onChange={(event) => handleChange(field.id, event.target.value)}
           >
             {showEmptyOption ? <option value="">Select...</option> : null}

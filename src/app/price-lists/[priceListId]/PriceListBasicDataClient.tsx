@@ -15,6 +15,8 @@ import LookupModal from '../../components/LookupModal';
 import AddBrandModal from '../../components/AddBrandModal';
 import AddSupplierModal from '../../components/AddSupplierModal';
 import lookupButtonStyles from '../../components/LookupAddButton.module.css';
+import comboStyles from '../../offers/create/OfferCreateClient.module.css';
+import { matchesCountrySearch } from '../../../lib/countryAliases';
 import { formatDisplayValue } from '../../lib/formatDisplayValue';
 import { normalizeValueForApi } from '../../lib/normalizeValueForApi';
 import { formatDateInputValue } from '../../lib/formatDateInputValue';
@@ -67,6 +69,8 @@ type FieldDefinition = {
   resolveValue?: (record: PriceListBasicRecord) => string | null | undefined;
   options?: PriceListDropdownOption[];
   datalistOptions?: PriceListDropdownOption[];
+  comboBox?: boolean;
+  datalistRecordKey?: keyof PriceListBasicRecord;
 };
 
 const SECTION_METADATA: Record<SectionKey, { title: string }> = {
@@ -173,7 +177,9 @@ const buildFieldDefinitions = (
     recordKey: 'CountryId',
     updateField: 'CountryId',
     valueType: 'number',
-    options: countries,
+    comboBox: true,
+    datalistOptions: countries,
+    datalistRecordKey: 'CountryName',
   },
   {
     id: 'currency',
@@ -232,6 +238,16 @@ const buildFieldDefinitions = (
 
 
 const formatInitialValue = (record: PriceListBasicRecord, def: FieldDefinition) => {
+  if (def.comboBox && def.datalistOptions && def.datalistOptions.length > 0) {
+    const comboValue = record[def.datalistRecordKey ?? def.recordKey];
+    if (comboValue === null || comboValue === undefined) return '';
+    if (typeof comboValue === 'string') return comboValue;
+    if (typeof comboValue === 'number') {
+      const matchingOption = def.datalistOptions.find((option) => option.value === String(comboValue));
+      return matchingOption?.label ?? String(comboValue);
+    }
+    return String(comboValue);
+  }
   const raw = typeof def.resolveValue === 'function' ? def.resolveValue(record) : record[def.recordKey];
   if (def.inputType === 'date' || def.valueType === 'date') {
     return formatDateInputValue(raw as Date | string | null | undefined);
@@ -304,6 +320,11 @@ export default function PriceListBasicDataClient({
   const [rulePickerSaving, setRulePickerSaving] = useState(false);
   const [rulePickerError, setRulePickerError] = useState<string | null>(null);
   const [discountDrafts, setDiscountDrafts] = useState<Record<number, { telmaco: string; customer: string }>>({});
+  const [openComboField, setOpenComboField] = useState<string | null>(null);
+  const [comboErrors, setComboErrors] = useState<Record<string, string>>({});
+  const comboCloseTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
   const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
   const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
 
@@ -366,6 +387,20 @@ export default function PriceListBasicDataClient({
     })),
     [localCountries]
   );
+
+  const scheduleComboClose = useCallback((fieldId: string) => {
+    comboCloseTimerRef.current[fieldId] = setTimeout(() => {
+      setOpenComboField((prev) => (prev === fieldId ? null : prev));
+      delete comboCloseTimerRef.current[fieldId];
+    }, 120);
+  }, []);
+
+  const cancelComboClose = useCallback((fieldId: string) => {
+    if (comboCloseTimerRef.current[fieldId]) {
+      clearTimeout(comboCloseTimerRef.current[fieldId]);
+      delete comboCloseTimerRef.current[fieldId];
+    }
+  }, []);
 
   const handleValueChange = useCallback((fieldId: string, value: string) => {
     setValues((prev) => ({ ...prev, [fieldId]: value }));
@@ -780,6 +815,102 @@ export default function PriceListBasicDataClient({
     const pending = pendingFields[def.id];
     const value = values[def.id] ?? '';
     const placeholder = value === '' ? '—' : undefined;
+
+    if (def.comboBox && def.datalistOptions && def.datalistOptions.length > 0) {
+      const search = value.trim();
+      const filteredOptions = search
+        ? def.datalistOptions.filter((option) => matchesCountrySearch(option.label, search))
+        : def.datalistOptions;
+      const isOpen = openComboField === def.id;
+      const errorMessage = comboErrors[def.id];
+      const handleComboBlur = () => {
+        scheduleComboClose(def.id);
+        if (!def.updateField) return;
+        const latestValue = (valuesRef.current?.[def.id] ?? '').trim();
+        if (latestValue === (savedValuesRef.current[def.id] ?? '').trim()) {
+          setComboErrors((prev) => {
+            if (!prev[def.id]) return prev;
+            const next = { ...prev };
+            delete next[def.id];
+            return next;
+          });
+          return;
+        }
+        void (async () => {
+          await saveField(def, latestValue);
+        })();
+      };
+      return (
+        <div className={`${comboStyles.controlStack} ${comboStyles.comboWrapper}`}>
+          <input
+            autoComplete="off"
+            id={controlId}
+            name={def.id}
+            className={`${styles.fieldControl} ${comboStyles.comboInput} ${pending ? styles.fieldControlPending : ''}`}
+            value={value}
+            placeholder="Type to filter countries"
+            onChange={(event) => {
+              cancelComboClose(def.id);
+              handleValueChange(def.id, event.target.value);
+              setComboErrors((prev) => {
+                if (!prev[def.id]) return prev;
+                const next = { ...prev };
+                delete next[def.id];
+                return next;
+              });
+            }}
+            onFocus={(event) => {
+              event.target.select();
+              refreshFieldLookups(def.id);
+              setOpenComboField(def.id);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && isOpen && filteredOptions.length > 0) {
+                event.preventDefault();
+                cancelComboClose(def.id);
+                setOpenComboField(null);
+                setComboErrors((prev) => {
+                  if (!prev[def.id]) return prev;
+                  const next = { ...prev };
+                  delete next[def.id];
+                  return next;
+                });
+                handleValueChange(def.id, filteredOptions[0].label);
+                void saveField(def, filteredOptions[0].label);
+              }
+            }}
+            onBlur={handleComboBlur}
+          />
+          {isOpen && filteredOptions.length > 0 ? (
+            <div className={comboStyles.comboList}>
+              {filteredOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={comboStyles.comboOption}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    cancelComboClose(def.id);
+                    setOpenComboField(null);
+                    setComboErrors((prev) => {
+                      if (!prev[def.id]) return prev;
+                      const next = { ...prev };
+                      delete next[def.id];
+                      return next;
+                    });
+                    handleValueChange(def.id, option.label);
+                    void saveField(def, option.label);
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {errorMessage ? <div className={comboStyles.fieldError}>{errorMessage}</div> : null}
+        </div>
+      );
+    }
 
     if (def.options && def.options.length > 0) {
       return (

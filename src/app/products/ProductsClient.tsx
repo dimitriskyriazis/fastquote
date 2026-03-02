@@ -4,6 +4,7 @@ import React, { useMemo, useCallback, useState, useRef, useEffect } from "react"
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import type {
+  CellEditingStartedEvent,
   CellValueChangedEvent,
   ColDef,
   DefaultMenuItem,
@@ -212,7 +213,7 @@ export default function ProductsClient() {
     if (lookupsLoadingRef.current) return;
     lookupsLoadingRef.current = true;
     try {
-      const response = await fetch(PRODUCT_LOOKUP_ENDPOINT);
+      const response = await fetch(PRODUCT_LOOKUP_ENDPOINT, { cache: 'no-store' });
       const payload = (await response.json().catch(() => null)) as ProductLookupResponse | null;
       if (!response.ok || !payload?.ok) {
         throw new Error(payload?.error ?? "Unable to load product lookup data.");
@@ -237,6 +238,16 @@ export default function ProductsClient() {
     if (lookups) return;
     loadLookups();
   }, [loadLookups, lookups]);
+
+  const handleProductCellEditingStarted = useCallback(
+    (event: CellEditingStartedEvent<Record<string, unknown>>) => {
+      const field = event.colDef.field;
+      if (field === 'Category' || field === 'SubCategory' || field === 'Type') {
+        void loadLookups();
+      }
+    },
+    [loadLookups],
+  );
 
   const categoryOptions = useMemo(() => lookups?.categories ?? [], [lookups]);
   const subCategoryOptions = useMemo(() => lookups?.subCategories ?? [], [lookups]);
@@ -807,6 +818,7 @@ export default function ProductsClient() {
                 rowMultiSelectWithClick
                 rowDeselection
                 onCellValueChanged={handleProductCellEdit}
+                onCellEditingStarted={handleProductCellEditingStarted}
                 onRequestPayloadConsumed={() => {
                   setHighlightedProductId(null);
                 }}

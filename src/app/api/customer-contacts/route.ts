@@ -15,14 +15,6 @@ import { toDropdownOptions, type DropdownOption } from "../../../lib/dropdownOpt
 import { IMPORTANCE_VALUES, fetchCustomers } from "../../customers/[customerId]/customerBasicDataLookups";
 
 
-
-
-
-
-
-
-
-
 type GridRequest = {
   startRow?: number;
   endRow?: number;

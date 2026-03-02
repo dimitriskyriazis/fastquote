@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import type { CellValueChangedEvent, ColDef, GridApi } from "ag-grid-community";
+import type { CellEditingStartedEvent, CellValueChangedEvent, ColDef, GridApi } from "ag-grid-community";
 import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { useAuditUser } from "../components/AuditUserProvider";
@@ -53,6 +53,7 @@ export default function UsersClient() {
   const [salesSeniorityOptions, setSalesSeniorityOptions] = useState<string[]>([]);
   const [refreshToken, setRefreshToken] = useState(0);
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const optionsRefreshInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!canAccess) return;
@@ -83,6 +84,33 @@ export default function UsersClient() {
       isActive = false;
     };
   }, [canAccess]);
+
+  const refreshOptions = useCallback(async () => {
+    if (optionsRefreshInFlightRef.current) return;
+    optionsRefreshInFlightRef.current = true;
+    try {
+      const res = await fetch("/api/user-management/options", { cache: 'no-store' });
+      const payload = (await res.json().catch(() => null)) as OptionsPayload | null;
+      if (!res.ok || !payload?.ok) return;
+      if (Array.isArray(payload.roles)) setRoleOptions(payload.roles);
+      if (Array.isArray(payload.salesDivisions)) setSalesDivisionOptions(payload.salesDivisions);
+      if (Array.isArray(payload.salesSeniorities)) setSalesSeniorityOptions(payload.salesSeniorities);
+    } catch (err) {
+      console.error('Failed to refresh user options', err);
+    } finally {
+      optionsRefreshInFlightRef.current = false;
+    }
+  }, []);
+
+  const handleCellEditingStarted = useCallback(
+    (event: CellEditingStartedEvent<Record<string, unknown>>) => {
+      const field = event.colDef.field;
+      if (field === 'SalesDivision' || field === 'SalesSeniority' || field === 'Role1' || field === 'Role2') {
+        void refreshOptions();
+      }
+    },
+    [refreshOptions],
+  );
 
   const roleSelectOptions = useMemo(() => ["", ...roleOptions], [roleOptions]);
   const divisionSelectOptions = useMemo(() => ["", ...salesDivisionOptions], [salesDivisionOptions]);
@@ -392,6 +420,7 @@ export default function UsersClient() {
                 }}
                 columnStateNamespace="users"
                 onCellValueChanged={handleCellEdit}
+                onCellEditingStarted={handleCellEditingStarted}
                 onGridReady={handleGridReady}
                 refreshToken={refreshToken}
                 suppressRowClickSelection
