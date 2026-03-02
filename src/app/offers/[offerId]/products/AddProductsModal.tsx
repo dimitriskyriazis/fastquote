@@ -92,6 +92,67 @@ const formatEuro = (value: unknown) => {
 };
 
 const emptyColumnWidthDefaults = {};
+const productAutoSizeExclusions = ['Description'];
+
+type ProductsGridPanelProps = {
+  endpoint: string;
+  productColumns: ColDef[];
+  defaultColDef: ColDef;
+  productRequestPayload: Record<string, unknown>;
+  handleProductSelection: (rows: Record<string, unknown>[], api: GridApi) => void;
+  handleProductCellEdit: (event: CellValueChangedEvent<Record<string, unknown>>) => void;
+  handleProductsGridReady: (api: GridApi) => void;
+  handleProductsGridModelUpdated: (api: GridApi) => void;
+  onRequestPayloadConsumed?: () => void;
+};
+
+const ProductsGridPanel = React.memo(function ProductsGridPanel({
+  endpoint,
+  productColumns,
+  defaultColDef,
+  productRequestPayload,
+  handleProductSelection,
+  handleProductCellEdit,
+  handleProductsGridReady,
+  handleProductsGridModelUpdated,
+  onRequestPayloadConsumed,
+}: ProductsGridPanelProps) {
+  return (
+    <div className={`${styles.sectionInner} ${styles.productsColumn}`}>
+      <div
+        className={`${styles.productsGridShell} offer-products-grid`}
+        data-fastquote-keep-selection="true"
+      >
+        <AgGridAll
+          endpoint={endpoint}
+          columnDefs={productColumns}
+          defaultColDef={defaultColDef}
+          columnWidthDefaults={emptyColumnWidthDefaults}
+          requestPayload={productRequestPayload}
+          cacheBlockSize={200}
+          rowBuffer={8}
+          maxBlocksInCache={4}
+          rowSelection="multiple"
+          rowMultiSelectWithClick
+          rowDeselection
+          allowRowClickSelection
+          rowGroupPanelShow="never"
+          onSelectionChanged={handleProductSelection}
+          autoSizeExclusions={productAutoSizeExclusions}
+          onCellValueChanged={handleProductCellEdit}
+          onGridReady={handleProductsGridReady}
+          onModelUpdated={handleProductsGridModelUpdated}
+          onRequestPayloadConsumed={onRequestPayloadConsumed}
+          columnStateNamespace="add-products-modal-v2"
+          applyColumnStateOrder={true}
+          maintainColumnOrder={true}
+          disableAutoSize={true}
+          allowCellSelectionInPerformanceMode={false}
+        />
+      </div>
+    </div>
+  );
+});
 
 const normalizeProductId = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
@@ -198,7 +259,6 @@ export default function AddProductsModal({
     if (Math.abs(nextViewport.scrollTop - pending) <= 1) return;
     nextViewport.scrollTop = pending;
   }, [getCategoryViewport]);
-
   const categoryRequestPayload = useMemo(() => ({ action: 'categories' }), []);
   const productRequestPayload = useMemo(() => {
     const payload: Record<string, unknown> = { action: 'products' };
@@ -758,19 +818,15 @@ export default function AddProductsModal({
     };
   }, [newProductId, ensureProductSort, refreshProductsGrid]);
 
+  const selectedCategoryIdRef = useRef<number | null>(null);
+  selectedCategoryIdRef.current = selectedCategory?.OfferDetailID ?? null;
+
   useEffect(() => {
     if (refreshToken == null) return;
     refreshCategoryGrid();
     refreshProductsGrid();
-    const categoryId = selectedCategory?.OfferDetailID ?? null;
-    void fetchRequestedRows(categoryId, { force: true });
-  }, [
-    refreshToken,
-    refreshCategoryGrid,
-    refreshProductsGrid,
-    fetchRequestedRows,
-    selectedCategory?.OfferDetailID,
-  ]);
+    void fetchRequestedRows(selectedCategoryIdRef.current, { force: true });
+  }, [refreshToken, refreshCategoryGrid, refreshProductsGrid, fetchRequestedRows]);
 
   const handleCategoryGridReady = useCallback((api: GridApi) => {
     const previousApi = categoryApiRef.current;
@@ -889,6 +945,7 @@ export default function AddProductsModal({
                   rowGroupPanelShow="never"
                   autoSizeExclusions={['Description']}
                   suppressSideBar
+                  allowCellSelectionInPerformanceMode={false}
                   onGridReady={handleCategoryGridReady}
                   onModelUpdated={handleCategoryGridModelUpdated}
                 />
@@ -947,38 +1004,17 @@ export default function AddProductsModal({
             </div>
             </div>
 
-            <div className={`${styles.sectionInner} ${styles.productsColumn}`}>
-              <div 
-                className={`${styles.productsGridShell} offer-products-grid`}
-                data-fastquote-keep-selection="true"
-              >
-                <AgGridAll
-                  endpoint={endpoint}
-                  columnDefs={productColumns}
-                  defaultColDef={defaultColDef}
-                  columnWidthDefaults={emptyColumnWidthDefaults}
-                  requestPayload={productRequestPayload}
-                  cacheBlockSize={200}
-                  rowBuffer={8}
-                  maxBlocksInCache={4}
-                  rowSelection="multiple"
-                  rowMultiSelectWithClick
-                  rowDeselection
-                  allowRowClickSelection
-                  rowGroupPanelShow="never"
-                  onSelectionChanged={handleProductSelection as (rows: Record<string, unknown>[], api: GridApi) => void}
-                  autoSizeExclusions={['Description']}
-                  onCellValueChanged={handleProductCellEdit}
-                  onGridReady={handleProductsGridReady}
-                  onModelUpdated={handleProductsGridModelUpdated}
-                  onRequestPayloadConsumed={onRequestPayloadConsumed}
-                  columnStateNamespace="add-products-modal-v2"
-                  applyColumnStateOrder={true}
-                  maintainColumnOrder={true}
-                  disableAutoSize={true}
-                />
-              </div>
-            </div>
+            <ProductsGridPanel
+              endpoint={endpoint}
+              productColumns={productColumns}
+              defaultColDef={defaultColDef}
+              productRequestPayload={productRequestPayload}
+              handleProductSelection={handleProductSelection as (rows: Record<string, unknown>[], api: GridApi) => void}
+              handleProductCellEdit={handleProductCellEdit}
+              handleProductsGridReady={handleProductsGridReady}
+              handleProductsGridModelUpdated={handleProductsGridModelUpdated}
+              onRequestPayloadConsumed={onRequestPayloadConsumed}
+            />
           </section>
         </div>
         </div>
@@ -1051,6 +1087,7 @@ export default function AddProductsModal({
                   rowGroupPanelShow="never"
                   autoSizeExclusions={['Description']}
                   suppressSideBar
+                  allowCellSelectionInPerformanceMode={false}
                   onGridReady={handleCategoryGridReady}
                   onModelUpdated={handleCategoryGridModelUpdated}
                 />
@@ -1109,38 +1146,17 @@ export default function AddProductsModal({
             </div>
             </div>
 
-            <div className={`${styles.sectionInner} ${styles.productsColumn}`}>
-              <div 
-                className={`${styles.productsGridShell} offer-products-grid`}
-                data-fastquote-keep-selection="true"
-              >
-                <AgGridAll
-                  endpoint={endpoint}
-                  columnDefs={productColumns}
-                  defaultColDef={defaultColDef}
-                  columnWidthDefaults={emptyColumnWidthDefaults}
-                  requestPayload={productRequestPayload}
-                  cacheBlockSize={200}
-                  rowBuffer={8}
-                  maxBlocksInCache={4}
-                  rowSelection="multiple"
-                  rowMultiSelectWithClick
-                  rowDeselection
-                  allowRowClickSelection
-                  rowGroupPanelShow="never"
-                  onSelectionChanged={handleProductSelection as (rows: Record<string, unknown>[], api: GridApi) => void}
-                  autoSizeExclusions={['Description']}
-                  onCellValueChanged={handleProductCellEdit}
-                  onGridReady={handleProductsGridReady}
-                  onModelUpdated={handleProductsGridModelUpdated}
-                  onRequestPayloadConsumed={onRequestPayloadConsumed}
-                  columnStateNamespace="add-products-modal-v2"
-                  applyColumnStateOrder={true}
-                  maintainColumnOrder={true}
-                  disableAutoSize={true}
-                />
-              </div>
-            </div>
+            <ProductsGridPanel
+              endpoint={endpoint}
+              productColumns={productColumns}
+              defaultColDef={defaultColDef}
+              productRequestPayload={productRequestPayload}
+              handleProductSelection={handleProductSelection as (rows: Record<string, unknown>[], api: GridApi) => void}
+              handleProductCellEdit={handleProductCellEdit}
+              handleProductsGridReady={handleProductsGridReady}
+              handleProductsGridModelUpdated={handleProductsGridModelUpdated}
+              onRequestPayloadConsumed={onRequestPayloadConsumed}
+            />
           </section>
         </div>
       </div>

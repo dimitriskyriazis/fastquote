@@ -1379,6 +1379,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     RequestedQuantity: false,
   });
   const [requestedItemNoVisible, setRequestedItemNoVisible] = useState(false);
+  const requestedColumnVisibilityRef = useRef(requestedColumnVisibility);
+  requestedColumnVisibilityRef.current = requestedColumnVisibility;
+  const requestedItemNoVisibleRef = useRef(requestedItemNoVisible);
+  requestedItemNoVisibleRef.current = requestedItemNoVisible;
   const [isAddingWebLinks, setIsAddingWebLinks] = useState(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const gridWrapperRef = useRef<HTMLDivElement | null>(null);
@@ -1581,12 +1585,13 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
 
   const reapplyRequestedColumnsVisibility = useCallback((options?: { defer?: boolean }) => {
     if (!requestedColumnsReady) return;
-    applyRequestedVisibilityToGrid(requestedColumnVisibility, requestedItemNoVisible, options);
+    // Read from refs to avoid stale-closure issues when called from RAF callbacks
+    // (e.g. handleGridModelUpdated schedules a RAF that may capture an old closure
+    // before React has flushed state updates from handleGridResponse).
+    applyRequestedVisibilityToGrid(requestedColumnVisibilityRef.current, requestedItemNoVisibleRef.current, options);
   }, [
     applyRequestedVisibilityToGrid,
     requestedColumnsReady,
-    requestedColumnVisibility,
-    requestedItemNoVisible,
   ]);
 
   const defaultColDef = useMemo<ColDef>(() => ({
@@ -1850,8 +1855,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       ) != null);
       const responseRequestedItemNo = Boolean(response?.requestedColumns?.RequestedItemNo) || hasRequestedItemInRows;
       if (isFirstPage) {
-        // First page of a new load or refresh: reset visibility to exactly what the data says.
-        // This ensures empty columns are hidden on launch and after re-importing requested products.
+        // First page: OR-merge with previous visibility so columns that were already
+        // visible stay visible across grid refreshes (e.g. after Populate Offer).
+        // On the very first load the previous state is all-false, so this is equivalent
+        // to a full reset — empty columns are still hidden on launch.
         const freshVisibility = REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
           (acc, key) => {
             acc[key] = Boolean(response?.requestedColumns?.[key]);
@@ -1859,12 +1866,21 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           },
           {} as Record<RequestedDisplayFieldKey, boolean>,
         );
+        const previousVisibility = appliedRequestedColumnVisibilityRef.current ?? requestedColumnVisibility;
+        const mergedVisibility = REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
+          (acc, key) => {
+            acc[key] = Boolean(previousVisibility?.[key]) || freshVisibility[key];
+            return acc;
+          },
+          {} as Record<RequestedDisplayFieldKey, boolean>,
+        );
         setRequestedColumnVisibility((prev) => {
-          const hasChanged = REQUESTED_DISPLAY_FIELD_KEYS.some((key) => prev[key] !== freshVisibility[key]);
-          return hasChanged ? freshVisibility : prev;
+          const hasChanged = REQUESTED_DISPLAY_FIELD_KEYS.some((key) => prev[key] !== mergedVisibility[key]);
+          return hasChanged ? mergedVisibility : prev;
         });
-        setRequestedItemNoVisible(responseRequestedItemNo);
-        applyRequestedVisibilityToGrid(freshVisibility, responseRequestedItemNo, { force: true, defer: true });
+        const mergedItemNoVisible = (appliedRequestedItemNoVisibleRef.current ?? requestedItemNoVisible) || responseRequestedItemNo;
+        setRequestedItemNoVisible(mergedItemNoVisible);
+        applyRequestedVisibilityToGrid(mergedVisibility, mergedItemNoVisible, { force: true, defer: true });
       } else {
         // Subsequent pages: OR-merge so columns don't disappear while scrolling through pages.
         const previousVisibility = appliedRequestedColumnVisibilityRef.current ?? requestedColumnVisibility;
@@ -1957,6 +1973,8 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     appliedRequestedItemNoVisibleRef.current = null;
     reapplyRequestedColumnsVisibility({ defer: true });
   }, [reapplyRequestedColumnsVisibility]);
+  const forceReapplyRef = useRef(forceReapplyRequestedColumnsVisibility);
+  forceReapplyRef.current = forceReapplyRequestedColumnsVisibility;
   const handleColumnStateRestored = useCallback(() => {
     forceReapplyRequestedColumnsVisibility();
   }, [forceReapplyRequestedColumnsVisibility]);
@@ -3414,6 +3432,27 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
   }, [processedRequestedMatches, requestedMatchQueue.length]);
 
+  // When the match queue empties (end of populate/skip flow), force-reapply
+  // requested column visibility.  Something in the populate → modal → skip
+  // lifecycle can leave the AG Grid column state out of sync with React state.
+  const prevMatchQueueLengthRef = useRef(requestedMatchQueue.length);
+  useEffect(() => {
+    const prevLen = prevMatchQueueLengthRef.current;
+    prevMatchQueueLengthRef.current = requestedMatchQueue.length;
+    if (prevLen > 0 && requestedMatchQueue.length === 0) {
+      // Queue just emptied — modal is closing.  Re-apply visibility immediately
+      // and again after a RAF to cover any async AG Grid state drift.
+      forceReapplyRequestedColumnsVisibility();
+      if (typeof window !== 'undefined') {
+        const rafId = window.requestAnimationFrame(() => {
+          forceReapplyRequestedColumnsVisibility();
+        });
+        return () => window.cancelAnimationFrame(rafId);
+      }
+    }
+    return undefined;
+  }, [requestedMatchQueue.length, forceReapplyRequestedColumnsVisibility]);
+
   const previousCollapsedPathsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const api = gridApiRef.current;
@@ -3811,6 +3850,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
     } finally {
       finalizeSelection();
+      // Force re-apply requested column visibility after populate to counter any
+      // AG Grid state drift caused by cell updates or grid refreshes.
+      forceReapplyRef.current?.();
     }
   }, [assignRequestedRowToProduct, promoteNodeToCategory, promoteNodeToProduct, refreshOfferProductGrid, resolvedEndpoint]);
 
@@ -3876,14 +3918,28 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     if (!currentRequestedMatch) return;
     showToastMessage('Skipped requested item.', 'info');
     advanceMatchQueue();
-  }, [advanceMatchQueue, currentRequestedMatch]);
+    // Force re-show requested columns that may have been hidden during the
+    // populate/match flow.  A deferred RAF handles AG Grid internal timing.
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        forceReapplyRequestedColumnsVisibility();
+      });
+    }
+  }, [advanceMatchQueue, currentRequestedMatch, forceReapplyRequestedColumnsVisibility]);
 
   const handleManualSkipAll = useCallback(() => {
     if (requestedMatchQueue.length === 0) return;
     showToastMessage('Skipped all requested items.', 'info');
     setRequestedMatchQueue([]);
     setProcessedRequestedMatches(0);
-  }, [requestedMatchQueue.length]);
+    // Force re-show requested columns that may have been hidden during the
+    // populate/match flow.
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        forceReapplyRequestedColumnsVisibility();
+      });
+    }
+  }, [requestedMatchQueue.length, forceReapplyRequestedColumnsVisibility]);
 
   const populateOfferBusyRef = useRef(false);
   const populateOffer = useCallback(async () => {

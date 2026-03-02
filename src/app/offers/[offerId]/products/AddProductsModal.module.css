@@ -276,6 +276,16 @@
   flex-direction: column;
 }
 
+.categoryGridShell :global(.ag-row-selected) {
+  background-color: #dbeafe !important;
+  border-left: 3px solid #000000;
+  font-weight: 600;
+}
+
+.categoryGridShell :global(.ag-row-selected .ag-cell) {
+  color: #000000;
+}
+
 .requestedSection {
   display: flex;
   flex-direction: column;
