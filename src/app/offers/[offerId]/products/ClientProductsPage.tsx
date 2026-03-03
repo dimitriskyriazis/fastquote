@@ -172,6 +172,7 @@ export default function ClientProductsPage({
   const [loadingStandardPackageOptions, setLoadingStandardPackageOptions] = useState(false);
   const [addingStandardPackage, setAddingStandardPackage] = useState(false);
   const [addStandardPackageError, setAddStandardPackageError] = useState<string | null>(null);
+  const [undoState, setUndoState] = useState<{ canUndo: boolean; lastLabel: string | undefined }>({ canUndo: false, lastLabel: undefined });
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
   const splitLeftRef = useRef<HTMLDivElement | null>(null);
   const layoutStorageKey = useMemo(() => buildLayoutStorageKey(userId), [userId]);
@@ -925,10 +926,24 @@ export default function ClientProductsPage({
     </div>
   );
 
+  const undoButton = undoState.canUndo ? (
+    <button
+      type="button"
+      className={`${toolbarStyles.button} page-header-button`}
+      onClick={() => void offerProductsPanelRef.current?.performUndo()}
+      title={undoState.lastLabel ? `Undo: ${undoState.lastLabel}` : 'Undo'}
+    >
+      ↩ Undo{undoState.lastLabel ? `: ${undoState.lastLabel}` : ''}
+    </button>
+  ) : null;
+
   const secondaryHeaderLeftActions = isStandardPackage ? (
-    <div className={toolbarStyles.leftRequestedRow} />
+    <div className={toolbarStyles.leftRequestedRow}>
+      {undoButton}
+    </div>
   ) : (
     <div className={toolbarStyles.leftRequestedRow}>
+      {undoButton}
       {addRequestedButton}
       {layoutSelect}
       {pivotToggleButton}
@@ -966,6 +981,7 @@ export default function ClientProductsPage({
               initialViewportScrollTop={initialProductsViewportScrollTop}
               onRequestPaste={handleRequestPaste}
               onRequestAddStandardPackage={handleRequestAddStandardPackage}
+              onUndoStateChange={setUndoState}
             />
           </div>
           {showAddProductModal ? (

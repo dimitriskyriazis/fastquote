@@ -16,6 +16,8 @@ import { GridQuickSearchProvider } from "../../../components/GridQuickSearchProv
 import { formatBooleanValue } from "../../../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../../../lib/normalizeBoolean";
 import { showToastMessage } from "../../../../lib/toast";
+import { useUndoStack } from "../../../hooks/useUndoStack";
+import { pushCellEditUndo, makePatternAUndoFn } from "../../../../lib/undoHelpers";
 import { useAddModal } from "../../../lib/useAddModal";
 import type { DropdownOption } from "../../../../lib/dropdownOptions";
 import {
@@ -112,6 +114,7 @@ type Props = {
 
 export default function CustomerContactsClient({ customerId, customerName, statuses, importances, titles }: Props) {
   const { roles } = useAuditUser();
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const encodedCustomerId = encodeURIComponent(customerId);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
@@ -405,7 +408,15 @@ export default function CustomerContactsClient({ customerId, customerName, statu
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update ${label}`);
         }
-        showToastMessage(`${label} updated`, "success");
+        pushCellEditUndo(pushUndo, performUndo, label, makePatternAUndoFn({
+          endpoint: "/api/customer-contacts",
+          idField: "ContactID",
+          entityId: contactId,
+          field,
+          oldValue: event.oldValue,
+          node: event.node,
+          gridApi: event.api,
+        }));
         event.api?.refreshServerSide?.({ purge: false });
       } catch (err) {
         console.error(`Failed to update ${label}`, err);
@@ -415,7 +426,7 @@ export default function CustomerContactsClient({ customerId, customerName, statu
     };
 
     void submit();
-  }, []);
+  }, [pushUndo, performUndo]);
 
   const contactRowDeletion = useMemo(
     () =>
@@ -466,6 +477,16 @@ export default function CustomerContactsClient({ customerId, customerName, statu
             >
               View Basic Data
             </Link>
+            {canUndo && (
+              <button
+                type="button"
+                className={`${styles.headerActionButton} page-header-button`}
+                onClick={() => void performUndo()}
+                title={lastLabel ? `Undo: ${lastLabel}` : "Undo"}
+              >
+                Undo
+              </button>
+            )}
             <button
               type="button"
               className={`${styles.headerActionButton} page-header-button`}

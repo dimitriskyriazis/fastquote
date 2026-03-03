@@ -133,6 +133,25 @@
   color: #0f172a;
 }
 
+.undoButton {
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #475569;
+  background: transparent;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.undoButton:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
 .loading {
   flex: 1;
   min-height: 0;

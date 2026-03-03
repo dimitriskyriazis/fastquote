@@ -22,6 +22,8 @@ import { useAuditUser } from "../../../components/AuditUserProvider";
 import { getUserNumberLocale } from "../../../../lib/localeNumber";
 import { normalizeBoolean } from "../../../../lib/normalizeBoolean";
 import { showToastMessage } from "../../../../lib/toast";
+import { useUndoStack } from "../../../hooks/useUndoStack";
+import { pushCellEditUndo, makePatternAUndoFn } from "../../../../lib/undoHelpers";
 
 const AgGridAll = dynamic(() => import("../../../components/AgGridAll"), {
   ssr: false,
@@ -136,6 +138,7 @@ export default function PriceListProductsClient({
   priceListLabel,
 }: Props) {
   const { roles } = useAuditUser();
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const [isAddingWebLinks, setIsAddingWebLinks] = useState(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const defaultEnabledFilterAppliedRef = useRef(false);
@@ -369,7 +372,15 @@ export default function PriceListProductsClient({
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update ${label}`);
         }
-        showToastMessage(`${label} updated`, "success");
+        pushCellEditUndo(pushUndo, performUndo, label, makePatternAUndoFn({
+          endpoint: `/api/price-lists/${priceListId}/products`,
+          idField: "PriceListItemID",
+          entityId: priceListItemId,
+          field,
+          oldValue: event.oldValue,
+          node: event.node,
+          gridApi: event.api,
+        }));
         event.api?.refreshServerSide?.({ purge: false });
       } catch (err) {
         console.error(`Failed to update ${label}`, err);
@@ -379,7 +390,7 @@ export default function PriceListProductsClient({
     };
 
     void submit();
-  }, [endpoint]);
+  }, [endpoint, pushUndo, performUndo, priceListId]);
 
   const defaultColDef = useMemo<ColDef>(
     () => ({
@@ -589,6 +600,15 @@ export default function PriceListProductsClient({
         </div>
         <h1 className={`${layoutStyles.heading} ${layoutStyles.headingCentered}`}>{headingText}</h1>
         <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>
+          {canUndo && (
+            <button
+              type="button"
+              className={`${layoutStyles.headerActionButton} page-header-button`}
+              onClick={performUndo}
+            >
+              ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+            </button>
+          )}
           <Link
             href={`/price-lists/${encodeURIComponent(priceListId)}/basicdata`}
             className={`${layoutStyles.headerActionButton} page-header-button`}

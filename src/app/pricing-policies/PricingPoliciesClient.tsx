@@ -28,6 +28,7 @@ import type { DropdownOption } from "../../lib/dropdownOptions";
 import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from "../components/useActionMenuCoordinator";
 import { useActionMenuPosition } from "../components/useActionMenuPosition";
 import { useAuditUser } from "../components/AuditUserProvider";
+import { useUndoStack } from "../hooks/useUndoStack";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -200,6 +201,7 @@ const isDefaultPricingPolicyName = (name: string): boolean => {
 export default function PricingPoliciesClient({ pricingPolicies, brands }: Props) {
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const { userId, roles } = useAuditUser();
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
 
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
   const [localBrands, setLocalBrands] = useState(brands);
@@ -439,7 +441,25 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
         if (!response.ok || !payload?.ok) {
           throw new Error(payload?.error ?? "Unable to update discounts");
         }
-        showToastMessage("Discount updated", "success");
+        const undoLabel = `${field} updated`;
+        pushUndo({
+          label: undoLabel,
+          undo: async () => {
+            const undoRes = await fetch("/api/pricing-policies/matrix", {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ brandId, pricingPolicyId: policyId, field, value: event.oldValue }),
+            });
+            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!undoRes.ok || !undoPayload?.ok) throw new Error("Failed to revert");
+            try { event.node?.setDataValue(event.colDef.colId ?? field, event.oldValue); } catch { /* noop */ }
+            event.api?.refreshServerSide?.({ purge: false });
+          },
+        });
+        showToastMessage(undoLabel, "success", 5500, {
+          label: "Undo",
+          onClick: () => performUndo(),
+        });
         event.api.refreshServerSide?.({ purge: false });
       } catch (err) {
         console.error("Failed to update discount", err);
@@ -449,7 +469,7 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
     };
 
     void submit();
-  }, []);
+  }, [pushUndo, performUndo]);
 
   const deletePricingPolicy = useCallback(
     async (pricingPolicyId: number) => {
@@ -740,6 +760,11 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
         title="Pricing Policies"
         rightActions={
           <div className={styles.headerActions}>
+              {canUndo && (
+                <button type="button" className={`page-header-button ${styles.addButton}`} onClick={performUndo}>
+                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+                </button>
+              )}
             <button
               type="button"
               className={`${styles.addButton} page-header-button`}

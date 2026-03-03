@@ -1,11 +1,20 @@
 export type ToastTone = 'info' | 'error' | 'success' | 'warning';
 
+export type ToastAction = {
+  label: string;
+  onClick: () => void;
+};
+
 export const showToastMessage = (
   message: string,
   tone: ToastTone = 'info',
   durationMs = 3200,
+  action?: ToastAction,
 ): (() => void) => {
   if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
+
+  const effectiveDuration = action ? Math.max(durationMs, 5500) : durationMs;
+
   const containerId = 'fastquote-drop-toast-container';
   let container = document.getElementById(containerId);
   if (!container) {
@@ -17,6 +26,19 @@ export const showToastMessage = (
   const toast = document.createElement('div');
   toast.className = `drop-toast drop-toast--${tone}`;
   toast.textContent = message;
+
+  if (action) {
+    const btn = document.createElement('button');
+    btn.className = 'drop-toast-action';
+    btn.textContent = action.label;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      action.onClick();
+      removeToast();
+    });
+    toast.appendChild(btn);
+  }
+
   container.appendChild(toast);
   requestAnimationFrame(() => {
     toast.classList.add('visible');
@@ -33,6 +55,6 @@ export const showToastMessage = (
       }
     }, 220);
   };
-  window.setTimeout(removeToast, durationMs);
+  window.setTimeout(removeToast, effectiveDuration);
   return removeToast;
 };

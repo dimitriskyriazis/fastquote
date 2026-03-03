@@ -25,6 +25,7 @@ import { formatDateUK } from "../lib/formatDateTime";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
 import { showToastMessage } from "../../lib/toast";
+import { useUndoStack } from "../hooks/useUndoStack";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -79,6 +80,7 @@ const PRICE_LIST_FIELD_LABELS: Record<string, string> = {
 export default function PriceListsClient() {
   const router = useRouter();
   const { roles, users } = useAuditUser();
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
   const responsibleUserNameById = useMemo(() => {
@@ -393,7 +395,25 @@ export default function PriceListsClient() {
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update ${label}`);
         }
-        showToastMessage(`${label} updated`, "success");
+        const undoLabel = `${label} updated`;
+        pushUndo({
+          label: undoLabel,
+          undo: async () => {
+            const undoRes = await fetch(`/api/price-lists/${priceListId}/basicdata`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ updates: [{ field, value: event.oldValue }] }),
+            });
+            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!undoRes.ok || !undoPayload?.ok) throw new Error("Failed to revert");
+            try { event.node?.setDataValue(field, event.oldValue); } catch { /* noop */ }
+            event.api?.refreshServerSide?.({ purge: false });
+          },
+        });
+        showToastMessage(undoLabel, "success", 5500, {
+          label: "Undo",
+          onClick: () => performUndo(),
+        });
         event.api?.refreshServerSide?.({ purge: false });
       } catch (err) {
         console.error(`Failed to update ${label}`, err);
@@ -403,20 +423,31 @@ export default function PriceListsClient() {
     };
 
     void submit();
-  }, []);
+  }, [pushUndo, performUndo]);
 
   return (
     <main className={styles.page}>
       <PageHeader
         title="Price Lists"
         rightActions={
-          <button
-            type="button"
-            className={`${styles.importButton} page-header-button`}
-            onClick={handleImportClick}
-          >
-            Import Price List
-          </button>
+          <div style={{ display: "flex", gap: "0.75rem" }}>
+            {canUndo && (
+              <button
+                type="button"
+                className="page-header-button"
+                onClick={performUndo}
+              >
+                ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+              </button>
+            )}
+            <button
+              type="button"
+              className={`${styles.importButton} page-header-button`}
+              onClick={handleImportClick}
+            >
+              Import Price List
+            </button>
+          </div>
         }
       >
         <GridQuickSearchProvider>

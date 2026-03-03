@@ -141,15 +141,20 @@ export async function DELETE(req: NextRequest) {
         return NextResponse.json({ ok: false, error: message }, { status: 409 });
       }
 
-      const deleteCountries = await request.query(`
+      const deleteCountries = await request.query<{ CountryID: number; Name: string | null }>(`
         DELETE FROM dbo.Countries
+        OUTPUT DELETED.ID AS CountryID, DELETED.Name
         WHERE ID IN (${placeholders});
       `);
 
+      const rawDeletedRows = deleteCountries.recordset ?? [];
       await transaction.commit();
       return NextResponse.json({
         ok: true,
-        deletedCountries: deleteCountries.rowsAffected?.[0] ?? 0,
+        deletedCountries: rawDeletedRows.length,
+        deletedRows: rawDeletedRows.map((row) => ({
+          Name: row.Name,
+        })),
       });
     } catch (err) {
       await transaction.rollback().catch(() => {});

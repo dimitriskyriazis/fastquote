@@ -2601,10 +2601,49 @@ export async function DELETE(
     const pool = await getPool();
     const chunkSize = 200;
     let deleted = 0;
+    const allDeletedRows: Record<string, unknown>[] = [];
 
     for (let idx = 0; idx < normalizedIds.length; idx += chunkSize) {
       const chunk = normalizedIds.slice(idx, idx + chunkSize);
       if (chunk.length === 0) continue;
+
+      // Pre-fetch rows that will be deleted (including cascaded children)
+      const prefetchReq = pool.request();
+      prefetchReq.input('__offerId', sql.Int, offerId);
+      const prefetchParamNames: string[] = [];
+      chunk.forEach((id, chunkIdx) => {
+        const paramName = `pf_${chunkIdx}`;
+        prefetchReq.input(paramName, sql.Int, id);
+        prefetchParamNames.push(`@${paramName}`);
+      });
+      const prefetchResult = await prefetchReq.query<Record<string, unknown>>(`
+        WITH PendingDeletes AS (
+          SELECT od.ID AS OfferDetailID,
+                 ${TREE_ORDERING_RAW_EXPRESSION} AS TreeOrderingTrimmed
+          FROM dbo.OfferDetails od
+          WHERE od.OfferID = @__offerId
+            AND od.ID IN (${prefetchParamNames.join(', ')})
+        )
+        SELECT od.*
+        FROM dbo.OfferDetails od
+        WHERE od.OfferID = @__offerId
+          AND (
+            od.ID IN (SELECT OfferDetailID FROM PendingDeletes)
+            OR EXISTS (
+              SELECT 1
+              FROM PendingDeletes pd
+              WHERE pd.TreeOrderingTrimmed IS NOT NULL
+                AND ${TREE_ORDERING_RAW_EXPRESSION} IS NOT NULL
+                AND (
+                  ${TREE_ORDERING_RAW_EXPRESSION} = pd.TreeOrderingTrimmed
+                  OR ${TREE_ORDERING_RAW_EXPRESSION} LIKE pd.TreeOrderingTrimmed + '.%'
+                )
+            )
+          )
+      `);
+      allDeletedRows.push(...(prefetchResult.recordset ?? []));
+
+      // Now perform the actual delete
       const request = pool.request();
       request.input('__offerId', sql.Int, offerId);
       const paramNames: string[] = [];
@@ -2666,11 +2705,19 @@ export async function DELETE(
       ? await resequenceTreeOrdering(offerId, audit)
       : { updated: 0, rowsAffected: 0 };
 
+    // Strip ID and audit columns from deleted rows for restore payload
+    const deletedRowsForRestore = allDeletedRows.map((row) => {
+      const { ID, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, ...rest } = row;
+      void ID; void CreatedOn; void CreatedBy; void ModifiedOn; void ModifiedBy;
+      return rest;
+    });
+
     return NextResponse.json({
       ok: true,
       deleted,
       resequenced: resequenced.updated,
       resequencedRowsAffected: resequenced.rowsAffected,
+      deletedRows: deletedRowsForRestore,
     });
   } catch (err: unknown) {
     console.error(err);

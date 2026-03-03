@@ -55,6 +55,7 @@ const AgGridAll = dynamic<AgGridAllProps>(() => import('../../components/AgGridA
   ),
 });
 import { showToastMessage } from '../../../lib/toast';
+import { useUndoStack } from '../../hooks/useUndoStack';
 import { showConfirmDialog, showMultiChoiceDialog } from '../../../lib/confirm';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
@@ -970,6 +971,7 @@ type Props = {
   initialViewportScrollTop?: number | null;
   onRequestPaste?: (anchorOfferDetailId: number | null, anchorTreeOrdering: string | null) => void;
   onRequestAddStandardPackage?: (anchorOfferDetailId: number, anchorTreeOrdering: string) => void;
+  onUndoStateChange?: (state: { canUndo: boolean; lastLabel: string | undefined }) => void;
 };
 
 export type OfferProductsPanelHandle = {
@@ -983,6 +985,9 @@ export type OfferProductsPanelHandle = {
   getViewportScrollTop: () => number;
   getSelectedRowData: () => Array<Record<string, unknown>>;
   getAllVisibleRowData: () => Array<Record<string, unknown>>;
+  canUndo: boolean;
+  performUndo: () => Promise<void>;
+  lastUndoLabel: string | undefined;
 };
 
 export type OfferProductsTemplateExportRow = {
@@ -1212,6 +1217,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   initialViewportScrollTop = null,
   onRequestPaste,
   onRequestAddStandardPackage,
+  onUndoStateChange,
 }: Props, ref) => {
   const router = useRouter();
   const { userId, roles } = useAuditUser();
@@ -1239,6 +1245,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     [standardPackageMode],
   );
   const pricingToastDedupRef = useRef<Map<string, number>>(new Map());
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
+  useEffect(() => {
+    onUndoStateChange?.({ canUndo, lastLabel });
+  }, [canUndo, lastLabel, onUndoStateChange]);
   const realtimeCellUpdateRef = useRef<Map<string, number>>(new Map());
   const registerRealtimeCellUpdate = useCallback((rowId: number, field: string, value: unknown) => {
     const key = `${rowId}:${field}:${String(value)}`;
@@ -1550,11 +1560,13 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         ? Boolean(itemNoVisible)
         : Boolean(itemNoVisible) && !savedRequestedHidden('RequestedItemNo')
       : false;
+
     const previousVisibility = appliedRequestedColumnVisibilityRef.current;
     const visibilityChanged = !previousVisibility
       || appliedShowRequestedColumnsRef.current !== showRequestedColumns
       || keys.some((key) => previousVisibility?.[key] !== effectiveVisibility[key]);
     const itemNoVisibilityChanged = appliedRequestedItemNoVisibleRef.current !== effectiveItemNoVisible;
+
     if (!options?.force && !visibilityChanged && !itemNoVisibilityChanged) {
       return;
     }
@@ -1903,32 +1915,54 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         applyRequestedVisibilityToGrid(mergedVisibility, mergedItemNoVisible, { force: true, defer: true });
       }
     } else {
-      const requestColumnVisibility: Partial<Record<RequestedDisplayFieldKey, boolean>> = {};
-      const normalizedVisibility = REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
+      const hasRequestedItemInRows = (response?.rows ?? []).some((row) => normalizeRequestedItemNoValue(
+        (row as Record<string, unknown>)?.RequestedItemNo ?? null,
+      ) != null);
+      const responseRequestedItemNo = Boolean(response?.requestedColumns?.RequestedItemNo) || hasRequestedItemInRows;
+      const freshVisibility = REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
         (acc, key) => {
           acc[key] = Boolean(response?.requestedColumns?.[key]);
           return acc;
         },
         {} as Record<RequestedDisplayFieldKey, boolean>,
       );
-      if (response?.requestedColumns) {
-        REQUESTED_DISPLAY_FIELD_KEYS.forEach((key) => {
-          const value = response.requestedColumns?.[key];
-          if (value != null) {
-            requestColumnVisibility[key] = Boolean(value);
-          }
+      if (isFirstPage) {
+        // First page: OR-merge with previous visibility so columns that were already
+        // visible stay visible across grid refreshes (e.g. after a cell edit triggers
+        // refreshServerSide).  On the very first load the previous state is all-false,
+        // so this is equivalent to a full reset — empty columns are still hidden on launch.
+        const previousVisibility = appliedRequestedColumnVisibilityRef.current ?? requestedColumnVisibility;
+        const mergedVisibility = REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
+          (acc, key) => {
+            acc[key] = Boolean(previousVisibility?.[key]) || freshVisibility[key];
+            return acc;
+          },
+          {} as Record<RequestedDisplayFieldKey, boolean>,
+        );
+        setRequestedColumnVisibility((prev) => {
+          const hasChanged = REQUESTED_DISPLAY_FIELD_KEYS.some((key) => prev[key] !== mergedVisibility[key]);
+          return hasChanged ? mergedVisibility : prev;
         });
-        applyRequestedColumnVisibility(requestColumnVisibility, true);
-      } else if (response) {
-        applyRequestedColumnVisibility(null, true);
+        const mergedItemNoVisible = (appliedRequestedItemNoVisibleRef.current ?? requestedItemNoVisible) || responseRequestedItemNo;
+        setRequestedItemNoVisible(mergedItemNoVisible);
+        applyRequestedVisibilityToGrid(mergedVisibility, mergedItemNoVisible, { force: true, defer: true });
+      } else {
+        // Subsequent pages: OR-merge so columns don't disappear while scrolling.
+        const previousVisibility = appliedRequestedColumnVisibilityRef.current ?? requestedColumnVisibility;
+        const mergedVisibility = REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
+          (acc, key) => {
+            const fromResponse = response?.requestedColumns?.[key];
+            const previous = Boolean(previousVisibility?.[key]);
+            acc[key] = previous || Boolean(fromResponse);
+            return acc;
+          },
+          {} as Record<RequestedDisplayFieldKey, boolean>,
+        );
+        const mergedItemNoVisible = (appliedRequestedItemNoVisibleRef.current ?? requestedItemNoVisible) || responseRequestedItemNo;
+        applyRequestedColumnVisibility(mergedVisibility, true);
+        setRequestedItemNoVisible((prev) => prev || responseRequestedItemNo);
+        applyRequestedVisibilityToGrid(mergedVisibility, mergedItemNoVisible, { force: true, defer: true });
       }
-      const hasRequestedItemInRows = (response?.rows ?? []).some((row) => normalizeRequestedItemNoValue(
-        (row as Record<string, unknown>)?.RequestedItemNo ?? null,
-      ) != null);
-      const shouldShowRequestedItemNo = hasRows
-        && (Boolean(response?.requestedColumns?.RequestedItemNo) || hasRequestedItemInRows);
-      setRequestedItemNoVisible(shouldShowRequestedItemNo);
-      applyRequestedVisibilityToGrid(normalizedVisibility, shouldShowRequestedItemNo, { force: true, defer: true });
     }
     const runHeavyUpdates = () => {
       scheduleCategoryAncestorsUpdate();
@@ -2274,7 +2308,12 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     if (modelUpdateRafRef.current != null || typeof window === 'undefined') return;
     modelUpdateRafRef.current = window.requestAnimationFrame(() => {
       modelUpdateRafRef.current = null;
-      reapplyRequestedColumnsVisibility({ defer: true });
+      // Force-reapply requested column visibility on every model update.
+      // AG Grid may internally revert columns to their definition state (hide: true)
+      // after certain operations (e.g. setDataValue, applyServerSideTransaction).
+      // Without force, the applied-visibility refs may think the columns are already
+      // visible and skip re-applying, leaving them hidden.
+      forceReapplyRef.current();
       pendingInitialSelectionRestoreRef.current?.();
       tryRestoreInitialViewportScroll();
       // Restore grid viewport scroll after refreshOfferProductGrid-triggered refreshes
@@ -2289,7 +2328,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         }
       }
     });
-  }, [getGridViewportElement, reapplyRequestedColumnsVisibility, scheduleCategoryAncestorsUpdate, tryRestoreInitialViewportScroll]);
+  }, [getGridViewportElement, scheduleCategoryAncestorsUpdate, tryRestoreInitialViewportScroll]);
 
   const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!isOfferProductCategory(row)) return;
@@ -3349,25 +3388,37 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         columnMap.delete(id);
       });
     columnMap.forEach((column) => ordered.push(column));
-    if (Object.keys(savedHiddenMap).length > 0) {
-      const lockRequestedHiddenState = showRequestedColumns && tableLayout === 'wReq';
-      const requestedColumnIds = new Set<string>(['RequestedItemNo', ...REQUESTED_DISPLAY_FIELD_KEYS]);
-      return ordered.map((column) => {
-        const id = typeof column.colId === 'string'
-          ? column.colId
-          : typeof column.field === 'string'
-            ? column.field
-            : '';
-        if (!id) return column;
-        if (savedHiddenMap[id] == null) return column;
-        if (lockRequestedHiddenState && requestedColumnIds.has(id)) return column;
-        return {
-          ...column,
-          hide: savedHiddenMap[id],
-        };
-      });
-    }
-    return ordered;
+    // Sync requested column hide state with the current requestedColumnVisibility so
+    // that the column *definitions* always reflect the desired visibility.  If AG Grid
+    // ever re-applies column defs (e.g. after setDataValue triggers an internal column
+    // model refresh), columns whose definitions have hide=false will stay visible instead
+    // of snapping back to hide=true from the original requestedColumnDefsMap.
+    const requestedColumnIds = new Set<string>(['RequestedItemNo', ...REQUESTED_DISPLAY_FIELD_KEYS]);
+    const hasSavedHidden = Object.keys(savedHiddenMap).length > 0;
+    return ordered.map((column) => {
+      const id = typeof column.colId === 'string'
+        ? column.colId
+        : typeof column.field === 'string'
+          ? column.field
+          : '';
+      if (!id) return column;
+      // For requested columns: derive hide from requestedColumnVisibility state
+      if (requestedColumnIds.has(id)) {
+        const isVisible = id === 'RequestedItemNo'
+          ? requestedItemNoVisible
+          : Boolean(requestedColumnVisibility[id as RequestedDisplayFieldKey]);
+        const shouldHide = !showRequestedColumns || !isVisible;
+        if (column.hide !== shouldHide) {
+          return { ...column, hide: shouldHide };
+        }
+        return column;
+      }
+      // For non-requested columns: apply savedHiddenMap if present
+      if (hasSavedHidden && savedHiddenMap[id] != null) {
+        return { ...column, hide: savedHiddenMap[id] };
+      }
+      return column;
+    });
   }, [
     actualNumericCellClass,
     actualNumericCellStyle,
@@ -3378,10 +3429,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     requestedColumnDefsMap,
     RequestedItemNoCell,
     requestedCellClassRules,
+    requestedColumnVisibility,
+    requestedItemNoVisible,
     savedHiddenMap,
     showRequestedColumns,
     standardPackageMode,
-    tableLayout,
     savedColumnOrder,
     truncateCellStyle,
   ]);
@@ -3526,8 +3578,26 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         failureToastMessage: 'Unable to delete row. Please try again.',
         refreshHandler: (api) => refreshOfferProductGrid(api, { purge: true }),
         canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'editOffers'),
+        restoreEndpoint: `${resolvedEndpoint}/restore`,
+        onDeleteSuccess: (deletedRows) => {
+          if (deletedRows.length > 0) {
+            pushUndo({
+              label: 'Row deleted',
+              undo: async () => {
+                const res = await fetch(`${resolvedEndpoint}/restore`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ rows: deletedRows }),
+                });
+                const result = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+                if (!res.ok || !result?.ok) throw new Error('Failed to restore');
+                refreshOfferProductGrid(null, { purge: true });
+              },
+            });
+          }
+        },
       }),
-    [resolvedEndpoint, refreshOfferProductGrid, roles],
+    [resolvedEndpoint, refreshOfferProductGrid, roles, pushUndo],
   );
 
   const populateRequestedRowsToOffer = useCallback(async (nodes: RowNode<Record<string, unknown>>[]) => {
@@ -4375,8 +4445,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       getViewportScrollTop,
       getSelectedRowData,
       getAllVisibleRowData,
+      canUndo,
+      performUndo,
+      lastUndoLabel: lastLabel,
     }),
-    [forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getTemplateExportRows, getViewportScrollTop, populateOffer],
+    [canUndo, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer],
   );
 
 
@@ -5247,7 +5320,27 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update ${friendlyLabel} (status ${res.status})`);
         }
-        showToastMessage(`${friendlyLabel} updated`, 'success');
+        const capturedOldValue = normalizedOldValue;
+        const capturedDetailId = offerDetailId;
+        const capturedField = field;
+        pushUndo({
+          label: `${friendlyLabel} updated`,
+          undo: async () => {
+            const undoRes = await fetch(resolvedEndpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, [capturedField]: capturedOldValue }] }),
+            });
+            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+            try { event.node?.setDataValue(capturedField, capturedOldValue); } catch { /* noop */ }
+            event.api?.refreshServerSide?.({ purge: false });
+          },
+        });
+        showToastMessage(`${friendlyLabel} updated`, 'success', 5500, {
+          label: 'Undo',
+          onClick: () => performUndo(),
+        });
       } catch (err) {
         console.error(`Failed to update ${friendlyLabel}`, err);
         showToastMessage(`Unable to update ${friendlyLabel}. Please try again.`, 'error');
@@ -5256,7 +5349,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     };
 
     void runUpdate();
-  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit]);
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
 
   const handleQuantityEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Quantity') return;
@@ -5324,7 +5417,26 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update quantity (status ${res.status})`);
         }
-        showToastMessage('Quantity updated', 'success');
+        const capturedOldQty = normalizedOldValue;
+        const capturedDetailId = offerDetailId;
+        pushUndo({
+          label: 'Quantity updated',
+          undo: async () => {
+            const undoRes = await fetch(resolvedEndpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, Quantity: capturedOldQty }] }),
+            });
+            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+            try { event.node?.setDataValue('Quantity', capturedOldQty); } catch { /* noop */ }
+            event.api?.refreshServerSide?.({ purge: false });
+          },
+        });
+        showToastMessage('Quantity updated', 'success', 5500, {
+          label: 'Undo',
+          onClick: () => performUndo(),
+        });
         recalcProductTotals(event, normalizedNewValue);
         refreshCategoryAggregates(event.api);
       } catch (err) {
@@ -5334,7 +5446,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
     };
     void runUpdate();
-  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit]);
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
 
   const handleDescriptionEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const editedField = event.colDef.field;
@@ -5385,7 +5497,29 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         } catch {
           /* noop */
         }
-        showToastMessage('Description updated', 'success');
+        const capturedOldDesc = normalizedOldValue;
+        const capturedDetailId = offerDetailId;
+        pushUndo({
+          label: 'Description updated',
+          undo: async () => {
+            const undoRes = await fetch(resolvedEndpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, ProductDescription: capturedOldDesc }] }),
+            });
+            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+            try {
+              event.node?.setDataValue?.('Description', capturedOldDesc ?? '');
+              event.node?.setDataValue?.('ProductDescription', capturedOldDesc ?? '');
+            } catch { /* noop */ }
+            event.api?.refreshServerSide?.({ purge: false });
+          },
+        });
+        showToastMessage('Description updated', 'success', 5500, {
+          label: 'Undo',
+          onClick: () => performUndo(),
+        });
       } catch (err) {
         console.error('Failed to update description', err);
         showToastMessage('Unable to update description. Please try again.', 'error');
@@ -5393,7 +5527,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
     };
     void runUpdate();
-  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit]);
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
 
   const handleCommentEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Comment') return;
@@ -5449,7 +5583,26 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update comment (status ${res.status})`);
         }
-        showToastMessage('Comment updated', 'success');
+        const capturedOldComment = normalizedOldValue;
+        const capturedDetailId = offerDetailId;
+        pushUndo({
+          label: 'Comment updated',
+          undo: async () => {
+            const undoRes = await fetch(resolvedEndpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, Comment: capturedOldComment }] }),
+            });
+            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+            try { event.node?.setDataValue?.('Comment', capturedOldComment ?? ''); } catch { /* noop */ }
+            event.api?.refreshServerSide?.({ purge: false });
+          },
+        });
+        showToastMessage('Comment updated', 'success', 5500, {
+          label: 'Undo',
+          onClick: () => performUndo(),
+        });
       } catch (err) {
         console.error('Failed to update comment', err);
         showToastMessage('Unable to update comment. Please try again.', 'error');
@@ -5458,7 +5611,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     };
 
     void runUpdate();
-  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit]);
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
 
   const handleDeliveryEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Delivery') return;
@@ -5504,7 +5657,26 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update delivery (status ${res.status})`);
         }
-        showToastMessage('Delivery updated', 'success');
+        const capturedOldDelivery = normalizedOldValue;
+        const capturedDetailId = offerDetailId;
+        pushUndo({
+          label: 'Delivery updated',
+          undo: async () => {
+            const undoRes = await fetch(resolvedEndpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, Delivery: capturedOldDelivery }] }),
+            });
+            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+            try { event.node?.setDataValue?.('Delivery', capturedOldDelivery ?? ''); } catch { /* noop */ }
+            event.api?.refreshServerSide?.({ purge: false });
+          },
+        });
+        showToastMessage('Delivery updated', 'success', 5500, {
+          label: 'Undo',
+          onClick: () => performUndo(),
+        });
       } catch (err) {
         console.error('Failed to update delivery', err);
         showToastMessage('Unable to update delivery. Please try again.', 'error');
@@ -5513,7 +5685,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     };
 
     void runUpdate();
-  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit]);
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
 
   const handlePricingEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
@@ -5595,7 +5767,27 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         const lastShown = pricingToastDedupRef.current.get(toastKey) ?? 0;
         if (now - lastShown > 800) {
           pricingToastDedupRef.current.set(toastKey, now);
-          showToastMessage(`${label} updated`, 'success');
+          const capturedOldPricing = normalizedOldValue;
+          const capturedDetailId = offerDetailId;
+          const capturedField = field;
+          pushUndo({
+            label: `${label} updated`,
+            undo: async () => {
+              const undoRes = await fetch(resolvedEndpoint, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, [capturedField]: capturedOldPricing }] }),
+              });
+              const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+              if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+              try { event.node?.setDataValue(capturedField, capturedOldPricing); } catch { /* noop */ }
+              event.api?.refreshServerSide?.({ purge: false });
+            },
+          });
+          showToastMessage(`${label} updated`, 'success', 5500, {
+            label: 'Undo',
+            onClick: () => performUndo(),
+          });
         }
         recalcProductTotals(event);
         refreshCategoryAggregates(event.api);
@@ -5612,7 +5804,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     };
 
     void runUpdate();
-  }, [refreshOfferProductGrid, resolvedEndpoint, shouldSkipRealtimeCellEdit]);
+  }, [refreshOfferProductGrid, resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     handleDescriptionEdit(event);

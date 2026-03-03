@@ -9,6 +9,8 @@ import { useAuditUser } from "../components/AuditUserProvider";
 import AccessDeniedPage from "../components/AccessDeniedPage";
 import AddUserModal from "../components/AddUserModal";
 import { showToastMessage } from "../../lib/toast";
+import { useUndoStack } from "../hooks/useUndoStack";
+import { pushCellEditUndo, makePatternAUndoFn } from "../../lib/undoHelpers";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
 import styles from "./UsersClient.module.css";
@@ -46,6 +48,7 @@ const REQUIRED_FIELDS = new Set(["UserName", "WindowsUserName"]);
 export default function UsersClient() {
   const { roles, loading } = useAuditUser();
   const canAccess = roles.includes("Administrator") || roles.includes("Developer");
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [roleOptions, setRoleOptions] = useState<string[]>([]);
@@ -354,6 +357,7 @@ export default function UsersClient() {
       }
 
       const payloadValue = value.length > 0 ? value : null;
+      const label = field;
       void (async () => {
         try {
           const res = await fetch("/api/user-management", {
@@ -367,7 +371,15 @@ export default function UsersClient() {
           if (!res.ok || !payload?.ok) {
             throw new Error(payload?.error ?? "Unable to update user.");
           }
-          showToastMessage("Updated", "success");
+          pushCellEditUndo(pushUndo, performUndo, label, makePatternAUndoFn({
+            endpoint: "/api/user-management",
+            idField: "UserID",
+            entityId: userId,
+            field,
+            oldValue: event.oldValue,
+            node: event.node,
+            gridApi: event.api,
+          }));
           setRefreshToken((prev) => prev + 1);
         } catch (err) {
           const message = err instanceof Error ? err.message : "Unable to update user.";
@@ -376,7 +388,7 @@ export default function UsersClient() {
         }
       })();
     },
-    [revertCell],
+    [revertCell, pushUndo, performUndo],
   );
 
   if (loading) {
@@ -398,6 +410,15 @@ export default function UsersClient() {
           title="User Management"
           rightActions={
             <div className={styles.headerActions}>
+              {canUndo && (
+                <button
+                  type="button"
+                  className={`page-header-button ${styles.headerButton}`}
+                  onClick={performUndo}
+                >
+                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+                </button>
+              )}
               <button
                 type="button"
                 className={`page-header-button ${styles.headerButton}`}

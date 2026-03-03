@@ -18,6 +18,8 @@ import lookupStyles from "../components/LookupModal.module.css";
 import lookupButtonStyles from "../components/LookupAddButton.module.css";
 import LookupModal from "../components/LookupModal";
 import { showToastMessage } from "../../lib/toast";
+import { useUndoStack } from "../hooks/useUndoStack";
+import { pushCellEditUndo, makePatternAUndoFn } from "../../lib/undoHelpers";
 import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { useAddModal } from "../lib/useAddModal";
@@ -166,6 +168,7 @@ export default function ContactsClient({
 }: Props) {
   const router = useRouter();
   const { roles } = useAuditUser();
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const initialContactFilterAppliedRef = useRef(false);
   const buildStatusDropdownValues = useCallback((raw: string[]) => {
@@ -753,7 +756,15 @@ export default function ContactsClient({
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update ${label}`);
         }
-        showToastMessage(`${label} updated`, "success");
+        pushCellEditUndo(pushUndo, performUndo, label, makePatternAUndoFn({
+          endpoint: "/api/customer-contacts",
+          idField: "ContactID",
+          entityId: contactId,
+          field,
+          oldValue: event.oldValue,
+          node: event.node,
+          gridApi: event.api,
+        }));
         event.api?.refreshServerSide?.({ purge: false });
       } catch (err) {
         console.error(`Failed to update ${label}`, err);
@@ -763,7 +774,7 @@ export default function ContactsClient({
     };
 
     void submit();
-  }, []);
+  }, [pushUndo, performUndo]);
 
   const handleCreateContact = useCallback(async () => {
     const validationError = validateContactForm(contactForm);
@@ -795,6 +806,15 @@ export default function ContactsClient({
           title="Contacts"
           rightActions={
             <div className={styles.headerActions}>
+              {canUndo && (
+                <button
+                  type="button"
+                  className={`page-header-button ${styles.headerButton}`}
+                  onClick={performUndo}
+                >
+                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+                </button>
+              )}
               <button
                 type="button"
                 className={`${styles.headerButton} page-header-button`}

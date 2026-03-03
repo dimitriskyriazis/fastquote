@@ -430,13 +430,27 @@ export async function DELETE(req: NextRequest) {
     ids.forEach((value, idx) => {
       request.input(`id${idx}`, sql.Int, value);
     });
-    const deleteResult = await request.query<{ BrandID: number; Name: string | null }>(`
+    const deleteResult = await request.query<{
+      BrandID: number;
+      Name: string | null;
+      Comment: string | null;
+      SoftOneID: number | null;
+      SoftOneCode: string | null;
+      Enabled: boolean | number | null;
+    }>(`
       DELETE FROM dbo.Brands
-      OUTPUT DELETED.ID AS BrandID, DELETED.Name
+      OUTPUT
+        DELETED.ID AS BrandID,
+        DELETED.Name,
+        DELETED.Comment,
+        DELETED.SoftOneID,
+        DELETED.SoftOneCode,
+        DELETED.Enabled
       WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
     `);
 
-    const deletedRows = (deleteResult.recordset ?? []).map((row) => ({
+    const rawDeletedRows = deleteResult.recordset ?? [];
+    const deletedRows = rawDeletedRows.map((row) => ({
       id: row.BrandID,
       name: normalizeTextOutput(row.Name),
     }));
@@ -450,7 +464,17 @@ export async function DELETE(req: NextRequest) {
       message: "Brands deleted",
     });
 
-    return NextResponse.json({ ok: true, deleted: deletedRows.length });
+    return NextResponse.json({
+      ok: true,
+      deleted: deletedRows.length,
+      deletedRows: rawDeletedRows.map((row) => ({
+        Name: row.Name,
+        Comment: row.Comment,
+        SoftOneID: row.SoftOneID,
+        SoftOneCode: row.SoftOneCode,
+        Enabled: row.Enabled,
+      })),
+    });
   } catch (err) {
     return await handleApiError(err, {
       requestId,

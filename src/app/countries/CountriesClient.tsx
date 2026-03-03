@@ -16,6 +16,8 @@ import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import styles from "./CountriesClient.module.css";
 import AddCountryModal from "../components/AddCountryModal";
 import { showToastMessage } from "../../lib/toast";
+import { useUndoStack } from "../hooks/useUndoStack";
+import { pushCellEditUndo, makePatternAUndoFn } from "../../lib/undoHelpers";
 import { showConfirmDialog } from "../../lib/confirm";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
@@ -37,6 +39,7 @@ const deleteMenuIcon = `
 
 export default function CountriesClient() {
   const router = useRouter();
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const [isAddCountryOpen, setIsAddCountryOpen] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
 
@@ -113,7 +116,15 @@ export default function CountriesClient() {
             throw new Error(data?.error ?? "Update failed");
           }
 
-          showToastMessage("Updated", "success");
+          pushCellEditUndo(pushUndo, performUndo, "Country", makePatternAUndoFn({
+            endpoint: "/api/countries-cities",
+            idField: "CountryID",
+            entityId: countryId,
+            field: "Country",
+            oldValue: event.oldValue,
+            node: event.node,
+            gridApi: event.api,
+          }));
           setRefreshToken((prev) => prev + 1);
         } catch (err) {
           console.error("Failed to update cell", err);
@@ -127,7 +138,7 @@ export default function CountriesClient() {
 
       void submit();
     },
-    [],
+    [pushUndo, performUndo],
   );
 
   const deleteCountry = useCallback(
@@ -150,19 +161,35 @@ export default function CountriesClient() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ CountryIDs: [countryId] }),
         });
-        const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; deletedRows?: unknown[] } | null;
         if (!response.ok || !payload?.ok) {
           throw new Error(payload?.error ?? "Unable to delete country");
         }
 
-        showToastMessage("Country deleted", "success");
+        const apiDeletedRows = Array.isArray(payload?.deletedRows) ? payload.deletedRows : [];
+        pushUndo({
+          label: "Country deleted",
+          undo: async () => {
+            const restoreRes = await fetch("/api/countries-cities/restore", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ rows: apiDeletedRows }),
+            });
+            const restoreResult = (await restoreRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!restoreRes.ok || !restoreResult?.ok) throw new Error("Failed to restore");
+          },
+        });
+        showToastMessage("Country deleted", "success", 5500, {
+          label: "Undo",
+          onClick: () => performUndo(),
+        });
         setRefreshToken((prev) => prev + 1);
       } catch (err) {
         console.error("Failed to delete country", err);
         showToastMessage(err instanceof Error ? err.message : "Unable to delete country.", "error");
       }
     },
-    [],
+    [pushUndo, performUndo],
   );
 
   const deleteCountries = useCallback(
@@ -201,19 +228,35 @@ export default function CountriesClient() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ CountryIDs: uniqueCountries.map((country) => country.id) }),
         });
-        const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; deletedRows?: unknown[] } | null;
         if (!response.ok || !payload?.ok) {
           throw new Error(payload?.error ?? "Unable to delete countries");
         }
 
-        showToastMessage("Countries deleted", "success");
+        const apiDeletedRows = Array.isArray(payload?.deletedRows) ? payload.deletedRows : [];
+        pushUndo({
+          label: "Country deleted",
+          undo: async () => {
+            const restoreRes = await fetch("/api/countries-cities/restore", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ rows: apiDeletedRows }),
+            });
+            const restoreResult = (await restoreRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!restoreRes.ok || !restoreResult?.ok) throw new Error("Failed to restore");
+          },
+        });
+        showToastMessage("Countries deleted", "success", 5500, {
+          label: "Undo",
+          onClick: () => performUndo(),
+        });
         setRefreshToken((prev) => prev + 1);
       } catch (err) {
         console.error("Failed to delete countries", err);
         showToastMessage(err instanceof Error ? err.message : "Unable to delete countries.", "error");
       }
     },
-    [],
+    [pushUndo, performUndo],
   );
 
   const getContextMenuItems = useCallback(
@@ -301,6 +344,15 @@ export default function CountriesClient() {
           }
           rightActions={
             <div className={styles.headerActions}>
+              {canUndo && (
+                <button
+                  type="button"
+                  className={`page-header-button ${styles.headerButton}`}
+                  onClick={performUndo}
+                >
+                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+                </button>
+              )}
               <button
                 type="button"
                 className={`page-header-button ${styles.headerButton}`}

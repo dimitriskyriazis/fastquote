@@ -113,6 +113,14 @@ type DeletedSupplierRow = {
   SupplierID: number;
   Name: string | null;
   TaxID: string | null;
+  Address: string | null;
+  City: string | null;
+  CountryID: number | null;
+  PostalCode: string | null;
+  Phone: string | null;
+  WebSite: string | null;
+  Comments: string | null;
+  Enabled: boolean | number | null;
 };
 
 class SupplierUpdateError extends Error {
@@ -551,10 +559,19 @@ export async function DELETE(req: NextRequest) {
       OUTPUT
         DELETED.ID AS SupplierID,
         DELETED.Name,
-        DELETED.TaxID
+        DELETED.TaxID,
+        DELETED.Address,
+        DELETED.City,
+        DELETED.CountryID,
+        DELETED.PostalCode,
+        DELETED.Phone,
+        DELETED.WebSite,
+        DELETED.Comments,
+        DELETED.Enabled
       WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
     `);
-    const deletedRows = (deleteResult.recordset ?? []).map((row) => ({
+    const rawDeletedRows = deleteResult.recordset ?? [];
+    const deletedRows = rawDeletedRows.map((row) => ({
       id: row.SupplierID,
       name: trimNullableText(row.Name),
       taxId: trimNullableText(row.TaxID),
@@ -569,7 +586,22 @@ export async function DELETE(req: NextRequest) {
       message: "Suppliers deleted",
     });
 
-    return NextResponse.json({ ok: true, deleted: deletedRows.length });
+    return NextResponse.json({
+      ok: true,
+      deleted: deletedRows.length,
+      deletedRows: rawDeletedRows.map((row) => ({
+        Name: row.Name,
+        TaxID: row.TaxID,
+        Address: row.Address,
+        City: row.City,
+        CountryID: row.CountryID,
+        PostalCode: row.PostalCode,
+        Phone: row.Phone,
+        WebSite: row.WebSite,
+        Comments: row.Comments,
+        Enabled: row.Enabled,
+      })),
+    });
   } catch (err) {
     console.error("Failed to delete suppliers", err);
     const message = err instanceof Error ? err.message : "Unable to delete suppliers.";

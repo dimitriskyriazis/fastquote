@@ -22,6 +22,8 @@ import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
 import AddBrandModal from "../components/AddBrandModal";
 import { showToastMessage } from "../../lib/toast";
+import { useUndoStack } from "../hooks/useUndoStack";
+import { pushCellEditUndo, makePatternAUndoFn } from "../../lib/undoHelpers";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -98,6 +100,7 @@ function normalizeBrandContextMenuItems(
 export default function BrandsClient() {
   const router = useRouter();
   const { roles } = useAuditUser();
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -135,8 +138,26 @@ export default function BrandsClient() {
           }
         },
         canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageBrandsSuppliers'),
+        restoreEndpoint: "/api/brands/restore",
+        onDeleteSuccess: (deletedRows, api) => {
+          if (deletedRows.length > 0) {
+            pushUndo({
+              label: "Brand deleted",
+              undo: async () => {
+                const res = await fetch("/api/brands/restore", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ rows: deletedRows }),
+                });
+                const result = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+                if (!res.ok || !result?.ok) throw new Error("Failed to restore");
+                try { api?.refreshServerSide?.({ purge: true }); } catch { /* noop */ }
+              },
+            });
+          }
+        },
       }),
-    [roles],
+    [roles, pushUndo],
   );
 
   const getContextMenuItems = useCallback(
@@ -270,7 +291,15 @@ export default function BrandsClient() {
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update ${label}`);
         }
-        showToastMessage(`${label} updated`, "success");
+        pushCellEditUndo(pushUndo, performUndo, label, makePatternAUndoFn({
+          endpoint: "/api/brands",
+          idField: "BrandID",
+          entityId: brandId,
+          field,
+          oldValue: event.oldValue,
+          node: event.node,
+          gridApi: event.api,
+        }));
         event.api?.refreshServerSide?.({ purge: false });
       } catch (err) {
         console.error(`Failed to update ${label}`, err);
@@ -280,7 +309,7 @@ export default function BrandsClient() {
     };
 
     void submit();
-  }, []);
+  }, [pushUndo, performUndo]);
 
   return (
     <>
@@ -299,6 +328,15 @@ export default function BrandsClient() {
           }
           rightActions={
             <div className={styles.headerActions}>
+              {canUndo && (
+                <button
+                  type="button"
+                  className={`page-header-button ${styles.headerButton}`}
+                  onClick={performUndo}
+                >
+                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+                </button>
+              )}
               <button
                 type="button"
                 className={`page-header-button ${styles.headerButton}`}

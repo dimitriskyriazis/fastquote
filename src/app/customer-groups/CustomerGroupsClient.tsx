@@ -18,6 +18,8 @@ import LookupModal from "../components/LookupModal";
 import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { showToastMessage } from "../../lib/toast";
+import { useUndoStack } from "../hooks/useUndoStack";
+import { pushCellEditUndo, makePatternAUndoFn } from "../../lib/undoHelpers";
 import { useAddModal } from "../lib/useAddModal";
 import {
   createGroup,
@@ -72,6 +74,7 @@ const GROUP_FIELD_LABELS: Record<string, string> = {
 export default function CustomerGroupsClient() {
   const router = useRouter();
   const { roles } = useAuditUser();
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -214,7 +217,15 @@ export default function CustomerGroupsClient() {
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update ${label}`);
         }
-        showToastMessage(`${label} updated`, "success");
+        pushCellEditUndo(pushUndo, performUndo, label, makePatternAUndoFn({
+          endpoint: "/api/customer-groups",
+          idField: "CustomerGroupID",
+          entityId: groupId,
+          field,
+          oldValue: event.oldValue,
+          node: event.node,
+          gridApi: event.api,
+        }));
         event.api?.refreshServerSide?.({ purge: false });
       } catch (err) {
         console.error(`Failed to update ${label}`, err);
@@ -224,7 +235,7 @@ export default function CustomerGroupsClient() {
     };
 
     void submit();
-  }, []);
+  }, [pushUndo, performUndo]);
 
   const handleCreateGroup = useCallback(async () => {
     const validationError = validateGroupForm(groupForm);
@@ -265,6 +276,11 @@ export default function CustomerGroupsClient() {
         }
         rightActions={
           <div className={styles.headerActions}>
+              {canUndo && (
+                <button type="button" className={`page-header-button ${styles.headerButton}`} onClick={performUndo}>
+                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+                </button>
+              )}
             <button
               type="button"
               className={`${styles.headerButton} page-header-button`}

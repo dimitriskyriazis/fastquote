@@ -14,6 +14,7 @@ export type Permission =
   | 'managePricingPolicies'
   | 'manageBrandsSuppliers'
   | 'manageCitiesCountries'
+  | 'manageMarkets'
   | 'createOffers'
   | 'editOffers'
   | 'manageCustomersContacts';
@@ -80,6 +81,8 @@ export const roleHasPermission = (roles: readonly AppRole[], permission: Permiss
   switch (permission) {
     case 'managePriceLists':
     case 'managePricingPolicies':
+      return roles.includes('Back Office User') || roles.includes('Sales Manager');
+    case 'manageMarkets':
       return roles.includes('Back Office User') || roles.includes('Sales Manager');
     // Permission ID 40: brands & suppliers management
     case 'manageBrandsSuppliers':

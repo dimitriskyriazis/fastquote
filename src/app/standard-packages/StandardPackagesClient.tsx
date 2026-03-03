@@ -24,6 +24,8 @@ import LookupModal from '../components/LookupModal';
 import lookupStyles from '../components/LookupModal.module.css';
 import { formatDateTime } from '../lib/formatDateTime';
 import { showToastMessage } from '../../lib/toast';
+import { useUndoStack } from '../hooks/useUndoStack';
+import { pushCellEditUndo, makePatternAUndoFn } from '../../lib/undoHelpers';
 import styles from './StandardPackagesClient.module.css';
 
 const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
@@ -112,6 +114,7 @@ export default function StandardPackagesClient() {
   const routerRef = useRef(router);
   routerRef.current = router;
   const { roles } = useAuditUser();
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const [expandedVersionGroups, setExpandedVersionGroups] = useState<Set<number>>(new Set());
@@ -552,6 +555,7 @@ export default function StandardPackagesClient() {
       }
     }
 
+    const label = field;
     const submit = async () => {
       try {
         const res = await fetch('/api/standard-packages', {
@@ -565,7 +569,15 @@ export default function StandardPackagesClient() {
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update ${field}`);
         }
-        showToastMessage(`${field} updated`, 'success');
+        pushCellEditUndo(pushUndo, performUndo, label, makePatternAUndoFn({
+          endpoint: '/api/standard-packages',
+          idField: 'OfferID',
+          entityId: offerId,
+          field,
+          oldValue: event.oldValue,
+          node: event.node,
+          gridApi: event.api,
+        }));
         event.api?.refreshServerSide?.({ purge: false });
       } catch (err) {
         console.error(`Failed to update ${field}`, err);
@@ -575,7 +587,7 @@ export default function StandardPackagesClient() {
     };
 
     void submit();
-  }, []);
+  }, [pushUndo, performUndo]);
 
   const columnDefs: ColDef[] = useMemo(() => [
     {
@@ -675,6 +687,15 @@ export default function StandardPackagesClient() {
         title="Standard Packages"
         rightActions={(
           <div className={styles.headerActions}>
+            {canUndo && (
+              <button
+                type="button"
+                className={`page-header-button`}
+                onClick={performUndo}
+              >
+                ↩ Undo{lastLabel ? `: ${lastLabel}` : ''}
+              </button>
+            )}
             <button
               type="button"
               className={`${styles.primaryButton} page-header-button`}

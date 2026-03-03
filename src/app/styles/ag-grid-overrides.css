@@ -200,6 +200,25 @@
   transform: translateY(0);
 }
 
+.drop-toast-action {
+  background: none;
+  border: none;
+  color: #93c5fd;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: 12px;
+  padding: 2px 6px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  pointer-events: auto;
+  transition: color 150ms ease;
+}
+
+.drop-toast-action:hover {
+  color: #bfdbfe;
+}
+
 .fastquote-confirm-overlay {
   position: fixed;
   inset: 0;

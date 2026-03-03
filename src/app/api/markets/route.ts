@@ -473,11 +473,30 @@ export async function DELETE(req: NextRequest) {
     ids.forEach((value, idx) => {
       request.input(`id${idx}`, sql.Int, value);
     });
-    await request.query(`
+    const deleteResult = await request.query<{
+      MarketID: number;
+      Name: string | null;
+      SalesDivisionID: number | null;
+      Enabled: boolean | number | null;
+    }>(`
       DELETE FROM dbo.Markets
+      OUTPUT
+        DELETED.ID AS MarketID,
+        DELETED.Name,
+        DELETED.SalesDivisionID,
+        DELETED.Enabled
       WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
     `);
-    return NextResponse.json({ ok: true, deleted: ids.length });
+    const rawDeletedRows = deleteResult.recordset ?? [];
+    return NextResponse.json({
+      ok: true,
+      deleted: rawDeletedRows.length,
+      deletedRows: rawDeletedRows.map((row) => ({
+        Name: row.Name,
+        SalesDivisionID: row.SalesDivisionID,
+        Enabled: row.Enabled,
+      })),
+    });
   } catch (err) {
     console.error("Failed to delete markets", err);
     const message = err instanceof Error ? err.message : "Unable to delete markets.";

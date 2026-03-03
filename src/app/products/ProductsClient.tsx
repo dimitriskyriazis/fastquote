@@ -20,6 +20,7 @@ import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
 import { useAuditUser } from "../components/AuditUserProvider";
 import { openLinkInNewTab } from "../../lib/navigation";
 import { showToastMessage } from "../../lib/toast";
+import { useUndoStack } from "../hooks/useUndoStack";
 import { showConfirmDialog, showMultiChoiceDialog } from "../../lib/confirm";
 import styles from "./ProductsClient.module.css";
 import AddProductModal from "./AddProductModal";
@@ -152,6 +153,7 @@ const ADD_WEBLINK_MAX_PRODUCTS = 200;
 export default function ProductsClient() {
   const router = useRouter();
   const { roles } = useAuditUser();
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
   const [isAddingWebLinks, setIsAddingWebLinks] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -660,7 +662,7 @@ export default function ProductsClient() {
         }
       };
 
-      const runUpdate = async (payload: Record<string, unknown>, label: string) => {
+      const runUpdate = async (payload: Record<string, unknown>, label: string, onSuccess?: () => void) => {
         try {
           const res = await fetch(`/api/products/${encodeURIComponent(String(productId))}`, {
             method: "PATCH",
@@ -671,7 +673,11 @@ export default function ProductsClient() {
           if (!res.ok || !payloadResponse?.ok) {
             throw new Error(payloadResponse?.error ?? `Failed to update ${label.toLowerCase()} (status ${res.status})`);
           }
-          showToastMessage(`${label} updated`, "success");
+          if (onSuccess) {
+            onSuccess();
+          } else {
+            showToastMessage(`${label} updated`, "success");
+          }
         } catch (err) {
           console.error(`Failed to update ${label}`, err);
           showToastMessage(`Unable to update ${label.toLowerCase()}. Please try again.`, "error");
@@ -683,7 +689,32 @@ export default function ProductsClient() {
         const normalizedOld = normalizeEditableValue(event.oldValue ?? null);
         const normalizedNew = normalizeEditableValue(event.newValue ?? null);
         if (normalizedOld === normalizedNew) return;
-        void runUpdate({ [config.payloadKey]: normalizedNew }, config.label);
+        const capturedProductId = productId;
+        const capturedPayloadKey = config.payloadKey;
+        const capturedLabel = config.label;
+        const capturedOldValue = normalizedOld;
+        const capturedNode = event.node;
+        const capturedApi = event.api;
+        void runUpdate({ [capturedPayloadKey]: normalizedNew }, capturedLabel, () => {
+          pushUndo({
+            label: `${capturedLabel} updated`,
+            undo: async () => {
+              const undoRes = await fetch(`/api/products/${encodeURIComponent(String(capturedProductId))}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ [capturedPayloadKey]: capturedOldValue }),
+              });
+              const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+              if (!undoRes.ok || !undoPayload?.ok) throw new Error("Failed to revert");
+              try { capturedNode?.setDataValue?.(field, capturedOldValue); } catch { /* noop */ }
+              capturedApi?.refreshServerSide?.({ purge: false });
+            },
+          });
+          showToastMessage(`${capturedLabel} updated`, "success", 5500, {
+            label: "Undo",
+            onClick: () => performUndo(),
+          });
+        });
         return;
       }
 
@@ -771,7 +802,7 @@ export default function ProductsClient() {
         return;
       }
     },
-    [categoryOptions, lookups, subCategoryOptions, typeOptions],
+    [categoryOptions, lookups, performUndo, pushUndo, subCategoryOptions, typeOptions],
   );
 
   return (
@@ -781,6 +812,15 @@ export default function ProductsClient() {
           title="Products"
           rightActions={
             <div className={styles.headerActions}>
+              {canUndo && (
+                <button
+                  type="button"
+                  className={`${styles.headerButton} page-header-button`}
+                  onClick={performUndo}
+                >
+                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+                </button>
+              )}
               <button
                 type="button"
                 className={`${styles.headerButton} page-header-button`}

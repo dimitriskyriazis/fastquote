@@ -23,6 +23,8 @@ import { useAuditUser } from "../components/AuditUserProvider";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
 import AddSupplierModal from "../components/AddSupplierModal";
+import { useUndoStack } from "../hooks/useUndoStack";
+import { pushCellEditUndo, makePatternAUndoFn } from "../../lib/undoHelpers";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -105,6 +107,7 @@ function normalizeSupplierContextMenuItems(
 export default function SuppliersClient({ countries }: Props) {
   const router = useRouter();
   const { roles } = useAuditUser();
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
   const [countryOptions, setCountryOptions] = useState(() => ["", ...countries.map((c) => c.name)]);
@@ -176,8 +179,26 @@ export default function SuppliersClient({ countries }: Props) {
           }
         },
         canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageBrandsSuppliers'),
+        restoreEndpoint: "/api/suppliers/restore",
+        onDeleteSuccess: (deletedRows, api) => {
+          if (deletedRows.length > 0) {
+            pushUndo({
+              label: "Supplier deleted",
+              undo: async () => {
+                const res = await fetch("/api/suppliers/restore", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ rows: deletedRows }),
+                });
+                const result = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+                if (!res.ok || !result?.ok) throw new Error("Failed to restore");
+                try { api?.refreshServerSide?.({ purge: true }); } catch { /* noop */ }
+              },
+            });
+          }
+        },
       }),
-    [roles],
+    [roles, pushUndo],
   );
 
   const getContextMenuItems = useCallback(
@@ -350,7 +371,15 @@ export default function SuppliersClient({ countries }: Props) {
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update ${label}`);
         }
-        showToastMessage(`${label} updated`, "success");
+        pushCellEditUndo(pushUndo, performUndo, label, makePatternAUndoFn({
+          endpoint: "/api/suppliers",
+          idField: "SupplierID",
+          entityId: supplierId,
+          field,
+          oldValue: event.oldValue,
+          node: event.node,
+          gridApi: event.api,
+        }));
         event.api?.refreshServerSide?.({ purge: false });
       } catch (err) {
         console.error(`Failed to update ${label}`, err);
@@ -360,7 +389,7 @@ export default function SuppliersClient({ countries }: Props) {
     };
 
     void submit();
-  }, []);
+  }, [pushUndo, performUndo]);
 
   return (
     <>
@@ -369,6 +398,15 @@ export default function SuppliersClient({ countries }: Props) {
           title="Suppliers"
           rightActions={
             <div className={styles.headerActions}>
+              {canUndo && (
+                <button
+                  type="button"
+                  className={`page-header-button ${styles.headerButton}`}
+                  onClick={performUndo}
+                >
+                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+                </button>
+              )}
               <button
                 type="button"
                 className={`page-header-button ${styles.headerButton}`}

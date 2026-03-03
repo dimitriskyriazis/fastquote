@@ -78,6 +78,8 @@ type GridRowDeletionConfig<RowData> = {
   failureToastMessage?: string;
   refreshHandler?: (api: GridApi<RowData> | null) => void;
   canDelete?: (count: number) => DeletePermissionResult;
+  restoreEndpoint?: string;
+  onDeleteSuccess?: (deletedRows: unknown[], api: GridApi<RowData> | null) => void;
 };
 
 export class GridRowDeletion<RowData> {
@@ -222,16 +224,47 @@ export class GridRowDeletion<RowData> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(this.buildPayload(ids)),
       });
-      let payload: { ok?: boolean; error?: string } | null = null;
+      let payload: { ok?: boolean; error?: string; deletedRows?: unknown[] } | null = null;
       try {
-        payload = (await res.json()) as { ok?: boolean; error?: string } | null;
+        payload = (await res.json()) as { ok?: boolean; error?: string; deletedRows?: unknown[] } | null;
       } catch {
         payload = null;
       }
       if (!res.ok || !payload?.ok) {
         throw new Error(payload?.error ?? `Failed to delete row (status ${res.status})`);
       }
-      showToastMessage(this.getSuccessMessage(typeLabel, rowLabel), 'success');
+      const apiDeletedRows = Array.isArray(payload.deletedRows) ? payload.deletedRows : [];
+      const restoreEndpoint = this.config.restoreEndpoint;
+      if (restoreEndpoint && apiDeletedRows.length > 0) {
+        const capturedApi = api;
+        showToastMessage(this.getSuccessMessage(typeLabel, rowLabel), 'success', 5500, {
+          label: 'Undo',
+          onClick: () => {
+            fetch(restoreEndpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ rows: apiDeletedRows }),
+            })
+              .then((r) => r.json())
+              .then((result: { ok?: boolean } | null) => {
+                if (result?.ok) {
+                  showToastMessage('Restored successfully', 'info');
+                  this.refreshGrid(capturedApi);
+                } else {
+                  showToastMessage('Unable to restore. Please try again.', 'error');
+                }
+              })
+              .catch(() => {
+                showToastMessage('Unable to restore. Please try again.', 'error');
+              });
+          },
+        });
+      } else {
+        showToastMessage(this.getSuccessMessage(typeLabel, rowLabel), 'success');
+      }
+      if (typeof this.config.onDeleteSuccess === 'function') {
+        this.config.onDeleteSuccess(apiDeletedRows, api);
+      }
       this.refreshGrid(api);
     } catch (err) {
       console.error('Failed to delete row', err);
