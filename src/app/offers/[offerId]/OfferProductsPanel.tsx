@@ -606,11 +606,15 @@ type AssignedRequestedPricing = {
 const fetchFarnellLookup = async (
   sku: string,
   quantity?: number,
+  searchType: 'id' | 'manuPartNum' = 'id',
 ): Promise<FarnellLookupResponse | null> => {
   try {
     const params = new URLSearchParams({ sku });
     if (quantity != null && quantity > 0) {
       params.set('quantity', String(Math.trunc(quantity)));
+    }
+    if (searchType !== 'id') {
+      params.set('searchType', searchType);
     }
     const res = await fetch(`/api/farnell/lookup?${params.toString()}`);
     if (!res.ok) return null;
@@ -3559,16 +3563,17 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     let categoriesAdded = 0;
     let productsAdded = 0;
     const unmatchedRequestedRows: RequestedProductMatchEntry[] = [];
+    const unfoundFarnellPartNumbers: string[] = [];
     const farnellProductCache = new Map<string, number>();
     const farnellLookupCache = new Map<string, FarnellLookupResponse | null>();
-    const getFarnellLookupCacheKey = (partNumber: string, quantity: number) => `${partNumber}::${quantity}`;
-    const getFarnellLookupCached = async (partNumber: string, quantity: number) => {
+    const getFarnellLookupCacheKey = (partNumber: string, quantity: number, searchType: 'id' | 'manuPartNum' = 'id') => `${searchType}::${partNumber}::${quantity}`;
+    const getFarnellLookupCached = async (partNumber: string, quantity: number, searchType: 'id' | 'manuPartNum' = 'id') => {
       const normalizedQuantity = quantity > 0 ? Math.trunc(quantity) : 1;
-      const cacheKey = getFarnellLookupCacheKey(partNumber, normalizedQuantity);
+      const cacheKey = getFarnellLookupCacheKey(partNumber, normalizedQuantity, searchType);
       if (farnellLookupCache.has(cacheKey)) {
         return farnellLookupCache.get(cacheKey) ?? null;
       }
-      const response = await fetchFarnellLookup(partNumber, normalizedQuantity);
+      const response = await fetchFarnellLookup(partNumber, normalizedQuantity, searchType);
       farnellLookupCache.set(cacheKey, response);
       return response;
     };
@@ -3690,8 +3695,16 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 
             // Auto-create product if not found
             if (productId == null) {
-              // Fetch from Farnell API (also returns the Farnell brand ID from DB)
-              farnellLookupResponse = await getFarnellLookupCached(partKey, 1);
+              // Fetch from Farnell API by item code (also returns the Farnell brand ID from DB)
+              if (lookupInfo.partNumber) {
+                farnellLookupResponse = await getFarnellLookupCached(lookupInfo.partNumber, 1);
+              }
+
+              // Fallback: retry the same part number as a manufacturer part number search
+              if (!farnellLookupResponse && partKey) {
+                farnellLookupResponse = await getFarnellLookupCached(partKey, 1, 'manuPartNum');
+              }
+
               const farnellBrandId = farnellLookupResponse?.farnellBrandId ?? null;
               if (farnellBrandId != null && farnellLookupResponse) {
                 productId = await createFarnellProduct(
@@ -3711,7 +3724,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           }
 
           if (productId == null) {
-            unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
+            if (brandIsFarnell && lookupInfo.partNumber) {
+              unfoundFarnellPartNumbers.push(lookupInfo.partNumber);
+            } else {
+              unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
+            }
             continue;
           }
           const parentCategoryId = normalizeOfferDetailId(
@@ -3719,7 +3736,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           );
           const assignment = await assignRequestedRowToProduct(offerDetailId, productId, parentCategoryId);
           if (!assignment) {
-            unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
+            if (brandIsFarnell && lookupInfo.partNumber) {
+              unfoundFarnellPartNumbers.push(lookupInfo.partNumber);
+            } else {
+              unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
+            }
             continue;
           }
 
@@ -3817,6 +3838,20 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         }
       }
 
+      if (unfoundFarnellPartNumbers.length > 0) {
+        const uniqueParts = [...new Set(unfoundFarnellPartNumbers)];
+        if (uniqueParts.length === 1) {
+          showToastMessage(
+            `Couldn't find a Farnell product with this item code: ${uniqueParts[0]}`,
+            'error',
+          );
+        } else {
+          showToastMessage(
+            `Couldn't find Farnell products with these item codes: ${uniqueParts.join(', ')}`,
+            'error',
+          );
+        }
+      }
       const manualMatchesRequired = unmatchedRequestedRows.length > 0;
       if (manualMatchesRequired) {
         setRequestedMatchQueue((prev) => [...prev, ...unmatchedRequestedRows]);

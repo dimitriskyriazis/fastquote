@@ -44,6 +44,7 @@ function parseJsonPrices(
 export async function fetchFarnellProduct(
   sku: string,
   quantity?: number,
+  searchType: 'id' | 'manuPartNum' = 'id',
 ): Promise<FarnellProduct | null> {
   const apiKey = process.env.FARNELL_API_KEY;
   if (!apiKey) {
@@ -53,7 +54,7 @@ export async function fetchFarnellProduct(
 
   const params = new URLSearchParams({
     'versionNumber': '1.4',
-    'term': `id:${sku}`,
+    'term': `${searchType}:${sku}`,
     'storeInfo.id': 'be.farnell.com',
     'resultsSettings.offset': '0',
     'resultsSettings.numberOfResults': '1',
@@ -82,6 +83,7 @@ export async function fetchFarnellProduct(
 
     const products =
       data?.manufacturerPartNumberReturn?.products ??
+      data?.manufacturerPartNumberSearchReturn?.products ??
       data?.premierFarnellPartNumberReturn?.products ??
       data?.keywordSearchReturn?.products ??
       null;

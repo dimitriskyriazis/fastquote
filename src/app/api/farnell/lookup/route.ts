@@ -41,7 +41,9 @@ export async function GET(req: NextRequest) {
     const quantity =
       quantityParam != null ? Math.max(1, Math.trunc(Number(quantityParam) || 1)) : 1;
 
-    const product = await fetchFarnellProduct(sku, quantity);
+    const searchType = searchParams.get('searchType') === 'manuPartNum' ? 'manuPartNum' : 'id';
+
+    const product = await fetchFarnellProduct(sku, quantity, searchType);
     if (!product) {
       return NextResponse.json(
         { ok: false, error: `No product found for SKU ${sku}` },
