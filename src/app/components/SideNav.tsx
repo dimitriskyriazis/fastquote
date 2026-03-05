@@ -5,6 +5,18 @@ import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import UserIdControl from "./UserIdControl";
 import { useAuditUser } from "./AuditUserProvider";
+import {
+  HomeIcon,
+  OffersIcon,
+  PriceListsIcon,
+  PricingPoliciesIcon,
+  ProductsIcon,
+  StandardPackagesIcon,
+  CustomersIcon,
+  ContactsIcon,
+  SuppliersIcon,
+  UserManagementIcon,
+} from "./NavIcons";
 
 type NavItem = {
   label: string;
@@ -14,229 +26,16 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
-  {
-    label: "Home",
-    href: "/",
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path
-          d="M4 11.5L12 4l8 7.5v8a1 1 0 0 1-1 1h-4v-5h-6v5H5a1 1 0 0 1-1-1z"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          fill="none"
-        />
-        <path
-          d="M7 21v-6.5h10V21"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    label: "Offers",
-    href: "/offers",
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path
-          d="M4.5 5.5h15v13h-15z"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M7.5 3.9h9v3.3h-9z"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinejoin="round"
-        />
-        <path d="M8 10.5h4m-4 3h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-    ),
-  },
-  {
-    label: "Price Lists",
-    href: "/price-lists",
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <rect x="4.5" y="4.8" width="10.8" height="14.4" rx="1.6" stroke="currentColor" strokeWidth="1.6" fill="none" />
-        <path d="M7.2 8h5.8M7.2 11.1h5.8M7.2 14.2h4.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-        <path
-          d="M14.6 12.4h5l2 2-5.4 5.4-3-3V12.4z"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinejoin="round"
-          fill="none"
-        />
-        <circle cx="17.6" cy="14.4" r="0.9" stroke="currentColor" strokeWidth="1.4" fill="none" />
-      </svg>
-    ),
-  },
-  {
-    label: "Pricing Policies",
-    href: "/pricing-policies",
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path
-          d="M12 3.5l6 2.4v5.2c0 4.2-2.7 7.7-6 9.4-3.3-1.7-6-5.2-6-9.4V5.9L12 3.5z"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinejoin="round"
-          fill="none"
-        />
-        <path
-          d="M8.5 9.2h7M9.8 12h4.4M8.5 14.8h7"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-        />
-        <circle cx="9.3" cy="9.2" r="0.9" fill="currentColor" />
-        <circle cx="14.8" cy="14.8" r="0.9" fill="currentColor" />
-      </svg>
-    ),
-  },
-  {
-    label: "Products",
-    href: "/products",
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path
-          d="M12 4.3l7.5 4-7.5 4-7.5-4 7.5-4z"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinejoin="round"
-          fill="none"
-        />
-        <path
-          d="M4.5 8.3v7.8L12 20.7v-7.8M19.5 8.3v7.8L12 20.7"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinejoin="round"
-          fill="none"
-        />
-      </svg>
-    ),
-  },
-  {
-    label: "Standard Packages",
-    href: "/standard-packages",
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <rect
-          x="4.5"
-          y="5.5"
-          width="15"
-          height="13"
-          rx="1.5"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          fill="none"
-        />
-        <path d="M7.5 9.5h9M7.5 12.5h9M7.5 15.5h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-    ),
-  },
-  {
-    label: "Customers",
-    href: "/customers",
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <circle cx="12" cy="7.4" r="3.1" stroke="currentColor" strokeWidth="1.6" fill="none" />
-        <circle cx="6.4" cy="9.1" r="2.1" stroke="currentColor" strokeWidth="1.6" fill="none" />
-        <circle cx="17.6" cy="9.1" r="2.1" stroke="currentColor" strokeWidth="1.6" fill="none" />
-        <path
-          d="M6.6 20c0-3 2.4-5.4 5.4-5.4s5.4 2.4 5.4 5.4"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          fill="none"
-          strokeLinecap="round"
-        />
-        <path
-          d="M2.6 20c0-1.9 1.5-3.4 3.4-3.4M21.4 20c0-1.9-1.5-3.4-3.4-3.4"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          fill="none"
-          strokeLinecap="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    label: "Contacts",
-    href: "/contacts",
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <circle cx="12" cy="8.1" r="2.5" stroke="currentColor" strokeWidth="1.6" fill="none" />
-        <path
-          d="M7.6 18.6c0-2.3 1.9-4.2 4.4-4.2s4.4 1.9 4.4 4.2"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          fill="none"
-          strokeLinecap="round"
-        />
-        <path
-          d="M2.5 3.2h19v17.6h-19z"
-          stroke="currentColor"
-          strokeWidth="1.3"
-          strokeLinejoin="round"
-          fill="none"
-        />
-      </svg>
-    ),
-  },
-  {
-    label: "Suppliers",
-    href: "/suppliers",
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path
-          d="M2 8h11v8H2z"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinejoin="round"
-          fill="none"
-        />
-        <path
-          d="M13 8h5l3 3v5h-8V8z"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinejoin="round"
-          fill="none"
-        />
-        <circle cx="6.5" cy="18.5" r="2" stroke="currentColor" strokeWidth="1.6" fill="none" />
-        <circle cx="17.5" cy="18.5" r="2" stroke="currentColor" strokeWidth="1.6" fill="none" />
-        <path
-          d="M13 16h-2.5M21 16h-1.5"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    label: "User Management",
-    href: "/user-management",
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <rect x="3.5" y="4.5" width="17" height="15" rx="2" stroke="currentColor" strokeWidth="1.6" fill="none" />
-        <circle cx="8.5" cy="10" r="2.2" stroke="currentColor" strokeWidth="1.6" fill="none" />
-        <path
-          d="M5.8 16c0-1.6 1.3-2.9 2.9-2.9s2.9 1.3 2.9 2.9"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          fill="none"
-          strokeLinecap="round"
-        />
-        <path d="M14 9.2h4.5M14 12.2h4.5M14 15.2h3.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-    ),
-    requiresRoles: ["Administrator", "Developer"],
-  },
+  { label: "Home", href: "/", icon: <HomeIcon /> },
+  { label: "Offers", href: "/offers", icon: <OffersIcon /> },
+  { label: "Price Lists", href: "/price-lists", icon: <PriceListsIcon /> },
+  { label: "Pricing Policies", href: "/pricing-policies", icon: <PricingPoliciesIcon /> },
+  { label: "Products", href: "/products", icon: <ProductsIcon /> },
+  { label: "Standard Packages", href: "/standard-packages", icon: <StandardPackagesIcon /> },
+  { label: "Customers", href: "/customers", icon: <CustomersIcon /> },
+  { label: "Contacts", href: "/contacts", icon: <ContactsIcon /> },
+  { label: "Suppliers", href: "/suppliers", icon: <SuppliersIcon /> },
+  { label: "User Management", href: "/user-management", icon: <UserManagementIcon />, requiresRoles: ["Administrator", "Developer"] },
 ];
 
 const SIDENAV_COLLAPSED_COOKIE_NAME = "fastquote_sidenav_collapsed";
