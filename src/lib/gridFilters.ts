@@ -272,7 +272,7 @@ export const buildQuickFilterClause = (
   });
 
   if (parts.length === 0) return { clause: "", params };
-  return { clause: `AND (${parts.join(" OR ")})`, params };
+  return { clause: `AND (${parts.join(" AND ")})`, params };
 };
 
 export const mergeWhereClauses = (baseWhere: string, clause: string): string => {

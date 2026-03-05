@@ -78,14 +78,15 @@ const normalizeRoles = (roles: string[]) => {
 };
 
 const applyQuickFilter = (rows: Record<string, unknown>[], query: string) => {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return rows;
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return rows;
   return rows.filter((row) => {
-    return Object.values(row).some((value) => {
-      if (value == null) return false;
-      const text = String(value).toLowerCase();
-      return text.includes(needle);
-    });
+    const values = Object.values(row).map((v) =>
+      v == null ? "" : String(v).toLowerCase()
+    );
+    return terms.every((term) =>
+      values.some((v) => v.includes(term))
+    );
   });
 };
 

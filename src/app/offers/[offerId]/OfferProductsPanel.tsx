@@ -79,6 +79,7 @@ const decimalFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
 const DEFAULT_ROW_HEIGHT = 32;
 const MAX_CATEGORY_DEPTH = 3;
 const ADD_WEBLINK_MAX_PRODUCTS = 200;
+const ENHANCE_DESC_MAX_PRODUCTS = 200;
 
 const COLLAPSED_CATEGORIES_COOKIE_NAME = 'offer_products_collapsed';
 
@@ -830,6 +831,15 @@ const productHistoryMenuIcon = `
   </span>
 `;
 
+const enhanceDescriptionMenuIcon = `
+  <span class="fastquote-menu-icon" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+      <path d="M9 4.5a.75.75 0 0 1 .721.544l.813 2.846a3.75 3.75 0 0 0 2.576 2.576l2.846.813a.75.75 0 0 1 0 1.442l-2.846.813a3.75 3.75 0 0 0-2.576 2.576l-.813 2.846a.75.75 0 0 1-1.442 0l-.813-2.846a3.75 3.75 0 0 0-2.576-2.576l-2.846-.813a.75.75 0 0 1 0-1.442l2.846-.813A3.75 3.75 0 0 0 7.466 7.89l.813-2.846A.75.75 0 0 1 9 4.5Z"/>
+      <path d="M18 1.5a.75.75 0 0 1 .728.568l.258 1.036a2.63 2.63 0 0 0 1.91 1.91l1.036.258a.75.75 0 0 1 0 1.456l-1.036.258a2.63 2.63 0 0 0-1.91 1.91l-.258 1.036a.75.75 0 0 1-1.456 0l-.258-1.036a2.63 2.63 0 0 0-1.91-1.91l-1.036-.258a.75.75 0 0 1 0-1.456l1.036-.258a2.63 2.63 0 0 0 1.91-1.91l.258-1.036A.75.75 0 0 1 18 1.5Z"/>
+    </svg>
+  </span>
+`;
+
 const addWebLinkMenuIcon = `
   <span class="fastquote-menu-icon" aria-hidden="true">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
@@ -1406,6 +1416,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const requestedItemNoVisibleRef = useRef(requestedItemNoVisible);
   requestedItemNoVisibleRef.current = requestedItemNoVisible;
   const [isAddingWebLinks, setIsAddingWebLinks] = useState(false);
+  const [isEnhancingDescriptions, setIsEnhancingDescriptions] = useState(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const gridWrapperRef = useRef<HTMLDivElement | null>(null);
   const [requestedColumnsReady, setRequestedColumnsReadyFlag] = useState(false);
@@ -5343,11 +5354,155 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       items.splice(deleteIdx >= 0 ? deleteIdx : items.length, 0, webLinkItem);
     }
 
+    // --- Enhance description item (product rows only) ---
+    if (targetIds.length > 0 || isSelectAllActive) {
+      const targetOfferDetailIds = targetProducts
+        .map((p) => {
+          const pid = (() => {
+            const raw = p.ProductID;
+            if (typeof raw === 'number' && Number.isInteger(raw)) return raw;
+            if (typeof raw === 'string') {
+              const parsed = Number.parseInt(raw.trim(), 10);
+              if (Number.isInteger(parsed)) return parsed;
+            }
+            return null;
+          })();
+          const odId = (() => {
+            const raw = p.OfferDetailID;
+            if (typeof raw === 'number' && Number.isInteger(raw)) return raw;
+            if (typeof raw === 'string') {
+              const parsed = Number.parseInt(raw.trim(), 10);
+              if (Number.isInteger(parsed)) return parsed;
+            }
+            return null;
+          })();
+          return pid !== null && odId !== null ? { productId: pid, offerDetailId: odId } : null;
+        })
+        .filter((x): x is { productId: number; offerDetailId: number } => x !== null);
+
+      const enhanceDescItem: MenuItemDef = {
+        name: isSelectAllActive
+          ? 'Enhance descriptions (all filtered)'
+          : targetIds.length > 1
+            ? `Enhance descriptions (${targetIds.length})`
+            : 'Enhance description',
+        icon: enhanceDescriptionMenuIcon,
+        disabled: isEnhancingDescriptions,
+        action: async () => {
+          let idsToProcess: Array<{ productId: number; offerDetailId: number }> = [];
+          if (isSelectAllActive) {
+            const confirmed = await showConfirmDialog({
+              title: 'Enhance descriptions for all filtered products',
+              message: 'This will overwrite descriptions for the filtered rows. Continue?',
+              confirmLabel: 'Continue',
+              cancelLabel: 'Cancel',
+            });
+            if (!confirmed) return;
+            try {
+              const allProductIds = await fetchAllFilteredOfferProductIds();
+              // For select-all we only have product IDs; we need offer detail IDs too
+              const allDetailIds = await fetchAllFilteredOfferDetailIds();
+              // Pair them: fetch from grid rows if possible
+              idsToProcess = allProductIds.map((pid, i) => ({
+                productId: pid,
+                offerDetailId: allDetailIds[i] ?? 0,
+              })).filter((x) => x.offerDetailId > 0);
+            } catch (err) {
+              showToastMessage(
+                err instanceof Error ? err.message : 'Failed to resolve selected products.',
+                'error',
+              );
+              return;
+            }
+          } else {
+            idsToProcess = [...targetOfferDetailIds];
+          }
+
+          if (idsToProcess.length === 0) {
+            showToastMessage('No products selected for description enhancement.', 'info');
+            return;
+          }
+          if (idsToProcess.length > ENHANCE_DESC_MAX_PRODUCTS) {
+            showToastMessage(`Cannot process more than ${ENHANCE_DESC_MAX_PRODUCTS} products at once. Please filter first.`, 'error');
+            return;
+          }
+
+          setIsEnhancingDescriptions(true);
+          const dismissLoadingToast = showToastMessage('Enhancing descriptions\u2026', 'info', 120000);
+          try {
+            const res = await fetch('/api/products/enhance-descriptions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ offerDetailIds: idsToProcess }),
+            });
+            const data = (await res.json()) as {
+              ok: boolean;
+              updatedCount?: number;
+              failedCount?: number;
+              results?: Array<{
+                productId: number;
+                offerDetailId?: number;
+                oldDescription: string | null;
+                oldOfferDescription?: string | null;
+                newDescription: string | null;
+                status: string;
+              }>;
+              error?: string;
+            };
+            dismissLoadingToast();
+            if (data.ok) {
+              const msg = data.failedCount
+                ? `Enhanced ${data.updatedCount} description(s), ${data.failedCount} could not be enhanced.`
+                : `Enhanced ${data.updatedCount} description(s).`;
+              showToastMessage(msg, 'success');
+              refreshOfferProductGrid(null, { purge: true });
+              router.refresh();
+
+              // Push undo entry
+              const updatedResults = (data.results ?? []).filter((r) => r.status === 'updated');
+              if (updatedResults.length > 0) {
+                pushUndo({
+                  label: `Enhance ${updatedResults.length} description(s)`,
+                  undo: async () => {
+                    await fetch('/api/products/enhance-descriptions', {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        items: updatedResults.map((r) => ({
+                          productId: r.productId,
+                          offerDetailId: r.offerDetailId,
+                          description: r.oldDescription ?? '',
+                          offerDescription: r.oldOfferDescription ?? '',
+                        })),
+                      }),
+                    });
+                    refreshOfferProductGrid(null, { purge: true });
+                    router.refresh();
+                  },
+                });
+              }
+            } else {
+              showToastMessage(data.error ?? 'Failed to enhance descriptions. Please try again.', 'error');
+            }
+          } catch {
+            dismissLoadingToast();
+            showToastMessage('Failed to enhance descriptions. Please try again.', 'error');
+          } finally {
+            setIsEnhancingDescriptions(false);
+          }
+        },
+      };
+      const enhanceDeleteIdx = findDeleteMenuItemIndex(items);
+      items.splice(enhanceDeleteIdx >= 0 ? enhanceDeleteIdx : items.length, 0, enhanceDescItem);
+    }
+
     return items;
   }, [
     fetchAllFilteredOfferDetailIds,
     fetchAllFilteredOfferProductIds,
     isAddingWebLinks,
+    isEnhancingDescriptions,
+    pushUndo,
     refreshOfferProductGrid,
     roles,
     productRowDeletion,
