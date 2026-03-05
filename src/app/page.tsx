@@ -40,6 +40,7 @@ export default function Page() {
             />
           </div>
         </div>
+        <hr className={styles.divider} />
         <nav className={styles.quickLinks}>
           {quickLinks.map((link) => (
             <Link key={link.href} href={link.href} className={styles.quickLink}>

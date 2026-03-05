@@ -125,6 +125,8 @@ export default function RecentOffersSection() {
         </Link>
       </header>
 
+      <hr className={styles.divider} />
+
       {isCheckingRecentOffers ? (
         <div className={styles.emptyState}>
           <p>Checking recent offers...</p>
