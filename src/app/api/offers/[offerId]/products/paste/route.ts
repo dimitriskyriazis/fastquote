@@ -289,15 +289,16 @@ const insertNonProductRows = async (transaction: Transaction, offerId: number, r
       request.input(`${p}_requestedDescription2`, sql.NVarChar(sql.MAX), row.requestedDescription2);
       request.input(`${p}_requestedDescription3`, sql.NVarChar(sql.MAX), row.requestedDescription3);
       request.input(`${p}_requestedQuantity`, sql.Decimal(18, 4), row.requestedQuantity);
-      values.push(`(@${p}_seq,@${p}_tree,@${p}_ordering,@${p}_isPrintable,@${p}_isComment,@${p}_isCategory,@${p}_productDescription,@${p}_comment,@${p}_delivery,@${p}_requestedItemNo,@${p}_requestedBrand,@${p}_requestedPartNo,@${p}_requestedModelNo,@${p}_requestedWebLink,@${p}_requestedDescription,@${p}_requestedDescription2,@${p}_requestedDescription3,@${p}_requestedQuantity)`);
+      request.input(`${p}_quantity`, sql.Decimal(18, 4), row.quantity ?? 0);
+      values.push(`(@${p}_seq,@${p}_tree,@${p}_ordering,@${p}_isPrintable,@${p}_isComment,@${p}_isCategory,@${p}_productDescription,@${p}_comment,@${p}_delivery,@${p}_requestedItemNo,@${p}_requestedBrand,@${p}_requestedPartNo,@${p}_requestedModelNo,@${p}_requestedWebLink,@${p}_requestedDescription,@${p}_requestedDescription2,@${p}_requestedDescription3,@${p}_requestedQuantity,@${p}_quantity)`);
     });
     const result = await request.query<{ OfferDetailID: number }>(`
-      DECLARE @r TABLE (Seq INT, TreeOrdering NVARCHAR(255), Ordering INT, IsPrintable BIT NULL, IsComment BIT, IsCategory BIT, ProductDescription NVARCHAR(MAX) NULL, Comment NVARCHAR(MAX) NULL, Delivery NVARCHAR(255) NULL, RequestedItemNo NVARCHAR(255) NULL, RequestedBrand NVARCHAR(255) NULL, RequestedPartNo NVARCHAR(255) NULL, RequestedModelNo NVARCHAR(255) NULL, RequestedWebLink NVARCHAR(MAX) NULL, RequestedDescription NVARCHAR(MAX) NULL, RequestedDescription2 NVARCHAR(MAX) NULL, RequestedDescription3 NVARCHAR(MAX) NULL, RequestedQuantity DECIMAL(18,4) NULL);
+      DECLARE @r TABLE (Seq INT, TreeOrdering NVARCHAR(255), Ordering INT, IsPrintable BIT NULL, IsComment BIT, IsCategory BIT, ProductDescription NVARCHAR(MAX) NULL, Comment NVARCHAR(MAX) NULL, Delivery NVARCHAR(255) NULL, RequestedItemNo NVARCHAR(255) NULL, RequestedBrand NVARCHAR(255) NULL, RequestedPartNo NVARCHAR(255) NULL, RequestedModelNo NVARCHAR(255) NULL, RequestedWebLink NVARCHAR(MAX) NULL, RequestedDescription NVARCHAR(MAX) NULL, RequestedDescription2 NVARCHAR(MAX) NULL, RequestedDescription3 NVARCHAR(MAX) NULL, RequestedQuantity DECIMAL(18,4) NULL, Quantity DECIMAL(18,4) NOT NULL);
       INSERT INTO @r VALUES ${values.join(', ')};
       DECLARE @i TABLE (OfferDetailID INT, TreeOrdering NVARCHAR(255));
-      INSERT INTO dbo.OfferDetails (OfferID, ParentOfferDetailID, TreeOrdering, Ordering, IsPrintable, IsComment, IsCategory, ProductDescription, Comment, Delivery, RequestedItemNo, RequestedBrand, RequestedPartNo, RequestedModelNo, RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy)
+      INSERT INTO dbo.OfferDetails (OfferID, ParentOfferDetailID, TreeOrdering, Ordering, IsPrintable, IsComment, IsCategory, ProductDescription, Quantity, Comment, Delivery, RequestedItemNo, RequestedBrand, RequestedPartNo, RequestedModelNo, RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy)
       OUTPUT INSERTED.ID, INSERTED.TreeOrdering INTO @i (OfferDetailID, TreeOrdering)
-      SELECT @__offerId, NULL, src.TreeOrdering, src.Ordering, src.IsPrintable, src.IsComment, src.IsCategory, src.ProductDescription, src.Comment, src.Delivery, src.RequestedItemNo, src.RequestedBrand, src.RequestedPartNo, src.RequestedModelNo, src.RequestedWebLink, src.RequestedDescription, src.RequestedDescription2, src.RequestedDescription3, src.RequestedQuantity, SYSUTCDATETIME(), @__createdBy, SYSUTCDATETIME(), @__modifiedBy
+      SELECT @__offerId, NULL, src.TreeOrdering, src.Ordering, src.IsPrintable, src.IsComment, src.IsCategory, src.ProductDescription, src.Quantity, src.Comment, src.Delivery, src.RequestedItemNo, src.RequestedBrand, src.RequestedPartNo, src.RequestedModelNo, src.RequestedWebLink, src.RequestedDescription, src.RequestedDescription2, src.RequestedDescription3, src.RequestedQuantity, SYSUTCDATETIME(), @__createdBy, SYSUTCDATETIME(), @__modifiedBy
       FROM @r src
       ORDER BY src.Seq;
       UPDATE child
@@ -334,7 +335,7 @@ const insertProductRowsKeepPricing = async (transaction: Transaction, offerId: n
       request.input(`${p}_partNo`, sql.NVarChar(255), row.partNumber);
       request.input(`${p}_modelNo`, sql.NVarChar(255), row.modelNumber);
       request.input(`${p}_description`, sql.NVarChar(sql.MAX), row.productDescription ?? row.description);
-      request.input(`${p}_quantity`, sql.Decimal(18, 4), row.quantity);
+      request.input(`${p}_quantity`, sql.Decimal(18, 4), row.quantity ?? 1);
       request.input(`${p}_listPrice`, sql.Decimal(18, 4), row.listPrice);
       request.input(`${p}_netUnitPrice`, sql.Decimal(18, 4), row.netUnitPrice);
       request.input(`${p}_telmacoDiscount`, sql.Decimal(18, 4), row.telmacoDiscount);

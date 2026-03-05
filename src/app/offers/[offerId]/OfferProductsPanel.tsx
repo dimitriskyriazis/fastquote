@@ -42,7 +42,6 @@ import {
   writeClipboard,
   isClipboardPopulated,
   mapRowToClipboardRow,
-  enrichWithParentCategories,
   type ProductClipboard,
 } from './products/productClipboard';
 
@@ -4800,25 +4799,16 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           return;
         }
         const clipboardRows = selectedData.map(mapRowToClipboardRow);
-        const allRows: Array<Record<string, unknown>> = [];
-        try {
-          api?.forEachNode?.((node: IRowNode<Record<string, unknown>>) => {
-            if (node.data) allRows.push(node.data as Record<string, unknown>);
-          });
-        } catch {
-          /* noop */
-        }
-        const enrichedRows = enrichWithParentCategories(clipboardRows, allRows);
-        enrichedRows.sort((a, b) =>
+        clipboardRows.sort((a, b) =>
           a.treeOrdering.localeCompare(b.treeOrdering, undefined, { numeric: true }),
         );
         const clipboard: ProductClipboard = {
           sourceOfferId: offerId,
           copiedAt: new Date().toISOString(),
-          rows: enrichedRows,
+          rows: clipboardRows,
         };
         writeClipboard(clipboard);
-        showToastMessage(`Copied ${enrichedRows.length} row(s) to clipboard.`, 'success');
+        showToastMessage(`Copied ${clipboardRows.length} row(s) to clipboard.`, 'success');
       },
     };
     const clipboardItems: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> = [copyItem];
