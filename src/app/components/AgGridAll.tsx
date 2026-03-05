@@ -978,37 +978,63 @@ type RowWithPersistedTree = RowData & {
   [PERSISTED_TREE_KEY]?: string | null;
 };
 
-const comparePaths = (a: number[], b: number[]) => {
-  if (a.length === 0 && b.length === 0) return 0;
-  if (a.length === 0) return 1;
-  if (b.length === 0) return -1;
-  const max = Math.max(a.length, b.length);
-  for (let idx = 0; idx < max; idx += 1) {
-    const hasA = idx < a.length;
-    const hasB = idx < b.length;
-    if (!hasA && !hasB) return 0;
-    if (!hasA) return -1;
-    if (!hasB) return 1;
-    const va = a[idx];
-    const vb = b[idx];
-    if (va !== vb) return va - vb;
-  }
-  return 0;
-};
+type TreeOrderingSegment = { numeric: number } | { text: string };
+type ParsedTreeOrdering = { segments: TreeOrderingSegment[]; allNumeric: boolean; raw: string };
 
-const parseTreeOrderingPath = (value: unknown): number[] => {
+const parseTreeOrderingPath = (value: unknown): string[] => {
   if (value == null) return [];
   const trimmed = String(value).trim();
   if (!trimmed) return [];
   return trimmed
     .split('.')
-    .map((segment) => Number.parseInt(segment, 10))
-    .filter((segment) => Number.isFinite(segment));
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
 };
 
-const longestCommonPrefix = (a: number[], b: number[]): number[] => {
+const parseTreeOrderingFull = (value: unknown): ParsedTreeOrdering => {
+  if (value == null) return { segments: [], allNumeric: true, raw: '' };
+  const raw = String(value).trim();
+  if (!raw) return { segments: [], allNumeric: true, raw };
+  const parts = raw.split('.');
+  let allNumeric = true;
+  const segments: TreeOrderingSegment[] = parts.map((part) => {
+    const num = Number.parseInt(part, 10);
+    if (Number.isFinite(num) && String(num) === part.trim()) return { numeric: num };
+    allNumeric = false;
+    return { text: part.trim() };
+  });
+  return { segments, allNumeric, raw };
+};
+
+const compareSegments = (a: TreeOrderingSegment, b: TreeOrderingSegment): number => {
+  const aNum = 'numeric' in a;
+  const bNum = 'numeric' in b;
+  if (aNum && bNum) return a.numeric - b.numeric;
+  if (aNum) return -1;
+  if (bNum) return 1;
+  return (a as { text: string }).text.localeCompare((b as { text: string }).text);
+};
+
+
+const compareFullPaths = (a: ParsedTreeOrdering, b: ParsedTreeOrdering): number => {
+  if (a.segments.length === 0 && b.segments.length === 0) return 0;
+  if (a.segments.length === 0) return 1;
+  if (b.segments.length === 0) return -1;
+  if (a.allNumeric && !b.allNumeric) return -1;
+  if (!a.allNumeric && b.allNumeric) return 1;
+  const max = Math.max(a.segments.length, b.segments.length);
+  for (let idx = 0; idx < max; idx += 1) {
+    if (idx >= a.segments.length) return -1;
+    if (idx >= b.segments.length) return 1;
+    const cmp = compareSegments(a.segments[idx], b.segments[idx]);
+    if (cmp !== 0) return cmp;
+  }
+  return 0;
+};
+
+const longestCommonPrefix = (a: string[], b: string[]): string[] => {
   const limit = Math.min(a.length, b.length);
-  const prefix: number[] = [];
+  const prefix: string[] = [];
   for (let idx = 0; idx < limit; idx += 1) {
     if (a[idx] !== b[idx]) break;
     prefix.push(a[idx]);
@@ -1065,15 +1091,15 @@ const GUARDED_SET_FILTERS = new Map<string, string[]>([
 // UTILITY FUNCTIONS - Server-Side Data & Row Management
 const reorderRowsByTreeOrdering = (api: GridApi<RowData>) => {
   if (typeof api.applyServerSideTransaction !== 'function') return;
-  const entries: Array<{ data: RowData; path: number[] }> = [];
+  const entries: Array<{ data: RowData; parsed: ParsedTreeOrdering }> = [];
   api.forEachNode((node) => {
     if (!node.data) return;
     const data = node.data as RowData;
-    const path = parseTreeOrderingPath((data as { TreeOrdering?: string | null }).TreeOrdering ?? null);
-    entries.push({ data, path });
+    const parsed = parseTreeOrderingFull((data as { TreeOrdering?: string | null }).TreeOrdering ?? null);
+    entries.push({ data, parsed });
   });
   if (entries.length === 0) return;
-  entries.sort((a, b) => comparePaths(a.path, b.path));
+  entries.sort((a, b) => compareFullPaths(a.parsed, b.parsed));
   const sortedData = entries.map(entry => entry.data);
   try {
     api.applyServerSideTransaction({ route: [], remove: sortedData });
@@ -1744,7 +1770,6 @@ export default function AgGridAll({
   }, [clearDropIndicatorDom]);
 
   useEffect(() => {
-    if (serverSideHeaderSelectMode === 'all') return;
     // Wait for grid to be ready
     if (!isGridReady) return;
     
@@ -1794,23 +1819,33 @@ export default function AgGridAll({
       
       // Select/deselect all visible nodes directly
       // This works with both client-side and server-side row models
-      // For server-side models, we select visible nodes rather than using selectAll: true
-      // because getSelectedNodes() doesn't work properly with selectAll: true
       if (isChecked) {
-        // First, clear any server-side selectAll state that AG Grid might have set
-        // This prevents conflicts between server-side selection and node-based selection
-        if (typeof api.setServerSideSelectionState === 'function') {
+        if (serverSideHeaderSelectMode === 'all' && typeof api.setServerSideSelectionState === 'function') {
+          // For 'all' mode: set server-side selectAll state so newly loaded rows
+          // also appear selected as the user scrolls
           try {
             api.setServerSideSelectionState({
-              selectAll: false,
+              selectAll: true,
               toggledNodes: [],
             });
           } catch {
             // Ignore errors
           }
+        } else {
+          // For 'loaded' mode: clear any server-side selectAll state first
+          if (typeof api.setServerSideSelectionState === 'function') {
+            try {
+              api.setServerSideSelectionState({
+                selectAll: false,
+                toggledNodes: [],
+              });
+            } catch {
+              // Ignore errors
+            }
+          }
         }
-        
-        // Select all visible nodes
+
+        // Also select all currently loaded nodes for immediate visual feedback
         if (typeof api.forEachNode === 'function') {
           api.forEachNode((node) => {
             if (node.selectable !== false && !node.isRowPinned()) {
@@ -1818,7 +1853,6 @@ export default function AgGridAll({
             }
           });
         } else if (typeof api.selectAll === 'function') {
-          // Fallback for client-side models
           api.selectAll();
         }
       } else {
@@ -2780,13 +2814,13 @@ requestPayloadRef.current = requestPayload;
 const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 
   // TREE ORDERING - Path Calculation & Parent Path Derivation
-  const getRowPath = useCallback((node: IRowNode<RowData> | null | undefined): number[] => {
+  const getRowPath = useCallback((node: IRowNode<RowData> | null | undefined): string[] => {
     if (!node) return [];
     const data = node.data as { TreeOrdering?: string | null } | undefined;
     return parseTreeOrderingPath(data?.TreeOrdering ?? null);
   }, []);
 
-  const getParentPath = useCallback((path: number[]) => {
+  const getParentPath = useCallback((path: string[]) => {
     return path.length > 0 ? path.slice(0, -1) : [];
   }, []);
 
@@ -2794,7 +2828,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     beforeNode: IRowNode<RowData> | null,
     afterNode: IRowNode<RowData> | null,
     position: 'before' | 'after',
-  ): number[] => {
+  ): string[] => {
     const beforePath = beforeNode ? getRowPath(beforeNode) : null;
     const afterPath = afterNode ? getRowPath(afterNode) : null;
 
@@ -3647,7 +3681,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
   type ReorderContext = {
     sourceId?: string | null;
     sourceIds?: string[];
-    parentPath: number[];
+    parentPath: string[];
     position: 'before' | 'after';
     beforeId: string | null;
     afterId: string | null;

@@ -101,11 +101,15 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
   const params: QueryParam[] = [];
   const typedFilterModel = filterModel as Record<string, KnownFilterModel>;
 
+  const descriptionSql = (expr: string) =>
+    `UPPER(COALESCE(CAST(${expr} AS NVARCHAR(MAX)), ''))`;
+
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
     const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
     const isPartNumber = col === "PartNumber";
     const isModelNumber = col === "ModelNumber";
+    const isDescription = col === "Description";
     const isPartOrModel = isPartNumber || isModelNumber;
 
     // Match products page behavior: cleared + reverse-search for part/model single text condition.
@@ -116,36 +120,91 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
       if (!val) return;
 
       const normalizedVal = normalizePartModelNumber(val);
+      const rawVal = val.trim().toUpperCase();
       const otherColumnExpression = isPartNumber
         ? COLUMN_EXPRESSIONS.ModelNumber
         : COLUMN_EXPRESSIONS.PartNumber;
 
+      // Cross-search: ModelNumber also searches Description (raw value)
+      const descExpr = isModelNumber ? COLUMN_EXPRESSIONS.Description : null;
+      const descParam = `${pBase}_desc`;
+
       if (type === "contains") {
-        parts.push(
-          `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase})`,
-        );
+        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase}`;
         params.push({ key: pBase, value: `%${normalizedVal}%` });
+        if (descExpr) {
+          clause += ` OR ${descriptionSql(descExpr)} LIKE @${descParam}`;
+          params.push({ key: descParam, value: `%${rawVal}%` });
+        }
+        parts.push(`${clause})`);
         return;
       }
       if (type === "equals") {
-        parts.push(
-          `(${partModelNumberSql(columnExpression)} = @${pBase} OR ${partModelNumberSql(otherColumnExpression)} = @${pBase})`,
-        );
+        let clause = `(${partModelNumberSql(columnExpression)} = @${pBase} OR ${partModelNumberSql(otherColumnExpression)} = @${pBase}`;
         params.push({ key: pBase, value: normalizedVal });
+        if (descExpr) {
+          clause += ` OR ${descriptionSql(descExpr)} = @${descParam}`;
+          params.push({ key: descParam, value: rawVal });
+        }
+        parts.push(`${clause})`);
         return;
       }
       if (type === "startsWith") {
-        parts.push(
-          `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase})`,
-        );
+        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase}`;
         params.push({ key: pBase, value: `${normalizedVal}%` });
+        if (descExpr) {
+          clause += ` OR ${descriptionSql(descExpr)} LIKE @${descParam}`;
+          params.push({ key: descParam, value: `${rawVal}%` });
+        }
+        parts.push(`${clause})`);
         return;
       }
       if (type === "endsWith") {
-        parts.push(
-          `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase})`,
-        );
+        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase}`;
         params.push({ key: pBase, value: `%${normalizedVal}` });
+        if (descExpr) {
+          clause += ` OR ${descriptionSql(descExpr)} LIKE @${descParam}`;
+          params.push({ key: descParam, value: `%${rawVal}` });
+        }
+        parts.push(`${clause})`);
+        return;
+      }
+    }
+
+    // Cross-search: Description also searches ModelNumber
+    if (isDescription && fm.filterType === "text" && !isCompoundFilter(fm)) {
+      const typedFm = fm as TextCondition;
+      const type = typedFm.type;
+      const val = String(typedFm.filter ?? "");
+      if (!val) return;
+
+      const rawVal = val.trim().toUpperCase();
+      const modelExpr = COLUMN_EXPRESSIONS.ModelNumber;
+      const modelParam = `${pBase}_model`;
+      const descExpr = descriptionSql(columnExpression);
+
+      if (type === "contains") {
+        parts.push(`(${descExpr} LIKE @${pBase} OR ${partModelNumberSql(modelExpr)} LIKE @${modelParam})`);
+        params.push({ key: pBase, value: `%${rawVal}%` });
+        params.push({ key: modelParam, value: `%${rawVal}%` });
+        return;
+      }
+      if (type === "equals") {
+        parts.push(`(${descExpr} = @${pBase} OR ${partModelNumberSql(modelExpr)} = @${modelParam})`);
+        params.push({ key: pBase, value: rawVal });
+        params.push({ key: modelParam, value: rawVal });
+        return;
+      }
+      if (type === "startsWith") {
+        parts.push(`(${descExpr} LIKE @${pBase} OR ${partModelNumberSql(modelExpr)} LIKE @${modelParam})`);
+        params.push({ key: pBase, value: `${rawVal}%` });
+        params.push({ key: modelParam, value: `${rawVal}%` });
+        return;
+      }
+      if (type === "endsWith") {
+        parts.push(`(${descExpr} LIKE @${pBase} OR ${partModelNumberSql(modelExpr)} LIKE @${modelParam})`);
+        params.push({ key: pBase, value: `%${rawVal}` });
+        params.push({ key: modelParam, value: `%${rawVal}` });
         return;
       }
     }

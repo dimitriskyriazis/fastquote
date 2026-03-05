@@ -66,7 +66,7 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
   itemNo: ['item', 'tree', 'ordering', '#', 'position'],
   brand: ['brand', 'maker', 'make', 'manufacturer', 'vendor'],
   modelNumber: ['model', 'series', 'model#'],
-  partNumber: ['part', 'sku', 'code', 'p/n', 'article', 'product'],
+  partNumber: ['part', 'sku', 'p/n', 'article', 'product'],
   webLink: ['weblink', 'web link', 'url', 'link', 'website', 'site'],
   description: ['description', 'desc', 'name', 'details', 'information', 'info', 'specs', 'specifications'],
   description2: ['description', 'desc', 'name', 'details', 'information', 'info', 'specs', 'specifications'],

@@ -218,6 +218,9 @@ export class GridRowDeletion<RowData> {
       tone: 'danger',
     });
     if (!confirmed) return;
+    const dismissDeleting = ids.length > 1
+      ? showToastMessage(`Deleting ${ids.length} ${typeLabel}...`, 'info', 60000)
+      : null;
     try {
       const res = await fetch(this.config.endpoint, {
         method: 'DELETE',
@@ -233,6 +236,7 @@ export class GridRowDeletion<RowData> {
       if (!res.ok || !payload?.ok) {
         throw new Error(payload?.error ?? `Failed to delete row (status ${res.status})`);
       }
+      dismissDeleting?.();
       const apiDeletedRows = Array.isArray(payload.deletedRows) ? payload.deletedRows : [];
       const restoreEndpoint = this.config.restoreEndpoint;
       if (restoreEndpoint && apiDeletedRows.length > 0) {
@@ -267,6 +271,7 @@ export class GridRowDeletion<RowData> {
       }
       this.refreshGrid(api);
     } catch (err) {
+      dismissDeleting?.();
       console.error('Failed to delete row', err);
       showToastMessage(this.getFailureMessage(), 'error');
     }

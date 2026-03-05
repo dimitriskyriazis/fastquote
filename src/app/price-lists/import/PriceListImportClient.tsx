@@ -108,7 +108,6 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "art ",
     "order ",
     "order_",
-    "code",
     "catalog",
     "cat ",
     "κωδικός",

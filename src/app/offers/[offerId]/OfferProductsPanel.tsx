@@ -848,6 +848,14 @@ const categoryMenuIcon = `
   </span>
 `;
 
+const commentMenuIcon = `
+  <span class="fastquote-menu-icon fastquote-menu-icon--comment" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  </span>
+`;
+
 const brandBulkEditMenuIcon = `
   <span class="fastquote-menu-icon fastquote-menu-icon--brand" aria-hidden="true">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -978,8 +986,8 @@ export type OfferProductsPanelHandle = {
   populateOffer: () => Promise<void>;
   getTemplateExportRows: () => Promise<OfferProductsTemplateExportRow[]>;
   getAddInsertionAnchor: () => { offerDetailId: number; parentPath: number[] } | null;
-  getSelectedOfferDetailIdsForPriceUpdate: () => number[];
-  getSelectedOfferDetailIds: () => number[];
+  getSelectedOfferDetailIdsForPriceUpdate: () => Promise<number[]>;
+  getSelectedOfferDetailIds: () => Promise<number[]>;
   getSelectedRequestedOfferDetailId: () => number | null;
   forceReapplyRequestedColumnsVisibility: () => void;
   getViewportScrollTop: () => number;
@@ -2675,7 +2683,7 @@ const ModelNumberCell = useCallback((params: ICellRendererParams<Record<string, 
     }
     if (description != null) {
       try {
-        node.setDataValue('Description', description);
+        node.setDataValue('Description', description, 'api');
       } catch {
         /* noop */
       }
@@ -2703,8 +2711,8 @@ const ModelNumberCell = useCallback((params: ICellRendererParams<Record<string, 
       node.setDataValue('PartNumber', partNumber ?? null);
       node.setDataValue('ModelNumber', modelNumber ?? null);
       node.setDataValue('BrandName', brandName ?? null);
-      node.setDataValue('ProductDescription', description ?? null);
-      node.setDataValue('Description', description ?? null);
+      node.setDataValue('ProductDescription', description ?? null, 'api');
+      node.setDataValue('Description', description ?? null, 'api');
     } catch {
       /* noop */
     }
@@ -4046,6 +4054,43 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
   }, [requestedMatchQueue.length, forceReapplyRequestedColumnsVisibility]);
 
+  const fetchAllFilteredRows = useCallback(async (): Promise<Array<Record<string, unknown>>> => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) {
+      throw new Error('Grid is not ready yet.');
+    }
+    const filterModel = api.getFilterModel?.() ?? {};
+    const sortModel = api.getColumnState?.()
+      ?.filter((col) => col.sort === 'asc' || col.sort === 'desc')
+      .map((col) => ({ colId: col.colId, sort: col.sort as 'asc' | 'desc' })) ?? [];
+    const quickFilterText = typeof lastServerRequestRef.current?.quickFilterText === 'string'
+      ? lastServerRequestRef.current.quickFilterText
+      : null;
+    const request: Record<string, unknown> = {
+      startRow: 0,
+      endRow: 1000,
+      allRows: true,
+      filterModel,
+      sortModel,
+    };
+    if (quickFilterText && quickFilterText.trim().length > 0) {
+      request.quickFilterText = quickFilterText.trim();
+    }
+
+    const response = await fetch(dataEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request }),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | { ok?: boolean; error?: string; rows?: Array<Record<string, unknown>> }
+      | null;
+    if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
+      throw new Error(payload?.error ?? `Failed to load all rows (status ${response.status})`);
+    }
+    return payload.rows;
+  }, [dataEndpoint]);
+
   const populateOfferBusyRef = useRef(false);
   const populateOffer = useCallback(async () => {
     if (populateOfferBusyRef.current) return;
@@ -4057,32 +4102,58 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         return;
       }
 
+      // Check if server-side select-all is active
+      let isSelectAllActive = false;
+      if (typeof api.getServerSideSelectionState === 'function') {
+        const state = api.getServerSideSelectionState();
+        isSelectAllActive = Boolean(state && 'selectAll' in state && Boolean((state as { selectAll?: boolean }).selectAll));
+      }
+
       let requestedNodes: Array<RowNode<Record<string, unknown>>> = [];
       let selectedRequestedNodes: Array<RowNode<Record<string, unknown>>> = [];
       let allRequestedNodes: Array<RowNode<Record<string, unknown>>> = [];
 
-      // Prefer explicit selection when present.
-      try {
-        const selected = typeof api.getSelectedNodes === 'function'
-          ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
-          : [];
-        selectedRequestedNodes = selected.filter((node) => isRequestedRow(node?.data ?? null));
-      } catch {
-        /* noop */
-      }
-
-      try {
-        if (typeof api.forEachNode === 'function') {
-          const allRequested: Array<RowNode<Record<string, unknown>>> = [];
-          api.forEachNode((node) => {
-            if (isRequestedRow(node?.data ?? null)) {
-              allRequested.push(node as RowNode<Record<string, unknown>>);
-            }
-          });
-          allRequestedNodes = allRequested;
+      if (isSelectAllActive) {
+        // When select-all is active, fetch ALL rows from server since
+        // getSelectedNodes/forEachNode only return loaded rows
+        try {
+          const allRows = await fetchAllFilteredRows();
+          const wrapAsNode = (data: Record<string, unknown>) => ({ data, setSelected: () => {} } as unknown as RowNode<Record<string, unknown>>);
+          const allWrapped = allRows.map(wrapAsNode);
+          selectedRequestedNodes = allWrapped.filter((node) => isRequestedRow(node.data));
+          allRequestedNodes = selectedRequestedNodes;
+        } catch (err) {
+          console.error('Failed to fetch all rows for populate', err);
+          showToastMessage(
+            err instanceof Error ? err.message : 'Failed to load all rows. Please try again.',
+            'error',
+          );
+          return;
         }
-      } catch {
-        /* noop */
+      } else {
+        // Prefer explicit selection when present.
+        try {
+          const selected = typeof api.getSelectedNodes === 'function'
+            ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
+            : [];
+          selectedRequestedNodes = selected.filter((node) => isRequestedRow(node?.data ?? null));
+        } catch {
+          /* noop */
+        }
+
+        try {
+          if (typeof api.forEachNode === 'function') {
+            const allRequested: Array<RowNode<Record<string, unknown>>> = [];
+            api.forEachNode((node) => {
+              if (isRequestedRow(node?.data ?? null)) {
+                allRequested.push(node as RowNode<Record<string, unknown>>);
+              }
+            });
+            allRequestedNodes = allRequested;
+          }
+        } catch {
+          /* noop */
+        }
       }
 
       requestedNodes = selectedRequestedNodes.length > 0 ? selectedRequestedNodes : allRequestedNodes;
@@ -4101,7 +4172,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           ? 'Populate all requested rows?'
           : 'Populate selected requested rows?';
         const targetLabel = shouldWarnNoSelection
-          ? 'all currently loaded requested rows'
+          ? 'all requested rows'
           : 'all selected requested rows';
         const confirmed = await showConfirmDialog({
           title,
@@ -4116,7 +4187,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     } finally {
       populateOfferBusyRef.current = false;
     }
-  }, [populateRequestedRowsToOffer]);
+  }, [populateRequestedRowsToOffer, fetchAllFilteredRows]);
 
   const fetchExportRows = useCallback(async (): Promise<OfferExportRow[]> => {
     const api = gridApiRef.current;
@@ -4301,10 +4372,18 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     return null;
   }, []);
 
-  const getSelectedOfferDetailIdsForPriceUpdate = useCallback((): number[] => {
+  const getSelectedOfferDetailIdsForPriceUpdate = useCallback(async (): Promise<number[]> => {
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return [];
     try {
+      // Check if server-side select-all is active
+      if (typeof api.getServerSideSelectionState === 'function') {
+        const state = api.getServerSideSelectionState();
+        if (state && 'selectAll' in state && Boolean((state as { selectAll?: boolean }).selectAll)) {
+          // Fetch all filtered IDs from server — the update-prices API filters to products
+          return await fetchAllFilteredOfferDetailIds();
+        }
+      }
       const selectedNodes = typeof api.getSelectedNodes === 'function'
         ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
         : [];
@@ -4321,12 +4400,19 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     } catch {
       return [];
     }
-  }, []);
+  }, [fetchAllFilteredOfferDetailIds]);
 
-  const getSelectedOfferDetailIds = useCallback((): number[] => {
+  const getSelectedOfferDetailIds = useCallback(async (): Promise<number[]> => {
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return [];
     try {
+      // Check if server-side select-all is active
+      if (typeof api.getServerSideSelectionState === 'function') {
+        const state = api.getServerSideSelectionState();
+        if (state && 'selectAll' in state && Boolean((state as { selectAll?: boolean }).selectAll)) {
+          return await fetchAllFilteredOfferDetailIds();
+        }
+      }
       const selectedNodes = typeof api.getSelectedNodes === 'function'
         ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
         : [];
@@ -4342,7 +4428,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     } catch {
       return [];
     }
-  }, []);
+  }, [fetchAllFilteredOfferDetailIds]);
 
   const getSelectedRowData = useCallback((): Array<Record<string, unknown>> => {
     const api = gridApiRef.current;
@@ -4997,11 +5083,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
               throw new Error(payload?.error ?? `Unable to mark category (status ${res.status})`);
             }
             showToastMessage('Marked as category', 'success');
-            try {
-              gridApiRef.current?.refreshServerSide?.({ purge: false });
-            } catch {
-              /* noop */
-            }
+            refreshOfferProductGrid(null, { purge: true });
           } catch (err) {
             if (rowNode) {
               try {
@@ -5044,6 +5126,95 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         items.splice(deleteIndexAfterHistory, 0, makeCategoryItem);
       } else {
         items.push(makeCategoryItem);
+      }
+    }
+
+    // --- "Set as Comment" for category rows (supports multi-selection) ---
+    const commentTargetNodes = relevantNodes.filter((n) => {
+      const d = n.data;
+      if (!isOfferProductCategory(d)) return false;
+      const id = normalizeOfferDetailId((d as { OfferDetailID?: unknown })?.OfferDetailID ?? null);
+      return id != null;
+    });
+    if (commentTargetNodes.length > 0) {
+      const buildSetAsCommentAction = (printable: boolean) => async () => {
+        // Save previous values for rollback
+        const prevStates = commentTargetNodes.map((n) => ({
+          node: n,
+          IsCategory: n.data ? (n.data as { IsCategory?: unknown }).IsCategory : null,
+          IsComment: n.data ? (n.data as { IsComment?: unknown }).IsComment : null,
+          IsPrintable: n.data ? (n.data as { IsPrintable?: unknown }).IsPrintable : null,
+        }));
+        // Optimistic UI update
+        for (const n of commentTargetNodes) {
+          try {
+            n.setDataValue('IsCategory', 0);
+            n.setDataValue('IsComment', true);
+            n.setDataValue('IsPrintable', printable);
+          } catch { /* noop */ }
+        }
+        const api = gridApiRef.current;
+        try {
+          api?.refreshCells?.({ rowNodes: commentTargetNodes as GridRowNode[], force: true });
+        } catch { /* noop */ }
+        try {
+          const updates = commentTargetNodes.map((n) => ({
+            OfferDetailID: normalizeOfferDetailId((n.data as { OfferDetailID?: unknown })?.OfferDetailID ?? null),
+            IsCategory: 0,
+            IsComment: true,
+            IsPrintable: printable,
+          }));
+          const res = await fetch(resolvedEndpoint, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates }),
+          });
+          const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+          if (!res.ok || !payload?.ok) {
+            throw new Error(payload?.error ?? `Unable to mark as comment (status ${res.status})`);
+          }
+          const label = printable ? 'printable comment' : 'non-printable comment';
+          showToastMessage(
+            commentTargetNodes.length === 1
+              ? `Marked as ${label}`
+              : `${commentTargetNodes.length} rows marked as ${label}`,
+            'success',
+          );
+          try { api?.deselectAll?.(); } catch { /* noop */ }
+          refreshOfferProductGrid(null, { purge: true });
+        } catch (err) {
+          // Rollback
+          for (const prev of prevStates) {
+            try { prev.node.setDataValue('IsCategory', prev.IsCategory ?? null); } catch { /* noop */ }
+            try { prev.node.setDataValue('IsComment', prev.IsComment ?? null); } catch { /* noop */ }
+            try { prev.node.setDataValue('IsPrintable', prev.IsPrintable ?? null); } catch { /* noop */ }
+          }
+          try {
+            api?.refreshCells?.({ rowNodes: commentTargetNodes as GridRowNode[], force: true });
+          } catch { /* noop */ }
+          console.error('Failed to mark as comment', err);
+          showToastMessage('Unable to mark row(s) as comment. Please try again.', 'error');
+        }
+      };
+      const commentCount = commentTargetNodes.length;
+      const makeCommentItem: MenuItemDef = {
+        name: commentCount > 1 ? `Set as Comment (${commentCount})` : 'Set as Comment',
+        icon: commentMenuIcon,
+        subMenu: [
+          {
+            name: 'Printable',
+            action: buildSetAsCommentAction(true),
+          },
+          {
+            name: 'Non Printable',
+            action: buildSetAsCommentAction(false),
+          },
+        ],
+      };
+      if (deleteIndexAfterHistory >= 0) {
+        items.splice(deleteIndexAfterHistory, 0, makeCommentItem);
+      } else {
+        items.push(makeCommentItem);
       }
     }
 
@@ -5876,9 +6047,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             useAgGridRowDrag
             serverSideHeaderSelectMode="all"
             suppressColumnVirtualisation={false}
-            cacheBlockSize={20}
-            rowBuffer={3}
-            maxBlocksInCache={2}
+            cacheBlockSize={100}
+            rowBuffer={5}
+            maxBlocksInCache={5}
           />
           {emptyGridPasteMenu ? (
             <div

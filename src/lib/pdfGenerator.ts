@@ -210,7 +210,7 @@ function innerContentWidth(orientation: PdfOrientation) {
  */
 const BASE_WIDTHS: Record<PdfOrientation, Record<PdfProductColumn, number | '*'>> = {
   portrait: {
-    no: 24,
+    no: 36,
     qty: 32,
     brand: 46, // was 54
     type: 56, // was 62
@@ -225,7 +225,7 @@ const BASE_WIDTHS: Record<PdfOrientation, Record<PdfProductColumn, number | '*'>
     delivery: 56,
   },
   landscape: {
-    no: 26,
+    no: 38,
     qty: 34,
     brand: 56, // was 64
     type: 68,  // was 76
@@ -819,7 +819,7 @@ function buildItemsTable(
         const baseCell: PdfCell = {
           text: value,
           style: dyn.style,
-          noWrap: numericCols.has(col),
+          noWrap: numericCols.has(col) || col === 'no',
         };
         if (dyn.fontSize) baseCell.fontSize = dyn.fontSize;
         if (dyn.lineHeight) baseCell.lineHeight = dyn.lineHeight;

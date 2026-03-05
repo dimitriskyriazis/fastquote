@@ -10,7 +10,7 @@ export type TreeOrderingUpdateInput = {
 
 export type TreeOrderingNode = {
   id: number;
-  path: number[];
+  path: string[];
   children: TreeOrderingNode[];
   parent: TreeOrderingNode | null;
 };
@@ -31,19 +31,30 @@ export const normalizeTreeOrderingValue = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
-export const parseTreeOrderingPath = (value: unknown): number[] => {
+export const parseTreeOrderingPath = (value: unknown): string[] => {
   if (value == null) return [];
   const trimmed = String(value).trim();
   if (!trimmed) return [];
   return trimmed
     .split('.')
-    .map((segment) => Number.parseInt(segment, 10))
-    .filter((segment) => Number.isFinite(segment));
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
 };
 
-export const formatTreeOrderingPath = (path: number[]): string => path.join('.');
+export const formatTreeOrderingPath = (path: string[]): string => path.join('.');
 
-export const comparePaths = (a: number[], b: number[]) => {
+const compareSegments = (a: string, b: string): number => {
+  const numA = Number(a);
+  const numB = Number(b);
+  const aIsNum = Number.isFinite(numA);
+  const bIsNum = Number.isFinite(numB);
+  if (aIsNum && bIsNum) return numA - numB;
+  if (aIsNum) return -1;
+  if (bIsNum) return 1;
+  return a.localeCompare(b);
+};
+
+export const comparePaths = (a: string[], b: string[]) => {
   const max = Math.max(a.length, b.length);
   for (let idx = 0; idx < max; idx += 1) {
     const hasA = idx < a.length;
@@ -51,18 +62,52 @@ export const comparePaths = (a: number[], b: number[]) => {
     if (!hasA && !hasB) return 0;
     if (!hasA) return -1;
     if (!hasB) return 1;
-    const diff = a[idx] - b[idx];
+    const diff = compareSegments(a[idx], b[idx]);
     if (diff !== 0) return diff;
   }
   return 0;
 };
 
-export const pathsEqual = (a: number[], b: number[]) => {
+export const pathsEqual = (a: string[], b: string[]) => {
   if (a.length !== b.length) return false;
   for (let idx = 0; idx < a.length; idx += 1) {
     if (a[idx] !== b[idx]) return false;
   }
   return true;
+};
+
+const VIRTUAL_NODE_ID = -1;
+
+const ensureAncestors = (
+  path: string[],
+  byPath: Map<string, TreeOrderingNode>,
+  roots: TreeOrderingNode[],
+) => {
+  for (let depth = 1; depth < path.length; depth += 1) {
+    const ancestorPath = path.slice(0, depth);
+    const key = formatTreeOrderingPath(ancestorPath);
+    if (byPath.has(key)) continue;
+    const virtual: TreeOrderingNode = {
+      id: VIRTUAL_NODE_ID,
+      path: ancestorPath,
+      children: [],
+      parent: null,
+    };
+    byPath.set(key, virtual);
+    const parentPath = ancestorPath.slice(0, -1);
+    if (parentPath.length === 0) {
+      roots.push(virtual);
+    } else {
+      const parentKey = formatTreeOrderingPath(parentPath);
+      const parent = byPath.get(parentKey);
+      if (parent) {
+        virtual.parent = parent;
+        parent.children.push(virtual);
+      } else {
+        roots.push(virtual);
+      }
+    }
+  }
 };
 
 export const buildTreeFromRows = (rows: TreeOrderingRow[]): TreeOrderingNode[] => {
@@ -84,6 +129,11 @@ export const buildTreeFromRows = (rows: TreeOrderingRow[]): TreeOrderingNode[] =
   });
 
   const roots: TreeOrderingNode[] = [];
+
+  nodes.forEach((node) => {
+    ensureAncestors(node.path, byPath, roots);
+  });
+
   nodes.forEach((node) => {
     const parentPath = node.path.slice(0, -1);
     if (parentPath.length === 0) {
@@ -109,14 +159,39 @@ export const buildTreeFromRows = (rows: TreeOrderingRow[]): TreeOrderingNode[] =
   return roots;
 };
 
+const buildSegmentList = (nodes: TreeOrderingNode[], depth: number): string[] => {
+  const seen = new Set<string>();
+  const sorted: string[] = [];
+  for (const node of nodes) {
+    const seg = node.path.length > depth ? node.path[depth] : null;
+    if (seg != null && !seen.has(seg)) {
+      seen.add(seg);
+      sorted.push(seg);
+    }
+  }
+  sorted.sort(compareSegments);
+  let nextNum = 1;
+  while (sorted.length < nodes.length) {
+    const candidate = String(nextNum);
+    if (!seen.has(candidate)) {
+      sorted.push(candidate);
+      seen.add(candidate);
+    }
+    nextNum += 1;
+  }
+  return sorted;
+};
+
 export const collectResequencedUpdates = (roots: TreeOrderingNode[]): TreeOrderingUpdateInput[] => {
   const updates: TreeOrderingUpdateInput[] = [];
-  const assign = (nodes: TreeOrderingNode[], parentPath: number[]) => {
+  const assign = (nodes: TreeOrderingNode[], parentPath: string[]) => {
+    const segments = buildSegmentList(nodes, parentPath.length);
     nodes.forEach((node, idx) => {
-      const nextPath = [...parentPath, idx + 1];
-      if (!pathsEqual(node.path, nextPath)) {
+      const nextPath = [...parentPath, segments[idx]];
+      if (node.id !== VIRTUAL_NODE_ID && !pathsEqual(node.path, nextPath)) {
         updates.push({ OfferDetailID: node.id, TreeOrdering: formatTreeOrderingPath(nextPath) });
       }
+      node.path = nextPath;
       if (node.children.length > 0) {
         assign(node.children, nextPath);
       }

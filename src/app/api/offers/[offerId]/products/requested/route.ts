@@ -27,6 +27,7 @@ type ImportBody = {
 };
 
 type NormalizedRow = {
+  originalIndex: number;
   itemNo: string | null;
   treeOrdering: string | null;
   brand: string | null;
@@ -43,6 +44,7 @@ type RowForInsert = NormalizedRow & {
   resolvedTreeOrdering: string;
   parentTreeOrdering: string | null;
   isCategory: boolean;
+  isComment: boolean;
   productDescription: string | null;
 };
 
@@ -73,9 +75,9 @@ const REQUESTED_COLUMN_METADATA: Array<{ key: ColumnLengthKey; column: string }>
   { key: 'ProductDescription', column: 'ProductDescription' },
 ];
 
-const SQL_PARAMETER_LIMIT = 2100;
+const SQL_PARAMETER_LIMIT = 2000;
 const UPDATE_ROW_PARAM_COUNT = 11;
-const INSERT_ROW_PARAM_COUNT = 13;
+const INSERT_ROW_PARAM_COUNT = 14;
 const computeChunkSize = (baseParams: number, perRowParams: number) => {
   const available = SQL_PARAMETER_LIMIT - baseParams;
   if (available <= 0) return 1;
@@ -124,7 +126,7 @@ const resolveParentOrdering = (treeOrdering: string | null): string | null => {
 const normalizeRows = (rows: RequestedRowInput[] | undefined): NormalizedRow[] => {
   if (!Array.isArray(rows)) return [];
   const normalized: NormalizedRow[] = [];
-  rows.forEach((row) => {
+  rows.forEach((row, inputIndex) => {
     if (!row || typeof row !== 'object') return;
     const itemNoRaw = row.itemNo ?? (row as Record<string, unknown>).ItemNo ?? null;
     const itemNo = normalizeString(itemNoRaw ?? null);
@@ -159,6 +161,7 @@ const normalizeRows = (rows: RequestedRowInput[] | undefined): NormalizedRow[] =
       return;
     }
     normalized.push({
+      originalIndex: inputIndex,
       itemNo,
       treeOrdering,
       brand,
@@ -198,6 +201,15 @@ const isCategoryCandidate = (row: NormalizedRow) => {
   return hasDescription && !hasQuantity && !hasLookup;
 };
 
+const COMMENT_KEYWORDS = ['grand total', 'subtotal', 'sub total', 'sub-total', 'total', 'options', 'summary'];
+
+const isCommentCandidate = (row: NormalizedRow) => {
+  const desc = getPrimaryDescription(row);
+  if (!desc) return false;
+  const lower = desc.toLowerCase().trim();
+  return COMMENT_KEYWORDS.includes(lower);
+};
+
 const assignSequentialOrdering = (
   rows: NormalizedRow[],
   lastRootValue: number,
@@ -209,7 +221,8 @@ const assignSequentialOrdering = (
 
   rows.forEach((row) => {
     if (!row) return;
-    const isCategory = isCategoryCandidate(row);
+    const isComment = isCommentCandidate(row);
+    const isCategory = isCategoryCandidate(row) && !isComment;
     let resolvedTreeOrdering = row.treeOrdering;
     let parentTreeOrdering: string | null = null;
 
@@ -237,17 +250,24 @@ const assignSequentialOrdering = (
           nextRoot += 1;
           resolvedTreeOrdering = String(nextRoot);
         }
+      } else {
+        const rootSegment = parseRootSegment(resolvedTreeOrdering);
+        if (rootSegment != null && rootSegment > nextRoot) {
+          nextRoot = rootSegment;
+        }
       }
       if (!parentTreeOrdering && resolvedTreeOrdering) {
         parentTreeOrdering = resolveParentOrdering(resolvedTreeOrdering);
       }
     }
 
+    const finalTreeOrdering = resolvedTreeOrdering ?? String(nextRoot);
     resolved.push({
       ...row,
-      resolvedTreeOrdering: resolvedTreeOrdering ?? String(nextRoot),
+      resolvedTreeOrdering: finalTreeOrdering,
       parentTreeOrdering: parentTreeOrdering,
       isCategory,
+      isComment,
       productDescription: getPrimaryDescription(row),
     });
   });
@@ -404,9 +424,9 @@ export async function POST(
         rowsWithTree.forEach((row) => {
           const treeOrdering = row.treeOrdering ?? null;
           if (treeOrdering && existingTreeOrderings.has(treeOrdering)) {
-            rowsNeedingInsert.push({ ...row, treeOrdering: null });
-          } else {
             available.push(row);
+          } else {
+            rowsNeedingInsert.push(row);
           }
         });
         rowsWithTree = available;
@@ -514,18 +534,22 @@ export async function POST(
         updatedCount += chunk.length - unmatched.length;
         if (unmatched.length) {
           rowsNeedingInsert.push(
-            ...unmatched.map((row) => applyColumnLengthsToRow({
-              itemNo: row.RequestedItemNo ?? null,
-              treeOrdering: row.TreeOrdering ?? null,
-              brand: row.RequestedBrand ?? null,
-              modelNumber: row.RequestedModelNo ?? null,
-              partNumber: row.RequestedPartNo ?? null,
-              webLink: row.RequestedWebLink ?? null,
-              description: row.RequestedDescription ?? null,
-              description2: row.RequestedDescription2 ?? null,
-              description3: row.RequestedDescription3 ?? null,
-              quantity: row.RequestedQuantity ?? null,
-            }, columnLengths)),
+            ...unmatched.map((row) => {
+              const originalRow = normalizedRows.find((nr) => nr.treeOrdering === row.TreeOrdering);
+              return applyColumnLengthsToRow({
+                originalIndex: originalRow?.originalIndex ?? Number.MAX_SAFE_INTEGER,
+                itemNo: row.RequestedItemNo ?? null,
+                treeOrdering: row.TreeOrdering ?? null,
+                brand: row.RequestedBrand ?? null,
+                modelNumber: row.RequestedModelNo ?? null,
+                partNumber: row.RequestedPartNo ?? null,
+                webLink: row.RequestedWebLink ?? null,
+                description: row.RequestedDescription ?? null,
+                description2: row.RequestedDescription2 ?? null,
+                description3: row.RequestedDescription3 ?? null,
+                quantity: row.RequestedQuantity ?? null,
+              }, columnLengths);
+            }),
           );
         }
       }
@@ -556,6 +580,7 @@ export async function POST(
     let nextRootValue = Number(metaRow.LastRootValue ?? 0);
     let nextOrderingValue = Number(metaRow.LastOrdering ?? 0) + 1;
 
+    rowsNeedingInsert.sort((a, b) => a.originalIndex - b.originalIndex);
     const { rows: rowsToInsert, nextRoot } = assignSequentialOrdering(rowsNeedingInsert, nextRootValue);
     nextRootValue = nextRoot;
 
@@ -580,11 +605,12 @@ export async function POST(
         request.input(`desc3_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description3);
         request.input(`rqty_${chunkIdx}`, getDecimalType(), row.quantity);
         request.input(`isCategory_${chunkIdx}`, sql.Bit, row.isCategory ? 1 : 0);
+        request.input(`isComment_${chunkIdx}`, sql.Bit, row.isComment ? 1 : 0);
         request.input(`productDesc_${chunkIdx}`, sql.NVarChar(sql.MAX), row.productDescription);
       });
         const values = chunk
           .map((_, chunkIdx) =>
-            `(@tree_${chunkIdx}, @parent_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @webLink_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @rqty_${chunkIdx}, @isCategory_${chunkIdx}, @productDesc_${chunkIdx})`,
+            `(@tree_${chunkIdx}, @parent_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @webLink_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @rqty_${chunkIdx}, @isCategory_${chunkIdx}, @isComment_${chunkIdx}, @productDesc_${chunkIdx})`,
           )
           .join(', ');
         const query = `
@@ -602,6 +628,7 @@ export async function POST(
           RequestedDescription3 NVARCHAR(MAX) NULL,
           RequestedQuantity DECIMAL(18, 4) NULL,
           IsCategory BIT NOT NULL,
+          IsComment BIT NOT NULL,
           ProductDescription NVARCHAR(MAX) NULL
         );
 
@@ -618,6 +645,7 @@ export async function POST(
           RequestedDescription3,
           RequestedQuantity,
           IsCategory,
+          IsComment,
           ProductDescription
         )
         VALUES ${values};
@@ -652,9 +680,9 @@ export async function POST(
           payload.TreeOrdering,
           ROW_NUMBER() OVER (ORDER BY payload.RowNumber) + @__orderingBase - 1,
           1,
-          0,
+          payload.IsComment,
           payload.IsCategory,
-          CASE WHEN payload.IsCategory = 1 THEN payload.ProductDescription ELSE NULL END,
+          CASE WHEN payload.IsCategory = 1 OR payload.IsComment = 1 THEN payload.ProductDescription ELSE NULL END,
           0,
           payload.RequestedItemNo,
           payload.RequestedBrand,

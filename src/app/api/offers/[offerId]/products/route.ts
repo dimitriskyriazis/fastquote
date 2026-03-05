@@ -98,6 +98,13 @@ const TREE_ORDERING_HIERARCHY_EXPRESSION = `
     ELSE TRY_CONVERT(hierarchyid, CONCAT('/', REPLACE(${TREE_ORDERING_RAW_EXPRESSION}, '.', '/'), '/'))
   END
 `;
+const TREE_ORDERING_SORT_PRIORITY_EXPRESSION = `
+  CASE
+    WHEN ${TREE_ORDERING_RAW_EXPRESSION} IS NULL THEN 1
+    WHEN TRY_CONVERT(hierarchyid, CONCAT('/', REPLACE(${TREE_ORDERING_RAW_EXPRESSION}, '.', '/'), '/')) IS NOT NULL THEN 0
+    ELSE 2
+  END
+`;
 
 const TREE_ORDERING_ROOT_EXPRESSION = `
   CASE
@@ -659,20 +666,18 @@ type ReorderRequest = {
   afterId?: number | string | null;
 };
 
-const normalizeParentPath = (value: unknown): number[] => {
+const normalizeParentPath = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
   return value
     .map((segment) => {
-      if (typeof segment === 'number' && Number.isFinite(segment)) return segment;
+      if (typeof segment === 'number' && Number.isFinite(segment)) return String(segment);
       if (typeof segment === 'string') {
         const trimmed = segment.trim();
-        if (!trimmed) return null;
-        const parsed = Number.parseInt(trimmed, 10);
-        return Number.isFinite(parsed) ? parsed : null;
+        return trimmed || null;
       }
       return null;
     })
-    .filter((segment): segment is number => segment != null);
+    .filter((segment): segment is string => segment != null);
 };
 
 const isDescendantOf = (candidateParent: TreeOrderingNode | null, potentialAncestor: TreeOrderingNode) => {
@@ -745,7 +750,7 @@ async function handleReorderRow(
     FROM dbo.OfferDetails od
     WHERE od.OfferID = @__offerId
       AND ${TREE_ORDERING_RAW_EXPRESSION} IS NOT NULL
-    ORDER BY ${TREE_ORDERING_HIERARCHY_EXPRESSION}, od.TreeOrdering;
+    ORDER BY ${TREE_ORDERING_SORT_PRIORITY_EXPRESSION}, ${TREE_ORDERING_HIERARCHY_EXPRESSION}, od.TreeOrdering;
   `);
   const rows = readResult.recordset ?? [];
   const roots = buildTreeFromRows(rows);
@@ -850,7 +855,7 @@ async function resequenceTreeOrdering(
     FROM dbo.OfferDetails od
     WHERE od.OfferID = @__offerId
       AND ${TREE_ORDERING_RAW_EXPRESSION} IS NOT NULL
-    ORDER BY ${TREE_ORDERING_HIERARCHY_EXPRESSION}, od.TreeOrdering;
+    ORDER BY ${TREE_ORDERING_SORT_PRIORITY_EXPRESSION}, ${TREE_ORDERING_HIERARCHY_EXPRESSION}, od.TreeOrdering;
   `);
   const rows = readResult.recordset ?? [];
   const roots = buildTreeFromRows(rows);
@@ -1034,12 +1039,16 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
     && Array.isArray((filter as { conditions?: unknown }).conditions)
   );
 
+  const descriptionSqlExpr = (expr: string) =>
+    `UPPER(COALESCE(CAST(${expr} AS NVARCHAR(MAX)), ''))`;
+
   Object.entries(typedModel).forEach(([col, fm], idx) => {
     if (!fm) return;
     const paramBase = `${col}_${idx}`;
     const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
     const isPartNumber = col === 'PartNumber';
     const isModelNumber = col === 'ModelNumber';
+    const isDescription = col === 'Description';
     const isPartOrModel = isPartNumber || isModelNumber;
     const otherColumnExpression = isPartNumber
       ? COLUMN_EXPRESSIONS.ModelNumber
@@ -1064,13 +1073,22 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
 
           if (isPartOrModel) {
             const searchVal = normalizePartModelNumber(value);
+            const rawVal = value.trim().toUpperCase();
             const expr = partModelNumberSql(columnExpression);
+
+            // Cross-search: ModelNumber also searches Description (raw value)
+            const descCrossExpr = isModelNumber ? COLUMN_EXPRESSIONS.Description : null;
+            const descCrossParam = `${conditionParamBase}_desc`;
+
             if (type === 'equals') {
               if (otherColumnExpression) {
-                return {
-                  clause: `(${expr} = @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} = @${conditionParamBase})`,
-                  params: [{ key: conditionParamBase, value: searchVal }],
-                };
+                const resultParams: QueryParam[] = [{ key: conditionParamBase, value: searchVal }];
+                let clause = `(${expr} = @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} = @${conditionParamBase}`;
+                if (descCrossExpr) {
+                  clause += ` OR ${descriptionSqlExpr(descCrossExpr)} = @${descCrossParam}`;
+                  resultParams.push({ key: descCrossParam, value: rawVal });
+                }
+                return { clause: `${clause})`, params: resultParams };
               }
               return {
                 clause: `${expr} = @${conditionParamBase}`,
@@ -1085,10 +1103,13 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
             }
             if (type === 'startsWith') {
               if (otherColumnExpression) {
-                return {
-                  clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase})`,
-                  params: [{ key: conditionParamBase, value: `${searchVal}%` }],
-                };
+                const resultParams: QueryParam[] = [{ key: conditionParamBase, value: `${searchVal}%` }];
+                let clause = `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase}`;
+                if (descCrossExpr) {
+                  clause += ` OR ${descriptionSqlExpr(descCrossExpr)} LIKE @${descCrossParam}`;
+                  resultParams.push({ key: descCrossParam, value: `${rawVal}%` });
+                }
+                return { clause: `${clause})`, params: resultParams };
               }
               return {
                 clause: `${expr} LIKE @${conditionParamBase}`,
@@ -1097,26 +1118,73 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
             }
             if (type === 'endsWith') {
               if (otherColumnExpression) {
-                return {
-                  clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase})`,
-                  params: [{ key: conditionParamBase, value: `%${searchVal}` }],
-                };
+                const resultParams: QueryParam[] = [{ key: conditionParamBase, value: `%${searchVal}` }];
+                let clause = `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase}`;
+                if (descCrossExpr) {
+                  clause += ` OR ${descriptionSqlExpr(descCrossExpr)} LIKE @${descCrossParam}`;
+                  resultParams.push({ key: descCrossParam, value: `%${rawVal}` });
+                }
+                return { clause: `${clause})`, params: resultParams };
               }
               return {
                 clause: `${expr} LIKE @${conditionParamBase}`,
                 params: [{ key: conditionParamBase, value: `%${searchVal}` }],
               };
             }
+            // Default: contains
             if (otherColumnExpression) {
-              return {
-                clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase})`,
-                params: [{ key: conditionParamBase, value: `%${searchVal}%` }],
-              };
+              const resultParams: QueryParam[] = [{ key: conditionParamBase, value: `%${searchVal}%` }];
+              let clause = `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase}`;
+              if (descCrossExpr) {
+                clause += ` OR ${descriptionSqlExpr(descCrossExpr)} LIKE @${descCrossParam}`;
+                resultParams.push({ key: descCrossParam, value: `%${rawVal}%` });
+              }
+              return { clause: `${clause})`, params: resultParams };
             }
             return {
               clause: `${expr} LIKE @${conditionParamBase}`,
               params: [{ key: conditionParamBase, value: `%${searchVal}%` }],
             };
+          }
+
+          // Cross-search: Description also searches ModelNumber
+          if (isDescription) {
+            const rawVal = value.trim().toUpperCase();
+            const modelExpr = COLUMN_EXPRESSIONS.ModelNumber;
+            const modelParam = `${conditionParamBase}_model`;
+            const descExpr = descriptionSqlExpr(columnExpression);
+            const mode = type ?? 'contains';
+
+            if (mode === 'contains') {
+              return {
+                clause: `(${descExpr} LIKE @${conditionParamBase} OR ${partModelNumberSql(modelExpr)} LIKE @${modelParam})`,
+                params: [{ key: conditionParamBase, value: `%${rawVal}%` }, { key: modelParam, value: `%${rawVal}%` }],
+              };
+            }
+            if (mode === 'equals') {
+              return {
+                clause: `(${descExpr} = @${conditionParamBase} OR ${partModelNumberSql(modelExpr)} = @${modelParam})`,
+                params: [{ key: conditionParamBase, value: rawVal }, { key: modelParam, value: rawVal }],
+              };
+            }
+            if (mode === 'startsWith') {
+              return {
+                clause: `(${descExpr} LIKE @${conditionParamBase} OR ${partModelNumberSql(modelExpr)} LIKE @${modelParam})`,
+                params: [{ key: conditionParamBase, value: `${rawVal}%` }, { key: modelParam, value: `${rawVal}%` }],
+              };
+            }
+            if (mode === 'endsWith') {
+              return {
+                clause: `(${descExpr} LIKE @${conditionParamBase} OR ${partModelNumberSql(modelExpr)} LIKE @${modelParam})`,
+                params: [{ key: conditionParamBase, value: `%${rawVal}` }, { key: modelParam, value: `%${rawVal}` }],
+              };
+            }
+            if (mode === 'notEqual') {
+              return {
+                clause: `${descExpr} <> @${conditionParamBase}`,
+                params: [{ key: conditionParamBase, value: rawVal }],
+              };
+            }
           }
 
           const mode = (type ?? 'contains') as 'contains' | 'equals' | 'startsWith' | 'endsWith' | 'notEqual';
@@ -1352,7 +1420,7 @@ export async function POST(
     const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, PRODUCTS_QUICK_FILTER_COLUMNS);
     const combinedWhereSql = mergeWhereClauses(whereSql, quickFilterClause.clause);
     const combinedParams = [...filterParams, ...quickFilterClause.params];
-    const orderSql = buildOrder(gridRequest.sortModel) || 'ORDER BY TreeOrderingHierarchy, od.TreeOrdering, od.ID';
+    const orderSql = buildOrder(gridRequest.sortModel) || `ORDER BY ${TREE_ORDERING_SORT_PRIORITY_EXPRESSION}, TreeOrderingHierarchy, od.TreeOrdering, od.ID`;
     const pagingSql = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
     const selectedColumnSql = selectedFields
@@ -1391,10 +1459,13 @@ export async function POST(
           MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription3,
           MAX(CASE WHEN od.RequestedQuantity IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedQuantity
         FROM dbo.OfferDetails od
-          LEFT OUTER JOIN dbo.OfferDetails cat
-            ON cat.OfferID = od.OfferID
-            AND ISNULL(cat.IsCategory, 0) = 1
-            AND NULLIF(LTRIM(RTRIM(cat.TreeOrdering)), '') = ${TREE_ORDERING_ROOT_EXPRESSION}
+          OUTER APPLY (
+            SELECT TOP 1 cat_inner.ProductDescription
+            FROM dbo.OfferDetails cat_inner
+            WHERE cat_inner.OfferID = od.OfferID
+              AND ISNULL(cat_inner.IsCategory, 0) = 1
+              AND NULLIF(LTRIM(RTRIM(cat_inner.TreeOrdering)), '') = ${TREE_ORDERING_ROOT_EXPRESSION}
+          ) cat
           LEFT OUTER JOIN dbo.Products p ON od.ProductID = p.ID
           LEFT OUTER JOIN dbo.Brands b ON p.BrandID = b.ID
           LEFT OUTER JOIN dbo.[Offer] o ON od.OfferID = o.ID
@@ -2199,13 +2270,21 @@ export async function PATCH(
 
       if (pendingRows.length === 0) continue;
 
+      const decimalType = getDecimalType();
+      const UPDATE_PARAMS_PER_ROW = 50;
+      const UPDATE_BASE_PARAMS = 2;
+      const updateChunkSize = Math.max(1, Math.floor((2100 - UPDATE_BASE_PARAMS) / UPDATE_PARAMS_PER_ROW));
+
+      for (let updateIdx = 0; updateIdx < pendingRows.length; updateIdx += updateChunkSize) {
+      const updateChunk = pendingRows.slice(updateIdx, updateIdx + updateChunkSize);
+      if (updateChunk.length === 0) continue;
+
       const request = pool.request();
       request.input('__offerId', sql.Int, offerId);
       request.input('__modifiedBy', sql.Int, audit.userId);
-      const decimalType = getDecimalType();
       const valueClauses: string[] = [];
 
-      pendingRows.forEach((row, rowIdx) => {
+      updateChunk.forEach((row, rowIdx) => {
         const idParam = `odid_${rowIdx}`;
         const productDescriptionParam = `productDescription_${rowIdx}`;
         const hasProductDescriptionParam = `hasProductDescription_${rowIdx}`;
@@ -2475,6 +2554,7 @@ export async function PATCH(
 
       const result = await request.query(query);
       affected += result.rowsAffected?.[0] ?? 0;
+      } // end updateChunk loop
     }
 
     // Emit realtime events for updated rows

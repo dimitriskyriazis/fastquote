@@ -53,7 +53,7 @@ type ClipboardRow = {
 
 type PasteBody = { rows?: unknown; keepPricing?: unknown; anchorOfferDetailId?: unknown };
 type ExistingRow = { OfferDetailID: number; TreeOrdering: string | null; Ordering: number | null };
-type PreparedRow = ClipboardRow & { path: number[] };
+type PreparedRow = ClipboardRow & { path: string[] };
 type InsertRow = PreparedRow & { seq: number; ordering: number; newTreeOrdering: string };
 type TreeUpdate = { offerDetailId: number; newTreeOrdering: string };
 
@@ -95,7 +95,7 @@ const coerceBool = (value: unknown): boolean => {
   return false;
 };
 
-const startsWithPath = (path: number[], prefix: number[]): boolean => {
+const startsWithPath = (path: string[], prefix: string[]): boolean => {
   if (prefix.length > path.length) return false;
   for (let i = 0; i < prefix.length; i += 1) {
     if (path[i] !== prefix[i]) return false;
@@ -160,9 +160,9 @@ const normalizeClipboardRows = (raw: unknown): PreparedRow[] => {
   return Array.from(deduped.values()).sort((a, b) => comparePaths(a.path, b.path));
 };
 
-const computeRoots = (rows: PreparedRow[]): number[][] => {
+const computeRoots = (rows: PreparedRow[]): string[][] => {
   const selected = new Set(rows.map((row) => row.treeOrdering));
-  const roots: number[][] = [];
+  const roots: string[][] = [];
   for (const row of rows) {
     const parent = row.path.slice(0, -1);
     const parentKey = parent.length ? formatTreeOrderingPath(parent) : '';
@@ -171,11 +171,11 @@ const computeRoots = (rows: PreparedRow[]): number[][] => {
   return roots.sort(comparePaths);
 };
 
-const buildRemap = (rows: PreparedRow[], roots: number[][], targetParent: number[], insertSibling: number): Map<string, string> => {
+const buildRemap = (rows: PreparedRow[], roots: string[][], targetParent: string[], insertSibling: number): Map<string, string> => {
   const remap = new Map<string, string>();
   for (const row of rows) {
     let rootIndex = -1;
-    let root: number[] | null = null;
+    let root: string[] | null = null;
     for (let i = 0; i < roots.length; i += 1) {
       if (startsWithPath(row.path, roots[i])) {
         root = roots[i];
@@ -185,11 +185,11 @@ const buildRemap = (rows: PreparedRow[], roots: number[][], targetParent: number
     }
     if (!root || rootIndex < 0) continue;
     const suffix = row.path.slice(root.length);
-    remap.set(row.treeOrdering, formatTreeOrderingPath([...targetParent, insertSibling + rootIndex, ...suffix]));
+    remap.set(row.treeOrdering, formatTreeOrderingPath([...targetParent, String(insertSibling + rootIndex), ...suffix]));
   }
   return remap;
 };
-const buildShiftUpdates = (existingRows: ExistingRow[], parentPath: number[], insertSibling: number, rootCount: number): TreeUpdate[] => {
+const buildShiftUpdates = (existingRows: ExistingRow[], parentPath: string[], insertSibling: number, rootCount: number): TreeUpdate[] => {
   const depth = parentPath.length;
   const updates: TreeUpdate[] = [];
   for (const row of existingRows) {
@@ -198,9 +198,9 @@ const buildShiftUpdates = (existingRows: ExistingRow[], parentPath: number[], in
     const path = parseTreeOrderingPath(tree);
     if (path.length <= depth) continue;
     if (!startsWithPath(path, parentPath)) continue;
-    if (path[depth] < insertSibling) continue;
+    if (Number(path[depth]) < insertSibling) continue;
     const shifted = [...path];
-    shifted[depth] += rootCount;
+    shifted[depth] = String(Number(shifted[depth]) + rootCount);
     updates.push({ offerDetailId: row.OfferDetailID, newTreeOrdering: formatTreeOrderingPath(shifted) });
   }
   return updates;
@@ -238,7 +238,7 @@ const prepareInsertRows = (rows: PreparedRow[], remap: Map<string, string>, base
       if (!next) return null;
       return { row, next, path: parseTreeOrderingPath(next) };
     })
-    .filter((entry): entry is { row: PreparedRow; next: string; path: number[] } => entry != null)
+    .filter((entry): entry is { row: PreparedRow; next: string; path: string[] } => entry != null)
     .sort((a, b) => comparePaths(a.path, b.path));
 
   return ordered.map((entry, idx) => ({
@@ -695,7 +695,7 @@ export async function POST(
     `);
     const existingRows = existingResult.recordset ?? [];
 
-    let parentPath: number[] = [];
+    let parentPath: string[] = [];
     let insertSibling = 1;
     if (anchorOfferDetailId != null) {
       const anchor = existingRows.find((row) => row.OfferDetailID === anchorOfferDetailId) ?? null;
@@ -714,7 +714,7 @@ export async function POST(
       }
 
       parentPath = anchorPath.slice(0, -1);
-      insertSibling = anchorPath[anchorPath.length - 1] + 1;
+      insertSibling = Number(anchorPath[anchorPath.length - 1]) + 1;
     } else {
       if (existingRows.length > 0) {
         await transaction.rollback();

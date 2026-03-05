@@ -320,7 +320,7 @@ export default function ClientProductsPage({
 
   const handleAddAction = useCallback(async (action: AddActionType) => {
     if (action === 'product') {
-      const ids = offerProductsPanelRef.current?.getSelectedOfferDetailIds?.() ?? [];
+      const ids = await offerProductsPanelRef.current?.getSelectedOfferDetailIds?.() ?? [];
       const requestedId = offerProductsPanelRef.current?.getSelectedRequestedOfferDetailId?.() ?? null;
       setSavedSelectionIds(ids);
       setInitialRequestedRowId(requestedId);
@@ -519,7 +519,7 @@ export default function ClientProductsPage({
 
   const handleUpdatePrices = useCallback(async () => {
     if (isUpdatingPrices) return;
-    const selectedOfferDetailIds = offerProductsPanelRef.current?.getSelectedOfferDetailIdsForPriceUpdate?.() ?? [];
+    const selectedOfferDetailIds = await offerProductsPanelRef.current?.getSelectedOfferDetailIdsForPriceUpdate?.() ?? [];
     setIsUpdatingPrices(true);
     try {
       const response = await fetch(updatePricesEndpoint, {
