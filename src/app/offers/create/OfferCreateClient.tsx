@@ -4,6 +4,9 @@ import { useState, useMemo, useEffect, useCallback, useRef, type FormEvent } fro
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { DropdownOption } from '../../../lib/dropdownOptions';
 import { showToastMessage } from '../../../lib/toast';
+import { useAuditUser } from '../../components/AuditUserProvider';
+import { useFormDraft } from '../../hooks/useFormDraft';
+import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import panelStyles from '../[offerId]/OfferBasicDataPanel.module.css';
 import styles from './OfferCreateClient.module.css';
 import UKDatePicker from '../../components/DatePicker';
@@ -189,6 +192,7 @@ export default function OfferCreateClient({
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { userId } = useAuditUser();
   const [contactOptions, setContactOptions] = useState<DropdownOption[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [contactLoadError, setContactLoadError] = useState<string | null>(null);
@@ -281,6 +285,31 @@ export default function OfferCreateClient({
 
   const [values, setValues] = useState<FormValues>(initialValues);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormValues, string>>>({});
+  const { hasDraft, restoredValues, saveDraft: saveDraftValues, clearDraft } = useFormDraft<FormValues>('offer-create', initialValues, userId);
+
+  // Restore draft if available
+  useEffect(() => {
+    if (hasDraft && restoredValues) {
+      setValues(restoredValues);
+      showToastMessage('Draft restored', 'info', 5500, {
+        label: 'Discard',
+        onClick: () => {
+          clearDraft();
+          setValues(initialValues);
+        },
+      });
+    }
+  }, [hasDraft, restoredValues]); // eslint-disable-line react-hooks/exhaustive-deps -- run once on restore
+
+  // Auto-save draft on value changes
+  useEffect(() => {
+    saveDraftValues(values);
+  }, [values, saveDraftValues]);
+
+  // Warn on unsaved changes
+  const isDirty = useMemo(() => JSON.stringify(values) !== JSON.stringify(initialValues), [values, initialValues]);
+  useUnsavedChanges(isDirty);
+
   useEffect(() => {
     setLocalCustomers(customers);
   }, [customers]);
@@ -626,6 +655,7 @@ export default function OfferCreateClient({
       if (!res.ok || !data?.ok || !data.offerId) {
         throw new Error(data?.error ?? 'Unable to create offer');
       }
+      clearDraft();
       showToastMessage('Offer created', 'success');
       router.push(`/offers/${encodeURIComponent(String(data.offerId))}/products`);
     } catch (err) {
@@ -634,7 +664,7 @@ export default function OfferCreateClient({
     } finally {
       setSubmitting(false);
     }
-  }, [router, values]);
+  }, [router, values, clearDraft]);
 
   const fieldDefinitions: FieldConfig[] = useMemo(
     () => [

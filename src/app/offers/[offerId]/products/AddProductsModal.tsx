@@ -856,7 +856,7 @@ export default function AddProductsModal({
   useEffect(() => () => {
     const api = categoryApiRef.current;
     const handler = categoryRowClickHandlerRef.current;
-    if (api && handler) {
+    if (api && !api.isDestroyed?.() && handler) {
       api.removeEventListener('rowClicked', handler as unknown as (event: unknown) => void);
     }
   }, []);

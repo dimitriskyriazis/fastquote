@@ -2,6 +2,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import telmacoLogo from './telmaco.jpg';
 import styles from './page.module.css';
+import DashboardStats from './DashboardStats';
 import RecentOffersSection from './RecentOffersSection';
 import {
   OffersIcon,
@@ -52,6 +53,8 @@ export default function Page() {
       </header>
 
       <RecentOffersSection />
+
+      <DashboardStats />
     </main>
   );
 }

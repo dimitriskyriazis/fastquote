@@ -9,6 +9,7 @@ import DisableAutofill from "./components/DisableAutofill";
 import PreventBackspaceNavigation from "./components/PreventBackspaceNavigation";
 import CaretVisibilityManager from "./components/CaretVisibilityManager";
 import SpellcheckManager from "./components/SpellcheckManager";
+import CommandPalette from "./components/CommandPalette";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -40,6 +41,7 @@ export default async function RootLayout({
           <DisableAutofill />
           <SpellcheckManager />
           <PreventBackspaceNavigation />
+          <CommandPalette />
           <div className="app-shell">
             <SideNav initialCollapsed={initialCollapsed} />
             <div className="app-content">{children}</div>

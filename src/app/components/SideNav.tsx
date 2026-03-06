@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import UserIdControl from "./UserIdControl";
 import { useAuditUser } from "./AuditUserProvider";
 import {
@@ -53,6 +53,10 @@ export default function SideNav({ initialCollapsed = false }: SideNavProps) {
     document.cookie = `${SIDENAV_COLLAPSED_COOKIE_NAME}=${collapsed ? "true" : "false"}; path=/; SameSite=Lax`;
   }, [collapsed]);
 
+  const openSearch = useCallback(() => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+  }, []);
+
   const visibleNavItems = useMemo(
     () =>
       navItems.filter((item) => {
@@ -88,6 +92,21 @@ export default function SideNav({ initialCollapsed = false }: SideNavProps) {
         </button>
         <span className="side-nav__brand">FastQuote</span>
       </div>
+      <button
+        type="button"
+        className="side-nav__link side-nav__search-trigger"
+        onClick={openSearch}
+        title="Search (Ctrl+K)"
+        aria-label="Search"
+      >
+        <span className="side-nav__icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+        </span>
+        <span className="side-nav__label">Search<span style={{ marginLeft: 8, fontSize: '0.72rem', opacity: 0.55 }}>Ctrl+K</span></span>
+      </button>
       <div className="side-nav__divider" aria-hidden="true" />
       <nav className="side-nav__items" aria-label="Primary">
         {visibleNavItems.map((item) => {

@@ -44,8 +44,13 @@ const useGlobalAutofillSkip = () => {
     const container = document.body ?? document.documentElement;
     if (!container) return;
     markTree(container);
-    const observer = new MutationObserver((records) => {
-      records.forEach((record) => {
+    let pendingRecords: MutationRecord[] = [];
+    let frameId = 0;
+    const flushRecords = () => {
+      frameId = 0;
+      const batch = pendingRecords.slice();
+      pendingRecords = [];
+      batch.forEach((record) => {
         if (record.type === 'childList') {
           record.addedNodes.forEach((node) => {
             if (node instanceof Element) {
@@ -59,6 +64,12 @@ const useGlobalAutofillSkip = () => {
           }
         }
       });
+    };
+    const observer = new MutationObserver((records) => {
+      pendingRecords = pendingRecords.concat(records);
+      if (!frameId) {
+        frameId = requestAnimationFrame(flushRecords);
+      }
     });
     observer.observe(container, {
       childList: true,
@@ -66,7 +77,10 @@ const useGlobalAutofillSkip = () => {
       attributes: true,
       attributeFilter: ['class', 'readonly', 'name', 'type'],
     });
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (frameId) cancelAnimationFrame(frameId);
+    };
   }, []);
 };
 

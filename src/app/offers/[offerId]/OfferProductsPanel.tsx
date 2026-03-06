@@ -1180,6 +1180,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     api.addEventListener('columnPinned', handleColumnPinned);
 
     return () => {
+      if (api.isDestroyed?.()) return;
       api.removeEventListener('columnMoved', handleColumnMoved);
       api.removeEventListener('columnResized', handleColumnResized);
       api.removeEventListener('columnVisible', handleColumnVisible);

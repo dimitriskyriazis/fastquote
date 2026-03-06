@@ -193,8 +193,13 @@ const disableAutofillScript = `
     });
   }
 
-  var observer = new MutationObserver(function (mutations) {
-    mutations.forEach(function (mutation) {
+  var pendingMutations = [];
+  var mutationFrameId = 0;
+  function flushMutations() {
+    mutationFrameId = 0;
+    var batch = pendingMutations.slice();
+    pendingMutations = [];
+    batch.forEach(function (mutation) {
       if (mutation.type === "childList") {
         forEach(mutation.addedNodes, function (node) {
           processTree(node);
@@ -204,6 +209,12 @@ const disableAutofillScript = `
         applyAttributes(mutation.target);
       }
     });
+  }
+  var observer = new MutationObserver(function (mutations) {
+    pendingMutations = pendingMutations.concat(mutations);
+    if (!mutationFrameId) {
+      mutationFrameId = requestFrame(flushMutations);
+    }
   });
 
   function startObserver() {

@@ -9,6 +9,7 @@ import type {
   OfferDropdownOption,
 } from './OfferBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
+import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { addRecentOffer, buildRecentOfferLabel } from '../../lib/recentOffers';
 import UKDatePicker from '../../components/DatePicker';
 import { formatDisplayValue } from '../../lib/formatDisplayValue';
@@ -488,6 +489,8 @@ export default function OfferBasicDataClient({
   const [values, setValues] = useState(initialValues);
   const [pendingFields, setPendingFields] = useState<Record<string, boolean>>({});
   const [savedValues, setSavedValues] = useState(initialValues);
+  const isDirty = useMemo(() => JSON.stringify(values) !== JSON.stringify(savedValues), [values, savedValues]);
+  useUnsavedChanges(isDirty);
   const [customerText, setCustomerText] = useState('');
   const [showCustomerList, setShowCustomerList] = useState(false);
   const customerListCloseTimerRef = useRef<NodeJS.Timeout | null>(null);

@@ -1,5 +1,5 @@
 import { DetailPageSkeleton } from '../../components/Skeleton';
 
-export default function OfferDetailLoading() {
+export default function PriceListImportLoading() {
   return <DetailPageSkeleton />;
 }
