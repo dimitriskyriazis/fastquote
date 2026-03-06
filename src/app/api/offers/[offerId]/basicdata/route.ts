@@ -5,6 +5,7 @@ import { getPool } from '../../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../../lib/auditTrail';
 import type { OfferBasicUpdateField } from '../../../../offers/[offerId]/OfferBasicDataTypes';
 import { requirePermission } from '../../../../../lib/authz';
+import { PROBABILITY_MIN, PROBABILITY_MAX } from '../../../../../lib/constants';
 
 type UpdateInput = {
   field?: OfferBasicUpdateField;
@@ -33,7 +34,7 @@ type NormalizedUpdate = {
 
 const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   CustomerID: { column: 'CustomerID', type: 'number', sqlType: sql.Int },
-  SalesDivitionID: { column: 'SalesDivitionID', type: 'number', sqlType: sql.Int },
+  SalesDivisionID: { column: 'SalesDivisionID', type: 'number', sqlType: sql.Int },
   CreatedBy: { column: 'CreatedBy', type: 'string', sqlType: sql.NVarChar, length: 450 },
   Title: { column: 'Title', type: 'string', sqlType: sql.NVarChar, length: 512 },
   Description: { column: 'Description', type: 'string', sqlType: sql.NVarChar, length: 2000 },
@@ -65,9 +66,6 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   Delivery: { column: 'Delivery', type: 'date', sqlType: sql.DateTime2 },
   OfferDate: { column: 'OfferDate', type: 'date', sqlType: sql.DateTime2 },
 };
-
-const PROBABILITY_MIN = 0;
-const PROBABILITY_MAX = 100;
 
 const normalizeValue = (value: unknown, type: FieldType): NormalizedValue => {
   if (value === null || value === undefined) return null;

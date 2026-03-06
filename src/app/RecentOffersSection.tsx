@@ -65,43 +65,43 @@ export default function RecentOffersSection() {
 
     let cancelled = false;
     const verifyOffersAndDescriptions = async () => {
-      const checks = await Promise.all(
-        recentOffers.map(async (entry) => {
-          try {
-            const response = await fetch(`/api/offers/${encodeURIComponent(entry.id)}/summary`);
-            if (!response.ok) return null;
-            const payload = (await response.json()) as {
-              ok?: boolean;
-              offer?: {
-                description?: string | null;
-                title?: string | null;
-                isStandardPackage?: boolean | null;
-              };
-            } | null;
-            if (!payload?.ok) return null;
-            if (payload.offer?.isStandardPackage) return null;
-            const description = payload.offer?.description?.trim();
-            const title = payload.offer?.title?.trim();
-            return { entry, resolvedDescription: description || title || null };
-          } catch {
-            return null;
+      try {
+        const ids = recentOffers.map((entry) => entry.id);
+        const response = await fetch('/api/offers/batch-summary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids }),
+        });
+        if (!response.ok) return;
+        const payload = (await response.json()) as {
+          ok?: boolean;
+          offers?: Record<string, {
+            description?: string | null;
+            title?: string | null;
+            isStandardPackage?: boolean;
+          }>;
+        } | null;
+        if (!payload?.ok || !payload.offers) return;
+
+        const nextVerified: RecentOfferSummary[] = [];
+        const nextOverrides: Record<string, string> = {};
+        for (const entry of recentOffers) {
+          const offer = payload.offers[entry.id];
+          if (!offer) continue;
+          if (offer.isStandardPackage) continue;
+          nextVerified.push(entry);
+          const resolvedDescription = offer.description?.trim() || offer.title?.trim();
+          if (resolvedDescription) {
+            nextOverrides[entry.id] = resolvedDescription;
           }
-        }),
-      );
-
-      const nextVerified: RecentOfferSummary[] = [];
-      const nextOverrides: Record<string, string> = {};
-      for (const result of checks) {
-        if (!result) continue;
-        nextVerified.push(result.entry);
-        if (result.resolvedDescription) {
-          nextOverrides[result.entry.id] = result.resolvedDescription;
         }
-      }
 
-      if (cancelled) return;
-      setVerifiedOffers(nextVerified);
-      setDescriptionOverrides(nextOverrides);
+        if (cancelled) return;
+        setVerifiedOffers(nextVerified);
+        setDescriptionOverrides(nextOverrides);
+      } catch {
+        // On failure, show unverified offers
+      }
     };
 
     void verifyOffersAndDescriptions();

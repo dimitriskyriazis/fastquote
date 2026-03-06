@@ -14,25 +14,10 @@ import UKDatePicker from '../../components/DatePicker';
 import { formatDisplayValue } from '../../lib/formatDisplayValue';
 import { normalizeValueForApi } from '../../lib/normalizeValueForApi';
 import { formatDateInputValue } from '../../lib/formatDateInputValue';
+import { useOfferLookups, type LookupKey } from './useOfferLookups';
+import { useCustomerSearch } from './useCustomerSearch';
 
 type UserOption = OfferDropdownOption & { salesSeniorityName?: string | null };
-type LookupKey =
-  | 'customers'
-  | 'statuses'
-  | 'pricingPolicies'
-  | 'markets'
-  | 'salesDivisions'
-  | 'users'
-  | 'fwcProjects';
-type OfferLookupPayload = {
-  customers?: OfferDropdownOption[];
-  statuses?: OfferDropdownOption[];
-  pricingPolicies?: OfferDropdownOption[];
-  markets?: OfferDropdownOption[];
-  salesDivisions?: OfferDropdownOption[];
-  users?: UserOption[];
-  fwcProjects?: OfferDropdownOption[];
-};
 
 type Props = {
   offerId: string;
@@ -231,7 +216,7 @@ const buildFieldDefinitions = (
     label: 'Sales Division',
     section: 'commercial',
     recordKey: 'SalesDivisionID',
-    updateField: 'SalesDivitionID',
+    updateField: 'SalesDivisionID',
     valueType: 'number',
     options: salesDivisions,
   },
@@ -328,72 +313,24 @@ export default function OfferBasicDataClient({
   users,
   fwcProjects,
 }: Props) {
-  const [localCustomers, setLocalCustomers] = useState(customers);
-  const [localStatuses, setLocalStatuses] = useState(statuses);
-  const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
-  const [localMarkets, setLocalMarkets] = useState(markets);
-  const [localSalesDivisions, setLocalSalesDivisions] = useState(salesDivisions);
-  const [localUsers, setLocalUsers] = useState(users);
-  const [localFwcProjects, setLocalFwcProjects] = useState(fwcProjects);
-  const lookupRefreshInFlightRef = useRef(new Set<LookupKey>());
-
-  useEffect(() => {
-    setLocalCustomers(customers);
-  }, [customers]);
-
-  useEffect(() => {
-    setLocalStatuses(statuses);
-  }, [statuses]);
-
-  useEffect(() => {
-    setLocalPricingPolicies(pricingPolicies);
-  }, [pricingPolicies]);
-
-  useEffect(() => {
-    setLocalMarkets(markets);
-  }, [markets]);
-
-  useEffect(() => {
-    setLocalSalesDivisions(salesDivisions);
-  }, [salesDivisions]);
-
-  useEffect(() => {
-    setLocalUsers(users);
-  }, [users]);
-
-  useEffect(() => {
-    setLocalFwcProjects(fwcProjects);
-  }, [fwcProjects]);
+  const { lookups, updateLookup, refreshLookups: refreshLookupsRaw } = useOfferLookups({
+    customers, statuses, pricingPolicies, markets, salesDivisions, users, fwcProjects,
+  });
+  const { customers: localCustomers, statuses: localStatuses, pricingPolicies: localPricingPolicies,
+    markets: localMarkets, salesDivisions: localSalesDivisions, users: localUsers,
+    fwcProjects: localFwcProjects } = lookups;
 
   const refreshLookups = useCallback(async (keys: LookupKey[]) => {
-    const uniqueKeys = Array.from(new Set(keys));
-    const pendingKeys = uniqueKeys.filter((key) => !lookupRefreshInFlightRef.current.has(key));
-    if (pendingKeys.length === 0) return;
-    pendingKeys.forEach((key) => lookupRefreshInFlightRef.current.add(key));
     try {
-      const search = new URLSearchParams();
-      pendingKeys.forEach((key) => search.append('keys', key));
-      const response = await fetch(`/api/offers/lookups?${search.toString()}`, { cache: 'no-store' });
-      const payload = (await response.json().catch(() => null)) as
-        | { ok?: boolean; error?: string; lookups?: OfferLookupPayload }
-        | null;
-      if (!response.ok || !payload?.ok || !payload.lookups) {
-        throw new Error(payload?.error ?? 'Unable to refresh lookup options');
-      }
-      if (payload.lookups.customers) setLocalCustomers(payload.lookups.customers);
-      if (payload.lookups.statuses) setLocalStatuses(payload.lookups.statuses);
-      if (payload.lookups.pricingPolicies) setLocalPricingPolicies(payload.lookups.pricingPolicies);
-      if (payload.lookups.markets) setLocalMarkets(payload.lookups.markets);
-      if (payload.lookups.salesDivisions) setLocalSalesDivisions(payload.lookups.salesDivisions);
-      if (payload.lookups.users) setLocalUsers(payload.lookups.users);
-      if (payload.lookups.fwcProjects) setLocalFwcProjects(payload.lookups.fwcProjects);
-    } catch (err) {
-      console.error(err);
+      await refreshLookupsRaw(keys);
+    } catch {
       showToastMessage('Unable to refresh latest dropdown values.', 'warning');
-    } finally {
-      pendingKeys.forEach((key) => lookupRefreshInFlightRef.current.delete(key));
     }
-  }, []);
+  }, [refreshLookupsRaw]);
+
+  const searchCustomers = useCustomerSearch(
+    useCallback((results) => updateLookup('customers', results), [updateLookup]),
+  );
 
   const salesUsers = useMemo(
     () =>
@@ -993,8 +930,10 @@ export default function OfferBasicDataClient({
             value={customerText}
             placeholder="Type to filter customers"
             onChange={(event) => {
-              setCustomerText(event.target.value);
+              const value = event.target.value;
+              setCustomerText(value);
               setShowCustomerList(true);
+              searchCustomers(value);
             }}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && showCustomerList && filteredCustomerOptions.length > 0) {

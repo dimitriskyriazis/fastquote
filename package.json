@@ -38,7 +38,6 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^0.1.0",
-    "@tailwindcss/postcss": "^4.1.17",
     "@types/mssql": "^9.1.8",
     "@types/node": "^24.10.1",
     "@types/pdfmake": "^0.3.1",
@@ -47,7 +46,6 @@
     "eslint": "^9.0.0",
     "eslint-config-next": "^16.1.1",
     "postcss": "^8.4.49",
-    "tailwindcss": "^4.1.17",
     "typescript": "^5.9.3"
   }
 }

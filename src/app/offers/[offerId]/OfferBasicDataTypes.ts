@@ -63,7 +63,7 @@ export type OfferDropdownOption = DropdownOption;
 
 export type OfferBasicUpdateField =
   | 'CustomerID'
-  | 'SalesDivitionID'
+  | 'SalesDivisionID'
   | 'CreatedBy'
   | 'Title'
   | 'Description'

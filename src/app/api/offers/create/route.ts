@@ -4,6 +4,7 @@ import sql from 'mssql';
 import { getPool } from '../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../lib/auditTrail';
 import { requirePermission } from '../../../../lib/authz';
+import { normalizeString, normalizeInt, normalizeUserId, normalizeDate, normalizeProbability } from '../../../../lib/normalize';
 
 type CreateOfferRequestBody = {
   title?: string | null;
@@ -45,72 +46,6 @@ type ContactLookupRow = {
   FirstName: string | null;
   LastName: string | null;
   FullName: string | null;
-};
-
-const normalizeString = (value: unknown, maxLength = 500): string | null => {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
-  }
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    const str = String(value);
-    return str.length > maxLength ? str.slice(0, maxLength) : str;
-  }
-  return null;
-};
-
-const normalizeInt = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isInteger(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isInteger(parsed)) return parsed;
-  }
-  return null;
-};
-
-const normalizeUserId = (value: unknown): string | null => {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed || null;
-  }
-  if (typeof value === 'number') {
-    const str = String(value);
-    return str.trim() || null;
-  }
-  return null;
-};
-
-const normalizeDate = (value: unknown): Date | null => {
-  if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? null : value;
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const parsed = new Date(trimmed);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-  return null;
-};
-
-const PROBABILITY_MIN = 0;
-const PROBABILITY_MAX = 100;
-
-const normalizeProbability = (value: unknown): number | null => {
-  if (typeof value === 'number') {
-    if (!Number.isInteger(value)) return null;
-    return value >= PROBABILITY_MIN && value <= PROBABILITY_MAX ? value : null;
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    if (!/^-?\d+$/.test(trimmed)) return null;
-    const parsed = Number.parseInt(trimmed, 10);
-    if (!Number.isInteger(parsed)) return null;
-    return parsed >= PROBABILITY_MIN && parsed <= PROBABILITY_MAX ? parsed : null;
-  }
-  return null;
 };
 
 export async function POST(req: NextRequest) {
@@ -279,7 +214,7 @@ export async function POST(req: NextRequest) {
     request.input('StatusID', sql.Int, statusId);
     request.input('PricingPolicyID', sql.Int, pricingPolicyId);
     request.input('MarketID', sql.Int, marketId);
-    request.input('SalesDivitionID', sql.Int, salesDivisionId);
+    request.input('SalesDivisionID', sql.Int, salesDivisionId);
     request.input('SalesPersonId', sql.NVarChar(450), salesPersonId);
     request.input('SalesManagerID', sql.NVarChar(450), salesManagerId);
     request.input('CreatedBy', sql.NVarChar(450), salesCreationPersonId);
@@ -317,7 +252,7 @@ export async function POST(req: NextRequest) {
         StatusID,
         PricingPolicyID,
         MarketID,
-        SalesDivitionID,
+        SalesDivisionID,
         SalesPersonId,
         SalesManagerID,
         CreatedBy,
@@ -359,7 +294,7 @@ export async function POST(req: NextRequest) {
         @StatusID,
         @PricingPolicyID,
         @MarketID,
-        @SalesDivitionID,
+        @SalesDivisionID,
         @SalesPersonId,
         @SalesManagerID,
         @CreatedBy,

@@ -35,7 +35,7 @@ type ExistingOfferRecord = {
   StatusID: number | null;
   PricingPolicyID: number | null;
   MarketID: number | null;
-  SalesDivitionID: number | null;
+  SalesDivisionID: number | null;
   SalesPersonId: string | null;
   SalesManagerID: string | null;
   Title: string | null;
@@ -304,7 +304,7 @@ export async function POST(
         StatusID,
         PricingPolicyID,
         MarketID,
-        SalesDivitionID,
+        SalesDivisionID,
         SalesPersonId,
         SalesManagerID,
         Title,
@@ -382,7 +382,7 @@ export async function POST(
       insertRequest.input('StatusID', sql.Int, existingOffer.StatusID);
       insertRequest.input('PricingPolicyID', sql.Int, existingOffer.PricingPolicyID);
       insertRequest.input('MarketID', sql.Int, existingOffer.MarketID);
-      insertRequest.input('SalesDivitionID', sql.Int, existingOffer.SalesDivitionID);
+      insertRequest.input('SalesDivisionID', sql.Int, existingOffer.SalesDivisionID);
       insertRequest.input('SalesPersonId', sql.NVarChar(450), normalizedSalesPersonId);
       insertRequest.input('SalesManagerID', sql.NVarChar(450), normalizedSalesManagerId);
       insertRequest.input('CreatedBy', sql.NVarChar(450), auditUserId);
@@ -424,7 +424,7 @@ export async function POST(
           StatusID,
           PricingPolicyID,
           MarketID,
-          SalesDivitionID,
+          SalesDivisionID,
           SalesPersonId,
           SalesManagerID,
           CreatedBy,
@@ -468,7 +468,7 @@ export async function POST(
           @StatusID,
           @PricingPolicyID,
           @MarketID,
-          @SalesDivitionID,
+          @SalesDivisionID,
           @SalesPersonId,
           @SalesManagerID,
           @CreatedBy,

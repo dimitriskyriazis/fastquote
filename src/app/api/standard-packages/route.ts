@@ -4,6 +4,8 @@ import sql from 'mssql';
 import type { Request as SqlRequest } from 'mssql';
 import { getPool } from '../../../lib/sql';
 import { resolveAuditUserId } from '../../../lib/auditTrail';
+import { normalizeId } from '../../../lib/normalize';
+import { BATCH_DELETE_SIZE } from '../../../lib/constants';
 import {
   buildQuickFilterClause,
   mergeWhereClauses,
@@ -135,15 +137,6 @@ function buildOrder(sortModel: GridRequest['sortModel']) {
   return `ORDER BY ${parts.join(', ')}`;
 }
 
-const normalizeOfferId = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isInteger(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isInteger(parsed)) return parsed;
-  }
-  return null;
-};
-
 const normalizeNullableText = (value: unknown, maxLength = 2000): string | null => {
   if (value == null) return null;
   const str = typeof value === 'string' ? value : String(value);
@@ -178,7 +171,7 @@ async function readGridRequest(req: NextRequest): Promise<GridRequestPayload> {
       const rawExpanded = (payload as { expandedVersionGroupIds?: unknown }).expandedVersionGroupIds;
       const expandedVersionGroupIds = Array.isArray(rawExpanded)
         ? rawExpanded
-          .map((value) => normalizeOfferId(value))
+          .map((value) => normalizeId(value))
           .filter((value): value is number => value != null)
         : [];
       if (inner && typeof inner === 'object') {
@@ -348,7 +341,7 @@ export async function PATCH(req: NextRequest) {
 
     for (const update of rawUpdates) {
       if (!update || !update.field) continue;
-      const offerId = normalizeOfferId(update.OfferID);
+      const offerId = normalizeId(update.OfferID);
       if (offerId == null) continue;
 
       const request = pool.request();
@@ -421,7 +414,7 @@ export async function DELETE(req: NextRequest) {
     const normalizedIds = Array.from(
       new Set(
         rawIds
-          .map((value) => normalizeOfferId(value ?? null))
+          .map((value) => normalizeId(value ?? null))
           .filter((value): value is number => value != null),
       ),
     );
@@ -436,7 +429,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     const pool = await getPool();
-    const chunkSize = 200;
+    const chunkSize = BATCH_DELETE_SIZE;
     let deleted = 0;
 
     for (let idx = 0; idx < normalizedIds.length; idx += chunkSize) {

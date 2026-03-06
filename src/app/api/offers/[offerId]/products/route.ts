@@ -14,6 +14,14 @@ import { clearPartModelNumber } from '../../../../../lib/partModelNumber';
 import { realtimeEvents } from '../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../lib/authz';
 import { checkDeletePermission } from '../../../../../lib/deletePermissions';
+import { ALL_ROWS_LIMIT } from '../../../../../lib/constants';
+import type {
+  TextCondition as TextFilterModel,
+  CompoundTextFilter as CompoundTextFilterModel,
+  NumberCondition as NumberFilterModel,
+  CompoundNumberFilter as CompoundNumberFilterModel,
+  KnownFilterModel,
+} from '../../../../../lib/filterTypes';
 import {
   buildTreeFromRows,
   collectResequencedUpdates,
@@ -29,52 +37,6 @@ const getDecimalType = () => {
   const decimalFactory = (sql as unknown as { Decimal: (precision: number, scale: number) => unknown }).Decimal;
   return decimalFactory(18, 4);
 };
-
-type TextFilterModel = {
-  filterType: 'text';
-  type?: 'contains' | 'equals' | 'notEqual' | 'startsWith' | 'endsWith' | 'blank' | 'notBlank';
-  filter?: string;
-};
-
-type CompoundTextFilterModel = {
-  filterType: 'text';
-  operator: 'AND' | 'OR';
-  conditions: TextFilterModel[];
-};
-
-type NumberFilterModel = {
-  filterType: 'number';
-  type?:
-    | 'equals'
-    | 'notEqual'
-    | 'lessThan'
-    | 'greaterThan'
-    | 'lessThanOrEqual'
-    | 'greaterThanOrEqual'
-    | 'inRange'
-    | 'blank'
-    | 'notBlank';
-  filter?: number;
-  filterTo?: number;
-};
-
-type CompoundNumberFilterModel = {
-  filterType: 'number';
-  operator: 'AND' | 'OR';
-  conditions: NumberFilterModel[];
-};
-
-type SetFilterModel = {
-  filterType: 'set';
-  values?: Array<string | number | boolean>;
-};
-
-type KnownFilterModel =
-  | TextFilterModel
-  | CompoundTextFilterModel
-  | NumberFilterModel
-  | CompoundNumberFilterModel
-  | SetFilterModel;
 
 type GridRequest = {
   startRow?: number;
@@ -114,8 +76,6 @@ const TREE_ORDERING_ROOT_EXPRESSION = `
   END
 `;
 const MAX_CATEGORY_DEPTH = 3;
-
-const ALL_ROWS_LIMIT = 20000;
 
 type ProductRow = {
   ProductID: number | null;

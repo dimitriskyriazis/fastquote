@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logRequest } from '../../../../lib/apiHelpers';
+import sql from 'mssql';
 import { getPool } from '../../../../lib/sql';
 import { requirePermission } from '../../../../lib/authz';
 import { toDropdownOptions, type DropdownOption, type RawDropdownRow } from '../../../../lib/dropdownOptions';
@@ -64,8 +65,21 @@ const parseRequestedKeys = (req: NextRequest): LookupKey[] => {
   return requested.size > 0 ? Array.from(requested) : LOOKUP_KEYS;
 };
 
-async function fetchCustomers() {
+async function fetchCustomers(search?: string) {
   const pool = await getPool();
+  const needle = (search ?? '').trim();
+  if (needle.length > 0) {
+    const req = pool.request();
+    req.input('customerSearch', sql.NVarChar(200), `%${needle}%`);
+    const result = await req.query<LookupRow>(`
+      SELECT TOP 50 ID, Name
+      FROM dbo.Customers
+      WHERE ISNULL(IsParent, 0) = 0
+        AND Name LIKE @customerSearch
+      ORDER BY Name
+    `);
+    return toLookupOptions(result.recordset);
+  }
   const result = await pool.request().query<LookupRow>(`
     SELECT ID, Name
     FROM dbo.Customers
@@ -158,12 +172,13 @@ export async function GET(req: NextRequest) {
     if (!auth.ok) return auth.response;
 
     const keys = parseRequestedKeys(req);
+    const customerSearch = req.nextUrl.searchParams.get('customerSearch') ?? undefined;
     const payload: OfferLookupPayload = {};
 
     await Promise.all(
       keys.map(async (key) => {
         if (key === 'customers') {
-          payload.customers = await fetchCustomers();
+          payload.customers = await fetchCustomers(customerSearch);
           return;
         }
         if (key === 'statuses') {

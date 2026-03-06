@@ -13,13 +13,11 @@ import type {
   GetContextMenuItemsParams,
   GridApi,
   ICellRendererParams,
-  ICellEditorParams,
   IRowNode,
   MenuItemDef,
   RowClassParams,
   RowDoubleClickedEvent,
   RowNode,
-  ValueFormatterParams,
   ValueGetterParams,
   ValueSetterParams,
 } from 'ag-grid-community';
@@ -59,8 +57,6 @@ import { showConfirmDialog, showMultiChoiceDialog } from '../../../lib/confirm';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
-import { priceListStatusClassRules } from '../../../lib/priceListStatus';
-import { getUserNumberLocale } from '../../../lib/localeNumber';
 import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
 import MatchRequestedProductsModal, {
   type RequestedProductMatchEntry,
@@ -70,910 +66,83 @@ import { useAuditUser } from '../../components/AuditUserProvider';
 import LookupModal from '../../components/LookupModal';
 import lookupStyles from '../../components/LookupModal.module.css';
 
-const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-const decimalFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-const DEFAULT_ROW_HEIGHT = 32;
-const MAX_CATEGORY_DEPTH = 3;
-const ADD_WEBLINK_MAX_PRODUCTS = 200;
-const ENHANCE_DESC_MAX_PRODUCTS = 200;
-
-const COLLAPSED_CATEGORIES_COOKIE_NAME = 'offer_products_collapsed';
-
-function readCollapsedCategoryPathsFromCookie(offerId: string): Set<string> {
-  if (typeof document === 'undefined' || !offerId) return new Set();
-  try {
-    const raw = document.cookie
-      .split(';')
-      .map((s) => s.trim())
-      .find((s) => s.startsWith(`${COLLAPSED_CATEGORIES_COOKIE_NAME}=`));
-    if (!raw) return new Set();
-    const value = raw.slice(COLLAPSED_CATEGORIES_COOKIE_NAME.length + 1).trim();
-    const decoded = value ? decodeURIComponent(value) : '';
-    const parsed = JSON.parse(decoded) as Record<string, string[] | undefined>;
-    const paths = parsed[offerId];
-    return Array.isArray(paths) ? new Set(paths) : new Set();
-  } catch {
-    return new Set();
-  }
-}
-
-function writeCollapsedCategoryPathsToCookie(offerId: string, paths: Set<string>): void {
-  if (typeof document === 'undefined' || !offerId) return;
-  try {
-    let all: Record<string, string[]> = {};
-    const existing = document.cookie
-      .split(';')
-      .map((s) => s.trim())
-      .find((s) => s.startsWith(`${COLLAPSED_CATEGORIES_COOKIE_NAME}=`));
-    if (existing) {
-      const value = existing.slice(COLLAPSED_CATEGORIES_COOKIE_NAME.length + 1).trim();
-      const decoded = value ? decodeURIComponent(value) : '{}';
-      all = JSON.parse(decoded) as Record<string, string[]>;
-    }
-    if (paths.size === 0) {
-      delete all[offerId];
-    } else {
-      all[offerId] = Array.from(paths);
-    }
-    const encoded = encodeURIComponent(JSON.stringify(all));
-    const maxAge = 60 * 60 * 24 * 365; // 1 year
-    document.cookie = `${COLLAPSED_CATEGORIES_COOKIE_NAME}=${encoded}; path=/; max-age=${maxAge}; SameSite=Lax`;
-  } catch {
-    // ignore
-  }
-}
+import MultilineTextCellEditor from './MultilineTextCellEditor';
+import {
+  productHistoryMenuIcon,
+  enhanceDescriptionMenuIcon,
+  addWebLinkMenuIcon,
+  categoryMenuIcon,
+  commentMenuIcon,
+  brandBulkEditMenuIcon,
+  copyRowsMenuIcon,
+  pasteRowsMenuIcon,
+  addStandardPackageMenuIcon,
+} from './offerProductsIcons';
+import {
+  decimalFormatter,
+  DEFAULT_ROW_HEIGHT,
+  MAX_CATEGORY_DEPTH,
+  ADD_WEBLINK_MAX_PRODUCTS,
+  ENHANCE_DESC_MAX_PRODUCTS,
+  readCollapsedCategoryPathsFromCookie,
+  writeCollapsedCategoryPathsToCookie,
+  coerceNumber,
+  percentageFormatter,
+  euroFormatter,
+  zeroBlankNumberFormatter,
+  normalizeProductId,
+  compareTreeOrderingValues,
+  parseTreeOrderingPath,
+  buildTreeOrderingKey,
+  normalizeOfferDetailId,
+  resolveRowLabel,
+  resolveOfferProductTypeLabel,
+  isRequestedRow,
+  isRequestedDescriptionField,
+  canEditRequestedField,
+  normalizeDescriptionValue,
+  getNormalizedRequestedDescriptionValues,
+  normalizeRequestedItemNoValue,
+  normalizeRequestedLookupValue,
+  getExactTextValue,
+  normalizeRequestedQuantityValue,
+  buildRequestedProductMatchEntry,
+  hasRequestedRowData,
+  hasRequestedPseudoFields,
+  buildRequestedLookupInfo,
+  resolveProductIdFromRequestedInfo,
+  fetchProductSummary,
+  isFarnellBrand,
+  fetchFarnellLookup,
+  resolveFarnellProductByPartNumber,
+  createFarnellProduct,
+  buildFarnellPricingPatch,
+  OFFER_PRODUCTS_EXPORT_FIELDS,
+  normalizeNoForExport,
+  recalcProductTotals,
+  refreshCategoryAggregates,
+  categoryTotalPriceGetter,
+  categoryTotalNetGetter,
+  categoryTotalCostGetter,
+  productAccentCellClassRules,
+  productPriceListClassRules,
+  totalPriceCellClassRules,
+  PRICING_FIELD_LABELS,
+  PRICING_EDITABLE_FIELDS,
+  COST_ANALYSIS_COLUMNS,
+  STANDARD_PACKAGE_PRODUCTS_FIELDS,
+  isOfferProductCommentOrProduct,
+  findDeleteMenuItemIndex,
+  buildEndpointForOffer,
+  type RequestedDisplayFieldKey,
+  REQUESTED_DISPLAY_FIELD_KEYS,
+  REQUESTED_FIELD_LABELS,
+  isRequestedFieldKey,
+  type ProductSummary,
+  type FarnellLookupResponse,
+} from './offerProductsUtils';
 
 type GridRowNode = RowNode<Record<string, unknown>> | IRowNode<Record<string, unknown>>;
-
-const plainNumberFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 2,
-});
-
-const parseFlexibleNumber = (raw: string): number | null => {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const numericPortion = trimmed.replace(/[^\d.,+-]/g, '');
-  if (!numericPortion) return null;
-
-  const commaCount = (numericPortion.match(/,/g) ?? []).length;
-  const dotCount = (numericPortion.match(/\./g) ?? []).length;
-
-  let normalized = numericPortion;
-  if (commaCount > 0 && dotCount > 0) {
-    const lastComma = numericPortion.lastIndexOf(',');
-    const lastDot = numericPortion.lastIndexOf('.');
-    if (lastComma > lastDot) {
-      normalized = numericPortion.replace(/\./g, '').replace(/,/g, '.');
-    } else {
-      normalized = numericPortion.replace(/,/g, '');
-    }
-  } else if (commaCount > 0) {
-    normalized = numericPortion.replace(/,/g, '.');
-  }
-
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-const coerceNumber = (value: unknown) => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    return parseFlexibleNumber(value);
-  }
-  return null;
-};
-
-const formatPercentageValue = (value: unknown) => {
-  const num = coerceNumber(value);
-  if (num == null || Object.is(num, 0)) return '';
-  return `${decimalFormatter.format(num)} %`;
-};
-
-const formatEuroValue = (value: unknown) => {
-  const num = coerceNumber(value);
-  if (num == null || Object.is(num, 0)) return '';
-  return `${decimalFormatter.format(num)} €`;
-};
-
-type FormatterParams = ValueFormatterParams<Record<string, unknown>, unknown>;
-const percentageFormatter = ({ value }: FormatterParams) => formatPercentageValue(value);
-const euroFormatter = ({ value }: FormatterParams) => formatEuroValue(value);
-const zeroBlankNumberFormatter = ({ value }: FormatterParams) => {
-  const num = coerceNumber(value);
-  if (num == null) {
-    if (value == null) return '';
-    return typeof value === 'string' ? value : String(value);
-  }
-  if (Object.is(num, 0)) return '';
-  return plainNumberFormatter.format(num);
-};
-
-type RequestedFieldKey =
-  | 'RequestedItemNo'
-  | 'RequestedBrand'
-  | 'RequestedPartNo'
-  | 'RequestedModelNo'
-  | 'RequestedWebLink'
-  | 'RequestedDescription'
-  | 'RequestedDescription2'
-  | 'RequestedDescription3'
-  | 'RequestedQuantity';
-
-type RequestedDisplayFieldKey = Exclude<RequestedFieldKey, 'RequestedItemNo'>;
-const REQUESTED_DISPLAY_FIELD_KEYS: RequestedDisplayFieldKey[] = [
-  'RequestedBrand',
-  'RequestedPartNo',
-  'RequestedModelNo',
-  'RequestedDescription',
-  'RequestedDescription2',
-  'RequestedDescription3',
-  'RequestedQuantity',
-];
-
-const REQUESTED_FIELD_LABELS: Record<RequestedFieldKey, string> = {
-  RequestedItemNo: 'requested item number',
-  RequestedBrand: 'requested brand',
-  RequestedPartNo: 'requested part number',
-  RequestedModelNo: 'requested model number',
-  RequestedWebLink: 'requested web link',
-  RequestedDescription: 'requested description',
-  RequestedDescription2: 'requested description 2',
-  RequestedDescription3: 'requested description 3',
-  RequestedQuantity: 'requested quantity',
-};
-
-const REQUESTED_FIELD_SET = new Set<RequestedFieldKey>([
-  'RequestedItemNo',
-  'RequestedBrand',
-  'RequestedPartNo',
-  'RequestedModelNo',
-  'RequestedWebLink',
-  'RequestedDescription',
-  'RequestedDescription2',
-  'RequestedDescription3',
-  'RequestedQuantity',
-]);
-
-const isRequestedFieldKey = (value: string | null | undefined): value is RequestedFieldKey =>
-  typeof value === 'string' && REQUESTED_FIELD_SET.has(value as RequestedFieldKey);
-
-const normalizeProductId = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isInteger(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isInteger(parsed)) return parsed;
-  }
-  return null;
-};
-
-const compareTreeOrderingValues = (a: unknown, b: unknown) => {
-  const sa = String(a ?? '').trim();
-  const sb = String(b ?? '').trim();
-  if (!sa && !sb) return 0;  // both empty/null
-  if (!sa) return -1;        // empty/null first
-  if (!sb) return 1;
-  return collator.compare(sa, sb);
-};
-
-const parseTreeOrderingPath = (value: unknown): number[] => {
-  if (value == null) return [];
-  const trimmed = String(value).trim();
-  if (!trimmed) return [];
-  return trimmed
-    .split('.')
-    .map((segment) => Number.parseInt(segment, 10))
-    .filter((segment) => Number.isFinite(segment));
-};
-
-const buildTreeOrderingKey = (segments: number[]) => segments.join('.');
-
-const normalizeOfferDetailId = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isInteger(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isInteger(parsed)) return parsed;
-  }
-  return null;
-};
-
-const resolveRowLabel = (row: Record<string, unknown> | null | undefined, fallback: string) => {
-  if (!row) return fallback;
-  const partNumberRaw = (row as { PartNumber?: unknown }).PartNumber;
-  const descriptionRaw = (row as { Description?: unknown }).Description;
-  const brandRaw = (row as { BrandName?: unknown }).BrandName;
-  const normalize = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
-  const partNumber = normalize(partNumberRaw);
-  const description = normalize(descriptionRaw);
-  if (partNumber && description) return `${partNumber} – ${description}`;
-  if (partNumber) return partNumber;
-  if (description) return description;
-  const brand = normalize(brandRaw);
-  return brand || fallback;
-};
-
-const resolveOfferProductTypeLabel = (row: Record<string, unknown> | null | undefined) => {
-  const rowType = resolveOfferProductRowType(row);
-  if (rowType === 'category') return 'category';
-  if (rowType === 'product') return 'product';
-  if (rowType === 'printable-comment' || rowType === 'non-printable-comment') return 'comment';
-  return 'record';
-};
-
-const isRequestedRow = (row: Record<string, unknown> | null | undefined) =>
-  Boolean((row as { __isRequestedRow?: number | null })?.__isRequestedRow === 1);
-
-const isRequestedDescriptionField = (field: string | null | undefined): field is 'RequestedDescription' | 'RequestedDescription2' | 'RequestedDescription3' =>
-  field === 'RequestedDescription' || field === 'RequestedDescription2' || field === 'RequestedDescription3';
-
-const canEditRequestedField = (field: RequestedFieldKey, row: Record<string, unknown> | null | undefined) => {
-  if (isRequestedRow(row)) return true;
-  if (isRequestedDescriptionField(field) && isOfferProductCategory(row)) {
-    return true;
-  }
-  return false;
-};
-
-const normalizeDescriptionValue = (value: unknown): string | null => {
-  if (value == null) return null;
-  const str = typeof value === 'string' ? value : String(value);
-  const trimmed = str.trim();
-  return trimmed.length > 0 ? trimmed : null;
-};
-
-const REQUESTED_DESCRIPTION_FIELD_KEYS = [
-  'RequestedDescription',
-  'RequestedDescription2',
-  'RequestedDescription3',
-] as const;
-type RequestedDescriptionFieldKey = (typeof REQUESTED_DESCRIPTION_FIELD_KEYS)[number];
-
-const getNormalizedRequestedDescriptionValues = (row: Record<string, unknown> | null | undefined): string[] => {
-  if (!row || typeof row !== 'object') return [];
-  const values: string[] = [];
-  REQUESTED_DESCRIPTION_FIELD_KEYS.forEach((key) => {
-    const normalized = normalizeDescriptionValue((row as Record<RequestedDescriptionFieldKey, unknown>)[key] ?? null);
-    if (normalized != null) {
-      values.push(normalized);
-    }
-  });
-  return values;
-};
-
-const normalizeRequestedItemNoValue = (value: unknown): string | null => {
-  if (value == null) return null;
-  const str = typeof value === 'string' ? value : String(value);
-  const trimmed = str.trim();
-  return trimmed.length > 0 ? trimmed : null;
-};
-
-const REQUESTED_HISTORY_LOOKUP_ENDPOINT = '/api/products/resolve';
-const requestedHistoryLookupCache = new Map<string, number | null>();
-
-const normalizeRequestedLookupValue = (value: unknown): string | null => {
-  if (value == null) return null;
-  const str = typeof value === 'string' ? value : String(value);
-  const trimmed = str.trim();
-  return trimmed.length > 0 ? trimmed : null;
-};
-
-const getExactTextValue = (value: unknown): string | null => {
-  if (value == null) return null;
-  return typeof value === 'string' ? value : String(value);
-};
-
-const normalizeRequestedQuantityValue = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const parsed = Number.parseFloat(trimmed);
-    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
-  }
-  return null;
-};
-
-const sanitizeDetailValue = (value: string | null | undefined): string | null => {
-  if (value == null) return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-};
-
-const buildRequestedProductMatchEntry = (
-  data: Record<string, unknown>,
-  offerDetailId: number,
-): RequestedProductMatchEntry => {
-  const requestedBrand = normalizeRequestedLookupValue(
-    (data as { RequestedBrand?: unknown }).RequestedBrand ?? null,
-  );
-  const requestedModel = normalizeRequestedLookupValue(
-    (data as { RequestedModelNo?: unknown }).RequestedModelNo ?? null,
-  );
-  const requestedPart = normalizeRequestedLookupValue(
-    (data as { RequestedPartNo?: unknown }).RequestedPartNo ?? null,
-  );
-  const requestedWebLink = normalizeRequestedLookupValue(
-    (data as { RequestedWebLink?: unknown }).RequestedWebLink ?? null,
-  );
-  const requestedDescription = normalizeDescriptionValue(
-    (data as { RequestedDescription?: unknown }).RequestedDescription ?? null,
-  );
-  const requestedDescription2 = normalizeDescriptionValue(
-    (data as { RequestedDescription2?: unknown }).RequestedDescription2 ?? null,
-  );
-  const requestedDescription3 = normalizeDescriptionValue(
-    (data as { RequestedDescription3?: unknown }).RequestedDescription3 ?? null,
-  );
-  const requestedItemNo = normalizeRequestedItemNoValue(
-    (data as { RequestedItemNo?: unknown }).RequestedItemNo ?? null,
-  );
-  const treeOrderingRaw = (data as { TreeOrdering?: unknown }).TreeOrdering;
-  const treeOrdering = typeof treeOrderingRaw === 'string' && treeOrderingRaw.trim()
-    ? treeOrderingRaw.trim()
-    : null;
-  const labelCandidates = [
-    requestedDescription,
-    requestedDescription2,
-    requestedDescription3,
-    requestedPart,
-    requestedModel,
-    requestedBrand,
-    requestedItemNo,
-    treeOrdering,
-  ];
-  const label = labelCandidates.find((item) => typeof item === 'string' && item.trim()) ?? 'Requested item';
-  const parentCategoryId = normalizeOfferDetailId(
-    (data as { ParentOfferDetailID?: unknown }).ParentOfferDetailID ?? null,
-  );
-  const detailEntries: Array<{ label: string; value: string }> = [];
-  const addDetail = (detailLabel: string, detailValue: string | null | undefined) => {
-    const sanitized = sanitizeDetailValue(detailValue);
-    if (sanitized) {
-      detailEntries.push({ label: detailLabel, value: sanitized });
-    }
-  };
-  addDetail('Brand', requestedBrand);
-  addDetail('Model', requestedModel);
-  addDetail('Part number', requestedPart);
-  addDetail('Web link', requestedWebLink);
-  addDetail('Requested item number', requestedItemNo);
-  addDetail('Tree ordering', treeOrdering);
-  addDetail('Requested description', requestedDescription);
-  addDetail('Requested description 2', requestedDescription2);
-  addDetail('Requested description 3', requestedDescription3);
-  return {
-    offerDetailId,
-    parentCategoryId,
-    label,
-    quantity: normalizeRequestedQuantityValue(
-      (data as { RequestedQuantity?: unknown }).RequestedQuantity ?? null,
-    ),
-    details: detailEntries,
-    requestedBrand,
-    requestedModelNumber: requestedModel,
-    requestedPartNumber: requestedPart,
-    requestedWebLink,
-    requestedDescription,
-    requestedDescription2,
-    requestedDescription3,
-  };
-};
-
-const hasRequestedLookupIdentifiers = (row: Record<string, unknown> | null | undefined) => {
-  if (!row || typeof row !== 'object') return false;
-  const part = normalizeRequestedLookupValue((row as { RequestedPartNo?: unknown }).RequestedPartNo ?? null);
-  const model = normalizeRequestedLookupValue((row as { RequestedModelNo?: unknown }).RequestedModelNo ?? null);
-  const brand = normalizeRequestedLookupValue((row as { RequestedBrand?: unknown }).RequestedBrand ?? null);
-  const webLink = normalizeRequestedLookupValue((row as { RequestedWebLink?: unknown }).RequestedWebLink ?? null);
-  return Boolean(part || model || brand || webLink);
-};
-
-const hasRequestedRowData = (row: Record<string, unknown> | null | undefined) => {
-  if (!row || typeof row !== 'object') return false;
-  if (hasRequestedLookupIdentifiers(row)) return true;
-  const quantity = normalizeRequestedQuantityValue(
-    (row as { RequestedQuantity?: unknown }).RequestedQuantity ?? null,
-  );
-  if (quantity != null && !Object.is(quantity, 0)) return true;
-  const actualQuantity = coerceNumber((row as { Quantity?: unknown }).Quantity ?? null);
-  if (actualQuantity != null && !Object.is(actualQuantity, 0)) return true;
-  return false;
-};
-
-const hasRequestedPseudoFields = (row: Record<string, unknown> | null | undefined) => {
-  if (!row || typeof row !== 'object') return false;
-  return hasRequestedRowData(row);
-};
-
-type RequestedLookupInfo = {
-  partNumber: string | null;
-  modelNumber: string | null;
-  brand: string | null;
-};
-
-const buildRequestedLookupInfo = (row: Record<string, unknown> | null | undefined): RequestedLookupInfo => {
-  if (!row || typeof row !== 'object') {
-    return { partNumber: null, modelNumber: null, brand: null };
-  }
-  const requestedPart = normalizeRequestedLookupValue((row as { RequestedPartNo?: unknown }).RequestedPartNo ?? (row as { PartNumber?: unknown }).PartNumber);
-  const requestedModel = normalizeRequestedLookupValue((row as { RequestedModelNo?: unknown }).RequestedModelNo ?? (row as { ModelNumber?: unknown }).ModelNumber);
-  const requestedBrand = normalizeRequestedLookupValue((row as { RequestedBrand?: unknown }).RequestedBrand ?? (row as { BrandName?: unknown }).BrandName);
-  return {
-    partNumber: requestedPart,
-    modelNumber: requestedModel,
-    brand: requestedBrand,
-  };
-};
-
-const resolveProductIdFromRequestedInfo = async (info: RequestedLookupInfo): Promise<number | null> => {
-  const { partNumber, modelNumber, brand } = info;
-  if (!partNumber && !modelNumber) return null;
-  const normalizedBrand = brand
-    ? brand.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim()
-    : null;
-  const brandKey = normalizedBrand
-    ? normalizedBrand.replace(/\s+/g, '').toLowerCase()
-    : null;
-  const params = new URLSearchParams();
-  if (partNumber) params.set('partNumber', partNumber);
-  if (modelNumber) params.set('modelNumber', modelNumber);
-  if (normalizedBrand) params.set('brand', normalizedBrand);
-  const cacheKey = `${partNumber ?? ''}|${modelNumber ?? ''}|${brandKey ?? ''}`;
-  if (requestedHistoryLookupCache.has(cacheKey)) {
-    return requestedHistoryLookupCache.get(cacheKey) ?? null;
-  }
-  try {
-    const response = await fetch(`${REQUESTED_HISTORY_LOOKUP_ENDPOINT}?${params.toString()}`);
-    if (!response.ok) {
-      requestedHistoryLookupCache.set(cacheKey, null);
-      return null;
-    }
-    const payload = (await response.json().catch(() => null)) as { ok?: boolean; productId?: number | null } | null;
-    const productId =
-      payload?.ok && typeof payload.productId === 'number' && Number.isInteger(payload.productId)
-        ? payload.productId
-        : null;
-    requestedHistoryLookupCache.set(cacheKey, productId);
-    return productId;
-  } catch (err) {
-    console.error('Failed to resolve product for requested row', err);
-    requestedHistoryLookupCache.set(cacheKey, null);
-    return null;
-  }
-};
-
-type ProductSummary = {
-  ProductID: number;
-  PartNumber: string | null;
-  ModelNumber: string | null;
-  BrandName: string | null;
-  Description: string | null;
-};
-
-const productSummaryCache = new Map<number, ProductSummary | null>();
-
-const fetchProductSummary = async (productId: number): Promise<ProductSummary | null> => {
-  if (productSummaryCache.has(productId)) {
-    return productSummaryCache.get(productId) ?? null;
-  }
-  try {
-    const res = await fetch(`/api/products/${encodeURIComponent(String(productId))}`);
-    if (!res.ok) {
-      productSummaryCache.set(productId, null);
-      return null;
-    }
-    const payload = (await res.json().catch(() => null)) as { ok?: boolean; product?: ProductSummary } | null;
-    const product = payload?.ok && payload.product ? payload.product : null;
-    productSummaryCache.set(productId, product);
-    return product;
-  } catch (err) {
-    console.error('Failed to fetch product summary', err);
-    productSummaryCache.set(productId, null);
-    return null;
-  }
-};
-
-const isFarnellBrand = (brand: string | null | undefined): boolean => {
-  if (!brand || typeof brand !== 'string') return false;
-  return brand.replace(/\u00A0/g, ' ').trim().toLowerCase() === 'farnell';
-};
-
-type FarnellLookupResult = {
-  sku: string;
-  displayName: string;
-  manufacturerPartNumber: string | null;
-  brandName: string | null;
-  description: string | null;
-  productURL: string | null;
-  stock: number | null;
-  prices: { from: number; to: number; cost: number }[];
-  matchedPrice: number | null;
-};
-
-type FarnellLookupResponse = {
-  product: FarnellLookupResult;
-  farnellBrandId: number | null;
-};
-
-type AssignedRequestedPricing = {
-  quantity: number | null;
-  customerDiscount: number | null;
-  telmacoDiscount: number | null;
-};
-
-const fetchFarnellLookup = async (
-  sku: string,
-  quantity?: number,
-  searchType: 'id' | 'manuPartNum' = 'id',
-): Promise<FarnellLookupResponse | null> => {
-  try {
-    const params = new URLSearchParams({ sku });
-    if (quantity != null && quantity > 0) {
-      params.set('quantity', String(Math.trunc(quantity)));
-    }
-    if (searchType !== 'id') {
-      params.set('searchType', searchType);
-    }
-    const res = await fetch(`/api/farnell/lookup?${params.toString()}`);
-    if (!res.ok) return null;
-    const payload = (await res.json().catch(() => null)) as {
-      ok?: boolean;
-      product?: FarnellLookupResult;
-      farnellBrandId?: number | null;
-    } | null;
-    if (!payload?.ok || !payload.product) return null;
-    return {
-      product: payload.product,
-      farnellBrandId: typeof payload.farnellBrandId === 'number' ? payload.farnellBrandId : null,
-    };
-  } catch (err) {
-    console.error('Failed to fetch Farnell product', err);
-    return null;
-  }
-};
-
-const resolveFarnellProductByPartNumber = async (
-  partNumber: string,
-): Promise<number | null> => {
-  try {
-    const params = new URLSearchParams({
-      partNumber,
-      brand: 'Farnell',
-    });
-    const res = await fetch(`/api/products/resolve?${params.toString()}`);
-    if (!res.ok) return null;
-    const payload = (await res.json().catch(() => null)) as {
-      ok?: boolean;
-      productId?: number;
-      match?: string;
-    } | null;
-    // Only accept brand-matched results - reject fallback matches from other brands.
-    if (payload?.ok && typeof payload.productId === 'number' && payload.match !== 'fallbackNoBrand') {
-      return payload.productId;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-};
-
-const createFarnellProduct = async (
-  farnellBrandId: number,
-  farnellProduct: FarnellLookupResult,
-  sku: string,
-): Promise<number | null> => {
-  try {
-    const res = await fetch('/api/products/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        brandId: farnellBrandId,
-        partNumber: sku,
-        modelNumber: farnellProduct.manufacturerPartNumber ?? null,
-        erpCode: null,
-        description: farnellProduct.description ?? farnellProduct.displayName ?? null,
-        weblink: farnellProduct.productURL ?? null,
-        comments: null,
-        typeId: null,
-        categoryId: null,
-        subCategoryId: null,
-      }),
-    });
-    if (!res.ok) return null;
-    const payload = (await res.json().catch(() => null)) as { ok?: boolean; productId?: number } | null;
-    return payload?.ok && typeof payload.productId === 'number' ? payload.productId : null;
-  } catch (err) {
-    console.error('Failed to create Farnell product', err);
-    return null;
-  }
-};
-
-const buildFarnellPricingPatch = (
-  offerDetailId: number,
-  listPrice: number,
-  pricing: AssignedRequestedPricing | null,
-): Record<string, unknown> | null => {
-  if (!Number.isFinite(listPrice) || listPrice <= 0) return null;
-  const customerDiscount = pricing?.customerDiscount ?? 0;
-  const telmacoDiscount = pricing?.telmacoDiscount ?? 0;
-
-  return {
-    OfferDetailID: offerDetailId,
-    ListPrice: listPrice,
-    CustomerDiscount: customerDiscount,
-    TelmacoDiscount: telmacoDiscount,
-  };
-};
-
-const isOfferProductCommentOrProduct = (row: Record<string, unknown> | null | undefined) =>
-  isOfferProductProduct(row) || isOfferProductComment(row);
-
-const buildCategoryAggregateGetter = (field: 'TotalPrice' | 'TotalNet' | 'TotalCost') => (
-  params: ValueGetterParams<Record<string, unknown>, unknown>,
-) => {
-  const rowData = params.data ?? null;
-  if (!isOfferProductCategory(rowData)) {
-    return (rowData as Record<string, unknown> | undefined)?.[field] ?? null;
-  }
-  const path = parseTreeOrderingPath((rowData as { TreeOrdering?: string | null })?.TreeOrdering);
-  if (path.length === 0 || !params.api) {
-    return (rowData as Record<string, unknown> | undefined)?.[field] ?? null;
-  }
-  let sum = 0;
-  let count = 0;
-  params.api.forEachNode((node) => {
-    if (!node?.data || node === params.node) return;
-    const candidateData = node.data as Record<string, unknown>;
-    if (!isOfferProductCommentOrProduct(candidateData)) return;
-    const candidatePath = parseTreeOrderingPath((candidateData as { TreeOrdering?: string | null }).TreeOrdering);
-    if (candidatePath.length <= path.length) return;
-    const isDescendant = path.every((segment, idx) => candidatePath[idx] === segment);
-    if (!isDescendant) return;
-    const value = coerceNumber((candidateData as Record<string, unknown>)[field]);
-    if (value == null) return;
-    sum += value;
-    count += 1;
-  });
-  if (count === 0) {
-    return (rowData as Record<string, unknown> | undefined)?.[field] ?? null;
-  }
-  return sum;
-};
-
-const roundMoney = (value: number, places = 4) => {
-  const factor = 10 ** places;
-  return Math.round(value * factor) / factor;
-};
-
-const OFFER_PRODUCTS_EXPORT_FIELDS = [
-  'TreeOrdering',
-  'PartNumber',
-  'BrandName',
-  'ModelNumber',
-  'Description',
-  'Quantity',
-  'NetUnitPrice',
-  'Comment',
-  'Delivery',
-  'IsPrintable',
-  'IsComment',
-  'IsCategory',
-] as const;
-
-const normalizeNoForExport = (value: unknown): string | number => {
-  if (value == null) return '';
-  const trimmed = String(value).trim();
-  if (!trimmed) return '';
-  if (/^\d+(\.\d+)?$/.test(trimmed)) {
-    const parsed = Number(trimmed);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-  return trimmed;
-};
-
-const recalcProductTotals = (
-  event: CellValueChangedEvent<Record<string, unknown>>,
-  quantityOverride?: number | null,
-) => {
-  const node = event.node;
-  const data = event.data;
-  if (!node || !data) return;
-
-  const quantity = quantityOverride ?? coerceNumber((data as { Quantity?: unknown }).Quantity) ?? 0;
-  const listPrice = coerceNumber((data as { ListPrice?: unknown }).ListPrice);
-  const netUnitPrice = coerceNumber((data as { NetUnitPrice?: unknown }).NetUnitPrice);
-  const netCost = coerceNumber((data as { NetCost?: unknown }).NetCost);
-
-  const setValue = (field: 'TotalPrice' | 'TotalNet' | 'TotalCost' | 'GrossProfit', value: number | null) => {
-    try {
-      node.setDataValue(field, value);
-    } catch {
-      /* noop */
-    }
-  };
-
-  setValue('TotalPrice', listPrice != null ? roundMoney(listPrice * quantity) : null);
-  setValue('TotalNet', netUnitPrice != null ? roundMoney(netUnitPrice * quantity) : null);
-  setValue('TotalCost', netCost != null ? roundMoney(netCost * quantity) : null);
-  setValue(
-    'GrossProfit',
-    netUnitPrice != null && netCost != null ? roundMoney((netUnitPrice - netCost) * quantity) : null,
-  );
-};
-
-const CATEGORY_TOTAL_COLUMNS: string[] = ['TotalPrice', 'TotalNet', 'TotalCost'];
-const refreshCategoryAggregates = (api?: GridApi<Record<string, unknown>> | null) => {
-  if (!api || typeof api.refreshCells !== 'function') return;
-  try {
-    api.refreshCells({ columns: CATEGORY_TOTAL_COLUMNS, force: true });
-  } catch (err) {
-    console.warn('Failed to refresh category aggregates', err);
-  }
-};
-
-const categoryTotalPriceGetter = buildCategoryAggregateGetter('TotalPrice');
-const categoryTotalNetGetter = buildCategoryAggregateGetter('TotalNet');
-const categoryTotalCostGetter = buildCategoryAggregateGetter('TotalCost');
-
-const productHistoryMenuIcon = `
-  <span class="fastquote-menu-icon fastquote-menu-icon--history" aria-hidden="true">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 5a7 7 0 1 1-7 7" />
-      <path d="M12 9v4l2.6 1.5" />
-      <path d="M5 7 4 4l3 1" />
-    </svg>
-  </span>
-`;
-
-const enhanceDescriptionMenuIcon = `
-  <span class="fastquote-menu-icon" aria-hidden="true">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-      <path d="M9 4.5a.75.75 0 0 1 .721.544l.813 2.846a3.75 3.75 0 0 0 2.576 2.576l2.846.813a.75.75 0 0 1 0 1.442l-2.846.813a3.75 3.75 0 0 0-2.576 2.576l-.813 2.846a.75.75 0 0 1-1.442 0l-.813-2.846a3.75 3.75 0 0 0-2.576-2.576l-2.846-.813a.75.75 0 0 1 0-1.442l2.846-.813A3.75 3.75 0 0 0 7.466 7.89l.813-2.846A.75.75 0 0 1 9 4.5Z"/>
-      <path d="M18 1.5a.75.75 0 0 1 .728.568l.258 1.036a2.63 2.63 0 0 0 1.91 1.91l1.036.258a.75.75 0 0 1 0 1.456l-1.036.258a2.63 2.63 0 0 0-1.91 1.91l-.258 1.036a.75.75 0 0 1-1.456 0l-.258-1.036a2.63 2.63 0 0 0-1.91-1.91l-1.036-.258a.75.75 0 0 1 0-1.456l1.036-.258a2.63 2.63 0 0 0 1.91-1.91l.258-1.036A.75.75 0 0 1 18 1.5Z"/>
-    </svg>
-  </span>
-`;
-
-const addWebLinkMenuIcon = `
-  <span class="fastquote-menu-icon" aria-hidden="true">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-      <path d="M9 4.5a.75.75 0 0 1 .721.544l.813 2.846a3.75 3.75 0 0 0 2.576 2.576l2.846.813a.75.75 0 0 1 0 1.442l-2.846.813a3.75 3.75 0 0 0-2.576 2.576l-.813 2.846a.75.75 0 0 1-1.442 0l-.813-2.846a3.75 3.75 0 0 0-2.576-2.576l-2.846-.813a.75.75 0 0 1 0-1.442l2.846-.813A3.75 3.75 0 0 0 7.466 7.89l.813-2.846A.75.75 0 0 1 9 4.5Z"/>
-      <path d="M18 1.5a.75.75 0 0 1 .728.568l.258 1.036a2.63 2.63 0 0 0 1.91 1.91l1.036.258a.75.75 0 0 1 0 1.456l-1.036.258a2.63 2.63 0 0 0-1.91 1.91l-.258 1.036a.75.75 0 0 1-1.456 0l-.258-1.036a2.63 2.63 0 0 0-1.91-1.91l-1.036-.258a.75.75 0 0 1 0-1.456l1.036-.258a2.63 2.63 0 0 0 1.91-1.91l.258-1.036A.75.75 0 0 1 18 1.5Z"/>
-    </svg>
-  </span>
-`;
-
-const categoryMenuIcon = `
-  <span class="fastquote-menu-icon fastquote-menu-icon--category" aria-hidden="true">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M3 5h6l2 2h10v12H3z" />
-      <path d="M3 7h18" />
-    </svg>
-  </span>
-`;
-
-const commentMenuIcon = `
-  <span class="fastquote-menu-icon fastquote-menu-icon--comment" aria-hidden="true">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-    </svg>
-  </span>
-`;
-
-const brandBulkEditMenuIcon = `
-  <span class="fastquote-menu-icon fastquote-menu-icon--brand" aria-hidden="true">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 20h9" />
-      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
-    </svg>
-  </span>
-`;
-
-const copyRowsMenuIcon = `
-  <span class="fastquote-menu-icon fastquote-menu-icon--copy" aria-hidden="true">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="9" y="9" width="11" height="11" rx="2" />
-      <rect x="4" y="4" width="11" height="11" rx="2" />
-    </svg>
-  </span>
-`;
-
-const pasteRowsMenuIcon = `
-  <span class="fastquote-menu-icon" aria-hidden="true">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M8 4h8" />
-      <rect x="6" y="2" width="12" height="4" rx="1.5" />
-      <path d="M6 8h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z" />
-      <path d="M12 12v6" />
-      <path d="M9 15h6" />
-    </svg>
-  </span>
-`;
-
-const addStandardPackageMenuIcon = `
-  <span class="fastquote-menu-icon fastquote-menu-icon--copy" aria-hidden="true">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M4 6h16" />
-      <path d="M4 12h16" />
-      <path d="M4 18h9" />
-      <path d="M17 15v6" />
-      <path d="M14 18h6" />
-    </svg>
-  </span>
-`;
-
-const productAccentCellClassRules = {
-  'offer-products-grid__cell--product-accent': (params: { data?: Record<string, unknown> | null }) =>
-    isOfferProductProduct(params.data),
-};
-
-const productPriceListClassRules = priceListStatusClassRules((params) =>
-  isOfferProductProduct(params.data) ? params.data : null,
-);
-
-const totalPriceCellClassRules = {
-  ...productAccentCellClassRules,
-  ...productPriceListClassRules,
-};
-
-const PRICING_FIELD_LABELS: Record<string, string> = {
-  CustomerDiscount: 'Customer Discount',
-  NetUnitPrice: 'Net Unit Price',
-  TelmacoDiscount: 'Telmaco Discount',
-  NetCostOtherCurrency: 'Cost (Other Currency)',
-  CurrencyCostModifier: 'Cost Modifier',
-  NetCost: 'Net Cost',
-  Margin: 'Margin',
-  ListPrice: 'List Price',
-};
-
-const PRICING_EDITABLE_FIELDS = new Set(Object.keys(PRICING_FIELD_LABELS));
-const COST_ANALYSIS_COLUMNS = [
-  'TelmacoDiscount',
-  'NetCostOtherCurrency',
-  'CurrencyCostModifier',
-  'NetCost',
-  'Margin',
-  'GrossProfit',
-  'TotalCost',
-];
-
-const STANDARD_PACKAGE_PRODUCTS_FIELDS = [
-  'OfferDetailID',
-  'ProductID',
-  'Quantity',
-  'PartNumber',
-  'ModelNumber',
-  'ProductDescription',
-  'Ordering',
-  'TreeOrdering',
-  'BrandID',
-  'Comment',
-  'IsCategory',
-  'IsComment',
-  'IsPrintable',
-  'WebLink',
-  'Enabled',
-  'CreatedOn',
-  'CreatedBy',
-  'ModifiedOn',
-  'ModifiedBy',
-];
-
-const findDeleteMenuItemIndex = (
-  items: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string>,
-) => items.findIndex((item) => {
-  if (!item || typeof item !== 'object') return false;
-  const { name } = item as MenuItemDef<Record<string, unknown>>;
-  if (typeof name !== 'string') return false;
-  const normalized = name.trim().toLowerCase();
-  return normalized.startsWith('delete');
-});
 
 type Props = {
   offerId: string;
@@ -1032,194 +201,6 @@ type OfferExportRow = {
   IsComment?: boolean | null;
   IsCategory?: boolean | null;
 };
-
-// Custom cell editor for multiline text (Description and Comment cells)
-class MultilineTextCellEditor {
-  private eInput!: HTMLTextAreaElement;
-  private eWrapper!: HTMLDivElement;
-  private initialValue: string = '';
-  private params!: ICellEditorParams;
-  private isMultiline: boolean = false;
-  private lastMeasuredWidth: number = 0;
-
-  init(params: ICellEditorParams) {
-    this.params = params;
-    this.initialValue = params.value ?? '';
-    this.isMultiline = this.initialValue.includes('\n');
-
-    // Create wrapper div for positioning
-    this.eWrapper = document.createElement('div');
-    this.eWrapper.style.position = 'relative';
-    this.eWrapper.style.width = '100%';
-    this.eWrapper.style.height = '100%';
-    this.eWrapper.style.overflow = 'visible';
-
-    // Create textarea
-    this.eInput = document.createElement('textarea');
-    this.eInput.value = this.initialValue;
-    this.eInput.style.border = 'none';
-    this.eInput.style.outline = 'none';
-    this.eInput.style.resize = 'none';
-    this.eInput.style.fontFamily = 'inherit';
-    this.eInput.style.fontSize = 'inherit';
-    this.eInput.style.lineHeight = '1.5';
-    this.eInput.style.boxSizing = 'border-box';
-    this.eInput.style.background = 'white';
-
-    if (this.isMultiline) {
-      this.applyMultilineStyle();
-    } else {
-      this.applySingleLineStyle();
-    }
-
-    // Handle Alt+Enter to insert line breaks
-    this.eInput.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && e.altKey) {
-        e.preventDefault();
-        e.stopPropagation();
-
-        const start = this.eInput.selectionStart;
-        const end = this.eInput.selectionEnd;
-        const value = this.eInput.value;
-
-        // Insert newline at cursor position
-        this.eInput.value = value.substring(0, start) + '\n' + value.substring(end);
-
-        // Move cursor after the newline
-        this.eInput.selectionStart = this.eInput.selectionEnd = start + 1;
-
-        // Switch to multi-line mode if not already
-        if (!this.isMultiline) {
-          this.isMultiline = true;
-          this.applyMultilineStyle();
-        }
-
-        // Resize row to fit content
-        this.resizeToFit();
-      }
-    });
-
-    // Detect when all line breaks are removed -> switch back to single-line
-    this.eInput.addEventListener('input', () => {
-      const hasBreaks = this.eInput.value.includes('\n');
-      if (this.isMultiline && !hasBreaks) {
-        this.isMultiline = false;
-        this.applySingleLineStyle();
-        // Reset row height back to default
-        const node = this.params.node;
-        if (node) {
-          node.setRowHeight(null);
-          this.params.api.onRowHeightChanged();
-        }
-      }
-    });
-
-    this.eWrapper.appendChild(this.eInput);
-  }
-
-  private applySingleLineStyle() {
-    this.eInput.style.position = 'absolute';
-    this.eInput.style.top = '0';
-    this.eInput.style.left = '0';
-    this.eInput.style.width = '2000px';
-    this.eInput.style.height = '100%';
-    this.eInput.style.padding = '4px 0';
-    this.eInput.style.whiteSpace = 'nowrap';
-    this.eInput.style.overflow = 'hidden';
-    this.eInput.style.zIndex = '1000';
-  }
-
-  private applyMultilineStyle() {
-    this.eInput.style.position = 'absolute';
-    this.eInput.style.top = '0';
-    this.eInput.style.left = '0';
-    this.eInput.style.width = '2000px';
-    this.eInput.style.height = '100%';
-    this.eInput.style.padding = '0';
-    this.eInput.style.whiteSpace = 'pre';
-    this.eInput.style.overflow = 'hidden';
-    this.eInput.style.zIndex = '1000';
-  }
-
-  private measureTextWidth(): number {
-    const text = this.eInput.value;
-    if (!text) return 0;
-    const computed = window.getComputedStyle(this.eInput);
-    const font = `${computed.fontSize} ${computed.fontFamily}`;
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return 0;
-    ctx.font = font;
-    const lines = text.split('\n');
-    let maxWidth = 0;
-    for (const line of lines) {
-      const w = ctx.measureText(line).width;
-      if (w > maxWidth) maxWidth = w;
-    }
-    return Math.ceil(maxWidth) + 24;
-  }
-
-  private resizeToFit() {
-    requestAnimationFrame(() => {
-      // Calculate height from line count (lineHeight 1.5 * fontSize)
-      const lineCount = this.eInput.value.split('\n').length;
-      const computed = window.getComputedStyle(this.eInput);
-      const fontSize = parseFloat(computed.fontSize) || 14;
-      const lineHeight = fontSize * 1.5;
-      const neededHeight = Math.ceil(lineCount * lineHeight);
-
-      // Set textarea and row height
-      this.eInput.style.height = neededHeight + 'px';
-
-      const node = this.params.node;
-      if (node) {
-        node.setRowHeight(neededHeight);
-        this.params.api.onRowHeightChanged();
-      }
-
-      // Measure and store width for use on destroy
-      this.lastMeasuredWidth = this.measureTextWidth();
-    });
-  }
-
-  getGui() {
-    return this.eWrapper;
-  }
-
-  afterGuiAttached() {
-    this.eInput.focus();
-    this.eInput.select();
-    this.eInput.scrollLeft = 0;
-  }
-
-  getValue() {
-    return this.eInput.value;
-  }
-
-  isCancelBeforeStart() {
-    return false;
-  }
-
-  isCancelAfterEnd() {
-    return false;
-  }
-
-  destroy() {
-    // Reset scroll position of the cell so it shows the left (beginning) of text
-    const cell = this.eWrapper.closest('.ag-cell');
-    if (cell) {
-      cell.scrollLeft = 0;
-      const wrapper = cell.querySelector('.ag-cell-wrapper');
-      if (wrapper) (wrapper as HTMLElement).scrollLeft = 0;
-      const value = cell.querySelector('.ag-cell-value');
-      if (value) (value as HTMLElement).scrollLeft = 0;
-    }
-
-  }
-}
-
-const buildEndpointForOffer = (offerId: string) =>
-  `/api/offers/${encodeURIComponent(offerId)}/products`;
 
 const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   offerId,
@@ -1708,6 +689,14 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       const parentKey = buildTreeOrderingKey(path.slice(0, -1));
       if (parentKey && categoryKeys.has(parentKey)) {
         next.add(parentKey);
+      }
+    });
+    // Preserve collapsed categories: their children have been removed from the
+    // grid so forEachNode won't find them, but we know they have children
+    // (otherwise they couldn't have been collapsed).
+    collapsedCategoryPathsRef.current.forEach((key) => {
+      if (categoryKeys.has(key)) {
+        next.add(key);
       }
     });
     setCategoryPathsWithChildren((prev) => {

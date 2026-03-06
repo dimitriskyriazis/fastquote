@@ -448,7 +448,7 @@ export async function POST(
     }>(`
       SELECT
         o.Description,
-        o.SalesDivitionID AS SalesDivisionID,
+        o.SalesDivisionID,
         sd.Name AS SalesDivisionName,
         c.ERPID AS ERPCustomerID,
         c.Name AS CustomerName,
@@ -456,7 +456,7 @@ export async function POST(
         o.ERPProjectCode
       FROM dbo.Offer o
       INNER JOIN dbo.Customers c ON o.CustomerID = c.ID
-      LEFT JOIN dbo.SalesDivision sd ON o.SalesDivitionID = sd.ID
+      LEFT JOIN dbo.SalesDivision sd ON o.SalesDivisionID = sd.ID
       WHERE o.ID = @offerId
     `);
     const offerRow = offerResult.recordset?.[0] ?? null;

@@ -4,6 +4,7 @@ import sql from 'mssql';
 import { getPool } from '../../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../../lib/auditTrail';
 import { requirePermission } from '../../../../../lib/authz';
+import { normalizeString, normalizeInt } from '../../../../../lib/normalize';
 
 type ContactRequestBody = {
   firstName?: string;
@@ -25,23 +26,6 @@ type CreatedContactRow = {
   ContactID: number;
   FirstName: string | null;
   LastName: string | null;
-};
-
-const normalizeString = (value: unknown, maxLength = 500): string | null => {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
-};
-
-const normalizeInt = (value: unknown): number | null => {
-  if (value === null || value === undefined) return null;
-  if (typeof value === 'number' && Number.isInteger(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number(value.trim());
-    if (Number.isInteger(parsed)) return parsed;
-  }
-  return null;
 };
 
 const normalizeBoolean = (value: unknown): boolean =>

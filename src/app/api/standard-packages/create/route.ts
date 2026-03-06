@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
         StatusID,
         PricingPolicyID,
         MarketID,
-        SalesDivitionID,
+        SalesDivisionID,
         SalesPersonId,
         SalesManagerID,
         CreatedBy,

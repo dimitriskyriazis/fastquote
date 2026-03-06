@@ -21,6 +21,8 @@ export const showToastMessage = (
     container = document.createElement('div');
     container.id = containerId;
     container.className = 'drop-toast-container';
+    container.setAttribute('role', 'status');
+    container.setAttribute('aria-live', 'polite');
     document.body.appendChild(container);
   }
   const toast = document.createElement('div');

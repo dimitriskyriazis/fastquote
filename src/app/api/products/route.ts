@@ -13,6 +13,8 @@ import {
 import { clearPartModelNumberUpper } from "../../../lib/partModelNumber";
 import { KnownFilterModel, TextCondition, isCompoundFilter } from "../../../lib/filterTypes";
 import { processFilter } from "../../../lib/filterProcessing";
+import { normalizeId } from '../../../lib/normalize';
+import { BATCH_DELETE_SIZE } from '../../../lib/constants';
 
 type GridRequest = {
   startRow?: number;
@@ -62,28 +64,17 @@ const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, exp
 }));
 const DEFAULT_PRODUCT_ORDER = "ORDER BY dbo.Brands.Name, dbo.Products.ModelNumber, dbo.Products.ID";
 
-const normalizeProductId = (value: unknown): number | null => {
-  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
-  if (typeof value === "string" && value.trim().length > 0) {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
-};
-
 const collectProductIds = (values: unknown): number[] => {
   if (!Array.isArray(values)) return [];
   const normalized = new Set<number>();
   values.forEach((value) => {
-    const id = normalizeProductId(value);
+    const id = normalizeId(value);
     if (id != null) {
       normalized.add(id);
     }
   });
   return Array.from(normalized);
 };
-
-const PRODUCT_DELETE_BATCH = 200;
 
 const ALLOWED_ROW_GROUP_FIELDS = new Set(["Brand", "Category", "SubCategory", "Type"]);
 
@@ -288,7 +279,7 @@ const buildGroupKeyFilter = (field: { field: string; expression: string }, key: 
 async function readGridRequest(req: NextRequest): Promise<GridRequestResult> {
   try {
     const payload = await req.json();
-    const highlightProductId = normalizeProductId(
+    const highlightProductId = normalizeId(
       payload && typeof payload === "object" ? (payload as { newProductId?: unknown }).newProductId ?? null : null,
     );
     if (payload && typeof payload === "object" && "request" in payload) {
@@ -324,8 +315,8 @@ export async function DELETE(req: NextRequest) {
     const pool = await getPool();
     let deleted = 0;
 
-    for (let idx = 0; idx < ids.length; idx += PRODUCT_DELETE_BATCH) {
-      const chunk = ids.slice(idx, idx + PRODUCT_DELETE_BATCH);
+    for (let idx = 0; idx < ids.length; idx += BATCH_DELETE_SIZE) {
+      const chunk = ids.slice(idx, idx + BATCH_DELETE_SIZE);
       if (chunk.length === 0) continue;
       const transaction = new sql.Transaction(pool);
       await transaction.begin();

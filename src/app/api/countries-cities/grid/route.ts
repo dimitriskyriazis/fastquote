@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { logRequest } from '../../../../lib/apiHelpers';
 import { getPool } from "../../../../lib/sql";
 import { requirePermission } from "../../../../lib/authz";
+import type {
+  TextCondition as TextFilterModel,
+  CompoundTextFilter as CompoundTextFilterModel,
+  SetFilterModel,
+  KnownFilterModel,
+} from "../../../../lib/filterTypes";
 
 type GridRequest = {
   startRow?: number;
@@ -21,24 +27,6 @@ type RawRow = {
   Enabled: boolean | number | null;
 };
 
-type TextFilterModel = {
-  filterType: "text";
-  type?: "contains" | "equals" | "notEqual" | "startsWith" | "endsWith";
-  filter?: string;
-};
-
-type CompoundTextFilterModel = {
-  filterType: "text";
-  operator: "AND" | "OR";
-  conditions: TextFilterModel[];
-};
-
-type SetFilterModel = {
-  filterType: "set";
-  values?: Array<string | number | boolean>;
-};
-
-type KnownFilterModel = TextFilterModel | CompoundTextFilterModel | SetFilterModel;
 
 const applyQuickFilter = (rows: Record<string, unknown>[], query: string) => {
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);

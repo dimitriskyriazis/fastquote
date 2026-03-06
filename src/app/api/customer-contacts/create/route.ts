@@ -4,29 +4,7 @@ import sql, { ConnectionPool } from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { requirePermission } from "../../../../lib/authz";
-
-const normalizeString = (value: unknown, maxLength = 500): string | null => {
-  if (value == null) return null;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (trimmed.length === 0) return null;
-    return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
-  }
-  const coerced = String(value);
-  const trimmed = coerced.trim();
-  if (trimmed.length === 0) return null;
-  return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
-};
-
-const normalizeId = (value: unknown): number | null => {
-  if (value === null || value === undefined) return null;
-  if (typeof value === "number" && Number.isInteger(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value.trim());
-    if (Number.isInteger(parsed)) return parsed;
-  }
-  return null;
-};
+import { normalizeString, normalizeId } from '../../../../lib/normalize';
 
 const normalizeBoolean = (value: unknown): boolean => {
   if (value === true || value === "true" || value === "1") return true;

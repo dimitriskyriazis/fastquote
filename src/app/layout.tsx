@@ -24,8 +24,6 @@ export const metadata: Metadata = {
   title: "FastQuote",
 };
 
-export const dynamic = 'force-dynamic';
-
 const SIDENAV_COLLAPSED_COOKIE_NAME = "fastquote_sidenav_collapsed";
 
 export default async function RootLayout({
@@ -36,7 +34,7 @@ export default async function RootLayout({
 
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <CaretVisibilityManager />
         <AuditUserProvider>
           <DisableAutofill />

@@ -9,6 +9,7 @@ import {
   QueryParam } from "../../../lib/gridFilters";
 import { KnownFilterModel } from "../../../lib/filterTypes";
 import { processFilter } from "../../../lib/filterProcessing";
+import { BATCH_DELETE_SIZE } from '../../../lib/constants';
 import { requirePermission } from "../../../lib/authz";
 import { checkDeletePermission } from "../../../lib/deletePermissions";
 import { toDropdownOptions, type DropdownOption } from "../../../lib/dropdownOptions";
@@ -245,8 +246,6 @@ const collectContactIds = (values: unknown): number[] => {
   });
   return Array.from(normalized);
 };
-
-const CONTACT_DELETE_BATCH = 200;
 
 const fetchEmailStatuses = async (): Promise<string[]> => {
   const pool = await getPool();
@@ -620,8 +619,8 @@ export async function DELETE(req: NextRequest) {
     const pool = await getPool();
     let deleted = 0;
 
-    for (let idx = 0; idx < ids.length; idx += CONTACT_DELETE_BATCH) {
-      const chunk = ids.slice(idx, idx + CONTACT_DELETE_BATCH);
+    for (let idx = 0; idx < ids.length; idx += BATCH_DELETE_SIZE) {
+      const chunk = ids.slice(idx, idx + BATCH_DELETE_SIZE);
       if (chunk.length === 0) continue;
       const transaction = new sql.Transaction(pool);
       await transaction.begin();

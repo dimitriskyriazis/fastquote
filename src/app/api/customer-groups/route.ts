@@ -11,6 +11,7 @@ import {
   QueryParam } from "../../../lib/gridFilters";
 import { KnownFilterModel } from "../../../lib/filterTypes";
 import { processFilter } from "../../../lib/filterProcessing";
+import { BATCH_DELETE_SIZE } from '../../../lib/constants';
 
 
 
@@ -121,8 +122,6 @@ const collectCustomerGroupIds = (values: unknown): number[] => {
   });
   return Array.from(normalized);
 };
-
-const GROUP_DELETE_BATCH = 200;
 
 const normalizeBooleanInput = (value: unknown): boolean => {
   if (value === 1 || value === true || value === "1") return true;
@@ -301,8 +300,8 @@ export async function DELETE(req: NextRequest) {
     const pool = await getPool();
     let deleted = 0;
 
-    for (let idx = 0; idx < ids.length; idx += GROUP_DELETE_BATCH) {
-      const chunk = ids.slice(idx, idx + GROUP_DELETE_BATCH);
+    for (let idx = 0; idx < ids.length; idx += BATCH_DELETE_SIZE) {
+      const chunk = ids.slice(idx, idx + BATCH_DELETE_SIZE);
       if (chunk.length === 0) continue;
       const transaction = new sql.Transaction(pool);
       await transaction.begin();

@@ -160,7 +160,7 @@ export function buildRecentOfferLabel(
     typeof value === "string" ? value.trim() : value ? String(value).trim() : "";
   const description = normalize(source.description);
   const title = normalize(source.title);
-  if (description && title) return `${description} ™?? ${title}`;
+  if (description && title) return `${description} – ${title}`;
   if (description) return description;
   if (title) return title;
   return fallback;

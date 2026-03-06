@@ -19,7 +19,7 @@ async function fetchOfferBasicRecord(offerId: number) {
         o.ID AS OfferID,
         o.OfferVersion,
         o.CustomerID,
-        o.SalesDivitionID AS SalesDivisionID,
+        o.SalesDivisionID,
         o.Title,
         o.Description,
         o.PaymentTerms,
@@ -74,7 +74,7 @@ async function fetchOfferBasicRecord(offerId: number) {
       LEFT JOIN dbo.OfferStatus AS os ON o.StatusID = os.ID
       LEFT JOIN dbo.PricingPolicies AS pp ON o.PricingPolicyID = pp.ID
       LEFT JOIN dbo.Markets AS m ON o.MarketID = m.ID
-      LEFT JOIN dbo.SalesDivision AS sd ON o.SalesDivitionID = sd.ID
+      LEFT JOIN dbo.SalesDivision AS sd ON o.SalesDivisionID = sd.ID
       LEFT JOIN dbo.AspNetUsers AS created ON o.CreatedBy = created.Id
       LEFT JOIN dbo.AspNetUsers AS sales ON o.SalesPersonId = sales.Id
       LEFT JOIN dbo.AspNetUsers AS approver ON o.ApprovalUserId = approver.Id

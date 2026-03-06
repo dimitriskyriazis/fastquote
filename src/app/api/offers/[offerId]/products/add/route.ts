@@ -12,46 +12,13 @@ import {
 } from '../../../../../../lib/gridFilters';
 import { clearPartModelNumberUpper } from '../../../../../../lib/partModelNumber';
 import { requirePermission } from '../../../../../../lib/authz';
-
-type TextFilterModel = {
-  filterType: 'text';
-  type?: 'contains' | 'equals' | 'notEqual' | 'startsWith' | 'endsWith' | 'blank' | 'notBlank';
-  filter?: string;
-};
-
-type CompoundTextFilterModel = {
-  filterType: 'text';
-  operator: 'AND' | 'OR';
-  conditions: TextFilterModel[];
-};
-
-type NumberFilterModel = {
-  filterType: 'number';
-  type?:
-    | 'equals'
-    | 'notEqual'
-    | 'lessThan'
-    | 'greaterThan'
-    | 'lessThanOrEqual'
-    | 'greaterThanOrEqual'
-    | 'inRange'
-    | 'blank'
-    | 'notBlank';
-  filter?: number;
-  filterTo?: number;
-};
-
-type CompoundNumberFilterModel = {
-  filterType: 'number';
-  operator: 'AND' | 'OR';
-  conditions: NumberFilterModel[];
-};
-
-type KnownFilterModel =
-  | TextFilterModel
-  | CompoundTextFilterModel
-  | NumberFilterModel
-  | CompoundNumberFilterModel;
+import type {
+  TextCondition as TextFilterModel,
+  CompoundTextFilter as CompoundTextFilterModel,
+  NumberCondition as NumberFilterModel,
+  CompoundNumberFilter as CompoundNumberFilterModel,
+  KnownFilterModel,
+} from '../../../../../../lib/filterTypes';
 
 type GridRequest = {
   startRow?: number;

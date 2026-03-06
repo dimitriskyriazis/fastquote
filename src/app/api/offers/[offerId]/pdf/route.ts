@@ -130,7 +130,7 @@ export async function GET(
         LEFT JOIN dbo.Contacts cnt ON o.ContactID = cnt.ID
         LEFT JOIN dbo.AspNetUsers sales ON o.SalesPersonId = sales.Id
         LEFT JOIN dbo.AspNetUsers approver ON o.ApprovalUserId = approver.Id
-        LEFT JOIN dbo.SalesDivision sd ON o.SalesDivitionID = sd.ID
+        LEFT JOIN dbo.SalesDivision sd ON o.SalesDivisionID = sd.ID
         WHERE o.ID = @offerId
       `);
 

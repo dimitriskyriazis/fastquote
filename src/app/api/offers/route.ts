@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logRequest } from '../../../lib/apiHelpers';
+import { normalizeId, normalizeProbability } from '../../../lib/normalize';
+import { BATCH_DELETE_SIZE } from '../../../lib/constants';
 import sql from 'mssql';
 import type { Request as SqlRequest } from 'mssql';
 import { getPool } from '../../../lib/sql';
@@ -258,7 +260,7 @@ async function readGridRequest(req: NextRequest): Promise<GridRequestPayload> {
       const rawExpanded = (payload as { expandedVersionGroupIds?: unknown }).expandedVersionGroupIds;
       const expandedVersionGroupIds = Array.isArray(rawExpanded)
         ? rawExpanded
-          .map((value) => normalizeOfferId(value))
+          .map((value) => normalizeId(value))
           .filter((value): value is number => value != null)
         : [];
       if (inner && typeof inner === 'object') {
@@ -272,14 +274,6 @@ async function readGridRequest(req: NextRequest): Promise<GridRequestPayload> {
   return { request: { startRow: 0, endRow: 100 }, includeAllVersions: false, expandedVersionGroupIds: [] };
 }
 
-const normalizeOfferId = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isInteger(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isInteger(parsed)) return parsed;
-  }
-  return null;
-};
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/offers');
@@ -359,7 +353,7 @@ export async function POST(req: NextRequest) {
 	        INNER JOIN dbo.Customers ON dbo.Offer.CustomerID = dbo.Customers.ID
 	        INNER JOIN dbo.PricingPolicies ON dbo.Offer.PricingPolicyID = dbo.PricingPolicies.ID
 	        INNER JOIN dbo.Markets ON dbo.Offer.MarketID = dbo.Markets.ID
-	        INNER JOIN dbo.SalesDivision ON dbo.Offer.SalesDivitionID = dbo.SalesDivision.ID
+	        INNER JOIN dbo.SalesDivision ON dbo.Offer.SalesDivisionID = dbo.SalesDivision.ID
 	        INNER JOIN dbo.AspNetUsers AS sales ON dbo.Offer.SalesPersonId = sales.Id
 	        LEFT JOIN dbo.AspNetUsers AS created ON dbo.Offer.CreatedBy = created.Id
 	        INNER JOIN dbo.OfferStatus ON dbo.Offer.StatusID = dbo.OfferStatus.ID
@@ -506,15 +500,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-const normalizeProbability = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isInteger(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isInteger(parsed)) return parsed;
-  }
-  return null;
-};
-
 export async function PATCH(req: NextRequest) {
   logRequest(req, '/api/offers');
   try {
@@ -539,7 +524,7 @@ export async function PATCH(req: NextRequest) {
 
     for (const update of rawUpdates) {
       if (!update || update.field !== 'Probability') continue;
-      const offerId = normalizeOfferId(update.OfferID);
+      const offerId = normalizeId(update.OfferID);
       if (offerId == null) continue;
       const probability = normalizeProbability(update.value);
       if (probability == null) {
@@ -598,7 +583,7 @@ export async function DELETE(req: NextRequest) {
     const normalizedIds = Array.from(
       new Set(
         rawIds
-          .map((value) => normalizeOfferId(value ?? null))
+          .map((value) => normalizeId(value ?? null))
           .filter((value): value is number => value != null),
       ),
     );
@@ -613,7 +598,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     const pool = await getPool();
-    const chunkSize = 200;
+    const chunkSize = BATCH_DELETE_SIZE;
     let deleted = 0;
 
     for (let idx = 0; idx < normalizedIds.length; idx += chunkSize) {

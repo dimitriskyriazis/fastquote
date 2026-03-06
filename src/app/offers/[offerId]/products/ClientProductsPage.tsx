@@ -6,22 +6,22 @@ import Link from 'next/link';
 import PageHeader from '../../../components/PageHeader';
 import { GridQuickSearchProvider } from '../../../components/GridQuickSearchProvider';
 import OfferProductsPanel, { type OfferProductsPanelHandle } from '../OfferProductsPanel';
-import OfferProductsPivotPanel from './OfferProductsPivotPanel';
 import { showToastMessage } from '../../../../lib/toast';
 import { addRecentOffer } from '../../../lib/recentOffers';
 import { useAuditUser } from '../../../components/AuditUserProvider';
 import layoutStyles from '../../offersDetail.module.css';
 import pageHeaderStyles from '../../../components/PageHeader.module.css';
 import toolbarStyles from './ClientProductsPage.module.css';
-import AddRequestedProductsModal from './AddRequestedProductsModal';
-import ExportOfferProductsModal from './ExportOfferProductsModal';
-import AddProductModal from '../../../products/AddProductModal';
-import PasteProductsDialog from './PasteProductsDialog';
-import LookupModal from '../../../components/LookupModal';
 import lookupStyles from '../../../components/LookupModal.module.css';
 import { mapRowToClipboardRow, readClipboard } from './productClipboard';
 
+const OfferProductsPivotPanel = dynamic(() => import('./OfferProductsPivotPanel'), { ssr: false });
+const AddRequestedProductsModal = dynamic(() => import('./AddRequestedProductsModal'), { ssr: false });
+const ExportOfferProductsModal = dynamic(() => import('./ExportOfferProductsModal'), { ssr: false });
+const AddProductModal = dynamic(() => import('../../../products/AddProductModal'), { ssr: false });
 const AddProductsModal = dynamic(() => import('./AddProductsModal'), { ssr: false });
+const PasteProductsDialog = dynamic(() => import('./PasteProductsDialog'), { ssr: false });
+const LookupModal = dynamic(() => import('../../../components/LookupModal'), { ssr: false });
 type Props = {
   offerId: string;
   headingText: string;
