@@ -7,13 +7,13 @@ const createRateLimiter = (points: number, duration: number) =>
   new RateLimiterMemory({ points, duration, blockDuration: duration });
 
 const ipLimiter = createRateLimiter(
-  Number(process.env.RATE_LIMIT_IP_POINTS),
-  Number(process.env.RATE_LIMIT_IP_DURATION),
+  Number(process.env.RATE_LIMIT_IP_POINTS) || 5000,
+  Number(process.env.RATE_LIMIT_IP_DURATION) || 900,
 );
 
 const strictLimiter = createRateLimiter(
-  Number(process.env.RATE_LIMIT_STRICT_POINTS),
-  Number(process.env.RATE_LIMIT_STRICT_DURATION),
+  Number(process.env.RATE_LIMIT_STRICT_POINTS) || 1000,
+  Number(process.env.RATE_LIMIT_STRICT_DURATION) || 900,
 );
 
 function getClientIp(req: NextRequest): string {
