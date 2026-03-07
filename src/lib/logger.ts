@@ -45,7 +45,6 @@ function writeToDatabase(
 
       const category = (context?.category as string) ?? null;
       const userId = (context?.userId as string) ?? null;
-      const userName = (context?.userName as string) ?? null;
       const method = (context?.method as string) ?? null;
       const requestId = (context?.requestId as string) ?? null;
 
@@ -69,7 +68,6 @@ function writeToDatabase(
       request.input('message', sql.NVarChar(2000), message.slice(0, 2000));
       request.input('category', sql.NVarChar(20), category);
       request.input('userId', sql.NVarChar(450), userId);
-      request.input('userName', sql.NVarChar(256), userName);
       request.input('method', sql.NVarChar(10), method);
       request.input('endpoint', sql.NVarChar(500), endpoint?.slice(0, 500) ?? null);
       request.input('requestId', sql.NVarChar(100), requestId);
@@ -77,9 +75,9 @@ function writeToDatabase(
 
       await request.query(`
         INSERT INTO dbo.Logs (
-          Timestamp, Level, Message, Category, UserId, UserName, Method, Endpoint, RequestId, Details
+          Timestamp, Level, Message, Category, UserId, Method, Endpoint, RequestId, Details
         ) VALUES (
-          SYSUTCDATETIME(), @level, @message, @category, @userId, @userName, @method, @endpoint, @requestId, @details
+          SYSUTCDATETIME(), @level, @message, @category, @userId, @method, @endpoint, @requestId, @details
         )
       `);
     } catch (err) {
