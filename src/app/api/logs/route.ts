@@ -43,7 +43,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Message: "dbo.Logs.Message",
   Category: "dbo.Logs.Category",
   UserId: "dbo.Logs.UserId",
-  UserName: "dbo.Logs.UserName",
+  UserName: "u.UserName",
   Method: "dbo.Logs.Method",
   Endpoint: "dbo.Logs.Endpoint",
   RequestId: "dbo.Logs.RequestId",
@@ -141,12 +141,13 @@ export async function POST(req: NextRequest) {
         dbo.Logs.Message,
         dbo.Logs.Category,
         dbo.Logs.UserId,
-        dbo.Logs.UserName,
+        u.UserName,
         dbo.Logs.Method,
         dbo.Logs.Endpoint,
         dbo.Logs.RequestId,
         dbo.Logs.Details
       FROM dbo.Logs
+      LEFT JOIN dbo.AspNetUsers u ON u.Id = dbo.Logs.UserId
     `;
 
     const pool = await getPool();
