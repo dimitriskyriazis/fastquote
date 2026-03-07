@@ -23,7 +23,7 @@ export const EMPTY_CONTACT_FORM: ContactFormValues = {
   firstName: "",
   position: "",
   email: "",
-  emailStatus: "",
+  emailStatus: "Active",
   secondEmail: "",
   secondEmailStatus: "",
   phone: "",

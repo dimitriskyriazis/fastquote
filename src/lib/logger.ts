@@ -1,7 +1,4 @@
-import winston from 'winston';
-import DailyRotateFile from 'winston-daily-rotate-file';
-import path from 'path';
-import fs from 'fs';
+import { getPool, sql } from './sql';
 import type { LogCategory } from './logCategory';
 
 export type { LogCategory } from './logCategory';
@@ -9,6 +6,7 @@ export type { LogCategory } from './logCategory';
 export type LogContext = {
   requestId?: string;
   userId?: string | null;
+  userName?: string | null;
   endpoint?: string;
   method?: string;
   category?: LogCategory;
@@ -18,75 +16,77 @@ export type LogContext = {
 export { categoryFromMethod, categoryFromRequest } from './logCategory';
 
 const isDev = process.env.NODE_ENV === 'development';
-const logsDir = path.join(process.cwd(), 'logs');
 
-// Ensure logs directory exists before creating transports
-fs.mkdirSync(logsDir, { recursive: true });
+const KNOWN_FIELDS = new Set([
+  'category', 'userId', 'userName', 'method', 'endpoint', 'requestId',
+]);
 
-const jsonFormat = winston.format.combine(
-  winston.format.timestamp(),
-  winston.format.errors({ stack: true }),
-  winston.format.json(),
-);
+const DB_LOG_SKIP_ENDPOINTS = new Set(['/api/logs']);
 
-const categoryFilter = (category: LogCategory) =>
-  winston.format((info) => (info['category'] === category ? info : false))();
-
-const consoleFormat = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-  winston.format.errors({ stack: true }),
-  isDev ? winston.format.colorize() : winston.format.uncolorize(),
-  winston.format.printf(({ timestamp, level, message, stack, ...rest }) => {
-    const context = Object.keys(rest).length ? ` ${JSON.stringify(rest)}` : '';
-    const base = `[${timestamp}] [${level.toUpperCase()}] ${message}${context}`;
-    return stack ? `${base}\n${stack}` : base;
-  }),
-);
-
-function makeRotateTransport(filename: string, opts: {
-  level?: string;
-  maxFiles?: string;
-  format?: winston.Logform.Format;
-}) {
-  const transport = new DailyRotateFile({
-    dirname: logsDir,
-    filename,
-    datePattern: 'YYYY-MM-DD',
-    maxFiles: opts.maxFiles ?? '14d',
-    level: opts.level ?? 'info',
-    format: opts.format ?? jsonFormat,
-    createSymlink: false,   // symlinks require elevated privileges on Windows
-    auditFile: path.join(logsDir, `.audit-${filename.replace('%DATE%', '').replace('.log', '')}.json`),
-  });
-
-  transport.on('error', (err) => {
-    console.error(`[logger] DailyRotateFile transport error (${filename}):`, err);
-  });
-
-  return transport;
+function formatConsole(level: string, message: string, context?: LogContext): string {
+  const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const contextStr = context ? ` ${JSON.stringify(context)}` : '';
+  return `[${timestamp}] [${level.toUpperCase()}] ${message}${contextStr}`;
 }
 
-const winstonLogger = winston.createLogger({
-  level: isDev ? 'debug' : 'info',
-  transports: [
-    new winston.transports.Console({ format: consoleFormat }),
-    makeRotateTransport('app-%DATE%.log', { level: 'info' }),
-    makeRotateTransport('error-%DATE%.log', { level: 'error', maxFiles: '30d' }),
-    makeRotateTransport('views-%DATE%.log', {
-      format: winston.format.combine(categoryFilter('view'), jsonFormat),
-    }),
-    makeRotateTransport('mutations-%DATE%.log', {
-      format: winston.format.combine(categoryFilter('mutation'), jsonFormat),
-    }),
-    makeRotateTransport('deletes-%DATE%.log', {
-      format: winston.format.combine(categoryFilter('delete'), jsonFormat),
-    }),
-  ],
-});
+function writeToDatabase(
+  level: string,
+  message: string,
+  context?: LogContext,
+  error?: Error,
+): void {
+  const endpoint = context?.endpoint as string | undefined;
+  if (endpoint && DB_LOG_SKIP_ENDPOINTS.has(endpoint)) return;
 
-winstonLogger.on('error', (err) => {
-  console.error('[logger] Winston error:', err);
-});
+  void (async () => {
+    try {
+      const pool = await getPool();
+      const request = pool.request();
+
+      const category = (context?.category as string) ?? null;
+      const userId = (context?.userId as string) ?? null;
+      const userName = (context?.userName as string) ?? null;
+      const method = (context?.method as string) ?? null;
+      const requestId = (context?.requestId as string) ?? null;
+
+      const details: Record<string, unknown> = {};
+      if (context) {
+        for (const [key, value] of Object.entries(context)) {
+          if (KNOWN_FIELDS.has(key)) continue;
+          details[key] = value;
+        }
+      }
+      if (error) {
+        details.errorName = error.name;
+        details.errorMessage = error.message;
+        details.stack = error.stack;
+      }
+      const detailsJson = Object.keys(details).length > 0
+        ? JSON.stringify(details)
+        : null;
+
+      request.input('level', sql.NVarChar(10), level);
+      request.input('message', sql.NVarChar(2000), message.slice(0, 2000));
+      request.input('category', sql.NVarChar(20), category);
+      request.input('userId', sql.NVarChar(450), userId);
+      request.input('userName', sql.NVarChar(256), userName);
+      request.input('method', sql.NVarChar(10), method);
+      request.input('endpoint', sql.NVarChar(500), endpoint?.slice(0, 500) ?? null);
+      request.input('requestId', sql.NVarChar(100), requestId);
+      request.input('details', sql.NVarChar(sql.MAX), detailsJson);
+
+      await request.query(`
+        INSERT INTO dbo.Logs (
+          Timestamp, Level, Message, Category, UserId, UserName, Method, Endpoint, RequestId, Details
+        ) VALUES (
+          SYSUTCDATETIME(), @level, @message, @category, @userId, @userName, @method, @endpoint, @requestId, @details
+        )
+      `);
+    } catch (err) {
+      console.error('[logger] Failed to write log to database:', err);
+    }
+  })();
+}
 
 function buildMeta(context?: LogContext, error?: Error): Record<string, unknown> {
   const meta: Record<string, unknown> = { ...context };
@@ -101,19 +101,25 @@ function buildMeta(context?: LogContext, error?: Error): Record<string, unknown>
 class Logger {
   debug(message: string, context?: LogContext): void {
     if (!isDev) return;
-    winstonLogger.debug(message, buildMeta(context));
+    console.log(formatConsole('debug', message, context));
   }
 
   info(message: string, context?: LogContext): void {
-    winstonLogger.info(message, buildMeta(context));
+    if (isDev) console.log(formatConsole('info', message, context));
+    writeToDatabase('info', message, context);
   }
 
   warn(message: string, context?: LogContext, error?: Error): void {
-    winstonLogger.warn(message, buildMeta(context, error));
+    if (isDev) console.warn(formatConsole('warn', message, context));
+    writeToDatabase('warn', message, context, error);
   }
 
   error(message: string, context?: LogContext, error?: Error): void {
-    winstonLogger.error(message, buildMeta(context, error));
+    if (isDev) {
+      const meta = buildMeta(context, error);
+      console.error(formatConsole('error', message, context), error ? meta : undefined);
+    }
+    writeToDatabase('error', message, context, error);
   }
 }
 

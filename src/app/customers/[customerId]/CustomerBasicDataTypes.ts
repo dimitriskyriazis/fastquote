@@ -9,7 +9,7 @@ export type CustomerBasicRecord = {
   Profession: string | null;
   CustomerGroupID: number | null;
   CustomerGroupName: string | null;
-  ActivityCode: string | null;
+
   ERPID: string | null;
   IsParent: boolean | number | null;
   ParentCustomerID: number | null;
@@ -37,7 +37,7 @@ export type CustomerBasicUpdateField =
   | 'TaxOffice'
   | 'Profession'
   | 'CustomerGroupID'
-  | 'ActivityCode'
+
   | 'ERPID'
   | 'IsParent'
   | 'ParentCustomerID'

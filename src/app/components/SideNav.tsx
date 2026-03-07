@@ -15,7 +15,7 @@ import {
   CustomersIcon,
   ContactsIcon,
   SuppliersIcon,
-  UserManagementIcon,
+  AdminIcon,
 } from "./NavIcons";
 
 type NavItem = {
@@ -35,7 +35,7 @@ const navItems: NavItem[] = [
   { label: "Customers", href: "/customers", icon: <CustomersIcon /> },
   { label: "Contacts", href: "/contacts", icon: <ContactsIcon /> },
   { label: "Suppliers", href: "/suppliers", icon: <SuppliersIcon /> },
-  { label: "User Management", href: "/user-management", icon: <UserManagementIcon />, requiresRoles: ["Administrator", "Developer"] },
+  { label: "Admin", href: "/user-management", icon: <AdminIcon />, requiresRoles: ["Administrator", "Developer"] },
 ];
 
 const SIDENAV_COLLAPSED_COOKIE_NAME = "fastquote_sidenav_collapsed";

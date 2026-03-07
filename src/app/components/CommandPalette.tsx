@@ -14,14 +14,16 @@ type SearchResult = {
 type GroupedResults = {
   offers: SearchResult[];
   customers: SearchResult[];
+  contacts: SearchResult[];
   products: SearchResult[];
 };
 
-const EMPTY_RESULTS: GroupedResults = { offers: [], customers: [], products: [] };
+const EMPTY_RESULTS: GroupedResults = { offers: [], customers: [], contacts: [], products: [] };
 
 const GROUPS: Array<{ key: keyof GroupedResults; label: string }> = [
   { key: 'offers', label: 'Offers' },
   { key: 'customers', label: 'Customers' },
+  { key: 'contacts', label: 'Contacts' },
   { key: 'products', label: 'Products' },
 ];
 
@@ -151,7 +153,7 @@ export default function CommandPalette() {
             ref={inputRef}
             className={styles.input}
             type="text"
-            placeholder="Search offers, customers, products..."
+            placeholder="Search offers, customers, contacts, products..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             autoComplete="off"

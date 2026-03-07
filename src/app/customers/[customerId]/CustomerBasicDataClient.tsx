@@ -174,13 +174,7 @@ const buildFieldDefinitions = (
     recordKey: 'Profession',
     updateField: 'Profession',
   },
-  {
-    id: 'activityCode',
-    label: 'Activity Code',
-    section: 'business',
-    recordKey: 'ActivityCode',
-    updateField: 'ActivityCode',
-  },
+
   {
     id: 'erp',
     label: 'ERP ID',

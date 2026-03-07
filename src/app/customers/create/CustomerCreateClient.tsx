@@ -129,12 +129,7 @@ const buildFieldDefinitions = (
     section: 'business',
     type: 'text',
   },
-  {
-    id: 'activityCode',
-    label: 'Activity Code',
-    section: 'business',
-    type: 'text',
-  },
+
   {
     id: 'erp',
     label: 'ERP ID',
@@ -653,7 +648,7 @@ export default function CustomerCreateClient({
         taxOffice: toNullableString(values.taxOffice),
         profession: toNullableString(values.profession),
         customerGroupId: toNumberOrNull(values.customerGroup),
-        activityCode: toNullableString(values.activityCode),
+
         erpId: toNullableString(values.erp),
         isParent: toBooleanNumber(values.isParent) ?? 0,
         parentCustomerId: toNumberOrNull(values.parentCustomer),

@@ -41,7 +41,7 @@ const FIELD_CONFIG: Record<CustomerBasicUpdateField, FieldConfig> = {
   TaxOffice: { column: "TaxOffice", type: "string", sqlType: sql.NVarChar, length: 128 },
   Profession: { column: "Profession", type: "string", sqlType: sql.NVarChar, length: 256 },
   CustomerGroupID: { column: "CustomerGroupID", type: "number", sqlType: sql.Int },
-  ActivityCode: { column: "ActivityCode", type: "string", sqlType: sql.NVarChar, length: 128 },
+
   ERPID: { column: "ERPID", type: "string", sqlType: sql.NVarChar, length: 128 },
   IsParent: { column: "IsParent", type: "number", sqlType: sql.Bit },
   ParentCustomerID: { column: "ParentCustomerID", type: "number", sqlType: sql.Int },
@@ -127,7 +127,7 @@ export async function GET(
         c.Profession,
         c.CustomerGroupID,
         cg.Name AS CustomerGroupName,
-        c.ActivityCode,
+
         c.ERPID,
         c.IsParent,
         c.ParentCustomerID,

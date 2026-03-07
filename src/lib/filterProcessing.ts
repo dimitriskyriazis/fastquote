@@ -16,6 +16,8 @@ export type FilterContext = {
   columnExpression: string;
   columnId: string;
   paramBase: string;
+  /** When true, date filters compare the full datetime instead of CAST to date */
+  preserveTime?: boolean;
 };
 
 const buildBlankClause = (columnExpression: string): string =>
@@ -244,39 +246,47 @@ function processSingleDateCondition(
   if (!val) return { clause: '', params: [] };
 
   const { columnExpression, paramBase } = context;
-  const dateExpression = `CAST(${columnExpression} AS date)`;
+  const isMidnight = (v: string) => v.endsWith(' 00:00:00');
+  const valHasTime = context.preserveTime && !isMidnight(val);
+  const dateExpr = valHasTime
+    ? columnExpression
+    : `CAST(${columnExpression} AS date)`;
   const params: QueryParam[] = [];
   let clause = '';
 
   switch (condition.type) {
     case 'equals':
-      clause = `${dateExpression} = @${paramBase}`;
+      clause = `${dateExpr} = @${paramBase}`;
       params.push({ key: paramBase, value: val });
       break;
     case 'notEqual':
-      clause = `${dateExpression} <> @${paramBase}`;
+      clause = `${dateExpr} <> @${paramBase}`;
       params.push({ key: paramBase, value: val });
       break;
     case 'lessThan':
-      clause = `${dateExpression} < @${paramBase}`;
+      clause = `${dateExpr} < @${paramBase}`;
       params.push({ key: paramBase, value: val });
       break;
     case 'greaterThan':
-      clause = `${dateExpression} > @${paramBase}`;
+      clause = `${dateExpr} > @${paramBase}`;
       params.push({ key: paramBase, value: val });
       break;
     case 'lessThanOrEqual':
-      clause = `${dateExpression} <= @${paramBase}`;
+      clause = `${dateExpr} <= @${paramBase}`;
       params.push({ key: paramBase, value: val });
       break;
     case 'greaterThanOrEqual':
-      clause = `${dateExpression} >= @${paramBase}`;
+      clause = `${dateExpr} >= @${paramBase}`;
       params.push({ key: paramBase, value: val });
       break;
     case 'inRange': {
       const valTo = condition.dateTo;
       if (valTo) {
-        clause = `(${dateExpression} BETWEEN @${paramBase} AND @${paramBase}_to)`;
+        const rangeHasTime = context.preserveTime && (!isMidnight(val) || !isMidnight(valTo));
+        const rangeExpr = rangeHasTime
+          ? columnExpression
+          : `CAST(${columnExpression} AS date)`;
+        clause = `(${rangeExpr} BETWEEN @${paramBase} AND @${paramBase}_to)`;
         params.push({ key: paramBase, value: val });
         params.push({ key: `${paramBase}_to`, value: valTo });
       }

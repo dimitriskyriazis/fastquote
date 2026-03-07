@@ -110,6 +110,7 @@
   line-height: 1.2;
   background: transparent;
   color: #0f172a;
+  text-decoration: none;
   transition: background-color 120ms ease, color 120ms ease;
 }
 

@@ -19,7 +19,7 @@ const createCustomerSchema = z.object({
   taxOffice: stringSchema(128),
   profession: stringSchema(256),
   customerGroupId: positiveIntSchema,
-  activityCode: stringSchema(128),
+
   erpId: stringSchema(128),
   isParent: z.union([z.literal(0), z.literal(1), z.boolean()]).transform((val) => {
     if (typeof val === 'boolean') return val ? 1 : 0;
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     const taxOffice = body.taxOffice;
     const profession = body.profession;
     const customerGroupId = body.customerGroupId;
-    const activityCode = body.activityCode;
+
     const erpId = body.erpId;
     const isParent = body.isParent ?? 0;
     const parentCustomerId = body.parentCustomerId;
@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
     request.input('TaxOffice', sql.NVarChar(128), taxOffice);
     request.input('Profession', sql.NVarChar(256), profession);
     request.input('CustomerGroupID', sql.Int, customerGroupId);
-    request.input('ActivityCode', sql.NVarChar(128), activityCode);
+
     request.input('ERPID', sql.NVarChar(128), erpId);
     request.input('IsParent', sql.Bit, isParent ?? 0);
     request.input('ParentCustomerID', sql.Int, parentCustomerId);
@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
         TaxOffice,
         Profession,
         CustomerGroupID,
-        ActivityCode,
+
         ERPID,
         IsParent,
         ParentCustomerID,
@@ -166,7 +166,7 @@ export async function POST(req: NextRequest) {
         @TaxOffice,
         @Profession,
         @CustomerGroupID,
-        @ActivityCode,
+
         @ERPID,
         @IsParent,
         @ParentCustomerID,

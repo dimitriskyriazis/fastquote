@@ -4,13 +4,35 @@ import { resolveAuditUserId } from './auditTrail';
 import { handleApiError, createErrorResponse } from './errorHandler';
 import { logger, categoryFromRequest } from './logger';
 import type { LogContext } from './logger';
+import { SESSION_COOKIE_NAME } from './authConstants';
 
 export type ApiHandlerContext = {
   requestId: string;
   userId: string | null;
+  userName: string | null;
   endpoint: string;
   method: string;
 };
+
+type CookieStore = {
+  get(name: string): { value?: string } | undefined;
+};
+
+function resolveSessionUserName(cookies?: CookieStore): string | null {
+  if (!cookies || typeof cookies.get !== 'function') return null;
+  try {
+    const raw = cookies.get(SESSION_COOKIE_NAME)?.value ?? '';
+    if (!raw) return null;
+    const [encoded] = raw.split('.', 2);
+    if (!encoded) return null;
+    const decoded = JSON.parse(
+      Buffer.from(encoded, 'base64url').toString('utf8'),
+    ) as { win?: string };
+    return decoded?.win ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export async function createApiContext(
   req: NextRequest,
@@ -20,6 +42,7 @@ export async function createApiContext(
   return {
     requestId: await getRequestId(req),
     userId: resolveAuditUserId(req),
+    userName: resolveSessionUserName(req.cookies),
     endpoint,
     method,
   };
@@ -351,6 +374,65 @@ async function summarizeMutationRequest(
   return details;
 }
 
+function buildDescriptiveMessage(method: string, endpoint: string, details?: LogContext): string {
+  const path = endpoint.split('?')[0];
+  const segments = path.split('/').filter(Boolean);
+  if (segments.length < 2 || segments[0] !== 'api') return `${method} ${endpoint}`;
+
+  const actionWord = details?.changeType
+    ? String(details.changeType)
+    : method.toUpperCase() === 'GET' ? 'view'
+      : method.toUpperCase() === 'DELETE' ? 'delete'
+        : method.toUpperCase() === 'PATCH' || method.toUpperCase() === 'PUT' ? 'edit'
+          : 'view';
+
+  const action = actionWord.charAt(0).toUpperCase() + actionWord.slice(1);
+
+  const entityParts: string[] = [];
+  const ids: string[] = [];
+  for (let i = 1; i < segments.length; i++) {
+    const seg = segments[i];
+    if (/^\d+$/.test(seg)) {
+      ids.push(seg);
+    } else if (!ACTION_SEGMENTS.has(seg.toLowerCase())) {
+      entityParts.push(seg);
+    }
+  }
+
+  const entity = entityParts.join(' ') || 'resource';
+  const idStr = ids.length > 0 ? ` #${ids.join('/')}` : '';
+  let msg = `${action} ${entity}${idStr}`;
+
+  if (details?.changedFields && Array.isArray(details.changedFields)) {
+    const fields = details.changedFields as string[];
+    if (fields.length > 0) {
+      msg += `: ${fields.slice(0, 5).join(', ')}`;
+    }
+  }
+
+  if (details?.requestedChanges && Array.isArray(details.requestedChanges)) {
+    const changes = details.requestedChanges as Array<Record<string, unknown>>;
+    const parts: string[] = [];
+    for (const change of changes.slice(0, 3)) {
+      if (change.field != null && change.newValue !== undefined) {
+        parts.push(`${change.field} → ${change.newValue}`);
+      }
+    }
+    if (parts.length > 0) {
+      msg += ` (${parts.join(', ')})`;
+    }
+  }
+
+  if (details?.requestedIds && Array.isArray(details.requestedIds)) {
+    const delIds = details.requestedIds as Array<number | string>;
+    if (delIds.length > 0) {
+      msg += ` [IDs: ${delIds.slice(0, 10).join(', ')}]`;
+    }
+  }
+
+  return msg;
+}
+
 export function logRequest(req: NextRequest, endpoint: string): void {
   const requestPath = req.nextUrl?.pathname || endpoint;
   const category = categoryFromRequest(req.method, requestPath);
@@ -358,6 +440,7 @@ export function logRequest(req: NextRequest, endpoint: string): void {
     endpoint: requestPath,
     method: req.method,
     userId: resolveAuditUserId(req),
+    userName: resolveSessionUserName(req.cookies),
     category,
   };
   if (requestPath !== endpoint) {
@@ -365,7 +448,7 @@ export function logRequest(req: NextRequest, endpoint: string): void {
   }
 
   if (category === 'view') {
-    logger.info('API request', baseContext);
+    logger.info(buildDescriptiveMessage(req.method, requestPath), baseContext);
     return;
   }
 
@@ -373,38 +456,40 @@ export function logRequest(req: NextRequest, endpoint: string): void {
   try {
     requestForAudit = req.clone();
   } catch {
-    logger.info('API request', baseContext);
+    logger.info(buildDescriptiveMessage(req.method, requestPath), baseContext);
     return;
   }
 
   void summarizeMutationRequest(requestForAudit, req.method, requestPath)
     .then((details) => {
-      logger.info('API request', {
+      logger.info(buildDescriptiveMessage(req.method, requestPath, details), {
         ...baseContext,
         ...details,
       });
     })
     .catch(() => {
-      logger.info('API request', baseContext);
+      logger.info(buildDescriptiveMessage(req.method, requestPath), baseContext);
     });
 }
 
 export function logApiRequest(context: ApiHandlerContext, message?: string): void {
-  logger.info(message || 'API request', {
+  logger.info(message || buildDescriptiveMessage(context.method, context.endpoint), {
     requestId: context.requestId,
     endpoint: context.endpoint,
     method: context.method,
     userId: context.userId,
+    userName: context.userName,
     category: categoryFromRequest(context.method, context.endpoint),
   });
 }
 
 export function logApiSuccess(context: ApiHandlerContext, message?: string, extra?: LogContext): void {
-  logger.info(message || 'API request succeeded', {
+  logger.info(message || buildDescriptiveMessage(context.method, context.endpoint, extra), {
     requestId: context.requestId,
     endpoint: context.endpoint,
     method: context.method,
     userId: context.userId,
+    userName: context.userName,
     category: categoryFromRequest(context.method, context.endpoint),
     ...extra,
   });
