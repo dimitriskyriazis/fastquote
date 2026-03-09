@@ -543,3 +543,41 @@
   font-weight: 400 !important;
   color: inherit !important;
 }
+
+/* Negative margin: red background with white text */
+.offer-products-grid .ag-cell.offer-products-grid__cell--negative-margin {
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
+}
+
+.offer-products-grid .ag-cell.offer-products-grid__cell--negative-margin .ag-cell-value {
+  color: #ffffff !important;
+}
+
+/* Negative margin: preserve red background when row is selected */
+.offer-products-grid .ag-row.offer-row--product.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--negative-margin,
+.offer-products-grid .ag-row.offer-row--product.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--negative-margin,
+.offer-products-grid .ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--negative-margin,
+.offer-products-grid .ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.offer-products-grid__cell--negative-margin {
+  background-color: #b91c1c !important; /* Darker red for selected */
+  color: #ffffff !important;
+}
+
+/* Negative margin: preserve red background on hover */
+.offer-products-grid .ag-row.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--negative-margin,
+.offer-products-grid .ag-row-hover.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--negative-margin,
+.offer-products-grid .ag-row:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--negative-margin,
+.offer-products-grid .ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--negative-margin {
+  background-color: #c62828 !important; /* Slightly darker red for hover */
+  color: #ffffff !important;
+}
+
+/* Negative margin: red text when editing (no red background) */
+.offer-products-grid .ag-cell.offer-products-grid__cell--negative-margin.ag-cell-inline-editing {
+  background-color: transparent !important;
+  color: #dc2626 !important;
+}
+
+.offer-products-grid .ag-cell.offer-products-grid__cell--negative-margin.ag-cell-inline-editing input {
+  color: #dc2626 !important;
+}

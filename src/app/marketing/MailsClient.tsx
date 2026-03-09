@@ -539,7 +539,7 @@ export default function MailsClient() {
                 onClick={handleExportMail}
                 disabled={exporting}
               >
-                Create List
+                Export List
               </button>
               <button
                 type="button"
@@ -547,14 +547,14 @@ export default function MailsClient() {
                 onClick={handleExportAll}
                 disabled={exporting}
               >
-                Create List with All Contacts
+                Export List with All Contacts
               </button>
               <button
                 type="button"
                 className={`page-header-button ${styles.headerButton}`}
                 onClick={openAddMail}
               >
-                Add Mail Lists
+                Create Mail Lists
               </button>
               <button
                 type="button"
@@ -586,10 +586,10 @@ export default function MailsClient() {
       </main>
       <LookupModal
         open={isAddMailOpen}
-        title="Add Mail List"
+        title="Create Mail List"
         onClose={closeAddMail}
         onConfirm={handleCreateMail}
-        confirmLabel="Add Mail List"
+        confirmLabel="Create Mail List"
         saving={mailSaving}
         error={mailError}
       >

@@ -332,7 +332,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     [offerId],
   );
   const assignRequestedRowToProduct = useCallback(
-    async (requestedRowId: number, productId: number, categoryId: number | null) => {
+    async (requestedRowId: number, productId: number, categoryId: number | null, comment?: string) => {
       try {
         const body: Record<string, unknown> = {
           action: 'assign-requested',
@@ -341,6 +341,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         };
         if (categoryId != null) {
           body.categoryId = categoryId;
+        }
+        if (comment) {
+          body.comment = comment;
         }
         const res = await fetch(addProductsEndpoint, {
           method: 'POST',
@@ -2321,7 +2324,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: percentageFormatter,
       cellClassRules: {
-        [styles.negativeMarginCell]: (params) => {
+        'offer-products-grid__cell--negative-margin': (params) => {
           const value = coerceNumber(
             params.value
             ?? (params.data as { Margin?: unknown } | null | undefined)?.Margin
@@ -3016,12 +3019,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     setProcessedRequestedMatches((prev) => prev + 1);
   }, []);
 
-  const handleManualAssign = useCallback(async (productId: number) => {
+  const handleManualAssign = useCallback(async (productId: number, comment: string) => {
     if (!currentRequestedMatch) return false;
     const assignment = await assignRequestedRowToProduct(
       currentRequestedMatch.offerDetailId,
       productId,
       currentRequestedMatch.parentCategoryId,
+      comment,
     );
     if (assignment) {
       showToastMessage('Requested item filled', 'success');

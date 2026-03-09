@@ -42,6 +42,8 @@ type Props = {
     pricingPolicyName: string | null;
     telmacoDiscountPercentage: number | null;
     customerDiscountPercentage: number | null;
+    telmacoWarrantyYears: number | null;
+    customerWarrantyYears: number | null;
   }>;
 };
 type LookupKey = 'brands' | 'countries' | 'suppliers' | 'currencies' | 'users';
@@ -319,7 +321,7 @@ export default function PriceListBasicDataClient({
   const [rulePickerSelection, setRulePickerSelection] = useState<Set<number>>(new Set());
   const [rulePickerSaving, setRulePickerSaving] = useState(false);
   const [rulePickerError, setRulePickerError] = useState<string | null>(null);
-  const [discountDrafts, setDiscountDrafts] = useState<Record<number, { telmaco: string; customer: string }>>({});
+  const [discountDrafts, setDiscountDrafts] = useState<Record<number, { telmaco: string; customer: string; telmacoWarranty: string; customerWarranty: string }>>({});
   const [openComboField, setOpenComboField] = useState<string | null>(null);
   const [comboErrors, setComboErrors] = useState<Record<string, string>>({});
   const comboCloseTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -580,11 +582,13 @@ export default function PriceListBasicDataClient({
 
   useEffect(() => {
     if (!isRulePickerOpen) return;
-    const next: Record<number, { telmaco: string; customer: string }> = {};
+    const next: Record<number, { telmaco: string; customer: string; telmacoWarranty: string; customerWarranty: string }> = {};
     rulesForPicker.forEach((rule) => {
       next[rule.id] = {
         telmaco: formatDiscountValue(rule.telmacoDiscountPercentage ?? null),
         customer: formatDiscountValue(rule.customerDiscountPercentage ?? null),
+        telmacoWarranty: rule.telmacoWarrantyYears != null ? String(rule.telmacoWarrantyYears) : '',
+        customerWarranty: rule.customerWarrantyYears != null ? String(rule.customerWarrantyYears) : '',
       };
     });
     setDiscountDrafts(next);
@@ -672,12 +676,14 @@ export default function PriceListBasicDataClient({
   }, [priceListId, priceListPricingPolicies, rulePickerSelection, rulesById, pricingPolicyNameById]);
 
   const handleRuleDiscountChange = useCallback(
-    (ruleId: number, field: 'telmaco' | 'customer', value: string) => {
+    (ruleId: number, field: 'telmaco' | 'customer' | 'telmacoWarranty' | 'customerWarranty', value: string) => {
       setDiscountDrafts((prev) => ({
         ...prev,
         [ruleId]: {
           telmaco: prev[ruleId]?.telmaco ?? '',
           customer: prev[ruleId]?.customer ?? '',
+          telmacoWarranty: prev[ruleId]?.telmacoWarranty ?? '',
+          customerWarranty: prev[ruleId]?.customerWarranty ?? '',
           [field]: value,
         },
       }));
@@ -688,10 +694,11 @@ export default function PriceListBasicDataClient({
   const handleRuleDiscountSave = useCallback(
     async (
       rule: (typeof localPricingPolicyRules)[number],
-      field: 'telmaco' | 'customer',
+      field: 'telmaco' | 'customer' | 'telmacoWarranty' | 'customerWarranty',
     ) => {
       const ruleId = rule.id;
       if (!Number.isFinite(ruleId)) return;
+      const isWarrantyField = field === 'telmacoWarranty' || field === 'customerWarranty';
       if (rule.brandId == null || rule.pricingPolicyId == null) {
         showToastMessage('This rule cannot be edited.', 'error');
         setDiscountDrafts((prev) => ({
@@ -699,6 +706,8 @@ export default function PriceListBasicDataClient({
           [ruleId]: {
             telmaco: formatDiscountValue(rule.telmacoDiscountPercentage ?? null),
             customer: formatDiscountValue(rule.customerDiscountPercentage ?? null),
+            telmacoWarranty: rule.telmacoWarrantyYears != null ? String(rule.telmacoWarrantyYears) : '',
+            customerWarranty: rule.customerWarrantyYears != null ? String(rule.customerWarrantyYears) : '',
           },
         }));
         return;
@@ -706,21 +715,30 @@ export default function PriceListBasicDataClient({
 
       const draft = discountDrafts[ruleId]?.[field] ?? '';
       const parsed = parseLocaleNumber(draft);
-      if (parsed == null) {
+      if (parsed == null && !isWarrantyField) {
         showToastMessage('Discount is required', 'error');
         setDiscountDrafts((prev) => ({
           ...prev,
           [ruleId]: {
             telmaco: formatDiscountValue(rule.telmacoDiscountPercentage ?? null),
             customer: formatDiscountValue(rule.customerDiscountPercentage ?? null),
+            telmacoWarranty: rule.telmacoWarrantyYears != null ? String(rule.telmacoWarrantyYears) : '',
+            customerWarranty: rule.customerWarrantyYears != null ? String(rule.customerWarrantyYears) : '',
           },
         }));
         return;
       }
 
       const currentValue =
-        field === 'telmaco' ? rule.telmacoDiscountPercentage ?? null : rule.customerDiscountPercentage ?? null;
-      if (currentValue != null && parsed === currentValue) return;
+        field === 'telmaco'
+          ? rule.telmacoDiscountPercentage ?? null
+          : field === 'customer'
+            ? rule.customerDiscountPercentage ?? null
+            : field === 'telmacoWarranty'
+              ? rule.telmacoWarrantyYears ?? null
+              : rule.customerWarrantyYears ?? null;
+      const apiValue = isWarrantyField ? (parsed ?? 1) : parsed;
+      if (currentValue != null && apiValue === currentValue) return;
 
       try {
         const response = await fetch('/api/pricing-policies/matrix', {
@@ -730,12 +748,12 @@ export default function PriceListBasicDataClient({
             brandId: rule.brandId,
             pricingPolicyId: rule.pricingPolicyId,
             field,
-            value: parsed,
+            value: apiValue,
           }),
         });
         const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
         if (!response.ok || !payload?.ok) {
-          throw new Error(payload?.error ?? 'Unable to update discounts');
+          throw new Error(payload?.error ?? isWarrantyField ? 'Unable to update warranty' : 'Unable to update discounts');
         }
         setLocalPricingPolicyRules((prev) =>
           prev.map((entry) =>
@@ -746,6 +764,10 @@ export default function PriceListBasicDataClient({
                     field === 'telmaco' ? parsed : entry.telmacoDiscountPercentage ?? null,
                   customerDiscountPercentage:
                     field === 'customer' ? parsed : entry.customerDiscountPercentage ?? null,
+                  telmacoWarrantyYears:
+                    field === 'telmacoWarranty' ? (apiValue as number) : entry.telmacoWarrantyYears ?? null,
+                  customerWarrantyYears:
+                    field === 'customerWarranty' ? (apiValue as number) : entry.customerWarrantyYears ?? null,
                 }
               : entry,
           ),
@@ -755,17 +777,21 @@ export default function PriceListBasicDataClient({
           [ruleId]: {
             telmaco: field === 'telmaco' ? formatDiscountValue(parsed) : prev[ruleId]?.telmaco ?? '',
             customer: field === 'customer' ? formatDiscountValue(parsed) : prev[ruleId]?.customer ?? '',
+            telmacoWarranty: field === 'telmacoWarranty' ? String(apiValue) : prev[ruleId]?.telmacoWarranty ?? '',
+            customerWarranty: field === 'customerWarranty' ? String(apiValue) : prev[ruleId]?.customerWarranty ?? '',
           },
         }));
-        showToastMessage('Discount updated', 'success');
+        showToastMessage(isWarrantyField ? 'Warranty updated' : 'Discount updated', 'success');
       } catch (err) {
-        console.error('Failed to update discount', err);
-        showToastMessage('Unable to update discount. Please try again.', 'error');
+        console.error('Failed to update', err);
+        showToastMessage(isWarrantyField ? 'Unable to update warranty. Please try again.' : 'Unable to update discount. Please try again.', 'error');
         setDiscountDrafts((prev) => ({
           ...prev,
           [ruleId]: {
             telmaco: formatDiscountValue(rule.telmacoDiscountPercentage ?? null),
             customer: formatDiscountValue(rule.customerDiscountPercentage ?? null),
+            telmacoWarranty: rule.telmacoWarrantyYears != null ? String(rule.telmacoWarrantyYears) : '',
+            customerWarranty: rule.customerWarrantyYears != null ? String(rule.customerWarrantyYears) : '',
           },
         }));
       }
@@ -1137,6 +1163,8 @@ export default function PriceListBasicDataClient({
                 <th>Pricing Policy</th>
                 <th>Telmaco Discount</th>
                 <th>Customer Discount</th>
+                <th>Telmaco Warranty</th>
+                <th>Customer Warranty</th>
               </tr>
             </thead>
             <tbody>
@@ -1185,6 +1213,36 @@ export default function PriceListBasicDataClient({
                         }}
                         disabled={!canEdit || rulePickerSaving}
                         aria-label={`Customer discount for ${rule.name ?? `Rule ${rule.id}`}`}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        className={styles.ruleDiscountInput}
+                        value={draft?.telmacoWarranty ?? (rule.telmacoWarrantyYears != null ? String(rule.telmacoWarrantyYears) : '')}
+                        onChange={(event) => handleRuleDiscountChange(rule.id, 'telmacoWarranty', event.target.value)}
+                        onBlur={() => void handleRuleDiscountSave(rule, 'telmacoWarranty')}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        disabled={!canEdit || rulePickerSaving}
+                        aria-label={`Telmaco warranty for ${rule.name ?? `Rule ${rule.id}`}`}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        className={styles.ruleDiscountInput}
+                        value={draft?.customerWarranty ?? (rule.customerWarrantyYears != null ? String(rule.customerWarrantyYears) : '')}
+                        onChange={(event) => handleRuleDiscountChange(rule.id, 'customerWarranty', event.target.value)}
+                        onBlur={() => void handleRuleDiscountSave(rule, 'customerWarranty')}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        disabled={!canEdit || rulePickerSaving}
+                        aria-label={`Customer warranty for ${rule.name ?? `Rule ${rule.id}`}`}
                       />
                     </td>
                   </tr>

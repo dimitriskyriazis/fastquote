@@ -120,14 +120,20 @@ async function updateFarnellPrices(
 
       DECLARE @CustomerDiscount DECIMAL(18, 6) = 0;
       DECLARE @TelmacoDiscount DECIMAL(18, 6) = 0;
+      DECLARE @TelmacoWarrantyYears INT = 1;
+      DECLARE @CustomerWarrantyYears INT = 1;
 
       SELECT TOP (1)
         @CustomerDiscount = COALESCE(ppr.CustomerDiscountPercentage, 0),
-        @TelmacoDiscount = COALESCE(ppr.TelmacoDiscountPercentage, 0)
+        @TelmacoDiscount = COALESCE(ppr.TelmacoDiscountPercentage, 0),
+        @TelmacoWarrantyYears = COALESCE(ppr.TelmacoWarrantyYears, 1),
+        @CustomerWarrantyYears = COALESCE(ppr.CustomerWarrantyYears, 1)
       FROM (
         SELECT TOP (1)
           ppr.CustomerDiscountPercentage,
           ppr.TelmacoDiscountPercentage,
+          ppr.TelmacoWarrantyYears,
+          ppr.CustomerWarrantyYears,
           1 AS Priority
         FROM dbo.OfferDetails od_inner
         INNER JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = od_inner.PriceListID
@@ -144,6 +150,8 @@ async function updateFarnellPrices(
         SELECT TOP (1)
           ppr.CustomerDiscountPercentage,
           ppr.TelmacoDiscountPercentage,
+          ppr.TelmacoWarrantyYears,
+          ppr.CustomerWarrantyYears,
           2 AS Priority
         FROM dbo.OfferDetails od_inner
         INNER JOIN dbo.PricingPolicyRules ppr ON ppr.PricingPolicyID = @PricingPolicyID
@@ -169,6 +177,8 @@ async function updateFarnellPrices(
         [ListPrice] = @listPrice,
         [CustomerDiscount] = @CustomerDiscount,
         [TelmacoDiscount] = @TelmacoDiscount,
+        [TelmacoWarranty] = @TelmacoWarrantyYears,
+        [Warranty] = @CustomerWarrantyYears,
         [NetUnitPrice] = @NetUnitPrice,
         [NetCost] = @NetCost,
         [TotalPrice] = CASE WHEN Quantity IS NULL THEN NULL ELSE ROUND(@listPrice * Quantity, 4) END,
@@ -357,6 +367,8 @@ export async function POST(
           ELSE discounts.TelmacoDiscountPercentage
         END,
         [CustomerDiscount] = discounts.CustomerDiscountPercentage,
+        [TelmacoWarranty] = COALESCE(discounts.TelmacoWarrantyYears, 1),
+        [Warranty] = COALESCE(discounts.CustomerWarrantyYears, 1),
         [Margin] = CASE
           WHEN computed.ComputedNetUnitPrice IS NULL
             OR computed.ComputedNetUnitPrice = 0
@@ -419,12 +431,16 @@ export async function POST(
       OUTER APPLY (
         SELECT TOP (1)
           ppr.TelmacoDiscountPercentage,
-          ppr.CustomerDiscountPercentage
+          ppr.CustomerDiscountPercentage,
+          ppr.TelmacoWarrantyYears,
+          ppr.CustomerWarrantyYears
         FROM (
           -- Priority 1: Use rules from policy specified in PriceListPricingPolicy
           SELECT TOP (1)
             ppr.TelmacoDiscountPercentage,
             ppr.CustomerDiscountPercentage,
+            ppr.TelmacoWarrantyYears,
+            ppr.CustomerWarrantyYears,
             1 AS Priority
           FROM dbo.PriceListPricingPolicy plpp
           INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
@@ -441,6 +457,8 @@ export async function POST(
           SELECT TOP (1)
             ppr.TelmacoDiscountPercentage,
             ppr.CustomerDiscountPercentage,
+            ppr.TelmacoWarrantyYears,
+            ppr.CustomerWarrantyYears,
             2 AS Priority
           FROM dbo.PricingPolicyRules ppr
           WHERE ppr.PricingPolicyID = oc.PricingPolicyID

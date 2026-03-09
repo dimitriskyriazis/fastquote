@@ -595,6 +595,8 @@ async function handleAddProducts(
   if (selections.length === 0) {
     return NextResponse.json({ ok: false, error: 'No products selected' }, { status: 400 });
   }
+  const addCommentRaw = body?.comment ?? (body as { Comment?: unknown })?.Comment ?? null;
+  const addCommentValue = typeof addCommentRaw === 'string' && selections.length === 1 ? addCommentRaw.trim() || null : null;
 
   try {
   const pool = await getPool();
@@ -629,6 +631,7 @@ async function handleAddProducts(
   request.input('__parentTree', sql.NVarChar(255), parentTreeOrdering);
   request.input('__createdBy', sql.Int, auditUserId);
   request.input('__modifiedBy', sql.Int, auditUserId);
+  request.input('__addComment', sql.NVarChar(sql.MAX), addCommentValue);
 
   const valueClauses: string[] = [];
   selections.forEach((entry, idx) => {
@@ -801,6 +804,7 @@ async function handleAddProducts(
       TotalCost,
       PriceListID,
       PriceListItemID,
+      Comment,
       CreatedOn,
       CreatedBy,
       ModifiedOn,
@@ -877,6 +881,7 @@ async function handleAddProducts(
       COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
       p.PriceListID,
       p.PriceListItemID,
+      @__addComment,
       SYSUTCDATETIME(),
       @__createdBy,
       SYSUTCDATETIME(),
@@ -1000,6 +1005,8 @@ async function handleAssignProductToRequestedRow(
   const categoryId = normalizeOfferDetailId(
     body?.categoryId ?? (body as { CategoryID?: unknown })?.CategoryID ?? null,
   );
+  const commentRaw = body?.comment ?? (body as { Comment?: unknown })?.Comment ?? null;
+  const commentValue = typeof commentRaw === 'string' ? commentRaw.trim() || null : null;
 
   if (requestedRowId == null || productId == null) {
     return NextResponse.json(
@@ -1031,6 +1038,7 @@ async function handleAssignProductToRequestedRow(
   request.input('__categoryId', sql.Int, categoryId);
   request.input('__categoryTree', sql.NVarChar(255), categoryTreeOrdering);
   request.input('__modifiedBy', sql.Int, auditUserId);
+  request.input('__comment', sql.NVarChar(sql.MAX), commentValue);
 
   const query = `
     DECLARE @pricingPolicyId INT;
@@ -1186,6 +1194,7 @@ async function handleAssignProductToRequestedRow(
       END,
       od.PriceListID = p.PriceListID,
       od.PriceListItemID = p.PriceListItemID,
+      od.Comment = @__comment,
       od.ModifiedOn = SYSUTCDATETIME(),
       od.ModifiedBy = @__modifiedBy
     OUTPUT

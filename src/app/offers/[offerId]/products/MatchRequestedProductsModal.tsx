@@ -53,7 +53,7 @@ type Props = {
   entry: RequestedProductMatchEntry;
   position: number;
   total: number;
-  onAssign: (productId: number) => Promise<boolean>;
+  onAssign: (productId: number, comment: string) => Promise<boolean>;
   onSkip: () => void;
   onRequestAddProduct: () => void;
   newProductId?: number | null;
@@ -115,6 +115,7 @@ export default function MatchRequestedProductsModal({
 }: Props) {
   const [selectedProduct, setSelectedProduct] = useState<MatcherRowData | null>(null);
   const [assigning, setAssigning] = useState(false);
+  const [comment, setComment] = useState('');
   const [searchSlot, setSearchSlot] = useState<HTMLDivElement | null>(null);
   const productsApiRef = useRef<MatcherGridApi | null>(null);
   const pendingSelectionProductIdRef = useRef<number | null>(null);
@@ -245,18 +246,19 @@ export default function MatchRequestedProductsModal({
     }
   }, []);
 
-  const handleAssignWithId = useCallback(async (productId: number) => {
+  const handleAssignWithId = useCallback(async (productId: number, assignComment?: string) => {
     if (assigning) return;
     setAssigning(true);
     try {
-      const success = await onAssign(productId);
+      const success = await onAssign(productId, assignComment ?? comment);
       if (success) {
         setSelectedProduct(null);
+        setComment('');
       }
     } finally {
       setAssigning(false);
     }
-  }, [assigning, onAssign]);
+  }, [assigning, onAssign, comment]);
 
   const getSelectedProductIdFromApi = useCallback(() => {
     const api = productsApiRef.current;
@@ -278,8 +280,8 @@ export default function MatchRequestedProductsModal({
     const rawProductId = (event.data as { ProductID?: unknown }).ProductID ?? null;
     const productId = normalizeProductId(rawProductId);
     if (productId == null) return;
-    void handleAssignWithId(productId);
-  }, [handleAssignWithId]);
+    void handleAssignWithId(productId, comment);
+  }, [handleAssignWithId, comment]);
 
   const trySelectPendingProduct = useCallback((api: MatcherGridApi) => {
     const targetId = pendingSelectionProductIdRef.current;
@@ -420,6 +422,7 @@ export default function MatchRequestedProductsModal({
     }
     setSelectedProduct(null);
     setAssigning(false);
+    setComment('');
   }, [entry.offerDetailId]);
 
   useEffect(() => {
@@ -497,6 +500,16 @@ export default function MatchRequestedProductsModal({
               />
             </div>
             <div className={styles.actions}>
+              <label className={styles.commentLabel}>Comment:</label>
+              <input
+                type="text"
+                className={styles.commentInput}
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                disabled={assigning || selectedProductId == null}
+                placeholder=""
+                data-fastquote-keep-selection="true"
+              />
               <button
                 type="button"
                 className={styles.primaryButton}

@@ -212,6 +212,7 @@ export default function AddProductsModal({
   const [selectedCategory, setSelectedCategory] = useState<CategoryRow | null>(null);
   const [selectedProducts, setSelectedProducts] = useState<ProductRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [comment, setComment] = useState('');
   const [requestedRows, setRequestedRows] = useState<RequestedRow[]>([]);
   const [requestedRowsLoading, setRequestedRowsLoading] = useState(false);
   const [requestedRowsError, setRequestedRowsError] = useState<string | null>(null);
@@ -544,17 +545,20 @@ export default function AddProductsModal({
         ? (getInsertionAnchor?.() ?? null)
         : null;
       const baseCategory = selectedCategory?.OfferDetailID ?? null;
+      const trimmedComment = comment.trim() || undefined;
       const payload = isAssigningRequestedRow
         ? {
             action: 'assign-requested',
             requestedRowId: selectedRequestedRowId,
             categoryId: baseCategory,
             productId: productPayload[0].productId,
+            ...(trimmedComment ? { comment: trimmedComment } : {}),
           }
         : {
             action: 'add',
             ...(baseCategory != null ? { categoryId: baseCategory } : {}),
             products: productPayload,
+            ...(trimmedComment && productPayload.length === 1 ? { comment: trimmedComment } : {}),
           };
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -633,6 +637,7 @@ export default function AddProductsModal({
       }
       setSelectedRequestedRowId(null);
       setSelectedProducts([]);
+      setComment('');
       try { productsApiRef.current?.deselectAll?.(); } catch { /* noop */ }
     } catch (err) {
       console.error('Failed to add products to offer', err);
@@ -641,6 +646,7 @@ export default function AddProductsModal({
       setSubmitting(false);
     }
   }, [
+    comment,
     endpoint,
     fetchRequestedRows,
     getInsertionAnchor,
@@ -893,6 +899,20 @@ export default function AddProductsModal({
                 <span className={styles.headerMetaValue}>{selectedProducts.length}</span>
               </div>
             </div>
+            {selectedProducts.length === 1 ? (
+              <>
+                <label className={styles.commentLabel}>Comment:</label>
+                <input
+                  type="text"
+                  className={styles.commentInput}
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  disabled={submitting}
+                  placeholder=""
+                  data-fastquote-keep-selection="true"
+                />
+              </>
+            ) : null}
             {onRequestAddProduct ? (
               <button
                 type="button"
@@ -1035,6 +1055,20 @@ export default function AddProductsModal({
                 <span className={styles.headerMetaValue}>{selectedProducts.length}</span>
               </div>
             </div>
+            {selectedProducts.length === 1 ? (
+              <>
+                <label className={styles.commentLabel}>Comment:</label>
+                <input
+                  type="text"
+                  className={styles.commentInput}
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  disabled={submitting}
+                  placeholder=""
+                  data-fastquote-keep-selection="true"
+                />
+              </>
+            ) : null}
             {onRequestAddProduct ? (
               <button
                 type="button"

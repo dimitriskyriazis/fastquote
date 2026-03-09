@@ -173,6 +173,8 @@ type PricingPolicyRuleRow = {
   PricingPolicyName: string | null;
   TelmacoDiscountPercentage: number | null;
   CustomerDiscountPercentage: number | null;
+  TelmacoWarrantyYears: number | null;
+  CustomerWarrantyYears: number | null;
 };
 
 async function fetchAllPricingPolicyRules() {
@@ -187,7 +189,9 @@ async function fetchAllPricingPolicyRules() {
         b.Name AS BrandName,
         pp.Name AS PricingPolicyName,
         ppr.TelmacoDiscountPercentage,
-        ppr.CustomerDiscountPercentage
+        ppr.CustomerDiscountPercentage,
+        ppr.TelmacoWarrantyYears,
+        ppr.CustomerWarrantyYears
       FROM dbo.PricingPolicyRules ppr
       LEFT JOIN dbo.Brands b ON ppr.BrandID = b.ID
       LEFT JOIN dbo.PricingPolicies pp ON ppr.PricingPolicyID = pp.ID
@@ -202,6 +206,8 @@ async function fetchAllPricingPolicyRules() {
       pricingPolicyName: row.PricingPolicyName ?? null,
       telmacoDiscountPercentage: row.TelmacoDiscountPercentage ?? null,
       customerDiscountPercentage: row.CustomerDiscountPercentage ?? null,
+      telmacoWarrantyYears: row.TelmacoWarrantyYears ?? null,
+      customerWarrantyYears: row.CustomerWarrantyYears ?? null,
     }));
   } catch (err) {
     console.error('Failed to load pricing policy rules', err);

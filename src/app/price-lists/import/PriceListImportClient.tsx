@@ -73,6 +73,8 @@ type PricingPolicyPickerRow = {
   pricingPolicyName: string;
   telmacoDiscountPercentage: number | null;
   customerDiscountPercentage: number | null;
+  telmacoWarrantyYears: number | null;
+  customerWarrantyYears: number | null;
 };
 
 type FormValues = {
@@ -764,10 +766,10 @@ export default function PriceListImportClient({
   const [isRulePickerOpen, setIsRulePickerOpen] = useState(false);
   const [policyPickerSelection, setPolicyPickerSelection] = useState<Set<number>>(new Set());
   const [rulePickerError, setRulePickerError] = useState<string | null>(null);
-  const [discountDrafts, setDiscountDrafts] = useState<Record<number, { telmaco: string; customer: string }>>({});
+  const [discountDrafts, setDiscountDrafts] = useState<Record<number, { telmaco: string; customer: string; telmacoWarranty: string; customerWarranty: string }>>({});
   const policyPickerSelectionInitializedRef = useRef(false);
   const [policyDiscountOverrides, setPolicyDiscountOverrides] = useState<
-    Record<string, { telmaco: number | null; customer: number | null }>
+    Record<string, { telmaco: number | null; customer: number | null; telmacoWarranty: number | null; customerWarranty: number | null }>
   >({});
   const [file, setFile] = useState<File | null>(null);
   const [fileValidation, setFileValidation] = useState<FileValidation>(INITIAL_VALIDATION);
@@ -798,6 +800,8 @@ export default function PriceListImportClient({
   const [newRuleBrandId, setNewRuleBrandId] = useState("");
   const [newRuleTelmaco, setNewRuleTelmaco] = useState("");
   const [newRuleCustomer, setNewRuleCustomer] = useState("");
+  const [newRuleTelmacoWarranty, setNewRuleTelmacoWarranty] = useState("1");
+  const [newRuleCustomerWarranty, setNewRuleCustomerWarranty] = useState("1");
   const [newRuleResponsibleUserId, setNewRuleResponsibleUserId] = useState("");
   const [newRuleComments, setNewRuleComments] = useState("");
   const [pricingPolicyRuleSaving, setPricingPolicyRuleSaving] = useState(false);
@@ -882,6 +886,8 @@ export default function PriceListImportClient({
       setPricingPolicyRuleError("Customer discount is required");
       return;
     }
+    const telmacoWarrantyValue = parseDecimalInput(newRuleTelmacoWarranty);
+    const customerWarrantyValue = parseDecimalInput(newRuleCustomerWarranty);
     setPricingPolicyRuleSaving(true);
     setPricingPolicyRuleError(null);
     try {
@@ -894,6 +900,8 @@ export default function PriceListImportClient({
           brandId,
           telmacoDiscountPercentage: telmacoValue,
           customerDiscountPercentage: customerValue,
+          telmacoWarrantyYears: telmacoWarrantyValue ?? 1,
+          customerWarrantyYears: customerWarrantyValue ?? 1,
           responsibleUserId: newRuleResponsibleUserId || null,
           comments: newRuleComments.trim() || null,
         }),
@@ -922,6 +930,8 @@ export default function PriceListImportClient({
     newRuleBrandId,
     newRuleTelmaco,
     newRuleCustomer,
+    newRuleTelmacoWarranty,
+    newRuleCustomerWarranty,
     newRuleResponsibleUserId,
     newRuleComments,
   ]);
@@ -979,6 +989,12 @@ export default function PriceListImportClient({
       const customerValues = applicableRules
         .map((rule) => rule.customerDiscountPercentage)
         .filter((value): value is number => value != null && Number.isFinite(value));
+      const telmacoWarrantyValues = applicableRules
+        .map((rule) => rule.telmacoWarrantyYears)
+        .filter((value): value is number => value != null && Number.isFinite(value));
+      const customerWarrantyValues = applicableRules
+        .map((rule) => rule.customerWarrantyYears)
+        .filter((value): value is number => value != null && Number.isFinite(value));
 
       const key = `${brandId ?? "none"}:${policyId}`;
       const override = policyDiscountOverrides[key];
@@ -989,6 +1005,10 @@ export default function PriceListImportClient({
           override?.telmaco ?? (telmacoValues.length > 0 ? Math.min(...telmacoValues) : null),
         customerDiscountPercentage:
           override?.customer ?? (customerValues.length > 0 ? Math.min(...customerValues) : null),
+        telmacoWarrantyYears:
+          override?.telmacoWarranty ?? (telmacoWarrantyValues.length > 0 ? Math.min(...telmacoWarrantyValues) : null),
+        customerWarrantyYears:
+          override?.customerWarranty ?? (customerWarrantyValues.length > 0 ? Math.min(...customerWarrantyValues) : null),
       });
     });
 
@@ -1038,11 +1058,13 @@ export default function PriceListImportClient({
 
   useEffect(() => {
     if (!isRulePickerOpen) return;
-    const next: Record<number, { telmaco: string; customer: string }> = {};
+    const next: Record<number, { telmaco: string; customer: string; telmacoWarranty: string; customerWarranty: string }> = {};
     policiesForPicker.forEach((row) => {
       next[row.pricingPolicyId] = {
         telmaco: formatDiscountValue(row.telmacoDiscountPercentage ?? null),
         customer: formatDiscountValue(row.customerDiscountPercentage ?? null),
+        telmacoWarranty: row.telmacoWarrantyYears != null ? String(row.telmacoWarrantyYears) : "",
+        customerWarranty: row.customerWarrantyYears != null ? String(row.customerWarrantyYears) : "",
       };
     });
     setDiscountDrafts(next);
@@ -1207,12 +1229,14 @@ export default function PriceListImportClient({
   }, [policyPickerSelection]);
 
   const handlePolicyDiscountChange = useCallback(
-    (policyId: number, field: "telmaco" | "customer", value: string) => {
+    (policyId: number, field: "telmaco" | "customer" | "telmacoWarranty" | "customerWarranty", value: string) => {
       setDiscountDrafts((prev) => ({
         ...prev,
         [policyId]: {
           telmaco: prev[policyId]?.telmaco ?? "",
           customer: prev[policyId]?.customer ?? "",
+          telmacoWarranty: prev[policyId]?.telmacoWarranty ?? "",
+          customerWarranty: prev[policyId]?.customerWarranty ?? "",
           [field]: value,
         },
       }));
@@ -1221,7 +1245,7 @@ export default function PriceListImportClient({
   );
 
   const handlePolicyDiscountSave = useCallback(
-    async (row: PricingPolicyPickerRow, field: "telmaco" | "customer") => {
+    async (row: PricingPolicyPickerRow, field: "telmaco" | "customer" | "telmacoWarranty" | "customerWarranty") => {
       const brandId = selectedBrandId;
       if (brandId == null) {
         showToastMessage("Please select a brand first.", "error");
@@ -1231,15 +1255,18 @@ export default function PriceListImportClient({
       const policyId = row.pricingPolicyId;
       if (!Number.isFinite(policyId)) return;
 
+      const isWarrantyField = field === "telmacoWarranty" || field === "customerWarranty";
       const draft = discountDrafts[policyId]?.[field] ?? "";
       const parsed = parseLocaleNumber(draft);
-      if (parsed == null) {
+      if (parsed == null && !isWarrantyField) {
         showToastMessage("Discount is required", "error");
         setDiscountDrafts((prev) => ({
           ...prev,
           [policyId]: {
             telmaco: formatDiscountValue(row.telmacoDiscountPercentage ?? null),
             customer: formatDiscountValue(row.customerDiscountPercentage ?? null),
+            telmacoWarranty: row.telmacoWarrantyYears != null ? String(row.telmacoWarrantyYears) : "",
+            customerWarranty: row.customerWarrantyYears != null ? String(row.customerWarrantyYears) : "",
           },
         }));
         return;
@@ -1248,10 +1275,17 @@ export default function PriceListImportClient({
       const currentValue =
         field === "telmaco"
           ? row.telmacoDiscountPercentage ?? null
-          : row.customerDiscountPercentage ?? null;
+          : field === "customer"
+            ? row.customerDiscountPercentage ?? null
+            : field === "telmacoWarranty"
+              ? row.telmacoWarrantyYears ?? null
+              : row.customerWarrantyYears ?? null;
       if (currentValue != null && parsed === currentValue) {
         return;
       }
+
+      const apiField = isWarrantyField ? field : field;
+      const apiValue = isWarrantyField ? (parsed ?? 1) : parsed;
 
       try {
         const response = await fetch("/api/pricing-policies/matrix", {
@@ -1260,25 +1294,27 @@ export default function PriceListImportClient({
           body: JSON.stringify({
             brandId,
             pricingPolicyId: policyId,
-            field,
-            value: parsed,
+            field: apiField,
+            value: apiValue,
           }),
         });
         const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
         if (!response.ok || !payload?.ok) {
-          throw new Error(payload?.error ?? "Unable to update discounts");
+          throw new Error(payload?.error ?? isWarrantyField ? "Unable to update warranty" : "Unable to update discounts");
         }
         const overrideKey = `${brandId}:${policyId}`;
         setPolicyDiscountOverrides((prev) => {
           const current = prev[overrideKey] ?? {
             telmaco: row.telmacoDiscountPercentage ?? null,
             customer: row.customerDiscountPercentage ?? null,
+            telmacoWarranty: row.telmacoWarrantyYears ?? null,
+            customerWarranty: row.customerWarrantyYears ?? null,
           };
           return {
             ...prev,
             [overrideKey]: {
               ...current,
-              [field]: parsed,
+              [field]: apiValue,
             },
           };
         });
@@ -1289,17 +1325,23 @@ export default function PriceListImportClient({
               field === "telmaco" ? formatDiscountValue(parsed) : prev[policyId]?.telmaco ?? "",
             customer:
               field === "customer" ? formatDiscountValue(parsed) : prev[policyId]?.customer ?? "",
+            telmacoWarranty:
+              field === "telmacoWarranty" ? String(apiValue) : prev[policyId]?.telmacoWarranty ?? "",
+            customerWarranty:
+              field === "customerWarranty" ? String(apiValue) : prev[policyId]?.customerWarranty ?? "",
           },
         }));
-        showToastMessage("Discount updated", "success");
+        showToastMessage(isWarrantyField ? "Warranty updated" : "Discount updated", "success");
       } catch (err) {
-        console.error("Failed to update discount", err);
-        showToastMessage("Unable to update discount. Please try again.", "error");
+        console.error("Failed to update", err);
+        showToastMessage(isWarrantyField ? "Unable to update warranty. Please try again." : "Unable to update discount. Please try again.", "error");
         setDiscountDrafts((prev) => ({
           ...prev,
           [policyId]: {
             telmaco: formatDiscountValue(row.telmacoDiscountPercentage ?? null),
             customer: formatDiscountValue(row.customerDiscountPercentage ?? null),
+            telmacoWarranty: row.telmacoWarrantyYears != null ? String(row.telmacoWarrantyYears) : "",
+            customerWarranty: row.customerWarrantyYears != null ? String(row.customerWarrantyYears) : "",
           },
         }));
       }
@@ -2378,6 +2420,8 @@ export default function PriceListImportClient({
                 <th>Pricing Policy</th>
                 <th>Telmaco Discount</th>
                 <th>Customer Discount</th>
+                <th>Telmaco Warranty</th>
+                <th>Customer Warranty</th>
               </tr>
             </thead>
             <tbody>
@@ -2429,6 +2473,40 @@ export default function PriceListImportClient({
                         }}
                         disabled={!hasBrandSelection}
                         aria-label={`Customer discount for ${row.pricingPolicyName}`}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        className={styles.ruleDiscountInput}
+                        value={draft?.telmacoWarranty ?? (row.telmacoWarrantyYears != null ? String(row.telmacoWarrantyYears) : "")}
+                        onChange={(event) => {
+                          handlePolicyDiscountChange(policyId, "telmacoWarranty", event.target.value);
+                        }}
+                        onBlur={() => handlePolicyDiscountSave(row, "telmacoWarranty")}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        disabled={!hasBrandSelection}
+                        aria-label={`Telmaco warranty for ${row.pricingPolicyName}`}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        className={styles.ruleDiscountInput}
+                        value={draft?.customerWarranty ?? (row.customerWarrantyYears != null ? String(row.customerWarrantyYears) : "")}
+                        onChange={(event) => {
+                          handlePolicyDiscountChange(policyId, "customerWarranty", event.target.value);
+                        }}
+                        onBlur={() => handlePolicyDiscountSave(row, "customerWarranty")}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        disabled={!hasBrandSelection}
+                        aria-label={`Customer warranty for ${row.pricingPolicyName}`}
                       />
                     </td>
                   </tr>
@@ -2520,6 +2598,28 @@ export default function PriceListImportClient({
             value={newRuleCustomer}
             required
             onChange={(event) => setNewRuleCustomer(event.target.value)}
+          />
+        </div>
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="import-rule-telmaco-warranty">
+            Telmaco warranty (years)
+          </label>
+          <input
+            id="import-rule-telmaco-warranty"
+            className={lookupStyles.fieldControl}
+            value={newRuleTelmacoWarranty}
+            onChange={(event) => setNewRuleTelmacoWarranty(event.target.value)}
+          />
+        </div>
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="import-rule-customer-warranty">
+            Customer warranty (years)
+          </label>
+          <input
+            id="import-rule-customer-warranty"
+            className={lookupStyles.fieldControl}
+            value={newRuleCustomerWarranty}
+            onChange={(event) => setNewRuleCustomerWarranty(event.target.value)}
           />
         </div>
         <div className={lookupStyles.field}>
