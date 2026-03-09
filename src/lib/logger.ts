@@ -113,10 +113,8 @@ class Logger {
   }
 
   error(message: string, context?: LogContext, error?: Error): void {
-    if (isDev) {
-      const meta = buildMeta(context, error);
-      console.error(formatConsole('error', message, context), error ? meta : undefined);
-    }
+    const meta = buildMeta(context, error);
+    console.error(formatConsole('error', message, context), error ? meta : undefined);
     writeToDatabase('error', message, context, error);
   }
 }
