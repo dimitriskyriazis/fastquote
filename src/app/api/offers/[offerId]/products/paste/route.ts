@@ -36,7 +36,7 @@ type ClipboardRow = {
   comment: string | null;
   delivery: string | null;
   warranty: number | null;
-  customerWarranty: number | null;
+  telmacoWarranty: number | null;
   otherCurrencyId: number | null;
   currencyCostModifier: number | null;
   priceListId: number | null;
@@ -133,7 +133,7 @@ const toPreparedRow = (value: unknown): PreparedRow | null => {
     comment: coerceString(row.comment ?? row.Comment),
     delivery: coerceString(row.delivery ?? row.Delivery),
     warranty: coerceInt(row.warranty ?? row.Warranty),
-    customerWarranty: coerceInt(row.customerWarranty ?? row.CustomerWarranty),
+    telmacoWarranty: coerceInt(row.telmacoWarranty ?? row.TelmacoWarranty),
     otherCurrencyId: coerceInt(row.otherCurrencyId ?? row.OtherCurrencyID),
     currencyCostModifier: coerceNumber(row.currencyCostModifier ?? row.CurrencyCostModifier),
     priceListId: coerceInt(row.priceListId ?? row.PriceListID),
@@ -349,7 +349,7 @@ const insertProductRowsKeepPricing = async (transaction: Transaction, offerId: n
       request.input(`${p}_margin`, sql.Decimal(18, 4), row.margin);
       request.input(`${p}_grossProfit`, sql.Decimal(18, 4), row.grossProfit);
       request.input(`${p}_warranty`, sql.Int, row.warranty);
-      request.input(`${p}_customerWarranty`, sql.Int, row.customerWarranty);
+      request.input(`${p}_telmacoWarranty`, sql.Int, row.telmacoWarranty);
       request.input(`${p}_priceListId`, sql.Int, row.priceListId);
       request.input(`${p}_priceListItemId`, sql.Int, row.priceListItemId);
       request.input(`${p}_requestedItemNo`, sql.NVarChar(255), row.requestedItemNo);
@@ -361,15 +361,15 @@ const insertProductRowsKeepPricing = async (transaction: Transaction, offerId: n
       request.input(`${p}_requestedDescription2`, sql.NVarChar(sql.MAX), row.requestedDescription2);
       request.input(`${p}_requestedDescription3`, sql.NVarChar(sql.MAX), row.requestedDescription3);
       request.input(`${p}_requestedQuantity`, sql.Decimal(18, 4), row.requestedQuantity);
-      values.push(`(@${p}_seq,@${p}_tree,@${p}_ordering,@${p}_isPrintable,@${p}_productId,@${p}_partNo,@${p}_modelNo,@${p}_description,@${p}_quantity,@${p}_listPrice,@${p}_netUnitPrice,@${p}_telmacoDiscount,@${p}_customerDiscount,@${p}_netCostOtherCurrency,@${p}_otherCurrencyId,@${p}_currencyCostModifier,@${p}_netCost,@${p}_margin,@${p}_grossProfit,@${p}_warranty,@${p}_customerWarranty,@${p}_priceListId,@${p}_priceListItemId,@${p}_requestedItemNo,@${p}_requestedBrand,@${p}_requestedPartNo,@${p}_requestedModelNo,@${p}_requestedWebLink,@${p}_requestedDescription,@${p}_requestedDescription2,@${p}_requestedDescription3,@${p}_requestedQuantity)`);
+      values.push(`(@${p}_seq,@${p}_tree,@${p}_ordering,@${p}_isPrintable,@${p}_productId,@${p}_partNo,@${p}_modelNo,@${p}_description,@${p}_quantity,@${p}_listPrice,@${p}_netUnitPrice,@${p}_telmacoDiscount,@${p}_customerDiscount,@${p}_netCostOtherCurrency,@${p}_otherCurrencyId,@${p}_currencyCostModifier,@${p}_netCost,@${p}_margin,@${p}_grossProfit,@${p}_warranty,@${p}_telmacoWarranty,@${p}_priceListId,@${p}_priceListItemId,@${p}_requestedItemNo,@${p}_requestedBrand,@${p}_requestedPartNo,@${p}_requestedModelNo,@${p}_requestedWebLink,@${p}_requestedDescription,@${p}_requestedDescription2,@${p}_requestedDescription3,@${p}_requestedQuantity)`);
     });
     const result = await request.query<{ OfferDetailID: number }>(`
-      DECLARE @r TABLE (Seq INT, TreeOrdering NVARCHAR(255), Ordering INT, IsPrintable BIT NULL, ProductID INT NULL, PartNumber NVARCHAR(255) NULL, ModelNumber NVARCHAR(255) NULL, ProductDescription NVARCHAR(MAX) NULL, Quantity DECIMAL(18,4) NULL, ListPrice DECIMAL(18,4) NULL, NetUnitPrice DECIMAL(18,4) NULL, TelmacoDiscount DECIMAL(18,4) NULL, CustomerDiscount DECIMAL(18,4) NULL, NetCostOtherCurrency DECIMAL(18,4) NULL, OtherCurrencyID INT NULL, CurrencyCostModifier DECIMAL(18,8) NULL, NetCost DECIMAL(18,4) NULL, Margin DECIMAL(18,4) NULL, GrossProfit DECIMAL(18,4) NULL, Warranty INT NULL, CustomerWarranty INT NULL, PriceListID INT NULL, PriceListItemID INT NULL, RequestedItemNo NVARCHAR(255) NULL, RequestedBrand NVARCHAR(255) NULL, RequestedPartNo NVARCHAR(255) NULL, RequestedModelNo NVARCHAR(255) NULL, RequestedWebLink NVARCHAR(MAX) NULL, RequestedDescription NVARCHAR(MAX) NULL, RequestedDescription2 NVARCHAR(MAX) NULL, RequestedDescription3 NVARCHAR(MAX) NULL, RequestedQuantity DECIMAL(18,4) NULL);
+      DECLARE @r TABLE (Seq INT, TreeOrdering NVARCHAR(255), Ordering INT, IsPrintable BIT NULL, ProductID INT NULL, PartNumber NVARCHAR(255) NULL, ModelNumber NVARCHAR(255) NULL, ProductDescription NVARCHAR(MAX) NULL, Quantity DECIMAL(18,4) NULL, ListPrice DECIMAL(18,4) NULL, NetUnitPrice DECIMAL(18,4) NULL, TelmacoDiscount DECIMAL(18,4) NULL, CustomerDiscount DECIMAL(18,4) NULL, NetCostOtherCurrency DECIMAL(18,4) NULL, OtherCurrencyID INT NULL, CurrencyCostModifier DECIMAL(18,8) NULL, NetCost DECIMAL(18,4) NULL, Margin DECIMAL(18,4) NULL, GrossProfit DECIMAL(18,4) NULL, Warranty INT NULL, TelmacoWarranty INT NULL, PriceListID INT NULL, PriceListItemID INT NULL, RequestedItemNo NVARCHAR(255) NULL, RequestedBrand NVARCHAR(255) NULL, RequestedPartNo NVARCHAR(255) NULL, RequestedModelNo NVARCHAR(255) NULL, RequestedWebLink NVARCHAR(MAX) NULL, RequestedDescription NVARCHAR(MAX) NULL, RequestedDescription2 NVARCHAR(MAX) NULL, RequestedDescription3 NVARCHAR(MAX) NULL, RequestedQuantity DECIMAL(18,4) NULL);
       INSERT INTO @r VALUES ${values.join(', ')};
       DECLARE @i TABLE (OfferDetailID INT, TreeOrdering NVARCHAR(255));
-      INSERT INTO dbo.OfferDetails (OfferID, ParentOfferDetailID, TreeOrdering, Ordering, IsPrintable, IsComment, IsCategory, ProductID, PartNumber, ModelNumber, ProductDescription, Quantity, ListPrice, NetUnitPrice, TotalPrice, TotalNet, TelmacoDiscount, CustomerDiscount, NetCostOtherCurrency, OtherCurrencyID, CurrencyCostModifier, NetCost, Margin, GrossProfit, TotalCost, Warranty, CustomerWarranty, PriceListID, PriceListItemID, RequestedItemNo, RequestedBrand, RequestedPartNo, RequestedModelNo, RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy)
+      INSERT INTO dbo.OfferDetails (OfferID, ParentOfferDetailID, TreeOrdering, Ordering, IsPrintable, IsComment, IsCategory, ProductID, PartNumber, ModelNumber, ProductDescription, Quantity, ListPrice, NetUnitPrice, TotalPrice, TotalNet, TelmacoDiscount, CustomerDiscount, NetCostOtherCurrency, OtherCurrencyID, CurrencyCostModifier, NetCost, Margin, GrossProfit, TotalCost, Warranty, TelmacoWarranty, PriceListID, PriceListItemID, RequestedItemNo, RequestedBrand, RequestedPartNo, RequestedModelNo, RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy)
       OUTPUT INSERTED.ID, INSERTED.TreeOrdering INTO @i (OfferDetailID, TreeOrdering)
-      SELECT @__offerId, NULL, src.TreeOrdering, src.Ordering, src.IsPrintable, 0, 0, src.ProductID, src.PartNumber, src.ModelNumber, src.ProductDescription, src.Quantity, src.ListPrice, src.NetUnitPrice, CASE WHEN src.ListPrice IS NULL OR src.Quantity IS NULL THEN NULL ELSE src.ListPrice * src.Quantity END, CASE WHEN src.NetUnitPrice IS NULL OR src.Quantity IS NULL THEN NULL ELSE src.NetUnitPrice * src.Quantity END, src.TelmacoDiscount, src.CustomerDiscount, src.NetCostOtherCurrency, src.OtherCurrencyID, src.CurrencyCostModifier, src.NetCost, src.Margin, src.GrossProfit, CASE WHEN src.NetCost IS NULL OR src.Quantity IS NULL THEN NULL ELSE src.NetCost * src.Quantity END, src.Warranty, src.CustomerWarranty, src.PriceListID, src.PriceListItemID, src.RequestedItemNo, src.RequestedBrand, src.RequestedPartNo, src.RequestedModelNo, src.RequestedWebLink, src.RequestedDescription, src.RequestedDescription2, src.RequestedDescription3, src.RequestedQuantity, SYSUTCDATETIME(), @__createdBy, SYSUTCDATETIME(), @__modifiedBy FROM @r src ORDER BY src.Seq;
+      SELECT @__offerId, NULL, src.TreeOrdering, src.Ordering, src.IsPrintable, 0, 0, src.ProductID, src.PartNumber, src.ModelNumber, src.ProductDescription, src.Quantity, src.ListPrice, src.NetUnitPrice, CASE WHEN src.ListPrice IS NULL OR src.Quantity IS NULL THEN NULL ELSE src.ListPrice * src.Quantity END, CASE WHEN src.NetUnitPrice IS NULL OR src.Quantity IS NULL THEN NULL ELSE src.NetUnitPrice * src.Quantity END, src.TelmacoDiscount, src.CustomerDiscount, src.NetCostOtherCurrency, src.OtherCurrencyID, src.CurrencyCostModifier, src.NetCost, src.Margin, src.GrossProfit, CASE WHEN src.NetCost IS NULL OR src.Quantity IS NULL THEN NULL ELSE src.NetCost * src.Quantity END, src.Warranty, src.TelmacoWarranty, src.PriceListID, src.PriceListItemID, src.RequestedItemNo, src.RequestedBrand, src.RequestedPartNo, src.RequestedModelNo, src.RequestedWebLink, src.RequestedDescription, src.RequestedDescription2, src.RequestedDescription3, src.RequestedQuantity, SYSUTCDATETIME(), @__createdBy, SYSUTCDATETIME(), @__modifiedBy FROM @r src ORDER BY src.Seq;
       UPDATE child
       SET child.ParentOfferDetailID = parent.ID
       FROM dbo.OfferDetails child
@@ -517,7 +517,7 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
         OfferID, ParentOfferDetailID, TreeOrdering, Ordering,
         IsPrintable, IsComment, IsCategory,
         ProductID, BrandID, PartNumber, ModelNumber, ProductDescription,
-        Warranty, CustomerWarranty, Quantity,
+        TelmacoWarranty, Warranty, Quantity,
         ListPrice, NetUnitPrice, TotalPrice, TotalNet,
         TelmacoDiscount, CustomerDiscount,
         NetCostOtherCurrency, OtherCurrencyID, CurrencyCostModifier,

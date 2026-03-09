@@ -90,24 +90,12 @@ const normalizeProductId = (value: unknown): number | null => {
 };
 
 const DescriptionCellRenderer = ({ value }: { value?: unknown }) => {
-  const [expanded, setExpanded] = useState(false);
   const text = value == null ? '' : String(value);
-  const hasLongText = text.length > 60;
-  const toggle = (event: React.MouseEvent) => {
-    event.stopPropagation();
-    event.preventDefault();
-    setExpanded((v) => !v);
-  };
   return (
     <div className={styles.descriptionCell}>
-      <div className={styles.descriptionText} data-expanded={expanded}>
+      <div className={styles.descriptionText}>
         {text}
       </div>
-      {hasLongText ? (
-        <button type="button" className={styles.descriptionToggle} onClick={toggle}>
-          {expanded ? 'Show less' : 'Show more'}
-        </button>
-      ) : null}
     </div>
   );
 };

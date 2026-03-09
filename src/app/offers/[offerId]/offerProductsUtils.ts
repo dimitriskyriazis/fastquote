@@ -793,7 +793,7 @@ export const COST_ANALYSIS_COLUMNS = [
   'Margin',
   'GrossProfit',
   'TotalCost',
-  'Warranty',
+  'TelmacoWarranty',
 ];
 
 export const STANDARD_PACKAGE_PRODUCTS_FIELDS = [

@@ -878,6 +878,7 @@ export default function ClientProductsPage({
       value={tableLayout}
       onChange={(event) => setTableLayout(event.target.value as ProductsTableLayout)}
       aria-label="Table layout"
+      suppressHydrationWarning
     >
       <option value="cust">Cust</option>
       <option value="wCost">wCost</option>

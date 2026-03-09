@@ -2227,7 +2227,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       cellStyle: actualNumericCellStyle,
     },
     {
-      field: 'CustomerWarranty',
+      field: 'Warranty',
       headerName: 'Warranty',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',

@@ -97,8 +97,8 @@ DECLARE @SourceDetails TABLE (
   NetUnitPrice DECIMAL(18,4) NULL,
   TotalPrice DECIMAL(18,4) NULL,
   TotalNet DECIMAL(18,4) NULL,
-  Warranty NVARCHAR(500) NULL,
-  CustomerWarranty INT NULL,
+  TelmacoWarranty INT NULL,
+  Warranty INT NULL,
   ListPrice DECIMAL(18,4) NULL,
   TelmacoDiscount DECIMAL(18,4) NULL,
   NetCostOtherCurrency DECIMAL(18,4) NULL,
@@ -120,7 +120,7 @@ DECLARE @SourceDetails TABLE (
   RequestedQuantity DECIMAL(18,4) NULL
 );
 
-INSERT INTO @SourceDetails (Seq, OldId, ParentOfferDetailID, TreeOrdering, Ordering, IsPrintable, IsComment, IsCategory, ProductDescription, BrandID, PartNumber, ModelNumber, ProductID, Quantity, CustomerDiscount, NetUnitPrice, TotalPrice, TotalNet, Warranty, CustomerWarranty, ListPrice, TelmacoDiscount, NetCostOtherCurrency, OtherCurrencyID, CurrencyCostModifier, NetCost, Margin, GrossProfit, TotalCost, PriceListID, PriceListItemID, RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity)
+INSERT INTO @SourceDetails (Seq, OldId, ParentOfferDetailID, TreeOrdering, Ordering, IsPrintable, IsComment, IsCategory, ProductDescription, BrandID, PartNumber, ModelNumber, ProductID, Quantity, CustomerDiscount, NetUnitPrice, TotalPrice, TotalNet, TelmacoWarranty, Warranty, ListPrice, TelmacoDiscount, NetCostOtherCurrency, OtherCurrencyID, CurrencyCostModifier, NetCost, Margin, GrossProfit, TotalCost, PriceListID, PriceListItemID, RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity)
 SELECT
   ROW_NUMBER() OVER (ORDER BY od.ID),
   od.ID,
@@ -140,8 +140,8 @@ SELECT
   od.NetUnitPrice,
   od.TotalPrice,
   od.TotalNet,
+  od.TelmacoWarranty,
   od.Warranty,
-  od.CustomerWarranty,
   od.ListPrice,
   od.TelmacoDiscount,
   od.NetCostOtherCurrency,
@@ -180,8 +180,8 @@ INSERT INTO dbo.OfferDetails (
   NetUnitPrice,
   TotalPrice,
   TotalNet,
+  TelmacoWarranty,
   Warranty,
-  CustomerWarranty,
   ListPrice,
   TelmacoDiscount,
   NetCostOtherCurrency,
@@ -225,8 +225,8 @@ SELECT
   src.NetUnitPrice,
   src.TotalPrice,
   src.TotalNet,
+  src.TelmacoWarranty,
   src.Warranty,
-  src.CustomerWarranty,
   src.ListPrice,
   src.TelmacoDiscount,
   src.NetCostOtherCurrency,

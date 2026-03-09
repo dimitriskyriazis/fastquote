@@ -89,8 +89,8 @@ export async function POST(
       request.input('__totalCost', Decimal, row.TotalCost ?? null);
       request.input('__comment', sql.NVarChar(2000), row.Comment ?? null);
       request.input('__delivery', sql.NVarChar(500), row.Delivery ?? null);
-      request.input('__warranty', sql.NVarChar(500), row.Warranty ?? null);
-      request.input('__customerWarranty', sql.Int, typeof row.CustomerWarranty === 'number' ? row.CustomerWarranty : null);
+      request.input('__warranty', sql.Int, typeof row.Warranty === 'number' ? row.Warranty : null);
+      request.input('__telmacoWarranty', sql.Int, typeof row.TelmacoWarranty === 'number' ? row.TelmacoWarranty : null);
       request.input('__productId', sql.Int, row.ProductID ?? null);
       request.input('__brandId', sql.Int, row.BrandID ?? null);
       request.input('__priceListId', sql.Int, row.PriceListID ?? null);
@@ -114,7 +114,7 @@ export async function POST(
           ListPrice, NetUnitPrice, TotalPrice, TotalNet,
           NetCost, NetCostOtherCurrency, OtherCurrencyID, CurrencyCostModifier,
           CustomerDiscount, TelmacoDiscount, Margin, GrossProfit, TotalCost,
-          Comment, Delivery, Warranty, CustomerWarranty,
+          Comment, Delivery, Warranty, TelmacoWarranty,
           ProductID, BrandID, PriceListID, PriceListItemID,
           RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo,
           RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3,
@@ -127,7 +127,7 @@ export async function POST(
           @__listPrice, @__netUnitPrice, @__totalPrice, @__totalNet,
           @__netCost, @__netCostOther, @__otherCurrencyId, @__currencyCostModifier,
           @__customerDiscount, @__telmacoDiscount, @__margin, @__grossProfit, @__totalCost,
-          @__comment, @__delivery, @__warranty, @__customerWarranty,
+          @__comment, @__delivery, @__warranty, @__telmacoWarranty,
           @__productId, @__brandId, @__priceListId, @__priceListItemId,
           @__requestedItemNo, @__requestedBrand, @__requestedModelNo, @__requestedPartNo,
           @__requestedWebLink, @__requestedDescription, @__requestedDescription2, @__requestedDescription3,

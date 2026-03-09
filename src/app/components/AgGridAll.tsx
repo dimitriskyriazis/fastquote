@@ -76,6 +76,7 @@ import {
   ExternalFilterModule,
   ScrollApiModule,
   RowAutoHeightModule,
+  RenderApiModule,
 } from 'ag-grid-community';
 import {
   AggregationModule,
@@ -491,6 +492,7 @@ if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
     ValidationModule,
     LocaleModule,
     RowAutoHeightModule,
+    RenderApiModule,
   ]);
   globalThis.__AG_GRID_MODULES_REGISTERED__ = true;
 }
