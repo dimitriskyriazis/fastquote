@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useCallback, useState, useRef, useEffect } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type {
   ColDef,
@@ -130,10 +130,12 @@ const normalizeProbability = (value: unknown): number | null => {
 export default function OffersClient() {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const routerRef = useRef(router);
   routerRef.current = router;
   const { roles, userId } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
+  const initialSalesPersonRef = useRef((searchParams.get('salesPerson') ?? '').trim());
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const pendingColumnStateRestoreRef = useRef<ColumnState[] | null>(null);
   const [expandedVersionGroups, setExpandedVersionGroups] = useState<Set<number>>(new Set());
@@ -148,14 +150,20 @@ export default function OffersClient() {
     if (defaultEnabledFilterAppliedRef.current) return;
     const existingModel = api.getFilterModel() as Record<string, unknown> | null;
     const nextModel = existingModel && typeof existingModel === 'object' ? { ...existingModel } : {};
-    if ('Enabled' in nextModel) {
+    const salesPerson = initialSalesPersonRef.current;
+    const needsEnabledDefault = !('Enabled' in nextModel);
+    const needsSalesPersonFilter = Boolean(salesPerson);
+    if (!needsEnabledDefault && !needsSalesPersonFilter) {
       defaultEnabledFilterAppliedRef.current = true;
       return;
     }
-    api.setFilterModel({
-      ...nextModel,
-      Enabled: { filterType: 'set', values: ['true'] },
-    });
+    if (needsEnabledDefault) {
+      nextModel.Enabled = { filterType: 'set', values: ['true'] };
+    }
+    if (needsSalesPersonFilter) {
+      nextModel.SalesPerson = { filterType: 'text', type: 'equals', filter: salesPerson };
+    }
+    api.setFilterModel(nextModel);
     defaultEnabledFilterAppliedRef.current = true;
   }, []);
   const handleCreateOfferClick = useCallback(() => {

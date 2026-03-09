@@ -330,12 +330,20 @@ const parsePastedText = (text: string): unknown[][] => {
     const char = text[idx];
 
     if (char === '"') {
-      const nextChar = text[idx + 1];
-      if (inQuotes && nextChar === '"') {
-        currentCell += '"';
-        idx += 1;
+      if (inQuotes) {
+        const nextChar = text[idx + 1];
+        if (nextChar === '"') {
+          currentCell += '"';
+          idx += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else if (currentCell.length === 0) {
+        // Only enter quote mode at the very start of a cell (standard CSV/TSV behaviour).
+        inQuotes = true;
       } else {
-        inQuotes = !inQuotes;
+        // Mid-cell quote (e.g. 55-65"): treat as a literal character.
+        currentCell += '"';
       }
       continue;
     }

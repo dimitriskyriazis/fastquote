@@ -18,7 +18,7 @@ export default function RecentOffersSection() {
   const [recentOffers, setRecentOffers] = useState<RecentOfferSummary[]>([]);
   const [verifiedOffers, setVerifiedOffers] = useState<RecentOfferSummary[] | null>([]);
   const [descriptionOverrides, setDescriptionOverrides] = useState<Record<string, string>>({});
-  const { userId } = useAuditUser();
+  const { userId, selectedUser } = useAuditUser();
 
   const refreshRecentOffers = useCallback(
     async (signal?: AbortSignal) => {
@@ -125,12 +125,22 @@ export default function RecentOffersSection() {
     <section className={styles.recentOffersSection}>
       <header className={styles.sectionHeader}>
         <h2 className={styles.sectionTitle}>Recent Offers</h2>
-        <Link
-          href="/offers"
-          className={`${styles.sectionAction} page-header-button`}
-        >
-          View all offers
-        </Link>
+        <div className={styles.sectionActions}>
+          {selectedUser && (
+            <Link
+              href={`/offers?salesPerson=${encodeURIComponent(selectedUser.label)}`}
+              className={`${styles.sectionAction} page-header-button`}
+            >
+              View my offers
+            </Link>
+          )}
+          <Link
+            href="/offers"
+            className={`${styles.sectionAction} page-header-button`}
+          >
+            View all offers
+          </Link>
+        </div>
       </header>
       <hr className={styles.sectionDivider} />
       <div className={styles.recentOfferGrid}>

@@ -129,6 +129,12 @@
   margin: 0;
 }
 
+.sectionActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .sectionAction {
   font-weight: 600;
   font-size: 0.88rem;

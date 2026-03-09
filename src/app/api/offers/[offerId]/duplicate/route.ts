@@ -358,7 +358,7 @@ export async function POST(
       null;
     const existingVersion = Math.max(0, Number(existingOffer.OfferVersion ?? 0));
     const nextVersion = existingVersion + 1;
-    const targetVersion = duplicateMode === 'copy' ? existingVersion : nextVersion;
+    const targetVersion = duplicateMode === 'copy' ? 1 : nextVersion;
     const targetParentOfferId = duplicateMode === 'copy' ? null : normalizedId;
     const enabledValue = typeof existingOffer.Enabled === 'boolean'
       ? existingOffer.Enabled
