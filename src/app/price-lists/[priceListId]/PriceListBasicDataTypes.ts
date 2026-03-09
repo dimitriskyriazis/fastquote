@@ -23,7 +23,6 @@ export type PriceListBasicRecord = {
   ResponsibleUserId: string | null;
   ResponsibleUserName: string | null;
   HasDuty: boolean | number | null;
-  PricingPolicyRuleID: number | null;
   PricingPolicyID: number | null;
   PricingPolicyName: string | null;
   ModifiedOn: Date | string | null;

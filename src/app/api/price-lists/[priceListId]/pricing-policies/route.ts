@@ -37,21 +37,16 @@ export async function GET(
       PriceListID: number;
       PricingPolicyID: number;
       PricingPolicyName: string | null;
-      PricingPolicyRuleID: number | null;
-      PricingPolicyRuleName: string | null;
     }>(`
       SELECT
         plpp.ID,
         plpp.PriceListID,
         plpp.PricingPolicyID,
-        pp.Name AS PricingPolicyName,
-        plpp.PricingPolicyRuleID,
-        ppr.Name AS PricingPolicyRuleName
+        pp.Name AS PricingPolicyName
       FROM dbo.PriceListPricingPolicy AS plpp
       INNER JOIN dbo.PricingPolicies AS pp ON plpp.PricingPolicyID = pp.ID
-      LEFT JOIN dbo.PricingPolicyRules AS ppr ON plpp.PricingPolicyRuleID = ppr.ID
       WHERE plpp.PriceListID = @priceListId
-      ORDER BY pp.Name, ppr.Name
+      ORDER BY pp.Name
     `);
 
     return NextResponse.json({
@@ -61,8 +56,8 @@ export async function GET(
         priceListId: row.PriceListID,
         pricingPolicyId: row.PricingPolicyID,
         pricingPolicyName: row.PricingPolicyName,
-        pricingPolicyRuleId: row.PricingPolicyRuleID,
-        pricingPolicyRuleName: row.PricingPolicyRuleName,
+        pricingPolicyRuleId: null,
+        pricingPolicyRuleName: null,
       })),
     });
   } catch (err) {
@@ -74,7 +69,6 @@ export async function GET(
 
 type AddPricingPolicyBody = {
   pricingPolicyId: number;
-  pricingPolicyRuleId?: number | null;
 };
 
 export async function POST(
@@ -102,22 +96,18 @@ export async function POST(
       return NextResponse.json({ ok: false, error: 'Pricing policy ID is required' }, { status: 400 });
     }
 
-    const pricingPolicyRuleId = normalizeInt(body?.pricingPolicyRuleId ?? null);
-
     const pool = await getPool();
     const request = pool.request();
     request.input('priceListId', sql.Int, parsedId);
     request.input('pricingPolicyId', sql.Int, pricingPolicyId);
-    request.input('pricingPolicyRuleId', sql.Int, pricingPolicyRuleId);
 
     const result = await request.query<{ ID: number }>(`
       INSERT INTO dbo.PriceListPricingPolicy (
         PriceListID,
-        PricingPolicyID,
-        PricingPolicyRuleID
+        PricingPolicyID
       )
       OUTPUT INSERTED.ID
-      VALUES (@priceListId, @pricingPolicyId, @pricingPolicyRuleId);
+      VALUES (@priceListId, @pricingPolicyId);
     `);
 
     const inserted = result.recordset?.[0];
@@ -135,7 +125,6 @@ export async function POST(
 
 type UpdatePricingPolicyBody = {
   pricingPolicyId: number;
-  pricingPolicyRuleId?: number | null;
 };
 
 export async function PUT(
@@ -169,19 +158,15 @@ export async function PUT(
       return NextResponse.json({ ok: false, error: 'Pricing policy ID is required' }, { status: 400 });
     }
 
-    const pricingPolicyRuleId = normalizeInt(body?.pricingPolicyRuleId ?? null);
-
     const pool = await getPool();
     const request = pool.request();
     request.input('priceListId', sql.Int, parsedId);
     request.input('policyId', sql.Int, policyId);
     request.input('pricingPolicyId', sql.Int, pricingPolicyId);
-    request.input('pricingPolicyRuleId', sql.Int, pricingPolicyRuleId);
 
     await request.query(`
       UPDATE dbo.PriceListPricingPolicy
-      SET PricingPolicyID = @pricingPolicyId,
-          PricingPolicyRuleID = @pricingPolicyRuleId
+      SET PricingPolicyID = @pricingPolicyId
       WHERE PriceListID = @priceListId
         AND ID = @policyId;
     `);

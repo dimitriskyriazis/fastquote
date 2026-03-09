@@ -586,23 +586,13 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
         FROM (
           SELECT TOP (1) ppr.TelmacoDiscountPercentage, ppr.CustomerDiscountPercentage, 1 AS Priority
           FROM dbo.PriceListPricingPolicy plpp
-          INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyRuleID = ppr.ID
+          INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
           WHERE plpp.PriceListID = p.PriceListID
             AND plpp.PricingPolicyID = @pricingPolicyId
-            AND plpp.PricingPolicyRuleID IS NOT NULL
             AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
           ORDER BY CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END, ppr.ID DESC
           UNION ALL
           SELECT TOP (1) ppr.TelmacoDiscountPercentage, ppr.CustomerDiscountPercentage, 2 AS Priority
-          FROM dbo.PriceListPricingPolicy plpp
-          INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
-          WHERE plpp.PriceListID = p.PriceListID
-            AND plpp.PricingPolicyID = @pricingPolicyId
-            AND plpp.PricingPolicyRuleID IS NULL
-            AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
-          ORDER BY CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END, ppr.ID DESC
-          UNION ALL
-          SELECT TOP (1) ppr.TelmacoDiscountPercentage, ppr.CustomerDiscountPercentage, 3 AS Priority
           FROM dbo.PricingPolicyRules ppr
           WHERE ppr.PricingPolicyID = @pricingPolicyId
             AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)

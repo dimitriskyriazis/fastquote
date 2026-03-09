@@ -132,24 +132,6 @@ async function updateFarnellPrices(
         FROM dbo.OfferDetails od_inner
         INNER JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = od_inner.PriceListID
           AND plpp.PricingPolicyID = @PricingPolicyID
-          AND plpp.PricingPolicyRuleID IS NOT NULL
-        INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyRuleID = ppr.ID
-        WHERE od_inner.ID = @detailId
-          AND (ppr.BrandID = od_inner.BrandID OR ppr.BrandID IS NULL)
-        ORDER BY
-          CASE WHEN ppr.BrandID = od_inner.BrandID THEN 0 ELSE 1 END,
-          ppr.ID DESC
-
-        UNION ALL
-
-        SELECT TOP (1)
-          ppr.CustomerDiscountPercentage,
-          ppr.TelmacoDiscountPercentage,
-          2 AS Priority
-        FROM dbo.OfferDetails od_inner
-        INNER JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = od_inner.PriceListID
-          AND plpp.PricingPolicyID = @PricingPolicyID
-          AND plpp.PricingPolicyRuleID IS NULL
         INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
         WHERE od_inner.ID = @detailId
           AND (ppr.BrandID = od_inner.BrandID OR ppr.BrandID IS NULL)
@@ -162,7 +144,7 @@ async function updateFarnellPrices(
         SELECT TOP (1)
           ppr.CustomerDiscountPercentage,
           ppr.TelmacoDiscountPercentage,
-          3 AS Priority
+          2 AS Priority
         FROM dbo.OfferDetails od_inner
         INNER JOIN dbo.PricingPolicyRules ppr ON ppr.PricingPolicyID = @PricingPolicyID
         WHERE od_inner.ID = @detailId
@@ -439,16 +421,15 @@ export async function POST(
           ppr.TelmacoDiscountPercentage,
           ppr.CustomerDiscountPercentage
         FROM (
-          -- Priority 1: Use specific rule from PriceListPricingPolicy if PricingPolicyRuleID is set
+          -- Priority 1: Use rules from policy specified in PriceListPricingPolicy
           SELECT TOP (1)
             ppr.TelmacoDiscountPercentage,
             ppr.CustomerDiscountPercentage,
             1 AS Priority
           FROM dbo.PriceListPricingPolicy plpp
-          INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyRuleID = ppr.ID
+          INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
           WHERE plpp.PriceListID = price.PriceListID
             AND plpp.PricingPolicyID = oc.PricingPolicyID
-            AND plpp.PricingPolicyRuleID IS NOT NULL
             AND (ppr.BrandID = eligible.EffectiveBrandID OR ppr.BrandID IS NULL)
           ORDER BY
             CASE WHEN ppr.BrandID = eligible.EffectiveBrandID THEN 0 ELSE 1 END,
@@ -456,28 +437,11 @@ export async function POST(
 
           UNION ALL
 
-          -- Priority 2: Use rules from policy specified in PriceListPricingPolicy
+          -- Priority 2: Fall back to Offer's PricingPolicyID
           SELECT TOP (1)
             ppr.TelmacoDiscountPercentage,
             ppr.CustomerDiscountPercentage,
             2 AS Priority
-          FROM dbo.PriceListPricingPolicy plpp
-          INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
-          WHERE plpp.PriceListID = price.PriceListID
-            AND plpp.PricingPolicyID = oc.PricingPolicyID
-            AND plpp.PricingPolicyRuleID IS NULL
-            AND (ppr.BrandID = eligible.EffectiveBrandID OR ppr.BrandID IS NULL)
-          ORDER BY
-            CASE WHEN ppr.BrandID = eligible.EffectiveBrandID THEN 0 ELSE 1 END,
-            ppr.ID DESC
-
-          UNION ALL
-
-          -- Priority 3: Fall back to Offer's PricingPolicyID
-          SELECT TOP (1)
-            ppr.TelmacoDiscountPercentage,
-            ppr.CustomerDiscountPercentage,
-            3 AS Priority
           FROM dbo.PricingPolicyRules ppr
           WHERE ppr.PricingPolicyID = oc.PricingPolicyID
             AND (ppr.BrandID = eligible.EffectiveBrandID OR ppr.BrandID IS NULL)

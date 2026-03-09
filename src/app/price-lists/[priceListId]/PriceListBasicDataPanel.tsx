@@ -49,7 +49,6 @@ export async function fetchPriceListBasicRecord(priceListId: number) {
         pl.ResponsibleUserId,
         COALESCE(NULLIF(LTRIM(RTRIM(resp.FullName)), ''), resp.UserName) AS ResponsibleUserName,
         pl.HasDuty,
-        NULL AS PricingPolicyRuleID,
         NULL AS PricingPolicyID,
         NULL AS PricingPolicyName,
         pl.ModifiedOn,
@@ -258,8 +257,6 @@ type PriceListPricingPolicyRow = {
   PriceListID: number;
   PricingPolicyID: number;
   PricingPolicyName: string | null;
-  PricingPolicyRuleID: number | null;
-  PricingPolicyRuleName: string | null;
 };
 
 export async function fetchPriceListPricingPolicies(priceListId: number) {
@@ -272,12 +269,9 @@ export async function fetchPriceListPricingPolicies(priceListId: number) {
         plpp.ID,
         plpp.PriceListID,
         plpp.PricingPolicyID,
-        pp.Name AS PricingPolicyName,
-        plpp.PricingPolicyRuleID,
-        ppr.Name AS PricingPolicyRuleName
+        pp.Name AS PricingPolicyName
       FROM dbo.PriceListPricingPolicy AS plpp
       INNER JOIN dbo.PricingPolicies AS pp ON plpp.PricingPolicyID = pp.ID
-      LEFT JOIN dbo.PricingPolicyRules AS ppr ON plpp.PricingPolicyRuleID = ppr.ID
       WHERE plpp.PriceListID = @priceListId
       ORDER BY pp.Name, ppr.Name
     `);
@@ -286,8 +280,8 @@ export async function fetchPriceListPricingPolicies(priceListId: number) {
       priceListId: row.PriceListID,
       pricingPolicyId: row.PricingPolicyID,
       pricingPolicyName: row.PricingPolicyName,
-      pricingPolicyRuleId: row.PricingPolicyRuleID,
-      pricingPolicyRuleName: row.PricingPolicyRuleName,
+      pricingPolicyRuleId: null,
+      pricingPolicyRuleName: null,
     }));
   } catch (err) {
     console.error('Failed to load price list pricing policies', err);

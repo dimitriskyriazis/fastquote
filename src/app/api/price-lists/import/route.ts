@@ -833,7 +833,7 @@ export async function POST(req: NextRequest) {
     const columnMappings = parseColumnMappings(formData.get("columnMappings"));
     const decimalFormat = normalizePriceListDecimalFormat(formData.get("decimalFormat"));
 
-    const parsePricingPolicies = (value: unknown): Array<{ pricingPolicyId: number; pricingPolicyRuleId: number | null }> => {
+    const parsePricingPolicies = (value: unknown): Array<{ pricingPolicyId: number }> => {
       if (typeof value !== "string") return [];
       try {
         const parsed = JSON.parse(value) as unknown;
@@ -842,11 +842,10 @@ export async function POST(req: NextRequest) {
           .map((entry) => {
             if (typeof entry !== "object" || entry === null) return null;
             const policyId = normalizeInt((entry as { pricingPolicyId?: unknown }).pricingPolicyId);
-            const ruleId = normalizeInt((entry as { pricingPolicyRuleId?: unknown }).pricingPolicyRuleId);
             if (policyId == null) return null;
-            return { pricingPolicyId: policyId, pricingPolicyRuleId: ruleId };
+            return { pricingPolicyId: policyId };
           })
-          .filter((val): val is { pricingPolicyId: number; pricingPolicyRuleId: number | null } => val !== null);
+          .filter((val): val is { pricingPolicyId: number } => val !== null);
       } catch {
         return [];
       }
@@ -913,50 +912,25 @@ export async function POST(req: NextRequest) {
 
     // Validate all pricing policies have applicable rules
     for (const policy of pricingPolicies) {
-      if (policy.pricingPolicyRuleId != null) {
-        // Validate specific rule matches policy and brand
-        const ruleCheck = await pool.request()
-          .input('__ruleId', sql.Int, policy.pricingPolicyRuleId)
-          .input('__ppid', sql.Int, policy.pricingPolicyId)
-          .input('__brandId', sql.Int, brandId)
-          .query<{ cnt: number }>(`
-            SELECT COUNT(1) AS cnt
-            FROM dbo.PricingPolicyRules ppr
-            WHERE ppr.ID = @__ruleId
-              AND ppr.PricingPolicyID = @__ppid
-              AND (ppr.BrandID = @__brandId OR ppr.BrandID IS NULL)
-          `);
-        const validRuleCount = ruleCheck.recordset?.[0]?.cnt ?? 0;
-        if (validRuleCount <= 0) {
-          return NextResponse.json(
-            {
-              ok: false,
-              error: `Pricing policy rule ${policy.pricingPolicyRuleId} does not match policy ${policy.pricingPolicyId} and brand ${brandId}.`,
-            },
-            { status: 400 },
-          );
-        }
-      } else {
-        // Validate policy has applicable rules for this brand
-        const policyRuleCheck = await pool.request()
-          .input('__ppid', sql.Int, policy.pricingPolicyId)
-          .input('__brandId', sql.Int, brandId)
-          .query<{ cnt: number }>(`
-            SELECT COUNT(1) AS cnt
-            FROM dbo.PricingPolicyRules ppr
-            WHERE ppr.PricingPolicyID = @__ppid
-              AND (ppr.BrandID = @__brandId OR ppr.BrandID IS NULL)
-          `);
-        const applicableRuleCount = policyRuleCheck.recordset?.[0]?.cnt ?? 0;
-        if (applicableRuleCount <= 0) {
-          return NextResponse.json(
-            {
-              ok: false,
-              error: `Pricing policy ${policy.pricingPolicyId} has no applicable rules for brand ${brandId}. Create a default (All brands) rule or a brand-specific rule first.`,
-            },
-            { status: 400 },
-          );
-        }
+      // Validate policy has applicable rules for this brand
+      const policyRuleCheck = await pool.request()
+        .input('__ppid', sql.Int, policy.pricingPolicyId)
+        .input('__brandId', sql.Int, brandId)
+        .query<{ cnt: number }>(`
+          SELECT COUNT(1) AS cnt
+          FROM dbo.PricingPolicyRules ppr
+          WHERE ppr.PricingPolicyID = @__ppid
+            AND (ppr.BrandID = @__brandId OR ppr.BrandID IS NULL)
+        `);
+      const applicableRuleCount = policyRuleCheck.recordset?.[0]?.cnt ?? 0;
+      if (applicableRuleCount <= 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: `Pricing policy ${policy.pricingPolicyId} has no applicable rules for brand ${brandId}. Create a default (All brands) rule or a brand-specific rule first.`,
+          },
+          { status: 400 },
+        );
       }
     }
 
@@ -1062,17 +1036,14 @@ export async function POST(req: NextRequest) {
         const policyRequest = createRequest(transaction);
         policyRequest.input("PriceListID", sql.Int, priceListId);
         policyRequest.input("PricingPolicyID", sql.Int, policy.pricingPolicyId);
-        policyRequest.input("PricingPolicyRuleID", sql.Int, policy.pricingPolicyRuleId);
         await policyRequest.query(`
           INSERT INTO dbo.PriceListPricingPolicy (
             PriceListID,
-            PricingPolicyID,
-            PricingPolicyRuleID
+            PricingPolicyID
           )
           VALUES (
             @PriceListID,
-            @PricingPolicyID,
-            @PricingPolicyRuleID
+            @PricingPolicyID
           )
         `);
       }

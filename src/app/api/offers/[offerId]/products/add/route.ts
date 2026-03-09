@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logRequest } from '../../../../../../lib/apiHelpers';
+import { logger } from '../../../../../../lib/logger';
 import sql from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
@@ -888,7 +889,7 @@ async function handleAddProducts(
         ppr.TelmacoWarrantyYears,
         ppr.CustomerWarrantyYears
       FROM (
-        -- Priority 1: Use specific rule from PriceListPricingPolicy if PricingPolicyRuleID is set
+        -- Priority 1: Use rules from policy specified in PriceListPricingPolicy
         SELECT TOP (1)
           ppr.TelmacoDiscountPercentage,
           ppr.CustomerDiscountPercentage,
@@ -896,43 +897,23 @@ async function handleAddProducts(
           ppr.CustomerWarrantyYears,
           1 AS Priority
         FROM dbo.PriceListPricingPolicy plpp
-        INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyRuleID = ppr.ID
+        INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
         WHERE plpp.PriceListID = p.PriceListID
           AND plpp.PricingPolicyID = @pricingPolicyId
-          AND plpp.PricingPolicyRuleID IS NOT NULL
           AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
         ORDER BY
           CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END,
           ppr.ID DESC
-        
+
         UNION ALL
-        
-        -- Priority 2: Use rules from policy specified in PriceListPricingPolicy
+
+        -- Priority 2: Fall back to Offer's PricingPolicyID
         SELECT TOP (1)
           ppr.TelmacoDiscountPercentage,
           ppr.CustomerDiscountPercentage,
           ppr.TelmacoWarrantyYears,
           ppr.CustomerWarrantyYears,
           2 AS Priority
-        FROM dbo.PriceListPricingPolicy plpp
-        INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
-        WHERE plpp.PriceListID = p.PriceListID
-          AND plpp.PricingPolicyID = @pricingPolicyId
-          AND plpp.PricingPolicyRuleID IS NULL
-          AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
-        ORDER BY
-          CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END,
-          ppr.ID DESC
-        
-        UNION ALL
-        
-        -- Priority 3: Fall back to Offer's PricingPolicyID
-        SELECT TOP (1)
-          ppr.TelmacoDiscountPercentage,
-          ppr.CustomerDiscountPercentage,
-          ppr.TelmacoWarrantyYears,
-          ppr.CustomerWarrantyYears,
-          3 AS Priority
         FROM dbo.PricingPolicyRules ppr
         WHERE ppr.PricingPolicyID = @pricingPolicyId
           AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
@@ -982,11 +963,12 @@ async function handleAddProducts(
     : [];
   return NextResponse.json({ ok: true, inserted, insertedOfferDetailIds });
   } catch (err) {
-    console.error(
-      `[add-products] offerId=${offerId} categoryId=${categoryId} count=${selections.length}`,
-      err,
-    );
     const message = err instanceof Error ? err.message : 'Server error';
+    logger.error(
+      `[add-products] offerId=${offerId} categoryId=${categoryId} count=${selections.length}: ${message}`,
+      { endpoint: `/api/offers/${offerId}/products/add`, method: 'POST', category: 'mutation' },
+      err instanceof Error ? err : undefined,
+    );
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
@@ -1233,7 +1215,7 @@ async function handleAssignProductToRequestedRow(
           ppr.TelmacoWarrantyYears,
           ppr.CustomerWarrantyYears
         FROM (
-          -- Priority 1: Use specific rule from PriceListPricingPolicy if PricingPolicyRuleID is set
+          -- Priority 1: Use rules from policy specified in PriceListPricingPolicy
           SELECT TOP (1)
             ppr.TelmacoDiscountPercentage,
             ppr.CustomerDiscountPercentage,
@@ -1241,10 +1223,9 @@ async function handleAssignProductToRequestedRow(
             ppr.CustomerWarrantyYears,
             1 AS Priority
           FROM dbo.PriceListPricingPolicy plpp
-          INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyRuleID = ppr.ID
+          INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
           WHERE plpp.PriceListID = p.PriceListID
             AND plpp.PricingPolicyID = @pricingPolicyId
-            AND plpp.PricingPolicyRuleID IS NOT NULL
             AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
           ORDER BY
             CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END,
@@ -1252,32 +1233,13 @@ async function handleAssignProductToRequestedRow(
 
           UNION ALL
 
-          -- Priority 2: Use rules from policy specified in PriceListPricingPolicy
+          -- Priority 2: Fall back to Offer's PricingPolicyID
           SELECT TOP (1)
             ppr.TelmacoDiscountPercentage,
             ppr.CustomerDiscountPercentage,
             ppr.TelmacoWarrantyYears,
             ppr.CustomerWarrantyYears,
             2 AS Priority
-          FROM dbo.PriceListPricingPolicy plpp
-          INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
-          WHERE plpp.PriceListID = p.PriceListID
-            AND plpp.PricingPolicyID = @pricingPolicyId
-            AND plpp.PricingPolicyRuleID IS NULL
-            AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
-          ORDER BY
-            CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END,
-            ppr.ID DESC
-
-          UNION ALL
-
-          -- Priority 3: Fall back to Offer's PricingPolicyID
-          SELECT TOP (1)
-            ppr.TelmacoDiscountPercentage,
-            ppr.CustomerDiscountPercentage,
-            ppr.TelmacoWarrantyYears,
-            ppr.CustomerWarrantyYears,
-            3 AS Priority
           FROM dbo.PricingPolicyRules ppr
           WHERE ppr.PricingPolicyID = @pricingPolicyId
             AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
@@ -1361,11 +1323,12 @@ async function handleAssignProductToRequestedRow(
       : null,
   });
   } catch (err) {
-    console.error(
-      `[assign-requested] offerId=${offerId} requestedRowId=${requestedRowId} productId=${productId} categoryId=${categoryId}`,
-      err,
-    );
     const message = err instanceof Error ? err.message : 'Server error';
+    logger.error(
+      `[assign-requested] offerId=${offerId} requestedRowId=${requestedRowId} productId=${productId} categoryId=${categoryId}: ${message}`,
+      { endpoint: `/api/offers/${offerId}/products/add`, method: 'POST', category: 'mutation' },
+      err instanceof Error ? err : undefined,
+    );
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
@@ -1403,13 +1366,17 @@ export async function POST(
 
     return handleProductGrid(offerId, body);
   } catch (err) {
-    console.error(err);
     const message = err instanceof Error ? err.message : 'Server error';
     const errNumber =
       err && typeof err === 'object' && 'number' in err && typeof (err as { number?: unknown }).number === 'number'
         ? (err as { number: number }).number
         : null;
     const status = errNumber === 50000 ? 400 : 500;
+    logger.error(
+      `[products/add] ${message}`,
+      { endpoint: '/api/offers/[offerId]/products/add', method: 'POST', category: 'mutation' },
+      err instanceof Error ? err : undefined,
+    );
     return NextResponse.json({ ok: false, error: message, rows: [], rowCount: 0 }, { status });
   }
 }
