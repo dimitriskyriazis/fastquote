@@ -597,6 +597,40 @@
   background-color: #ffcfcf !important; /* Keep expired price list color even when row is selected */
 }
 
+/* Negative margin: preserve red background when cell is range-selected */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--negative-margin.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--negative-margin.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--negative-margin.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--negative-margin.ag-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--negative-margin.ag-cell-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product .ag-cell.offer-products-grid__cell--negative-margin.ag-range-single-cell:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--negative-margin.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--negative-margin.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--negative-margin.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--negative-margin.ag-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--negative-margin.ag-cell-range-selected:hover),
+:global(.offer-products-grid) .gridShell :global(.ag-row .ag-cell.offer-products-grid__cell--negative-margin.ag-range-single-cell:hover) {
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
+}
+
+/* Negative margin: preserve red background when row is selected AND cell is range-selected */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.offer-products-grid__cell--negative-margin.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.offer-products-grid__cell--negative-margin.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.offer-products-grid__cell--negative-margin.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected .ag-cell.offer-products-grid__cell--negative-margin.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected .ag-cell.offer-products-grid__cell--negative-margin.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-range-selected .ag-cell.offer-products-grid__cell--negative-margin.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected .ag-cell.offer-products-grid__cell--negative-margin.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected .ag-cell.offer-products-grid__cell--negative-margin.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected .ag-cell.offer-products-grid__cell--negative-margin.ag-range-single-cell),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected .ag-cell.offer-products-grid__cell--negative-margin.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected .ag-cell.offer-products-grid__cell--negative-margin.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-range-selected .ag-cell.offer-products-grid__cell--negative-margin.ag-range-single-cell) {
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
+}
+
 /* Preserve banded row colors (odd/even) when cells are range-selected */
 /* These rules override the transparent rule above for banded rows */
 .gridShell :global(.ag-row-odd .ag-cell.ag-range-selected),

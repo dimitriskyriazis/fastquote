@@ -828,13 +828,15 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
     <main className={styles.page}>
       <PageHeader
         title="Pricing Policies"
+        leftActions={
+          canUndo ? (
+            <button type="button" className={`page-header-button ${styles.addButton}`} onClick={performUndo}>
+              ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+            </button>
+          ) : null
+        }
         rightActions={
           <div className={styles.headerActions}>
-              {canUndo && (
-                <button type="button" className={`page-header-button ${styles.addButton}`} onClick={performUndo}>
-                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
-                </button>
-              )}
             <button
               type="button"
               className={`${styles.addButton} page-header-button`}

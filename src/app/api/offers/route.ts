@@ -374,7 +374,7 @@ export async function POST(req: NextRequest) {
       'AND ISNULL(dbo.Offer.IsStandardPackage, 0) = 0',
     );
     const expandedParams: QueryParam[] = [];
-    let versionVisibilityClause = '';
+    let combinedWhereWithVersions: string;
     if (!includeAllVersions) {
       if (expandedVersionGroupIds.length > 0) {
         const placeholders = expandedVersionGroupIds.map((groupId, idx) => {
@@ -382,17 +382,37 @@ export async function POST(req: NextRequest) {
           expandedParams.push({ key, value: groupId });
           return `@${key}`;
         });
-        versionVisibilityClause = `
-          AND (
-            NOT EXISTS (SELECT 1 FROM dbo.Offer child WHERE child.ParentOfferID = dbo.Offer.ID)
-            OR COALESCE(versionTree.RootOfferID, dbo.Offer.ID) IN (${placeholders.join(', ')})
-          )
-        `;
+        const expandedInList = placeholders.join(', ');
+        // When version groups are expanded, historical versions must bypass grid filters
+        // (e.g. Enabled=true) so ALL versions in the group are shown.
+        // Structure: IsStandardPackage=0 AND ((grid_filters AND is_latest_or_in_expanded) OR is_historical_in_expanded)
+        const isLatest = 'NOT EXISTS (SELECT 1 FROM dbo.Offer child WHERE child.ParentOfferID = dbo.Offer.ID)';
+        const inExpandedGroup = `COALESCE(versionTree.RootOfferID, dbo.Offer.ID) IN (${expandedInList})`;
+        const isHistorical = 'EXISTS (SELECT 1 FROM dbo.Offer child WHERE child.ParentOfferID = dbo.Offer.ID)';
+
+        // Strip leading WHERE from the filter clause so we can wrap it in parens
+        const filterClause = combinedWhere.trim();
+        const filterCondition = filterClause.replace(/^\s*WHERE\s+/i, '').trim();
+
+        const standardPackageFilter = 'ISNULL(dbo.Offer.IsStandardPackage, 0) = 0';
+
+        if (filterCondition.length > 0) {
+          combinedWhereWithVersions = `WHERE ${standardPackageFilter} AND (
+            (${filterCondition} AND (${isLatest} OR ${inExpandedGroup}))
+            OR (${isHistorical} AND ${inExpandedGroup})
+          )`;
+        } else {
+          combinedWhereWithVersions = `WHERE ${standardPackageFilter} AND (
+            ${isLatest} OR ${inExpandedGroup}
+          )`;
+        }
       } else {
-        versionVisibilityClause = 'AND NOT EXISTS (SELECT 1 FROM dbo.Offer child WHERE child.ParentOfferID = dbo.Offer.ID)';
+        const versionVisibilityClause = 'AND NOT EXISTS (SELECT 1 FROM dbo.Offer child WHERE child.ParentOfferID = dbo.Offer.ID)';
+        combinedWhereWithVersions = mergeWhereClauses(combinedWhereWithStandardOffersOnly, versionVisibilityClause);
       }
+    } else {
+      combinedWhereWithVersions = combinedWhereWithStandardOffersOnly;
     }
-    const combinedWhereWithVersions = mergeWhereClauses(combinedWhereWithStandardOffersOnly, versionVisibilityClause);
     const combinedParams = [...whereParams, ...quickFilterClause.params, ...expandedParams];
     const defaultOrder = `
       ORDER BY
