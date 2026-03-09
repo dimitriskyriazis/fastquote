@@ -1,0 +1,129 @@
+.page {
+  padding: 16px;
+  box-sizing: border-box;
+  height: 100vh;
+  width: 100%;
+  max-width: 100vw;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.gridFrame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-row-odd .ag-cell) {
+  background: #f4f6fb !important;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-row-even .ag-cell) {
+  background: #ffffff !important;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-row-hover .ag-cell) {
+  background: #e9f1ff !important;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-cell) {
+  transition: background-color 140ms ease;
+}
+
+.loading {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-tertiary, #888);
+}
+
+.headerActions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.headerButton {
+  /* Inherits from page-header-button */
+}
+
+.actionCell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  position: relative;
+  user-select: none;
+  pointer-events: none;
+}
+
+.actionButton {
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  border-radius: 6px;
+  padding: 2px;
+  cursor: pointer;
+  color: inherit;
+  font-size: 12px;
+  width: 24px;
+  height: 24px;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.actionButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.actionButton:not(:disabled):hover,
+.actionButton:not(:disabled):focus-visible {
+  background: #d1d5db;
+}
+
+.actionMenu {
+  position: fixed;
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+  z-index: 9999;
+  overflow: hidden;
+}
+
+.actionMenuItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  padding: 5px 9px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.2;
+  background: transparent;
+  color: #0f172a;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.actionMenuItem:hover,
+.actionMenuItem:focus {
+  background: #e2e8f0;
+  color: #0f172a;
+  outline: none;
+}
+
+.actionCellContainer {
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  cursor: default;
+}

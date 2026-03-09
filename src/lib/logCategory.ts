@@ -10,7 +10,10 @@ const READ_ONLY_POST_ENDPOINTS = new Set<string>([
   '/api/erp/smoke-test',
   '/api/markets',
   '/api/me',
+  '/api/marketing/contact-groups',
+  '/api/marketing/mails',
   '/api/offers',
+  '/api/offers/batch-summary',
   '/api/price-lists',
   '/api/pricing-policies',
   '/api/pricing-policies/matrix',
@@ -21,6 +24,9 @@ const READ_ONLY_POST_ENDPOINTS = new Set<string>([
 ]);
 
 const READ_ONLY_POST_PATTERNS: RegExp[] = [
+  /^\/api\/marketing\/mails\/[^/]+\/contacts$/,
+  /^\/api\/marketing\/mails\/[^/]+\/contact-groups$/,
+  /^\/api\/marketing\/mails\/[^/]+\/contact-groups\/count$/,
   /^\/api\/offers\/[^/]+\/products$/,
   /^\/api\/offers\/\[[^/]+\]\/products$/,
   /^\/api\/price-lists\/[^/]+\/products$/,

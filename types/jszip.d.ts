@@ -22,6 +22,7 @@ declare module 'jszip' {
   };
 
   type JSZipStatic = {
+    new(): ZipArchive;
     loadAsync(data: ArrayBuffer | Uint8Array): Promise<ZipArchive>;
   };
 

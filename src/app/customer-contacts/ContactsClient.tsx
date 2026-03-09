@@ -35,6 +35,7 @@ import {
 } from "./contactModalHelpers";
 import { useDuplicateCheck } from "../lib/useDuplicateCheck";
 import DuplicateWarning from "../components/DuplicateWarning";
+import ContactGroupsMailsModal from "./ContactGroupsMailsModal";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -157,6 +158,17 @@ const viewCustomerMenuIcon = `
   </span>
 `;
 
+const viewGroupsMailsMenuIcon = `
+  <span class="fastquote-menu-icon" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="7" height="7" rx="1"/>
+      <rect x="14" y="3" width="7" height="7" rx="1"/>
+      <rect x="3" y="14" width="7" height="7" rx="1"/>
+      <rect x="14" y="14" width="7" height="7" rx="1"/>
+    </svg>
+  </span>
+`;
+
 export default function ContactsClient({
   statuses,
   importances,
@@ -266,6 +278,9 @@ export default function ContactsClient({
   const changeCustomerListTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isChangeCustomerOpen = changeCustomerContactId != null;
+
+  const [groupsMailsContactId, setGroupsMailsContactId] = useState<number | null>(null);
+  const [groupsMailsContactName, setGroupsMailsContactName] = useState("");
 
   const closeChangeCustomer = useCallback(() => {
     setChangeCustomerContactId(null);
@@ -708,7 +723,21 @@ export default function ContactsClient({
             },
           ]
         : [];
-      const customerItems = [...viewCustomerItem, ...changeCustomerItem];
+      const viewGroupsMailsItem = contactId != null
+        ? [
+            {
+              name: "View Contact Group Lists data",
+              icon: viewGroupsMailsMenuIcon,
+              action: () => {
+                const data = params.node?.data as { LastName?: string; FirstName?: string } | undefined;
+                const name = [data?.FirstName, data?.LastName].filter(Boolean).join(' ') || `Contact ${contactId}`;
+                setGroupsMailsContactId(contactId);
+                setGroupsMailsContactName(name);
+              },
+            },
+          ]
+        : [];
+      const customerItems = [...viewCustomerItem, ...changeCustomerItem, ...viewGroupsMailsItem];
       return [...(customerItems.length > 0 ? [...customerItems, "separator" as const] : []), ...deleteItems];
     },
     [contactRowDeletion, router],
@@ -1211,6 +1240,16 @@ export default function ContactsClient({
           </div>
         </div>
       </LookupModal>
+      {groupsMailsContactId != null && (
+        <ContactGroupsMailsModal
+          contactId={groupsMailsContactId}
+          contactName={groupsMailsContactName}
+          onClose={() => {
+            setGroupsMailsContactId(null);
+            setGroupsMailsContactName("");
+          }}
+        />
+      )}
     </>
   );
 }

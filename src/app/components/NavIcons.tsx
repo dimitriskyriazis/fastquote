@@ -107,6 +107,16 @@ export function AdminIcon({ size = 22 }: IconProps): ReactNode {
   );
 }
 
+export function MarketingIcon({ size = 22 }: IconProps): ReactNode {
+  return (
+    <svg {...s(size)}>
+      <path d="M18 3v18l-7-4V7z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" fill="none" />
+      <path d="M11 7H7.5A1.5 1.5 0 006 8.5v7A1.5 1.5 0 007.5 17H11" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" fill="none" />
+      <path d="M21 8c1.5 2 1.5 6 0 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+    </svg>
+  );
+}
+
 export function LogsIcon({ size = 22 }: IconProps): ReactNode {
   return (
     <svg {...s(size)}>

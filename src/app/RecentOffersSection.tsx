@@ -27,7 +27,7 @@ export default function RecentOffersSection() {
         const entries = sortRecentOffers(await loadRecentOffers());
         if (signal?.aborted) return;
         setRecentOffers(entries);
-        setVerifiedOffers(entries.length === 0 ? [] : null);
+        if (entries.length === 0) setVerifiedOffers([]);
         setDescriptionOverrides({});
       } catch (err) {
         console.error("Failed to load recent offers", err);
@@ -72,7 +72,10 @@ export default function RecentOffersSection() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ids }),
         });
-        if (!response.ok) return;
+        if (!response.ok) {
+          if (!cancelled) setVerifiedOffers(recentOffers);
+          return;
+        }
         const payload = (await response.json()) as {
           ok?: boolean;
           offers?: Record<string, {
@@ -81,7 +84,10 @@ export default function RecentOffersSection() {
             isStandardPackage?: boolean;
           }>;
         } | null;
-        if (!payload?.ok || !payload.offers) return;
+        if (!payload?.ok || !payload.offers) {
+          if (!cancelled) setVerifiedOffers(recentOffers);
+          return;
+        }
 
         const nextVerified: RecentOfferSummary[] = [];
         const nextOverrides: Record<string, string> = {};

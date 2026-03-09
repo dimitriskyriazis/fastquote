@@ -15,6 +15,7 @@ import {
   CustomersIcon,
   ContactsIcon,
   SuppliersIcon,
+  MarketingIcon,
   AdminIcon,
 } from "./NavIcons";
 
@@ -35,6 +36,7 @@ const navItems: NavItem[] = [
   { label: "Customers", href: "/customers", icon: <CustomersIcon /> },
   { label: "Contacts", href: "/contacts", icon: <ContactsIcon /> },
   { label: "Suppliers", href: "/suppliers", icon: <SuppliersIcon /> },
+  { label: "Marketing", href: "/marketing", icon: <MarketingIcon /> },
   { label: "Admin", href: "/user-management", icon: <AdminIcon />, requiresRoles: ["Administrator", "Developer"] },
 ];
 
