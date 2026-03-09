@@ -48,12 +48,16 @@ type RuleAggRow = {
   PricingPolicyID: number | null;
   MinTelmaco: number | null;
   MinCustomer: number | null;
+  MinTelmacoWarranty: number | null;
+  MinCustomerWarranty: number | null;
 };
 
 type GrandAggRow = {
   PricingPolicyID: number | null;
   MinTelmaco: number | null;
   MinCustomer: number | null;
+  MinTelmacoWarranty: number | null;
+  MinCustomerWarranty: number | null;
 };
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
@@ -130,11 +134,15 @@ const normalizeNumeric = (value: unknown): number | null => {
   return null;
 };
 
-const normalizeUpdateField = (value: unknown): "telmaco" | "customer" | null => {
+type UpdateField = "telmaco" | "customer" | "telmacoWarranty" | "customerWarranty";
+
+const normalizeUpdateField = (value: unknown): UpdateField | null => {
   if (typeof value !== "string") return null;
   const trimmed = value.trim().toLowerCase();
   if (trimmed === "telmaco") return "telmaco";
   if (trimmed === "customer") return "customer";
+  if (trimmed === "telmacowarranty") return "telmacoWarranty";
+  if (trimmed === "customerwarranty") return "customerWarranty";
   return null;
 };
 
@@ -157,7 +165,8 @@ export async function PATCH(req: NextRequest) {
     if (!field) {
       return NextResponse.json({ ok: false, error: "Field is required" }, { status: 400 });
     }
-    const value = normalizeNumeric(payload?.value);
+    const isWarrantyField = field === "telmacoWarranty" || field === "customerWarranty";
+    const value = isWarrantyField ? normalizeInt(payload?.value) : normalizeNumeric(payload?.value);
     if (value == null) {
       return NextResponse.json({ ok: false, error: "Value is required" }, { status: 400 });
     }
@@ -223,9 +232,101 @@ export async function PATCH(req: NextRequest) {
       `);
     const hasModifiedBy = (columnCheck.recordset?.[0]?.count ?? 0) > 0;
 
+    const modifiedByClause = hasModifiedBy ? ", ModifiedBy = @__userId" : "";
+
+    if (isWarrantyField) {
+      // Warranty years are INT columns — simpler direct-update logic (no MIN-based spreading)
+      const warrantyColumn = field === "telmacoWarranty" ? "TelmacoWarrantyYears" : "CustomerWarrantyYears";
+
+      if (hasNullPolicyRule) {
+        // Migrate the null-policy rule to this policy and set the warranty value
+        const updateReq = pool.request();
+        updateReq.input("__brandId", sql.Int, brandId);
+        updateReq.input("__pricingPolicyId", sql.Int, pricingPolicyId);
+        updateReq.input("__name", sql.NVarChar(512), ruleName);
+        updateReq.input("__value", sql.Int, value);
+        updateReq.input("__userId", sql.NVarChar(450), auditUserId ?? null);
+
+        const updateSql = `
+          UPDATE dbo.PricingPolicyRules
+          SET Name = @__name,
+              PricingPolicyID = @__pricingPolicyId,
+              [${warrantyColumn}] = @__value,
+              ModifiedOn = SYSUTCDATETIME()
+              ${modifiedByClause}
+          WHERE BrandID = @__brandId
+            AND PricingPolicyID IS NULL;
+
+          SELECT @@ROWCOUNT AS UpdatedCount;
+        `;
+
+        const updateRes = await updateReq.query<{ UpdatedCount: number | null }>(updateSql);
+        const updatedCount = updateRes.recordset?.[0]?.UpdatedCount ?? 0;
+        return NextResponse.json({ ok: true, updatedCount });
+      } else if (!hasAnyRule) {
+        // Create new rule with warranty value
+        const columns = [
+          "[Name]",
+          "[PricingPolicyID]",
+          "[BrandID]",
+          `[${warrantyColumn}]`,
+          "[CreatedOn]",
+          "[CreatedBy]",
+          "[ModifiedOn]",
+          hasModifiedBy ? "[ModifiedBy]" : null,
+        ].filter(Boolean);
+        const values = [
+          "@__name",
+          "@__pricingPolicyId",
+          "@__brandId",
+          "@__value",
+          "SYSUTCDATETIME()",
+          "@__userId",
+          "SYSUTCDATETIME()",
+          hasModifiedBy ? "@__userId" : null,
+        ].filter(Boolean);
+
+        const insertReq = pool.request();
+        insertReq.input("__name", sql.NVarChar(512), ruleName);
+        insertReq.input("__pricingPolicyId", sql.Int, pricingPolicyId);
+        insertReq.input("__brandId", sql.Int, brandId);
+        insertReq.input("__value", sql.Int, value);
+        insertReq.input("__userId", sql.NVarChar(450), auditUserId ?? null);
+
+        await insertReq.query(`
+          INSERT INTO dbo.PricingPolicyRules (${columns.join(", ")})
+          VALUES (${values.join(", ")})
+        `);
+
+        return NextResponse.json({ ok: true, updatedCount: 1 });
+      } else {
+        // Direct update of warranty years on existing rule(s)
+        const updateReq = pool.request();
+        updateReq.input("__brandId", sql.Int, brandId);
+        updateReq.input("__pricingPolicyId", sql.Int, pricingPolicyId);
+        updateReq.input("__value", sql.Int, value);
+        updateReq.input("__userId", sql.NVarChar(450), auditUserId ?? null);
+
+        const updateSql = `
+          UPDATE dbo.PricingPolicyRules
+          SET [${warrantyColumn}] = @__value,
+              ModifiedOn = SYSUTCDATETIME()
+              ${modifiedByClause}
+          WHERE BrandID = @__brandId
+            AND PricingPolicyID = @__pricingPolicyId;
+
+          SELECT @@ROWCOUNT AS UpdatedCount;
+        `;
+
+        const updateRes = await updateReq.query<{ UpdatedCount: number | null }>(updateSql);
+        const updatedCount = updateRes.recordset?.[0]?.UpdatedCount ?? 0;
+        return NextResponse.json({ ok: true, updatedCount });
+      }
+    }
+
+    // Discount percentage fields
     const discountColumn =
       field === "telmaco" ? "TelmacoDiscountPercentage" : "CustomerDiscountPercentage";
-    const modifiedByClause = hasModifiedBy ? ", ModifiedBy = @__userId" : "";
 
     if (hasNullPolicyRule) {
       // Get current discount values from the NULL PricingPolicyID rule
@@ -340,8 +441,6 @@ export async function PATCH(req: NextRequest) {
           AND PricingPolicyID = @__pricingPolicyId
       `);
       const currentDiscount = currentDiscountRes.recordset?.[0]?.CurrentDiscount ?? null;
-
-      const modifiedByClause = hasModifiedBy ? ", ModifiedBy = @__userId" : "";
 
       if (currentDiscount == null) {
         // If current discount is NULL, just update it directly
@@ -502,7 +601,9 @@ export async function POST(req: NextRequest) {
           ppr.BrandID,
           ppr.PricingPolicyID,
           MIN(ppr.TelmacoDiscountPercentage) AS MinTelmaco,
-          MIN(ppr.CustomerDiscountPercentage) AS MinCustomer
+          MIN(ppr.CustomerDiscountPercentage) AS MinCustomer,
+          MIN(ppr.TelmacoWarrantyYears) AS MinTelmacoWarranty,
+          MIN(ppr.CustomerWarrantyYears) AS MinCustomerWarranty
         FROM dbo.PricingPolicyRules ppr
         WHERE ppr.BrandID IS NOT NULL
           AND ppr.BrandID IN (${inParams})
@@ -517,17 +618,22 @@ export async function POST(req: NextRequest) {
       SELECT
         ppr.PricingPolicyID,
         MIN(ppr.TelmacoDiscountPercentage) AS MinTelmaco,
-        MIN(ppr.CustomerDiscountPercentage) AS MinCustomer
+        MIN(ppr.CustomerDiscountPercentage) AS MinCustomer,
+        MIN(ppr.TelmacoWarrantyYears) AS MinTelmacoWarranty,
+        MIN(ppr.CustomerWarrantyYears) AS MinCustomerWarranty
       FROM dbo.PricingPolicyRules ppr
       WHERE ppr.BrandID IS NOT NULL
       GROUP BY ppr.PricingPolicyID
     `);
     const grandAggRows = grandRes.recordset ?? [];
 
-    const policiesByBrand = new Map<
-      number,
-      Record<string, { telmacoDiscount: number | null; customerDiscount: number | null }>
-    >();
+    type PolicyCell = {
+      telmacoDiscount: number | null;
+      customerDiscount: number | null;
+      telmacoWarranty: number | null;
+      customerWarranty: number | null;
+    };
+    const policiesByBrand = new Map<number, Record<string, PolicyCell>>();
     ruleAggRows.forEach((row) => {
       const brandId = row.BrandID;
       const policyId = row.PricingPolicyID;
@@ -536,7 +642,10 @@ export async function POST(req: NextRequest) {
       const map = policiesByBrand.get(brandId) ?? {};
       map[key] = {
         telmacoDiscount: normalizeNumeric(row.MinTelmaco),
-        customerDiscount: normalizeNumeric(row.MinCustomer) };
+        customerDiscount: normalizeNumeric(row.MinCustomer),
+        telmacoWarranty: normalizeInt(row.MinTelmacoWarranty),
+        customerWarranty: normalizeInt(row.MinCustomerWarranty),
+      };
       policiesByBrand.set(brandId, map);
     });
 
@@ -558,15 +667,18 @@ export async function POST(req: NextRequest) {
         totalCustomerDiscount: customerValues.length > 0 ? Math.min(...customerValues) : null };
     });
 
-    const grandPolicies: Record<string, { telmacoDiscount: number | null; customerDiscount: number | null }> = {};
+    const grandPolicies: Record<string, PolicyCell> = {};
     const grandTelmacoValues: number[] = [];
     const grandCustomerValues: number[] = [];
     grandAggRows.forEach((row) => {
       const policyId = row.PricingPolicyID;
       if (policyId == null) return;
-      const cell = {
+      const cell: PolicyCell = {
         telmacoDiscount: normalizeNumeric(row.MinTelmaco),
-        customerDiscount: normalizeNumeric(row.MinCustomer) };
+        customerDiscount: normalizeNumeric(row.MinCustomer),
+        telmacoWarranty: normalizeInt(row.MinTelmacoWarranty),
+        customerWarranty: normalizeInt(row.MinCustomerWarranty),
+      };
       grandPolicies[String(policyId)] = cell;
       if (cell.telmacoDiscount != null && Number.isFinite(cell.telmacoDiscount)) {
         grandTelmacoValues.push(cell.telmacoDiscount);

@@ -45,7 +45,12 @@ type Props = {
   brands: DropdownOption[];
 };
 
-type PolicyCell = { telmacoDiscount: number | null; customerDiscount: number | null };
+type PolicyCell = {
+  telmacoDiscount: number | null;
+  customerDiscount: number | null;
+  telmacoWarranty: number | null;
+  customerWarranty: number | null;
+};
 
 type MatrixRow = {
   BrandID: number | null;
@@ -181,7 +186,7 @@ const getOrCreatePolicyCell = (row: MatrixRow, policyId: string): PolicyCell => 
   row.policies = row.policies && typeof row.policies === "object" ? row.policies : {};
   const existing = row.policies[policyId];
   if (existing && typeof existing === "object") return existing;
-  const next: PolicyCell = { telmacoDiscount: null, customerDiscount: null };
+  const next: PolicyCell = { telmacoDiscount: null, customerDiscount: null, telmacoWarranty: null, customerWarranty: null };
   row.policies[policyId] = next;
   return next;
 };
@@ -403,23 +408,28 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const colId = event.column?.getColId?.() ?? event.colDef?.colId ?? "";
-    const match = /^pp_(\d+)_(telmaco|customer)$/.exec(colId);
+    const match = /^pp_(\d+)_(telmaco|customer|telmacoWarranty|customerWarranty)$/.exec(colId);
     if (!match) return;
 
     if (event.node?.rowPinned) return;
 
     const policyId = Number(match[1] ?? Number.NaN);
     if (!Number.isFinite(policyId)) return;
-    const field = match[2] === "customer" ? "customer" : "telmaco";
+    const fieldKey = match[2] as "telmaco" | "customer" | "telmacoWarranty" | "customerWarranty";
+    const field = fieldKey;
+    const isWarranty = fieldKey === "telmacoWarranty" || fieldKey === "customerWarranty";
 
     const row = event.data as MatrixRow | null | undefined;
     const brandId = row?.BrandID ?? null;
     if (brandId == null || !Number.isFinite(brandId)) return;
 
-    const nextValue = parseDiscountInput(event.newValue);
-    const previousValue = parseDiscountInput(event.oldValue);
+    const parseValue = isWarranty
+      ? (v: unknown) => { const n = parseDiscountInput(v); return n != null ? Math.trunc(n) : null; }
+      : parseDiscountInput;
+    const nextValue = parseValue(event.newValue);
+    const previousValue = parseValue(event.oldValue);
     if (nextValue == null) {
-      showToastMessage("Discount is required", "error");
+      showToastMessage(isWarranty ? "Warranty years is required" : "Discount is required", "error");
       event.api.refreshServerSide?.({ purge: false });
       return;
     }
@@ -733,6 +743,66 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
               return true;
             },
             width: 150,
+          },
+          {
+            headerName: "Telmaco Warranty (yrs)",
+            colId: `pp_${policyId}_telmacoWarranty`,
+            sortable: false,
+            filter: false,
+            floatingFilter: false,
+            type: "numericColumn",
+            valueGetter: (params: ValueGetterParams) => {
+              const row = params.data as MatrixRow | null | undefined;
+              return row?.policies?.[policyId]?.telmacoWarranty ?? null;
+            },
+            valueFormatter: discountFormatter,
+            editable: (params: { node?: { rowPinned?: string | null }; data?: unknown }) => {
+              if (params.node?.rowPinned) return false;
+              const row = params.data as MatrixRow | null | undefined;
+              if (row?.BrandID == null) return false;
+              return true;
+            },
+            cellEditor: "agTextCellEditor",
+            valueSetter: (params: ValueSetterParams<Record<string, unknown>, unknown>) => {
+              const row = params.data as MatrixRow | null | undefined;
+              if (!row) return false;
+              const parsed = parseDiscountInput(params.newValue);
+              if (parsed == null) return false;
+              const cell = getOrCreatePolicyCell(row, policyId);
+              cell.telmacoWarranty = Math.trunc(parsed);
+              return true;
+            },
+            width: 170,
+          },
+          {
+            headerName: "Customer Warranty (yrs)",
+            colId: `pp_${policyId}_customerWarranty`,
+            sortable: false,
+            filter: false,
+            floatingFilter: false,
+            type: "numericColumn",
+            valueGetter: (params: ValueGetterParams) => {
+              const row = params.data as MatrixRow | null | undefined;
+              return row?.policies?.[policyId]?.customerWarranty ?? null;
+            },
+            valueFormatter: discountFormatter,
+            editable: (params: { node?: { rowPinned?: string | null }; data?: unknown }) => {
+              if (params.node?.rowPinned) return false;
+              const row = params.data as MatrixRow | null | undefined;
+              if (row?.BrandID == null) return false;
+              return true;
+            },
+            cellEditor: "agTextCellEditor",
+            valueSetter: (params: ValueSetterParams<Record<string, unknown>, unknown>) => {
+              const row = params.data as MatrixRow | null | undefined;
+              if (!row) return false;
+              const parsed = parseDiscountInput(params.newValue);
+              if (parsed == null) return false;
+              const cell = getOrCreatePolicyCell(row, policyId);
+              cell.customerWarranty = Math.trunc(parsed);
+              return true;
+            },
+            width: 170,
           },
         ],
       };

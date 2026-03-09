@@ -10,6 +10,8 @@ type CreatePricingPolicyRuleBody = {
   brandId?: unknown;
   telmacoDiscountPercentage?: unknown;
   customerDiscountPercentage?: unknown;
+  telmacoWarrantyYears?: unknown;
+  customerWarrantyYears?: unknown;
   responsibleUserId?: unknown;
   comments?: unknown;
 };
@@ -85,6 +87,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const telmacoWarrantyYears = normalizeInt(payload?.telmacoWarrantyYears);
+    const customerWarrantyYears = normalizeInt(payload?.customerWarrantyYears);
     const responsibleUserId = normalizeString(payload?.responsibleUserId, 450);
     const comments = normalizeString(payload?.comments, 2000);
 
@@ -105,6 +109,8 @@ export async function POST(req: NextRequest) {
     request.input('__brandId', sql.Int, brandId);
     request.input('__telmaco', sql.TYPES.Numeric(9, 6), telmaco);
     request.input('__customer', sql.TYPES.Numeric(9, 6), customer);
+    request.input('__telmacoWarrantyYears', sql.Int, telmacoWarrantyYears ?? null);
+    request.input('__customerWarrantyYears', sql.Int, customerWarrantyYears ?? null);
     request.input('__responsibleUserId', sql.NVarChar(450), responsibleUserId ?? null);
     request.input('__comments', sql.NVarChar(2000), comments ?? null);
     const auditUserId = resolveAuditUserId(req);
@@ -116,6 +122,8 @@ export async function POST(req: NextRequest) {
       '[BrandID]',
       '[TelmacoDiscountPercentage]',
       '[CustomerDiscountPercentage]',
+      '[TelmacoWarrantyYears]',
+      '[CustomerWarrantyYears]',
       '[ResponsibleUserID]',
       '[Comments]',
       '[CreatedOn]',
@@ -129,6 +137,8 @@ export async function POST(req: NextRequest) {
       '@__brandId',
       '@__telmaco',
       '@__customer',
+      '@__telmacoWarrantyYears',
+      '@__customerWarrantyYears',
       '@__responsibleUserId',
       '@__comments',
       'SYSUTCDATETIME()',
@@ -181,6 +191,8 @@ export async function POST(req: NextRequest) {
       pricingPolicyName: inserted.PricingPolicyName ?? null,
       telmacoDiscountPercentage: telmaco,
       customerDiscountPercentage: customer,
+      telmacoWarrantyYears: telmacoWarrantyYears ?? null,
+      customerWarrantyYears: customerWarrantyYears ?? null,
     };
 
     return NextResponse.json({ ok: true, option });

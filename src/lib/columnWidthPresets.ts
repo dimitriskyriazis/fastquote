@@ -51,6 +51,7 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   TotalPrice: 2,
   TotalNet: 2,
   Warranty: 1,
+  CustomerWarranty: 1,
   TelmacoDiscount: 2,
   NetCostOtherCurrency: 2,
   OtherCurrencyName: 1,

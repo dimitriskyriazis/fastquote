@@ -2227,7 +2227,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       cellStyle: actualNumericCellStyle,
     },
     {
-      field: 'Warranty',
+      field: 'CustomerWarranty',
       headerName: 'Warranty',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
@@ -2358,6 +2358,16 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         cellClass: [...actualNumericCellClass, styles.redDataCell],
         cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
       },
+    {
+      field: 'TelmacoWarranty',
+      headerName: 'Telmaco Warranty',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
+      valueFormatter: zeroBlankNumberFormatter,
+      cellClass: [...actualNumericCellClass, styles.redDataCell],
+      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
+    },
     ];
     const columnMap = new Map<string, ColDef>();
     baseColumns.forEach((column) => {

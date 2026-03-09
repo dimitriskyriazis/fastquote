@@ -335,6 +335,13 @@ export async function DELETE(req: NextRequest) {
         const params = chunk.map((id, chunkIdx) => ({ name: `pl_${chunkIdx}`, value: id }));
         const paramNames = params.map((p) => `@${p.name}`);
 
+        const deletePoliciesReq = new sql.Request(transaction);
+        params.forEach((p) => deletePoliciesReq.input(p.name, sql.Int, p.value));
+        await deletePoliciesReq.query(`
+          DELETE FROM dbo.PriceListPricingPolicy
+          WHERE PriceListID IN (${paramNames.join(", ")})
+        `);
+
         const deleteItemsReq = new sql.Request(transaction);
         params.forEach((p) => deleteItemsReq.input(p.name, sql.Int, p.value));
         await deleteItemsReq.query(`

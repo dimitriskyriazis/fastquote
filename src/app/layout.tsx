@@ -8,6 +8,7 @@ import { AuditUserProvider } from "./components/AuditUserProvider";
 import DisableAutofill from "./components/DisableAutofill";
 import PreventBackspaceNavigation from "./components/PreventBackspaceNavigation";
 import CaretVisibilityManager from "./components/CaretVisibilityManager";
+import StorageVersionManager from "./components/StorageVersionManager";
 import SpellcheckManager from "./components/SpellcheckManager";
 import CommandPalette from "./components/CommandPalette";
 
@@ -37,6 +38,7 @@ export default async function RootLayout({
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <CaretVisibilityManager />
+        <StorageVersionManager />
         <AuditUserProvider>
           <DisableAutofill />
           <SpellcheckManager />

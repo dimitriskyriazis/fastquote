@@ -104,6 +104,7 @@ type ProductRow = {
   TotalPrice: number | null;
   TotalNet: number | null;
   Warranty: string | number | null;
+  CustomerWarranty: number | null;
   Delivery: string | null;
   OfferValidity: string | null;
   ListPrice: number | null;
@@ -253,6 +254,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   TotalPrice: 'od.TotalPrice',
   TotalNet: 'od.TotalNet',
   Warranty: 'od.Warranty',
+  CustomerWarranty: 'od.CustomerWarranty',
   Delivery: 'od.Delivery',
   OfferValidity: 'o.OfferValidity',
   ListPrice: 'od.ListPrice',

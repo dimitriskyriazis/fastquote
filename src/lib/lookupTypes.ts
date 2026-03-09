@@ -7,4 +7,6 @@ export type PricingPolicyRuleOption = DropdownOption & {
   pricingPolicyName: string | null;
   telmacoDiscountPercentage?: number | null;
   customerDiscountPercentage?: number | null;
+  telmacoWarrantyYears?: number | null;
+  customerWarrantyYears?: number | null;
 };

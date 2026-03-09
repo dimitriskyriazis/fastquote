@@ -782,6 +782,7 @@ async function handleAddProducts(
       ModelNumber,
       ProductDescription,
       Warranty,
+      CustomerWarranty,
       Quantity,
       ListPrice,
       NetUnitPrice,
@@ -821,7 +822,8 @@ async function handleAddProducts(
       p.PartNumber,
       p.ModelNumber,
       p.Description,
-      p.WarrantyValue,
+      COALESCE(discounts.TelmacoWarrantyYears, 0),
+      COALESCE(discounts.CustomerWarrantyYears, 0),
       1,
       p.ListPrice,
       computed.ComputedNetUnitPrice,
@@ -881,12 +883,16 @@ async function handleAddProducts(
     OUTER APPLY (
       SELECT TOP (1)
         ppr.TelmacoDiscountPercentage,
-        ppr.CustomerDiscountPercentage
+        ppr.CustomerDiscountPercentage,
+        ppr.TelmacoWarrantyYears,
+        ppr.CustomerWarrantyYears
       FROM (
         -- Priority 1: Use specific rule from PriceListPricingPolicy if PricingPolicyRuleID is set
         SELECT TOP (1)
           ppr.TelmacoDiscountPercentage,
           ppr.CustomerDiscountPercentage,
+          ppr.TelmacoWarrantyYears,
+          ppr.CustomerWarrantyYears,
           1 AS Priority
         FROM dbo.PriceListPricingPolicy plpp
         INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyRuleID = ppr.ID
@@ -904,6 +910,8 @@ async function handleAddProducts(
         SELECT TOP (1)
           ppr.TelmacoDiscountPercentage,
           ppr.CustomerDiscountPercentage,
+          ppr.TelmacoWarrantyYears,
+          ppr.CustomerWarrantyYears,
           2 AS Priority
         FROM dbo.PriceListPricingPolicy plpp
         INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
@@ -921,6 +929,8 @@ async function handleAddProducts(
         SELECT TOP (1)
           ppr.TelmacoDiscountPercentage,
           ppr.CustomerDiscountPercentage,
+          ppr.TelmacoWarrantyYears,
+          ppr.CustomerWarrantyYears,
           3 AS Priority
         FROM dbo.PricingPolicyRules ppr
         WHERE ppr.PricingPolicyID = @pricingPolicyId
@@ -1125,7 +1135,8 @@ async function handleAssignProductToRequestedRow(
         NULLIF(p.Description, ''),
         NULLIF(od.ProductDescription, '')
       ),
-      od.Warranty = p.WarrantyValue,
+      od.Warranty = COALESCE(discounts.TelmacoWarrantyYears, 0),
+      od.CustomerWarranty = COALESCE(discounts.CustomerWarrantyYears, 0),
       od.Quantity = q.Quantity,
       od.ListPrice = p.ListPrice,
       od.NetUnitPrice = computed.ComputedNetUnitPrice,
@@ -1208,12 +1219,16 @@ async function handleAssignProductToRequestedRow(
       OUTER APPLY (
         SELECT TOP (1)
           ppr.TelmacoDiscountPercentage,
-          ppr.CustomerDiscountPercentage
+          ppr.CustomerDiscountPercentage,
+          ppr.TelmacoWarrantyYears,
+          ppr.CustomerWarrantyYears
         FROM (
           -- Priority 1: Use specific rule from PriceListPricingPolicy if PricingPolicyRuleID is set
           SELECT TOP (1)
             ppr.TelmacoDiscountPercentage,
             ppr.CustomerDiscountPercentage,
+            ppr.TelmacoWarrantyYears,
+            ppr.CustomerWarrantyYears,
             1 AS Priority
           FROM dbo.PriceListPricingPolicy plpp
           INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyRuleID = ppr.ID
@@ -1224,13 +1239,15 @@ async function handleAssignProductToRequestedRow(
           ORDER BY
             CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END,
             ppr.ID DESC
-          
+
           UNION ALL
-          
+
           -- Priority 2: Use rules from policy specified in PriceListPricingPolicy
           SELECT TOP (1)
             ppr.TelmacoDiscountPercentage,
             ppr.CustomerDiscountPercentage,
+            ppr.TelmacoWarrantyYears,
+            ppr.CustomerWarrantyYears,
             2 AS Priority
           FROM dbo.PriceListPricingPolicy plpp
           INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
@@ -1241,13 +1258,15 @@ async function handleAssignProductToRequestedRow(
           ORDER BY
             CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END,
             ppr.ID DESC
-          
+
           UNION ALL
-          
+
           -- Priority 3: Fall back to Offer's PricingPolicyID
           SELECT TOP (1)
             ppr.TelmacoDiscountPercentage,
             ppr.CustomerDiscountPercentage,
+            ppr.TelmacoWarrantyYears,
+            ppr.CustomerWarrantyYears,
             3 AS Priority
           FROM dbo.PricingPolicyRules ppr
           WHERE ppr.PricingPolicyID = @pricingPolicyId

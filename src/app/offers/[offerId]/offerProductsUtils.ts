@@ -793,6 +793,7 @@ export const COST_ANALYSIS_COLUMNS = [
   'Margin',
   'GrossProfit',
   'TotalCost',
+  'Warranty',
 ];
 
 export const STANDARD_PACKAGE_PRODUCTS_FIELDS = [

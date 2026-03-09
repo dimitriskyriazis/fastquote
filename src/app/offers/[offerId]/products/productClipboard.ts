@@ -27,6 +27,7 @@ export interface ClipboardRow {
   comment: string | null;
   delivery: string | null;
   warranty: number | null;
+  customerWarranty: number | null;
   otherCurrencyId: number | null;
   currencyCostModifier: number | null;
   priceListId: number | null;
@@ -150,6 +151,7 @@ export function mapRowToClipboardRow(row: Record<string, unknown>): ClipboardRow
     comment: coerceString(row.Comment),
     delivery: coerceString(row.Delivery),
     warranty: coerceInt(row.Warranty),
+    customerWarranty: coerceInt(row.CustomerWarranty),
     otherCurrencyId: coerceInt(row.OtherCurrencyID),
     currencyCostModifier: coerceNumber(row.CurrencyCostModifier),
     priceListId: coerceInt(row.PriceListID),
