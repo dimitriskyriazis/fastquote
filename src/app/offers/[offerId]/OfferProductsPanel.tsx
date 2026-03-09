@@ -2622,7 +2622,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   );
 
   const populateRequestedRowsToOffer = useCallback(async (nodes: RowNode<Record<string, unknown>>[]) => {
-    const requestedNodes = nodes.filter((node) => isRequestedRow(node?.data ?? null));
+    const requestedNodes = nodes.filter((node) => isRequestedRow(node?.data ?? null) || hasRequestedPseudoFields(node?.data ?? null));
     if (requestedNodes.length === 0) return;
 
     try {
@@ -2711,8 +2711,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         const hasRequestedQuantity = requestedQuantityValue != null && !Object.is(requestedQuantityValue, 0);
         const hasActualQuantity = actualQuantityValue != null && !Object.is(actualQuantityValue, 0);
         const hasQuantity = hasRequestedQuantity || hasActualQuantity;
+        const isAlreadyPopulated = !isRequestedRow(data);
         const shouldPromoteToCategory = (
-          !hasRequestedIdentifiers
+          !isAlreadyPopulated
+          && !hasRequestedIdentifiers
           && hasSingleDescriptionOnly
           && !hasQuantity
         );
@@ -3134,7 +3136,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           const allRows = await fetchAllFilteredRows();
           const wrapAsNode = (data: Record<string, unknown>) => ({ data, setSelected: () => {} } as unknown as RowNode<Record<string, unknown>>);
           const allWrapped = allRows.map(wrapAsNode);
-          selectedRequestedNodes = allWrapped.filter((node) => isRequestedRow(node.data));
+          selectedRequestedNodes = allWrapped.filter((node) => isRequestedRow(node.data) || hasRequestedPseudoFields(node.data));
           allRequestedNodes = selectedRequestedNodes;
         } catch (err) {
           console.error('Failed to fetch all rows for populate', err);
@@ -3150,7 +3152,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           const selected = typeof api.getSelectedNodes === 'function'
             ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
             : [];
-          selectedRequestedNodes = selected.filter((node) => isRequestedRow(node?.data ?? null));
+          selectedRequestedNodes = selected.filter((node) => isRequestedRow(node?.data ?? null) || hasRequestedPseudoFields(node?.data ?? null));
         } catch {
           /* noop */
         }
@@ -3159,7 +3161,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           if (typeof api.forEachNode === 'function') {
             const allRequested: Array<RowNode<Record<string, unknown>>> = [];
             api.forEachNode((node) => {
-              if (isRequestedRow(node?.data ?? null)) {
+              if (isRequestedRow(node?.data ?? null) || hasRequestedPseudoFields(node?.data ?? null)) {
                 allRequested.push(node as RowNode<Record<string, unknown>>);
               }
             });
@@ -3173,7 +3175,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       requestedNodes = selectedRequestedNodes.length > 0 ? selectedRequestedNodes : allRequestedNodes;
 
       if (requestedNodes.length === 0) {
-        showToastMessage('No requested rows found to populate.', 'info');
+        showToastMessage('No rows with requested data found to populate.', 'info');
         return;
       }
 

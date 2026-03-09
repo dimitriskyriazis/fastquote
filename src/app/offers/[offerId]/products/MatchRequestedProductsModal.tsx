@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
-import type { ColDef, GridApi, RowDoubleClickedEvent, RowNode } from 'ag-grid-community';
+import type { CellClickedEvent, ColDef, GridApi, RowClassParams, RowDoubleClickedEvent, RowNode, RowStyle } from 'ag-grid-community';
 import { PageHeaderContext } from '../../../components/PageHeader';
 import { GridQuickSearchProvider } from '../../../components/GridQuickSearchProvider';
 import { productDefaultColDef } from '../../../../lib/productColumns';
@@ -117,19 +117,52 @@ export default function MatchRequestedProductsModal({
   const [assigning, setAssigning] = useState(false);
   const [comment, setComment] = useState('');
   const [searchSlot, setSearchSlot] = useState<HTMLDivElement | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestedProducts, setSuggestedProducts] = useState<MatcherRowData[]>([]);
+  const [suggestionsVisible, setSuggestionsVisible] = useState(true);
   const productsApiRef = useRef<MatcherGridApi | null>(null);
   const pendingSelectionProductIdRef = useRef<number | null>(null);
-  const clearPinnedTopRow = useCallback(() => {
+  const suggestedProductsRef = useRef<MatcherRowData[]>([]);
+
+  // Keep ref in sync so event listeners can read current value
+  suggestedProductsRef.current = suggestedProducts;
+
+  const setPinnedSuggestions = useCallback((products: MatcherRowData[]) => {
     const api = productsApiRef.current;
     if (!api) return;
-    const setter = api.setPinnedTopRowData;
-    if (typeof setter === 'function') {
-      try {
-        setter([]);
-      } catch {
-        /* noop */
-      }
+    try {
+      api.setGridOption('pinnedTopRowData', products);
+    } catch { /* noop */ }
+  }, []);
+
+  const clearPinnedTopRow = useCallback(() => {
+    setPinnedSuggestions([]);
+  }, [setPinnedSuggestions]);
+
+  const handleHideSuggestions = useCallback(() => {
+    setSuggestionsVisible(false);
+    clearPinnedTopRow();
+  }, [clearPinnedTopRow]);
+
+  const handleShowSuggestions = useCallback(() => {
+    setSuggestionsVisible(true);
+    setPinnedSuggestions(suggestedProductsRef.current);
+  }, [setPinnedSuggestions]);
+
+  // Sync pinned rows when suggestedProducts or visibility changes
+  useEffect(() => {
+    if (suggestedProducts.length > 0 && suggestionsVisible) {
+      setPinnedSuggestions(suggestedProducts);
+    } else {
+      clearPinnedTopRow();
     }
+  }, [suggestedProducts, suggestionsVisible, setPinnedSuggestions, clearPinnedTopRow]);
+
+  const getRowStyle = useCallback((params: RowClassParams): RowStyle | undefined => {
+    if (params.node.rowPinned === 'top') {
+      return { background: '#dbeafe' };
+    }
+    return undefined;
   }, []);
 
   const productColumns: ColDef[] = useMemo(
@@ -220,7 +253,10 @@ export default function MatchRequestedProductsModal({
 
   const handleSelectionChanged = useCallback(
     (rows: MatcherRowData[]) => {
-      setSelectedProduct(rows.length > 0 ? rows[rows.length - 1] : null);
+      // When a normal grid row is selected, use it (this clears any pinned row selection)
+      if (rows.length > 0) {
+        setSelectedProduct(rows[rows.length - 1]);
+      }
     },
     [],
   );
@@ -228,6 +264,8 @@ export default function MatchRequestedProductsModal({
   const autoSelectTopProduct = useCallback((api: MatcherGridApi | null) => {
     if (!api) return;
     if (pendingSelectionProductIdRef.current != null) return;
+    // Don't auto-select grid row if we have suggestions selected
+    if (suggestedProductsRef.current.length > 0) return;
     try {
       const selectedNodes =
         typeof api.getSelectedNodes === 'function' ? (api.getSelectedNodes() as Array<RowNode<MatcherRowData>>) : [];
@@ -295,13 +333,10 @@ export default function MatchRequestedProductsModal({
         const rowData = node.data as MatcherRowData;
         node.setSelected(true);
         setSelectedProduct(rowData);
-        const pinnedSetter = api.setPinnedTopRowData;
-        if (typeof pinnedSetter === 'function') {
-          try {
-            pinnedSetter([rowData]);
-          } catch {
-            /* noop */
-          }
+        try {
+          api.setGridOption('pinnedTopRowData', [rowData]);
+        } catch {
+          /* noop */
         }
         const typedNode = node as MatcherRowNode;
         const ensureVisible = typedNode.ensureVisible;
@@ -321,15 +356,74 @@ export default function MatchRequestedProductsModal({
     }
   }, [onClearNewProductId]);
 
+  // Attach a cellClicked listener to handle pinned row clicks for selection
+  const cellClickListenerRef = useRef<((event: CellClickedEvent<MatcherRowData>) => void) | null>(null);
+
+  const attachCellClickListener = useCallback((api: MatcherGridApi) => {
+    // Remove previous listener if any
+    if (cellClickListenerRef.current) {
+      try {
+        api.removeEventListener('cellClicked', cellClickListenerRef.current as never);
+      } catch { /* noop */ }
+    }
+    const listener = (event: CellClickedEvent<MatcherRowData>) => {
+      if (event.node.rowPinned === 'top' && event.data) {
+        // Deselect any normal row selection
+        try {
+          api.deselectAll?.();
+        } catch { /* noop */ }
+        setSelectedProduct(event.data as MatcherRowData);
+      }
+    };
+    cellClickListenerRef.current = listener;
+    try {
+      api.addEventListener('cellClicked', listener as never);
+    } catch { /* noop */ }
+  }, []);
+
   useEffect(() => {
-    if (newProductId == null) {
+    if (newProductId == null && suggestedProducts.length === 0) {
       clearPinnedTopRow();
     }
-  }, [newProductId, clearPinnedTopRow]);
+  }, [newProductId, clearPinnedTopRow, suggestedProducts.length]);
 
   useEffect(() => () => {
     clearPinnedTopRow();
   }, [clearPinnedTopRow]);
+
+  const handleSuggestProducts = useCallback(async () => {
+    if (suggesting) return;
+    setSuggesting(true);
+    try {
+      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/suggest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestedBrand: entry.requestedBrand,
+          requestedModelNumber: entry.requestedModelNumber,
+          requestedPartNumber: entry.requestedPartNumber,
+          requestedDescription: entry.requestedDescription,
+          requestedDescription2: entry.requestedDescription2,
+          requestedDescription3: entry.requestedDescription3,
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to suggest products');
+      const data = (await res.json()) as { ok: boolean; products?: MatcherRowData[] };
+      const products = data.products ?? [];
+      setSuggestedProducts(products);
+      setSuggestionsVisible(true);
+      if (products.length > 0) {
+        try {
+          productsApiRef.current?.deselectAll?.();
+        } catch { /* noop */ }
+        setSelectedProduct(products[0]);
+      }
+    } catch (err) {
+      console.error('AI suggest failed', err);
+    } finally {
+      setSuggesting(false);
+    }
+  }, [suggesting, offerId, entry]);
 
   const refreshProductsGrid = useCallback(() => {
     const api = productsApiRef.current;
@@ -387,6 +481,7 @@ export default function MatchRequestedProductsModal({
     trySelectPendingProduct(api);
     applyRequestedFilterModel(api);
     autoSelectTopProduct(api);
+    attachCellClickListener(api);
     // The grid restores persisted filter state asynchronously via requestAnimationFrame,
     // which can overwrite the programmatic filters we just set for the current product.
     // Schedule a re-application that runs after the persisted restoration.
@@ -395,7 +490,7 @@ export default function MatchRequestedProductsModal({
       hasAppliedRequestedFiltersRef.current = false;
       applyRequestedFilterModel(api);
     });
-  }, [applyRequestedFilterModel, autoSelectTopProduct, ensureProductSort, trySelectPendingProduct]);
+  }, [applyRequestedFilterModel, autoSelectTopProduct, ensureProductSort, trySelectPendingProduct, attachCellClickListener]);
 
   const handleGridModelUpdated = useCallback(() => {
     const api = productsApiRef.current;
@@ -423,6 +518,8 @@ export default function MatchRequestedProductsModal({
     setSelectedProduct(null);
     setAssigning(false);
     setComment('');
+    setSuggestedProducts([]);
+    setSuggestionsVisible(true);
   }, [entry.offerDetailId]);
 
   useEffect(() => {
@@ -451,6 +548,41 @@ export default function MatchRequestedProductsModal({
               </div>
             </div>
             <div className={styles.headerActions}>
+              <button
+                type="button"
+                className={styles.aiButton}
+                onClick={handleSuggestProducts}
+                disabled={suggesting || assigning}
+              >
+                {suggesting ? (
+                  <>
+                    <span className={styles.aiButtonSpinner} />
+                    Suggesting…
+                  </>
+                ) : (
+                  'Suggest Products (AI)'
+                )}
+              </button>
+              {suggestedProducts.length > 0 && suggestionsVisible && (
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={handleHideSuggestions}
+                  disabled={suggesting || assigning}
+                >
+                  Hide suggestions
+                </button>
+              )}
+              {suggestedProducts.length > 0 && !suggestionsVisible && (
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={handleShowSuggestions}
+                  disabled={suggesting || assigning}
+                >
+                  Show suggestions
+                </button>
+              )}
               <button type="button" className={styles.secondaryButton} onClick={onRequestAddProduct}>
                 Add product
               </button>
@@ -497,6 +629,7 @@ export default function MatchRequestedProductsModal({
                 applyColumnStateOrder={true}
                 maintainColumnOrder={true}
                 disableAutoSize={true}
+                getRowStyle={getRowStyle}
               />
             </div>
             <div className={styles.actions}>
