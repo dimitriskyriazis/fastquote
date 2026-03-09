@@ -183,18 +183,3 @@
   line-height: 1.3;
 }
 
-.descriptionText[data-expanded="true"] {
-  max-height: none;
-  line-clamp: unset;
-  -webkit-line-clamp: unset;
-}
-
-.descriptionToggle {
-  align-self: flex-start;
-  border: none;
-  background: transparent;
-  color: #b91c1c;
-  font-size: 12px;
-  padding: 0;
-  cursor: pointer;
-}
