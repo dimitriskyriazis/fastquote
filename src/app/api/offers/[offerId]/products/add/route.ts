@@ -595,6 +595,7 @@ async function handleAddProducts(
     return NextResponse.json({ ok: false, error: 'No products selected' }, { status: 400 });
   }
 
+  try {
   const pool = await getPool();
 
   let parentTreeOrdering: string | null = null;
@@ -980,6 +981,14 @@ async function handleAddProducts(
       .filter((id): id is number => id != null)
     : [];
   return NextResponse.json({ ok: true, inserted, insertedOfferDetailIds });
+  } catch (err) {
+    console.error(
+      `[add-products] offerId=${offerId} categoryId=${categoryId} count=${selections.length}`,
+      err,
+    );
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
 }
 
 const requestedRowCondition = `
@@ -1017,6 +1026,7 @@ async function handleAssignProductToRequestedRow(
     );
   }
 
+  try {
   const pool = await getPool();
   let categoryTreeOrdering: string | null = null;
   if (categoryId != null) {
@@ -1350,6 +1360,14 @@ async function handleAssignProductToRequestedRow(
         }
       : null,
   });
+  } catch (err) {
+    console.error(
+      `[assign-requested] offerId=${offerId} requestedRowId=${requestedRowId} productId=${productId} categoryId=${categoryId}`,
+      err,
+    );
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
 }
 
 export async function POST(
