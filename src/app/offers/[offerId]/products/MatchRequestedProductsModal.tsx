@@ -227,8 +227,9 @@ export default function MatchRequestedProductsModal({
     applyFilter('BrandName', entry.requestedBrand);
     applyFilter('ModelNumber', entry.requestedModelNumber);
     applyFilter('PartNumber', entry.requestedPartNumber);
+    applyFilter('Description', entry.requestedDescription);
     return Object.keys(filters).length > 0 ? filters : null;
-  }, [entry.requestedBrand, entry.requestedModelNumber, entry.requestedPartNumber]);
+  }, [entry.requestedBrand, entry.requestedModelNumber, entry.requestedPartNumber, entry.requestedDescription]);
 
   const requestPayload = useMemo(() => {
     const payload: Record<string, unknown> = { action: 'products' };

@@ -792,7 +792,7 @@ export default function ClientProductsPage({
             className={`${toolbarStyles.button} ${toolbarStyles.buttonExport} page-header-button`}
             onClick={handleOpenExportModal}
           >
-            Export
+            Fill AVC4 Offer
           </button>
         </>
       )}

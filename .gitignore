@@ -41,7 +41,6 @@ ecosystem.config.cjs
 # vercel
 .vercel
 
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts

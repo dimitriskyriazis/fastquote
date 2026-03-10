@@ -267,6 +267,37 @@ const evaluateValidation = (sheets: SheetMapping[], activeSheetIndex: number) =>
   };
 };
 
+const padExportRowsForAlignment = (
+  rows: OfferProductsTemplateExportRow[],
+): OfferProductsTemplateExportRow[] => {
+  // Only pad when ALL rows have positive integer `no` values.
+  // Falls back to unchanged sequential offset for hierarchical numbering (1.1, 1.2) or text.
+  const allPositiveIntegers = rows.length > 0 && rows.every((row) =>
+    typeof row.no === 'number' && Number.isInteger(row.no) && row.no >= 1,
+  );
+  if (!allPositiveIntegers) return rows;
+
+  const maxNo = Math.max(...rows.map((row) => row.no as number));
+  const byNo = new Map<number, OfferProductsTemplateExportRow>();
+  for (const row of rows) {
+    byNo.set(row.no as number, row);
+  }
+
+  const padded: OfferProductsTemplateExportRow[] = [];
+  for (let n = 1; n <= maxNo; n++) {
+    const existing = byNo.get(n);
+    if (existing) {
+      padded.push(existing);
+    } else {
+      padded.push({
+        no: n, productReference: '', manufacturer: '', descriptionType: '',
+        qty: '', unitPrice: '', delayForDelivery: '', comments: '', skipRow: true,
+      });
+    }
+  }
+  return padded;
+};
+
 const resolveFieldValue = (
   row: OfferProductsTemplateExportRow,
   fieldKey: ExportFieldKey,
@@ -300,7 +331,7 @@ const formatPreviewValue = (value: string | number | null): string => {
 
 const buildOutputFilename = (inputName: string, extension: 'xlsx' | 'xlsm' | 'xls'): string => {
   const baseName = inputName.replace(/\.[^.]+$/, '').trim() || 'template';
-  return `${baseName}-updated.${extension}`;
+  return `${baseName}- Telmaco Offer.${extension}`;
 };
 
 const resolveWorkbookExtension = (fileName: string): 'xlsx' | 'xlsm' | 'xls' | null => {
@@ -597,6 +628,7 @@ const patchWorksheetXmlWithAppendedRows = (
 
   rows.forEach((row, rowOffset) => {
     const rowIndex = startRow + rowOffset;
+    if (row.skipRow) return;
     const rowElement = getOrCreateRowElement(rowIndex);
     selectedMappings.forEach(({ field, columnIndex }) => {
       const value = resolveFieldValue(row, field.key);
@@ -745,6 +777,7 @@ const applyRowsToSheet = (
 
   rows.forEach((row, rowOffset) => {
     const rowIndex = startRow + rowOffset;
+    if (row.skipRow) return;
     selectedMappings.forEach(({ field, columnIndex }) => {
       const value = resolveFieldValue(row, field.key);
       setCellValuePreservingFormat(rowIndex, columnIndex, value);
@@ -1010,6 +1043,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
       const outputFilename = buildOutputFilename(file.name, workbookType);
       let writeResult: { startRow: number; mappedColumnCount: number };
       let outputBuffer: ArrayBuffer;
+      const alignedRows = padExportRowsForAlignment(exportRows);
 
       if (workbookType === 'xls') {
         // Legacy .xls is not ZIP-based, so use workbook rewrite fallback.
@@ -1018,7 +1052,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
         if (!sheet) {
           throw new Error(`Worksheet "${activeSheet.name}" was not found in the selected file.`);
         }
-        writeResult = applyRowsToSheet(xlsx, sheet, activeSheet, exportRows);
+        writeResult = applyRowsToSheet(xlsx, sheet, activeSheet, alignedRows);
         // Force Excel to recalculate all formulas when the file is opened.
         if (!workbook.Workbook) workbook.Workbook = {};
         const wbProps = workbook.Workbook as Record<string, unknown>;
@@ -1040,7 +1074,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
           throw new Error(`Worksheet "${activeSheet.name}" XML was not found (${worksheetPath}).`);
         }
         const worksheetXml = await worksheetFile.async('string') as string;
-        const patchResult = patchWorksheetXmlWithAppendedRows(worksheetXml, activeSheet, exportRows);
+        const patchResult = patchWorksheetXmlWithAppendedRows(worksheetXml, activeSheet, alignedRows);
         writeResult = { startRow: patchResult.startRow, mappedColumnCount: patchResult.mappedColumnCount };
         archive.file(worksheetPath, patchResult.sheetXml);
 
@@ -1066,8 +1100,9 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
       }
 
       downloadWorkbookFile(outputBuffer, outputFilename, workbookType);
+      const writtenCount = alignedRows.filter((r) => !r.skipRow).length;
       showToastMessage(
-        `Exported ${exportRows.length} row${exportRows.length === 1 ? '' : 's'} to "${activeSheet.name}" (from row ${writeResult.startRow}).`,
+        `Exported ${writtenCount} row${writtenCount === 1 ? '' : 's'} to "${activeSheet.name}" (from row ${writeResult.startRow}).`,
         'success',
       );
       onClose();
@@ -1131,7 +1166,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
               Cancel
             </button>
             <button type="button" className={styles.primaryButton} onClick={handleExport} disabled={!canExport}>
-              {submitting ? 'Exporting...' : 'Export Updated File'}
+              {submitting ? 'Filling...' : 'Fill AVC4 Offer'}
             </button>
           </div>
         </div>

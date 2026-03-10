@@ -236,23 +236,42 @@
   }
 }
 
-/* Suggested (pinned) row styling */
+/* Suggested (pinned) row styling
+   Cell-level rules use .gridShell repeated 3× to beat the high-specificity
+   catch-all in ag-grid-overrides.css (0,7,0) that would otherwise paint
+   pinned rows grey on hover. */
 .gridShell :global(.ag-floating-top .ag-row) {
   background: #dbeafe !important;
   cursor: pointer;
   transition: background-color 150ms ease;
 }
 
+.gridShell.gridShell.gridShell :global(.ag-floating-top .ag-row .ag-cell) {
+  background-color: #dbeafe !important;
+}
+
 .gridShell :global(.ag-floating-top .ag-row.ag-row-hover) {
   background: #bfdbfe !important;
+}
+
+.gridShell.gridShell.gridShell :global(.ag-floating-top .ag-row.ag-row-hover .ag-cell) {
+  background-color: #bfdbfe !important;
 }
 
 .gridShell :global(.ag-floating-top .ag-row.suggestion-selected) {
   background: #93c5fd !important;
 }
 
+.gridShell.gridShell.gridShell :global(.ag-floating-top .ag-row.suggestion-selected .ag-cell) {
+  background-color: #93c5fd !important;
+}
+
 .gridShell :global(.ag-floating-top .ag-row.suggestion-selected.ag-row-hover) {
   background: #7dd3fc !important;
+}
+
+.gridShell.gridShell.gridShell :global(.ag-floating-top .ag-row.suggestion-selected.ag-row-hover .ag-cell) {
+  background-color: #7dd3fc !important;
 }
 
 .descriptionCell {

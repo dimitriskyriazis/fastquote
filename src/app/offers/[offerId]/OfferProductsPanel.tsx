@@ -185,6 +185,7 @@ export type OfferProductsTemplateExportRow = {
   unitPrice: number | '';
   delayForDelivery: string;
   comments: string;
+  skipRow?: boolean;
 };
 
 type OfferExportRow = {
@@ -3448,6 +3449,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     });
 
     return includedRows.map((row) => {
+      const rowType = resolveOfferProductRowType(row as unknown as Record<string, unknown>);
       const model = (row.ModelNumber ?? '').toString().trim();
       const description = (row.Description ?? '').toString().trim();
       const descriptionType = [model, description].filter((part) => part.length > 0).join(' ').trim();
@@ -3456,6 +3458,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       const qtyForExport = qty != null && !Object.is(qty, 0) ? qty : null;
       const deliveryRaw = row.Delivery == null ? '' : String(row.Delivery).trim();
       const deliveryValue = deliveryRaw.length > 0 ? deliveryRaw : 'unknown';
+      const isUnmatchedProduct = rowType === 'product'
+        && !row.PartNumber?.toString().trim()
+        && !row.BrandName?.toString().trim()
+        && !model
+        && !description
+        && netUnitPrice == null;
       return {
         no: normalizeNoForExport(row.TreeOrdering),
         productReference: row.PartNumber?.toString().trim() ?? '',
@@ -3465,6 +3473,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         unitPrice: netUnitPrice ?? '',
         delayForDelivery: deliveryValue,
         comments: row.Comment?.toString() ?? '',
+        ...(isUnmatchedProduct ? { skipRow: true } : undefined),
       };
     });
   }, []);
