@@ -3,7 +3,11 @@ import { getPool } from '../../../../../../lib/sql';
 import { clearPartModelNumberUpper } from '../../../../../../lib/partModelNumber';
 import OpenAI from 'openai';
 
-const openai = new OpenAI();
+let _openai: OpenAI | null = null;
+function getOpenAI() {
+  if (!_openai) _openai = new OpenAI();
+  return _openai;
+}
 
 export type SuggestInput = {
   requestedBrand?: string | null;
@@ -167,7 +171,7 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
 
   let selectedIds: number[] = [];
   try {
-    const completion = await openai.chat.completions.create({
+    const completion = await getOpenAI().chat.completions.create({
       model: 'gpt-4o-mini',
       temperature: 0,
       response_format: { type: 'json_object' },
