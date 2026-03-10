@@ -642,6 +642,57 @@ export async function DELETE(req: NextRequest) {
           return request;
         };
 
+        // Renumber remaining versions in affected groups before deletion.
+        // Uses the original (still-intact) parent chain to find version groups,
+        // then assigns sequential OfferVersion numbers to the versions that will remain.
+        await bindParams(new sql.Request(transaction)).query(`
+          ;WITH VersionTree AS (
+            SELECT ID, ParentOfferID, ID AS RootOfferID
+            FROM dbo.Offer
+            WHERE ParentOfferID IS NULL
+            UNION ALL
+            SELECT o.ID, o.ParentOfferID, vt.RootOfferID
+            FROM dbo.Offer o
+            INNER JOIN VersionTree vt ON o.ParentOfferID = vt.ID
+          ),
+          AffectedGroups AS (
+            SELECT DISTINCT vt.RootOfferID
+            FROM VersionTree vt
+            WHERE vt.ID IN (${idsSql})
+          ),
+          RemainingVersions AS (
+            SELECT vt.ID,
+              ROW_NUMBER() OVER (PARTITION BY vt.RootOfferID ORDER BY o.OfferVersion) AS NewVersion
+            FROM VersionTree vt
+            INNER JOIN dbo.Offer o ON o.ID = vt.ID
+            WHERE vt.RootOfferID IN (SELECT RootOfferID FROM AffectedGroups)
+              AND vt.ID NOT IN (${idsSql})
+          )
+          UPDATE dbo.Offer
+          SET OfferVersion = rv.NewVersion
+          FROM dbo.Offer
+          INNER JOIN RemainingVersions rv ON rv.ID = dbo.Offer.ID
+          WHERE dbo.Offer.OfferVersion <> rv.NewVersion;
+        `);
+
+        // Re-parent children of deleted offers to prevent orphaned version chains.
+        // Each child's ParentOfferID is set to its deleted parent's ParentOfferID.
+        // Loop handles cases where multiple versions in the same chain are deleted
+        // (e.g. deleting v1 and v2: first pass re-parents v3 to v1, second pass to NULL).
+        await bindParams(new sql.Request(transaction)).query(`
+          DECLARE @reparented INT = 1;
+          WHILE @reparented > 0
+          BEGIN
+            UPDATE child
+            SET child.ParentOfferID = parent.ParentOfferID
+            FROM dbo.Offer child
+            INNER JOIN dbo.Offer parent ON child.ParentOfferID = parent.ID
+            WHERE parent.ID IN (${idsSql})
+              AND child.ID NOT IN (${idsSql});
+            SET @reparented = @@ROWCOUNT;
+          END
+        `);
+
         await bindParams(new sql.Request(transaction)).query(`
           DELETE FROM dbo.OfferDetails
           WHERE OfferID IN (
