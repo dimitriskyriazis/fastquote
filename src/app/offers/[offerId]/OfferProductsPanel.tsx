@@ -405,6 +405,50 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [requestedColumnsReady, setRequestedColumnsReadyFlag] = useState(false);
   const [requestedMatchQueue, setRequestedMatchQueue] = useState<RequestedProductMatchEntry[]>([]);
   const [processedRequestedMatches, setProcessedRequestedMatches] = useState(0);
+
+  // --- AI suggestion prefetch cache (batch) ---
+  const suggestionCacheRef = useRef<Map<number, Record<string, unknown>[]>>(new Map());
+  const batchPrefetchedRef = useRef(false);
+  const [suggestionCacheVersion, setSuggestionCacheVersion] = useState(0);
+
+  const prefetchAllSuggestions = useCallback((entries: RequestedProductMatchEntry[]) => {
+    if (batchPrefetchedRef.current) return;
+    const uncached = entries.filter((e) => !suggestionCacheRef.current.has(e.offerDetailId));
+    if (uncached.length === 0) return;
+    batchPrefetchedRef.current = true;
+    fetch(`/api/offers/${encodeURIComponent(offerId)}/products/suggest-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        entries: uncached.map((e) => ({
+          offerDetailId: e.offerDetailId,
+          requestedBrand: e.requestedBrand,
+          requestedModelNumber: e.requestedModelNumber,
+          requestedPartNumber: e.requestedPartNumber,
+          requestedDescription: e.requestedDescription,
+          requestedDescription2: e.requestedDescription2,
+          requestedDescription3: e.requestedDescription3,
+        })),
+      }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const results = (data as { results?: Record<string, Record<string, unknown>[]> } | null)?.results;
+        if (results) {
+          for (const [idStr, products] of Object.entries(results)) {
+            suggestionCacheRef.current.set(Number(idStr), products);
+          }
+          setSuggestionCacheVersion((v) => v + 1);
+        }
+      })
+      .catch(() => { /* noop */ });
+  }, [offerId]);
+
+  // Prefetch suggestions for ALL entries in one batch request
+  useEffect(() => {
+    if (requestedMatchQueue.length === 0) return;
+    prefetchAllSuggestions(requestedMatchQueue);
+  }, [requestedMatchQueue, prefetchAllSuggestions]);
   const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() =>
     readCollapsedCategoryPathsFromCookie(offerId),
   );
@@ -2650,6 +2694,64 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
     };
 
+    // Clear actual product data from already-populated rows so they can be re-populated
+    const alreadyPopulatedNodes = requestedNodes.filter((node) => {
+      const data = node?.data ?? null;
+      if (!data) return false;
+      const productId = (data as { ProductID?: unknown }).ProductID;
+      return productId != null && productId !== 0;
+    });
+    if (alreadyPopulatedNodes.length > 0) {
+      const idsToUnassign = alreadyPopulatedNodes
+        .map((node) => normalizeOfferDetailId((node?.data as { OfferDetailID?: unknown })?.OfferDetailID ?? null))
+        .filter((id): id is number => id != null);
+      if (idsToUnassign.length > 0) {
+        try {
+          const res = await fetch(addProductsEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'unassign-requested', offerDetailIds: idsToUnassign }),
+          });
+          const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+          if (!res.ok || !payload?.ok) {
+            showToastMessage(payload?.error ?? 'Failed to clear existing product data for re-population.', 'error');
+            return;
+          }
+          // Reset local node data directly (without setDataValue) to avoid
+          // triggering cell-changed handlers that spam validation toasts.
+          // The grid will be purge-refreshed at the end of populate anyway.
+          for (const node of alreadyPopulatedNodes) {
+            const d = node.data;
+            if (!d) continue;
+            d.__isRequestedRow = 1;
+            d.ProductID = null;
+            d.BrandID = null;
+            d.BrandName = null;
+            d.PartNumber = null;
+            d.ModelNumber = null;
+            d.ProductDescription = null;
+            d.Description = null;
+            d.ListPrice = null;
+            d.NetUnitPrice = null;
+            d.TotalPrice = null;
+            d.TotalNet = null;
+            d.TelmacoDiscount = null;
+            d.CustomerDiscount = null;
+            d.NetCost = null;
+            d.Margin = null;
+            d.GrossProfit = null;
+            d.TotalCost = null;
+            d.Quantity = null;
+            d.IsCategory = 0;
+          }
+        } catch (err) {
+          console.error('Failed to clear existing product data for re-population', err);
+          showToastMessage('Unable to clear existing product data. Please try again.', 'error');
+          return;
+        }
+      }
+    }
+
     const updates: Array<Record<string, unknown>> = [];
     let categoriesAdded = 0;
     let productsAdded = 0;
@@ -2982,9 +3084,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       // AG Grid state drift caused by cell updates or grid refreshes.
       forceReapplyRef.current?.();
     }
-  }, [assignRequestedRowToProduct, promoteNodeToCategory, promoteNodeToProduct, refreshOfferProductGrid, resolvedEndpoint]);
+  }, [addProductsEndpoint, assignRequestedRowToProduct, promoteNodeToCategory, promoteNodeToProduct, refreshOfferProductGrid, resolvedEndpoint]);
 
   const currentRequestedMatch = requestedMatchQueue[0] ?? null;
+  void suggestionCacheVersion; // trigger re-read from ref on cache update
+  const currentPrefetchedSuggestions = currentRequestedMatch
+    ? suggestionCacheRef.current.get(currentRequestedMatch.offerDetailId) ?? null
+    : null;
   const matchAddProductInitialValues = useMemo<AddProductInitialValues | null>(() => {
     if (!currentRequestedMatch) return null;
     const descriptionParts = [
@@ -3061,6 +3167,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     showToastMessage('Skipped all requested items.', 'info');
     setRequestedMatchQueue([]);
     setProcessedRequestedMatches(0);
+    batchPrefetchedRef.current = false;
+    suggestionCacheRef.current.clear();
     // Force re-show requested columns that may have been hidden during the
     // populate/match flow.
     if (typeof window !== 'undefined') {
@@ -5267,6 +5375,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         newProductId={matchAddedProductId}
           onClearNewProductId={clearMatchAddedProductId}
           onRequestPayloadConsumed={clearMatchAddedProductId}
+          prefetchedSuggestions={currentPrefetchedSuggestions}
         />
       ) : null}
       <AddProductModal

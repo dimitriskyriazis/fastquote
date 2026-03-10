@@ -3,6 +3,7 @@ import { getPool } from '../../../lib/sql';
 import { toDropdownOptions, type RawDropdownRow } from '../../../lib/dropdownOptions';
 import PriceListBasicDataClient from './PriceListBasicDataClient';
 import styles from './PriceListBasicDataPanel.module.css';
+
 import type {
   PriceListBasicRecord,
   PriceListDropdownOption,
@@ -279,15 +280,13 @@ export async function fetchPriceListPricingPolicies(priceListId: number) {
       FROM dbo.PriceListPricingPolicy AS plpp
       INNER JOIN dbo.PricingPolicies AS pp ON plpp.PricingPolicyID = pp.ID
       WHERE plpp.PriceListID = @priceListId
-      ORDER BY pp.Name, ppr.Name
+      ORDER BY pp.Name
     `);
     return (result.recordset ?? []).map((row) => ({
       id: row.ID,
       priceListId: row.PriceListID,
       pricingPolicyId: row.PricingPolicyID,
       pricingPolicyName: row.PricingPolicyName,
-      pricingPolicyRuleId: null,
-      pricingPolicyRuleName: null,
     }));
   } catch (err) {
     console.error('Failed to load price list pricing policies', err);

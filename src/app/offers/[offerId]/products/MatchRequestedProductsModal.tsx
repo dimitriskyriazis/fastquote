@@ -60,6 +60,7 @@ type Props = {
   onClearNewProductId: () => void;
   onRequestPayloadConsumed?: () => void;
   onSkipAll: () => void;
+  prefetchedSuggestions?: MatcherRowData[] | null;
 };
 
 const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
@@ -112,6 +113,7 @@ export default function MatchRequestedProductsModal({
   onClearNewProductId,
   onRequestPayloadConsumed,
   onSkipAll,
+  prefetchedSuggestions,
 }: Props) {
   const [selectedProduct, setSelectedProduct] = useState<MatcherRowData | null>(null);
   const [assigning, setAssigning] = useState(false);
@@ -123,6 +125,10 @@ export default function MatchRequestedProductsModal({
   const productsApiRef = useRef<MatcherGridApi | null>(null);
   const pendingSelectionProductIdRef = useRef<number | null>(null);
   const suggestedProductsRef = useRef<MatcherRowData[]>([]);
+  const currentEntryIdRef = useRef(entry.offerDetailId);
+  currentEntryIdRef.current = entry.offerDetailId;
+  const gridShellRef = useRef<HTMLDivElement | null>(null);
+  const userWantsSuggestionsRef = useRef(false);
 
   // Keep ref in sync so event listeners can read current value
   suggestedProductsRef.current = suggestedProducts;
@@ -140,13 +146,22 @@ export default function MatchRequestedProductsModal({
   }, [setPinnedSuggestions]);
 
   const handleHideSuggestions = useCallback(() => {
+    userWantsSuggestionsRef.current = false;
     setSuggestionsVisible(false);
     clearPinnedTopRow();
   }, [clearPinnedTopRow]);
 
   const handleShowSuggestions = useCallback(() => {
+    userWantsSuggestionsRef.current = true;
     setSuggestionsVisible(true);
-    setPinnedSuggestions(suggestedProductsRef.current);
+    const products = suggestedProductsRef.current;
+    setPinnedSuggestions(products);
+    if (products.length > 0) {
+      try {
+        productsApiRef.current?.deselectAll?.();
+      } catch { /* noop */ }
+      setSelectedProduct(products[0]);
+    }
   }, [setPinnedSuggestions]);
 
   // Sync pinned rows when suggestedProducts or visibility changes
@@ -159,9 +174,8 @@ export default function MatchRequestedProductsModal({
   }, [suggestedProducts, suggestionsVisible, setPinnedSuggestions, clearPinnedTopRow]);
 
   const getRowStyle = useCallback((params: RowClassParams): RowStyle | undefined => {
-    if (params.node.rowPinned === 'top') {
-      return { background: '#dbeafe' };
-    }
+    // Pinned top row default/hover/selected styling handled via CSS on .ag-floating-top
+    if (params.node.rowPinned === 'top') return undefined;
     return undefined;
   }, []);
 
@@ -246,6 +260,31 @@ export default function MatchRequestedProductsModal({
     () => normalizeProductId(selectedProduct?.ProductID ?? null),
     [selectedProduct],
   );
+
+  // Highlight selected suggestion row via DOM class toggle
+  const updateSuggestionHighlight = useCallback(() => {
+    const shell = gridShellRef.current;
+    if (!shell) return;
+    const sid = normalizeProductId(selectedProduct?.ProductID ?? null);
+    const rows = shell.querySelectorAll<HTMLElement>('.ag-floating-top .ag-row');
+    rows.forEach((row, idx) => {
+      const product = suggestedProductsRef.current[idx];
+      const rowProductId = product ? normalizeProductId((product as MatcherRowData)?.ProductID ?? null) : null;
+      if (rowProductId != null && rowProductId === sid) {
+        row.classList.add('suggestion-selected');
+      } else {
+        row.classList.remove('suggestion-selected');
+      }
+    });
+  }, [selectedProduct]);
+
+  useEffect(() => {
+    // Run immediately for clicks on already-rendered rows
+    updateSuggestionHighlight();
+    // Also run after a frame so ag-grid has time to render new pinned rows
+    const raf = requestAnimationFrame(updateSuggestionHighlight);
+    return () => cancelAnimationFrame(raf);
+  }, [updateSuggestionHighlight, suggestedProducts]);
 
   const handleSlotRef = useCallback((node: HTMLDivElement | null) => {
     setSearchSlot(node);
@@ -393,6 +432,8 @@ export default function MatchRequestedProductsModal({
 
   const handleSuggestProducts = useCallback(async () => {
     if (suggesting) return;
+    userWantsSuggestionsRef.current = true;
+    const targetEntryId = entry.offerDetailId;
     setSuggesting(true);
     try {
       const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/suggest`, {
@@ -408,6 +449,8 @@ export default function MatchRequestedProductsModal({
         }),
       });
       if (!res.ok) throw new Error('Failed to suggest products');
+      // Discard result if the entry changed while we were fetching
+      if (currentEntryIdRef.current !== targetEntryId) return;
       const data = (await res.json()) as { ok: boolean; products?: MatcherRowData[] };
       const products = data.products ?? [];
       setSuggestedProducts(products);
@@ -520,7 +563,26 @@ export default function MatchRequestedProductsModal({
     setComment('');
     setSuggestedProducts([]);
     setSuggestionsVisible(true);
+    appliedPrefetchRef.current = null;
   }, [entry.offerDetailId]);
+
+  // Store prefetched suggestions; auto-show if user previously opted in
+  const appliedPrefetchRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!prefetchedSuggestions || prefetchedSuggestions.length === 0) return;
+    if (appliedPrefetchRef.current === entry.offerDetailId) return;
+    appliedPrefetchRef.current = entry.offerDetailId;
+    setSuggestedProducts(prefetchedSuggestions);
+    if (userWantsSuggestionsRef.current) {
+      setSuggestionsVisible(true);
+      try {
+        productsApiRef.current?.deselectAll?.();
+      } catch { /* noop */ }
+      setSelectedProduct(prefetchedSuggestions[0]);
+    } else {
+      setSuggestionsVisible(false);
+    }
+  }, [prefetchedSuggestions, entry.offerDetailId]);
 
   useEffect(() => {
     applyRequestedFilterModel(productsApiRef.current);
@@ -548,6 +610,7 @@ export default function MatchRequestedProductsModal({
               </div>
             </div>
             <div className={styles.headerActions}>
+              {suggestedProducts.length === 0 && (
               <button
                 type="button"
                 className={styles.aiButton}
@@ -563,24 +626,25 @@ export default function MatchRequestedProductsModal({
                   'Suggest Products (AI)'
                 )}
               </button>
+              )}
               {suggestedProducts.length > 0 && suggestionsVisible && (
                 <button
                   type="button"
-                  className={styles.secondaryButton}
+                  className={styles.aiButton}
                   onClick={handleHideSuggestions}
                   disabled={suggesting || assigning}
                 >
-                  Hide suggestions
+                  Hide suggestions (AI)
                 </button>
               )}
               {suggestedProducts.length > 0 && !suggestionsVisible && (
                 <button
                   type="button"
-                  className={styles.secondaryButton}
+                  className={styles.aiButton}
                   onClick={handleShowSuggestions}
                   disabled={suggesting || assigning}
                 >
-                  Show suggestions
+                  Show suggestions (AI)
                 </button>
               )}
               <button type="button" className={styles.secondaryButton} onClick={onRequestAddProduct}>
@@ -607,7 +671,7 @@ export default function MatchRequestedProductsModal({
                 </div>
               ) : null}
             </div>
-            <div className={`${styles.gridShell} offer-products-grid`}>
+            <div className={`${styles.gridShell} offer-products-grid`} ref={gridShellRef}>
               <AgGridAll
                 endpoint={endpoint}
                 columnDefs={productColumns}
@@ -629,6 +693,7 @@ export default function MatchRequestedProductsModal({
                 applyColumnStateOrder={true}
                 maintainColumnOrder={true}
                 disableAutoSize={true}
+                suppressCellSelection
                 getRowStyle={getRowStyle}
               />
             </div>

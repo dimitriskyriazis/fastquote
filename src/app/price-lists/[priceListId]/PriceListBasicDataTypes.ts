@@ -46,8 +46,6 @@ export type PriceListPricingPolicyEntry = {
   priceListId: number;
   pricingPolicyId: number;
   pricingPolicyName: string | null;
-  pricingPolicyRuleId: number | null;
-  pricingPolicyRuleName: string | null;
 };
 
 export type PriceListBasicUpdateField =

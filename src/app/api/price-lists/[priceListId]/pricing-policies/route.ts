@@ -56,8 +56,6 @@ export async function GET(
         priceListId: row.PriceListID,
         pricingPolicyId: row.PricingPolicyID,
         pricingPolicyName: row.PricingPolicyName,
-        pricingPolicyRuleId: null,
-        pricingPolicyRuleName: null,
       })),
     });
   } catch (err) {
@@ -95,7 +93,6 @@ export async function POST(
     if (pricingPolicyId == null) {
       return NextResponse.json({ ok: false, error: 'Pricing policy ID is required' }, { status: 400 });
     }
-
     const pool = await getPool();
     const request = pool.request();
     request.input('priceListId', sql.Int, parsedId);

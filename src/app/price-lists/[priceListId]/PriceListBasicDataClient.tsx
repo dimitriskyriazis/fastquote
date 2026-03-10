@@ -532,12 +532,20 @@ export default function PriceListBasicDataClient({
   }, [currentBrandId, localPricingPolicyRules, pricingPolicyNameById]);
 
   const selectedRuleIds = useMemo(() => {
-    return new Set(
-      priceListPricingPolicies
-        .map((entry) => entry.pricingPolicyRuleId)
-        .filter((id): id is number => typeof id === 'number' && Number.isFinite(id)),
+    const existingPolicyIds = new Set(
+      priceListPricingPolicies.map((entry) => entry.pricingPolicyId),
     );
-  }, [priceListPricingPolicies]);
+    return new Set(
+      localPricingPolicyRules
+        .filter(
+          (rule) =>
+            rule.pricingPolicyId != null &&
+            existingPolicyIds.has(rule.pricingPolicyId) &&
+            (rule.brandId == null || rule.brandId === currentBrandId),
+        )
+        .map((rule) => rule.id),
+    );
+  }, [priceListPricingPolicies, localPricingPolicyRules, currentBrandId]);
 
   const rulesById = useMemo(() => {
     const map = new Map<number, (typeof localPricingPolicyRules)[number]>();
@@ -550,15 +558,24 @@ export default function PriceListBasicDataClient({
   }, [localPricingPolicyRules]);
 
   const selectedRuleSummary = useMemo(() => {
-    return priceListPricingPolicies
-      .map((entry) => (entry.pricingPolicyRuleId != null ? rulesById.get(entry.pricingPolicyRuleId) : null))
-      .filter((rule): rule is (typeof localPricingPolicyRules)[number] => Boolean(rule));
-  }, [priceListPricingPolicies, rulesById]);
+    const existingPolicyIds = new Set(
+      priceListPricingPolicies.map((entry) => entry.pricingPolicyId),
+    );
+    return localPricingPolicyRules.filter(
+      (rule) =>
+        rule.pricingPolicyId != null &&
+        existingPolicyIds.has(rule.pricingPolicyId) &&
+        (rule.brandId == null || rule.brandId === currentBrandId),
+    );
+  }, [priceListPricingPolicies, localPricingPolicyRules, currentBrandId]);
 
   const selectedPolicySummary = useMemo(() => {
+    const ruleMatchedPolicyIds = new Set(
+      selectedRuleSummary.map((rule) => rule.pricingPolicyId).filter((id): id is number => id != null),
+    );
     const seen = new Set<number>();
     return priceListPricingPolicies
-      .filter((entry) => entry.pricingPolicyRuleId == null)
+      .filter((entry) => !ruleMatchedPolicyIds.has(entry.pricingPolicyId))
       .map((entry) => {
         const id = entry.pricingPolicyId;
         if (!Number.isFinite(id) || seen.has(id)) return null;
@@ -569,7 +586,7 @@ export default function PriceListBasicDataClient({
         };
       })
       .filter((entry): entry is { id: number; name: string } => Boolean(entry));
-  }, [priceListPricingPolicies, pricingPolicyNameById]);
+  }, [priceListPricingPolicies, selectedRuleSummary, pricingPolicyNameById]);
 
   useEffect(() => {
     if (!isRulePickerOpen) return;
@@ -609,16 +626,22 @@ export default function PriceListBasicDataClient({
   const applyRuleSelection = useCallback(async () => {
     setRulePickerSaving(true);
     setRulePickerError(null);
-    const desiredRuleIds = Array.from(rulePickerSelection);
-    const existingRuleIds = new Set(
-      priceListPricingPolicies
-        .map((entry) => entry.pricingPolicyRuleId)
-        .filter((id): id is number => typeof id === 'number' && Number.isFinite(id)),
-    );
+
+    // Build the set of pricingPolicyIds that the desired rules map to
+    const desiredPolicyIds = new Set<number>();
+    for (const ruleId of rulePickerSelection) {
+      const rule = rulesById.get(ruleId);
+      if (rule?.pricingPolicyId != null) desiredPolicyIds.add(rule.pricingPolicyId);
+    }
+
+    // Existing entries whose pricingPolicyId is NOT among the desired ones should be deleted
     const toDelete = priceListPricingPolicies.filter(
-      (entry) => entry.pricingPolicyRuleId == null || !rulePickerSelection.has(entry.pricingPolicyRuleId),
+      (entry) => !desiredPolicyIds.has(entry.pricingPolicyId),
     );
-    const toAdd = desiredRuleIds.filter((ruleId) => !existingRuleIds.has(ruleId));
+    // Desired policyIds that don't already have an entry should be added
+    const existingPolicyIds = new Set(priceListPricingPolicies.map((e) => e.pricingPolicyId));
+    const toAddPolicyIds = Array.from(desiredPolicyIds).filter((id) => !existingPolicyIds.has(id));
+
     const deletedIds = new Set(toDelete.map((entry) => entry.id));
     const addedEntries: PriceListPricingPolicyEntry[] = [];
 
@@ -634,16 +657,11 @@ export default function PriceListBasicDataClient({
         }
       }
 
-      for (const ruleId of toAdd) {
-        const rule = rulesById.get(ruleId);
-        if (!rule || rule.pricingPolicyId == null) continue;
+      for (const policyId of toAddPolicyIds) {
         const response = await fetch(`/api/price-lists/${encodeURIComponent(priceListId)}/pricing-policies`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            pricingPolicyId: rule.pricingPolicyId,
-            pricingPolicyRuleId: ruleId,
-          }),
+          body: JSON.stringify({ pricingPolicyId: policyId }),
         });
         const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; id?: number } | null;
         if (!response.ok || !payload?.ok || !payload?.id) {
@@ -652,10 +670,8 @@ export default function PriceListBasicDataClient({
         addedEntries.push({
           id: payload.id,
           priceListId: Number(priceListId),
-          pricingPolicyId: rule.pricingPolicyId,
-          pricingPolicyName: rule.pricingPolicyName ?? pricingPolicyNameById.get(rule.pricingPolicyId) ?? null,
-          pricingPolicyRuleId: rule.id,
-          pricingPolicyRuleName: rule.name ?? null,
+          pricingPolicyId: policyId,
+          pricingPolicyName: pricingPolicyNameById.get(policyId) ?? null,
         });
       }
 

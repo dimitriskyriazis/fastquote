@@ -737,23 +737,21 @@ export default function PriceListImportClient({
 }: Props) {
   const router = useRouter();
   const { userId: currentUserId } = useAuditUser();
-  const euroCurrencyId = useMemo(() => {
-    const match =
+  const euroCurrencyLabel = "€";
+
+  const [values, setValues] = useState<FormValues>(() => {
+    const initialEuro =
       currencies.find((c) => (c.label ?? "").trim() === "€") ??
       currencies.find((c) => (c.label ?? "").toLowerCase().includes("eur")) ??
       null;
-    return match?.value ?? "";
-  }, [currencies]);
-  const euroCurrencyLabel = "€";
-
-  const [values, setValues] = useState<FormValues>(() => ({
+    return {
     name: "",
     brandId: "",
     pricingPolicies: [],
     responsibleUserId: "",
     supplierId: "",
     hasDuty: false,
-    costCurrencyId: euroCurrencyId,
+    costCurrencyId: initialEuro?.value ?? "",
     currencyCostModifier: "1",
     countryId: "",
     validFromDate: "",
@@ -762,7 +760,8 @@ export default function PriceListImportClient({
     supplierComments: "",
     previousPriceListId: "",
     decimalFormat: "dotDecimal",
-  }));
+  };
+  });
   const [isRulePickerOpen, setIsRulePickerOpen] = useState(false);
   const [policyPickerSelection, setPolicyPickerSelection] = useState<Set<number>>(new Set());
   const [rulePickerError, setRulePickerError] = useState<string | null>(null);
@@ -785,6 +784,10 @@ export default function PriceListImportClient({
   const [showBrandList, setShowBrandList] = useState(false);
   const [localBrands, setLocalBrands] = useState<DropdownOption[]>(brands);
   const [localSuppliers, setLocalSuppliers] = useState<DropdownOption[]>(suppliers);
+  const [localCurrencies, setLocalCurrencies] = useState<DropdownOption[]>(currencies);
+  const [localCountries, setLocalCountries] = useState<DropdownOption[]>(countries);
+  const [localUsers, setLocalUsers] = useState<DropdownOption[]>(users);
+  const lookupRefreshInFlightRef = useRef(new Set<string>());
   const [brandsLoading, setBrandsLoading] = useState(false);
   const [brandsError, setBrandsError] = useState<string | null>(null);
   const [countryText, setCountryText] = useState("");
@@ -823,6 +826,18 @@ export default function PriceListImportClient({
     setLocalSuppliers(suppliers);
   }, [suppliers]);
 
+  useEffect(() => {
+    setLocalCurrencies(currencies);
+  }, [currencies]);
+
+  useEffect(() => {
+    setLocalCountries(countries);
+  }, [countries]);
+
+  useEffect(() => {
+    setLocalUsers(users);
+  }, [users]);
+
   // Automatically select current user as responsible user
   useEffect(() => {
     if (currentUserId && !values.responsibleUserId) {
@@ -830,13 +845,20 @@ export default function PriceListImportClient({
     }
   }, [currentUserId, values.responsibleUserId]);
 
+  const euroCurrencyId = useMemo(() => {
+    const match =
+      localCurrencies.find((c) => (c.label ?? "").trim() === "€") ??
+      localCurrencies.find((c) => (c.label ?? "").toLowerCase().includes("eur")) ??
+      null;
+    return match?.value ?? "";
+  }, [localCurrencies]);
 
   const countriesForModal = useMemo(() =>
-    countries.map((country) => ({
+    localCountries.map((country) => ({
       id: Number(country.value),
       name: country.label,
     })),
-    [countries]
+    [localCountries]
   );
 
   const isCostCurrencyEuro = !values.costCurrencyId || values.costCurrencyId === euroCurrencyId;
@@ -1116,6 +1138,32 @@ export default function PriceListImportClient({
     }
   }, [brandsLoading]);
 
+  const refreshLookups = useCallback(async (keys: string[]) => {
+    const pendingKeys = keys.filter((k) => !lookupRefreshInFlightRef.current.has(k));
+    if (pendingKeys.length === 0) return;
+    pendingKeys.forEach((k) => lookupRefreshInFlightRef.current.add(k));
+    try {
+      const search = new URLSearchParams();
+      pendingKeys.forEach((k) => search.append("keys", k));
+      const response = await fetch(`/api/price-lists/lookups?${search.toString()}`, { cache: "no-store" });
+      const payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; lookups?: { brands?: DropdownOption[]; countries?: DropdownOption[]; suppliers?: DropdownOption[]; currencies?: DropdownOption[]; users?: DropdownOption[] } }
+        | null;
+      if (!response.ok || !payload?.ok || !payload.lookups) {
+        throw new Error(payload?.error ?? "Unable to refresh lookup options");
+      }
+      if (payload.lookups.brands) setLocalBrands(payload.lookups.brands);
+      if (payload.lookups.countries) setLocalCountries(payload.lookups.countries);
+      if (payload.lookups.suppliers) setLocalSuppliers(payload.lookups.suppliers);
+      if (payload.lookups.currencies) setLocalCurrencies(payload.lookups.currencies);
+      if (payload.lookups.users) setLocalUsers(payload.lookups.users);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      pendingKeys.forEach((k) => lookupRefreshInFlightRef.current.delete(k));
+    }
+  }, []);
+
   const updateField = useCallback(<K extends keyof FormValues>(key: K, value: FormValues[K]) => {
     setValues((prev) => ({ ...prev, [key]: value }));
   }, []);
@@ -1129,9 +1177,9 @@ export default function PriceListImportClient({
 
   const filteredCountries = useMemo(() => {
     const search = countryText.trim();
-    if (!search) return countries;
-    return countries.filter((option) => matchesCountrySearch(option.label, search));
-  }, [countries, countryText]);
+    if (!search) return localCountries;
+    return localCountries.filter((option) => matchesCountrySearch(option.label, search));
+  }, [localCountries, countryText]);
 
   const handleCountryInputChange = useCallback((text: string) => {
     clearCountryListCloseTimer();
@@ -1139,10 +1187,10 @@ export default function PriceListImportClient({
     setShowCountryList(true);
     const normalized = text.trim().toLowerCase();
     const exactMatch = normalized
-      ? countries.find((opt) => opt.label.trim().toLowerCase() === normalized)
+      ? localCountries.find((opt) => opt.label.trim().toLowerCase() === normalized)
       : null;
     updateField("countryId", exactMatch?.value ?? "");
-  }, [clearCountryListCloseTimer, countries, updateField]);
+  }, [clearCountryListCloseTimer, localCountries, updateField]);
 
   const handleCountrySelect = useCallback((option: DropdownOption) => {
     clearCountryListCloseTimer();
@@ -1163,17 +1211,17 @@ export default function PriceListImportClient({
       updateField("countryId", "");
       return;
     }
-    const match = countries.find(
+    const match = localCountries.find(
       (opt) => opt.label.trim().toLowerCase() === trimmed.toLowerCase(),
     );
     if (match) {
       setCountryText(match.label);
       updateField("countryId", match.value);
     } else {
-      const selectedOption = countries.find((opt) => opt.value === values.countryId);
+      const selectedOption = localCountries.find((opt) => opt.value === values.countryId);
       setCountryText(selectedOption?.label ?? "");
     }
-  }, [clearCountryListCloseTimer, countries, countryText, updateField, values.countryId]);
+  }, [clearCountryListCloseTimer, localCountries, countryText, updateField, values.countryId]);
 
   const handleBrandCreated = useCallback(
     (brand: { id: number; name: string }) => {
@@ -1741,10 +1789,10 @@ export default function PriceListImportClient({
   );
 
   const costCurrencyOptions = useMemo(() => {
-    if (!euroCurrencyId) return currencies;
-    const rest = currencies.filter((c) => c.value !== euroCurrencyId);
+    if (!euroCurrencyId) return localCurrencies;
+    const rest = localCurrencies.filter((c) => c.value !== euroCurrencyId);
     return [{ value: euroCurrencyId, label: euroCurrencyLabel }, ...rest];
-  }, [currencies, euroCurrencyId]);
+  }, [localCurrencies, euroCurrencyId]);
 
   return (
     <>
@@ -1899,10 +1947,12 @@ export default function PriceListImportClient({
                     className={styles.input}
                     value={values.responsibleUserId}
                     required
+                    onMouseDown={() => void refreshLookups(["users"])}
+                    onFocus={() => void refreshLookups(["users"])}
                     onChange={(e) => updateField("responsibleUserId", e.target.value)}
                   >
                     <option value="">Select responsible user</option>
-                    {users.map(renderOption)}
+                    {localUsers.map(renderOption)}
                   </select>
                 </label>
                 <div className={styles.field}>
@@ -1923,6 +1973,8 @@ export default function PriceListImportClient({
                   <select
                     className={styles.input}
                     value={values.supplierId}
+                    onMouseDown={() => void refreshLookups(["suppliers"])}
+                    onFocus={() => void refreshLookups(["suppliers"])}
                     onChange={(e) => updateField("supplierId", e.target.value)}
                   >
                     <option value="">Select supplier</option>
@@ -1951,6 +2003,7 @@ export default function PriceListImportClient({
                       onFocus={(e) => {
                         clearCountryListCloseTimer();
                         e.target.select();
+                        void refreshLookups(["countries"]);
                         setShowCountryList(true);
                       }}
                     />
@@ -1976,6 +2029,8 @@ export default function PriceListImportClient({
                   <select
                     className={styles.input}
                     value={values.costCurrencyId}
+                    onMouseDown={() => void refreshLookups(["currencies"])}
+                    onFocus={() => void refreshLookups(["currencies"])}
                     onChange={(e) => updateField("costCurrencyId", e.target.value)}
                   >
                     {costCurrencyOptions.map(renderOption)}
@@ -2630,10 +2685,12 @@ export default function PriceListImportClient({
             id="import-rule-user"
             className={lookupStyles.fieldControl}
             value={newRuleResponsibleUserId}
+            onMouseDown={() => void refreshLookups(["users"])}
+            onFocus={() => void refreshLookups(["users"])}
             onChange={(event) => setNewRuleResponsibleUserId(event.target.value)}
           >
             <option value="">Select responsible user </option>
-            {users.map((option) => (
+            {localUsers.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>

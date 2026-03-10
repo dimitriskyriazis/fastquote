@@ -236,6 +236,25 @@
   }
 }
 
+/* Suggested (pinned) row styling */
+.gridShell :global(.ag-floating-top .ag-row) {
+  background: #dbeafe !important;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.gridShell :global(.ag-floating-top .ag-row.ag-row-hover) {
+  background: #bfdbfe !important;
+}
+
+.gridShell :global(.ag-floating-top .ag-row.suggestion-selected) {
+  background: #93c5fd !important;
+}
+
+.gridShell :global(.ag-floating-top .ag-row.suggestion-selected.ag-row-hover) {
+  background: #7dd3fc !important;
+}
+
 .descriptionCell {
   display: flex;
   flex-direction: column;

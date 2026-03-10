@@ -97,6 +97,7 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
   const [lookups, setLookups] = useState<ProductLookups | null>(null);
   const [lookupsLoading, setLookupsLoading] = useState(false);
   const [lookupsError, setLookupsError] = useState<string | null>(null);
+  const lookupsRefreshInFlightRef = useRef(false);
   const [form, setForm] = useState<ProductFormState>(createEmptyProductForm());
   const [formError, setFormError] = useState<string | null>(null);
   const [savingProduct, setSavingProduct] = useState(false);
@@ -135,6 +136,26 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
       setLookupsError(err instanceof Error ? err.message : 'Unable to load lookup data.');
     } finally {
       setLookupsLoading(false);
+    }
+  }, []);
+
+  const refreshLookups = useCallback(async () => {
+    if (lookupsRefreshInFlightRef.current) return;
+    lookupsRefreshInFlightRef.current = true;
+    try {
+      const response = await fetch(PRODUCT_LOOKUP_ENDPOINT);
+      const payload = (await response.json().catch(() => null)) as ProductLookupResponse | null;
+      if (!response.ok || !payload?.ok) return;
+      setLookups({
+        brands: payload.brands ?? [],
+        categories: payload.categories ?? [],
+        subCategories: payload.subCategories ?? [],
+        types: payload.types ?? [],
+      });
+    } catch {
+      // silent – this is a background refresh
+    } finally {
+      lookupsRefreshInFlightRef.current = false;
     }
   }, []);
 
@@ -423,6 +444,8 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
             id="product-type"
             className={lookupStyles.fieldControl}
             value={form.typeId}
+            onMouseDown={() => void refreshLookups()}
+            onFocus={() => void refreshLookups()}
             onChange={(event) => updateFormField('typeId', event.target.value)}
             disabled={lookupsLoading}
           >
@@ -442,6 +465,8 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
             id="product-category"
             className={lookupStyles.fieldControl}
             value={form.categoryId}
+            onMouseDown={() => void refreshLookups()}
+            onFocus={() => void refreshLookups()}
             onChange={(event) => updateFormField('categoryId', event.target.value)}
             disabled={lookupsLoading}
           >
@@ -461,6 +486,8 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
             id="product-sub-category"
             className={lookupStyles.fieldControl}
             value={form.subCategoryId}
+            onMouseDown={() => void refreshLookups()}
+            onFocus={() => void refreshLookups()}
             onChange={(event) => updateFormField('subCategoryId', event.target.value)}
             disabled={lookupsLoading}
           >

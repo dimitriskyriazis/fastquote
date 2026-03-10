@@ -991,6 +991,94 @@ const requestedRowCondition = `
       )
 `;
 
+async function handleUnassignRequestedRows(
+  offerId: number,
+  body: Record<string, unknown>,
+  auditUserId: string | number | null,
+) {
+  const rawIds = body?.offerDetailIds;
+  if (!Array.isArray(rawIds) || rawIds.length === 0) {
+    return NextResponse.json(
+      { ok: false, error: 'Missing offerDetailIds' },
+      { status: 400 },
+    );
+  }
+  const ids = rawIds
+    .map((v) => normalizeOfferDetailId(v))
+    .filter((v): v is number => v != null);
+  if (ids.length === 0) {
+    return NextResponse.json(
+      { ok: false, error: 'No valid offerDetailIds provided' },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const pool = await getPool();
+    const request = pool.request();
+    request.input('__offerId', sql.Int, offerId);
+    request.input('__modifiedBy', sql.Int, auditUserId);
+
+    // Build parameterised IN list
+    const idParams = ids.map((id, i) => {
+      const paramName = `__id${i}`;
+      request.input(paramName, sql.Int, id);
+      return `@${paramName}`;
+    });
+
+    const query = `
+      UPDATE od
+      SET
+        od.ProductID = NULL,
+        od.BrandID = NULL,
+        od.PartNumber = NULL,
+        od.ModelNumber = NULL,
+        od.ProductDescription = NULL,
+        od.ListPrice = NULL,
+        od.NetUnitPrice = NULL,
+        od.TotalPrice = NULL,
+        od.TotalNet = NULL,
+        od.TelmacoDiscount = NULL,
+        od.CustomerDiscount = NULL,
+        od.NetCost = NULL,
+        od.NetCostOtherCurrency = NULL,
+        od.OtherCurrencyID = NULL,
+        od.CurrencyCostModifier = NULL,
+        od.Margin = NULL,
+        od.GrossProfit = NULL,
+        od.TotalCost = NULL,
+        od.PriceListID = NULL,
+        od.PriceListItemID = NULL,
+        od.Quantity = 0,
+        od.TelmacoWarranty = 0,
+        od.Warranty = 0,
+        od.IsCategory = 0,
+        od.IsComment = 0,
+        od.IsPrintable = NULL,
+        od.Comment = NULL,
+        od.ModifiedOn = SYSUTCDATETIME(),
+        od.ModifiedBy = @__modifiedBy
+      FROM dbo.OfferDetails od
+      WHERE od.OfferID = @__offerId
+        AND od.ID IN (${idParams.join(', ')})
+        AND ${requestedRowCondition};
+    `;
+
+    const result = await request.query(query);
+    const rowsAffected = result.rowsAffected?.[0] ?? 0;
+
+    return NextResponse.json({ ok: true, cleared: rowsAffected });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Server error';
+    logger.error(
+      `[unassign-requested] offerId=${offerId} ids=${ids.join(',')}: ${message}`,
+      { endpoint: `/api/offers/${offerId}/products/add`, method: 'POST', category: 'mutation' },
+      err instanceof Error ? err : undefined,
+    );
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
 async function handleAssignProductToRequestedRow(
   offerId: number,
   body: Record<string, unknown>,
@@ -1362,6 +1450,11 @@ export async function POST(
       return handleCategoryGrid(offerId, body);
     }
     const audit = buildAuditContext(req);
+    if (actionRaw === 'unassign-requested') {
+      const auth = await requirePermission(req, "editOffers");
+      if (!auth.ok) return auth.response;
+      return handleUnassignRequestedRows(offerId, body, audit.userId);
+    }
     if (actionRaw === 'assign-requested') {
       const auth = await requirePermission(req, "editOffers");
       if (!auth.ok) return auth.response;

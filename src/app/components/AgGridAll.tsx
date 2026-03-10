@@ -565,6 +565,7 @@ type Props = {
   onHeaderSelectAllChange?: (selected: boolean, api: GridApi<RowData> | null) => void;
   onRequestPayloadConsumed?: () => void;
   allowCellSelectionInPerformanceMode?: boolean;
+  suppressCellSelection?: boolean;
   useAgGridRowDrag?: boolean;
   suppressSideBar?: boolean;
   serverSideHeaderSelectMode?: 'loaded' | 'all';
@@ -1173,6 +1174,7 @@ export default function AgGridAll({
   onHeaderSelectAllChange,
   onRequestPayloadConsumed,
   allowCellSelectionInPerformanceMode = performanceMode === true,
+  suppressCellSelection = false,
   useAgGridRowDrag = false,
   suppressSideBar = false,
   serverSideHeaderSelectMode = 'loaded',
@@ -1405,7 +1407,7 @@ export default function AgGridAll({
     () => resolveColumnWidthAssignments(columnWidthDefaults),
     [columnWidthDefaults],
   );
-  const cellSelectionEnabled = !resolvedPerformanceMode || allowCellSelectionInPerformanceMode;
+  const cellSelectionEnabled = !suppressCellSelection && (!resolvedPerformanceMode || allowCellSelectionInPerformanceMode);
   const cellSelectionConfig = useMemo<CellSelectionOptions<RowData> | false>(() => (
     cellSelectionEnabled
       ? {} // Range handle disabled - no handle property
