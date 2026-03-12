@@ -65,6 +65,14 @@ export default function LogsClient() {
         minWidth: 250,
       },
       {
+        field: "Details",
+        headerName: "Details",
+        filter: "agTextColumnFilter",
+        flex: 1,
+        minWidth: 200,
+        hide: true,
+      },
+      {
         field: "Endpoint",
         headerName: "Endpoint",
         filter: "agTextColumnFilter",
@@ -110,13 +118,6 @@ export default function LogsClient() {
         width: 140,
         hide: true,
       },
-      {
-        field: "Details",
-        headerName: "Details",
-        filter: "agTextColumnFilter",
-        width: 200,
-        hide: true,
-      },
     ],
     [],
   );
@@ -139,7 +140,7 @@ export default function LogsClient() {
           }
         />
         <div className={styles.gridFrame}>
-          <AgGridAll endpoint="/api/logs" columnDefs={columnDefs} />
+          <AgGridAll endpoint="/api/logs" columnDefs={columnDefs} disableAutoSize />
         </div>
       </main>
     </GridQuickSearchProvider>
