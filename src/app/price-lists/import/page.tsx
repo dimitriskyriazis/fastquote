@@ -1,7 +1,9 @@
 import PriceListImportClient, {
   type PreviousPriceListOption,
+  type PrefillData,
 } from "./PriceListImportClient";
 import { getPool } from "../../../lib/sql";
+import sql from "mssql";
 import {
   toDropdownOptions,
   type DropdownOption,
@@ -174,7 +176,77 @@ async function fetchPreviousPriceLists(): Promise<PreviousPriceListOption[]> {
   }
 }
 
-export default async function PriceListImportPage() {
+type PriceListPrefillRow = {
+  ID: number;
+  Name: string | null;
+  BrandID: number | null;
+  SupplierID: number | null;
+  CurrencyId: number | null;
+  CostCurrencyID: number | null;
+  CurrencyCostModifier: number | null;
+  CountryId: number | null;
+  HasDuty: boolean | number | null;
+  ResponsibleUserId: string | null;
+  Comments: string | null;
+  ValidityComment: string | null;
+};
+
+type PrefillPolicyRow = {
+  PricingPolicyID: number;
+};
+
+async function fetchPrefillData(priceListId: number): Promise<PrefillData | null> {
+  try {
+    const pool = await getPool();
+    const request = pool.request();
+    request.input("id", sql.Int, priceListId);
+    const result = await request.query<PriceListPrefillRow>(`
+      SELECT
+        ID, Name, BrandID, SupplierID, CurrencyId, CostCurrencyID,
+        CurrencyCostModifier, CountryId, HasDuty, ResponsibleUserId,
+        Comments, ValidityComment
+      FROM dbo.PriceLists
+      WHERE ID = @id
+    `);
+    const row = result.recordset?.[0];
+    if (!row) return null;
+
+    const policiesResult = await pool.request()
+      .input("plId", sql.Int, priceListId)
+      .query<PrefillPolicyRow>(`
+        SELECT PricingPolicyID
+        FROM dbo.PriceListPricingPolicy
+        WHERE PriceListID = @plId
+      `);
+
+    return {
+      name: row.Name ?? "",
+      previousPriceListId: String(row.ID),
+      brandId: row.BrandID != null ? String(row.BrandID) : "",
+      supplierId: row.SupplierID != null ? String(row.SupplierID) : "",
+      costCurrencyId: row.CostCurrencyID != null ? String(row.CostCurrencyID) : "",
+      currencyCostModifier: row.CurrencyCostModifier != null ? String(row.CurrencyCostModifier) : "1",
+      countryId: row.CountryId != null ? String(row.CountryId) : "",
+      hasDuty: row.HasDuty === true || row.HasDuty === 1 ? true : row.HasDuty === false || row.HasDuty === 0 ? false : null,
+      responsibleUserId: row.ResponsibleUserId ?? "",
+      comments: row.Comments ?? "",
+      supplierComments: row.ValidityComment ?? "",
+      pricingPolicyIds: (policiesResult.recordset ?? []).map((p) => p.PricingPolicyID),
+    };
+  } catch (err) {
+    console.error("Failed to fetch prefill data for price list", priceListId, err);
+    return null;
+  }
+}
+
+type PageProps = {
+  searchParams: Promise<{ from?: string }>;
+};
+
+export default async function PriceListImportPage({ searchParams }: PageProps) {
+  const resolvedSearchParams = await searchParams;
+  const fromId = resolvedSearchParams.from ? Number(resolvedSearchParams.from) : null;
+  const prefill = fromId && Number.isInteger(fromId) ? await fetchPrefillData(fromId) : null;
   const pool = await getPool();
 
   const [brands, suppliers, currencies, countries] = await Promise.all([
@@ -240,6 +312,7 @@ export default async function PriceListImportPage() {
       pricingPolicyRules={pricingPolicyRules}
       users={users}
       previousPriceLists={previousPriceLists}
+      prefill={prefill}
     />
   );
 }

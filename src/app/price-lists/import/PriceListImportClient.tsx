@@ -52,6 +52,21 @@ export type PreviousPriceListOption = DropdownOption & {
   brandName: string | null;
 };
 
+export type PrefillData = {
+  name: string;
+  previousPriceListId: string;
+  brandId: string;
+  supplierId: string;
+  costCurrencyId: string;
+  currencyCostModifier: string;
+  countryId: string;
+  hasDuty: boolean | null;
+  responsibleUserId: string;
+  comments: string;
+  supplierComments: string;
+  pricingPolicyIds: number[];
+};
+
 type Props = {
   brands: DropdownOption[];
   suppliers: DropdownOption[];
@@ -61,6 +76,7 @@ type Props = {
   pricingPolicyRules: PricingPolicyRuleOption[];
   users: DropdownOption[];
   previousPriceLists: PreviousPriceListOption[];
+  prefill?: PrefillData | null;
 };
 
 type PricingPolicySelection = {
@@ -95,7 +111,7 @@ type FormValues = {
   decimalFormat: PriceListDecimalFormat;
 };
 
-type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning" | "weblink";
+type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning" | "weblink" | "legacyPartNumber";
 
 const columnKeywords: Record<HeaderColumnKey, string[]> = {
   partNumber: [
@@ -208,7 +224,6 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
 
   warning: [
     "warn",
-    "note",
     "remark",
     "σημείωση",
     "σημειωση",
@@ -218,7 +233,6 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "παρατήρηση",
     "παρατηρηση",
     "παρατηρ.",
-
   ],
 
   weblink: [
@@ -238,6 +252,19 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "ιστοσελίδα",
     "ιστοσελιδα",
   ],
+  
+  legacyPartNumber: [
+    "legacy",
+    "old part",
+    "old_part",
+    "oldpart",
+    "previous part",
+    "previous_part",
+    "previouspart",
+    "former part",
+    "former_part",
+    "formerpart",
+  ],
 };
 
 const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string; required?: boolean }> = [
@@ -248,6 +275,7 @@ const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string; required?: bo
   { key: "costPrice", label: "Cost Price (optional)", required: false },
   { key: "warning", label: "Warning (optional)", required: false },
   { key: "weblink", label: "Weblink (optional)", required: false },
+  { key: "legacyPartNumber", label: "Legacy Part Number (optional)", required: false },
 ];
 
 const PREVIEW_COLUMN_KEYS: HeaderColumnKey[] = [
@@ -258,6 +286,7 @@ const PREVIEW_COLUMN_KEYS: HeaderColumnKey[] = [
   "costPrice",
   "warning",
   "weblink",
+  "legacyPartNumber",
 ];
 
 type ColumnOption = { index: number; label: string; normalized: string };
@@ -569,6 +598,7 @@ const buildSuggestions = (columns: ColumnOption[]) => {
     costPrice: makeSuggestions("costPrice"),
     warning: makeSuggestions("warning"),
     weblink: makeSuggestions("weblink"),
+    legacyPartNumber: makeSuggestions("legacyPartNumber"),
   };
 };
 
@@ -662,6 +692,7 @@ const evaluateSelection = (sheets: SheetMapping[], activeSheetIndex: number) => 
     costPrice: selection.costPrice != null,
     warning: selection.warning != null,
     weblink: selection.weblink != null,
+    legacyPartNumber: selection.legacyPartNumber != null,
   };
 
   const status: FileValidation["status"] = validSheets.length > 0 ? "valid" : "invalid";
@@ -734,6 +765,7 @@ export default function PriceListImportClient({
   pricingPolicyRules,
   users,
   previousPriceLists,
+  prefill,
 }: Props) {
   const router = useRouter();
   const { userId: currentUserId } = useAuditUser();
@@ -744,26 +776,31 @@ export default function PriceListImportClient({
       currencies.find((c) => (c.label ?? "").trim() === "€") ??
       currencies.find((c) => (c.label ?? "").toLowerCase().includes("eur")) ??
       null;
+    const initialPolicies: PricingPolicySelection[] = prefill?.pricingPolicyIds
+      ? prefill.pricingPolicyIds.map((id) => ({ pricingPolicyId: id, pricingPolicyRuleId: null }))
+      : [];
     return {
-    name: "",
-    brandId: "",
-    pricingPolicies: [],
-    responsibleUserId: "",
-    supplierId: "",
-    hasDuty: false,
-    costCurrencyId: initialEuro?.value ?? "",
-    currencyCostModifier: "1",
-    countryId: "",
-    validFromDate: "",
+    name: prefill?.name ?? "",
+    brandId: prefill?.brandId ?? "",
+    pricingPolicies: initialPolicies,
+    responsibleUserId: prefill?.responsibleUserId ?? "",
+    supplierId: prefill?.supplierId ?? "",
+    hasDuty: prefill?.hasDuty ?? false,
+    costCurrencyId: prefill?.costCurrencyId || (initialEuro?.value ?? ""),
+    currencyCostModifier: prefill?.currencyCostModifier ?? "1",
+    countryId: prefill?.countryId ?? "",
+    validFromDate: new Date().toISOString().slice(0, 10),
     validToDate: "",
-    comments: "",
-    supplierComments: "",
-    previousPriceListId: "",
+    comments: prefill?.comments ?? "",
+    supplierComments: prefill?.supplierComments ?? "",
+    previousPriceListId: prefill?.previousPriceListId ?? "",
     decimalFormat: "dotDecimal",
   };
   });
   const [isRulePickerOpen, setIsRulePickerOpen] = useState(false);
-  const [policyPickerSelection, setPolicyPickerSelection] = useState<Set<number>>(new Set());
+  const [policyPickerSelection, setPolicyPickerSelection] = useState<Set<number>>(
+    () => new Set(prefill?.pricingPolicyIds ?? []),
+  );
   const [rulePickerError, setRulePickerError] = useState<string | null>(null);
   const [discountDrafts, setDiscountDrafts] = useState<Record<number, { telmaco: string; customer: string; telmacoWarranty: string; customerWarranty: string }>>({});
   const policyPickerSelectionInitializedRef = useRef(false);
@@ -779,7 +816,13 @@ export default function PriceListImportClient({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showValidationErrors, setShowValidationErrors] = useState(false);
-  const [brandText, setBrandText] = useState("");
+  const [brandText, setBrandText] = useState(() => {
+    if (prefill?.brandId) {
+      const match = brands.find((b) => b.value === prefill.brandId);
+      return match?.label ?? "";
+    }
+    return "";
+  });
   const [brandError, setBrandError] = useState<string | null>(null);
   const [showBrandList, setShowBrandList] = useState(false);
   const [localBrands, setLocalBrands] = useState<DropdownOption[]>(brands);
@@ -790,7 +833,13 @@ export default function PriceListImportClient({
   const lookupRefreshInFlightRef = useRef(new Set<string>());
   const [brandsLoading, setBrandsLoading] = useState(false);
   const [brandsError, setBrandsError] = useState<string | null>(null);
-  const [countryText, setCountryText] = useState("");
+  const [countryText, setCountryText] = useState(() => {
+    if (prefill?.countryId) {
+      const match = countries.find((c) => c.value === prefill.countryId);
+      return match?.label ?? "";
+    }
+    return "";
+  });
   const [showCountryList, setShowCountryList] = useState(false);
   const countryListCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
@@ -1693,6 +1742,7 @@ export default function PriceListImportClient({
           costPrice: sheet.selection.costPrice ?? null,
           warning: sheet.selection.warning ?? null,
           weblink: sheet.selection.weblink ?? null,
+          legacyPartNumber: sheet.selection.legacyPartNumber ?? null,
         },
       }));
       formData.append("columnMappings", JSON.stringify(columnMappings));
@@ -1710,6 +1760,7 @@ export default function PriceListImportClient({
         skippedRows?: number;
         totalRows?: number;
         descriptionMismatches?: { productId: number; newDescription: string }[];
+        modelNumberMismatches?: { productId: number; newModelNumber: string }[];
       };
       const raw = await response.text().catch(() => "");
       const typedPayload: ImportResponse | null = (() => {
@@ -1760,6 +1811,34 @@ export default function PriceListImportClient({
             }
           } catch {
             showToastMessage("Failed to update descriptions.");
+          }
+        }
+      }
+
+      // Prompt user if product model numbers don't match
+      const modelMismatches = typedPayload.modelNumberMismatches;
+      if (modelMismatches && modelMismatches.length > 0) {
+        const confirmed = await showConfirmDialog({
+          title: "Model Number Mismatch",
+          message: `${modelMismatches.length} product(s) don't match the products' original model numbers. Do you want to overwrite them?`,
+          confirmLabel: "Yes",
+          cancelLabel: "No",
+        });
+        if (confirmed) {
+          try {
+            const updateRes = await fetch("/api/products/update-model-numbers", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ mismatches: modelMismatches }),
+            });
+            const updateData = await updateRes.json().catch(() => null);
+            if (updateRes.ok && updateData?.ok) {
+              showToastMessage(`Updated ${updateData.updatedCount} product model number(s).`);
+            } else {
+              showToastMessage(updateData?.error || "Failed to update model numbers.");
+            }
+          } catch {
+            showToastMessage("Failed to update model numbers.");
           }
         }
       }
@@ -1816,7 +1895,7 @@ export default function PriceListImportClient({
             <div className={styles.fieldStack}>
               <div className={styles.sectionHeading}>Price List Details</div>
               <div className={styles.fieldRow}>
-                <label className={`${styles.field} ${styles.fieldNudgeDown}`}>
+                <label className={styles.field}>
                   <span className={styles.label}>
                     Name <span className={styles.requiredMark}>*</span>
                   </span>
@@ -1939,7 +2018,7 @@ export default function PriceListImportClient({
               </div>
 
               <div className={styles.fieldRow}>
-                <label className={`${styles.field} ${styles.fieldNudgeDown}`}>
+                <label className={styles.field}>
                   <span className={styles.label}>
                     Responsible User <span className={styles.requiredMark}>*</span>
                   </span>

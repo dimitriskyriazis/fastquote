@@ -114,20 +114,6 @@ function buildOrder(sortModel: GridRequest["sortModel"]) {
   return `ORDER BY ${parts.join(", ")}`;
 }
 
-const ensureEnabledFilterModel = (
-  filterModel: GridRequest["filterModel"],
-): Record<string, KnownFilterModel> => {
-  const base =
-    (filterModel && typeof filterModel === "object" ? { ...filterModel } : {}) as Record<
-      string,
-      KnownFilterModel
-    >;
-  if ("Enabled" in base) {
-    return base;
-  }
-  base.Enabled = { filterType: "set", values: ["true"] };
-  return base;
-};
 
 const normalizeMarketId = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
@@ -295,8 +281,7 @@ export async function POST(req: NextRequest) {
     const pageSize = Math.max(1, Math.min(1000, endRow - startRow));
     const offset = startRow;
 
-    const normalizedFilterModel = ensureEnabledFilterModel(gridRequest.filterModel);
-    const { where, params: whereParams } = buildWhereAndParams(normalizedFilterModel);
+    const { where, params: whereParams } = buildWhereAndParams(gridRequest.filterModel);
     const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, QUICK_FILTER_COLUMNS);
     const combinedWhere = mergeWhereClauses(where, quickFilterClause.clause);
     const combinedParams = [...whereParams, ...quickFilterClause.params];

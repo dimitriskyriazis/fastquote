@@ -205,20 +205,6 @@ const buildGroupKeyFilter = (fields: GroupField[], keys: Array<string | null>) =
   return { clause: `WHERE ${clauses.join(" AND ")}`, params };
 };
 
-const ensureEnabledFilterModel = (
-  filterModel: GridRequest["filterModel"],
-): Record<string, KnownFilterModel> => {
-  const base =
-    (filterModel && typeof filterModel === "object" ? { ...filterModel } : {}) as Record<
-      string,
-      KnownFilterModel
-    >;
-  if ("Enabled" in base) {
-    return base;
-  }
-  base.Enabled = { filterType: "set", values: ["true"] };
-  return base;
-};
 
 const normalizeContactId = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
@@ -432,8 +418,7 @@ export async function POST(req: NextRequest) {
       LEFT OUTER JOIN dbo.EmailStatuses AS es2 ON dbo.Contacts.SecondEmailStatusID = es2.ID
     `;
 
-    const normalizedFilterModel = ensureEnabledFilterModel(requestPayload.filterModel);
-    const { where, params: whereParams } = buildWhereAndParams(normalizedFilterModel);
+    const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);
     const quickFilterClause = buildQuickFilterClause(requestPayload.quickFilterText, QUICK_FILTER_COLUMNS);
     const combinedWhere = mergeWhereClauses(where, quickFilterClause.clause);
     const combinedParams = [...whereParams, ...quickFilterClause.params];

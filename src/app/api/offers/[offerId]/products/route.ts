@@ -1042,10 +1042,13 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
             const descCrossExpr = isModelNumber ? COLUMN_EXPRESSIONS.Description : null;
             const descCrossParam = `${conditionParamBase}_desc`;
 
+            // Also search LegacyPartNoCleaned
+            const legacySql = `UPPER(ISNULL(p.LegacyPartNoCleaned, ''))`;
+
             if (type === 'equals') {
               if (otherColumnExpression) {
                 const resultParams: QueryParam[] = [{ key: conditionParamBase, value: searchVal }];
-                let clause = `(${expr} = @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} = @${conditionParamBase}`;
+                let clause = `(${expr} = @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} = @${conditionParamBase} OR ${legacySql} = @${conditionParamBase}`;
                 if (descCrossExpr) {
                   clause += ` OR ${descriptionSqlExpr(descCrossExpr)} = @${descCrossParam}`;
                   resultParams.push({ key: descCrossParam, value: rawVal });
@@ -1053,7 +1056,7 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
                 return { clause: `${clause})`, params: resultParams };
               }
               return {
-                clause: `${expr} = @${conditionParamBase}`,
+                clause: `(${expr} = @${conditionParamBase} OR ${legacySql} = @${conditionParamBase})`,
                 params: [{ key: conditionParamBase, value: searchVal }],
               };
             }
@@ -1066,7 +1069,7 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
             if (type === 'startsWith') {
               if (otherColumnExpression) {
                 const resultParams: QueryParam[] = [{ key: conditionParamBase, value: `${searchVal}%` }];
-                let clause = `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase}`;
+                let clause = `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase} OR ${legacySql} LIKE @${conditionParamBase}`;
                 if (descCrossExpr) {
                   clause += ` OR ${descriptionSqlExpr(descCrossExpr)} LIKE @${descCrossParam}`;
                   resultParams.push({ key: descCrossParam, value: `${rawVal}%` });
@@ -1074,14 +1077,14 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
                 return { clause: `${clause})`, params: resultParams };
               }
               return {
-                clause: `${expr} LIKE @${conditionParamBase}`,
+                clause: `(${expr} LIKE @${conditionParamBase} OR ${legacySql} LIKE @${conditionParamBase})`,
                 params: [{ key: conditionParamBase, value: `${searchVal}%` }],
               };
             }
             if (type === 'endsWith') {
               if (otherColumnExpression) {
                 const resultParams: QueryParam[] = [{ key: conditionParamBase, value: `%${searchVal}` }];
-                let clause = `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase}`;
+                let clause = `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase} OR ${legacySql} LIKE @${conditionParamBase}`;
                 if (descCrossExpr) {
                   clause += ` OR ${descriptionSqlExpr(descCrossExpr)} LIKE @${descCrossParam}`;
                   resultParams.push({ key: descCrossParam, value: `%${rawVal}` });
@@ -1089,14 +1092,14 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
                 return { clause: `${clause})`, params: resultParams };
               }
               return {
-                clause: `${expr} LIKE @${conditionParamBase}`,
+                clause: `(${expr} LIKE @${conditionParamBase} OR ${legacySql} LIKE @${conditionParamBase})`,
                 params: [{ key: conditionParamBase, value: `%${searchVal}` }],
               };
             }
             // Default: contains
             if (otherColumnExpression) {
               const resultParams: QueryParam[] = [{ key: conditionParamBase, value: `%${searchVal}%` }];
-              let clause = `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase}`;
+              let clause = `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase} OR ${legacySql} LIKE @${conditionParamBase}`;
               if (descCrossExpr) {
                 clause += ` OR ${descriptionSqlExpr(descCrossExpr)} LIKE @${descCrossParam}`;
                 resultParams.push({ key: descCrossParam, value: `%${rawVal}%` });
@@ -1104,7 +1107,7 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
               return { clause: `${clause})`, params: resultParams };
             }
             return {
-              clause: `${expr} LIKE @${conditionParamBase}`,
+              clause: `(${expr} LIKE @${conditionParamBase} OR ${legacySql} LIKE @${conditionParamBase})`,
               params: [{ key: conditionParamBase, value: `%${searchVal}%` }],
             };
           }

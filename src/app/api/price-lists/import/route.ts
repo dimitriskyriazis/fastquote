@@ -25,6 +25,7 @@ type ParsedPriceListRow = {
   costPrice: number | null;
   warning: string | null;
   weblink: string | null;
+  legacyPartNumber: string | null;
 };
 
 type ProductRow = {
@@ -35,7 +36,7 @@ type ProductRow = {
   Description: string | null;
 };
 
-type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning" | "weblink";
+type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning" | "weblink" | "legacyPartNumber";
 
 type ColumnMapping = {
   sheetName: string | null;
@@ -77,6 +78,12 @@ const HEADER_SYNONYMS: Record<HeaderColumnKey, string[]> = {
   weblink: [
     "weblink", "web link", "weblnk", "url", "link", "hyperlink",
     "website", "σύνδεσμος", "συνδεσμος", "ιστοσελίδα", "ιστοσελιδα",
+  ],
+  legacyPartNumber: [
+    "legacypartnumber", "legacy part number", "legacypartno", "legacy part no",
+    "oldpartnumber", "old part number", "oldpartno", "old part no",
+    "previouspartnumber", "previous part number", "previouspartno", "previous part no",
+    "formerpartnumber", "former part number", "formerpartno", "former part no",
   ],
 };
 
@@ -444,7 +451,8 @@ const parseSheetWithMapping = (
     const listPrice = parsePrice(getValue(row, "listPrice"), decimalFormat);
     const costPrice = parsePrice(getValue(row, "costPrice"), decimalFormat);
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
-    
+    const legacyPartNumber = normalizeCellString(getValue(row, "legacyPartNumber"), 50);
+
     // Extract weblink: first try hyperlink, then fall back to cell value
     const weblinkColIdx = columnMap.weblink;
     let weblink: string | null = null;
@@ -470,6 +478,7 @@ const parseSheetWithMapping = (
       costPrice,
       warning,
       weblink,
+      legacyPartNumber,
     });
   }
 
@@ -497,7 +506,8 @@ const parseSheet = (rows: unknown[][], decimalFormat: PriceListDecimalFormat, sh
     const listPrice = parsePrice(getValue(row, "listPrice"), decimalFormat);
     const costPrice = parsePrice(getValue(row, "costPrice"), decimalFormat);
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
-    
+    const legacyPartNumber = normalizeCellString(getValue(row, "legacyPartNumber"), 50);
+
     // Extract weblink: first try hyperlink, then fall back to cell value
     const weblinkColIdx = columnMap.weblink;
     let weblink: string | null = null;
@@ -523,6 +533,7 @@ const parseSheet = (rows: unknown[][], decimalFormat: PriceListDecimalFormat, sh
       costPrice,
       warning,
       weblink,
+      legacyPartNumber,
     });
   }
 
@@ -681,15 +692,24 @@ const loadExistingProducts = async (pool: ConnectionPool, parsedRows: ParsedPric
         .filter((value): value is string => Boolean(value)),
     ),
   );
+  // Collect legacy part number keys - these match against existing products' current PartNumber
+  const legacyKeys = Array.from(
+    new Set(
+      parsedRows
+        .map((row) => normalizeKey(row.legacyPartNumber))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
 
-  if (partKeys.length === 0 && modelKeys.length === 0) return [] as ProductRow[];
+  if (partKeys.length === 0 && modelKeys.length === 0 && legacyKeys.length === 0) return [] as ProductRow[];
 
-  const [partProducts, modelProducts] = await Promise.all([
+  const [partProducts, modelProducts, legacyProducts] = await Promise.all([
     fetchProductsByKeys(pool, partKeys, "PartNumber", brandId),
     fetchProductsByKeys(pool, modelKeys, "ModelNumber", brandId),
+    fetchProductsByKeys(pool, legacyKeys, "PartNumber", brandId),
   ]);
 
-  const allProducts = [...partProducts, ...modelProducts];
+  const allProducts = [...partProducts, ...modelProducts, ...legacyProducts];
   const seen = new Set<number>();
   const uniqueProducts: ProductRow[] = [];
   for (const product of allProducts) {
@@ -715,6 +735,8 @@ const createProduct = async (
   request.input("ModelNumber", sql.NVarChar(255), row.modelNumber);
   request.input("PartNumberCleared", sql.NVarChar(255), partNumberCleared);
   request.input("ModelNumberCleared", sql.NVarChar(255), modelNumberCleared);
+  request.input("LegacyPartNo", sql.NVarChar(255), null);
+  request.input("LegacyPartNoCleaned", sql.NVarChar(255), null);
   request.input("Description", sql.NVarChar(2000), row.description);
   request.input("WebLink", sql.NVarChar(1000), row.weblink);
   request.input("CreatedBy", sql.NVarChar(450), auditUserId);
@@ -727,6 +749,8 @@ const createProduct = async (
       ModelNumber,
       PartNumberCleared,
       ModelNumberCleared,
+      LegacyPartNo,
+      LegacyPartNoCleaned,
       Description,
       WebLink,
       Enabled,
@@ -742,6 +766,8 @@ const createProduct = async (
       @ModelNumber,
       @PartNumberCleared,
       @ModelNumberCleared,
+      @LegacyPartNo,
+      @LegacyPartNoCleaned,
       @Description,
       @WebLink,
       1,
@@ -946,6 +972,16 @@ export async function POST(req: NextRequest) {
       if (modelKey && !byModelNumber.has(modelKey)) byModelNumber.set(modelKey, product);
     });
 
+    // Build a map from legacy part number -> existing product (keyed by existing PartNumber)
+    // This allows matching when the import has a legacyPartNumber column
+    const byLegacyPartNumber = new Map<string, ProductRow>();
+    parsedRows.forEach((row) => {
+      const legacyKey = normalizeKey(row.legacyPartNumber);
+      if (legacyKey && byPartNumber.has(legacyKey) && !byLegacyPartNumber.has(legacyKey)) {
+        byLegacyPartNumber.set(legacyKey, byPartNumber.get(legacyKey)!);
+      }
+    });
+
     const { relativePath, fileName, absolutePath } = await saveUploadedFile(buffer, file.name, name);
 
     const TransactionCtor = (sql as unknown as {
@@ -1067,10 +1103,14 @@ export async function POST(req: NextRequest) {
       let matchedProductCount = 0;
       let skippedRows = 0;
       const descriptionMismatches: { productId: number; newDescription: string }[] = [];
+      const modelNumberMismatches: { productId: number; newModelNumber: string }[] = [];
+
+      let legacyUpdatedCount = 0;
 
       for (const row of parsedRows) {
         const partKey = normalizeKey(row.partNumber);
         const modelKey = normalizeKey(row.modelNumber);
+        const legacyKey = normalizeKey(row.legacyPartNumber);
         if (!partKey && !modelKey) {
           skippedRows += 1;
           continue;
@@ -1083,11 +1123,18 @@ export async function POST(req: NextRequest) {
         let productId: number | null = null;
         let isExistingProduct = false;
         let existingProduct: ProductRow | undefined;
+        let matchedByLegacy = false;
 
         if (partKey && byPartNumber.has(partKey)) {
           existingProduct = byPartNumber.get(partKey);
           productId = existingProduct?.ID ?? null;
           isExistingProduct = productId != null;
+        } else if (legacyKey && byLegacyPartNumber.has(legacyKey)) {
+          // Match by legacy part number: the existing product's current PartNumber matches the legacy key
+          existingProduct = byLegacyPartNumber.get(legacyKey);
+          productId = existingProduct?.ID ?? null;
+          isExistingProduct = productId != null;
+          matchedByLegacy = productId != null;
         } else if (modelKey && byModelNumber.has(modelKey)) {
           const candidate = byModelNumber.get(modelKey);
           const candidatePartKey = normalizeKey(candidate?.PartNumber);
@@ -1120,11 +1167,61 @@ export async function POST(req: NextRequest) {
         if (isExistingProduct) {
           matchedProductCount += 1;
 
+          // When matched by legacy part number AND a new part number is available,
+          // swap old->new part number and store the legacy.
+          if (matchedByLegacy && partKey && existingProduct) {
+            const updateReq = createRequest(transaction);
+            updateReq.input("ProductID", sql.Int, productId);
+            updateReq.input("NewPartNumber", sql.NVarChar(255), row.partNumber);
+            updateReq.input("NewPartNumberCleared", sql.NVarChar(255), toClearedPartModel(row.partNumber));
+            updateReq.input("LegacyPartNo", sql.NVarChar(255), existingProduct.PartNumber);
+            updateReq.input("LegacyPartNoCleaned", sql.NVarChar(255), toClearedPartModel(existingProduct.PartNumber));
+            updateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
+            await updateReq.query(`
+              UPDATE dbo.Products
+              SET PartNumber = @NewPartNumber,
+                  PartNumberCleared = @NewPartNumberCleared,
+                  LegacyPartNo = @LegacyPartNo,
+                  LegacyPartNoCleaned = @LegacyPartNoCleaned,
+                  ModifiedOn = SYSUTCDATETIME(),
+                  ModifiedBy = @ModifiedBy
+              WHERE ID = @ProductID
+            `);
+            legacyUpdatedCount += 1;
+          } else if (legacyKey && isExistingProduct) {
+            // Store the legacy part number from the import even when matched by partKey or modelKey,
+            // or when matched by legacy but no new part number is available.
+            const legacyValue = row.legacyPartNumber?.trim() || null;
+            if (legacyValue) {
+              const updateReq = createRequest(transaction);
+              updateReq.input("ProductID", sql.Int, productId);
+              updateReq.input("LegacyPartNo", sql.NVarChar(255), legacyValue);
+              updateReq.input("LegacyPartNoCleaned", sql.NVarChar(255), toClearedPartModel(legacyValue));
+              updateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
+              await updateReq.query(`
+                UPDATE dbo.Products
+                SET LegacyPartNo = @LegacyPartNo,
+                    LegacyPartNoCleaned = @LegacyPartNoCleaned,
+                    ModifiedOn = SYSUTCDATETIME(),
+                    ModifiedBy = @ModifiedBy
+                WHERE ID = @ProductID
+              `);
+              legacyUpdatedCount += 1;
+            }
+          }
+
           // Detect description mismatches
           const importDesc = row.description?.trim() || "";
           const existingDesc = existingProduct?.Description?.trim() || "";
           if (importDesc && existingDesc && importDesc.toLowerCase() !== existingDesc.toLowerCase()) {
             descriptionMismatches.push({ productId: productId!, newDescription: row.description! });
+          }
+
+          // Detect model number mismatches
+          const importModel = row.modelNumber?.trim() || "";
+          const existingModel = existingProduct?.ModelNumber?.trim() || "";
+          if (importModel && existingModel && importModel.toLowerCase() !== existingModel.toLowerCase()) {
+            modelNumberMismatches.push({ productId: productId!, newModelNumber: row.modelNumber! });
           }
 
           // Update WebLink if provided in the import
@@ -1171,9 +1268,11 @@ export async function POST(req: NextRequest) {
         filePath: relativePath || fileName,
         createdProductCount,
         matchedProductCount,
+        legacyUpdatedCount,
         skippedRows,
         totalRows: parsedRows.length,
         descriptionMismatches,
+        modelNumberMismatches,
       });
     } catch (err) {
       await transaction.rollback();

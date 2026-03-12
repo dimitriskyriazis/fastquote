@@ -41,6 +41,7 @@ type PriceListProductRowGrid = {
   PriceListItemID?: number | null;
   Description?: string | null;
   PartNumber?: string | null;
+  LegacyPartNo?: string | null;
   ModelNumber?: string | null;
   ListPrice?: string | number | null;
   CostPrice?: string | number | null;
@@ -244,6 +245,13 @@ export default function PriceListProductsClient({
       {
         field: "PartNumber",
         headerName: "Part Number",
+        filter: "agTextColumnFilter",
+        filterParams: TWO_CONDITION_FILTER_PARAMS,
+        width: 160,
+      },
+      {
+        field: "LegacyPartNo",
+        headerName: "Legacy Part No",
         filter: "agTextColumnFilter",
         filterParams: TWO_CONDITION_FILTER_PARAMS,
         width: 160,

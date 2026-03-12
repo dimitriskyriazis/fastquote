@@ -74,7 +74,7 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
       const p = `pn_${paramIdx++}`;
       request.input(p, sql.NVarChar(255), cleared);
       conditions.push(
-        `(UPPER(ISNULL(p.PartNumberCleared, '')) = @${p} OR UPPER(ISNULL(p.ModelNumberCleared, '')) = @${p})`,
+        `(UPPER(ISNULL(p.PartNumberCleared, '')) = @${p} OR UPPER(ISNULL(p.ModelNumberCleared, '')) = @${p} OR UPPER(ISNULL(p.LegacyPartNoCleaned, '')) = @${p})`,
       );
     }
   }
@@ -85,7 +85,7 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
       const p = `mn_${paramIdx++}`;
       request.input(p, sql.NVarChar(255), cleared);
       conditions.push(
-        `(UPPER(ISNULL(p.PartNumberCleared, '')) = @${p} OR UPPER(ISNULL(p.ModelNumberCleared, '')) = @${p})`,
+        `(UPPER(ISNULL(p.PartNumberCleared, '')) = @${p} OR UPPER(ISNULL(p.ModelNumberCleared, '')) = @${p} OR UPPER(ISNULL(p.LegacyPartNoCleaned, '')) = @${p})`,
       );
     }
   }

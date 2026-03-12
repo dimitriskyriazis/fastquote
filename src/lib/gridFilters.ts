@@ -23,6 +23,14 @@ const partModelNumberSql = (expr: string) => {
   return `UPPER(ISNULL(${expr}, ''))`;
 };
 
+// Derive the LegacyPartNoCleaned SQL expression from a PartNumber expression
+const legacyPartNoClearedSql = (expr: string): string | null => {
+  if (expr.includes('.PartNumber')) {
+    return `UPPER(ISNULL(${expr.replace('.PartNumber', '.LegacyPartNoCleaned')}, ''))`;
+  }
+  return null;
+};
+
 const buildColumnQuickFilterExpression = (expression: string) => {
   // Check if this is a PartNumber or ModelNumber column
   const isPartModelNumber = /\.(PartNumber|ModelNumber)/i.test(expression);
@@ -224,23 +232,27 @@ export const buildQuickFilterClause = (
       const isPartNumber = partNumberColumn && expr === partNumberColumn.expression;
       const isModelNumber = modelNumberColumn && expr === modelNumberColumn.expression;
       
-      // For PartNumber and ModelNumber, add cross-search
+      // For PartNumber and ModelNumber, add cross-search (also searches LegacyPartNoCleaned)
       if (isPartNumber && hasPartModelCrossSearch && !processedColumns.has('partmodel')) {
-        // When searching PartNumber, also search ModelNumber
+        // When searching PartNumber, also search ModelNumber and LegacyPartNoCleaned
         const paramKey = `${paramPrefix}_${termIdx}_partmodel`;
         params.push({ key: paramKey, value: `%${normalizedTerm}%` });
+        const legacyExpr = legacyPartNoClearedSql(expr);
+        const legacyClause = legacyExpr ? ` OR ${legacyExpr} LIKE @${paramKey}` : '';
         likeParts.push(
-          `(${partModelNumberSql(expr)} LIKE @${paramKey} OR ${partModelNumberSql(modelNumberColumn.expression)} LIKE @${paramKey})`,
+          `(${partModelNumberSql(expr)} LIKE @${paramKey} OR ${partModelNumberSql(modelNumberColumn.expression)} LIKE @${paramKey}${legacyClause})`,
         );
         processedColumns.add('partmodel');
         processedColumns.add(expr);
         processedColumns.add(modelNumberColumn.expression);
       } else if (isModelNumber && hasPartModelCrossSearch && !processedColumns.has('partmodel')) {
-        // When searching ModelNumber, also search PartNumber
+        // When searching ModelNumber, also search PartNumber and LegacyPartNoCleaned
         const paramKey = `${paramPrefix}_${termIdx}_partmodel`;
         params.push({ key: paramKey, value: `%${normalizedTerm}%` });
+        const legacyExpr = legacyPartNoClearedSql(partNumberColumn.expression);
+        const legacyClause = legacyExpr ? ` OR ${legacyExpr} LIKE @${paramKey}` : '';
         likeParts.push(
-          `(${partModelNumberSql(partNumberColumn.expression)} LIKE @${paramKey} OR ${partModelNumberSql(expr)} LIKE @${paramKey})`,
+          `(${partModelNumberSql(partNumberColumn.expression)} LIKE @${paramKey} OR ${partModelNumberSql(expr)} LIKE @${paramKey}${legacyClause})`,
         );
         processedColumns.add('partmodel');
         processedColumns.add(expr);

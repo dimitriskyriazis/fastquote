@@ -28,6 +28,7 @@ type PriceListProductRow = {
   Warning: string | number | boolean | null;
   Enabled: boolean | number | null;
   PartNumber: string | null;
+  LegacyPartNo: string | null;
   ModelNumber: string | null;
   PriceListID: number | null;
   PriceListItemID: number | null;
@@ -62,6 +63,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Warning: "dbo.PriceListItems.Warning",
   Enabled: "dbo.PriceListItems.Enabled",
   PartNumber: "dbo.Products.PartNumber",
+  LegacyPartNo: "dbo.Products.LegacyPartNo",
   PriceListID: "dbo.PriceListItems.PriceListID",
   PriceListItemID: "dbo.PriceListItems.ID" };
 
@@ -129,8 +131,11 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
       const descExpr = isModelNumber ? COLUMN_EXPRESSIONS.Description : null;
       const descParam = `${pBase}_desc`;
 
+      // Also search LegacyPartNoCleaned
+      const legacySql = `UPPER(ISNULL(dbo.Products.LegacyPartNoCleaned, ''))`;
+
       if (type === "contains") {
-        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase}`;
+        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase} OR ${legacySql} LIKE @${pBase}`;
         params.push({ key: pBase, value: `%${normalizedVal}%` });
         if (descExpr) {
           clause += ` OR ${descriptionSql(descExpr)} LIKE @${descParam}`;
@@ -140,7 +145,7 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
         return;
       }
       if (type === "equals") {
-        let clause = `(${partModelNumberSql(columnExpression)} = @${pBase} OR ${partModelNumberSql(otherColumnExpression)} = @${pBase}`;
+        let clause = `(${partModelNumberSql(columnExpression)} = @${pBase} OR ${partModelNumberSql(otherColumnExpression)} = @${pBase} OR ${legacySql} = @${pBase}`;
         params.push({ key: pBase, value: normalizedVal });
         if (descExpr) {
           clause += ` OR ${descriptionSql(descExpr)} = @${descParam}`;
@@ -150,7 +155,7 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
         return;
       }
       if (type === "startsWith") {
-        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase}`;
+        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase} OR ${legacySql} LIKE @${pBase}`;
         params.push({ key: pBase, value: `${normalizedVal}%` });
         if (descExpr) {
           clause += ` OR ${descriptionSql(descExpr)} LIKE @${descParam}`;
@@ -160,7 +165,7 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
         return;
       }
       if (type === "endsWith") {
-        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase}`;
+        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase} OR ${legacySql} LIKE @${pBase}`;
         params.push({ key: pBase, value: `%${normalizedVal}` });
         if (descExpr) {
           clause += ` OR ${descriptionSql(descExpr)} LIKE @${descParam}`;
@@ -226,20 +231,6 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
   return { where, params };
 };
 
-const ensureEnabledFilterModel = (
-  filterModel: GridRequest["filterModel"],
-) => {
-  const base =
-    (filterModel && typeof filterModel === "object" ? { ...filterModel } : {}) as Record<
-      string,
-      KnownFilterModel
-    >;
-  if ("Enabled" in base) {
-    return base;
-  }
-  base.Enabled = { filterType: "set", values: ["true"] };
-  return base;
-};
 
 
 function buildOrder(sortModel: GridRequest["sortModel"]) {
@@ -318,6 +309,7 @@ export async function POST(
         dbo.PriceListItems.Warning,
         dbo.PriceListItems.Enabled,
         dbo.Products.PartNumber,
+        NULLIF(LTRIM(RTRIM(dbo.Products.LegacyPartNo)), '') AS LegacyPartNo,
         dbo.PriceListItems.ID AS PriceListItemID,
         dbo.PriceListItems.PriceListID
     `;
@@ -330,8 +322,7 @@ export async function POST(
     `;
 
     const baseWhere = "WHERE dbo.PriceListItems.PriceListID = @__priceListId";
-    const normalizedFilterModel = ensureEnabledFilterModel(requestPayload.filterModel);
-    const { where, params: whereParams } = buildWhereAndParams(normalizedFilterModel);
+    const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);
     const trimmedWhere = where.trim().replace(/^WHERE\s+/i, "");
     const combinedWhere = trimmedWhere
       ? `${baseWhere} AND ${trimmedWhere}`

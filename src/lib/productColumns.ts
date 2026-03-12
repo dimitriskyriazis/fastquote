@@ -18,6 +18,11 @@ export const productGridColumnDefs: ColDef[] = [
     filter: 'agTextColumnFilter',
   },
   {
+    field: 'LegacyPartNo',
+    headerName: 'Legacy Part No',
+    filter: 'agTextColumnFilter',
+  },
+  {
     field: 'ERPCode',
     headerName: 'ERP Code',
     filter: 'agTextColumnFilter',

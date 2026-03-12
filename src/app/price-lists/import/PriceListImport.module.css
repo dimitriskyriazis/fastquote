@@ -35,6 +35,9 @@
   flex-direction: column;
   gap: 12px;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+  min-width: 0;
 }
 
 .sectionHeading {
@@ -57,8 +60,10 @@
   gap: 6px;
 }
 
-.fieldNudgeDown {
-  margin-top: 14px;
+.field > .label {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
 }
 
 .label {

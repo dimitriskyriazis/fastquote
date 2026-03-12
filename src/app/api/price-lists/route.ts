@@ -156,20 +156,6 @@ const buildGroupKeyFilter = (field: GroupField, key: string | null) => {
   };
 };
 
-const ensureEnabledFilterModel = (
-  filterModel: GridRequest["filterModel"],
-): Record<string, KnownFilterModel> => {
-  const base =
-    (filterModel && typeof filterModel === "object" ? { ...filterModel } : {}) as Record<
-      string,
-      KnownFilterModel
-    >;
-  if ("Enabled" in base) {
-    return base;
-  }
-  base.Enabled = { filterType: "set", values: ["true"] };
-  return base;
-};
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/price-lists');
@@ -202,8 +188,7 @@ export async function POST(req: NextRequest) {
       LEFT OUTER JOIN dbo.AspNetUsers AS responsible ON dbo.PriceLists.ResponsibleUserId = responsible.Id
     `;
 
-    const normalizedFilterModel = ensureEnabledFilterModel(requestPayload.filterModel);
-    const { where, params: whereParams } = buildWhereAndParams(normalizedFilterModel);
+    const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);
     const quickFilterClause = buildQuickFilterClause(requestPayload.quickFilterText, QUICK_FILTER_COLUMNS);
     const combinedWhere = mergeWhereClauses(where, quickFilterClause.clause);
     const combinedParams = [...whereParams, ...quickFilterClause.params];

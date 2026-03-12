@@ -80,10 +80,10 @@ export async function GET(req: NextRequest) {
       request.input('brandKey', sql.NVarChar(255), brandKey);
     }
 
-    // Cross-search: part/model number searches both PartNumber and ModelNumber fields
-    // Uses cleared columns (PartNumberCleared, ModelNumberCleared) for index-based performance
+    // Cross-search: part/model number searches PartNumber, ModelNumber, and LegacyPartNoCleaned
+    // Uses cleared columns (PartNumberCleared, ModelNumberCleared, LegacyPartNoCleaned) for index-based performance
     const partModelCondition = searchValue
-      ? `(${partModelNumberSql('p.PartNumber')} = @searchValue OR ${partModelNumberSql('p.ModelNumber')} = @searchValue)`
+      ? `(${partModelNumberSql('p.PartNumber')} = @searchValue OR ${partModelNumberSql('p.ModelNumber')} = @searchValue OR ISNULL(p.LegacyPartNoCleaned, '') = @searchValue)`
       : '0=1';
     const whereConditions = [] as string[];
     if (searchValue) whereConditions.push(partModelCondition);

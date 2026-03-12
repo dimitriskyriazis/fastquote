@@ -15,6 +15,7 @@ import {
   stringSchema,
   urlSchema,
   positiveIntSchema,
+  booleanSchema,
 } from '../../../../lib/validation';
 
 const toClearedPartModel = (value: string | null | undefined) => {
@@ -46,6 +47,7 @@ const updateProductSchema = z.object({
   categoryId: positiveIntSchema,
   subCategoryId: positiveIntSchema,
   typeId: positiveIntSchema,
+  enabled: booleanSchema,
 }).strict().refine((data) => (
   data.partNumber !== undefined
   || data.modelNumber !== undefined
@@ -55,6 +57,7 @@ const updateProductSchema = z.object({
   || data.categoryId !== undefined
   || data.subCategoryId !== undefined
   || data.typeId !== undefined
+  || data.enabled !== undefined
 ), {
   message: 'No updates provided',
 });
@@ -91,6 +94,7 @@ export async function GET(
       ProductID: number;
       PartNumber: string | null;
       ModelNumber: string | null;
+      LegacyPartNo: string | null;
       BrandName: string | null;
       Description: string | null;
     }>(`
@@ -98,6 +102,7 @@ export async function GET(
         p.ID AS ProductID,
         NULLIF(LTRIM(RTRIM(p.PartNumber)), '') AS PartNumber,
         NULLIF(LTRIM(RTRIM(p.ModelNumber)), '') AS ModelNumber,
+        NULLIF(LTRIM(RTRIM(p.LegacyPartNo)), '') AS LegacyPartNo,
         NULLIF(LTRIM(RTRIM(b.Name)), '') AS BrandName,
         NULLIF(LTRIM(RTRIM(p.Description)), '') AS Description
       FROM dbo.Products p
@@ -210,6 +215,9 @@ export async function PATCH(
     }
     if (body.typeId !== undefined) {
       updates.push({ column: 'TypeID', param: 'TypeID', value: body.typeId, type: sql.Int });
+    }
+    if (body.enabled !== undefined) {
+      updates.push({ column: 'Enabled', param: 'Enabled', value: body.enabled ? 1 : 0, type: sql.Bit });
     }
 
     if (updates.length === 0) {

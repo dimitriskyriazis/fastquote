@@ -162,15 +162,20 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
           if (isPartOrModel) {
             const searchVal = normalizePartModelNumber(value);
             const expr = partModelNumberSql(columnExpression);
+            // Also search LegacyPartNoCleaned when filtering by PartNumber
+            const legacyExpr = columnExpression.includes('.PartNumber')
+              ? `UPPER(ISNULL(${columnExpression.replace('.PartNumber', '.LegacyPartNoCleaned')}, ''))`
+              : null;
+            const legacyOr = legacyExpr ? ` OR ${legacyExpr}` : '';
             if (type === 'equals') {
               if (otherColumnExpression) {
                 return {
-                  clause: `(${expr} = @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} = @${conditionParamBase})`,
+                  clause: `(${expr} = @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} = @${conditionParamBase}${legacyOr ? `${legacyOr} = @${conditionParamBase}` : ''})`,
                   params: [{ key: conditionParamBase, value: searchVal }],
                 };
               }
               return {
-                clause: `${expr} = @${conditionParamBase}`,
+                clause: legacyExpr ? `(${expr} = @${conditionParamBase}${legacyOr} = @${conditionParamBase})` : `${expr} = @${conditionParamBase}`,
                 params: [{ key: conditionParamBase, value: searchVal }],
               };
             }
@@ -183,35 +188,35 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
             if (type === 'startsWith') {
               if (otherColumnExpression) {
                 return {
-                  clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase})`,
+                  clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase}${legacyOr ? `${legacyOr} LIKE @${conditionParamBase}` : ''})`,
                   params: [{ key: conditionParamBase, value: `${searchVal}%` }],
                 };
               }
               return {
-                clause: `${expr} LIKE @${conditionParamBase}`,
+                clause: legacyExpr ? `(${expr} LIKE @${conditionParamBase}${legacyOr} LIKE @${conditionParamBase})` : `${expr} LIKE @${conditionParamBase}`,
                 params: [{ key: conditionParamBase, value: `${searchVal}%` }],
               };
             }
             if (type === 'endsWith') {
               if (otherColumnExpression) {
                 return {
-                  clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase})`,
+                  clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase}${legacyOr ? `${legacyOr} LIKE @${conditionParamBase}` : ''})`,
                   params: [{ key: conditionParamBase, value: `%${searchVal}` }],
                 };
               }
               return {
-                clause: `${expr} LIKE @${conditionParamBase}`,
+                clause: legacyExpr ? `(${expr} LIKE @${conditionParamBase}${legacyOr} LIKE @${conditionParamBase})` : `${expr} LIKE @${conditionParamBase}`,
                 params: [{ key: conditionParamBase, value: `%${searchVal}` }],
               };
             }
             if (otherColumnExpression) {
               return {
-                clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase})`,
+                clause: `(${expr} LIKE @${conditionParamBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${conditionParamBase}${legacyOr ? `${legacyOr} LIKE @${conditionParamBase}` : ''})`,
                 params: [{ key: conditionParamBase, value: `%${searchVal}%` }],
               };
             }
             return {
-              clause: `${expr} LIKE @${conditionParamBase}`,
+              clause: legacyExpr ? `(${expr} LIKE @${conditionParamBase}${legacyOr} LIKE @${conditionParamBase})` : `${expr} LIKE @${conditionParamBase}`,
               params: [{ key: conditionParamBase, value: `%${searchVal}%` }],
             };
           }
@@ -493,6 +498,7 @@ async function handleProductGrid(
         p.Description,
         p.ModelNumber,
         p.ModelNumberCleared,
+        p.LegacyPartNoCleaned,
         b.Name AS BrandName
       FROM dbo.Products p
         LEFT JOIN dbo.Brands b ON p.BrandID = b.ID

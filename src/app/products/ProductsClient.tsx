@@ -26,6 +26,8 @@ import styles from "./ProductsClient.module.css";
 import AddProductModal from "./AddProductModal";
 import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
+import { formatBooleanValue } from "../lib/formatBooleanValue";
+import { normalizeBoolean } from "../../lib/normalizeBoolean";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -171,6 +173,8 @@ export default function ProductsClient() {
   const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null);
   const [lookups, setLookups] = useState<ProductLookups | null>(null);
   const lookupsLoadingRef = useRef(false);
+  const defaultEnabledFilterAppliedRef = useRef(false);
+  const enabledOptions = useMemo(() => ["Yes", "No"], []);
   const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
 
   const handleServerRequest = useCallback((request: ServerRequestWithQuickFilter) => {
@@ -287,6 +291,11 @@ export default function ProductsClient() {
       valueParser: (params) => normalizeEditableValue(params.newValue),
     },
     {
+      field: "LegacyPartNo",
+      headerName: "Legacy Part No",
+      filter: "agTextColumnFilter",
+    },
+    {
       field: "ERPCode",
       headerName: "ERP Code",
       filter: "agTextColumnFilter",
@@ -352,7 +361,30 @@ export default function ProductsClient() {
       editable: true,
       valueParser: (params) => normalizeEditableValue(params.newValue),
     },
-  ], [categoryOptions, subCategoryOptions, typeOptions]);
+    {
+      field: "Enabled",
+      headerName: "Enabled",
+      filter: "agSetColumnFilter",
+      valueFormatter: (params) => formatBooleanValue(params.value),
+      filterParams: {
+        values: ["true", "false"],
+        valueFormatter: (params: { value?: unknown }) => formatBooleanValue(params.value),
+        comparator: (a: string, b: string) => {
+          if (a === b) return 0;
+          return a === "true" ? -1 : 1;
+        },
+      },
+      width: 120,
+      editable: true,
+      cellEditor: "agSelectCellEditor",
+      cellEditorParams: { values: enabledOptions },
+      valueSetter: (params) => {
+        params.data = params.data ?? {};
+        (params.data as Record<string, unknown>).Enabled = normalizeBoolean(params.newValue);
+        return true;
+      },
+    },
+  ], [categoryOptions, subCategoryOptions, typeOptions, enabledOptions]);
 
   const productRowDeletion = useMemo(
     () =>
@@ -717,6 +749,17 @@ export default function ProductsClient() {
   const handleGridReady = useCallback(
     (api: GridApi<Record<string, unknown>>) => {
       productsApiRef.current = api;
+      if (!defaultEnabledFilterAppliedRef.current) {
+        const existingModel = api.getFilterModel() as Record<string, unknown> | null;
+        const nextModel = existingModel && typeof existingModel === "object" ? { ...existingModel } : {};
+        if (!("Enabled" in nextModel)) {
+          api.setFilterModel({
+            ...nextModel,
+            Enabled: { filterType: "set", values: ["true"] },
+          });
+        }
+        defaultEnabledFilterAppliedRef.current = true;
+      }
       ensureProductSort(api);
       trySelectPendingProduct(api);
     },
@@ -917,6 +960,14 @@ export default function ProductsClient() {
           return;
         }
         void runUpdate({ typeId: nextType.id }, "Type");
+        return;
+      }
+
+      if (field === "Enabled") {
+        const enabled = normalizeBoolean(
+          (event.data as { Enabled?: unknown } | undefined)?.Enabled ?? event.newValue,
+        );
+        void runUpdate({ enabled }, "Enabled");
         return;
       }
     },

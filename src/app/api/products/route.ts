@@ -36,12 +36,14 @@ type ProductRow = {
   Brand: string | null;
   ModelNumber: string | null;
   PartNumber: string | null;
+  LegacyPartNo: string | null;
   ERPCode: string | null;
   Description: string | null;
   Category: string | null;
   SubCategory: string | null;
   Type: string | null;
   WebLink: string | null;
+  Enabled: boolean | number | null;
 };
 
 type ProductRowWithCount = ProductRow & { __totalCount: number | bigint | null };
@@ -51,12 +53,14 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Brand: "dbo.Brands.Name",
   ModelNumber: "dbo.Products.ModelNumber",
   PartNumber: "dbo.Products.PartNumber",
+  LegacyPartNo: "dbo.Products.LegacyPartNo",
   ERPCode: "dbo.Products.ERPCode",
   Description: "dbo.Products.Description",
   Category: "dbo.ProductCategories.Name",
   SubCategory: "dbo.ProductSubCategories.Name",
   Type: "dbo.ProductTypes.Name",
   WebLink: "dbo.Products.WebLink",
+  Enabled: "dbo.Products.Enabled",
 };
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
   colId,
@@ -138,8 +142,11 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
       const descExpr = isModelNumber ? COLUMN_EXPRESSIONS["Description"] : null;
       const descParam = `${pBase}_desc`;
 
+      // Also search LegacyPartNoCleaned when filtering by PartNumber or ModelNumber
+      const legacySql = `UPPER(ISNULL(dbo.Products.LegacyPartNoCleaned, ''))`;
+
       if (type === "contains") {
-        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase}`;
+        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase} OR ${legacySql} LIKE @${pBase}`;
         params.push({ key: pBase, value: `%${searchVal}%` });
         if (descExpr) {
           clause += ` OR ${descriptionSql(descExpr)} LIKE @${descParam}`;
@@ -147,7 +154,7 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
         }
         parts.push(`${clause})`);
       } else if (type === "equals") {
-        let clause = `(${partModelNumberSql(columnExpression)} = @${pBase} OR ${partModelNumberSql(otherColumnExpression)} = @${pBase}`;
+        let clause = `(${partModelNumberSql(columnExpression)} = @${pBase} OR ${partModelNumberSql(otherColumnExpression)} = @${pBase} OR ${legacySql} = @${pBase}`;
         params.push({ key: pBase, value: searchVal });
         if (descExpr) {
           clause += ` OR ${descriptionSql(descExpr)} = @${descParam}`;
@@ -155,7 +162,7 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
         }
         parts.push(`${clause})`);
       } else if (type === "startsWith") {
-        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase}`;
+        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase} OR ${legacySql} LIKE @${pBase}`;
         params.push({ key: pBase, value: `${searchVal}%` });
         if (descExpr) {
           clause += ` OR ${descriptionSql(descExpr)} LIKE @${descParam}`;
@@ -163,7 +170,7 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
         }
         parts.push(`${clause})`);
       } else if (type === "endsWith") {
-        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase}`;
+        let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase} OR ${legacySql} LIKE @${pBase}`;
         params.push({ key: pBase, value: `%${searchVal}` });
         if (descExpr) {
           clause += ` OR ${descriptionSql(descExpr)} LIKE @${descParam}`;
@@ -365,12 +372,14 @@ export async function POST(req: NextRequest) {
         dbo.Brands.Name AS Brand,
         dbo.Products.ModelNumber,
         dbo.Products.PartNumber,
+        dbo.Products.LegacyPartNo,
         dbo.Products.ERPCode,
         dbo.Products.Description,
         dbo.ProductCategories.Name AS Category,
         dbo.ProductSubCategories.Name AS SubCategory,
         dbo.ProductTypes.Name AS Type,
-        dbo.Products.WebLink
+        dbo.Products.WebLink,
+        dbo.Products.Enabled
     `;
 
     const from = `

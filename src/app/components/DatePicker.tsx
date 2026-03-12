@@ -91,6 +91,8 @@ export default function UKDatePicker({
       showYearDropdown
       showMonthDropdown
       dropdownMode="select"
+      popperPlacement="bottom-start"
+      fixedHeight
     />
   );
 }

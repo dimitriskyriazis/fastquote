@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
         const result = await pool.request()
           .input("partNumber", sql.NVarChar(255), cleared)
           .query<{ ID: number; PartNumber: string | null; ModelNumber: string | null; Description: string | null }>(
-            `SELECT TOP 10 p.ID, p.PartNumber, p.ModelNumber, p.Description FROM dbo.Products p WHERE p.PartNumberCleared = @partNumber`
+            `SELECT TOP 10 p.ID, p.PartNumber, p.ModelNumber, p.Description FROM dbo.Products p WHERE p.PartNumberCleared = @partNumber OR p.LegacyPartNoCleaned = @partNumber`
           );
         if (result.recordset.length > 0) {
           warnings.push({
