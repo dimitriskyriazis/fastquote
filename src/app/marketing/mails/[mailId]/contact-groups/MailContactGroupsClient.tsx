@@ -123,43 +123,36 @@ export default function MailContactGroupsClient({ mailId }: Props) {
       field: "Description",
       headerName: "Group",
       filter: "agTextColumnFilter",
-      flex: 1,
     },
     {
       field: "Division",
       headerName: "Division",
       filter: "agTextColumnFilter",
-      width: 150,
     },
     {
       field: "TotalCount",
       headerName: "Total",
       filter: "agNumberColumnFilter",
-      width: 90,
     },
     {
       field: "Importance1",
       headerName: "Imp. 1",
       filter: "agNumberColumnFilter",
-      width: 80,
     },
     {
       field: "Importance2",
       headerName: "Imp. 2",
       filter: "agNumberColumnFilter",
-      width: 80,
     },
     {
       field: "Importance3",
       headerName: "Imp. 3",
       filter: "agNumberColumnFilter",
-      width: 80,
     },
     {
       field: "Note",
       headerName: "Note",
       filter: "agTextColumnFilter",
-      width: 200,
     },
   ], []);
 
@@ -168,20 +161,17 @@ export default function MailContactGroupsClient({ mailId }: Props) {
       field: "Description",
       headerName: "Group",
       filter: "agTextColumnFilter",
-      flex: 1,
     },
     {
       field: "TotalCount",
       headerName: "Count",
       filter: "agNumberColumnFilter",
-      width: 100,
     },
     {
       field: "MinimumImportance",
       headerName: "Min. Importance",
       filter: "agNumberColumnFilter",
       editable: true,
-      width: 150,
     },
     {
       field: "Note",

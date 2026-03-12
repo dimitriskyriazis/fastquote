@@ -384,7 +384,6 @@ export default function MailsClient() {
         field: "Date",
         headerName: "Date",
         filter: "agDateColumnFilter",
-        width: 130,
         valueFormatter: (params) => formatDateUK(params.value),
       },
       {
@@ -392,20 +391,17 @@ export default function MailsClient() {
         headerName: "Description",
         filter: "agTextColumnFilter",
         editable: true,
-        width: 250,
       },
       {
         field: "Note",
         headerName: "Note",
         filter: "agTextColumnFilter",
         editable: true,
-        flex: 1,
       },
       {
         field: "IsPresent",
         headerName: "Present",
         filter: "agSetColumnFilter",
-        width: 100,
         valueFormatter: (params) => formatBooleanValue(params.value),
         filterParams: {
           values: ["true", "false"],
@@ -424,7 +420,6 @@ export default function MailsClient() {
         field: "Locked",
         headerName: "Locked",
         filter: "agSetColumnFilter",
-        width: 100,
         editable: false,
         valueFormatter: (params) => formatBooleanValue(params.value),
         filterParams: {
@@ -554,7 +549,7 @@ export default function MailsClient() {
                 className={`page-header-button ${styles.headerButton}`}
                 onClick={openAddMail}
               >
-                Create Mail Lists
+                Create Mail List
               </button>
               <button
                 type="button"

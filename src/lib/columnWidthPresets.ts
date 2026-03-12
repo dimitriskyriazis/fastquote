@@ -102,6 +102,22 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   ResponsibleUserName: 2,
   ModifiedBy: 2,
   CreatedBy: 2,
+  Date: 'date',
+  Note: 3,
+  IsPresent: 1,
+  Locked: 1,
+  UsedForFax: 1,
+  Division: 2,
+  GroupImportance: 2,
+  TotalCount: 1,
+  Importance1: 1,
+  Importance2: 1,
+  Importance3: 1,
+  Title: 1,
+  Fax: 2,
+  Sent: 1,
+  FaxSent: 1,
+  MinimumImportance: 2,
 };
 
 export const resolveColumnWidthAssignments = (

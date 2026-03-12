@@ -109,13 +109,13 @@ export default function ContactGroupDetailClient({ groupId }: Props) {
 
   const columnDefs = useMemo<ColDef[]>(() => [
     { field: "CustomerName", headerName: "Customer", filter: "agTextColumnFilter" },
-    { field: "Title", headerName: "Title", filter: "agTextColumnFilter", width: 80 },
+    { field: "Title", headerName: "Title", filter: "agTextColumnFilter" },
     { field: "LastName", headerName: "Last Name", filter: "agTextColumnFilter" },
     { field: "FirstName", headerName: "First Name", filter: "agTextColumnFilter" },
     { field: "Position", headerName: "Position", filter: "agTextColumnFilter" },
     { field: "Email", headerName: "Email", filter: "agTextColumnFilter" },
-    { field: "Fax", headerName: "Fax", filter: "agTextColumnFilter", width: 120 },
-    { field: "Importance", headerName: "Importance", filter: "agNumberColumnFilter", editable: true, width: 110 },
+    { field: "Fax", headerName: "Fax", filter: "agTextColumnFilter" },
+    { field: "Importance", headerName: "Importance", filter: "agNumberColumnFilter", editable: true },
     { field: "Note", headerName: "Note", filter: "agTextColumnFilter", editable: true },
   ], []);
 

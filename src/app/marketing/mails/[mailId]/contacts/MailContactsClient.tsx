@@ -113,19 +113,19 @@ export default function MailContactsClient({ mailId }: Props) {
 
   const columnDefs = useMemo<ColDef[]>(() => [
     { field: "CustomerName", headerName: "Customer", filter: "agTextColumnFilter" },
-    { field: "Title", headerName: "Title", filter: "agTextColumnFilter", width: 80 },
+    { field: "Title", headerName: "Title", filter: "agTextColumnFilter" },
     { field: "LastName", headerName: "Last Name", filter: "agTextColumnFilter" },
     { field: "FirstName", headerName: "First Name", filter: "agTextColumnFilter" },
     { field: "Email", headerName: "Email", filter: "agTextColumnFilter" },
-    { field: "Fax", headerName: "Fax", filter: "agTextColumnFilter", width: 120 },
-    { field: "Importance", headerName: "Importance", filter: "agNumberColumnFilter", editable: true, width: 110 },
+    { field: "Fax", headerName: "Fax", filter: "agTextColumnFilter" },
+    { field: "Importance", headerName: "Importance", filter: "agNumberColumnFilter", editable: true },
     { field: "Note", headerName: "Note", filter: "agTextColumnFilter", editable: true },
     {
-      field: "Sent", headerName: "Sent", filter: "agSetColumnFilter", width: 80,
+      field: "Sent", headerName: "Sent", filter: "agSetColumnFilter",
       valueFormatter: (params) => formatBooleanValue(params.value),
     },
     {
-      field: "FaxSent", headerName: "Fax Sent", filter: "agSetColumnFilter", width: 90,
+      field: "FaxSent", headerName: "Fax Sent", filter: "agSetColumnFilter",
       valueFormatter: (params) => formatBooleanValue(params.value),
     },
   ], []);
