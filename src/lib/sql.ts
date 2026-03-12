@@ -43,8 +43,6 @@ const buildFastQuoteConfig = (): SqlConnectionConfig => {
   };
 };
 
-const config: SqlConnectionConfig = buildFastQuoteConfig();
-
 type SqlFactoryWithPrecisionScale = (precision?: number, scale?: number) => {
   type: unknown;
   precision?: number;
@@ -63,6 +61,8 @@ const sqlWithTypes = sql as SqlWithTypes;
 let poolPromise: Promise<ConnectionPool> | null = null;
 
 export async function getPool(): Promise<ConnectionPool> {
+  const config = buildFastQuoteConfig();
+
   if (!poolPromise) {
     poolPromise = sqlWithTypes.connect(config);
   }
