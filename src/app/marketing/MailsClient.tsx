@@ -517,17 +517,19 @@ export default function MailsClient() {
       <main className={styles.page}>
         <PageHeader
           title="Mail Lists"
+          leftActions={
+            canUndo ? (
+              <button
+                type="button"
+                className={`page-header-button ${styles.headerButton}`}
+                onClick={performUndo}
+              >
+                ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+              </button>
+            ) : undefined
+          }
           rightActions={
             <div className={styles.headerActions}>
-              {canUndo && (
-                <button
-                  type="button"
-                  className={`page-header-button ${styles.headerButton}`}
-                  onClick={performUndo}
-                >
-                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
-                </button>
-              )}
               <button
                 type="button"
                 className={`page-header-button ${styles.headerButton}`}

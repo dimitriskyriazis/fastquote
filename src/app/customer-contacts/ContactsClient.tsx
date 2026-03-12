@@ -833,17 +833,19 @@ export default function ContactsClient({
       <main className={styles.page}>
         <PageHeader
           title="Contacts"
+          leftActions={
+            canUndo ? (
+              <button
+                type="button"
+                className={`page-header-button ${styles.headerButton}`}
+                onClick={performUndo}
+              >
+                ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+              </button>
+            ) : undefined
+          }
           rightActions={
             <div className={styles.headerActions}>
-              {canUndo && (
-                <button
-                  type="button"
-                  className={`page-header-button ${styles.headerButton}`}
-                  onClick={performUndo}
-                >
-                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
-                </button>
-              )}
               <button
                 type="button"
                 className={`${styles.headerButton} page-header-button`}

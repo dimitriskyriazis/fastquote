@@ -605,9 +605,6 @@ export default function PriceListProductsClient({
             <span aria-hidden="true">←</span>
             Back to price lists
           </Link>
-        </div>
-        <h1 className={`${layoutStyles.heading} ${layoutStyles.headingCentered}`}>{headingText}</h1>
-        <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>
           {canUndo && (
             <button
               type="button"
@@ -617,6 +614,9 @@ export default function PriceListProductsClient({
               ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
             </button>
           )}
+        </div>
+        <h1 className={`${layoutStyles.heading} ${layoutStyles.headingCentered}`}>{headingText}</h1>
+        <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>
           <Link
             href={`/price-lists/${encodeURIComponent(priceListId)}/basicdata`}
             className={`${layoutStyles.headerActionButton} page-header-button`}

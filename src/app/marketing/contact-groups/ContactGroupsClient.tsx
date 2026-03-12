@@ -382,23 +382,25 @@ export default function ContactGroupsClient() {
         <PageHeader
           title="Marketing - Contact Groups"
           leftActions={
-            <button
-              type="button"
-              className="page-header-button"
-              style={{ border: '1px solid rgba(15,23,42,0.15)', backgroundColor: '#e5e7eb', color: '#0f172a' }}
-              onClick={() => router.push("/marketing")}
-            >
-              <span aria-hidden="true">←</span>
-              Back to Mails
-            </button>
-          }
-          rightActions={
-            <div className={styles.headerActions}>
+            <>
+              <button
+                type="button"
+                className="page-header-button"
+                style={{ border: '1px solid rgba(15,23,42,0.15)', backgroundColor: '#e5e7eb', color: '#0f172a' }}
+                onClick={() => router.push("/marketing")}
+              >
+                <span aria-hidden="true">←</span>
+                Back to Mails
+              </button>
               {canUndo && (
                 <button type="button" className={`page-header-button ${styles.headerButton}`} onClick={performUndo}>
                   ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
                 </button>
               )}
+            </>
+          }
+          rightActions={
+            <div className={styles.headerActions}>
               <button type="button" className={`page-header-button ${styles.headerButton}`} onClick={openAddGroup}>
                 Add Contact Group
               </button>

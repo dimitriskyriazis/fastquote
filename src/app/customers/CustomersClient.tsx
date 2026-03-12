@@ -442,17 +442,19 @@ export default function CustomersClient() {
     <main className={styles.page}>
       <PageHeader
         title="Customers"
+        leftActions={
+          canUndo ? (
+            <button
+              type="button"
+              className={`${styles.headerButton} page-header-button`}
+              onClick={performUndo}
+            >
+              ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+            </button>
+          ) : undefined
+        }
         rightActions={
           <div className={styles.headerActions}>
-            {canUndo && (
-              <button
-                type="button"
-                className={`${styles.headerButton} page-header-button`}
-                onClick={performUndo}
-              >
-                ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
-              </button>
-            )}
             <button
               type="button"
               className={`${styles.headerButton} page-header-button`}

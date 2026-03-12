@@ -409,17 +409,19 @@ export default function UsersClient() {
       <main className={styles.page}>
         <PageHeader
           title="User Management"
+          leftActions={
+            canUndo ? (
+              <button
+                type="button"
+                className={`page-header-button ${styles.headerButton}`}
+                onClick={performUndo}
+              >
+                ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+              </button>
+            ) : undefined
+          }
           rightActions={
             <div className={styles.headerActions}>
-              {canUndo && (
-                <button
-                  type="button"
-                  className={`page-header-button ${styles.headerButton}`}
-                  onClick={performUndo}
-                >
-                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
-                </button>
-              )}
               <Link
                 href="/logs"
                 className={`page-header-button ${styles.headerButton}`}

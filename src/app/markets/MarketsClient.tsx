@@ -378,13 +378,11 @@ export default function MarketsClient({ salesDivisions }: Props) {
         <PageHeader
           title="Markets"
           leftActions={
-            <Link href="/offers" className={`page-header-button ${styles.headerButton}`}>
-              <span aria-hidden="true">←</span>
-              Back to offers
-            </Link>
-          }
-          rightActions={
-            <div className={styles.headerActions}>
+            <>
+              <Link href="/offers" className={`page-header-button ${styles.headerButton}`}>
+                <span aria-hidden="true">←</span>
+                Back to offers
+              </Link>
               {canUndo && (
                 <button
                   type="button"
@@ -394,6 +392,10 @@ export default function MarketsClient({ salesDivisions }: Props) {
                   ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
                 </button>
               )}
+            </>
+          }
+          rightActions={
+            <div className={styles.headerActions}>
               <button
                 type="button"
                 className={`page-header-button ${styles.headerButton}`}

@@ -317,17 +317,15 @@ export default function BrandsClient() {
         <PageHeader
           title="Brands"
           leftActions={
-            <button
-              type="button"
-              className={`page-header-button ${styles.headerButton}`}
-              onClick={() => router.push("/suppliers")}
-            >
-              <span aria-hidden="true">←</span>
-              Back to Suppliers
-            </button>
-          }
-          rightActions={
-            <div className={styles.headerActions}>
+            <>
+              <button
+                type="button"
+                className={`page-header-button ${styles.headerButton}`}
+                onClick={() => router.push("/suppliers")}
+              >
+                <span aria-hidden="true">←</span>
+                Back to Suppliers
+              </button>
               {canUndo && (
                 <button
                   type="button"
@@ -337,6 +335,10 @@ export default function BrandsClient() {
                   ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
                 </button>
               )}
+            </>
+          }
+          rightActions={
+            <div className={styles.headerActions}>
               <button
                 type="button"
                 className={`page-header-button ${styles.headerButton}`}

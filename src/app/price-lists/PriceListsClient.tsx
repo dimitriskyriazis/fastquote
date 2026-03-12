@@ -466,17 +466,19 @@ export default function PriceListsClient() {
     <main className={styles.page}>
       <PageHeader
         title="Price Lists"
+        leftActions={
+          canUndo ? (
+            <button
+              type="button"
+              className="page-header-button"
+              onClick={performUndo}
+            >
+              ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+            </button>
+          ) : undefined
+        }
         rightActions={
           <div style={{ display: "flex", gap: "0.75rem" }}>
-            {canUndo && (
-              <button
-                type="button"
-                className="page-header-button"
-                onClick={performUndo}
-              >
-                ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
-              </button>
-            )}
             <button
               type="button"
               className={`${styles.importButton} page-header-button`}

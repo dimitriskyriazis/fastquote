@@ -333,17 +333,15 @@ export default function CountriesClient() {
         <PageHeader
           title="Countries"
           leftActions={
-            <button
-              type="button"
-              className={`page-header-button ${styles.headerButton}`}
-              onClick={() => router.push("/suppliers")}
-            >
-              <span aria-hidden="true">←</span>
-              Back to Suppliers
-            </button>
-          }
-          rightActions={
-            <div className={styles.headerActions}>
+            <>
+              <button
+                type="button"
+                className={`page-header-button ${styles.headerButton}`}
+                onClick={() => router.push("/suppliers")}
+              >
+                <span aria-hidden="true">←</span>
+                Back to Suppliers
+              </button>
               {canUndo && (
                 <button
                   type="button"
@@ -353,6 +351,10 @@ export default function CountriesClient() {
                   ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
                 </button>
               )}
+            </>
+          }
+          rightActions={
+            <div className={styles.headerActions}>
               <button
                 type="button"
                 className={`page-header-button ${styles.headerButton}`}

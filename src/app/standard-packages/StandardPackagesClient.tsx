@@ -685,17 +685,19 @@ export default function StandardPackagesClient() {
     <main className={styles.page}>
       <PageHeader
         title="Standard Packages"
+        leftActions={
+          canUndo ? (
+            <button
+              type="button"
+              className={`page-header-button`}
+              onClick={performUndo}
+            >
+              ↩ Undo{lastLabel ? `: ${lastLabel}` : ''}
+            </button>
+          ) : undefined
+        }
         rightActions={(
           <div className={styles.headerActions}>
-            {canUndo && (
-              <button
-                type="button"
-                className={`page-header-button`}
-                onClick={performUndo}
-              >
-                ↩ Undo{lastLabel ? `: ${lastLabel}` : ''}
-              </button>
-            )}
             <button
               type="button"
               className={`${styles.primaryButton} page-header-button`}

@@ -265,22 +265,24 @@ export default function CustomerGroupsClient() {
       <PageHeader
         title="Customer Groups"
         leftActions={
-          <button
-            type="button"
-            className={`${styles.backLink} page-header-button`}
-            onClick={() => router.push("/customers")}
-          >
-            <span aria-hidden="true">←</span>
-            Back to customers
-          </button>
+          <>
+            <button
+              type="button"
+              className={`${styles.backLink} page-header-button`}
+              onClick={() => router.push("/customers")}
+            >
+              <span aria-hidden="true">←</span>
+              Back to customers
+            </button>
+            {canUndo && (
+              <button type="button" className={`page-header-button ${styles.headerButton}`} onClick={performUndo}>
+                ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+              </button>
+            )}
+          </>
         }
         rightActions={
           <div className={styles.headerActions}>
-              {canUndo && (
-                <button type="button" className={`page-header-button ${styles.headerButton}`} onClick={performUndo}>
-                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
-                </button>
-              )}
             <button
               type="button"
               className={`${styles.headerButton} page-header-button`}

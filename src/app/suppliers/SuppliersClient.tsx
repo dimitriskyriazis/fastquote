@@ -396,17 +396,19 @@ export default function SuppliersClient({ countries }: Props) {
       <main className={styles.page}>
         <PageHeader
           title="Suppliers"
+          leftActions={
+            canUndo ? (
+              <button
+                type="button"
+                className={`page-header-button ${styles.headerButton}`}
+                onClick={performUndo}
+              >
+                ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
+              </button>
+            ) : undefined
+          }
           rightActions={
             <div className={styles.headerActions}>
-              {canUndo && (
-                <button
-                  type="button"
-                  className={`page-header-button ${styles.headerButton}`}
-                  onClick={performUndo}
-                >
-                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}
-                </button>
-              )}
               <button
                 type="button"
                 className={`page-header-button ${styles.headerButton}`}

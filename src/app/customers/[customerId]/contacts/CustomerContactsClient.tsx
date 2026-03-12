@@ -464,18 +464,10 @@ export default function CustomerContactsClient({ customerId, customerName, statu
       <PageHeader
         title={heading}
         leftActions={
-          <Link href="/customers" className={`${styles.backLink} page-header-button`}>
-            <span aria-hidden="true">←</span>
-            Back to customers
-          </Link>
-        }
-        rightActions={
-          <div className={styles.headerActions}>
-            <Link
-              href={`/customers/${encodedCustomerId}/basicdata`}
-              className={`${styles.headerActionButton} page-header-button`}
-            >
-              View Basic Data
+          <>
+            <Link href="/customers" className={`${styles.backLink} page-header-button`}>
+              <span aria-hidden="true">←</span>
+              Back to customers
             </Link>
             {canUndo && (
               <button
@@ -487,6 +479,16 @@ export default function CustomerContactsClient({ customerId, customerName, statu
                 Undo
               </button>
             )}
+          </>
+        }
+        rightActions={
+          <div className={styles.headerActions}>
+            <Link
+              href={`/customers/${encodedCustomerId}/basicdata`}
+              className={`${styles.headerActionButton} page-header-button`}
+            >
+              View Basic Data
+            </Link>
             <button
               type="button"
               className={`${styles.headerActionButton} page-header-button`}
