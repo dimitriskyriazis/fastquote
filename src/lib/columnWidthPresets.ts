@@ -13,6 +13,7 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   BrandName: 2,
   ModelNumber: 2,
   PartNumber: 2,
+  LegacyPartNo: 2,
   ERPCode: 2,
   PriceListName: 3,
   CustomerName: 3,
