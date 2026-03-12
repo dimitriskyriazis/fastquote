@@ -155,6 +155,8 @@ export default function CustomerGroupsClient() {
     () =>
       new GridRowDeletion<Record<string, unknown>>({
         endpoint: "/api/customer-groups",
+        dataEndpoint: "/api/customer-groups",
+        idField: "CustomerGroupID",
         resolveRowId: (row) =>
           normalizeGroupId((row as { CustomerGroupID?: unknown } | null)?.CustomerGroupID ?? null),
         resolveRowLabel: (row, fallback) =>

@@ -5,6 +5,19 @@ import type { DeletePermissionResult } from './deletePermissions';
 
 const contextMenuSelectionSnapshots = new WeakMap<GridApi<unknown>, unknown[]>();
 
+// Quick filter text tracking — allows fetchAllFilteredIds to include quick filter in requests
+const gridQuickFilterTextMap = new WeakMap<GridApi<unknown>, string>();
+
+export const setGridQuickFilterText = (api: GridApi<unknown> | null, text: string) => {
+  if (!api) return;
+  gridQuickFilterTextMap.set(api, text);
+};
+
+const getGridQuickFilterText = (api: GridApi<unknown> | null): string | null => {
+  if (!api) return null;
+  return gridQuickFilterTextMap.get(api) ?? null;
+};
+
 export const setGridRowDeletionContextMenuSelectionSnapshot = <RowData>(
   api: GridApi<RowData> | null,
   selection: Array<RowNode<RowData>> | null,
@@ -40,6 +53,76 @@ const hasServerSideSelectAll = <RowData>(api: GridApi<RowData> | null) => {
   const state = api.getServerSideSelectionState();
   return Boolean(state && 'selectAll' in state && Boolean((state as ServerSideRowSelectionState).selectAll));
 };
+
+async function fetchAllFilteredIds(
+  api: GridApi<unknown>,
+  dataEndpoint: string,
+  idField: string,
+  requestPayload?: Record<string, unknown>,
+): Promise<number[]> {
+  const filterModel = api.getFilterModel?.() ?? {};
+  const sortModel = api.getColumnState?.()
+    ?.filter(col => col.sort != null)
+    .map(col => ({ colId: col.colId, sort: col.sort })) ?? [];
+  const quickFilterText = getGridQuickFilterText(api);
+
+  const MAX_ROWS = 50000;
+  const BATCH_SIZE = 1000;
+  const allIds: number[] = [];
+  let currentRow = 0;
+
+  while (currentRow < MAX_ROWS) {
+    const serverRequest: Record<string, unknown> = {
+      filterModel,
+      sortModel,
+      startRow: currentRow,
+      endRow: Math.min(currentRow + BATCH_SIZE, MAX_ROWS),
+      groupKeys: [],
+      rowGroupCols: [],
+      valueCols: [],
+      pivotCols: [],
+      pivotMode: false,
+    };
+    if (typeof quickFilterText === 'string' && quickFilterText.length > 0) {
+      serverRequest.quickFilterText = quickFilterText;
+    }
+
+    const bodyRequest = {
+      ...(requestPayload ?? {}),
+      request: serverRequest,
+      fields: [idField],
+    };
+
+    const response = await fetch(dataEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(bodyRequest),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch data: ${response.status}`);
+    }
+
+    const data = await response.json() as { rows?: Record<string, unknown>[]; data?: Record<string, unknown>[]; rowCount?: number };
+    const batchRows = data.rows ?? data.data ?? [];
+
+    if (batchRows.length === 0) break;
+
+    for (const row of batchRows) {
+      const raw = row[idField];
+      const id = typeof raw === 'number' ? raw : (typeof raw === 'string' ? Number(raw) : NaN);
+      if (!Number.isNaN(id) && Number.isFinite(id)) {
+        allIds.push(id);
+      }
+    }
+
+    currentRow += batchRows.length;
+    if (data.rowCount && currentRow >= data.rowCount) break;
+    if (batchRows.length < BATCH_SIZE) break;
+  }
+
+  return Array.from(new Set(allIds));
+}
 
 const deleteRecordMenuIcon = `
   <span class="fastquote-menu-icon fastquote-menu-icon--danger" aria-hidden="true">
@@ -80,6 +163,9 @@ type GridRowDeletionConfig<RowData> = {
   canDelete?: (count: number, rows?: (RowData | null)[]) => DeletePermissionResult;
   restoreEndpoint?: string;
   onDeleteSuccess?: (deletedRows: unknown[], api: GridApi<RowData> | null) => void;
+  dataEndpoint?: string;
+  idField?: string;
+  requestPayload?: Record<string, unknown>;
 };
 
 export class GridRowDeletion<RowData> {
@@ -285,6 +371,26 @@ export class GridRowDeletion<RowData> {
     await this.deleteRows([rowData ?? null], [rowId], api);
   }
 
+  private async deleteAllFiltered(api: GridApi<RowData> | null) {
+    const { dataEndpoint, idField, requestPayload } = this.config;
+    if (!api || !dataEndpoint || !idField) return;
+    const dismissLoading = showToastMessage('Loading all records...', 'info', 60000);
+    try {
+      const ids = await fetchAllFilteredIds(api as GridApi<unknown>, dataEndpoint, idField, requestPayload);
+      dismissLoading();
+      if (ids.length === 0) {
+        showToastMessage('No records found to delete.', 'info');
+        return;
+      }
+      const nullRows: (RowData | null)[] = ids.map(() => null);
+      await this.deleteRows(nullRows, ids, api);
+    } catch (err) {
+      dismissLoading();
+      console.error('Failed to fetch all filtered IDs for deletion', err);
+      showToastMessage('Failed to load records. Please try again.', 'error');
+    }
+  }
+
   public getContextMenuItems(params: GetContextMenuItemsParams<RowData>) {
     const baseItems: Array<MenuItemDef<RowData> | DefaultMenuItem | string> =
       Array.isArray(params.defaultItems) ? [...params.defaultItems] : [];
@@ -292,11 +398,38 @@ export class GridRowDeletion<RowData> {
       const rowData = params.node?.data ?? null;
       const clickedRowId = this.config.resolveRowId(rowData);
       const snapshotNodes = readContextMenuSelectionSnapshot(params.api ?? null);
-      const selectedNodes = snapshotNodes ?? (hasServerSideSelectAll(params.api ?? null)
-        ? []
-        : (typeof params.api?.getSelectedNodes === 'function'
-          ? (params.api.getSelectedNodes() as Array<RowNode<RowData>>)
-          : []));
+      const isSelectAll = hasServerSideSelectAll(params.api ?? null);
+      const canDeleteAll = isSelectAll && typeof this.config.dataEndpoint === 'string' && typeof this.config.idField === 'string';
+
+      // When select-all is active and dataEndpoint/idField are configured, show "Delete all" menu item
+      if (canDeleteAll) {
+        if (baseItems.length > 0 && baseItems[baseItems.length - 1] !== 'separator') {
+          baseItems.push('separator');
+        }
+        const typeLabel = this.getMultiRowTypeLabel([rowData]);
+        const deleteAllItem: MenuItemDef<RowData> = {
+          name: `Delete all ${typeLabel}`,
+          icon: deleteRecordMenuIcon,
+          action: () => {
+            void this.deleteAllFiltered(params.api ?? null);
+          },
+        };
+        baseItems.push(deleteAllItem);
+        return baseItems;
+      }
+
+      let selectedNodes: Array<RowNode<RowData>>;
+      if (snapshotNodes) {
+        selectedNodes = snapshotNodes;
+      } else if (isSelectAll && params.api && typeof params.api.forEachNode === 'function') {
+        const allNodes: Array<RowNode<RowData>> = [];
+        params.api.forEachNode((node) => { if (node?.data) allNodes.push(node as RowNode<RowData>); });
+        selectedNodes = allNodes;
+      } else if (!isSelectAll && typeof params.api?.getSelectedNodes === 'function') {
+        selectedNodes = params.api.getSelectedNodes() as Array<RowNode<RowData>>;
+      } else {
+        selectedNodes = [];
+      }
       const selectedEntries = selectedNodes
         .map((node) => {
           const data = node?.data ?? null;

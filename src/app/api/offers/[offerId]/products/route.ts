@@ -1348,6 +1348,7 @@ export async function POST(
       'PriceListEnabled',
       'PriceListValidFromDate',
       'PriceListValidToDate',
+      'CreatedBy',
     ];
     const selectedFields = Array.from(new Set([...requiredFields, ...requestedFields]))
       .filter((field) => Boolean(SELECT_FIELD_EXPRESSIONS[field]));
@@ -2640,7 +2641,18 @@ export async function DELETE(
 
     const pool = await getPool();
 
-    // Check if the current user created all the rows being deleted
+    // Check if the current user is the offer creator (offer-level check)
+    const offerCreatorReq = pool.request();
+    offerCreatorReq.input('__offerId', sql.Int, offerId);
+    offerCreatorReq.input('__userId', sql.NVarChar, auth.userId);
+    const offerCreatorResult = await offerCreatorReq.query<{ IsOfferCreator: number }>(`
+      SELECT CASE WHEN CreatedBy = @__userId THEN 1 ELSE 0 END AS IsOfferCreator
+      FROM dbo.Offer
+      WHERE ID = @__offerId
+    `);
+    const isOfferCreator = offerCreatorResult.recordset?.[0]?.IsOfferCreator === 1;
+
+    // Also check per-product creator as fallback
     const creatorCheckReq = pool.request();
     creatorCheckReq.input('__creatorUserId', sql.NVarChar, auth.userId);
     const creatorParamNames: string[] = [];
@@ -2657,7 +2669,8 @@ export async function DELETE(
       WHERE OfferDetailID IN (${creatorParamNames.join(', ')})
     `);
     const creatorRow = creatorResult.recordset[0];
-    const isCreator = creatorRow != null && creatorRow.Total > 0 && creatorRow.Total === creatorRow.CreatedByUser;
+    const isProductCreator = creatorRow != null && creatorRow.Total > 0 && creatorRow.Total === creatorRow.CreatedByUser;
+    const isCreator = isOfferCreator || isProductCreator;
 
     const deleteCheck = checkDeletePermission(auth.roles, normalizedIds.length, 'offerProducts', null, { isCreator });
     if (!deleteCheck.allowed) {

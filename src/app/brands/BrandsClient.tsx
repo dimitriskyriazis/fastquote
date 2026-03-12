@@ -110,6 +110,8 @@ export default function BrandsClient() {
     () =>
       new GridRowDeletion<BrandRow>({
         endpoint: "/api/brands",
+        dataEndpoint: "/api/brands/grid",
+        idField: "BrandID",
         resolveRowId: (row) => {
           const candidate = row?.BrandID;
           return typeof candidate === "number" ? candidate : null;

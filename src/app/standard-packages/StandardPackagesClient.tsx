@@ -284,6 +284,8 @@ export default function StandardPackagesClient() {
     () =>
       new GridRowDeletion<Record<string, unknown>>({
         endpoint: '/api/standard-packages',
+        dataEndpoint: '/api/standard-packages',
+        idField: 'ID',
         resolveRowId: (row) =>
           normalizeOfferIdValue(
             (row as { ID?: unknown; offerId?: unknown } | null | undefined)?.ID
@@ -305,11 +307,18 @@ export default function StandardPackagesClient() {
         successToastMessage: 'Standard package deleted',
         failureToastMessage: 'Unable to delete standard package. Please try again.',
         canDelete: (count, rows) => {
-          const isCreator = userId != null && rows != null && rows.length > 0 && rows.every((row) => {
+          const hasRowData = rows != null && rows.length > 0 && rows.some((row) => row != null);
+          const isCreator = hasRowData && userId != null && rows!.every((row) => {
             const createdBy = (row as { CreatedByUserId?: string | number | null } | null)?.CreatedByUserId;
             return createdBy != null && String(createdBy) === String(userId);
           });
-          return checkDeletePermissionForClient(roles, count, 'standardPackages', 'editOffers', { isCreator });
+          // When row data is unavailable (e.g. delete-all), skip client-side creator check — server enforces it
+          const options = hasRowData ? { isCreator } : { isCreator: true };
+          const result = checkDeletePermissionForClient(roles, count, 'standardPackages', 'editOffers', options);
+          if (!result.allowed) {
+            console.warn('[FastQuote] Standard package delete blocked:', { reason: result.reason, isCreator, userId, roles, count, firstRowCreatedBy: rows?.[0] ? (rows[0] as Record<string, unknown>).CreatedByUserId : undefined });
+          }
+          return result;
         },
       }),
     [roles, userId],

@@ -151,6 +151,8 @@ export default function SuppliersClient({ countries }: Props) {
     () =>
       new GridRowDeletion<SupplierRow>({
         endpoint: "/api/suppliers",
+        dataEndpoint: "/api/suppliers",
+        idField: "SupplierID",
         resolveRowId: (row) => {
           const candidate = row?.SupplierID;
           return typeof candidate === "number" ? candidate : null;

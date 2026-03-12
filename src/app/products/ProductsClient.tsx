@@ -390,6 +390,8 @@ export default function ProductsClient() {
     () =>
       new GridRowDeletion<Record<string, unknown>>({
         endpoint: "/api/products",
+        dataEndpoint: "/api/products",
+        idField: "ProductID",
         resolveRowId: (row) => normalizeProductId((row as { ProductID?: unknown } | null)?.ProductID ?? null),
         resolveRowLabel: (row, fallback) => resolveProductLabel(row, fallback),
         resolveRowTypeLabel: () => PRODUCT_ROW_TYPE,

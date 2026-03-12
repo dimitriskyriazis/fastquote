@@ -163,6 +163,8 @@ export default function MarketsClient({ salesDivisions }: Props) {
     () =>
       new GridRowDeletion<MarketRow>({
         endpoint: "/api/markets",
+        dataEndpoint: "/api/markets",
+        idField: "MarketID",
         resolveRowId: (row) => {
           const candidate = row?.MarketID;
           return typeof candidate === "number" ? candidate : null;

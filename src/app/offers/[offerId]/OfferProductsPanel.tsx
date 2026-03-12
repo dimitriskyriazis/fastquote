@@ -158,6 +158,7 @@ type Props = {
   onRequestPaste?: (anchorOfferDetailId: number | null, anchorTreeOrdering: string | null) => void;
   onRequestAddStandardPackage?: (anchorOfferDetailId: number, anchorTreeOrdering: string) => void;
   onUndoStateChange?: (state: { canUndo: boolean; lastLabel: string | undefined }) => void;
+  offerCreatedByUserId?: string | null;
 };
 
 export type OfferProductsPanelHandle = {
@@ -217,9 +218,11 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   onRequestPaste,
   onRequestAddStandardPackage,
   onUndoStateChange,
+  offerCreatedByUserId,
 }: Props, ref) => {
   const router = useRouter();
   const { userId, roles } = useAuditUser();
+  const isOfferCreator = Boolean(userId && offerCreatedByUserId && String(userId) === String(offerCreatedByUserId));
   useEffect(() => {
     deferInitialHeavyWorkRef.current = true;
   }, [offerId]);
@@ -2620,6 +2623,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     () =>
       new GridRowDeletion<Record<string, unknown>>({
         endpoint: resolvedEndpoint,
+        dataEndpoint: resolvedEndpoint,
+        idField: 'OfferDetailID',
         resolveRowId: (row) =>
           normalizeOfferDetailId((row as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null),
         resolveRowLabel,
@@ -2643,12 +2648,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         successToastMessage: 'Row deleted',
         failureToastMessage: 'Unable to delete row. Please try again.',
         refreshHandler: (api) => refreshOfferProductGrid(api, { purge: true }),
-        canDelete: (count, rows) => {
-          const isCreator = userId != null && rows != null && rows.length > 0 && rows.every((row) => {
-            const createdBy = (row as { CreatedBy?: string | number | null } | null)?.CreatedBy;
-            return createdBy != null && String(createdBy) === String(userId);
-          });
-          return checkDeletePermissionForClient(roles, count, 'offerProducts', 'editOffers', { isCreator });
+        canDelete: (count) => {
+          return checkDeletePermissionForClient(roles, count, 'offerProducts', 'editOffers', { isCreator: isOfferCreator });
         },
         restoreEndpoint: `${resolvedEndpoint}/restore`,
         onDeleteSuccess: (deletedRows) => {
@@ -2669,7 +2670,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           }
         },
       }),
-    [resolvedEndpoint, refreshOfferProductGrid, roles, userId, pushUndo],
+    [resolvedEndpoint, refreshOfferProductGrid, roles, isOfferCreator, pushUndo],
   );
 
   const populateRequestedRowsToOffer = useCallback(async (nodes: RowNode<Record<string, unknown>>[]) => {
@@ -4085,7 +4086,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         const existingDeleteItem = items[deleteItemIndex];
         if (existingDeleteItem && typeof existingDeleteItem === 'object') {
           const totalSelected = Math.max(lastRowCountRef.current ?? 0, 0);
-          const deleteCheck = checkDeletePermissionForClient(roles, Math.max(totalSelected, 1), 'generic', 'editOffers');
+          const deleteCheck = checkDeletePermissionForClient(roles, Math.max(totalSelected, 1), 'offerProducts', 'editOffers', { isCreator: isOfferCreator });
           items[deleteItemIndex] = {
             ...(existingDeleteItem as MenuItemDef),
             name: 'Delete Products',
@@ -4624,6 +4625,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     pushUndo,
     refreshOfferProductGrid,
     roles,
+    isOfferCreator,
     productRowDeletion,
     router,
     offerId,
@@ -5319,7 +5321,6 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             rowMultiSelectWithClick
             rowDeselection
             useAgGridRowDrag
-            serverSideHeaderSelectMode="all"
             suppressColumnVirtualisation={false}
             cacheBlockSize={100}
             rowBuffer={5}

@@ -673,6 +673,8 @@ export default function ContactsClient({
     () =>
       new GridRowDeletion<Record<string, unknown>>({
         endpoint: "/api/customer-contacts",
+        dataEndpoint: "/api/customer-contacts",
+        idField: "ContactID",
         resolveRowId: (row) =>
           normalizeContactId((row as { ContactID?: unknown } | null)?.ContactID ?? null),
         resolveRowLabel: (row, fallback) =>

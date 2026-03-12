@@ -28,6 +28,7 @@ type Props = {
   headingTopText?: string | null;
   headingBottomText?: string | null;
   isStandardPackage: boolean;
+  offerCreatedByUserId?: string | null;
 };
 
 type AddActionType = 'product' | 'category' | 'printable-comment' | 'non-printable-comment';
@@ -110,6 +111,7 @@ export default function ClientProductsPage({
   headingTopText,
   headingBottomText,
   isStandardPackage,
+  offerCreatedByUserId,
 }: Props) {
   const { userId } = useAuditUser();
   const normalizedHeadingTop = typeof headingTopText === 'string' ? headingTopText.trim() : '';
@@ -983,6 +985,7 @@ export default function ClientProductsPage({
               onRequestPaste={handleRequestPaste}
               onRequestAddStandardPackage={handleRequestAddStandardPackage}
               onUndoStateChange={setUndoState}
+              offerCreatedByUserId={offerCreatedByUserId}
             />
           </div>
           {showAddProductModal ? (

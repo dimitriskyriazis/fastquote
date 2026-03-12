@@ -243,6 +243,8 @@ export default function PriceListsClient() {
     () =>
       new GridRowDeletion<Record<string, unknown>>({
         endpoint: '/api/price-lists',
+        dataEndpoint: '/api/price-lists',
+        idField: 'PriceListID',
         resolveRowId: (row) =>
           normalizePriceListIdValue((row as { PriceListID?: unknown } | null | undefined)?.PriceListID ?? null),
         resolveRowLabel: (row, fallback) =>

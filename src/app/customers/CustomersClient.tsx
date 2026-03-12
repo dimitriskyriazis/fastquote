@@ -382,6 +382,8 @@ export default function CustomersClient() {
     () =>
       new GridRowDeletion<Record<string, unknown>>({
         endpoint: "/api/customers",
+        dataEndpoint: "/api/customers",
+        idField: "CustomerID",
         resolveRowId: (row) =>
           normalizeCustomerId((row as { CustomerID?: unknown } | null)?.CustomerID ?? null),
         resolveRowLabel: (row, fallback) =>

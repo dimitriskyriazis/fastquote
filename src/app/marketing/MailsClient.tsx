@@ -205,6 +205,8 @@ export default function MailsClient() {
     () =>
       new GridRowDeletion<MailRow>({
         endpoint: "/api/marketing/mails",
+        dataEndpoint: "/api/marketing/mails",
+        idField: "MailID",
         resolveRowId: (row) => {
           const candidate = row?.MailID;
           return typeof candidate === "number" ? candidate : null;

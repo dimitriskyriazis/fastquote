@@ -417,6 +417,8 @@ export default function PriceListProductsClient({
     () =>
       new GridRowDeletion<PriceListProductRowGrid>({
         endpoint,
+        dataEndpoint: endpoint,
+        idField: 'PriceListItemID',
         resolveRowId: (row) => normalizePriceListItemId(row?.PriceListItemID ?? null),
         resolveRowLabel: resolvePriceListRowLabel,
         resolveRowTypeLabel: () => PRICE_LIST_ROW_TYPE_LABEL,

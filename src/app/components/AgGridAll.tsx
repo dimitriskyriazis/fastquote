@@ -111,7 +111,7 @@ import {
 } from '../../lib/gridExport';
 import styles from './AgGridAll.module.css';
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from './actionMenuMarkers';
-import { setGridRowDeletionContextMenuSelectionSnapshot } from '../../lib/gridRowDeletion';
+import { setGridRowDeletionContextMenuSelectionSnapshot, setGridQuickFilterText } from '../../lib/gridRowDeletion';
 import { useAuditUser } from './AuditUserProvider';
 import { GridQuickSearchContext } from './GridQuickSearchProvider';
 import { restoreCaretSelection } from '../hooks/useCaretKeeper';
@@ -1177,7 +1177,7 @@ export default function AgGridAll({
   suppressCellSelection = false,
   useAgGridRowDrag = false,
   suppressSideBar = false,
-  serverSideHeaderSelectMode = 'loaded',
+  serverSideHeaderSelectMode = 'all',
   suppressColumnMoveAnimation = false,
   onColumnStateRestored,
 }: Props) {
@@ -1622,7 +1622,12 @@ export default function AgGridAll({
 
   const captureSelectionSnapshot = useCallback((api: GridApi<RowData> | null) => {
     if (hasServerSideSelectAll(api)) {
-      setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, []);
+      // Collect all loaded nodes so the delete context menu can use them
+      const allNodes: Array<RowNode<RowData>> = [];
+      if (api && typeof api.forEachNode === 'function') {
+        api.forEachNode((node) => { if (node?.data) allNodes.push(node as RowNode<RowData>); });
+      }
+      setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, allNodes);
       return;
     }
     const selectedNodes = typeof api?.getSelectedNodes === 'function'
@@ -2181,6 +2186,7 @@ export default function AgGridAll({
     if (!isGridReady) return;
     const api = gridApiRef.current ?? gridRef.current?.api ?? null;
     if (!api || api.isDestroyed?.()) return;
+    setGridQuickFilterText(api as GridApi<unknown>, trimmedQuickSearch);
     if (!quickSearchEffectInitializedRef.current && trimmedQuickSearch.length === 0) {
       quickSearchEffectInitializedRef.current = true;
       return;

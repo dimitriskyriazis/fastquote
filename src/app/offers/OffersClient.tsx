@@ -361,6 +361,8 @@ export default function OffersClient() {
     () =>
       new GridRowDeletion<Record<string, unknown>>({
         endpoint: '/api/offers',
+        dataEndpoint: '/api/offers',
+        idField: 'offerId',
         resolveRowId: (row) =>
           normalizeOfferIdValue((row as { offerId?: unknown } | null | undefined)?.offerId ?? null),
         resolveRowLabel: (row, fallback) =>
@@ -378,11 +380,18 @@ export default function OffersClient() {
         successToastMessage: 'Offer deleted',
         failureToastMessage: 'Unable to delete offer. Please try again.',
         canDelete: (count, rows) => {
-          const isCreator = userId != null && rows != null && rows.length > 0 && rows.every((row) => {
+          const hasRowData = rows != null && rows.length > 0 && rows.some((row) => row != null);
+          const isCreator = hasRowData && userId != null && rows!.every((row) => {
             const createdBy = (row as { CreatedByUserId?: string | number | null } | null)?.CreatedByUserId;
             return createdBy != null && String(createdBy) === String(userId);
           });
-          return checkDeletePermissionForClient(roles, count, 'offers', 'editOffers', { isCreator });
+          // When row data is unavailable (e.g. delete-all), skip client-side creator check — server enforces it
+          const options = hasRowData ? { isCreator } : { isCreator: true };
+          const result = checkDeletePermissionForClient(roles, count, 'offers', 'editOffers', options);
+          if (!result.allowed) {
+            console.warn('[FastQuote] Offer delete blocked:', { reason: result.reason, isCreator, userId, roles, count, firstRowCreatedBy: rows?.[0] ? (rows[0] as Record<string, unknown>).CreatedByUserId : undefined });
+          }
+          return result;
         },
       }),
     [roles, userId],

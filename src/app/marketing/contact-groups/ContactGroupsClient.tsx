@@ -127,6 +127,8 @@ export default function ContactGroupsClient() {
     () =>
       new GridRowDeletion<GroupRow>({
         endpoint: "/api/marketing/contact-groups",
+        dataEndpoint: "/api/marketing/contact-groups",
+        idField: "ContactGroupID",
         resolveRowId: (row) => {
           const candidate = row?.ContactGroupID;
           return typeof candidate === "number" ? candidate : null;

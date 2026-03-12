@@ -10,6 +10,7 @@ type OfferHeaderInfo = {
   description: string | null;
   customerName: string | null;
   isStandardPackage: boolean;
+  createdByUserId: string | null;
 };
 
 async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
@@ -18,6 +19,7 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
     Description: string | null;
     CustomerName: string | null;
     IsStandardPackage: number | boolean | null;
+    CreatedBy: number | string | null;
   };
   try {
     const pool = await getPool();
@@ -28,7 +30,8 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
         o.Title,
         o.Description,
         c.Name AS CustomerName,
-        o.IsStandardPackage
+        o.IsStandardPackage,
+        o.CreatedBy
       FROM dbo.Offer AS o
       LEFT JOIN dbo.Customers AS c ON c.ID = o.CustomerID
       WHERE o.ID = @offerId
@@ -39,10 +42,11 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
       description: row?.Description?.trim() || null,
       customerName: row?.CustomerName?.trim() || null,
       isStandardPackage: row?.IsStandardPackage === true || row?.IsStandardPackage === 1,
+      createdByUserId: row?.CreatedBy != null ? String(row.CreatedBy) : null,
     };
   } catch (err) {
     console.error('Failed to load offer title for products page', err);
-    return { title: null, description: null, customerName: null, isStandardPackage: false };
+    return { title: null, description: null, customerName: null, isStandardPackage: false, createdByUserId: null };
   }
 }
 
@@ -53,7 +57,7 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
   const normalizedId = Number.parseInt(decodedId, 10);
   const offerHeader = hasNumericOfferId
     ? await fetchOfferHeaderInfo(normalizedId)
-    : { title: null, description: null, customerName: null, isStandardPackage: false };
+    : { title: null, description: null, customerName: null, isStandardPackage: false, createdByUserId: null };
   const offerTitle = offerHeader.title;
   const offerDescription = offerHeader.description;
   const customerName = offerHeader.customerName;
@@ -74,6 +78,7 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
       headingTopText={headingTopText}
       headingBottomText={headingBottomText}
       isStandardPackage={isStandardPackage}
+      offerCreatedByUserId={offerHeader.createdByUserId}
     />
   );
 }
