@@ -306,8 +306,8 @@ export default function StandardPackagesClient() {
         failureToastMessage: 'Unable to delete standard package. Please try again.',
         canDelete: (count, rows) => {
           const isCreator = userId != null && rows != null && rows.length > 0 && rows.every((row) => {
-            const createdBy = (row as { CreatedByUserId?: string | null } | null)?.CreatedByUserId;
-            return createdBy != null && createdBy === userId;
+            const createdBy = (row as { CreatedByUserId?: string | number | null } | null)?.CreatedByUserId;
+            return createdBy != null && String(createdBy) === String(userId);
           });
           return checkDeletePermissionForClient(roles, count, 'standardPackages', 'editOffers', { isCreator });
         },

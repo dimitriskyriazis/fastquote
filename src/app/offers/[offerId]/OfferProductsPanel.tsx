@@ -2645,8 +2645,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         refreshHandler: (api) => refreshOfferProductGrid(api, { purge: true }),
         canDelete: (count, rows) => {
           const isCreator = userId != null && rows != null && rows.length > 0 && rows.every((row) => {
-            const createdBy = (row as { CreatedBy?: string | null } | null)?.CreatedBy;
-            return createdBy != null && createdBy === userId;
+            const createdBy = (row as { CreatedBy?: string | number | null } | null)?.CreatedBy;
+            return createdBy != null && String(createdBy) === String(userId);
           });
           return checkDeletePermissionForClient(roles, count, 'offerProducts', 'editOffers', { isCreator });
         },
