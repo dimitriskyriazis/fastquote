@@ -119,7 +119,7 @@ export default function RecentOffersSection() {
   const offersToRender = verifiedOffers ?? [];
   const isCheckingRecentOffers = verifiedOffers === null;
 
-  if (isCheckingRecentOffers || offersToRender.length === 0) return null;
+  if (isCheckingRecentOffers) return null;
 
   return (
     <section className={styles.recentOffersSection}>
@@ -143,29 +143,35 @@ export default function RecentOffersSection() {
         </div>
       </header>
       <hr className={styles.sectionDivider} />
-      <div className={styles.recentOfferGrid}>
-        {offersToRender.map((offer) => {
-          const encodedId = encodeURIComponent(offer.id);
-          const descriptionValue = descriptionOverrides[offer.id] ?? offer.description?.trim();
-          const fallbackDescription = offer.label.includes(" – ")
-            ? offer.label.split(" – ")[0].trim()
-            : offer.label.trim();
-          const descriptionOnly = descriptionValue || fallbackDescription;
-          return (
-            <Link
-              key={offer.id}
-              href={`/offers/${encodedId}/products`}
-              className={styles.recentOfferCard}
-            >
-              <p className={styles.cardLabel}>{descriptionOnly}</p>
-              <div className={styles.cardMetaRow}>
-                <span className={styles.cardDate}>{formatDateTime(offer.openedAt)}</span>
-                <span className={styles.cardId}>Offer {offer.id}</span>
-              </div>
-            </Link>
-          );
-        })}
-      </div>
+      {offersToRender.length === 0 ? (
+        <div className={styles.emptyState}>
+          No recent offers to show. Offers you open will appear here.
+        </div>
+      ) : (
+        <div className={styles.recentOfferGrid}>
+          {offersToRender.map((offer) => {
+            const encodedId = encodeURIComponent(offer.id);
+            const descriptionValue = descriptionOverrides[offer.id] ?? offer.description?.trim();
+            const fallbackDescription = offer.label.includes(" – ")
+              ? offer.label.split(" – ")[0].trim()
+              : offer.label.trim();
+            const descriptionOnly = descriptionValue || fallbackDescription;
+            return (
+              <Link
+                key={offer.id}
+                href={`/offers/${encodedId}/products`}
+                className={styles.recentOfferCard}
+              >
+                <p className={styles.cardLabel}>{descriptionOnly}</p>
+                <div className={styles.cardMetaRow}>
+                  <span className={styles.cardDate}>{formatDateTime(offer.openedAt)}</span>
+                  <span className={styles.cardId}>Offer {offer.id}</span>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
