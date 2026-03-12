@@ -13,6 +13,7 @@ import {
   CustomersIcon,
   ContactsIcon,
   SuppliersIcon,
+  MarketingIcon,
 } from './components/NavIcons';
 
 const quickLinks = [
@@ -24,6 +25,7 @@ const quickLinks = [
   { label: 'Customers', href: '/customers', icon: <CustomersIcon size={28} /> },
   { label: 'Contacts', href: '/contacts', icon: <ContactsIcon size={28} /> },
   { label: 'Suppliers', href: '/suppliers', icon: <SuppliersIcon size={28} /> },
+  { label: 'Marketing', href: '/marketing', icon: <MarketingIcon size={28} /> },
 ];
 
 export default function Page() {

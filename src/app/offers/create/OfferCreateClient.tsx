@@ -685,7 +685,7 @@ export default function OfferCreateClient({
       { id: 'pricingPolicyId', label: 'Pricing Policy', section: 'commercial', required: true, type: 'select', options: localPricingPolicies },
       { id: 'marketId', label: 'Market', section: 'commercial', required: true, type: 'select', options: localMarkets },
       { id: 'salesDivisionId', label: 'Sales Division', section: 'commercial', required: true, type: 'select', options: localSalesDivisions },
-      { id: 'salesCreationPersonId', label: 'Sales Creation Person', section: 'commercial', required: true, type: 'select', options: salesUsers },
+      { id: 'salesCreationPersonId', label: 'Sales Creation Person', section: 'commercial', required: true, type: 'select', options: salesUsers, readOnly: true },
       { id: 'salesPersonId', label: 'Sales Person', section: 'commercial', type: 'select', options: salesUsers },
       { id: 'approvalUserId', label: 'Approval User', section: 'commercial', type: 'select', options: approvalUsers },
 

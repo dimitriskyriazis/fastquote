@@ -2,6 +2,7 @@ import { roleHasPermission, coerceRoles, type AppRole, type Permission } from '.
 
 export type DeleteCategory =
   | 'offers'
+  | 'offerProducts'
   | 'standardPackages'
   | 'pricelists'
   | 'pricingPolicies'
@@ -12,11 +13,16 @@ export type DeletePermissionResult =
   | { allowed: true }
   | { allowed: false; reason: string };
 
+export interface DeletePermissionOptions {
+  isCreator?: boolean;
+}
+
 export function checkDeletePermission(
   roles: readonly AppRole[],
   count: number,
   category: DeleteCategory,
   basePermission: Permission | null,
+  options?: DeletePermissionOptions,
 ): DeletePermissionResult {
   if (basePermission && !roleHasPermission(roles, basePermission)) {
     return { allowed: false, reason: 'You do not have permission to delete these records.' };
@@ -27,6 +33,7 @@ export function checkDeletePermission(
 
   switch (category) {
     case 'offers':
+      if (options?.isCreator && count === 1) break;
       if (count >= 2) {
         if (!hasCriticalOps)
           return { allowed: false, reason: 'Only developers can delete multiple offers at once.' };
@@ -36,7 +43,16 @@ export function checkDeletePermission(
       }
       break;
 
+    case 'offerProducts':
+      if (options?.isCreator) break;
+      if (count > 10) {
+        if (!hasDangerousOps)
+          return { allowed: false, reason: 'You can delete up to 10 rows at once. Select fewer rows.' };
+      }
+      break;
+
     case 'standardPackages':
+      if (options?.isCreator && count === 1) break;
       if (count >= 2) {
         if (!hasCriticalOps)
           return { allowed: false, reason: 'Only developers can delete multiple standard packages at once.' };
@@ -85,9 +101,10 @@ export function checkDeletePermissionForClient(
   count: number,
   category: DeleteCategory,
   basePermission: Permission | null,
+  options?: DeletePermissionOptions,
 ): DeletePermissionResult {
   const appRoles = coerceRoles([...roles]);
-  return checkDeletePermission(appRoles, count, category, basePermission);
+  return checkDeletePermission(appRoles, count, category, basePermission, options);
 }
 
 export function canDeleteAnyForClient(

@@ -448,7 +448,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "No markets provided" }, { status: 400 });
     }
 
-    const deleteCheck = checkDeletePermission(roles, ids.length, 'generic', null);
+    const deleteCheck = checkDeletePermission(roles, ids.length, 'generic', 'manageCustomersContacts');
     if (!deleteCheck.allowed) {
       return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }

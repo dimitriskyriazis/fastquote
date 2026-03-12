@@ -229,6 +229,7 @@ const buildFieldDefinitions = (
     updateField: 'CreatedBy',
     valueType: 'string',
     options: salesUsers,
+    readOnly: true,
   },
   {
     id: 'salesPersonId',

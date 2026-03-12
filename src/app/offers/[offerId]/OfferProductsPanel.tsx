@@ -2643,7 +2643,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         successToastMessage: 'Row deleted',
         failureToastMessage: 'Unable to delete row. Please try again.',
         refreshHandler: (api) => refreshOfferProductGrid(api, { purge: true }),
-        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'editOffers'),
+        canDelete: (count, rows) => {
+          const isCreator = userId != null && rows != null && rows.length > 0 && rows.every((row) => {
+            const createdBy = (row as { CreatedBy?: string | null } | null)?.CreatedBy;
+            return createdBy != null && createdBy === userId;
+          });
+          return checkDeletePermissionForClient(roles, count, 'offerProducts', 'editOffers', { isCreator });
+        },
         restoreEndpoint: `${resolvedEndpoint}/restore`,
         onDeleteSuccess: (deletedRows) => {
           if (deletedRows.length > 0) {
@@ -2663,7 +2669,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           }
         },
       }),
-    [resolvedEndpoint, refreshOfferProductGrid, roles, pushUndo],
+    [resolvedEndpoint, refreshOfferProductGrid, roles, userId, pushUndo],
   );
 
   const populateRequestedRowsToOffer = useCallback(async (nodes: RowNode<Record<string, unknown>>[]) => {

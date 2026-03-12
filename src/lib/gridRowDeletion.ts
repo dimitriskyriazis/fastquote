@@ -77,7 +77,7 @@ type GridRowDeletionConfig<RowData> = {
   successToastMessage?: string | ((typeLabel: string, label: string) => string);
   failureToastMessage?: string;
   refreshHandler?: (api: GridApi<RowData> | null) => void;
-  canDelete?: (count: number) => DeletePermissionResult;
+  canDelete?: (count: number, rows?: (RowData | null)[]) => DeletePermissionResult;
   restoreEndpoint?: string;
   onDeleteSuccess?: (deletedRows: unknown[], api: GridApi<RowData> | null) => void;
 };
@@ -180,7 +180,7 @@ export class GridRowDeletion<RowData> {
   private async deleteRows(rows: (RowData | null)[], ids: number[], api: GridApi<RowData> | null) {
     if (ids.length === 0) return;
     if (typeof this.config.canDelete === 'function') {
-      const check = this.config.canDelete(ids.length);
+      const check = this.config.canDelete(ids.length, rows);
       if (!check.allowed) {
         showToastMessage(check.reason, 'error');
         return;
@@ -314,15 +314,15 @@ export class GridRowDeletion<RowData> {
       if (targetEntries.length === 0) {
         return baseItems;
       }
+      const rows = targetEntries.map((entry) => entry.row ?? null);
       let deleteBlocked: string | null = null;
       if (typeof this.config.canDelete === 'function') {
-        const check = this.config.canDelete(targetEntries.length);
+        const check = this.config.canDelete(targetEntries.length, rows);
         if (!check.allowed) deleteBlocked = check.reason;
       }
       if (baseItems.length > 0 && baseItems[baseItems.length - 1] !== 'separator') {
         baseItems.push('separator');
       }
-      const rows = targetEntries.map((entry) => entry.row ?? null);
       const deleteLabel = targetEntries.length > 1
         ? `Delete ${this.getMultiRowTypeLabel(rows)}`
         : `Delete ${this.getRowTypeLabel(rows[0])}`;

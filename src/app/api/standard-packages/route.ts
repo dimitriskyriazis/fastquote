@@ -52,6 +52,7 @@ type StandardPackageRow = {
   Description: string | null;
   CreatedOn: string | null;
   CreatedBy: string | null;
+  CreatedByUserId: string | null;
   ModifiedOn: string | null;
   ModifiedBy: string | null;
   Comments: string | null;
@@ -88,6 +89,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Description: 'dbo.Offer.Description',
   CreatedOn: 'dbo.Offer.CreatedOn',
   CreatedBy: CREATED_BY_DISPLAY_EXPRESSION,
+  CreatedByUserId: 'dbo.Offer.CreatedBy',
   ModifiedOn: 'dbo.Offer.ModifiedOn',
   ModifiedBy: MODIFIED_BY_DISPLAY_EXPRESSION,
   Comments: 'dbo.Offer.Comments',
@@ -218,6 +220,7 @@ export async function POST(req: NextRequest) {
         dbo.Offer.Description,
         dbo.Offer.CreatedOn,
         ${CREATED_BY_DISPLAY_EXPRESSION} AS CreatedBy,
+        dbo.Offer.CreatedBy AS CreatedByUserId,
         dbo.Offer.ModifiedOn,
         ${MODIFIED_BY_DISPLAY_EXPRESSION} AS ModifiedBy,
         dbo.Offer.Comments,
@@ -423,12 +426,31 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'No standard packages selected for deletion' }, { status: 400 });
     }
 
-    const deleteCheck = checkDeletePermission(auth.roles, normalizedIds.length, 'standardPackages', null);
+    const pool = await getPool();
+
+    // Check if the current user created all the standard packages being deleted
+    const creatorCheckReq = pool.request();
+    creatorCheckReq.input('__creatorUserId', sql.NVarChar, auth.userId);
+    const creatorParamNames: string[] = [];
+    normalizedIds.forEach((id, idx) => {
+      const paramName = `__crOffer_${idx}`;
+      creatorCheckReq.input(paramName, sql.Int, id);
+      creatorParamNames.push(`@${paramName}`);
+    });
+    const creatorResult = await creatorCheckReq.query<{ Total: number; CreatedByUser: number }>(`
+      SELECT
+        COUNT(1) AS Total,
+        SUM(CASE WHEN CreatedBy = @__creatorUserId THEN 1 ELSE 0 END) AS CreatedByUser
+      FROM dbo.Offer
+      WHERE ID IN (${creatorParamNames.join(', ')})
+    `);
+    const creatorRow = creatorResult.recordset[0];
+    const isCreator = creatorRow != null && creatorRow.Total > 0 && creatorRow.Total === creatorRow.CreatedByUser;
+
+    const deleteCheck = checkDeletePermission(auth.roles, normalizedIds.length, 'standardPackages', null, { isCreator });
     if (!deleteCheck.allowed) {
       return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }
-
-    const pool = await getPool();
     const chunkSize = BATCH_DELETE_SIZE;
     let deleted = 0;
 

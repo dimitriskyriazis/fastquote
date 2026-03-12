@@ -58,6 +58,7 @@ type OfferRow = {
   SalesDivision: string | null;
   SalesPerson: string | null;
   SalesCreationPerson: string | null;
+  CreatedByUserId: string | null;
   OfferStatus: string | null;
   ERPProjectCode: string | null;
   ERPFWCProjectID: number | null;
@@ -103,6 +104,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   SalesDivision: 'dbo.SalesDivision.Name',
   SalesPerson: 'sales.FullName',
   SalesCreationPerson: 'created.FullName',
+  CreatedByUserId: 'dbo.Offer.CreatedBy',
   OfferStatus: 'dbo.OfferStatus.Name',
   ERPProjectCode: 'dbo.Offer.ERPProjectCode',
   ERPFWCProjectID: 'dbo.Offer.ERPFWCProjectID',
@@ -315,6 +317,7 @@ export async function POST(req: NextRequest) {
 	        dbo.SalesDivision.Name AS SalesDivision,
 	        sales.FullName AS SalesPerson,
 	        created.FullName AS SalesCreationPerson,
+	        dbo.Offer.CreatedBy AS CreatedByUserId,
 	        dbo.OfferStatus.Name AS OfferStatus,
 	        dbo.Offer.ERPProjectCode AS ERPProjectCode,
 	        dbo.Offer.ERPFWCProjectID AS ERPFWCProjectID,
@@ -612,12 +615,31 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'No offers selected for deletion' }, { status: 400 });
     }
 
-    const deleteCheck = checkDeletePermission(auth.roles, normalizedIds.length, 'offers', null);
+    const pool = await getPool();
+
+    // Check if the current user created all the offers being deleted
+    const creatorCheckReq = pool.request();
+    creatorCheckReq.input('__creatorUserId', sql.NVarChar, auth.userId);
+    const creatorParamNames: string[] = [];
+    normalizedIds.forEach((id, idx) => {
+      const paramName = `__crOffer_${idx}`;
+      creatorCheckReq.input(paramName, sql.Int, id);
+      creatorParamNames.push(`@${paramName}`);
+    });
+    const creatorResult = await creatorCheckReq.query<{ Total: number; CreatedByUser: number }>(`
+      SELECT
+        COUNT(1) AS Total,
+        SUM(CASE WHEN CreatedBy = @__creatorUserId THEN 1 ELSE 0 END) AS CreatedByUser
+      FROM dbo.Offer
+      WHERE ID IN (${creatorParamNames.join(', ')})
+    `);
+    const creatorRow = creatorResult.recordset[0];
+    const isCreator = creatorRow != null && creatorRow.Total > 0 && creatorRow.Total === creatorRow.CreatedByUser;
+
+    const deleteCheck = checkDeletePermission(auth.roles, normalizedIds.length, 'offers', null, { isCreator });
     if (!deleteCheck.allowed) {
       return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }
-
-    const pool = await getPool();
     const chunkSize = BATCH_DELETE_SIZE;
     let deleted = 0;
 

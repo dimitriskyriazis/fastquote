@@ -2638,12 +2638,31 @@ export async function DELETE(
       return NextResponse.json({ ok: false, error: 'No rows selected for deletion' }, { status: 400 });
     }
 
-    const deleteCheck = checkDeletePermission(auth.roles, normalizedIds.length, 'generic', null);
+    const pool = await getPool();
+
+    // Check if the current user created all the rows being deleted
+    const creatorCheckReq = pool.request();
+    creatorCheckReq.input('__creatorUserId', sql.NVarChar, auth.userId);
+    const creatorParamNames: string[] = [];
+    normalizedIds.forEach((id, idx) => {
+      const paramName = `__crDet_${idx}`;
+      creatorCheckReq.input(paramName, sql.Int, id);
+      creatorParamNames.push(`@${paramName}`);
+    });
+    const creatorResult = await creatorCheckReq.query<{ Total: number; CreatedByUser: number }>(`
+      SELECT
+        COUNT(1) AS Total,
+        SUM(CASE WHEN CreatedBy = @__creatorUserId THEN 1 ELSE 0 END) AS CreatedByUser
+      FROM dbo.OfferDetails
+      WHERE OfferDetailID IN (${creatorParamNames.join(', ')})
+    `);
+    const creatorRow = creatorResult.recordset[0];
+    const isCreator = creatorRow != null && creatorRow.Total > 0 && creatorRow.Total === creatorRow.CreatedByUser;
+
+    const deleteCheck = checkDeletePermission(auth.roles, normalizedIds.length, 'offerProducts', null, { isCreator });
     if (!deleteCheck.allowed) {
       return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }
-
-    const pool = await getPool();
     const chunkSize = 200;
     let deleted = 0;
     const allDeletedRows: Record<string, unknown>[] = [];

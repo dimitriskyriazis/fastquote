@@ -168,7 +168,7 @@ export default function CustomerGroupsClient() {
           (isSingle ? "Keep group" : "Keep groups"),
         successToastMessage: "Customer group deleted",
         failureToastMessage: "Unable to delete group. Please try again.",
-        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', null),
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageCustomersContacts'),
       }),
     [roles],
   );

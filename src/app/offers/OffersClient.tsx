@@ -377,9 +377,15 @@ export default function OffersClient() {
           (isSingle ? 'Keep offer' : 'Keep offers'),
         successToastMessage: 'Offer deleted',
         failureToastMessage: 'Unable to delete offer. Please try again.',
-        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'offers', 'editOffers'),
+        canDelete: (count, rows) => {
+          const isCreator = userId != null && rows != null && rows.length > 0 && rows.every((row) => {
+            const createdBy = (row as { CreatedByUserId?: string | null } | null)?.CreatedByUserId;
+            return createdBy != null && createdBy === userId;
+          });
+          return checkDeletePermissionForClient(roles, count, 'offers', 'editOffers', { isCreator });
+        },
       }),
-    [roles],
+    [roles, userId],
   );
 
   const offersContextMenuItems = useCallback(

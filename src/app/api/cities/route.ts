@@ -120,7 +120,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "No cities selected for deletion" }, { status: 400 });
     }
 
-    const deleteCheck = checkDeletePermission(auth.roles, ids.length, 'generic', null);
+    const deleteCheck = checkDeletePermission(auth.roles, ids.length, 'generic', 'manageCustomersContacts');
     if (!deleteCheck.allowed) {
       return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }

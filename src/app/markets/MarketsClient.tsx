@@ -190,7 +190,7 @@ export default function MarketsClient({ salesDivisions }: Props) {
             console.warn("Failed to refresh markets grid after deletion", err);
           }
         },
-        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', null),
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageCustomersContacts'),
         restoreEndpoint: "/api/markets/restore",
         onDeleteSuccess: (deletedRows, api) => {
           if (deletedRows.length > 0) {

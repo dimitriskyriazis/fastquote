@@ -277,7 +277,7 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    const deleteCheck = checkDeletePermission(roles, ids.length, 'generic', null);
+    const deleteCheck = checkDeletePermission(roles, ids.length, 'generic', 'manageCustomersContacts');
     if (!deleteCheck.allowed) {
       return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }

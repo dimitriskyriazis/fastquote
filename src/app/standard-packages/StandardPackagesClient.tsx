@@ -113,7 +113,7 @@ export default function StandardPackagesClient() {
   const router = useRouter();
   const routerRef = useRef(router);
   routerRef.current = router;
-  const { roles } = useAuditUser();
+  const { roles, userId } = useAuditUser();
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
@@ -304,9 +304,15 @@ export default function StandardPackagesClient() {
           (isSingle ? 'Keep standard package' : 'Keep standard packages'),
         successToastMessage: 'Standard package deleted',
         failureToastMessage: 'Unable to delete standard package. Please try again.',
-        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'standardPackages', 'editOffers'),
+        canDelete: (count, rows) => {
+          const isCreator = userId != null && rows != null && rows.length > 0 && rows.every((row) => {
+            const createdBy = (row as { CreatedByUserId?: string | null } | null)?.CreatedByUserId;
+            return createdBy != null && createdBy === userId;
+          });
+          return checkDeletePermissionForClient(roles, count, 'standardPackages', 'editOffers', { isCreator });
+        },
       }),
-    [roles],
+    [roles, userId],
   );
 
   const standardPackagesContextMenuItems = useCallback(
