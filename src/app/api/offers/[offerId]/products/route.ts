@@ -2666,7 +2666,7 @@ export async function DELETE(
         COUNT(1) AS Total,
         SUM(CASE WHEN CreatedBy = @__creatorUserId THEN 1 ELSE 0 END) AS CreatedByUser
       FROM dbo.OfferDetails
-      WHERE OfferDetailID IN (${creatorParamNames.join(', ')})
+      WHERE ID IN (${creatorParamNames.join(', ')})
     `);
     const creatorRow = creatorResult.recordset[0];
     const isProductCreator = creatorRow != null && creatorRow.Total > 0 && creatorRow.Total === creatorRow.CreatedByUser;
