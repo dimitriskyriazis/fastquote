@@ -79,7 +79,7 @@ export default function CreateDraftOfferButton({ offerId, className }: Props) {
         requestBody.customerCode = customerCodeInput.trim();
       }
 
-      const response = await fetch(`/api/offers/${encodeURIComponent(offerId)}/create-draft-offer`, {
+      const response = await fetch(`/api/offers/${encodeURIComponent(offerId)}/create-draft-order-soft1`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),

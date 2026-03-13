@@ -3,13 +3,11 @@ import { logRequest } from '../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getErpPool, getPool } from '../../../../lib/sql';
 import { findProject, PROJECT_FIND_STATUS } from '../../../../lib/projectValidation';
-import { createProjectFromIntegration } from '../../../../lib/projectCreation';
-import { createCustomerOrder, addOrderLine } from '../../../../lib/orderCreation';
+import { getSoftOneClient } from '../../../../lib/softone';
+import { fuzzyCustomerSearch } from '../../../../lib/customerSearch';
 
 type SmokeTestPostBody = {
-  trdr?: number | null; // ERP customer (TRDR) for standalone order test; optional
-  mtrl?: number | null; // ERP material (MTRL) for standalone line test; optional
-  offerId: number; // FastQuote offer ID to run full create-draft-offer flow against
+  offerId: number; // FastQuote offer ID to validate readiness for ERP integration
 };
 
 export async function GET(_req: NextRequest) {
@@ -35,12 +33,24 @@ export async function GET(_req: NextRequest) {
       WHERE IntegrationKey IN (N'FASTQUOTE_CREATE_PRJC', N'FASTQUOTE_CREATE_FINDOC');
     `);
 
+    // SoftOne Web Services connectivity check
+    let wsHealthCheck: { ok: boolean; error?: string } = { ok: false, error: 'not attempted' };
+    try {
+      const client = getSoftOneClient();
+      wsHealthCheck = await client.healthCheck();
+    } catch (err) {
+      wsHealthCheck = { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+
     return NextResponse.json({
       ok: true,
       erpConnectionOk,
+      wsConnectionOk: wsHealthCheck.ok,
+      wsConnectionError: wsHealthCheck.error ?? null,
       integrationConfig: configResult.recordset ?? [],
+      projectCreationMode: process.env.SOFTONE_WS_PROJECT_CREATION === 'true' ? 'webservice' : 'sql',
       message:
-        'ERP connectivity and IntegrationConfig checked. POST with { "offerId": <number> } (optional: "trdr", "mtrl") to run smoke test.',
+        'ERP connectivity, WS connectivity, and IntegrationConfig checked. POST with { "offerId": <number> } to run full read-only smoke test.',
     });
   } catch (err) {
     console.error('ERP smoke-test GET failed', err);
@@ -68,29 +78,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         ok: false,
-        error:
-          'Body must be JSON with "offerId" (positive number). Optional: "trdr", "mtrl" for standalone order/line tests.',
+        error: 'Body must be JSON with "offerId" (positive number).',
       },
       { status: 400 },
     );
   }
 
   const offerId = body.offerId;
-  const trdr =
-    body.trdr != null && typeof body.trdr === 'number' && body.trdr > 0
-      ? body.trdr
-      : null;
-  const mtrl =
-    body.mtrl != null && typeof body.mtrl === 'number' && body.mtrl > 0
-      ? body.mtrl
-      : null;
-
   const steps: Record<string, unknown> = {};
 
   try {
     const erpPool = await getErpPool();
+    const pool = await getPool();
 
-    // Step 1: ERP connectivity
+    // Step 1: SoftOne Web Services connectivity (login + authenticate)
+    try {
+      const client = getSoftOneClient();
+      const wsHealth = await client.healthCheck();
+      steps.wsConnection = {
+        ok: wsHealth.ok,
+        error: wsHealth.error ?? null,
+        mode: process.env.SOFTONE_WS_PROJECT_CREATION === 'true' ? 'webservice' : 'sql',
+      };
+    } catch (err) {
+      steps.wsConnection = {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+
+    // Step 2: ERP SQL connectivity
     try {
       const pingResult = await erpPool
         .request()
@@ -103,11 +120,10 @@ export async function POST(req: NextRequest) {
         ok: false,
         error: err instanceof Error ? err.message : String(err),
       };
-      // If even this fails, abort early
       return NextResponse.json({ ok: false, steps }, { status: 500 });
     }
 
-    // Step 2: IntegrationConfig check
+    // Step 3: IntegrationConfig check
     try {
       const configResult = await erpPool.request().query<{
         IntegrationKey: string;
@@ -117,9 +133,12 @@ export async function POST(req: NextRequest) {
         FROM tlm.IntegrationConfig
         WHERE IntegrationKey IN (N'FASTQUOTE_CREATE_PRJC', N'FASTQUOTE_CREATE_FINDOC');
       `);
+      const entries = configResult.recordset ?? [];
+      const allEnabled = entries.length >= 2 && entries.every(e => e.IsEnabled);
       steps.integrationConfig = {
         ok: true,
-        entries: configResult.recordset ?? [],
+        allEnabled,
+        entries,
       };
     } catch (err) {
       steps.integrationConfig = {
@@ -128,293 +147,358 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    // Step 3: Project validation using known test values (if present)
-    // Uses example: PRJC = 89191, CODE = 'COV.0004'
+    // Step 4: Offer lookup (FastQuote DB — read-only)
+    let erpCustomerId: number | null = null;
+    let erpProjectId: number | null = null;
+    let erpProjectCode: string | null = null;
+    let customerName: string | null = null;
     try {
-      const validation = await findProject(89191, 'COV.0004');
-      steps.projectValidation = {
-        ok: validation.statusCode === PROJECT_FIND_STATUS.OK,
-        result: validation,
-      };
+      const offerResult = await pool
+        .request()
+        .input('offerId', sql.Int, offerId)
+        .query<{
+          ID: number;
+          Description: string | null;
+          SalesDivisionName: string | null;
+          ERPProjectID: number | null;
+          ERPProjectCode: string | null;
+          ERPCustomerID: number | null;
+          CustomerName: string | null;
+          ProductCount: number;
+        }>(`
+          SELECT
+            o.ID,
+            o.Description,
+            sd.Name AS SalesDivisionName,
+            o.ERPProjectID,
+            o.ERPProjectCode,
+            c.ERPID AS ERPCustomerID,
+            c.Name AS CustomerName,
+            (SELECT COUNT(*) FROM dbo.OfferDetails od
+             INNER JOIN dbo.Products p ON od.ProductID = p.ID
+             WHERE od.OfferID = o.ID AND od.ProductID IS NOT NULL) AS ProductCount
+          FROM dbo.Offer o
+          INNER JOIN dbo.Customers c ON o.CustomerID = c.ID
+          LEFT JOIN dbo.SalesDivision sd ON o.SalesDivisionID = sd.ID
+          WHERE o.ID = @offerId
+        `);
+
+      const row = offerResult.recordset?.[0] ?? null;
+      if (!row) {
+        steps.offerLookup = { ok: false, error: `Offer ${offerId} not found` };
+      } else {
+        erpCustomerId = row.ERPCustomerID;
+        erpProjectId = row.ERPProjectID;
+        erpProjectCode = row.ERPProjectCode;
+        customerName = row.CustomerName;
+        steps.offerLookup = {
+          ok: true,
+          offerId: row.ID,
+          description: row.Description,
+          salesDivision: row.SalesDivisionName,
+          customerName: row.CustomerName,
+          erpCustomerId: row.ERPCustomerID,
+          erpProjectId: row.ERPProjectID,
+          erpProjectCode: row.ERPProjectCode,
+          productCount: row.ProductCount,
+        };
+      }
     } catch (err) {
-      steps.projectValidation = {
+      steps.offerLookup = {
         ok: false,
         error: err instanceof Error ? err.message : String(err),
       };
     }
 
-    // Step 4: Project creation via prjc_CreateFromIntegration
-    let testProjectId: number | null = null;
-    try {
-      const created = await createProjectFromIntegration({
-        integrationKey: 'FASTQUOTE_CREATE_PRJC',
-        codePrefix: 'COV',
-        name: 'FastQuote ERP Smoke Test Project',
-        prjcParent: null,
-        trdr: null,
-        prjCategory: null,
-        sourceSystem: 'FQ',
-        createdByUser: 1011,
-        businessUnit: 'AVS',
-        prjState: 90,
-      });
-
-      testProjectId = created.prjcId;
-
-      steps.projectCreation = {
-        ok: true,
-        prjcId: created.prjcId,
-        prjcCode: created.prjcCode,
-      };
-    } catch (err) {
-      steps.projectCreation = {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      };
-    }
-
-    // Step 5: Customer order creation (only if trdr provided)
-    let testFindocId: number | null = null;
-    if (trdr == null) {
-      steps.orderCreation = { ok: true, skipped: true, reason: 'trdr not provided' };
-    } else {
+    // Step 5: Project validation (ERP DB — read-only)
+    if (erpProjectId && erpProjectId > 0) {
       try {
-        if (!testProjectId) {
-          throw new Error('Project creation failed; cannot create order');
+        // If we don't have a code, fetch it
+        let codeToValidate = erpProjectCode;
+        if (!codeToValidate) {
+          const projResult = await erpPool
+            .request()
+            .input('PRJC', sql.Int, erpProjectId)
+            .query<{ CODE: string | null }>('SELECT CODE FROM dbo.PRJC WHERE PRJC = @PRJC');
+          codeToValidate = projResult.recordset?.[0]?.CODE ?? null;
         }
 
-        const orderInfo = await createCustomerOrder({
-          prjcId: testProjectId,
-          businessUnit: 'AVS',
-          trdr,
-          integrationKey: 'FASTQUOTE_CREATE_FINDOC',
-          series: 9001,
-          createdByUser: 1011,
-        });
-
-        testFindocId = orderInfo.findocId;
-        steps.orderCreation = {
-          ok: true,
-          findocId: orderInfo.findocId,
-          finCode: orderInfo.finCode,
-          seriesNum: orderInfo.seriesNum,
-        };
+        if (codeToValidate) {
+          const validation = await findProject(erpProjectId, codeToValidate);
+          steps.projectValidation = {
+            ok: validation.statusCode === PROJECT_FIND_STATUS.OK,
+            result: validation,
+          };
+        } else {
+          steps.projectValidation = {
+            ok: false,
+            error: `Project ${erpProjectId} exists in offer but has no CODE in ERP`,
+          };
+        }
       } catch (err) {
-        steps.orderCreation = {
+        steps.projectValidation = {
           ok: false,
           error: err instanceof Error ? err.message : String(err),
         };
       }
-    }
-
-    // Step 6: Order line creation (only if mtrl provided and order was created)
-    if (mtrl == null || testFindocId == null) {
-      steps.lineCreation = {
+    } else {
+      steps.projectValidation = {
         ok: true,
         skipped: true,
-        reason: mtrl == null ? 'mtrl not provided' : 'order not created',
+        reason: 'Offer has no ERP project yet — one will be created on draft order',
       };
-    } else {
-      try {
-        await addOrderLine({
-          findocId: testFindocId,
-          cccPosNo: '1',
-          mtrl,
-          qty: 1,
-          price: 1,
-          num01: 0,
-          createdByUser: 1011,
-        });
+    }
 
-        steps.lineCreation = {
-          ok: true,
-          findocId: testFindocId,
-          mtrl,
+    // Step 6: Customer lookup in ERP (read-only)
+    if (erpCustomerId && erpCustomerId > 0) {
+      try {
+        const custResult = await erpPool
+          .request()
+          .input('TRDR', sql.Int, erpCustomerId)
+          .query<{
+            TRDR: number;
+            CODE: string | null;
+            NAME: string | null;
+          }>(`
+            SELECT TOP (1) TRDR, CODE, NAME
+            FROM dbo.TRDR
+            WHERE TRDR = @TRDR
+          `);
+        const cust = custResult.recordset?.[0] ?? null;
+        steps.customerLookup = {
+          ok: !!cust,
+          found: !!cust,
+          erpCustomerId,
+          erpCode: cust?.CODE ?? null,
+          erpName: cust?.NAME ?? null,
         };
       } catch (err) {
-        steps.lineCreation = {
+        steps.customerLookup = {
           ok: false,
           error: err instanceof Error ? err.message : String(err),
         };
       }
+    } else if (customerName) {
+      // Try finding customer by name — SP first, then fuzzy LIKE fallback
+      try {
+        const searchResult = await erpPool
+          .request()
+          .input('SearchValue', sql.NVarChar(200), customerName)
+          .query<{
+            TRDR: number;
+            CODE: string | null;
+            NAME: string | null;
+          }>('EXEC tlm.FindCustomer @SearchValue = @SearchValue');
+        const spMatches = searchResult.recordset ?? [];
+
+        // If SP returned no matches, try fuzzy LIKE search on TRDR
+        let searchMethod = 'FindCustomer';
+        let fuzzyMatches: Array<{ TRDR: number; CODE: string | null; NAME: string | null }> = [];
+        if (spMatches.length === 0) {
+          searchMethod = 'fuzzy';
+          fuzzyMatches = await fuzzyCustomerSearch(erpPool, customerName);
+        }
+
+        const allMatches = spMatches.length > 0 ? spMatches : fuzzyMatches;
+        steps.customerLookup = {
+          ok: true,
+          found: allMatches.length > 0,
+          matchCount: allMatches.length,
+          searchMethod,
+          searchedName: customerName,
+          matches: allMatches.slice(0, 10).map(m => ({
+            TRDR: m.TRDR,
+            CODE: m.CODE,
+            NAME: m.NAME,
+          })),
+        };
+      } catch (err) {
+        steps.customerLookup = {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    } else {
+      steps.customerLookup = {
+        ok: true,
+        skipped: true,
+        reason: 'No customer ERPID or name available',
+      };
     }
 
-    // Step 7: Full create-draft-offer flow for the given offerId
+    // Step 7: Product matching in ERP (read-only — test first product from the offer)
     try {
-      const pool = await getPool();
-
-      // Snapshot offer state before
-      const beforeOfferResult = await pool
+      const productResult = await pool
         .request()
         .input('offerId', sql.Int, offerId)
         .query<{
-          ID: number;
-          ERPProjectID: number | null;
-          ERPProjectCode: string | null;
-          ERPCustomerID: number | null;
+          ProductID: number;
+          PartNumberCleared: string | null;
+          ModelNumberCleared: string | null;
+          ERPID: number | null;
+          ERPCode: string | null;
+          BrandName: string | null;
         }>(`
-          SELECT 
-            o.ID,
-            o.ERPProjectID,
-            o.ERPProjectCode,
-            c.ERPID AS ERPCustomerID
-          FROM dbo.Offer o
-          INNER JOIN dbo.Customers c ON o.CustomerID = c.ID
-          WHERE o.ID = @offerId;
+          SELECT TOP (3)
+            p.ID AS ProductID,
+            p.PartNumberCleared,
+            p.ModelNumberCleared,
+            p.ERPID,
+            p.ERPCode,
+            b.Name AS BrandName
+          FROM dbo.OfferDetails od
+          INNER JOIN dbo.Products p ON od.ProductID = p.ID
+          LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
+          WHERE od.OfferID = @offerId
+            AND od.ProductID IS NOT NULL
+            AND (p.PartNumberCleared IS NOT NULL OR p.ModelNumberCleared IS NOT NULL)
         `);
 
-      const beforeOffer = beforeOfferResult.recordset?.[0] ?? null;
+      const products = productResult.recordset ?? [];
+      if (products.length === 0) {
+        steps.productMatching = {
+          ok: true,
+          skipped: true,
+          reason: 'No products with part/model numbers in this offer',
+        };
+      } else {
+        const matchResults: unknown[] = [];
+        for (const product of products) {
+          // If product already has an ERPID, just report it
+          if (product.ERPID) {
+            matchResults.push({
+              productId: product.ProductID,
+              partNumber: product.PartNumberCleared,
+              modelNumber: product.ModelNumberCleared,
+              alreadyLinked: true,
+              erpId: product.ERPID,
+              erpCode: product.ERPCode,
+            });
+            continue;
+          }
 
-      const origin = req.nextUrl.origin;
-      const offerIdStr = String(offerId);
-
-      const draftResp = await fetch(
-        `${origin}/api/offers/${encodeURIComponent(offerIdStr)}/create-draft-offer`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          // Empty selections -> exercise the full auto path
-          body: JSON.stringify({ selections: [] }),
-        },
-      );
-
-      const draftJson = await draftResp.json().catch(() => null);
-
-      // Snapshot offer state after
-      const afterOfferResult = await pool
-        .request()
-        .input('offerId', sql.Int, offerId)
-        .query<{
-          ID: number;
-          ERPProjectID: number | null;
-          ERPProjectCode: string | null;
-          ERPCustomerID: number | null;
-        }>(`
-          SELECT 
-            o.ID,
-            o.ERPProjectID,
-            o.ERPProjectCode,
-            c.ERPID AS ERPCustomerID
-          FROM dbo.Offer o
-          INNER JOIN dbo.Customers c ON o.CustomerID = c.ID
-          WHERE o.ID = @offerId;
-        `);
-
-      const afterOffer = afterOfferResult.recordset?.[0] ?? null;
-
-      let projectRow: unknown = null;
-      let orderRow: unknown = null;
-      let orderLineCount: number | null = null;
-
-      if (afterOffer?.ERPProjectID) {
-        // Check project exists in ERP
-        const projResult = await erpPool
-          .request()
-          .input('PRJC', sql.Int, afterOffer.ERPProjectID)
-          .query<{
-            PRJC: number;
-            CODE: string | null;
-            COMPANY: number;
-          }>(`
-            SELECT TOP (1)
-              p.PRJC,
-              p.CODE,
-              p.COMPANY
-            FROM dbo.PRJC p
-            WHERE p.PRJC = @PRJC;
-          `);
-
-        projectRow = projResult.recordset?.[0] ?? null;
-
-        // Check latest order for this project and customer
-        if (afterOffer.ERPCustomerID) {
-          const orderResult = await erpPool
-            .request()
-            .input('PRJC', sql.Int, afterOffer.ERPProjectID)
-            .input('TRDR', sql.Int, afterOffer.ERPCustomerID)
-            .query<{
-              FINDOC: number;
-              FINCODE: string | null;
-              SERIESNUM: number | null;
-              TRNDATE: Date | null;
-            }>(`
-              SELECT TOP (1)
-                f.FINDOC,
-                f.FINCODE,
-                f.SERIESNUM,
-                f.TRNDATE
-              FROM dbo.FINDOC f
-              WHERE f.COMPANY = 1
-                AND f.SODTYPE = 13
-                AND f.PRJC = @PRJC
-                AND f.TRDR = @TRDR
-              ORDER BY f.FINDOC DESC;
-            `);
-
-          const ord = orderResult.recordset?.[0] ?? null;
-          orderRow = ord;
-
-          if (ord) {
-            const lineResult = await erpPool
+          // Try finding in ERP (read-only)
+          try {
+            const erpResult = await erpPool
               .request()
-              .input('FINDOC', sql.Int, ord.FINDOC)
-              .query<{ Cnt: number }>(`
-                SELECT COUNT(*) AS Cnt
-                FROM dbo.MTRLINES
-                WHERE FINDOC = @FINDOC
-                  AND SODTYPE = 51;
-              `);
+              .input('PartNo', sql.NVarChar(200), product.PartNumberCleared)
+              .input('ModelNo', sql.NVarChar(200), product.ModelNumberCleared)
+              .input('TopN', sql.Int, 5)
+              .query(`
+                DECLARE @FoundCount INT;
+                EXEC [tlm].[_mtrlFindProduct]
+                  @PartNo = @PartNo,
+                  @ModelNo = @ModelNo,
+                  @TopN = @TopN,
+                  @FoundCount = @FoundCount OUTPUT;
+              `) as { recordsets?: Array<Array<unknown>> };
 
-            orderLineCount = lineResult.recordset?.[0]?.Cnt ?? 0;
+            const foundCountArr = (erpResult.recordsets?.[0] ?? []) as Array<{ FoundCount: number }>;
+            const foundCount = foundCountArr[0]?.FoundCount ?? 0;
+            const matches = (erpResult.recordsets?.[1] ?? []) as Array<{
+              MTRL: number;
+              CODE: string | null;
+              NAME1: string | null;
+            }>;
+
+            matchResults.push({
+              productId: product.ProductID,
+              partNumber: product.PartNumberCleared,
+              modelNumber: product.ModelNumberCleared,
+              brandName: product.BrandName,
+              alreadyLinked: false,
+              foundCount,
+              matches: matches.map(m => ({
+                MTRL: m.MTRL,
+                CODE: m.CODE,
+                NAME1: m.NAME1,
+              })),
+            });
+          } catch (err) {
+            matchResults.push({
+              productId: product.ProductID,
+              partNumber: product.PartNumberCleared,
+              modelNumber: product.ModelNumberCleared,
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
         }
+
+        steps.productMatching = {
+          ok: true,
+          testedCount: products.length,
+          results: matchResults,
+        };
       }
-
-      const draftApiOk =
-        draftResp.ok === true && (draftJson as { ok?: boolean } | null)?.ok === true;
-      const hasProject = !!afterOffer?.ERPProjectID && !!projectRow;
-      const hasCustomer = !!(afterOffer?.ERPCustomerID && afterOffer.ERPCustomerID > 0);
-      const hasOrderAndLines =
-        !!orderRow && (orderLineCount ?? 0) > 0;
-      // Success: API ok, project created/valid. If customer has ERPID we also expect order + lines.
-      const createDraftOfferOk = draftApiOk &&
-        hasProject &&
-        (!hasCustomer || hasOrderAndLines);
-
-      steps.createDraftOffer = {
-        ok: createDraftOfferOk,
-        request: {
-          status: draftResp.status,
-        },
-        response: draftJson,
-        beforeOffer,
-        afterOffer,
-        project: projectRow,
-        order: orderRow,
-        orderLineCount,
-      };
     } catch (err) {
-      steps.createDraftOffer = {
+      steps.productMatching = {
         ok: false,
         error: err instanceof Error ? err.message : String(err),
       };
     }
 
-    const overallOk =
-      (steps.erpConnection as { ok?: boolean } | undefined)?.ok === true &&
-      (steps.integrationConfig as { ok?: boolean } | undefined)?.ok === true &&
-      (steps.projectCreation as { ok?: boolean } | undefined)?.ok === true &&
-      (steps.orderCreation as { ok?: boolean } | undefined)?.ok === true &&
-      (steps.lineCreation as { ok?: boolean } | undefined)?.ok === true &&
-      (steps.createDraftOffer as { ok?: boolean } | undefined)?.ok === true;
+    // Step 8: Check existing ERP orders for this offer's project (read-only)
+    if (erpProjectId && erpProjectId > 0 && erpCustomerId && erpCustomerId > 0) {
+      try {
+        const orderResult = await erpPool
+          .request()
+          .input('PRJC', sql.Int, erpProjectId)
+          .input('TRDR', sql.Int, erpCustomerId)
+          .query<{
+            FINDOC: number;
+            FINCODE: string | null;
+            SERIESNUM: number | null;
+            TRNDATE: Date | null;
+            LineCount: number;
+          }>(`
+            SELECT TOP (3)
+              f.FINDOC,
+              f.FINCODE,
+              f.SERIESNUM,
+              f.TRNDATE,
+              (SELECT COUNT(*) FROM dbo.MTRLINES ml WHERE ml.FINDOC = f.FINDOC AND ml.SODTYPE = 51) AS LineCount
+            FROM dbo.FINDOC f
+            WHERE f.COMPANY = 1
+              AND f.SODTYPE = 13
+              AND f.PRJC = @PRJC
+              AND f.TRDR = @TRDR
+            ORDER BY f.FINDOC DESC
+          `);
+
+        const orders = orderResult.recordset ?? [];
+        steps.existingOrders = {
+          ok: true,
+          orderCount: orders.length,
+          orders: orders.map(o => ({
+            findocId: o.FINDOC,
+            finCode: o.FINCODE,
+            seriesNum: o.SERIESNUM,
+            trnDate: o.TRNDATE,
+            lineCount: o.LineCount,
+          })),
+        };
+      } catch (err) {
+        steps.existingOrders = {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    } else {
+      steps.existingOrders = {
+        ok: true,
+        skipped: true,
+        reason: erpProjectId ? 'No ERP customer ID' : 'No ERP project ID',
+      };
+    }
+
+    const overallOk = Object.values(steps).every(
+      (step) => (step as { ok?: boolean })?.ok === true,
+    );
 
     return NextResponse.json({
       ok: overallOk,
       steps,
-      note:
-        'Performs real writes (project, optionally order+line). createDraftOffer runs for offerId. When customer has no ERPID, order/lines are not required for success.',
+      note: 'Read-only smoke test. No data is written to any database.',
     });
   } catch (err) {
     console.error('ERP smoke-test POST failed', err);
@@ -422,10 +506,9 @@ export async function POST(req: NextRequest) {
       {
         ok: false,
         error: err instanceof Error ? err.message : 'ERP smoke-test POST failed',
-        steps: {},
+        steps,
       },
       { status: 500 },
     );
   }
 }
-

@@ -1,5 +1,6 @@
 import sql from 'mssql';
 import { getErpPool } from './sql';
+import { createProjectViaWebService } from './projectCreationWS';
 
 export type CreateProjectFromIntegrationParams = {
   integrationKey: string; // e.g. 'FASTQUOTE_CREATE_PRJC'
@@ -19,18 +20,21 @@ export type CreatedProjectInfo = {
   prjcCode: string;
 };
 
+const USE_WS_PROJECT_CREATION = process.env.SOFTONE_WS_PROJECT_CREATION === 'true';
+
 /**
- * Calls tlm.prjc_CreateFromIntegration to create a new project in ERP.
+ * Creates a new project in ERP.
  *
- * This procedure:
- * - Enforces the IntegrationConfig kill switch
- * - Generates a unique project CODE using the configured counters
- * - Inserts into dbo.PRJC (and related tables)
- * - Returns the new PRJC ID and CODE
+ * When SOFTONE_WS_PROJECT_CREATION=true, uses the SoftOne setProject web service.
+ * Otherwise falls back to the direct SQL stored procedure tlm.prjc_CreateFromIntegration.
  */
 export async function createProjectFromIntegration(
   params: CreateProjectFromIntegrationParams,
 ): Promise<CreatedProjectInfo> {
+  if (USE_WS_PROJECT_CREATION) {
+    return createProjectViaWebService(params);
+  }
+
   const erpPool = await getErpPool();
   const request = erpPool.request();
 

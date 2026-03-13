@@ -8,34 +8,6 @@ const separatorCache = new Map<string, SeparatorInfo>();
 
 const getCacheKey = (locale?: string) => (locale && locale.trim() ? locale.trim() : "__default__");
 
-const NUMBER_LOCALE_COOKIE = "fastquote-number-locale";
-
-const readCookie = (name: string): string | null => {
-  if (typeof document === "undefined") return null;
-  const segments = document.cookie.split(";").map((segment) => segment.trim());
-  for (const segment of segments) {
-    if (!segment) continue;
-    if (segment.startsWith(`${name}=`)) {
-      const raw = decodeURIComponent(segment.slice(name.length + 1));
-      const trimmed = raw.trim();
-      return trimmed ? trimmed : null;
-    }
-  }
-  return null;
-};
-
-const inferLocaleFromTimeZone = (): string | null => {
-  // Best-effort "regional format" hint. Browsers don't expose OS number-format overrides,
-  // so we fall back to a time zone heuristic when needed.
-  try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (tz === "Europe/Athens") return "el-GR";
-  } catch {
-    /* noop */
-  }
-  return null;
-};
-
 export const getUserNumberLocale = (): string => {
   // Always use Greek locale (comma as decimal separator) regardless of regional settings
   return "el-GR";

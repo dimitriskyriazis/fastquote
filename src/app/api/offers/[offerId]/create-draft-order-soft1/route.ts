@@ -8,6 +8,7 @@ import { createCustomerOrder, addOrderLine } from '../../../../../lib/orderCreat
 import { getRequestId } from '../../../../../lib/requestId';
 import { logger } from '../../../../../lib/logger';
 import { requirePermission } from '../../../../../lib/authz';
+import { fuzzyCustomerSearch } from '../../../../../lib/customerSearch';
 
 type ProductMatch = {
   productId: number;
@@ -411,7 +412,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
 ) {
-  logRequest(req, '/api/offers/[offerId]/create-draft-offer');
+  logRequest(req, '/api/offers/[offerId]/create-draft-order-soft1');
   try {
     const auth = await requirePermission(req, "editOffers");
     if (!auth.ok) return auth.response;
@@ -488,7 +489,7 @@ export async function POST(
       if (customerSelection && customerConfirmed) {
         // User confirmed the customer selection
         erpCustomerId = customerSelection.TRDR;
-        logger.info('create-draft-offer customer confirmed', {
+        logger.info('create-draft-order-soft1 customer confirmed', {
           requestId,
           offerId: normalizedId,
           erpCustomerId,
@@ -536,7 +537,7 @@ export async function POST(
           });
         }
       } else if (customerName) {
-        // Search by customer name
+        // Search by customer name — SP first, then fuzzy LIKE fallback
         const customerSearchRequest = erpPool.request();
         customerSearchRequest.input('SearchValue', sql.NVarChar(200), customerName);
         const customerSearchResult = await customerSearchRequest.query<{
@@ -546,13 +547,18 @@ export async function POST(
         }>(`
           EXEC tlm.FindCustomer @SearchValue = @SearchValue
         `);
-        const customerMatches = customerSearchResult.recordset ?? [];
+        let customerMatches = customerSearchResult.recordset ?? [];
+
+        // If FindCustomer returned 0 matches, try fuzzy search (Latin + Greek)
+        if (customerMatches.length === 0) {
+          customerMatches = await fuzzyCustomerSearch(erpPool, customerName);
+        }
 
         if (customerMatches.length === 0) {
-          // No matches by name, ask for customer code
+          // No matches even with fuzzy search, ask for customer code
           return NextResponse.json({
             ok: false,
-            error: `No customer found with name: ${customerName}. Please provide customer code.`,
+            error: `No customer found matching: ${customerName}. Please provide customer code.`,
             needsCustomerCode: true,
           });
         } else if (customerMatches.length === 1) {
@@ -567,7 +573,7 @@ export async function POST(
           return NextResponse.json({
             ok: true,
             needsCustomerSelection: customerMatches,
-            message: `Multiple customers found with name: ${customerName}. Please select one.`,
+            message: `Multiple customers found matching: ${customerName}. Please select one.`,
           });
         }
       } else {
@@ -592,7 +598,7 @@ export async function POST(
           WHERE ID = (SELECT CustomerID FROM dbo.Offer WHERE ID = @offerId)
             AND ERPID IS NULL
         `);
-        logger.info('create-draft-offer customer ERPID persisted', {
+        logger.info('create-draft-order-soft1 customer ERPID persisted', {
           requestId,
           offerId: normalizedId,
           erpCustomerId,
@@ -638,7 +644,7 @@ export async function POST(
 
     const products = productsResult.recordset ?? [];
     if (products.length === 0) {
-      logger.info('create-draft-offer no products', { requestId, offerId: normalizedId });
+      logger.info('create-draft-order-soft1 no products', { requestId, offerId: normalizedId });
       return NextResponse.json({
         ok: true,
         message: 'No products found in offer',
@@ -647,7 +653,7 @@ export async function POST(
       });
     }
 
-    logger.info('create-draft-offer started', {
+    logger.info('create-draft-order-soft1 started', {
       requestId,
       offerId: normalizedId,
       businessUnit,
@@ -773,7 +779,7 @@ export async function POST(
       for (const product of products) {
         const selection = selectionMap.get(product.ProductID);
         if (selection) {
-          logger.info('create-draft-offer DB update (selection)', {
+          logger.info('create-draft-order-soft1 DB update (selection)', {
             requestId,
             offerId: normalizedId,
             productId: product.ProductID,
@@ -826,7 +832,7 @@ export async function POST(
               CODE2: string | null;
             }>;
 
-            logger.info('create-draft-offer FindProduct result', {
+            logger.info('create-draft-order-soft1 FindProduct result', {
               requestId,
               offerId: normalizedId,
               productId: product.ProductID,
@@ -920,14 +926,14 @@ export async function POST(
                 }
 
                 if (createdMTRL && createdCode) {
-                  logger.info('create-draft-offer CreateProduct result', {
+                  logger.info('create-draft-order-soft1 CreateProduct result', {
                     requestId,
                     offerId: normalizedId,
                     productId: product.ProductID,
                     createdMTRL,
                     createdCode,
                   });
-                  logger.info('create-draft-offer DB update (created)', {
+                  logger.info('create-draft-order-soft1 DB update (created)', {
                     requestId,
                     offerId: normalizedId,
                     productId: product.ProductID,
@@ -984,7 +990,7 @@ export async function POST(
             } else if (foundCount === 1) {
               // Single match - update directly
               const match = matches[0];
-              logger.info('create-draft-offer DB update (single match)', {
+              logger.info('create-draft-order-soft1 DB update (single match)', {
                 requestId,
                 offerId: normalizedId,
                 productId: product.ProductID,
@@ -1053,7 +1059,7 @@ export async function POST(
           codeToValidate = projectResult.recordset?.[0]?.CODE ?? null;
         }
 
-        logger.info('create-draft-offer project fetch', {
+        logger.info('create-draft-order-soft1 project fetch', {
           requestId,
           offerId: normalizedId,
           erpProjectId: finalErpProjectId,
@@ -1062,7 +1068,7 @@ export async function POST(
 
         if (codeToValidate) {
           const projectValidation = await findProject(finalErpProjectId, codeToValidate);
-          logger.info('create-draft-offer project validation', {
+          logger.info('create-draft-order-soft1 project validation', {
             requestId,
             offerId: normalizedId,
             erpProjectId: finalErpProjectId,
@@ -1088,7 +1094,7 @@ export async function POST(
             );
           }
         } else {
-          logger.info('create-draft-offer project validation skipped (no project code)', {
+          logger.info('create-draft-order-soft1 project validation skipped (no project code)', {
             requestId,
             offerId: normalizedId,
             erpProjectId: finalErpProjectId,
@@ -1125,7 +1131,7 @@ export async function POST(
         finalErpProjectId = createdProject.prjcId;
         finalErpProjectCode = createdProject.prjcCode;
 
-        logger.info('create-draft-offer project created', {
+        logger.info('create-draft-order-soft1 project created', {
           requestId,
           offerId: normalizedId,
           erpProjectId: finalErpProjectId,
@@ -1158,7 +1164,7 @@ export async function POST(
             createdByUser: 1011,
           });
 
-          logger.info('create-draft-offer order created (selections path)', {
+          logger.info('create-draft-order-soft1 order created (selections path)', {
             requestId,
             offerId: normalizedId,
             findocId: orderInfo.findocId,
@@ -1248,7 +1254,7 @@ export async function POST(
       }
 
       const updatedIds = selections.map((s) => s.productId);
-      logger.info('create-draft-offer completed (selections path)', {
+      logger.info('create-draft-order-soft1 completed (selections path)', {
         requestId,
         offerId: normalizedId,
         updatedCount: updatedIds.length,
@@ -1298,7 +1304,7 @@ export async function POST(
           CODE2: string | null;
         }>;
 
-        logger.info('create-draft-offer FindProduct result', {
+        logger.info('create-draft-order-soft1 FindProduct result', {
           requestId,
           offerId: normalizedId,
           productId: product.ProductID,
@@ -1392,14 +1398,14 @@ export async function POST(
             }
 
             if (createdMTRL && createdCode) {
-              logger.info('create-draft-offer CreateProduct result', {
+              logger.info('create-draft-order-soft1 CreateProduct result', {
                 requestId,
                 offerId: normalizedId,
                 productId: product.ProductID,
                 createdMTRL,
                 createdCode,
               });
-              logger.info('create-draft-offer DB update (created)', {
+              logger.info('create-draft-order-soft1 DB update (created)', {
                 requestId,
                 offerId: normalizedId,
                 productId: product.ProductID,
@@ -1455,7 +1461,7 @@ export async function POST(
         } else if (foundCount === 1) {
           // Single match - update directly
           const match = matches[0];
-          logger.info('create-draft-offer DB update (single match)', {
+          logger.info('create-draft-order-soft1 DB update (single match)', {
             requestId,
             offerId: normalizedId,
             productId: product.ProductID,
@@ -1520,7 +1526,7 @@ export async function POST(
         codeToValidate = projectResult.recordset?.[0]?.CODE ?? null;
       }
 
-      logger.info('create-draft-offer project fetch', {
+      logger.info('create-draft-order-soft1 project fetch', {
         requestId,
         offerId: normalizedId,
         erpProjectId: finalErpProjectId,
@@ -1529,7 +1535,7 @@ export async function POST(
 
       if (codeToValidate) {
         const projectValidation = await findProject(finalErpProjectId, codeToValidate);
-        logger.info('create-draft-offer project validation', {
+        logger.info('create-draft-order-soft1 project validation', {
           requestId,
           offerId: normalizedId,
           erpProjectId: finalErpProjectId,
@@ -1555,7 +1561,7 @@ export async function POST(
           );
         }
       } else {
-        logger.info('create-draft-offer project validation skipped (no project code)', {
+        logger.info('create-draft-order-soft1 project validation skipped (no project code)', {
           requestId,
           offerId: normalizedId,
           erpProjectId: finalErpProjectId,
@@ -1592,7 +1598,7 @@ export async function POST(
       finalErpProjectId = createdProject.prjcId;
       finalErpProjectCode = createdProject.prjcCode;
 
-      logger.info('create-draft-offer project created', {
+      logger.info('create-draft-order-soft1 project created', {
         requestId,
         offerId: normalizedId,
         erpProjectId: finalErpProjectId,
@@ -1625,7 +1631,7 @@ export async function POST(
           createdByUser: 1011,
         });
 
-        logger.info('create-draft-offer order created (no-selections path)', {
+        logger.info('create-draft-order-soft1 order created (no-selections path)', {
           requestId,
           offerId: normalizedId,
           findocId: orderInfo.findocId,
@@ -1714,7 +1720,7 @@ export async function POST(
       }
     }
 
-    logger.info('create-draft-offer completed (no-selections path)', {
+    logger.info('create-draft-order-soft1 completed (no-selections path)', {
       requestId,
       offerId: normalizedId,
       updatedCount: successfullyUpdatedIds.length,
