@@ -36,11 +36,9 @@ const inferLocaleFromTimeZone = (): string | null => {
   return null;
 };
 
-export const getUserNumberLocale = (): string | undefined => {
-  const cookie = readCookie(NUMBER_LOCALE_COOKIE);
-  if (cookie) return cookie;
-  const inferred = inferLocaleFromTimeZone();
-  return inferred ?? undefined;
+export const getUserNumberLocale = (): string => {
+  // Always use Greek locale (comma as decimal separator) regardless of regional settings
+  return "el-GR";
 };
 
 const resolveSeparators = (locale?: string): SeparatorInfo => {

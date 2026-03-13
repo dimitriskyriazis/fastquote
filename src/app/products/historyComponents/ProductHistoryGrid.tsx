@@ -38,13 +38,13 @@ type Props = {
 const currencyFormatter = (params: { value?: unknown }) => {
   const num = typeof params.value === 'number' ? params.value : Number(params.value ?? Number.NaN);
   if (!Number.isFinite(num)) return '';
-  return `${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+  return `${num.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 };
 
 const percentFormatter = (params: { value?: unknown }) => {
   const num = typeof params.value === 'number' ? params.value : Number(params.value ?? Number.NaN);
   if (!Number.isFinite(num)) return '';
-  return `${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} %`;
+  return `${num.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} %`;
 };
 
 export default function ProductHistoryGrid({ rows }: Props) {
