@@ -691,6 +691,7 @@ export const OFFER_PRODUCTS_EXPORT_FIELDS = [
   'TreeOrdering',
   'PartNumber',
   'BrandName',
+  'AVC4BrandName',
   'ModelNumber',
   'Description',
   'Quantity',

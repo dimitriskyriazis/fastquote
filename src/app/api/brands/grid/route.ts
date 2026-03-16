@@ -27,6 +27,7 @@ type BrandRow = {
   Comment: string | null;
   SoftOneID: number | null;
   SoftOneCode: string | null;
+  AVC4Name: string | null;
 };
 
 type BrandRowWithCount = BrandRow & { __totalCount: number | bigint | null };
@@ -38,6 +39,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Comment: "dbo.Brands.Comment",
   SoftOneID: "dbo.Brands.SoftOneID",
   SoftOneCode: "dbo.Brands.SoftOneCode",
+  AVC4Name: "dbo.Brands.AVC4Name",
 };
 
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
@@ -127,7 +129,8 @@ export async function POST(req: NextRequest) {
         dbo.Brands.Enabled,
         dbo.Brands.Comment,
         dbo.Brands.SoftOneID,
-        dbo.Brands.SoftOneCode
+        dbo.Brands.SoftOneCode,
+        dbo.Brands.AVC4Name
       FROM dbo.Brands
     `;
 

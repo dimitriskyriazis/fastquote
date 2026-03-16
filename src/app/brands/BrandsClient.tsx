@@ -43,6 +43,7 @@ type BrandRow = {
   Comment: string | null;
   SoftOneID: number | null;
   SoftOneCode: string | null;
+  AVC4Name: string | null;
 };
 
 const normalizeBrandId = (value: unknown): number | null => {
@@ -73,6 +74,7 @@ const BRAND_FIELD_LABELS: Record<string, string> = {
   SoftOneID: "SoftOne ID",
   SoftOneCode: "SoftOne Code",
   Comment: "Comment",
+  AVC4Name: "AVC4 Name",
   Enabled: "Enabled",
 };
 
@@ -216,6 +218,13 @@ export default function BrandsClient() {
         headerName: "SoftOne Code",
         filter: "agTextColumnFilter",
         width: 150,
+        editable: true,
+      },
+      {
+        field: "AVC4Name",
+        headerName: "AVC4 Name",
+        filter: "agTextColumnFilter",
+        width: 180,
         editable: true,
       },
       {

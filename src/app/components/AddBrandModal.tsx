@@ -34,6 +34,7 @@ export default function AddBrandModal({ open, onClose, onCreated, overlayClassNa
   const [comment, setComment] = useState('');
   const [softOneId, setSoftOneId] = useState('');
   const [softOneCode, setSoftOneCode] = useState('');
+  const [avc4Name, setAvc4Name] = useState('');
   const [enabled, setEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +45,7 @@ export default function AddBrandModal({ open, onClose, onCreated, overlayClassNa
     setComment('');
     setSoftOneId('');
     setSoftOneCode('');
+    setAvc4Name('');
     setEnabled(true);
     setError(null);
   }, []);
@@ -84,6 +86,7 @@ export default function AddBrandModal({ open, onClose, onCreated, overlayClassNa
         comment: comment.trim() || null,
         softOneId: parseOptionalInt(softOneId),
         softOneCode: softOneCode.trim() || null,
+        avc4Name: avc4Name.trim() || null,
         enabled,
       };
 
@@ -110,7 +113,7 @@ export default function AddBrandModal({ open, onClose, onCreated, overlayClassNa
     } finally {
       setSaving(false);
     }
-  }, [comment, enabled, isSoftOneIdValid, name, onClose, onCreated, resetForm, softOneCode, softOneId]);
+  }, [avc4Name, comment, enabled, isSoftOneIdValid, name, onClose, onCreated, resetForm, softOneCode, softOneId]);
 
   return (
     <LookupModal
@@ -173,6 +176,17 @@ export default function AddBrandModal({ open, onClose, onCreated, overlayClassNa
             className={lookupStyles.fieldControl}
             value={softOneCode}
             onChange={(event) => setSoftOneCode(event.target.value)}
+          />
+        </div>
+        <div className={lookupStyles.fieldFull}>
+          <label className={lookupStyles.fieldLabel} htmlFor="brand-avc4-name">
+            AVC4 Name
+          </label>
+          <input
+            id="brand-avc4-name"
+            className={lookupStyles.fieldControl}
+            value={avc4Name}
+            onChange={(event) => setAvc4Name(event.target.value)}
           />
         </div>
         <div className={lookupStyles.fieldFull}>

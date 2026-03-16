@@ -9,6 +9,7 @@ type RestoreRow = {
   Comment?: string | null;
   SoftOneID?: number | null;
   SoftOneCode?: string | null;
+  AVC4Name?: string | null;
   Enabled?: boolean | number | null;
 };
 
@@ -33,15 +34,16 @@ export async function POST(req: NextRequest) {
       request.input("Comment", sql.NVarChar(2000), row.Comment ?? null);
       request.input("SoftOneID", sql.Int, row.SoftOneID ?? null);
       request.input("SoftOneCode", sql.NVarChar(255), row.SoftOneCode ?? null);
+      request.input("AVC4Name", sql.NVarChar(255), row.AVC4Name ?? null);
       request.input("Enabled", sql.Bit, row.Enabled ? 1 : 0);
       request.input("UserId", sql.NVarChar(450), userId ?? null);
 
       await request.query(`
         INSERT INTO dbo.Brands (
-          [Name], [Comment], [SoftOneID], [SoftOneCode], [Enabled],
+          [Name], [Comment], [SoftOneID], [SoftOneCode], [AVC4Name], [Enabled],
           [CreatedOn], [CreatedBy], [ModifiedOn], [ModifiedBy]
         ) VALUES (
-          @Name, @Comment, @SoftOneID, @SoftOneCode, @Enabled,
+          @Name, @Comment, @SoftOneID, @SoftOneCode, @AVC4Name, @Enabled,
           SYSUTCDATETIME(), @UserId, SYSUTCDATETIME(), @UserId
         )
       `);

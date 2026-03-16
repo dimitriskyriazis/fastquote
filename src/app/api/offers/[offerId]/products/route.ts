@@ -93,6 +93,7 @@ type ProductRow = {
   ModifiedOn: Date | string | null;
   ModifiedBy: string | null;
   BrandName: string | null;
+  AVC4BrandName: string | null;
   PartNumber: string | null;
   ModelNumber: string | null;
   WebLink: string | null;
@@ -243,6 +244,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   ModifiedBy: 'od.ModifiedBy',
   BrandID: 'od.BrandID',
   BrandName: 'b.Name',
+  AVC4BrandName: 'b.AVC4Name',
   PartNumber: 'p.PartNumber',
   WebLink: 'p.WebLink',
   ModelNumber: 'p.ModelNumber',

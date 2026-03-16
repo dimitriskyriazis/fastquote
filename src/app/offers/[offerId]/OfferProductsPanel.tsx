@@ -193,6 +193,7 @@ type OfferExportRow = {
   TreeOrdering: string | null;
   PartNumber: string | null;
   BrandName: string | null;
+  AVC4BrandName: string | null;
   ModelNumber: string | null;
   Description: string | null;
   Quantity: number | null;
@@ -3476,7 +3477,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       return {
         no: normalizeNoForExport(row.TreeOrdering),
         productReference: row.PartNumber?.toString().trim() ?? '',
-        manufacturer: row.BrandName?.toString().trim() ?? '',
+        manufacturer: (row.AVC4BrandName?.toString().trim() || row.BrandName?.toString().trim()) ?? '',
         descriptionType,
         qty: qtyForExport ?? '',
         unitPrice: netUnitPrice ?? '',

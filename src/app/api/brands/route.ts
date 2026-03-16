@@ -25,6 +25,7 @@ const createBrandSchema = z
     comment: stringSchema(2000),
     softOneId: intSchema,
     softOneCode: stringSchema(255),
+    avc4Name: stringSchema(255),
     enabled: booleanSchema,
   })
   .strict();
@@ -45,12 +46,13 @@ type BrandAuditRow = {
   Comment: string | null;
   SoftOneID: number | null;
   SoftOneCode: string | null;
+  AVC4Name: string | null;
   Enabled: boolean | number | null;
 };
 
 type NormalizedBrandUpdate = {
   brandId: number;
-  field: "Name" | "Comment" | "SoftOneID" | "SoftOneCode" | "Enabled";
+  field: "Name" | "Comment" | "SoftOneID" | "SoftOneCode" | "AVC4Name" | "Enabled";
   value: unknown;
 };
 
@@ -129,6 +131,7 @@ const fetchBrandAuditRows = async (ids: number[]) => {
       Comment,
       SoftOneID,
       SoftOneCode,
+      AVC4Name,
       Enabled
     FROM dbo.Brands
     WHERE ID IN (${ids.map((_, idx) => `@auditId${idx}`).join(", ")})
@@ -140,6 +143,7 @@ const fetchBrandAuditRows = async (ids: number[]) => {
     Comment: normalizeTextOutput(row.Comment),
     SoftOneID: row.SoftOneID ?? null,
     SoftOneCode: normalizeTextOutput(row.SoftOneCode),
+    AVC4Name: normalizeTextOutput(row.AVC4Name),
     Enabled: normalizeBooleanOutput(row.Enabled),
   }));
   return indexRowsById(normalizedRows, (row) => row.BrandID);
@@ -178,6 +182,7 @@ export async function POST(req: NextRequest) {
     const comment = body.comment ?? null;
     const softOneId = body.softOneId ?? null;
     const softOneCode = body.softOneCode ?? null;
+    const avc4Name = body.avc4Name ?? null;
     const enabled = body.enabled ?? true;
 
     const pool = await getPool();
@@ -187,6 +192,7 @@ export async function POST(req: NextRequest) {
     request.input("Comment", sql.NVarChar(2000), comment);
     request.input("SoftOneID", sql.Int, softOneId);
     request.input("SoftOneCode", sql.NVarChar(255), softOneCode);
+    request.input("AVC4Name", sql.NVarChar(255), avc4Name);
     request.input("Enabled", sql.Bit, enabled ? 1 : 0);
     request.input("CreatedBy", sql.NVarChar(450), userId ?? null);
     request.input("ModifiedBy", sql.NVarChar(450), userId ?? null);
@@ -197,6 +203,7 @@ export async function POST(req: NextRequest) {
         [Comment],
         [SoftOneID],
         [SoftOneCode],
+        [AVC4Name],
         [Enabled],
         [CreatedOn],
         [CreatedBy],
@@ -209,6 +216,7 @@ export async function POST(req: NextRequest) {
         @Comment,
         @SoftOneID,
         @SoftOneCode,
+        @AVC4Name,
         @Enabled,
         SYSUTCDATETIME(),
         @CreatedBy,
@@ -285,6 +293,7 @@ export async function PATCH(req: NextRequest) {
             field !== "Comment" &&
             field !== "SoftOneID" &&
             field !== "SoftOneCode" &&
+            field !== "AVC4Name" &&
             field !== "Enabled")
         ) {
           return null;
@@ -327,6 +336,15 @@ export async function PATCH(req: NextRequest) {
         await request.query(`
           UPDATE dbo.Brands
           SET SoftOneCode = @value,
+            ModifiedOn = SYSUTCDATETIME(),
+            ModifiedBy = @userId
+          WHERE ID = @brandId
+        `);
+      } else if (update.field === "AVC4Name") {
+        request.input("value", sql.NVarChar(255), normalizeNullableTextValue(update.value));
+        await request.query(`
+          UPDATE dbo.Brands
+          SET AVC4Name = @value,
             ModifiedOn = SYSUTCDATETIME(),
             ModifiedBy = @userId
           WHERE ID = @brandId
@@ -436,6 +454,7 @@ export async function DELETE(req: NextRequest) {
       Comment: string | null;
       SoftOneID: number | null;
       SoftOneCode: string | null;
+      AVC4Name: string | null;
       Enabled: boolean | number | null;
     }>(`
       DELETE FROM dbo.Brands
@@ -445,6 +464,7 @@ export async function DELETE(req: NextRequest) {
         DELETED.Comment,
         DELETED.SoftOneID,
         DELETED.SoftOneCode,
+        DELETED.AVC4Name,
         DELETED.Enabled
       WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
     `);
@@ -472,6 +492,7 @@ export async function DELETE(req: NextRequest) {
         Comment: row.Comment,
         SoftOneID: row.SoftOneID,
         SoftOneCode: row.SoftOneCode,
+        AVC4Name: row.AVC4Name,
         Enabled: row.Enabled,
       })),
     });
