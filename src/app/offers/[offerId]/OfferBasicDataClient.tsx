@@ -278,6 +278,7 @@ const buildFieldDefinitions = (
   { id: 'offerVersion', label: 'Offer Version', section: 'code', recordKey: 'OfferVersion', readOnly: true },
   { id: 'offerId', label: 'Offer ID', section: 'code', recordKey: 'OfferID', readOnly: true },
   { id: 'customerRef', label: 'Customer Ref', section: 'code', recordKey: 'CustomerRef', updateField: 'CustomerRef' },
+  { id: 'protocolNo', label: 'Protocol No', section: 'code', recordKey: 'ProtocolNo', updateField: 'ProtocolNo', valueType: 'number', inputType: 'number' },
 
   { id: 'initialRequest', label: 'Initial Request', section: 'dates', recordKey: 'InitialRequest', updateField: 'InitialRequest', inputType: 'date', valueType: 'date' },
   { id: 'officialRequest', label: 'Official Request', section: 'dates', recordKey: 'OfficialRequest', updateField: 'OfficialRequest', inputType: 'date', valueType: 'date' },

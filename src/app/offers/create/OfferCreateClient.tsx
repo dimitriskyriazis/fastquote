@@ -45,6 +45,7 @@ type FormValues = {
   deliveryDue: string;
   delivery: string;
   offerDate: string;
+  protocolNo: string;
 };
 
 type FieldConfig = {
@@ -274,6 +275,7 @@ export default function OfferCreateClient({
     deliveryDue: '',
     delivery: '',
     offerDate: '',
+    protocolNo: '',
   }), [
     defaultPricingPolicyId,
     defaultStatusId,
@@ -642,6 +644,7 @@ export default function OfferCreateClient({
       deliveryDue: toNullableString(values.deliveryDue),
       delivery: toNullableString(values.delivery),
       offerDate: toNullableString(values.offerDate),
+      protocolNo: toNumberOrNull(values.protocolNo),
     };
 
     setSubmitting(true);
@@ -693,6 +696,7 @@ export default function OfferCreateClient({
       { id: 'erpFwcProjectId', label: 'ERP FWC Project', section: 'code', type: 'select', options: localFwcProjects },
       { id: 'customerRef', label: 'Customer Ref', section: 'code' },
       { id: 'probability', label: 'Probability', section: 'code', inputType: 'number' },
+      { id: 'protocolNo', label: 'Protocol No', section: 'code', inputType: 'number' },
 
       { id: 'initialRequest', label: 'Initial Request', section: 'dates', type: 'date' },
       { id: 'officialRequest', label: 'Official Request', section: 'dates', type: 'date' },

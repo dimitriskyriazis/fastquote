@@ -65,6 +65,7 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   DeliveryDue: { column: 'DeliveryDue', type: 'date', sqlType: sql.DateTime2 },
   Delivery: { column: 'Delivery', type: 'date', sqlType: sql.DateTime2 },
   OfferDate: { column: 'OfferDate', type: 'date', sqlType: sql.DateTime2 },
+  ProtocolNo: { column: 'ProtocolNo', type: 'number', sqlType: sql.Int },
 };
 
 const normalizeValue = (value: unknown, type: FieldType): NormalizedValue => {

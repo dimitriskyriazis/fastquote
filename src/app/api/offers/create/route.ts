@@ -38,6 +38,7 @@ type CreateOfferRequestBody = {
   deliveryDue?: string | Date | null;
   delivery?: string | Date | null;
   offerDate?: string | Date | null;
+  protocolNo?: number | string | null;
 };
 
 type ContactLookupRow = {
@@ -95,6 +96,7 @@ export async function POST(req: NextRequest) {
   const salesManagerId = salesCreationPersonId;
   const erpProjectCode = body?.projectCode?.trim() || null;
   const erpFwcProjectId = normalizeInt(body?.erpFwcProjectId);
+  const protocolNo = normalizeInt(body?.protocolNo);
 
     const dateFields = {
       initialRequest: normalizeDate(body?.initialRequest),
@@ -245,6 +247,7 @@ export async function POST(req: NextRequest) {
     request.input('Delivery', sql.DateTime2, dateFields.delivery);
     request.input('OfferDate', sql.DateTime2, dateFields.offerDate);
     request.input('ApprovalUserId', sql.NVarChar(450), approvalUserId);
+    request.input('ProtocolNo', sql.Int, protocolNo);
 
     const insertResult = await request.query<{ OfferID: number }>(`
       INSERT INTO dbo.Offer (
@@ -283,6 +286,7 @@ export async function POST(req: NextRequest) {
         Delivery,
         OfferDate,
         ApprovalUserId,
+        ProtocolNo,
         OfferVersion,
         Enabled,
         CreatedOn,
@@ -325,6 +329,7 @@ export async function POST(req: NextRequest) {
         @Delivery,
         @OfferDate,
         @ApprovalUserId,
+        @ProtocolNo,
         1,
         1,
         SYSUTCDATETIME(),

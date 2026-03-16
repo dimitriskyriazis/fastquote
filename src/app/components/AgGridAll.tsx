@@ -4060,7 +4060,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           rowHeight={32}
           headerHeight={38}
           rowSelection={rowSelectionConfig}
-          selectionColumnDef={rowSelection === 'multiple' ? { width: 42, minWidth: 42, maxWidth: 42, lockPosition: true, suppressMovable: true, suppressHeaderMenuButton: true, resizable: false, suppressSizeToFit: true } : undefined}
+          selectionColumnDef={rowSelection === 'multiple' ? { width: 42, minWidth: 42, maxWidth: 42, pinned: 'left', lockPosition: true, suppressMovable: true, suppressHeaderMenuButton: true, resizable: false, suppressSizeToFit: true } : undefined}
 
           // Server-Side model
           rowModelType="serverSide"

@@ -1901,6 +1901,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         {
           headerName: '',
           colId: '__row_drag__',
+          pinned: 'left',
           lockPosition: true,
           suppressMovable: true,
           suppressSizeToFit: true,
@@ -2101,6 +2102,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       {
         headerName: '',
         colId: '__row_drag__',
+        pinned: 'left',
         lockPosition: true,
         suppressMovable: true,
         suppressSizeToFit: true,

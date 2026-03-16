@@ -787,8 +787,7 @@ export default function OffersClient() {
     { field: 'ERPFWCProjectShortName', headerName: 'ERP FWC Project', filter: 'agTextColumnFilter', hide: true },
     { field: 'Title', headerName: 'Title', filter: 'agTextColumnFilter' },
     {field: 'Comments',  headerName: 'Comments', filter: 'agTextColumnFilter'},
-    { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn' },
-    { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
+{ field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
     {
       field: 'Enabled',
       headerName: 'Enabled',
