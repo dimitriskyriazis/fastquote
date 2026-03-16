@@ -2,15 +2,13 @@
 
 import { useEffect } from 'react';
 
-const STORAGE_VERSION = 'v1';
-
-export default function StorageVersionManager() {
+export default function StorageVersionManager({ buildId }: { buildId: string }) {
   useEffect(() => {
-    const storedVersion = localStorage.getItem('storageVersion');
-    if (storedVersion !== STORAGE_VERSION) {
+    const storedBuildId = localStorage.getItem('buildId');
+    if (storedBuildId !== buildId) {
       localStorage.clear();
-      localStorage.setItem('storageVersion', STORAGE_VERSION);
+      localStorage.setItem('buildId', buildId);
     }
-  }, []);
+  }, [buildId]);
   return null;
 }
