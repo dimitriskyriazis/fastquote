@@ -245,9 +245,9 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   BrandID: 'od.BrandID',
   BrandName: 'b.Name',
   AVC4BrandName: 'b.AVC4Name',
-  PartNumber: 'p.PartNumber',
+  PartNumber: 'od.PartNumber',
   WebLink: 'p.WebLink',
-  ModelNumber: 'p.ModelNumber',
+  ModelNumber: 'od.ModelNumber',
   Quantity: 'od.Quantity',
   Description: 'od.ProductDescription',
   Comment: 'od.[Comment]',
@@ -1435,7 +1435,7 @@ export async function POST(
               AND NULLIF(LTRIM(RTRIM(cat_inner.TreeOrdering)), '') = ${TREE_ORDERING_ROOT_EXPRESSION}
           ) cat
           LEFT OUTER JOIN dbo.Products p ON od.ProductID = p.ID
-          LEFT OUTER JOIN dbo.Brands b ON p.BrandID = b.ID
+          LEFT OUTER JOIN dbo.Brands b ON od.BrandID = b.ID
           LEFT OUTER JOIN dbo.[Offer] o ON od.OfferID = o.ID
           LEFT OUTER JOIN dbo.PriceLists pl ON od.PriceListID = pl.ID
           LEFT OUTER JOIN dbo.Currencies oc ON od.OtherCurrencyID = oc.ID
@@ -1940,6 +1940,8 @@ export async function PATCH(
         OfferDetailID: number;
         ProductID: number | null;
         IsComment: number | null;
+        PartNumber: string | null;
+        ModelNumber: string | null;
         ProductDescription: string | null;
         Comment: string | null;
         Delivery: string | null;
@@ -1959,6 +1961,8 @@ export async function PATCH(
         od.ID AS OfferDetailID,
         od.ProductID,
         od.IsComment,
+        od.PartNumber,
+        od.ModelNumber,
         od.ProductDescription,
           od.[Comment] AS Comment,
           od.Delivery,
@@ -1980,6 +1984,8 @@ export async function PATCH(
       const currentById = new Map<number, {
         ProductID: number | null;
         IsComment: number | null;
+        PartNumber: string | null;
+        ModelNumber: string | null;
         ProductDescription: string | null;
         Comment: string | null;
         Delivery: string | null;
@@ -2089,7 +2095,10 @@ export async function PATCH(
         let resolvedPricing: ResolvedPricing | null = null;
 
         if (pricingProvided) {
-          if (current.ProductID == null && !isCommentRow) {
+          const hasProductIdentifier = current.ProductID != null
+            || (current.PartNumber != null && current.PartNumber.trim() !== '')
+            || (current.ModelNumber != null && current.ModelNumber.trim() !== '');
+          if (!hasProductIdentifier && !isCommentRow) {
             errors.push('Pricing can only be updated for product or comment rows.');
             return;
           }
@@ -2152,8 +2161,13 @@ export async function PATCH(
 
             resolvedPricing = resolvePricing(input);
             if (!resolvedPricing) {
-              errors.push('Unable to resolve pricing from inputs.');
-              return;
+              resolvedPricing = {
+                customerDiscount: input.customerDiscount,
+                telmacoDiscount: input.telmacoDiscount,
+                netUnitPrice: input.netUnitPrice,
+                netCost: input.netCost,
+                margin: input.margin,
+              };
             }
           }
         } else {
