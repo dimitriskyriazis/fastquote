@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef, type CSSProperties } from 'react';
 import styles from './LookupModal.module.css';
+import { useModalDragResize } from '../hooks/useModalDragResize';
 
 type Props = {
   open: boolean;
@@ -22,6 +23,8 @@ type Props = {
   bodyClassName?: string;
   footerClassName?: string;
   confirmFirst?: boolean;
+  draggable?: boolean;
+  resizable?: boolean;
 };
 
 export default function LookupModal({
@@ -43,7 +46,10 @@ export default function LookupModal({
   bodyClassName = '',
   footerClassName = '',
   confirmFirst = false,
+  draggable = true,
+  resizable = true,
 }: Props) {
+  const { cardRef: setCardRef, cardStyle: dragCardStyle, headerProps: dragHeaderProps, resizeHandles } = useModalDragResize({ draggable, resizable });
   const [showValidation, setShowValidation] = useState(false);
   const overlayPointerDownOnOverlayRef = useRef(false);
 
@@ -100,15 +106,21 @@ export default function LookupModal({
       }}
     >
       <div
+        ref={setCardRef}
         className={`${styles.card} ${cardClassName}`.trim()}
-        style={cardStyle}
+        style={{ ...dragCardStyle, ...cardStyle }}
         role="dialog"
         aria-modal="true"
         aria-label={title}
         data-show-validation={showValidation ? 'true' : 'false'}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className={`${styles.header} ${headerClassName}`.trim()}>
+        <div
+          className={`${styles.header} ${headerClassName}`.trim()}
+          onPointerDown={dragHeaderProps.onPointerDown}
+          onDoubleClick={dragHeaderProps.onDoubleClick}
+          style={dragHeaderProps.style}
+        >
           <div className={`${styles.title} ${titleClassName}`.trim()}>{title}</div>
           <button
             type="button"
@@ -154,6 +166,7 @@ export default function LookupModal({
             </>
           )}
         </div>
+        {resizeHandles}
       </div>
     </div>
   );

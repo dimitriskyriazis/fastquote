@@ -9,6 +9,7 @@ import { productDefaultColDef } from '../../../../lib/productColumns';
 import { priceListStatusClassRules } from '../../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../../lib/localeNumber';
 import styles from './MatchRequestedProductsModal.module.css';
+import { useModalDragResize } from '../../../hooks/useModalDragResize';
 
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), {
   ssr: false,
@@ -115,6 +116,7 @@ export default function MatchRequestedProductsModal({
   onSkipAll,
   prefetchedSuggestions,
 }: Props) {
+  const { cardRef: setCardRef, cardStyle: dragCardStyle, headerProps: dragHeaderProps, resizeHandles } = useModalDragResize({ draggable: true, resizable: true });
   const [selectedProduct, setSelectedProduct] = useState<MatcherRowData | null>(null);
   const [assigning, setAssigning] = useState(false);
   const [comment, setComment] = useState('');
@@ -599,9 +601,9 @@ export default function MatchRequestedProductsModal({
 
   return (
     <div className={styles.overlay} role="dialog" aria-modal="true" aria-label="Match requested product">
-      <div className={styles.card}>
+      <div ref={setCardRef} className={styles.card} style={dragCardStyle}>
         <PageHeaderContext.Provider value={searchSlot}>
-          <div className={styles.header}>
+          <div className={styles.header} onPointerDown={dragHeaderProps.onPointerDown} onDoubleClick={dragHeaderProps.onDoubleClick} style={dragHeaderProps.style}>
             <div>
               <div className={styles.title}>Match requested product</div>
               <div className={styles.subtitle}>{entry.label}</div>
@@ -737,6 +739,7 @@ export default function MatchRequestedProductsModal({
             </div>
           </GridQuickSearchProvider>
         </PageHeaderContext.Provider>
+        {resizeHandles}
       </div>
     </div>
   );

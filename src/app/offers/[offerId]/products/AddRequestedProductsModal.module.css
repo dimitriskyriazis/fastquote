@@ -10,6 +10,7 @@
 }
 
 .card {
+  position: relative;
   background: #ffffff;
   border-radius: 16px;
   width: min(1600px, 100vw);

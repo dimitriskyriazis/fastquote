@@ -11,6 +11,7 @@ import React, {
 } from 'react';
 import type * as XLSXTypes from 'xlsx';
 import styles from './AddRequestedProductsModal.module.css';
+import { useModalDragResize } from '../../../hooks/useModalDragResize';
 import { showToastMessage } from '../../../../lib/toast';
 import type { OfferProductsTemplateExportRow } from '../OfferProductsPanel';
 
@@ -807,6 +808,7 @@ const toArrayBuffer = (value: ArrayBuffer | Uint8Array): ArrayBuffer => {
 };
 
 export default function ExportOfferProductsModal({ onClose, onRequestRows }: Props) {
+  const { cardRef: setCardRef, cardStyle: dragCardStyle, headerProps: dragHeaderProps, resizeHandles } = useModalDragResize({ draggable: true, resizable: true });
   const [file, setFile] = useState<File | null>(null);
   const [validation, setValidation] = useState<ValidationState>(INITIAL_VALIDATION);
   const [isDragging, setIsDragging] = useState(false);
@@ -1155,8 +1157,8 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
 
   return (
     <div className={styles.overlay} onPointerDown={handleOverlayPointerDown} onClick={handleOverlayClick}>
-      <div className={styles.card} role="dialog" aria-modal="true" aria-label="Export offer products" onClick={(event) => event.stopPropagation()}>
-        <div className={styles.header}>
+      <div ref={setCardRef} className={styles.card} role="dialog" aria-modal="true" aria-label="Export offer products" onClick={(event) => event.stopPropagation()} style={dragCardStyle}>
+        <div className={styles.header} onPointerDown={dragHeaderProps.onPointerDown} onDoubleClick={dragHeaderProps.onDoubleClick} style={dragHeaderProps.style}>
           <div className={styles.headerText}>
             <div className={styles.title}>Export Offer Products</div>
             <div className={styles.subtitle}>Use your own Excel template and map columns automatically.</div>
@@ -1323,6 +1325,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
             {error ? <div className={styles.errorText}>{error}</div> : null}
           </div>
         </div>
+        {resizeHandles}
       </div>
     </div>
   );

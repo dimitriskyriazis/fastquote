@@ -11,6 +11,7 @@ import React, {
 } from 'react';
 import type * as XLSXTypes from 'xlsx';
 import styles from './AddRequestedProductsModal.module.css';
+import { useModalDragResize } from '../../../hooks/useModalDragResize';
 import { showToastMessage } from '../../../../lib/toast';
 import { parseLocaleNumber } from '../../../../lib/localeNumber';
 
@@ -408,6 +409,7 @@ const extractSheetHyperlinkTargets = (
 };
 
 export default function AddRequestedProductsModal({ offerId, onClose, onImported }: Props) {
+  const { cardRef: setCardRef, cardStyle: dragCardStyle, headerProps: dragHeaderProps, resizeHandles } = useModalDragResize({ draggable: true, resizable: true });
   const [file, setFile] = useState<File | null>(null);
   const [fileValidation, setFileValidation] = useState<FileValidation>(INITIAL_VALIDATION);
   const [pasteText, setPasteText] = useState('');
@@ -736,8 +738,8 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
   return (
     <>
     <div className={styles.overlay} onPointerDown={handleOverlayPointerDown} onClick={handleOverlayClick}>
-      <div className={styles.card} role="dialog" aria-modal="true" aria-label="Add requested products" onClick={(event) => event.stopPropagation()}>
-        <div className={styles.header}>
+      <div ref={setCardRef} className={styles.card} role="dialog" aria-modal="true" aria-label="Add requested products" onClick={(event) => event.stopPropagation()} style={dragCardStyle}>
+        <div className={styles.header} onPointerDown={dragHeaderProps.onPointerDown} onDoubleClick={dragHeaderProps.onDoubleClick} style={dragHeaderProps.style}>
           <div className={styles.headerText}>
             <div className={styles.title}>Add Requested Products</div>
           </div>
@@ -920,6 +922,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
             {error ? <div className={styles.errorText}>{error}</div> : null}
           </div>
         </div>
+        {resizeHandles}
       </div>
     </div>
     {showSheetSelector && fileValidation.sheets.length > 1 ? (
