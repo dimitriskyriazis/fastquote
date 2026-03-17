@@ -13,12 +13,22 @@ type DashboardStatsData = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  Draft: '#94a3b8',
-  Sent: '#3b82f6',
-  'In Negotiation': '#f59e0b',
-  Won: '#22c55e',
-  Lost: '#ef4444',
-  Cancelled: '#a1a1aa',
+  // Early / In Progress
+  'Initial Request': '#93c5fd',
+  'Draft Offer': '#93c5fd',
+  'Official Request': '#93c5fd',
+  'Final clarification': '#93c5fd',
+  // Deadlines / Urgency
+  'Offer Expiration': '#fcd34d',
+  'Offer Deadline': '#fcd34d',
+  // Finalized Offer
+  'Official Quote Offer': '#c4b5fd',
+  // Fulfillment
+  'Order Signed': '#86efac',
+  'Delivery Due': '#86efac',
+  'Delivery Complete': '#86efac',
+  // Negative
+  'Rejection': '#fca5a5',
 };
 
 const getStatusColor = (status: string) =>
