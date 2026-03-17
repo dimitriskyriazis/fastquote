@@ -1,5 +1,17 @@
-import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
-// Generated once when the server process starts.
-// A new value is created on every server restart.
-export const serverStartId = crypto.randomUUID();
+// In dev mode: always "development" — localStorage is never cleared on rebuild.
+// In production: uses the Next.js build ID — only clears on new deployments.
+function getBuildId(): string {
+  if (process.env.NODE_ENV === 'development') {
+    return 'development';
+  }
+  try {
+    return fs.readFileSync(path.join(process.cwd(), '.next', 'BUILD_ID'), 'utf8').trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
+export const serverStartId = getBuildId();

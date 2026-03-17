@@ -1169,7 +1169,20 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       }
       return withWidth;
     });
-    writePersistedColumnState(columnStateStorageKey, nextState);
+    // Derive fingerprint from the grid's live column IDs so saved state
+    // auto-invalidates when columns are added or removed.
+    const liveColIds: string[] = [];
+    try {
+      const allCols = (api as unknown as { getAllGridColumns?: () => Array<{ getColId?: () => string }> }).getAllGridColumns?.();
+      if (Array.isArray(allCols)) {
+        allCols.forEach((col) => {
+          const id = typeof col?.getColId === 'function' ? col.getColId() : '';
+          if (id) liveColIds.push(id);
+        });
+      }
+    } catch { /* noop */ }
+    const fingerprint = liveColIds.length > 0 ? liveColIds.sort().join('|') : undefined;
+    writePersistedColumnState(columnStateStorageKey, nextState, fingerprint);
     if (!options?.silent) {
       showToastMessage('Layout saved', 'success');
     }

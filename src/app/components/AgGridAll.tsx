@@ -292,6 +292,25 @@ const collectFieldIdsFromDefs = (defs: ColDef[] | null | undefined): string[] =>
   return fields;
 };
 
+/** Build a stable fingerprint from columnDefs so we can detect when columns are added/removed. */
+export const buildColumnFingerprint = (defs: ColDef[] | null | undefined): string => {
+  if (!defs) return '';
+  const ids: string[] = [];
+  const walk = (items: ColDef[]) => {
+    items.forEach((def) => {
+      if (!def) return;
+      const id = (typeof def.colId === 'string' && def.colId) || (typeof def.field === 'string' && def.field) || '';
+      if (id) ids.push(id);
+      const children = (def as { children?: ColDef[] }).children;
+      if (Array.isArray(children) && children.length > 0) {
+        walk(children);
+      }
+    });
+  };
+  walk(defs);
+  return ids.sort().join('|');
+};
+
 // UTILITY FUNCTIONS - Selection Management
 const scheduleDeselectAllRows = (api?: GridApi<RowData> | null) => {
   if (!api || typeof api.deselectAll !== 'function') return;
@@ -786,13 +805,18 @@ export const collectPersistableColumnState = (
     })
     .filter((entry) => typeof entry.colId === 'string' && entry.colId.length > 0);
 
-const readPersistedColumnState = (key: string): SavedColumnStateEntry[] | null => {
+const readPersistedColumnState = (key: string, currentFingerprint?: string): SavedColumnStateEntry[] | null => {
   if (typeof window === 'undefined' || !key) return null;
   try {
     const raw = window.localStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || !Array.isArray(parsed.columns)) return null;
+    // If columns were added or removed, discard the saved state for this grid.
+    if (currentFingerprint && typeof parsed.fingerprint === 'string' && parsed.fingerprint !== currentFingerprint) {
+      window.localStorage.removeItem(key);
+      return null;
+    }
     const entries: SavedColumnStateEntry[] = [];
     for (const candidate of parsed.columns) {
       if (!candidate || typeof candidate !== 'object') continue;
@@ -840,14 +864,14 @@ const readPersistedColumnState = (key: string): SavedColumnStateEntry[] | null =
   }
 };
 
-export const writePersistedColumnState = (key: string, columns: SavedColumnStateEntry[]) => {
+export const writePersistedColumnState = (key: string, columns: SavedColumnStateEntry[], columnFingerprint?: string) => {
   if (typeof window === 'undefined' || !key) return;
   try {
     if (columns.length === 0) {
       window.localStorage.removeItem(key);
       return;
     }
-    window.localStorage.setItem(key, JSON.stringify({ columns }));
+    window.localStorage.setItem(key, JSON.stringify({ columns, ...(columnFingerprint ? { fingerprint: columnFingerprint } : {}) }));
   } catch (err) {
     console.warn('Failed to save column state', err);
   }
@@ -1331,6 +1355,8 @@ export default function AgGridAll({
     },
     [columnStateNamespace, persistenceKeyBase, pathname, userId, shouldPersistColumnState],
   );
+  const columnFingerprint = useMemo(() => buildColumnFingerprint(columnDefs), [columnDefs]);
+
   const previousStorageKeysRef = useRef<{ column: string; filter: string; sort: string }>({
     column: '',
     filter: '',
@@ -1461,7 +1487,7 @@ export default function AgGridAll({
     if (!shouldPersistColumnState || !columnStateStorageKey || typeof window === 'undefined') {
       return {};
     }
-    const persisted = readPersistedColumnState(columnStateStorageKey);
+    const persisted = readPersistedColumnState(columnStateStorageKey, columnFingerprint);
     if (!persisted || persisted.length === 0) return {};
     const widths: Record<string, number> = {};
     persisted.forEach((entry) => {
@@ -1470,7 +1496,7 @@ export default function AgGridAll({
       widths[entry.colId] = entry.width;
     });
     return widths;
-  }, [columnStateStorageKey, shouldPersistColumnState]);
+  }, [columnStateStorageKey, shouldPersistColumnState, columnFingerprint]);
 
   const resolvedColumnDefs = useMemo(() => {
     const base = !suppressRowGroup
@@ -2232,7 +2258,7 @@ export default function AgGridAll({
   const applySavedColumnState = useCallback((api: GridApi<RowData>) => {
     if (!shouldPersistColumnState || !columnStateStorageKey) return;
     if (columnStateLoadedRef.current) return;
-    const persisted = readPersistedColumnState(columnStateStorageKey);
+    const persisted = readPersistedColumnState(columnStateStorageKey, columnFingerprint);
     if (!persisted || persisted.length === 0) {
       columnStateLoadedRef.current = true;
       onColumnStateRestored?.();
@@ -2413,7 +2439,7 @@ export default function AgGridAll({
       columnStateLoadedRef.current = true;
       onColumnStateRestored?.();
     }
-  }, [applyColumnStateOrder, columnStateStorageKey, onColumnStateRestored, rowSelection, shouldPersistColumnState]);
+  }, [applyColumnStateOrder, columnFingerprint, columnStateStorageKey, onColumnStateRestored, rowSelection, shouldPersistColumnState]);
 
   useEffect(() => {
     if (!shouldPersistColumnState) return;
@@ -2563,8 +2589,8 @@ export default function AgGridAll({
     }
 
     const nextState = collectPersistableColumnState(api.getColumnState(), columnOrderMap);
-    writePersistedColumnState(columnStateStorageKey, nextState);
-  }, [columnStateStorageKey, shouldPersistColumnState]);
+    writePersistedColumnState(columnStateStorageKey, nextState, columnFingerprint);
+  }, [columnFingerprint, columnStateStorageKey, shouldPersistColumnState]);
   persistColumnStateNowRef.current = persistColumnState;
 
   const queuePersistColumnState = useCallback(() => {
@@ -2712,7 +2738,7 @@ export default function AgGridAll({
     if (!api || api.isDestroyed?.()) return;
     if (typeof api.getAllDisplayedColumns !== 'function' || typeof api.moveColumns !== 'function') return;
 
-    const persisted = readPersistedColumnState(columnStateStorageKey);
+    const persisted = readPersistedColumnState(columnStateStorageKey, columnFingerprint);
     if (!persisted || persisted.length === 0) return;
 
     const orderMap = new Map<string, number>();
@@ -2752,6 +2778,7 @@ export default function AgGridAll({
       }
     }
   }, [
+    columnFingerprint,
     columnStateStorageKey,
     queuePersistColumnState,
     shouldAutoPersistColumnState,
