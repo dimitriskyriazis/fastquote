@@ -656,6 +656,7 @@ async function handleAddProducts(
   }
 
   const request = pool.request();
+  request.timeout = 120000; // 2 min – this batch is heavy (legacy resolution + pricing + insert)
   request.input('__offerId', sql.Int, offerId);
   request.input('__categoryId', sql.Int, categoryId);
   request.input('__parentTree', sql.NVarChar(255), parentTreeOrdering);
@@ -760,7 +761,8 @@ async function handleAddProducts(
         WHERE pli_chk2.ProductID = p_new.ID
       )
     ORDER BY p_new.ID DESC
-  ) resolved;
+  ) resolved
+  OPTION (RECOMPILE);
 
   DECLARE @ProductData TABLE (
     ProductID INT NOT NULL,
@@ -829,7 +831,8 @@ async function handleAddProducts(
         pl.ValidToDate,
         pl.ValidFromDate DESC,
         pli.ID DESC
-    ) price;
+    ) price
+  OPTION (RECOMPILE);
 
   -- Pricing policy rules are optional: when no matching rule exists, discounts default to 0.
     INSERT INTO dbo.OfferDetails (
@@ -1015,7 +1018,8 @@ async function handleAddProducts(
           )
         END AS ComputedNetCost
     ) AS computed
-    ORDER BY p.Seq;
+    ORDER BY p.Seq
+    OPTION (RECOMPILE);
   `;
 
   const result = await request.query(query);
