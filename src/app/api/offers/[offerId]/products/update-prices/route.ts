@@ -341,6 +341,17 @@ export async function POST(
             AND (ppr.BrandID = COALESCE(od.BrandID, p.BrandID) OR ppr.BrandID IS NULL)
         );
 
+      DECLARE @euroCurrencyId INT;
+      SELECT TOP 1 @euroCurrencyId = ID
+      FROM dbo.Currencies
+      WHERE Name = N'€' OR LOWER(Name) LIKE '%eur%'
+      ORDER BY
+        CASE WHEN Name = N'€' THEN 0
+             WHEN LOWER(Name) LIKE '%eur%' THEN 1
+             WHEN LOWER(Name) LIKE '%euro%' THEN 2
+             ELSE 3
+        END;
+
       WITH OfferContext AS (
         SELECT
           o.ID AS OfferID,
@@ -381,16 +392,16 @@ export async function POST(
         [NetUnitPrice] = computed.ComputedNetUnitPrice,
         [TotalPrice] = CASE WHEN price.ListPrice IS NULL OR od.Quantity IS NULL THEN NULL ELSE price.ListPrice * od.Quantity END,
         [TotalNet] = CASE WHEN computed.ComputedNetUnitPrice IS NULL OR od.Quantity IS NULL THEN NULL ELSE computed.ComputedNetUnitPrice * od.Quantity END,
-        [NetCostOtherCurrency] = price.CostPrice,
+        [NetCostOtherCurrency] = CASE WHEN price.OtherCurrencyID IS NULL THEN NULL ELSE price.CostPrice END,
         [OtherCurrencyID] = price.OtherCurrencyID,
         [CurrencyCostModifier] = price.CurrencyCostModifier,
-        [NetCost] = COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice),
+        [NetCost] = COALESCE(computed.ComputedNetCost, price.CostPrice * COALESCE(price.CurrencyCostModifier, 1), price.ListPrice),
         [TelmacoDiscount] = CASE
           -- Case 2: If cost price exists, calculate Telmaco discount from cost price
           WHEN price.CostPrice IS NOT NULL AND price.ListPrice IS NOT NULL AND price.ListPrice <> 0
             THEN ROUND(
               (CAST(1 AS DECIMAL(18, 8))
-                - (CAST(price.CostPrice * price.CurrencyCostModifier AS DECIMAL(18, 8))
+                - (CAST(price.CostPrice * COALESCE(price.CurrencyCostModifier, 1) AS DECIMAL(18, 8))
                   / CAST(price.ListPrice AS DECIMAL(18, 8))
                 )
               ) * 100,
@@ -405,11 +416,11 @@ export async function POST(
         [Margin] = CASE
           WHEN computed.ComputedNetUnitPrice IS NULL
             OR computed.ComputedNetUnitPrice = 0
-            OR COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice) IS NULL
+            OR COALESCE(computed.ComputedNetCost, price.CostPrice * COALESCE(price.CurrencyCostModifier, 1), price.ListPrice) IS NULL
             THEN NULL
           ELSE ROUND(
             (CAST(1 AS DECIMAL(18, 8))
-              - (CAST(COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice) AS DECIMAL(18, 8))
+              - (CAST(COALESCE(computed.ComputedNetCost, price.CostPrice * COALESCE(price.CurrencyCostModifier, 1), price.ListPrice) AS DECIMAL(18, 8))
                 / CAST(computed.ComputedNetUnitPrice AS DECIMAL(18, 8))
               )
             ) * 100,
@@ -418,21 +429,21 @@ export async function POST(
         END,
         [GrossProfit] = CASE
           WHEN computed.ComputedNetUnitPrice IS NULL
-            OR COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice) IS NULL
+            OR COALESCE(computed.ComputedNetCost, price.CostPrice * COALESCE(price.CurrencyCostModifier, 1), price.ListPrice) IS NULL
             OR od.Quantity IS NULL
             THEN NULL
           ELSE ROUND(
-            (computed.ComputedNetUnitPrice - COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice))
+            (computed.ComputedNetUnitPrice - COALESCE(computed.ComputedNetCost, price.CostPrice * COALESCE(price.CurrencyCostModifier, 1), price.ListPrice))
             * od.Quantity,
             4
           )
         END,
         [TotalCost] = CASE
-          WHEN COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice) IS NULL
+          WHEN COALESCE(computed.ComputedNetCost, price.CostPrice * COALESCE(price.CurrencyCostModifier, 1), price.ListPrice) IS NULL
             OR od.Quantity IS NULL
             THEN NULL
           ELSE ROUND(
-            COALESCE(computed.ComputedNetCost, price.CostPrice * price.CurrencyCostModifier, price.ListPrice) * od.Quantity,
+            COALESCE(computed.ComputedNetCost, price.CostPrice * COALESCE(price.CurrencyCostModifier, 1), price.ListPrice) * od.Quantity,
             4
           )
         END,
@@ -448,8 +459,10 @@ export async function POST(
           pli.ID AS PriceListItemID,
           pli.ListPrice,
           pli.CostPrice,
-          COALESCE(pl.CostCurrencyID, pl.CurrencyId) AS OtherCurrencyID,
-          COALESCE(pl.CurrencyCostModifier, 1) AS CurrencyCostModifier
+          CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @euroCurrencyId THEN NULL
+               ELSE COALESCE(pl.CostCurrencyID, pl.CurrencyId) END AS OtherCurrencyID,
+          CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @euroCurrencyId THEN NULL
+               ELSE COALESCE(pl.CurrencyCostModifier, 1) END AS CurrencyCostModifier
         FROM dbo.PriceListItems pli
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = oc.PricingPolicyID

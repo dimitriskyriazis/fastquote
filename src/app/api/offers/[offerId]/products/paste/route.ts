@@ -419,6 +419,17 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
       FROM dbo.Offer o
       WHERE o.ID = @__offerId;
 
+      DECLARE @euroCurrencyId INT;
+      SELECT TOP 1 @euroCurrencyId = ID
+      FROM dbo.Currencies
+      WHERE Name = N'€' OR LOWER(Name) LIKE '%eur%'
+      ORDER BY
+        CASE WHEN Name = N'€' THEN 0
+             WHEN LOWER(Name) LIKE '%eur%' THEN 1
+             WHEN LOWER(Name) LIKE '%euro%' THEN 2
+             ELSE 3
+        END;
+
       DECLARE @r TABLE (
         Seq INT,
         TreeOrdering NVARCHAR(255),
@@ -525,8 +536,10 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
           pli.PriceListID,
           pli.ListPrice,
           pli.CostPrice,
-          COALESCE(pl.CostCurrencyID, pl.CurrencyId) AS OtherCurrencyID,
-          COALESCE(pl.CurrencyCostModifier, 1) AS CurrencyCostModifier
+          CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @euroCurrencyId THEN NULL
+               ELSE COALESCE(pl.CostCurrencyID, pl.CurrencyId) END AS OtherCurrencyID,
+          CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @euroCurrencyId THEN NULL
+               ELSE COALESCE(pl.CurrencyCostModifier, 1) END AS CurrencyCostModifier
         FROM dbo.PriceListItems pli
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         WHERE pli.ProductID = src.ProductID
@@ -568,25 +581,25 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
           WHEN p.CostPrice IS NOT NULL AND p.ListPrice IS NOT NULL AND p.ListPrice <> 0
             THEN ROUND(
               (CAST(1 AS DECIMAL(18, 8))
-                - (CAST(p.CostPrice * p.CurrencyCostModifier AS DECIMAL(18, 8)) / CAST(p.ListPrice AS DECIMAL(18, 8)))
+                - (CAST(p.CostPrice * COALESCE(p.CurrencyCostModifier, 1) AS DECIMAL(18, 8)) / CAST(p.ListPrice AS DECIMAL(18, 8)))
               ) * 100,
               4
             )
           ELSE COALESCE(discounts.TelmacoDiscountPercentage, 0)
         END,
         COALESCE(discounts.CustomerDiscountPercentage, 0),
-        p.CostPrice,
+        CASE WHEN p.OtherCurrencyID IS NULL THEN NULL ELSE p.CostPrice END,
         p.OtherCurrencyID,
         p.CurrencyCostModifier,
-        COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
+        COALESCE(computed.ComputedNetCost, p.CostPrice * COALESCE(p.CurrencyCostModifier, 1), p.ListPrice),
         CASE
           WHEN computed.ComputedNetUnitPrice IS NULL
             OR computed.ComputedNetUnitPrice = 0
-            OR COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL
+            OR COALESCE(computed.ComputedNetCost, p.CostPrice * COALESCE(p.CurrencyCostModifier, 1), p.ListPrice) IS NULL
             THEN NULL
           ELSE ROUND(
             (CAST(1 AS DECIMAL(18, 8))
-              - (CAST(COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) AS DECIMAL(18, 8))
+              - (CAST(COALESCE(computed.ComputedNetCost, p.CostPrice * COALESCE(p.CurrencyCostModifier, 1), p.ListPrice) AS DECIMAL(18, 8))
                 / CAST(computed.ComputedNetUnitPrice AS DECIMAL(18, 8))
               )
             ) * 100,
@@ -595,14 +608,14 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
         END,
         CASE
           WHEN computed.ComputedNetUnitPrice IS NULL
-            OR COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL
+            OR COALESCE(computed.ComputedNetCost, p.CostPrice * COALESCE(p.CurrencyCostModifier, 1), p.ListPrice) IS NULL
             THEN NULL
           ELSE ROUND(
-            computed.ComputedNetUnitPrice - COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
+            computed.ComputedNetUnitPrice - COALESCE(computed.ComputedNetCost, p.CostPrice * COALESCE(p.CurrencyCostModifier, 1), p.ListPrice),
             4
           )
         END,
-        COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
+        COALESCE(computed.ComputedNetCost, p.CostPrice * COALESCE(p.CurrencyCostModifier, 1), p.ListPrice),
         p.PriceListID, p.PriceListItemID,
         p.RequestedItemNo, p.RequestedBrand, p.RequestedPartNo, p.RequestedModelNo,
         p.RequestedWebLink, p.RequestedDescription, p.RequestedDescription2, p.RequestedDescription3, p.RequestedQuantity,
@@ -640,7 +653,7 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
             )
           END AS ComputedNetUnitPrice,
           CASE
-            WHEN p.CostPrice IS NOT NULL THEN p.CostPrice * p.CurrencyCostModifier
+            WHEN p.CostPrice IS NOT NULL THEN p.CostPrice * COALESCE(p.CurrencyCostModifier, 1)
             WHEN p.ListPrice IS NULL THEN NULL
             ELSE ROUND(
               p.ListPrice * (
