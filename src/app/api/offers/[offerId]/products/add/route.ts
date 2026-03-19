@@ -1149,6 +1149,17 @@ async function handleAssignProductToRequestedRow(
     FROM dbo.Offer o
     WHERE o.ID = @__offerId;
 
+    DECLARE @euroCurrencyId INT;
+    SELECT TOP 1 @euroCurrencyId = ID
+    FROM dbo.Currencies
+    WHERE Name = N'€' OR LOWER(Name) LIKE '%eur%'
+    ORDER BY
+      CASE WHEN Name = N'€' THEN 0
+           WHEN LOWER(Name) LIKE '%eur%' THEN 1
+           WHEN LOWER(Name) LIKE '%euro%' THEN 2
+           ELSE 3
+      END;
+
     -- Resolve legacy product: if product has no enabled pricelist items
     -- but another product's legacy part number matches, use that product instead
     DECLARE @resolvedProductId INT = @__productId;
