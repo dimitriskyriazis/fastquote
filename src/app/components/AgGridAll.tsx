@@ -3256,10 +3256,10 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
               try {
                 if (mode === 'selected-cells') {
                   console.log('[Excel Export] Exporting selected cells');
-                  exportSelectedCellsAsExcel(api);
+                  await exportSelectedCellsAsExcel(api);
                 } else if (mode === 'selected-rows') {
                   console.log('[Excel Export] Exporting selected rows');
-                  exportSelectedRowsAsExcel(api);
+                  await exportSelectedRowsAsExcel(api);
                 } else {
                   console.log('[Excel Export] Exporting all filtered rows');
                   // Export all filtered rows
@@ -4058,6 +4058,98 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     wrapGridApiRefreshers(gridApiRef.current);
   }, [wrapGridApiRefreshers]);
 
+  // CLIPBOARD - Write HTML to clipboard so hyperlinks survive paste into Excel
+  const sendToClipboard = useCallback((params: { data: string }) => {
+    const api = gridRef.current?.api ?? null;
+    if (!api) {
+      navigator.clipboard?.writeText(params.data).catch(() => { /* noop */ });
+      return;
+    }
+
+    const cellRanges = api.getCellRanges?.();
+    if (!cellRanges || cellRanges.length === 0) {
+      navigator.clipboard?.writeText(params.data).catch(() => { /* noop */ });
+      return;
+    }
+
+    // Build HTML table from cell range data, embedding <a> tags for hyperlinked cells
+    let hasLinks = false;
+    const htmlRows: string[] = [];
+
+    const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+    cellRanges.forEach(range => {
+      const columns: Column[] = (range as { columns?: Column[] }).columns ?? [];
+      const startIdx = Math.min(
+        (range as { startRow?: { rowIndex: number } }).startRow?.rowIndex ?? 0,
+        (range as { endRow?: { rowIndex: number } }).endRow?.rowIndex ?? 0,
+      );
+      const endIdx = Math.max(
+        (range as { startRow?: { rowIndex: number } }).startRow?.rowIndex ?? 0,
+        (range as { endRow?: { rowIndex: number } }).endRow?.rowIndex ?? 0,
+      );
+
+      for (let rowIdx = startIdx; rowIdx <= endIdx; rowIdx++) {
+        const rowNode = api.getDisplayedRowAtIndex(rowIdx);
+        if (!rowNode?.data) continue;
+        const rowData = rowNode.data as Record<string, unknown>;
+
+        const cells = columns.map(col => {
+          const colDef = col.getColDef();
+          const field = colDef.field ?? col.getColId();
+          const rawValue = rowData[field];
+          const displayValue = rawValue != null ? String(rawValue) : '';
+
+          // Check for hyperlink
+          let link = '';
+          if (field === 'PartNumber' || field === 'ModelNumber') {
+            const webLink = typeof rowData.WebLink === 'string' ? rowData.WebLink.trim() : '';
+            if (webLink) {
+              if (field === 'PartNumber') {
+                link = webLink;
+              } else {
+                const pn = typeof rowData.PartNumber === 'string' ? rowData.PartNumber.trim() : '';
+                if (!pn) link = webLink;
+              }
+            }
+          } else if (field === 'RequestedPartNo' || field === 'RequestedModelNo') {
+            const webLink = typeof rowData.RequestedWebLink === 'string' ? (rowData.RequestedWebLink as string).trim() : '';
+            if (webLink) {
+              if (field === 'RequestedPartNo') {
+                link = webLink;
+              } else {
+                const pn = typeof rowData.RequestedPartNo === 'string' ? (rowData.RequestedPartNo as string).trim() : '';
+                if (!pn) link = webLink;
+              }
+            }
+          }
+
+          if (link) {
+            hasLinks = true;
+            return `<td><a href="${escHtml(link)}">${escHtml(displayValue)}</a></td>`;
+          }
+          return `<td>${escHtml(displayValue)}</td>`;
+        });
+
+        htmlRows.push(`<tr>${cells.join('')}</tr>`);
+      }
+    });
+
+    if (hasLinks && typeof navigator?.clipboard?.write === 'function') {
+      const html = `<table>${htmlRows.join('')}</table>`;
+      navigator.clipboard.write([
+        new ClipboardItem({
+          'text/plain': new Blob([params.data], { type: 'text/plain' }),
+          'text/html': new Blob([html], { type: 'text/html' }),
+        }),
+      ]).catch(() => {
+        navigator.clipboard?.writeText(params.data).catch(() => { /* noop */ });
+      });
+    } else {
+      navigator.clipboard?.writeText(params.data).catch(() => { /* noop */ });
+    }
+  }, []);
+
   // RENDER - AgGridReact Component with All Props
   return (
     <div className={styles.container}>
@@ -4126,6 +4218,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           onRowDragMove={handleRowDragMove}
           onRowDragLeave={handleRowDragLeave}
           suppressLastEmptyLineOnPaste
+          sendToClipboard={sendToClipboard}
           onPasteStart={handlePasteStart}
           onPasteEnd={handlePasteEnd}
           onCellValueChanged={handleCellValueChanged}
