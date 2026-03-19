@@ -159,14 +159,14 @@ export const buildTreeFromRows = (rows: TreeOrderingRow[]): TreeOrderingNode[] =
   return roots;
 };
 
-const buildSegmentList = (nodes: TreeOrderingNode[], _depth: number): string[] => {
+const buildSegmentList = (nodes: TreeOrderingNode[]): string[] => {
   return nodes.map((_, idx) => String(idx + 1));
 };
 
 export const collectResequencedUpdates = (roots: TreeOrderingNode[]): TreeOrderingUpdateInput[] => {
   const updates: TreeOrderingUpdateInput[] = [];
   const assign = (nodes: TreeOrderingNode[], parentPath: string[]) => {
-    const segments = buildSegmentList(nodes, parentPath.length);
+    const segments = buildSegmentList(nodes);
     nodes.forEach((node, idx) => {
       const nextPath = [...parentPath, segments[idx]];
       if (node.id !== VIRTUAL_NODE_ID && !pathsEqual(node.path, nextPath)) {
