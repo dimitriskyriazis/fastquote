@@ -433,7 +433,6 @@ async function handleProductGrid(
   offerId: number,
   body: GridRequestEnvelope & Record<string, unknown>,
 ) {
-  void offerId; // offer context may be used later (pricing policies), keep signature
   const gridRequest = readGridRequest(body);
   const highlightProductId = normalizeProductId(body?.newProductId ?? null);
   const startRow = gridRequest.startRow ?? 0;
@@ -481,9 +480,21 @@ async function handleProductGrid(
     : baseOrderSql;
 
   const pool = await getPool();
+
+  // Look up the offer's pricing policy so we can prefer matching pricelists
+  const policyLookup = pool.request();
+  policyLookup.input('__offerId', sql.Int, offerId);
+  const policyResult = await policyLookup.query<{ PricingPolicyID: number | null }>(`
+    SELECT TOP (1) o.PricingPolicyID
+    FROM dbo.Offer o
+    WHERE o.ID = @__offerId
+  `);
+  const offerPricingPolicyId = policyResult.recordset?.[0]?.PricingPolicyID ?? null;
+
   const request = pool.request();
   request.input('__offset', sql.Int, offset);
   request.input('__limit', sql.Int, pageSize);
+  request.input('__pricingPolicyId', sql.Int, offerPricingPolicyId);
   combinedParams.forEach((param) => request.input(param.key, param.value));
   if (highlightProductId != null) {
     request.input('__highlightProductId', sql.Int, highlightProductId);
@@ -530,9 +541,11 @@ async function handleProductGrid(
           pl.Enabled AS PriceListEnabled
         FROM dbo.PriceListItems pli
           INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
+          LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @__pricingPolicyId
         WHERE pli.ProductID = bp.ProductID
           AND pl.Enabled = 1
         ORDER BY
+          CASE WHEN plpp.ID IS NOT NULL THEN 0 ELSE 1 END,
           CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
           pl.ValidToDate,
           pl.ValidFromDate DESC,
@@ -768,9 +781,11 @@ async function handleAddProducts(
         COALESCE(pl.CurrencyCostModifier, 1) AS CurrencyCostModifier
       FROM dbo.PriceListItems pli
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
+        LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @pricingPolicyId
       WHERE pli.ProductID = p.ProductID
         AND pl.Enabled = 1
       ORDER BY
+        CASE WHEN plpp.ID IS NOT NULL THEN 0 ELSE 1 END,
         CASE WHEN pli.CostPrice IS NOT NULL THEN 0 ELSE 1 END,
         CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
         pl.ValidToDate,
@@ -1200,9 +1215,11 @@ async function handleAssignProductToRequestedRow(
         COALESCE(pl.CurrencyCostModifier, 1) AS CurrencyCostModifier
       FROM dbo.PriceListItems pli
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
+        LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @pricingPolicyId
       WHERE pli.ProductID = pr.ID
         AND pl.Enabled = 1
       ORDER BY
+        CASE WHEN plpp.ID IS NOT NULL THEN 0 ELSE 1 END,
         CASE WHEN pli.CostPrice IS NOT NULL THEN 0 ELSE 1 END,
         CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
         pl.ValidToDate,

@@ -2992,19 +2992,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 
           const productDescription = normalizeDescriptionValue(productMeta?.Description ?? null);
           const description = productDescription ?? descriptionOverride ?? null;
-          const requestedPartNumberRaw = getExactTextValue(
-            (data as { RequestedPartNo?: unknown }).RequestedPartNo ?? null,
-          );
           const requestedModelNumberRaw = getExactTextValue(
             (data as { RequestedModelNo?: unknown }).RequestedModelNo ?? null,
           );
           const requestedBrandRaw = getExactTextValue(
             (data as { RequestedBrand?: unknown }).RequestedBrand ?? null,
           );
-          const partNumber = requestedPartNumberRaw
-            ?? getExactTextValue((data as { PartNumber?: unknown }).PartNumber ?? null)
-            ?? productMeta?.PartNumber
-            ?? null;
+          const partNumber = productMeta?.PartNumber ?? null;
           const modelNumber = requestedModelNumberRaw
             ?? getExactTextValue((data as { ModelNumber?: unknown }).ModelNumber ?? null)
             ?? productMeta?.ModelNumber

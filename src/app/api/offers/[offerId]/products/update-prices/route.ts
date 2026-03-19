@@ -419,9 +419,11 @@ export async function POST(
           COALESCE(pl.CurrencyCostModifier, 1) AS CurrencyCostModifier
         FROM dbo.PriceListItems pli
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
+        LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = oc.PricingPolicyID
         WHERE pli.ProductID = od.ProductID
           AND pl.Enabled = 1
         ORDER BY
+          CASE WHEN plpp.ID IS NOT NULL THEN 0 ELSE 1 END,
           CASE WHEN pli.CostPrice IS NOT NULL THEN 0 ELSE 1 END,
           CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
           pl.ValidToDate DESC,
