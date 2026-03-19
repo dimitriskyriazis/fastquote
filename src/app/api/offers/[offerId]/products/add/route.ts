@@ -542,9 +542,20 @@ async function handleProductGrid(
         FROM dbo.PriceListItems pli
           INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
           LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @__pricingPolicyId
-        WHERE pli.ProductID = bp.ProductID
-          AND pl.Enabled = 1
+        WHERE pl.Enabled = 1
+          AND (
+            pli.ProductID = bp.ProductID
+            OR EXISTS (
+              SELECT 1
+              FROM dbo.Products p_match
+              WHERE p_match.ID = pli.ProductID
+                AND p_match.LegacyPartNoCleaned = bp.PartNumberCleared
+                AND p_match.LegacyPartNoCleaned IS NOT NULL
+                AND p_match.LegacyPartNoCleaned <> ''
+            )
+          )
         ORDER BY
+          CASE WHEN pli.ProductID = bp.ProductID THEN 0 ELSE 1 END,
           CASE WHEN plpp.ID IS NOT NULL THEN 0 ELSE 1 END,
           CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
           pl.ValidToDate,
@@ -723,6 +734,33 @@ async function handleAddProducts(
   INSERT INTO @ProvidedProducts (ProductID, Seq)
   SELECT DISTINCT v.ProductID, v.Seq
   FROM (VALUES ${valueClauses.join(', ')}) AS v (ProductID, Seq);
+
+  -- Resolve legacy products: if product has no enabled pricelist items
+  -- but another product's legacy part number matches, use that product instead
+  UPDATE pp
+  SET pp.ProductID = resolved.NewProductID
+  FROM @ProvidedProducts pp
+  CROSS APPLY (
+    SELECT TOP (1) p_new.ID AS NewProductID
+    FROM dbo.Products pr
+    INNER JOIN dbo.Products p_new
+      ON p_new.LegacyPartNoCleaned = pr.PartNumberCleared
+      AND p_new.LegacyPartNoCleaned IS NOT NULL
+      AND p_new.LegacyPartNoCleaned <> ''
+      AND p_new.ID <> pr.ID
+    WHERE pr.ID = pp.ProductID
+      AND NOT EXISTS (
+        SELECT 1 FROM dbo.PriceListItems pli_chk
+        INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND pl_chk.Enabled = 1
+        WHERE pli_chk.ProductID = pr.ID
+      )
+      AND EXISTS (
+        SELECT 1 FROM dbo.PriceListItems pli_chk2
+        INNER JOIN dbo.PriceLists pl_chk2 ON pli_chk2.PriceListID = pl_chk2.ID AND pl_chk2.Enabled = 1
+        WHERE pli_chk2.ProductID = p_new.ID
+      )
+    ORDER BY p_new.ID DESC
+  ) resolved;
 
   DECLARE @ProductData TABLE (
     ProductID INT NOT NULL,
@@ -1156,6 +1194,31 @@ async function handleAssignProductToRequestedRow(
     FROM dbo.Offer o
     WHERE o.ID = @__offerId;
 
+    -- Resolve legacy product: if product has no enabled pricelist items
+    -- but another product's legacy part number matches, use that product instead
+    DECLARE @resolvedProductId INT = @__productId;
+    IF NOT EXISTS (
+      SELECT 1 FROM dbo.PriceListItems pli
+      INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID AND pl.Enabled = 1
+      WHERE pli.ProductID = @__productId
+    )
+    BEGIN
+      SELECT TOP (1) @resolvedProductId = p_new.ID
+      FROM dbo.Products pr
+      INNER JOIN dbo.Products p_new
+        ON p_new.LegacyPartNoCleaned = pr.PartNumberCleared
+        AND p_new.LegacyPartNoCleaned IS NOT NULL
+        AND p_new.LegacyPartNoCleaned <> ''
+        AND p_new.ID <> pr.ID
+      WHERE pr.ID = @__productId
+        AND EXISTS (
+          SELECT 1 FROM dbo.PriceListItems pli_chk
+          INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND pl_chk.Enabled = 1
+          WHERE pli_chk.ProductID = p_new.ID
+        )
+      ORDER BY p_new.ID DESC;
+    END;
+
     DECLARE @ProductData TABLE (
       ProductID INT NOT NULL,
       Description NVARCHAR(MAX) NULL,
@@ -1226,7 +1289,7 @@ async function handleAssignProductToRequestedRow(
         pl.ValidFromDate DESC,
         pli.ID DESC
     ) price
-    WHERE pr.ID = @__productId;
+    WHERE pr.ID = @resolvedProductId;
     -- Pricing policy rules are optional: when no matching rule exists, discounts default to 0.
     UPDATE od
     SET

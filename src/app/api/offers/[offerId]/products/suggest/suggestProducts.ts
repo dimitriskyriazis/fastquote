@@ -136,7 +136,7 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
           pli.ID DESC
       ) price
     WHERE (${conditions.join(' OR ')})
-    ORDER BY (${scoreExpr}) DESC, p.ID DESC
+    ORDER BY (${scoreExpr}) DESC, CASE WHEN price.ListPrice IS NOT NULL THEN 0 ELSE 1 END, p.ID DESC
   `;
 
   const result = await request.query<CandidateRow & { MatchScore: number }>(query);

@@ -273,6 +273,39 @@ export async function POST(
       updatedBrandsCsv: string | null;
       failedBrandsCsv: string | null;
     }>(`
+      -- Resolve legacy products: if a product has no enabled pricelist items
+      -- but another product's legacy part number matches, migrate to that product
+      UPDATE od
+      SET
+        od.ProductID = p_new.ID,
+        od.PartNumber = p_new.PartNumber,
+        od.ModelNumber = p_new.ModelNumber,
+        od.BrandID = p_new.BrandID,
+        od.ProductDescription = COALESCE(NULLIF(p_new.Description, ''), od.ProductDescription)
+      FROM dbo.OfferDetails od
+      INNER JOIN dbo.Products pr ON pr.ID = od.ProductID
+      CROSS APPLY (
+        SELECT TOP (1) p_new.ID, p_new.PartNumber, p_new.ModelNumber, p_new.BrandID, p_new.Description
+        FROM dbo.Products p_new
+        WHERE p_new.LegacyPartNoCleaned = pr.PartNumberCleared
+          AND p_new.LegacyPartNoCleaned IS NOT NULL
+          AND p_new.LegacyPartNoCleaned <> ''
+          AND p_new.ID <> pr.ID
+          AND EXISTS (
+            SELECT 1 FROM dbo.PriceListItems pli_chk
+            INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND pl_chk.Enabled = 1
+            WHERE pli_chk.ProductID = p_new.ID
+          )
+        ORDER BY p_new.ID DESC
+      ) p_new
+      WHERE od.OfferID = @offerId
+        AND od.ProductID IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM dbo.PriceListItems pli_chk
+          INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND pl_chk.Enabled = 1
+          WHERE pli_chk.ProductID = pr.ID
+        )${selectedDetailsFilterSql}${excludeFarnellSql};
+
       DECLARE @PricingPolicyID INT = (
         SELECT TOP (1) o.PricingPolicyID
         FROM dbo.Offer o

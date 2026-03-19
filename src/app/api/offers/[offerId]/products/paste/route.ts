@@ -437,6 +437,33 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
       );
       INSERT INTO @r VALUES ${values.join(', ')};
 
+      -- Resolve legacy products: if product has no enabled pricelist items
+      -- but another product's legacy part number matches, use that product instead
+      UPDATE r_upd
+      SET r_upd.ProductID = resolved.NewProductID
+      FROM @r r_upd
+      CROSS APPLY (
+        SELECT TOP (1) p_new.ID AS NewProductID
+        FROM dbo.Products pr
+        INNER JOIN dbo.Products p_new
+          ON p_new.LegacyPartNoCleaned = pr.PartNumberCleared
+          AND p_new.LegacyPartNoCleaned IS NOT NULL
+          AND p_new.LegacyPartNoCleaned <> ''
+          AND p_new.ID <> pr.ID
+        WHERE pr.ID = r_upd.ProductID
+          AND NOT EXISTS (
+            SELECT 1 FROM dbo.PriceListItems pli_chk
+            INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND pl_chk.Enabled = 1
+            WHERE pli_chk.ProductID = pr.ID
+          )
+          AND EXISTS (
+            SELECT 1 FROM dbo.PriceListItems pli_chk2
+            INNER JOIN dbo.PriceLists pl_chk2 ON pli_chk2.PriceListID = pl_chk2.ID AND pl_chk2.Enabled = 1
+            WHERE pli_chk2.ProductID = p_new.ID
+          )
+        ORDER BY p_new.ID DESC
+      ) resolved;
+
       DECLARE @d TABLE (
         Seq INT,
         TreeOrdering NVARCHAR(255),
