@@ -33,7 +33,7 @@ export default function Page() {
     <main className={styles.homePage}>
       <header className={styles.topBar}>
         <div className={styles.brandRow}>
-          <h1 className={styles.brandTitle}>FastQuote</h1>
+          <h1 className={styles.brandTitle}><span style={{ color: '#e1352b' }}>Fast</span>Quote</h1>
           <div className={styles.poweredBy}>
             <Image
               src={telmacoLogo}
