@@ -4037,12 +4037,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           copiedAt: new Date().toISOString(),
           rows: clipboardRows,
         };
-        const ok = writeClipboard(clipboard);
-        if (ok) {
-          showToastMessage(`Copied ${clipboardRows.length} row(s) to clipboard.`, 'success');
-        } else {
-          showToastMessage('Failed to copy rows — browser storage may be full.', 'error');
-        }
+        writeClipboard(clipboard);
+        showToastMessage(`Copied ${clipboardRows.length} row(s) to clipboard.`, 'success');
       },
     };
     const clipboardItems: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> = [copyItem];

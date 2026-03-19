@@ -74,13 +74,12 @@ export function readClipboard(): ProductClipboard | null {
   }
 }
 
-export function writeClipboard(data: ProductClipboard): boolean {
-  if (typeof window === 'undefined') return false;
+export function writeClipboard(data: ProductClipboard): void {
+  if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(CLIPBOARD_STORAGE_KEY, JSON.stringify(data));
-    return true;
   } catch {
-    return false;
+    /* noop */
   }
 }
 

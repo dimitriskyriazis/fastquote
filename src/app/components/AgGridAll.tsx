@@ -4135,6 +4135,36 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       }
     });
 
+    const writeTextFallback = (text: string) => {
+      // Async Clipboard API – works when the page has focus & permissions
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).catch(() => {
+          // Fallback: use a hidden textarea + execCommand for cross-browser support
+          try {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          } catch { /* last resort – nothing we can do */ }
+        });
+      } else {
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        } catch { /* noop */ }
+      }
+    };
+
     if (hasLinks && typeof navigator?.clipboard?.write === 'function') {
       const html = `<table>${htmlRows.join('')}</table>`;
       navigator.clipboard.write([
@@ -4143,10 +4173,10 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           'text/html': new Blob([html], { type: 'text/html' }),
         }),
       ]).catch(() => {
-        navigator.clipboard?.writeText(params.data).catch(() => { /* noop */ });
+        writeTextFallback(params.data);
       });
     } else {
-      navigator.clipboard?.writeText(params.data).catch(() => { /* noop */ });
+      writeTextFallback(params.data);
     }
   }, []);
 
