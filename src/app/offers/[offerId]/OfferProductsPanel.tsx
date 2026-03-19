@@ -74,6 +74,7 @@ import {
   categoryMenuIcon,
   commentMenuIcon,
   brandBulkEditMenuIcon,
+  costModifierMenuIcon,
   copyRowsMenuIcon,
   pasteRowsMenuIcon,
   addStandardPackageMenuIcon,
@@ -488,6 +489,8 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [brandBulkEditValue, setBrandBulkEditValue] = useState('');
   const [brandBulkEditSaving, setBrandBulkEditSaving] = useState(false);
   const [brandBulkEditError, setBrandBulkEditError] = useState<string | null>(null);
+  const [brandBulkEditScope, setBrandBulkEditScope] = useState<'brand' | 'offer'>('brand');
+  const hasNonEuroCostCurrencyRef = useRef(false);
   const refreshScheduledRef = useRef(false);
   const pendingRefreshPurgeRef = useRef<boolean | null>(null);
   const captureColumnWidths = useCallback((api: GridApi<Record<string, unknown>>) => {
@@ -1021,6 +1024,31 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         applyRequestedColumnVisibility(mergedVisibility, true);
         setRequestedItemNoVisible((prev) => prev || responseRequestedItemNo);
         applyRequestedVisibilityToGrid(mergedVisibility, mergedItemNoVisible, { force: true, defer: true });
+      }
+    }
+    // Auto-hide NetCostOtherCurrency and CurrencyCostModifier when all rows have Euro cost currency
+    {
+      const rows = Array.isArray(response?.rows) ? response.rows as Array<Record<string, unknown>> : [];
+      const pageHasNonEuro = rows.some((row) => {
+        const name = typeof row?.OtherCurrencyName === 'string' ? row.OtherCurrencyName.trim() : '';
+        if (!name) return false;
+        return name !== '€' && !name.toLowerCase().includes('eur');
+      });
+      if (isFirstPage) {
+        hasNonEuroCostCurrencyRef.current = pageHasNonEuro;
+      } else {
+        hasNonEuroCostCurrencyRef.current = hasNonEuroCostCurrencyRef.current || pageHasNonEuro;
+      }
+      const api = gridApiRef.current;
+      if (api && isFirstPage) {
+        const showCostCurrencyCols = hasNonEuroCostCurrencyRef.current;
+        api.applyColumnState({
+          state: [
+            { colId: 'NetCostOtherCurrency', hide: !showCostCurrencyCols },
+            { colId: 'CurrencyCostModifier', hide: !showCostCurrencyCols },
+          ],
+          applyOrder: false,
+        });
       }
     }
     const runHeavyUpdates = () => {
@@ -2375,7 +2403,15 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      valueFormatter: euroFormatter,
+      valueFormatter: (params) => {
+        const num = coerceNumber(params.value);
+        if (num == null || Object.is(num, 0)) return '';
+        const currencyName = typeof (params.data as { OtherCurrencyName?: unknown } | null | undefined)?.OtherCurrencyName === 'string'
+          ? String((params.data as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
+          : '';
+        if (!currencyName || currencyName === '€' || currencyName.toLowerCase().includes('eur')) return '';
+        return `${decimalFormatter.format(num)} ${currencyName}`;
+      },
       cellClass: [...actualNumericCellClass, styles.redDataCell],
       cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
     },
@@ -2386,7 +2422,15 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      valueFormatter: zeroBlankNumberFormatter,
+      valueFormatter: (params) => {
+        const currencyName = typeof (params.data as { OtherCurrencyName?: unknown } | null | undefined)?.OtherCurrencyName === 'string'
+          ? String((params.data as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
+          : '';
+        if (!currencyName || currencyName === '€' || currencyName.toLowerCase().includes('eur')) return '';
+        const num = coerceNumber(params.value);
+        if (num == null) return '';
+        return String(num);
+      },
       cellClass: [...actualNumericCellClass, styles.redDataCell],
       cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
     },
@@ -3718,14 +3762,20 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     field: 'CurrencyCostModifier' | 'Margin',
     brandName: string,
     currentValue?: unknown,
+    scope: 'brand' | 'offer' = 'brand',
   ) => {
-    const normalizedBrand = brandName.trim();
-    if (!normalizedBrand) {
-      showToastMessage('Missing brand name for bulk edit.', 'error');
-      return;
+    if (scope === 'brand') {
+      const normalizedBrand = brandName.trim();
+      if (!normalizedBrand) {
+        showToastMessage('Missing brand name for bulk edit.', 'error');
+        return;
+      }
+      setBrandBulkEditBrandName(normalizedBrand);
+    } else {
+      setBrandBulkEditBrandName('');
     }
     setBrandBulkEditField(field);
-    setBrandBulkEditBrandName(normalizedBrand);
+    setBrandBulkEditScope(scope);
     setBrandBulkEditError(null);
     const numericCurrent = coerceNumber(currentValue);
     if (field === 'CurrencyCostModifier') {
@@ -3743,8 +3793,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 
   const confirmBrandBulkEdit = useCallback(async () => {
     if (brandBulkEditSaving) return;
+    const isOfferScope = brandBulkEditScope === 'offer';
     const brandName = brandBulkEditBrandName.trim();
-    if (!brandName) {
+    if (!isOfferScope && !brandName) {
       setBrandBulkEditError('Brand is required.');
       return;
     }
@@ -3766,7 +3817,18 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     setBrandBulkEditSaving(true);
     setBrandBulkEditError(null);
     try {
-      // Fetch all product rows for this brand (pivot view excludes categories and requested-only rows).
+      // Fetch all product rows, optionally filtered by brand (pivot view excludes categories and requested-only rows).
+      const filterModel: Record<string, unknown> = {};
+      if (!isOfferScope && brandName) {
+        filterModel.BrandName = {
+          filterType: 'text',
+          type: 'equals',
+          filter: brandName,
+        };
+      }
+      const fetchFields = isOfferScope && brandBulkEditField === 'CurrencyCostModifier'
+        ? ['OfferDetailID', 'OtherCurrencyID', 'OtherCurrencyName']
+        : ['OfferDetailID'];
       const res = await fetch(resolvedEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3774,28 +3836,32 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           request: {
             allRows: true,
             view: 'pivot',
-            filterModel: {
-              BrandName: {
-                filterType: 'text',
-                type: 'equals',
-                filter: brandName,
-              },
-            },
+            filterModel: Object.keys(filterModel).length > 0 ? filterModel : undefined,
           },
+          fields: fetchFields,
         }),
       });
       const payload = (await res.json().catch(() => null)) as
         | { ok?: boolean; error?: string; rows?: Array<Record<string, unknown>> }
         | null;
       if (!res.ok || !payload?.ok) {
-        throw new Error(payload?.error ?? `Unable to load brand rows (status ${res.status})`);
+        throw new Error(payload?.error ?? `Unable to load rows (status ${res.status})`);
       }
       const rows = Array.isArray(payload?.rows) ? payload.rows : [];
-      const ids = rows
+      // For offer-scope cost modifier, only update non-Euro rows
+      const filteredRows = isOfferScope && brandBulkEditField === 'CurrencyCostModifier'
+        ? rows.filter((row) => {
+            const name = typeof (row as { OtherCurrencyName?: unknown }).OtherCurrencyName === 'string'
+              ? String((row as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
+              : '';
+            return name.length > 0 && name !== '€' && !name.toLowerCase().includes('eur');
+          })
+        : rows;
+      const ids = filteredRows
         .map((row) => normalizeOfferDetailId((row as { OfferDetailID?: unknown })?.OfferDetailID ?? null))
         .filter((id): id is number => id != null);
       if (ids.length === 0) {
-        throw new Error('No product rows found for this brand.');
+        throw new Error(isOfferScope ? 'No non-Euro product rows found in this offer.' : 'No product rows found for this brand.');
       }
 
       const chunkSize = 200;
@@ -3816,11 +3882,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         }
       }
 
-      showToastMessage(`${label} updated for ${brandName} (${ids.length} items)`, 'success');
+      const target = isOfferScope ? 'this offer' : brandName;
+      showToastMessage(`${label} updated for ${target} (${ids.length} items)`, 'success');
       setBrandBulkEditOpen(false);
       refreshOfferProductGrid(null, { purge: false });
     } catch (err) {
-      console.error('Brand bulk edit failed', err);
+      console.error('Bulk edit failed', err);
       setBrandBulkEditError(err instanceof Error ? err.message : 'Unable to apply changes.');
     } finally {
       setBrandBulkEditSaving(false);
@@ -3829,6 +3896,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     brandBulkEditBrandName,
     brandBulkEditField,
     brandBulkEditSaving,
+    brandBulkEditScope,
     brandBulkEditValue,
     refreshOfferProductGrid,
     resolvedEndpoint,
@@ -4079,27 +4147,42 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     if (canBulkEditBrand) {
       const currentModifier = (rowData as { CurrencyCostModifier?: unknown }).CurrencyCostModifier ?? null;
       const currentMargin = (rowData as { Margin?: unknown }).Margin ?? null;
-      const otherCurrencyName = typeof (rowData as { OtherCurrencyName?: unknown } | null | undefined)?.OtherCurrencyName === 'string'
+      const rowCurrencyName = typeof (rowData as { OtherCurrencyName?: unknown } | null | undefined)?.OtherCurrencyName === 'string'
         ? String((rowData as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
         : '';
-      const isEuroCostCurrency =
-        !otherCurrencyName ||
-        otherCurrencyName === '€' ||
-        otherCurrencyName.toLowerCase().includes('eur') ||
-        otherCurrencyName.toLowerCase().includes('euro');
+      const rowIsEuroCurrency = !rowCurrencyName || rowCurrencyName === '€' || rowCurrencyName.toLowerCase().includes('eur');
+      const rowHasModifier = !rowIsEuroCurrency && currentModifier != null && currentModifier !== '' && currentModifier !== 0;
+      let anyRowHasModifier = rowHasModifier;
+      if (!anyRowHasModifier && api && typeof api.forEachNode === 'function') {
+        api.forEachNode((node) => {
+          if (anyRowHasModifier) return;
+          const val = (node?.data as { CurrencyCostModifier?: unknown } | null | undefined)?.CurrencyCostModifier ?? null;
+          if (val != null && val !== '' && val !== 0) {
+            anyRowHasModifier = true;
+          }
+        });
+      }
       const setModifierItem: MenuItemDef = {
         name: 'Set cost modifier for this brand',
-        icon: brandBulkEditMenuIcon,
-        action: () => openBrandBulkEdit('CurrencyCostModifier', rowBrandName, currentModifier),
+        icon: costModifierMenuIcon,
+        action: () => openBrandBulkEdit('CurrencyCostModifier', rowBrandName, currentModifier, 'brand'),
+      };
+      const setOfferModifierItem: MenuItemDef = {
+        name: 'Set cost modifier for this offer',
+        icon: costModifierMenuIcon,
+        action: () => openBrandBulkEdit('CurrencyCostModifier', '', currentModifier, 'offer'),
       };
       const setMarginItem: MenuItemDef = {
         name: 'Set margin for this brand',
         icon: brandBulkEditMenuIcon,
-        action: () => openBrandBulkEdit('Margin', rowBrandName, currentMargin),
+        action: () => openBrandBulkEdit('Margin', rowBrandName, currentMargin, 'brand'),
       };
       const bulkItems: MenuItemDef[] = [];
-      if (!isEuroCostCurrency) {
+      if (rowHasModifier) {
         bulkItems.push(setModifierItem);
+      }
+      if (anyRowHasModifier) {
+        bulkItems.push(setOfferModifierItem);
       }
       bulkItems.push(setMarginItem);
       if (bulkItems.length > 0) {
@@ -5434,13 +5517,18 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       />
       <LookupModal
         open={brandBulkEditOpen}
-        title={brandBulkEditField === 'CurrencyCostModifier' ? 'Bulk edit cost modifier by brand' : 'Bulk edit margin by brand'}
+        title={
+          brandBulkEditScope === 'offer'
+            ? (brandBulkEditField === 'CurrencyCostModifier' ? 'Bulk edit cost modifier for offer' : 'Bulk edit margin for offer')
+            : (brandBulkEditField === 'CurrencyCostModifier' ? 'Bulk edit cost modifier by brand' : 'Bulk edit margin by brand')
+        }
         onClose={closeBrandBulkEdit}
         onConfirm={confirmBrandBulkEdit}
         confirmLabel="Apply"
         saving={brandBulkEditSaving}
         error={brandBulkEditError}
       >
+        {brandBulkEditScope === 'brand' && (
         <div className={lookupStyles.field}>
           <label className={lookupStyles.fieldLabel} htmlFor="bulk-edit-brand-name">
             Brand
@@ -5452,6 +5540,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             readOnly
           />
         </div>
+        )}
         <div className={lookupStyles.field}>
           <label className={lookupStyles.fieldLabel} htmlFor="bulk-edit-brand-value">
             {brandBulkEditField === 'CurrencyCostModifier' ? 'Cost modifier' : 'Margin (%)'}

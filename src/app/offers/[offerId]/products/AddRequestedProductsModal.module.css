@@ -297,6 +297,19 @@
   color: #92400e;
 }
 
+.headerRowToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #f0f9ff;
+  border: 1px solid #93c5fd;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-weight: 600;
+  color: #1e40af;
+  font-size: 0.88rem;
+}
+
 .helpText {
   font-size: 0.85rem;
   color: #64748b;

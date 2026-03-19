@@ -108,6 +108,24 @@
   transition: border-color 150ms ease;
 }
 
+@media (max-width: 1400px) {
+  .commentInput {
+    min-width: 400px;
+  }
+}
+
+@media (max-width: 1000px) {
+  .commentInput {
+    min-width: 200px;
+  }
+}
+
+@media (max-width: 700px) {
+  .commentInput {
+    min-width: 100px;
+  }
+}
+
 .commentInput:focus {
   border-color: #94a3b8;
 }

@@ -1352,7 +1352,12 @@ export async function POST(
       'PriceListValidToDate',
       'CreatedBy',
     ];
-    const selectedFields = Array.from(new Set([...requiredFields, ...requestedFields]))
+    // Always include OtherCurrencyName when OtherCurrencyID or NetCostOtherCurrency is requested
+    const extraFields: string[] = [];
+    if (requestedFields.includes('OtherCurrencyID') || requestedFields.includes('NetCostOtherCurrency')) {
+      extraFields.push('OtherCurrencyName');
+    }
+    const selectedFields = Array.from(new Set([...requiredFields, ...requestedFields, ...extraFields]))
       .filter((field) => Boolean(SELECT_FIELD_EXPRESSIONS[field]));
 
     if ((body as ReorderRequest | null)?.action === 'reorder') {

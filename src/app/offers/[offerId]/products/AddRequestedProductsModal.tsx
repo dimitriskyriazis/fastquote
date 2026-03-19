@@ -488,6 +488,54 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
     });
   }, []);
 
+  const toggleIncludeHeaderRow = useCallback((include: boolean) => {
+    setFileValidation((prev) => {
+      const sheets = prev.sheets.map((sheet, idx) => {
+        if (idx !== prev.activeSheetIndex) return sheet;
+
+        const headerRow = Array.isArray(sheet.rawRows[sheet.headerRowIndex])
+          ? (sheet.rawRows[sheet.headerRowIndex] as unknown[])
+          : [];
+        const columnCount = Math.max(determineColumnCount(sheet.rawRows), headerRow.length);
+
+        let columns: ColumnOption[];
+        let suggestions: Record<HeaderColumnKey, ColumnOption[]>;
+
+        if (include) {
+          const baseColumns = columnCount > 0 ? buildColumns(headerRow, columnCount) : [];
+          columns = baseColumns.filter((col) => columnHasValue(sheet.rawRows, headerRow, col.index));
+          suggestions = buildSuggestions(columns);
+        } else {
+          const emptyRow: unknown[] = Array.from({ length: columnCount }, () => null);
+          const baseColumns = columnCount > 0 ? buildColumns(emptyRow, columnCount) : [];
+          columns = baseColumns.filter((col) => columnHasValue(sheet.rawRows, emptyRow, col.index));
+          suggestions = buildSuggestions(columns);
+        }
+
+        // Preserve existing column selections where the index is still valid
+        const validIndexes = new Set(columns.map((c) => c.index));
+        const selection: Partial<Record<HeaderColumnKey, number | null>> = {};
+        for (const [key, value] of Object.entries(sheet.selection)) {
+          if (value != null && validIndexes.has(value as number)) {
+            selection[key as HeaderColumnKey] = value as number;
+          }
+        }
+
+        const updatedSheet: SheetMapping = {
+          ...sheet,
+          includeHeaderRow: include,
+          columns,
+          suggestions,
+          selection,
+        };
+        return enrichSheet(updatedSheet);
+      });
+
+      const evaluation = evaluateSelection(sheets, prev.activeSheetIndex);
+      return { ...prev, ...evaluation, sheets };
+    });
+  }, []);
+
   const handleFileSelection = useCallback((nextFile: File | null) => {
     validationRunId.current += 1;
     const runId = validationRunId.current;
@@ -851,8 +899,18 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
             ) : null}
             {activeSheet ? (
               <>
+                <div className={styles.headerRowToggle}>
+                  <span>First row contains column headers</span>
+                  <button
+                    type="button"
+                    className={`${styles.toggleSwitch} ${activeSheet.includeHeaderRow ? styles.toggleSwitchOn : ''}`}
+                    onClick={() => toggleIncludeHeaderRow(!activeSheet.includeHeaderRow)}
+                  >
+                    <span className={styles.toggleKnob} />
+                  </button>
+                </div>
                 <div className={styles.helpText}>
-                  <strong>{activeSheet.name || 'Sheet'}</strong> — Select the corresponding column for each field. Suggested matches appear at the top.
+                  <strong>{activeSheet.name || 'Sheet'}</strong> — Select the corresponding column for each field.{activeSheet.includeHeaderRow ? ' Suggested matches appear at the top.' : ''}
                 </div>
                 <div className={styles.mappingGrid}>
                   {COLUMN_DISPLAY.map((column) => {
