@@ -2410,7 +2410,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           ? String((params.data as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
           : '';
         if (!currencyName || currencyName === '€' || currencyName.toLowerCase().includes('eur')) return '';
-        return `${decimalFormatter.format(num)} ${currencyName}`;
+        return currencyName === '$' ? `$ ${decimalFormatter.format(num)}` : `${decimalFormatter.format(num)} ${currencyName}`;
       },
       cellClass: [...actualNumericCellClass, styles.redDataCell],
       cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },

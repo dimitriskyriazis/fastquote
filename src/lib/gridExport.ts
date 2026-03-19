@@ -78,7 +78,16 @@ function detectCellNumberFormat(
     if (formatted.includes('€')) return '#,##0.00" €"';
     if (formatted.includes('%')) return '#,##0.00" %"';
 
-    // Extract currency/unit suffix after a space: "1,234.56 $" → "$", "1,234.56 USD" → "USD"
+    // Extract currency/unit prefix before the number: "$ 1,234.56" → "$"
+    const prefixMatch = formatted.match(/^([^\d.,\s][^\d.,]*?)\s*[\d.,]/);
+    if (prefixMatch) {
+      const prefix = prefixMatch[1].trim();
+      if (prefix.length > 0 && prefix.length <= 5) {
+        return `"${prefix} "#,##0.00`;
+      }
+    }
+
+    // Extract currency/unit suffix after a space: "1,234.56 USD" → "USD"
     // Requires whitespace between the number and suffix to avoid false matches like "0.9" → "9"
     const suffixMatch = formatted.match(/\d\s+(.+)$/);
     if (suffixMatch) {

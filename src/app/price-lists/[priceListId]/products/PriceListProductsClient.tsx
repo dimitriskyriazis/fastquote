@@ -293,7 +293,7 @@ export default function PriceListProductsClient({
           const num = typeof value === "number" ? value : Number(value);
           if (!Number.isFinite(num)) return String(value);
           const currencyName = (params.data as PriceListProductRowGrid | undefined)?.CostCurrencyName ?? "";
-          return `${currencyFormatter.format(num)} ${currencyName}`.trim();
+          return currencyName === '$' ? `$ ${currencyFormatter.format(num)}` : `${currencyFormatter.format(num)} ${currencyName}`.trim();
         },
         type: "numericColumn",
         width: 200,
