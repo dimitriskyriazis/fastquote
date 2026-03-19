@@ -543,19 +543,8 @@ async function handleProductGrid(
           INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
           LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @__pricingPolicyId
         WHERE pl.Enabled = 1
-          AND (
-            pli.ProductID = bp.ProductID
-            OR EXISTS (
-              SELECT 1
-              FROM dbo.Products p_match
-              WHERE p_match.ID = pli.ProductID
-                AND p_match.LegacyPartNoCleaned = bp.PartNumberCleared
-                AND p_match.LegacyPartNoCleaned IS NOT NULL
-                AND p_match.LegacyPartNoCleaned <> ''
-            )
-          )
+          AND pli.ProductID = bp.ProductID
         ORDER BY
-          CASE WHEN pli.ProductID = bp.ProductID THEN 0 ELSE 1 END,
           CASE WHEN plpp.ID IS NOT NULL THEN 0 ELSE 1 END,
           CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
           pl.ValidToDate,
@@ -674,6 +663,10 @@ async function handleAddProducts(
   });
 
   const query = `
+  -- Safety: drop leftover temp tables from previous pooled-connection usage
+  IF OBJECT_ID('tempdb..#PP') IS NOT NULL DROP TABLE #PP;
+  IF OBJECT_ID('tempdb..#PD') IS NOT NULL DROP TABLE #PD;
+
   DECLARE @parentTree NVARCHAR(255) = NULLIF(LTRIM(RTRIM(@__parentTree)), '');
   DECLARE @prefix NVARCHAR(260);
   DECLARE @targetSegments INT;
@@ -686,28 +679,18 @@ async function handleAddProducts(
 
   IF @parentTree IS NULL
   BEGIN
-    -- No category selected: find max top-level TreeOrdering
     SELECT @maxChild =
-      MAX(
-        TRY_CONVERT(
-          INT,
-          NULLIF(LTRIM(RTRIM(od.TreeOrdering)), '')
-        )
-      )
+      MAX(TRY_CONVERT(INT, NULLIF(LTRIM(RTRIM(od.TreeOrdering)), '')))
     FROM dbo.OfferDetails od
     WHERE od.OfferID = @__offerId;
-
     SET @maxChild = ISNULL(@maxChild, 0);
   END
   ELSE
   BEGIN
     SET @prefix = CONCAT(@parentTree, '.');
     SET @targetSegments = (LEN(@parentTree) - LEN(REPLACE(@parentTree, '.', '')) + 2);
-
     SELECT @maxChild =
-      MAX(
-        TRY_CONVERT(INT, RIGHT(t.TreeOrderingTrimmed, CHARINDEX('.', REVERSE(t.TreeOrderingTrimmed) + '.') - 1))
-      )
+      MAX(TRY_CONVERT(INT, RIGHT(t.TreeOrderingTrimmed, CHARINDEX('.', REVERSE(t.TreeOrderingTrimmed) + '.') - 1)))
     FROM (
       SELECT LTRIM(RTRIM(ISNULL(od.TreeOrdering, ''))) AS TreeOrderingTrimmed
       FROM dbo.OfferDetails od
@@ -716,23 +699,21 @@ async function handleAddProducts(
     WHERE t.TreeOrderingTrimmed <> ''
       AND t.TreeOrderingTrimmed LIKE CONCAT(@prefix, '%')
       AND (LEN(t.TreeOrderingTrimmed) - LEN(REPLACE(t.TreeOrderingTrimmed, '.', '')) + 1) = @targetSegments;
-
     SET @maxChild = ISNULL(@maxChild, 0);
   END;
 
-  DECLARE @nextOrdering INT =
-    (
-      SELECT ISNULL(MAX(ISNULL(od.Ordering, 0)), 0) + 1
-      FROM dbo.OfferDetails od
-      WHERE od.OfferID = @__offerId
-    );
-
-  DECLARE @ProvidedProducts TABLE (
-    ProductID INT NOT NULL,
-    Seq INT NOT NULL
+  DECLARE @nextOrdering INT = (
+    SELECT ISNULL(MAX(ISNULL(od.Ordering, 0)), 0) + 1
+    FROM dbo.OfferDetails od
+    WHERE od.OfferID = @__offerId
   );
 
-  INSERT INTO @ProvidedProducts (ProductID, Seq)
+  -- Temp table with clustered index (proper statistics, unlike table variables)
+  CREATE TABLE #PP (
+    ProductID INT NOT NULL PRIMARY KEY CLUSTERED,
+    Seq INT NOT NULL
+  );
+  INSERT INTO #PP (ProductID, Seq)
   SELECT DISTINCT v.ProductID, v.Seq
   FROM (VALUES ${valueClauses.join(', ')}) AS v (ProductID, Seq);
 
@@ -740,7 +721,7 @@ async function handleAddProducts(
   -- but another product's legacy part number matches, use that product instead
   UPDATE pp
   SET pp.ProductID = resolved.NewProductID
-  FROM @ProvidedProducts pp
+  FROM #PP pp
   CROSS APPLY (
     SELECT TOP (1) p_new.ID AS NewProductID
     FROM dbo.Products pr
@@ -761,55 +742,42 @@ async function handleAddProducts(
         WHERE pli_chk2.ProductID = p_new.ID
       )
     ORDER BY p_new.ID DESC
-  ) resolved
-  OPTION (RECOMPILE);
+  ) resolved;
 
-  DECLARE @ProductData TABLE (
-    ProductID INT NOT NULL,
+  -- Full product data with pricing, discounts, and computed values pre-calculated
+  CREATE TABLE #PD (
+    ProductID INT NOT NULL PRIMARY KEY CLUSTERED,
     Seq INT NOT NULL,
     Description NVARCHAR(MAX) NULL,
     BrandID INT NULL,
     PartNumber NVARCHAR(255) NULL,
     ModelNumber NVARCHAR(255) NULL,
-    WarrantyValue INT NOT NULL,
     PriceListID INT NULL,
     PriceListItemID INT NULL,
     ListPrice DECIMAL(18, 4) NULL,
     CostPrice DECIMAL(18, 4) NULL,
     OtherCurrencyID INT NULL,
-    CurrencyCostModifier DECIMAL(18, 8) NULL
+    CurrencyCostModifier DECIMAL(18, 8) NULL,
+    TelmacoWarrantyYears INT NOT NULL DEFAULT 0,
+    CustomerWarrantyYears INT NOT NULL DEFAULT 0,
+    TelmacoDiscountPct DECIMAL(18, 4) NOT NULL DEFAULT 0,
+    CustomerDiscountPct DECIMAL(18, 4) NOT NULL DEFAULT 0,
+    ComputedTelmacoDiscount DECIMAL(18, 4) NOT NULL DEFAULT 0,
+    ComputedNetUnitPrice DECIMAL(18, 4) NULL,
+    ComputedNetCost DECIMAL(18, 4) NULL
   );
 
-  INSERT INTO @ProductData (
-    ProductID,
-    Seq,
-    Description,
-    BrandID,
-    PartNumber,
-    ModelNumber,
-    WarrantyValue,
-    PriceListID,
-    PriceListItemID,
-    ListPrice,
-    CostPrice,
-    OtherCurrencyID,
-    CurrencyCostModifier
+  -- Step 1: Base product data + best price
+  INSERT INTO #PD (
+    ProductID, Seq, Description, BrandID, PartNumber, ModelNumber,
+    PriceListID, PriceListItemID, ListPrice, CostPrice,
+    OtherCurrencyID, CurrencyCostModifier
   )
   SELECT
-    p.ProductID,
-    p.Seq,
-    pr.Description,
-    pr.BrandID,
-    pr.PartNumber,
-    pr.ModelNumber,
-    0 AS WarrantyValue,
-    price.PriceListID,
-    price.PriceListItemID,
-    price.ListPrice,
-    price.CostPrice,
-    price.OtherCurrencyID,
-    price.CurrencyCostModifier
-  FROM @ProvidedProducts p
+    p.ProductID, p.Seq, pr.Description, pr.BrandID, pr.PartNumber, pr.ModelNumber,
+    price.PriceListID, price.PriceListItemID, price.ListPrice, price.CostPrice,
+    price.OtherCurrencyID, price.CurrencyCostModifier
+  FROM #PP p
     INNER JOIN dbo.Products pr ON pr.ID = p.ProductID
     OUTER APPLY (
       SELECT TOP (1)
@@ -831,195 +799,164 @@ async function handleAddProducts(
         pl.ValidToDate,
         pl.ValidFromDate DESC,
         pli.ID DESC
-    ) price
-  OPTION (RECOMPILE);
+    ) price;
 
-  -- Pricing policy rules are optional: when no matching rule exists, discounts default to 0.
-    INSERT INTO dbo.OfferDetails (
-      OfferID,
-      ParentOfferDetailID,
-      TreeOrdering,
-      Ordering,
-      IsPrintable,
-      IsComment,
-      IsCategory,
-      ProductID,
-      BrandID,
-      PartNumber,
-      ModelNumber,
-      ProductDescription,
-      TelmacoWarranty,
-      Warranty,
-      Quantity,
-      ListPrice,
-      NetUnitPrice,
-      TotalPrice,
-      TotalNet,
-      TelmacoDiscount,
-      CustomerDiscount,
-      NetCostOtherCurrency,
-      OtherCurrencyID,
-      CurrencyCostModifier,
-      NetCost,
-      Margin,
-      GrossProfit,
-      TotalCost,
-      PriceListID,
-      PriceListItemID,
-      Comment,
-      CreatedOn,
-      CreatedBy,
-      ModifiedOn,
-      ModifiedBy
-    )
-    OUTPUT INSERTED.ID AS OfferDetailID, INSERTED.TreeOrdering
-    SELECT
-      @__offerId,
-      CASE WHEN @parentTree IS NULL THEN NULL ELSE @__categoryId END,
-      CASE
-        WHEN @parentTree IS NULL THEN CONVERT(NVARCHAR(255), @maxChild + ROW_NUMBER() OVER (ORDER BY p.Seq))
-        ELSE CONCAT(@parentTree, '.', @maxChild + ROW_NUMBER() OVER (ORDER BY p.Seq))
-      END,
-      @nextOrdering + ROW_NUMBER() OVER (ORDER BY p.Seq) - 1,
-
-      NULL,
-      0,
-      0,
-      p.ProductID,
-      p.BrandID,
-      p.PartNumber,
-      p.ModelNumber,
-      p.Description,
-      COALESCE(discounts.TelmacoWarrantyYears, 0),
-      COALESCE(discounts.CustomerWarrantyYears, 0),
-      1,
-      p.ListPrice,
-      computed.ComputedNetUnitPrice,
-      CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
-      computed.ComputedNetUnitPrice,
-      CASE
-        -- Case 2: If cost price exists, calculate Telmaco discount from cost price
-        WHEN p.CostPrice IS NOT NULL AND p.ListPrice IS NOT NULL AND p.ListPrice <> 0
-          THEN ROUND(
-            (CAST(1 AS DECIMAL(18, 8))
-              - (CAST(p.CostPrice * p.CurrencyCostModifier AS DECIMAL(18, 8))
-                / CAST(p.ListPrice AS DECIMAL(18, 8))
-              )
-            ) * 100,
-            4
-          )
-        -- Case 1: If no cost price, use discount from pricing policy rule
-        ELSE COALESCE(discounts.TelmacoDiscountPercentage, 0)
-      END,
-      COALESCE(discounts.CustomerDiscountPercentage, 0),
-      p.CostPrice,
-      p.OtherCurrencyID,
-      p.CurrencyCostModifier,
-      COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
-      CASE
-        WHEN computed.ComputedNetUnitPrice IS NULL
-          OR computed.ComputedNetUnitPrice = 0
-          OR COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL
-          THEN NULL
-        ELSE ROUND(
-          (CAST(1 AS DECIMAL(18, 8))
-            - (CAST(COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) AS DECIMAL(18, 8))
-              / CAST(computed.ComputedNetUnitPrice AS DECIMAL(18, 8))
-            )
-          ) * 100,
-          4
-        )
-      END,
-      CASE
-        WHEN computed.ComputedNetUnitPrice IS NULL
-          OR COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL
-          THEN NULL
-        ELSE ROUND(
-          computed.ComputedNetUnitPrice
-          - COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
-          4
-        )
-      END,
-      COALESCE(computed.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
-      p.PriceListID,
-      p.PriceListItemID,
-      @__addComment,
-      SYSUTCDATETIME(),
-      @__createdBy,
-      SYSUTCDATETIME(),
-      @__modifiedBy
-    FROM @ProductData p
-    OUTER APPLY (
+  -- Step 2: Apply pricing policy discount rules
+  UPDATE pd SET
+    pd.TelmacoWarrantyYears = COALESCE(discounts.TelmacoWarrantyYears, 0),
+    pd.CustomerWarrantyYears = COALESCE(discounts.CustomerWarrantyYears, 0),
+    pd.TelmacoDiscountPct = COALESCE(discounts.TelmacoDiscountPercentage, 0),
+    pd.CustomerDiscountPct = COALESCE(discounts.CustomerDiscountPercentage, 0)
+  FROM #PD pd
+  OUTER APPLY (
+    SELECT TOP (1)
+      ppr.TelmacoDiscountPercentage,
+      ppr.CustomerDiscountPercentage,
+      ppr.TelmacoWarrantyYears,
+      ppr.CustomerWarrantyYears
+    FROM (
       SELECT TOP (1)
         ppr.TelmacoDiscountPercentage,
         ppr.CustomerDiscountPercentage,
         ppr.TelmacoWarrantyYears,
-        ppr.CustomerWarrantyYears
-      FROM (
-        -- Priority 1: Use rules from policy specified in PriceListPricingPolicy
-        SELECT TOP (1)
-          ppr.TelmacoDiscountPercentage,
-          ppr.CustomerDiscountPercentage,
-          ppr.TelmacoWarrantyYears,
-          ppr.CustomerWarrantyYears,
-          1 AS Priority
-        FROM dbo.PriceListPricingPolicy plpp
-        INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
-        WHERE plpp.PriceListID = p.PriceListID
-          AND plpp.PricingPolicyID = @pricingPolicyId
-          AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
-        ORDER BY
-          CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END,
-          ppr.ID DESC
+        ppr.CustomerWarrantyYears,
+        1 AS Priority
+      FROM dbo.PriceListPricingPolicy plpp
+      INNER JOIN dbo.PricingPolicyRules ppr ON plpp.PricingPolicyID = ppr.PricingPolicyID
+      WHERE plpp.PriceListID = pd.PriceListID
+        AND plpp.PricingPolicyID = @pricingPolicyId
+        AND (ppr.BrandID = pd.BrandID OR ppr.BrandID IS NULL)
+      ORDER BY
+        CASE WHEN ppr.BrandID = pd.BrandID THEN 0 ELSE 1 END,
+        ppr.ID DESC
 
-        UNION ALL
+      UNION ALL
 
-        -- Priority 2: Fall back to Offer's PricingPolicyID
-        SELECT TOP (1)
-          ppr.TelmacoDiscountPercentage,
-          ppr.CustomerDiscountPercentage,
-          ppr.TelmacoWarrantyYears,
-          ppr.CustomerWarrantyYears,
-          2 AS Priority
-        FROM dbo.PricingPolicyRules ppr
-        WHERE ppr.PricingPolicyID = @pricingPolicyId
-          AND (ppr.BrandID = p.BrandID OR ppr.BrandID IS NULL)
-        ORDER BY
-          CASE WHEN ppr.BrandID = p.BrandID THEN 0 ELSE 1 END,
-          ppr.ID DESC
-      ) ppr
-      ORDER BY ppr.Priority
-    ) AS discounts
-    OUTER APPLY (
-      SELECT
-        CASE
-          WHEN p.ListPrice IS NULL THEN NULL
-          ELSE ROUND(
-            p.ListPrice
-            * (
-              CAST(1 AS DECIMAL(18, 8))
-              - (CAST(COALESCE(discounts.CustomerDiscountPercentage, 0) AS DECIMAL(18, 8)) / CAST(100 AS DECIMAL(18, 8)))
-            ),
-            4
+      SELECT TOP (1)
+        ppr.TelmacoDiscountPercentage,
+        ppr.CustomerDiscountPercentage,
+        ppr.TelmacoWarrantyYears,
+        ppr.CustomerWarrantyYears,
+        2 AS Priority
+      FROM dbo.PricingPolicyRules ppr
+      WHERE ppr.PricingPolicyID = @pricingPolicyId
+        AND (ppr.BrandID = pd.BrandID OR ppr.BrandID IS NULL)
+      ORDER BY
+        CASE WHEN ppr.BrandID = pd.BrandID THEN 0 ELSE 1 END,
+        ppr.ID DESC
+    ) ppr
+    ORDER BY ppr.Priority
+  ) AS discounts;
+
+  -- Step 3: Compute derived pricing values
+  UPDATE pd SET
+    pd.ComputedNetUnitPrice = CASE
+      WHEN pd.ListPrice IS NULL THEN NULL
+      ELSE ROUND(
+        pd.ListPrice
+        * (CAST(1 AS DECIMAL(18, 8)) - (CAST(pd.CustomerDiscountPct AS DECIMAL(18, 8)) / CAST(100 AS DECIMAL(18, 8)))),
+        4
+      )
+    END,
+    pd.ComputedNetCost = CASE
+      WHEN pd.CostPrice IS NOT NULL THEN pd.CostPrice * pd.CurrencyCostModifier
+      WHEN pd.ListPrice IS NULL THEN NULL
+      ELSE ROUND(
+        pd.ListPrice
+        * (CAST(1 AS DECIMAL(18, 8)) - (CAST(pd.TelmacoDiscountPct AS DECIMAL(18, 8)) / CAST(100 AS DECIMAL(18, 8)))),
+        4
+      )
+    END,
+    pd.ComputedTelmacoDiscount = CASE
+      WHEN pd.CostPrice IS NOT NULL AND pd.ListPrice IS NOT NULL AND pd.ListPrice <> 0
+        THEN ROUND(
+          (CAST(1 AS DECIMAL(18, 8))
+            - (CAST(pd.CostPrice * pd.CurrencyCostModifier AS DECIMAL(18, 8))
+              / CAST(pd.ListPrice AS DECIMAL(18, 8))
+            )
+          ) * 100,
+          4
+        )
+      ELSE pd.TelmacoDiscountPct
+    END
+  FROM #PD pd;
+
+  -- Step 4: Simple INSERT from pre-computed data (no OUTER APPLYs)
+  INSERT INTO dbo.OfferDetails (
+    OfferID, ParentOfferDetailID, TreeOrdering, Ordering,
+    IsPrintable, IsComment, IsCategory,
+    ProductID, BrandID, PartNumber, ModelNumber, ProductDescription,
+    TelmacoWarranty, Warranty, Quantity,
+    ListPrice, NetUnitPrice, TotalPrice, TotalNet,
+    TelmacoDiscount, CustomerDiscount,
+    NetCostOtherCurrency, OtherCurrencyID, CurrencyCostModifier,
+    NetCost, Margin, GrossProfit, TotalCost,
+    PriceListID, PriceListItemID,
+    Comment,
+    CreatedOn, CreatedBy, ModifiedOn, ModifiedBy
+  )
+  OUTPUT INSERTED.ID AS OfferDetailID, INSERTED.TreeOrdering
+  SELECT
+    @__offerId,
+    CASE WHEN @parentTree IS NULL THEN NULL ELSE @__categoryId END,
+    CASE
+      WHEN @parentTree IS NULL THEN CONVERT(NVARCHAR(255), @maxChild + ROW_NUMBER() OVER (ORDER BY p.Seq))
+      ELSE CONCAT(@parentTree, '.', @maxChild + ROW_NUMBER() OVER (ORDER BY p.Seq))
+    END,
+    @nextOrdering + ROW_NUMBER() OVER (ORDER BY p.Seq) - 1,
+    NULL, 0, 0,
+    p.ProductID, p.BrandID, p.PartNumber, p.ModelNumber, p.Description,
+    p.TelmacoWarrantyYears,
+    p.CustomerWarrantyYears,
+    1,
+    p.ListPrice,
+    p.ComputedNetUnitPrice,
+    CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
+    p.ComputedNetUnitPrice,
+    p.ComputedTelmacoDiscount,
+    p.CustomerDiscountPct,
+    p.CostPrice,
+    p.OtherCurrencyID,
+    p.CurrencyCostModifier,
+    COALESCE(p.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
+    CASE
+      WHEN p.ComputedNetUnitPrice IS NULL
+        OR p.ComputedNetUnitPrice = 0
+        OR COALESCE(p.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL
+        THEN NULL
+      ELSE ROUND(
+        (CAST(1 AS DECIMAL(18, 8))
+          - (CAST(COALESCE(p.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) AS DECIMAL(18, 8))
+            / CAST(p.ComputedNetUnitPrice AS DECIMAL(18, 8))
           )
-        END AS ComputedNetUnitPrice,
-        CASE
-          -- Case 2: If cost price exists, use cost price (with currency modifier) as NetCost
-          WHEN p.CostPrice IS NOT NULL THEN p.CostPrice * p.CurrencyCostModifier
-          -- Case 1: If no cost price, calculate from Telmaco discount percentage
-          WHEN p.ListPrice IS NULL THEN NULL
-          ELSE ROUND(
-            p.ListPrice
-            * (
-              CAST(1 AS DECIMAL(18, 8))
-              - (CAST(COALESCE(discounts.TelmacoDiscountPercentage, 0) AS DECIMAL(18, 8)) / CAST(100 AS DECIMAL(18, 8)))
-            ),
-            4
-          )
-        END AS ComputedNetCost
-    ) AS computed
-    ORDER BY p.Seq
-    OPTION (RECOMPILE);
+        ) * 100,
+        4
+      )
+    END,
+    CASE
+      WHEN p.ComputedNetUnitPrice IS NULL
+        OR COALESCE(p.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice) IS NULL
+        THEN NULL
+      ELSE ROUND(
+        p.ComputedNetUnitPrice
+        - COALESCE(p.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
+        4
+      )
+    END,
+    COALESCE(p.ComputedNetCost, p.CostPrice * p.CurrencyCostModifier, p.ListPrice),
+    p.PriceListID,
+    p.PriceListItemID,
+    @__addComment,
+    SYSUTCDATETIME(),
+    @__createdBy,
+    SYSUTCDATETIME(),
+    @__modifiedBy
+  FROM #PD p
+  ORDER BY p.Seq;
+
+  -- Cleanup temp tables (important for connection pooling)
+  DROP TABLE #PP;
+  DROP TABLE #PD;
   `;
 
   const result = await request.query(query);
