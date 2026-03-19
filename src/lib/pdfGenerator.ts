@@ -1083,7 +1083,6 @@ function buildSignatureBlock(data: OfferPdfData, L: Labels, lang: PdfLang, orien
         ],
         margin: [0, 6, 0, 10],
       },
-      { text: L.signaturesTitle, style: 'h2', margin: [0, 0, 0, 8] },
       { text: L.regards, style: 'body', margin: [0, 18, 0, 4] },
       { text: L.companySign, style: 'body', bold: true, margin: [0, 0, 0, 28] },
       sameSigner
