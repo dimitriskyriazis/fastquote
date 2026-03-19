@@ -1,6 +1,8 @@
 import MarketsClient from "./MarketsClient";
 import { getPool } from "../../lib/sql";
 
+export const dynamic = "force-dynamic";
+
 async function fetchSalesDivisions(): Promise<string[]> {
   try {
     const pool = await getPool();

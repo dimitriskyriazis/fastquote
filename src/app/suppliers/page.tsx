@@ -1,6 +1,8 @@
 import SuppliersClient from "./SuppliersClient";
 import { getPool } from "../../lib/sql";
 
+export const dynamic = "force-dynamic";
+
 async function fetchCountries(): Promise<Array<{ id: number; name: string }>> {
   try {
     const pool = await getPool();

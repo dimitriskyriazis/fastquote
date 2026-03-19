@@ -2,6 +2,8 @@ import PricingPoliciesClient, { PricingPolicyColumn } from "./PricingPoliciesCli
 import { getPool } from "../../lib/sql";
 import { toDropdownOptions, type RawDropdownRow } from "../../lib/dropdownOptions";
 
+export const dynamic = "force-dynamic";
+
 async function fetchPricingPolicies(): Promise<PricingPolicyColumn[]> {
   try {
     const pool = await getPool();
