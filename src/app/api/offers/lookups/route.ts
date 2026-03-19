@@ -74,8 +74,7 @@ async function fetchCustomers(search?: string) {
     const result = await req.query<LookupRow>(`
       SELECT TOP 50 ID, Name
       FROM dbo.Customers
-      WHERE ISNULL(IsParent, 0) = 0
-        AND Name LIKE @customerSearch
+      WHERE Name LIKE @customerSearch
       ORDER BY Name
     `);
     return toLookupOptions(result.recordset);
@@ -83,7 +82,6 @@ async function fetchCustomers(search?: string) {
   const result = await pool.request().query<LookupRow>(`
     SELECT ID, Name
     FROM dbo.Customers
-    WHERE ISNULL(IsParent, 0) = 0
     ORDER BY Name
   `);
   return toLookupOptions(result.recordset);

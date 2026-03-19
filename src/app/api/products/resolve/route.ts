@@ -119,6 +119,14 @@ export async function GET(req: NextRequest) {
             WHEN ${partModelCondition} THEN 0
             ELSE 1
           END,
+          CASE
+            WHEN EXISTS (
+              SELECT 1 FROM dbo.PriceListItems pli
+              INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID AND pl.Enabled = 1
+              WHERE pli.ProductID = p.ID
+            ) THEN 0
+            ELSE 1
+          END,
           p.ID ASC
       `;
 
