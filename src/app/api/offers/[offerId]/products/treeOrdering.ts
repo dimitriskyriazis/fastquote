@@ -159,27 +159,8 @@ export const buildTreeFromRows = (rows: TreeOrderingRow[]): TreeOrderingNode[] =
   return roots;
 };
 
-const buildSegmentList = (nodes: TreeOrderingNode[], depth: number): string[] => {
-  const seen = new Set<string>();
-  const sorted: string[] = [];
-  for (const node of nodes) {
-    const seg = node.path.length > depth ? node.path[depth] : null;
-    if (seg != null && !seen.has(seg)) {
-      seen.add(seg);
-      sorted.push(seg);
-    }
-  }
-  sorted.sort(compareSegments);
-  let nextNum = 1;
-  while (sorted.length < nodes.length) {
-    const candidate = String(nextNum);
-    if (!seen.has(candidate)) {
-      sorted.push(candidate);
-      seen.add(candidate);
-    }
-    nextNum += 1;
-  }
-  return sorted;
+const buildSegmentList = (nodes: TreeOrderingNode[], _depth: number): string[] => {
+  return nodes.map((_, idx) => String(idx + 1));
 };
 
 export const collectResequencedUpdates = (roots: TreeOrderingNode[]): TreeOrderingUpdateInput[] => {
