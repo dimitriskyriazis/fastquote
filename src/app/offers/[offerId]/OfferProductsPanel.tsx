@@ -198,7 +198,7 @@ type OfferExportRow = {
   ModelNumber: string | null;
   Description: string | null;
   Quantity: number | null;
-  NetUnitPrice: number | null;
+  ListPrice: number | null;
   Delivery: string | null;
   Comment: string | null;
   IsPrintable?: boolean | null;
@@ -3537,7 +3537,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       const description = (row.Description ?? '').toString().trim();
       const descriptionType = [model, description].filter((part) => part.length > 0).join(' ').trim();
       const qty = coerceNumber(row.Quantity);
-      const netUnitPrice = coerceNumber(row.NetUnitPrice);
+      const listPrice = coerceNumber(row.ListPrice);
       const qtyForExport = qty != null && !Object.is(qty, 0) ? qty : null;
       const deliveryRaw = row.Delivery == null ? '' : String(row.Delivery).trim();
       const deliveryValue = deliveryRaw.length > 0 ? deliveryRaw : 'unknown';
@@ -3546,14 +3546,14 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         && !row.BrandName?.toString().trim()
         && !model
         && !description
-        && netUnitPrice == null;
+        && listPrice == null;
       return {
         no: normalizeNoForExport(row.TreeOrdering),
         productReference: row.PartNumber?.toString().trim() ?? '',
         manufacturer: (row.AVC4BrandName?.toString().trim() || row.BrandName?.toString().trim()) ?? '',
         descriptionType,
         qty: qtyForExport ?? '',
-        unitPrice: netUnitPrice ?? '',
+        unitPrice: listPrice ?? '',
         delayForDelivery: deliveryValue,
         comments: row.Comment?.toString() ?? '',
         ...(isUnmatchedProduct ? { skipRow: true } : undefined),

@@ -695,7 +695,7 @@ export const OFFER_PRODUCTS_EXPORT_FIELDS = [
   'ModelNumber',
   'Description',
   'Quantity',
-  'NetUnitPrice',
+  'ListPrice',
   'Comment',
   'Delivery',
   'IsPrintable',
