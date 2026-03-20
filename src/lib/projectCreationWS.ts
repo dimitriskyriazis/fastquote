@@ -37,9 +37,9 @@ export async function createProjectViaWebService(
     prjstatus: String(params.prjState),
   };
 
-  // Map customer (trdr) if provided
-  if (params.trdr != null) {
-    wsParams.custcode = String(params.trdr);
+  // Map customer CODE if provided (alphanumeric CODE from TRDR.CODE, e.g. 'ΔΙ.3505')
+  if (params.customerCode) {
+    wsParams.custcode = params.customerCode;
   }
 
   // Map parent project if provided

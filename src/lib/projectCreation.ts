@@ -8,6 +8,7 @@ export type CreateProjectFromIntegrationParams = {
   name: string;
   prjcParent: number | null;
   trdr: number | null;
+  customerCode: string | null; // alphanumeric CODE from TRDR.CODE (e.g. 'ΔΙ.3505') — used by WS path
   prjCategory: number | null;
   sourceSystem: string; // e.g. 'FQ'
   createdByUser: number; // e.g. 1011

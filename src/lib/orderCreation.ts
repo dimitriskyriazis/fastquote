@@ -1,5 +1,7 @@
 import sql from 'mssql';
 import { getErpPool } from './sql';
+import { createOrderViaWebService } from './orderCreationWS';
+import { logger } from './logger';
 
 export type CreateCustomerOrderParams = {
   prjcId: number;
@@ -104,5 +106,94 @@ export async function addOrderLine(input: OrderLineInput): Promise<void> {
       @NUM01         = @NUM01,
       @CreatedByUser = @CreatedByUser;
   `);
+}
+
+// ── Order + Lines dispatch (WS vs SQL) ────────────────────────────────────
+
+const USE_WS_ORDER_CREATION = process.env.SOFTONE_WS_ORDER_CREATION === 'true';
+
+export type OrderLineForCreation = {
+  erpId: number;
+  erpCode: string;
+  qty: number;
+  price: number;
+  netCost: number | null;
+};
+
+export type CreateOrderWithLinesParams = {
+  offerId: number;
+  description: string;
+  customerCode: string;  // alphanumeric CODE from dbo.TRDR.CODE
+  prjcId: number;
+  businessUnit: 'AVS' | 'TVS';
+  trdr: number;
+  integrationKey: string;
+  series: number;
+  createdByUser: number;
+  lines: OrderLineForCreation[];
+};
+
+export type CreatedOrderWithLinesInfo = {
+  findocId: number;
+  finCode: string;
+};
+
+/**
+ * Creates an order with lines in ERP.
+ *
+ * When SOFTONE_WS_ORDER_CREATION=true, uses the SoftOne setDocs web service
+ * (creates header + all lines atomically in one call).
+ * Otherwise falls back to SQL SPs: createCustomerOrder + addOrderLine per line.
+ */
+export async function createOrderWithLines(
+  params: CreateOrderWithLinesParams,
+): Promise<CreatedOrderWithLinesInfo> {
+  if (USE_WS_ORDER_CREATION) {
+    return createOrderViaWebService(params);
+  }
+
+  // SQL path: create header, then add lines one by one
+  const orderInfo = await createCustomerOrder({
+    prjcId: params.prjcId,
+    businessUnit: params.businessUnit,
+    trdr: params.trdr,
+    integrationKey: params.integrationKey,
+    series: params.series,
+    createdByUser: params.createdByUser,
+  });
+
+  let lineIndex = 0;
+  for (const line of params.lines) {
+    lineIndex += 1;
+    const cccPosNo = String(lineIndex);
+
+    try {
+      await addOrderLine({
+        findocId: orderInfo.findocId,
+        cccPosNo,
+        mtrl: line.erpId,
+        qty: line.qty,
+        price: line.price,
+        num01: line.netCost,
+        createdByUser: params.createdByUser,
+      });
+    } catch (lineErr) {
+      logger.error(
+        'Failed to add order line',
+        {
+          offerId: String(params.offerId),
+          findocId: String(orderInfo.findocId),
+          erpId: String(line.erpId),
+          cccPosNo,
+        },
+        lineErr instanceof Error ? lineErr : undefined,
+      );
+    }
+  }
+
+  return {
+    findocId: orderInfo.findocId,
+    finCode: orderInfo.finCode,
+  };
 }
 

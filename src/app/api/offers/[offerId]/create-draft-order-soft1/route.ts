@@ -4,7 +4,9 @@ import sql from 'mssql';
 import { getPool, getErpPool } from '../../../../../lib/sql';
 import { findProject, PROJECT_FIND_STATUS } from '../../../../../lib/projectValidation';
 import { createProjectFromIntegration } from '../../../../../lib/projectCreation';
-import { createCustomerOrder, addOrderLine } from '../../../../../lib/orderCreation';
+import { createOrderWithLines } from '../../../../../lib/orderCreation';
+import type { OrderLineForCreation } from '../../../../../lib/orderCreation';
+import { createItemInErp } from '../../../../../lib/itemCreation';
 import { getRequestId } from '../../../../../lib/requestId';
 import { logger } from '../../../../../lib/logger';
 import { requirePermission } from '../../../../../lib/authz';
@@ -87,11 +89,6 @@ function normalizeOfferId(value: unknown): number | null {
     if (Number.isFinite(parsed)) return parsed;
   }
   return null;
-}
-
-// Type guard to check if error is a RequestError with a number property
-function isRequestErrorWithNumber(error: unknown): error is { number: number } {
-  return typeof error === 'object' && error !== null && 'number' in error && typeof (error as { number: unknown }).number === 'number';
 }
 
 // Suggest product categories using AI
@@ -312,101 +309,6 @@ IMPORTANT RULES:
   }
 }
 
-// Generate a structured CODE: [SubCategoryCode][TypeFirstLetter].[BrandCode].[3DigitSequence]
-// Example: SPRM.BIA.180
-// - SPR = SubCategory Code (3 chars from dbo.ProductSubCategories.Code)
-// - M = Type first letter (1 char from dbo.ProductTypes.Name)
-// - BIA = Brand Code (from dbo.MTRMANFCTR.CODE, matched by NAME)
-// - 180 = 3-digit sequence from tlm._mtrlNextCode3Digit
-async function generateNewErpCode(
-  pool: Awaited<ReturnType<typeof getPool>>,
-  erpPool: Awaited<ReturnType<typeof getErpPool>>,
-  product: {
-    SubCategoryID: number | null;
-    TypeID: number | null;
-    BrandID: number | null;
-    BrandName: string | null;
-  },
-): Promise<string> {
-  if (!product.SubCategoryID || !product.TypeID || !product.BrandID || !product.BrandName) {
-    throw new Error(
-      `Product missing required fields for CODE generation: SubCategoryID=${product.SubCategoryID}, TypeID=${product.TypeID}, BrandID=${product.BrandID}, BrandName=${product.BrandName}`,
-    );
-  }
-
-  // 1. Get SubCategory Code (first 3 chars) from FASTQUOTE
-  const subCategoryRequest = pool.request();
-  subCategoryRequest.input('subCategoryId', sql.Int, product.SubCategoryID);
-  const subCategoryResult = await subCategoryRequest.query<{ Code: string | null }>(`
-    SELECT Code
-    FROM dbo.ProductSubCategories
-    WHERE ID = @subCategoryId
-  `);
-  const subCategoryCode = subCategoryResult.recordset?.[0]?.Code;
-  if (!subCategoryCode || subCategoryCode.length < 3) {
-    throw new Error(
-      `SubCategory Code not found or too short for product SubCategoryID=${product.SubCategoryID}`,
-    );
-  }
-  const subCategoryCode3 = subCategoryCode.substring(0, 3).toUpperCase();
-
-  // 2. Get Type first letter (4th char) from FASTQUOTE
-  const typeRequest = pool.request();
-  typeRequest.input('typeId', sql.Int, product.TypeID);
-  const typeResult = await typeRequest.query<{ Name: string | null }>(`
-    SELECT Name
-    FROM dbo.ProductTypes
-    WHERE ID = @typeId
-  `);
-  const typeName = typeResult.recordset?.[0]?.Name;
-  if (!typeName || typeName.length === 0) {
-    throw new Error(`Type Name not found for product TypeID=${product.TypeID}`);
-  }
-  const typeFirstLetter = typeName.trim().charAt(0).toUpperCase();
-
-  // 3. Match Brand Name with ERP MTRMANFCTR.NAME (case-insensitive) and get CODE
-  const brandRequest = erpPool.request();
-  brandRequest.input('brandName', sql.NVarChar(128), product.BrandName.trim());
-  const brandResult = await brandRequest.query<{ CODE: string | null }>(`
-    SELECT TOP (1) CODE
-    FROM dbo.MTRMANFCTR
-    WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
-    ORDER BY MTRMANFCTR
-  `);
-  const brandCode = brandResult.recordset?.[0]?.CODE;
-  if (!brandCode) {
-    throw new Error(`Brand Code not found in ERP for brand name: ${product.BrandName}`);
-  }
-
-  // 4. Build prefix: SubCategoryCode + TypeFirstLetter + "." + BrandCode (no trailing dot)
-  const prefix = `${subCategoryCode3}${typeFirstLetter}.${brandCode}`;
-
-  // 5. Call tlm._mtrlNextCode3Digit to get the full CODE
-  const nextCodeRequest = erpPool.request();
-  nextCodeRequest.input('Prefix', sql.NVarChar(20), prefix);
-  nextCodeRequest.input('Company', sql.Int, 1);
-  const nextCodeResult = await nextCodeRequest.query<{
-    NextCode: string | null;
-    NextNo: number | null;
-  }>(`
-    DECLARE @NextCode VARCHAR(25);
-    DECLARE @NextNo INT;
-    EXEC tlm._mtrlNextCode3Digit
-      @Prefix = @Prefix,
-      @Company = @Company,
-      @NextCode = @NextCode OUTPUT,
-      @NextNo = @NextNo OUTPUT;
-    SELECT @NextCode AS NextCode, @NextNo AS NextNo;
-  `);
-
-  const nextCode = nextCodeResult.recordset?.[0]?.NextCode;
-  if (!nextCode) {
-    throw new Error(`Failed to get next CODE from tlm._mtrlNextCode3Digit for prefix: ${prefix}`);
-  }
-
-  return nextCode;
-}
-
 // First call: Find matches for all products
 export async function POST(
   req: NextRequest,
@@ -465,6 +367,7 @@ export async function POST(
     const salesDivisionId = offerRow?.SalesDivisionID ?? null;
     const salesDivisionName = offerRow?.SalesDivisionName ?? null;
     let erpCustomerId = offerRow?.ERPCustomerID ?? null;
+    let erpCustomerCode: string | null = null; // alphanumeric CODE from dbo.TRDR.CODE (needed for WS setDocs)
     const customerName = offerRow?.CustomerName ?? null;
     const erpProjectId = offerRow?.ERPProjectID ?? null;
     const erpProjectCode = offerRow?.ERPProjectCode ?? null;
@@ -489,11 +392,12 @@ export async function POST(
       if (customerSelection && customerConfirmed) {
         // User confirmed the customer selection
         erpCustomerId = customerSelection.TRDR;
+        erpCustomerCode = customerSelection.CODE ?? null;
         logger.info('create-draft-order-soft1 customer confirmed', {
           requestId,
           offerId: normalizedId,
           erpCustomerId,
-          customerCode: customerSelection.CODE,
+          customerCode: erpCustomerCode,
         });
       } else if (customerSelection && !customerConfirmed) {
         // User selected but not confirmed yet, ask for confirmation
@@ -604,6 +508,22 @@ export async function POST(
           erpCustomerId,
         });
       }
+    }
+
+    // Resolve customer CODE from ERP if we have a TRDR but no CODE yet
+    if (erpCustomerId && !erpCustomerCode) {
+      const custCodeRequest = erpPool.request();
+      custCodeRequest.input('TRDR', sql.Int, erpCustomerId);
+      const custCodeResult = await custCodeRequest.query<{ CODE: string | null }>(`
+        SELECT TOP (1) CODE FROM dbo.TRDR WHERE TRDR = @TRDR
+      `);
+      erpCustomerCode = custCodeResult.recordset?.[0]?.CODE ?? null;
+      logger.info('create-draft-order-soft1 resolved customer CODE', {
+        requestId,
+        offerId: normalizedId,
+        erpCustomerId,
+        erpCustomerCode,
+      });
     }
 
     // Get all products from the offer that have ProductID, including Brand name and Description
@@ -845,7 +765,6 @@ export async function POST(
             if (foundCount === 0) {
               // No matches found - automatically create product in ERP
               try {
-                // Validate required fields
                 if (
                   !product.Description ||
                   !product.BrandID ||
@@ -872,112 +791,42 @@ export async function POST(
                   continue;
                 }
 
-                // Try to create product with retry logic for duplicate CODE errors
-                let retryCount = 0;
-                const MAX_RETRIES = 3;
-                let createdMTRL: number | null = null;
-                let createdCode: string | null = null;
+                const created = await createItemInErp(pool, erpPool, {
+                  productId: product.ProductID,
+                  description: product.Description,
+                  modelNumber: product.ModelNumberCleared,
+                  partNumber: product.PartNumberCleared,
+                  brandId: product.BrandID,
+                  brandName: product.BrandName!,
+                  subCategoryId: product.SubCategoryID,
+                  typeId: product.TypeID,
+                  businessUnit,
+                });
 
-                while (retryCount <= MAX_RETRIES && !createdMTRL) {
-                  try {
-                    const newCode = await generateNewErpCode(pool, erpPool, {
-                      SubCategoryID: product.SubCategoryID,
-                      TypeID: product.TypeID,
-                      BrandID: product.BrandID,
-                      BrandName: product.BrandName,
-                    });
+                logger.info('create-draft-order-soft1 CreateProduct result', {
+                  requestId,
+                  offerId: normalizedId,
+                  productId: product.ProductID,
+                  createdMTRL: created.mtrl,
+                  createdCode: created.code,
+                });
 
-                    // Call tlm._mtrlCreateProduct
-                    const createRequest = erpPool.request();
-                    createRequest.input('CODE', sql.NVarChar(25), newCode);
-                    createRequest.input('CODE1', sql.NVarChar(25), product.ModelNumberCleared);
-                    createRequest.input('CODE2', sql.NVarChar(50), product.PartNumberCleared);
-                    createRequest.input('Description', sql.NVarChar(128), product.Description);
-                    createRequest.input('BrandId', sql.Int, product.BrandID);
-                    createRequest.input('BusinessUnit', sql.NVarChar(20), businessUnit);
+                const updateRequest = pool.request();
+                updateRequest.input('productId', sql.Int, product.ProductID);
+                updateRequest.input('erpId', sql.Int, created.mtrl);
+                updateRequest.input('erpCode', sql.NVarChar(255), created.code);
 
-                    const createResult = await createRequest.query(`
-                      DECLARE @CreatedMTRL INT;
-                      EXEC [tlm].[_mtrlCreateProduct]
-                        @CODE = @CODE,
-                        @CODE1 = @CODE1,
-                        @CODE2 = @CODE2,
-                        @Description = @Description,
-                        @BrandId = @BrandId,
-                        @BusinessUnit = @BusinessUnit,
-                        @CreatedMTRL = @CreatedMTRL OUTPUT;
-                      SELECT @CreatedMTRL AS CreatedMTRL;
-                    `) as { recordset: Array<{ CreatedMTRL: number }>; recordsets?: Array<Array<{ MTRL: number; CODE: string | null }>> };
-
-                    // The procedure returns the created product in recordsets[0] and CreatedMTRL in recordset
-                    createdMTRL = createResult.recordset?.[0]?.CreatedMTRL ?? createResult.recordsets?.[0]?.[0]?.MTRL ?? null;
-                    createdCode = createResult.recordsets?.[0]?.[0]?.CODE ?? newCode;
-                  } catch (retryErr) {
-                    const isDuplicateKey = isRequestErrorWithNumber(retryErr) && retryErr.number === 2627;
-                    if (isDuplicateKey && retryCount < MAX_RETRIES) {
-                      // Duplicate CODE error - retry with a new CODE
-                      retryCount++;
-                      console.warn(`Duplicate CODE detected for product ${product.ProductID}, retrying (attempt ${retryCount}/${MAX_RETRIES})...`);
-                      continue;
-                    }
-                    // Re-throw if not a duplicate key error or max retries reached
-                    throw retryErr;
-                  }
-                }
-
-                if (createdMTRL && createdCode) {
-                  logger.info('create-draft-order-soft1 CreateProduct result', {
-                    requestId,
-                    offerId: normalizedId,
-                    productId: product.ProductID,
-                    createdMTRL,
-                    createdCode,
-                  });
-                  logger.info('create-draft-order-soft1 DB update (created)', {
-                    requestId,
-                    offerId: normalizedId,
-                    productId: product.ProductID,
-                    erpId: createdMTRL,
-                    erpCode: createdCode,
-                  });
-                  // Update FastQuote Products table with the new ERP IDs
-                  const updateRequest = pool.request();
-                  updateRequest.input('productId', sql.Int, product.ProductID);
-                  updateRequest.input('erpId', sql.Int, createdMTRL);
-                  updateRequest.input('erpCode', sql.NVarChar(255), createdCode);
-
-                  updatePromises.push(
-                    updateRequest.query(`
-                      UPDATE dbo.Products
-                      SET ERPID = @erpId,
-                          ERPCode = @erpCode,
-                          ModifiedOn = SYSUTCDATETIME()
-                      WHERE ID = @productId
-                    `).then(() => undefined),
-                  );
-                } else {
-                  throw new Error('Failed to create product after retries - could not get CreatedMTRL from tlm._mtrlCreateProduct');
-                }
+                updatePromises.push(
+                  updateRequest.query(`
+                    UPDATE dbo.Products
+                    SET ERPID = @erpId,
+                        ERPCode = @erpCode,
+                        ModifiedOn = SYSUTCDATETIME()
+                    WHERE ID = @productId
+                  `).then(() => undefined),
+                );
               } catch (createErr) {
-                const isDefaultsError = isRequestErrorWithNumber(createErr) && createErr.number === 53012;
-                const isDuplicateKey = isRequestErrorWithNumber(createErr) && createErr.number === 2627;
-                
-                if (isDefaultsError) {
-                  console.error(
-                    `Failed to create product in ERP for product ${product.ProductID}: MtrlCreateDefaults missing for (COMPANY=1, SODTYPE=51). ` +
-                    `Ensure tlm.MtrlCreateDefaults has a row for COMPANY=1, SODTYPE=51.`,
-                    createErr
-                  );
-                } else if (isDuplicateKey) {
-                  console.error(
-                    `Failed to create product in ERP for product ${product.ProductID}: Duplicate CODE detected after 3 retries. ` +
-                    `The generated CODE already exists in the ERP database. This may indicate a race condition or CODE generation issue.`,
-                    createErr
-                  );
-                } else {
-                  console.error(`Failed to create product in ERP for product ${product.ProductID}:`, createErr);
-                }
-                // Add to productMatches for manual attention
+                console.error(`Failed to create product in ERP for product ${product.ProductID}:`, createErr);
                 productMatches.push({
                   productId: product.ProductID,
                   partNumber: product.PartNumberCleared,
@@ -1121,6 +970,7 @@ export async function POST(
           name: offerDescription,
           prjcParent: null,
           trdr: erpCustomerId,
+          customerCode: erpCustomerCode,
           prjCategory: null,
           sourceSystem: 'FQ',
           createdByUser: 1011,
@@ -1155,23 +1005,6 @@ export async function POST(
       // Create customer order (FINDOC) and lines if we have the required data
       if (finalErpProjectId && finalErpProjectId > 0 && erpCustomerId && erpCustomerId > 0) {
         try {
-          const orderInfo = await createCustomerOrder({
-            prjcId: finalErpProjectId,
-            businessUnit,
-            trdr: erpCustomerId,
-            integrationKey: 'FASTQUOTE_CREATE_FINDOC',
-            series: 9001,
-            createdByUser: 1011,
-          });
-
-          logger.info('create-draft-order-soft1 order created (selections path)', {
-            requestId,
-            offerId: normalizedId,
-            findocId: orderInfo.findocId,
-            finCode: orderInfo.finCode,
-            seriesNum: orderInfo.seriesNum,
-          });
-
           // Load offer details that should become order lines
           const linesRequest = pool.request();
           linesRequest.input('offerId', sql.Int, normalizedId);
@@ -1182,6 +1015,7 @@ export async function POST(
             ListPrice: number | null;
             NetCost: number | null;
             ERPID: number | null;
+            ERPCode: string | null;
           }>(`
             SELECT
               od.TreeOrdering,
@@ -1189,7 +1023,8 @@ export async function POST(
               od.Quantity,
               od.ListPrice,
               od.NetCost,
-              p.ERPID
+              p.ERPID,
+              p.ERPCode
             FROM dbo.OfferDetails od
             INNER JOIN dbo.Products p ON od.ProductID = p.ID
             WHERE od.OfferID = @offerId
@@ -1203,47 +1038,43 @@ export async function POST(
             return ta - tb;
           });
 
-          let lineIndex = 0;
-          for (const line of lines) {
-            if (
-              line.ERPID == null ||
-              line.Quantity == null ||
-              line.Quantity <= 0 ||
-              line.ListPrice == null ||
-              line.ListPrice < 0
-            ) {
-              // Incomplete line - skip
-              continue;
-            }
+          const orderLines: OrderLineForCreation[] = lines
+            .filter(
+              (line) =>
+                line.ERPID != null &&
+                line.ERPCode != null &&
+                line.Quantity != null &&
+                line.Quantity > 0 &&
+                line.ListPrice != null &&
+                line.ListPrice >= 0,
+            )
+            .map((line) => ({
+              erpId: line.ERPID!,
+              erpCode: line.ERPCode!,
+              qty: Number(line.Quantity),
+              price: Number(line.ListPrice),
+              netCost: line.NetCost != null ? Number(line.NetCost) : null,
+            }));
 
-            lineIndex += 1;
-            const cccPosNo = String(lineIndex);
+          const orderInfo = await createOrderWithLines({
+            offerId: normalizedId,
+            description: offerDescription,
+            customerCode: erpCustomerCode ?? String(erpCustomerId),
+            prjcId: finalErpProjectId,
+            businessUnit,
+            trdr: erpCustomerId,
+            integrationKey: 'FASTQUOTE_CREATE_FINDOC',
+            series: 9001,
+            createdByUser: 1011,
+            lines: orderLines,
+          });
 
-            try {
-              await addOrderLine({
-                findocId: orderInfo.findocId,
-                cccPosNo,
-                mtrl: line.ERPID,
-                qty: Number(line.Quantity),
-                price: Number(line.ListPrice),
-                num01: line.NetCost != null ? Number(line.NetCost) : null,
-                createdByUser: 1011,
-              });
-            } catch (lineErr) {
-              logger.error(
-                'Failed to add order line (selections path)',
-                {
-                  requestId,
-                  offerId: normalizedId,
-                  findocId: orderInfo.findocId,
-                  productId: line.ProductID,
-                  erpId: line.ERPID,
-                  cccPosNo,
-                },
-                lineErr instanceof Error ? lineErr : undefined,
-              );
-            }
-          }
+          logger.info('create-draft-order-soft1 order created (selections path)', {
+            requestId,
+            offerId: normalizedId,
+            findocId: orderInfo.findocId,
+            finCode: orderInfo.finCode,
+          });
         } catch (orderErr) {
           logger.error(
             'Failed to create customer order (selections path)',
@@ -1317,7 +1148,6 @@ export async function POST(
         if (foundCount === 0) {
           // No matches found - automatically create product in ERP
           try {
-            // Validate required fields
             if (
               !product.Description ||
               !product.BrandID ||
@@ -1344,111 +1174,41 @@ export async function POST(
               continue;
             }
 
-            // Try to create product with retry logic for duplicate CODE errors
-            let retryCount = 0;
-            const MAX_RETRIES = 3;
-            let createdMTRL: number | null = null;
-            let createdCode: string | null = null;
+            const created = await createItemInErp(pool, erpPool, {
+              productId: product.ProductID,
+              description: product.Description,
+              modelNumber: product.ModelNumberCleared,
+              partNumber: product.PartNumberCleared,
+              brandId: product.BrandID,
+              brandName: product.BrandName!,
+              subCategoryId: product.SubCategoryID,
+              typeId: product.TypeID,
+              businessUnit,
+            });
 
-            while (retryCount <= MAX_RETRIES && !createdMTRL) {
-              try {
-                const newCode = await generateNewErpCode(pool, erpPool, {
-                  SubCategoryID: product.SubCategoryID,
-                  TypeID: product.TypeID,
-                  BrandID: product.BrandID,
-                  BrandName: product.BrandName,
-                });
+            logger.info('create-draft-order-soft1 CreateProduct result', {
+              requestId,
+              offerId: normalizedId,
+              productId: product.ProductID,
+              createdMTRL: created.mtrl,
+              createdCode: created.code,
+            });
 
-                // Call tlm._mtrlCreateProduct
-                const createRequest = erpPool.request();
-                createRequest.input('CODE', sql.NVarChar(25), newCode);
-                createRequest.input('CODE1', sql.NVarChar(25), product.ModelNumberCleared);
-                createRequest.input('CODE2', sql.NVarChar(50), product.PartNumberCleared);
-                createRequest.input('Description', sql.NVarChar(128), product.Description);
-                createRequest.input('BrandId', sql.Int, product.BrandID);
-                createRequest.input('BusinessUnit', sql.NVarChar(20), businessUnit);
+            const updateRequest = pool.request();
+            updateRequest.input('productId', sql.Int, product.ProductID);
+            updateRequest.input('erpId', sql.Int, created.mtrl);
+            updateRequest.input('erpCode', sql.NVarChar(255), created.code);
 
-                const createResult = await createRequest.query(`
-                  DECLARE @CreatedMTRL INT;
-                  EXEC [tlm].[_mtrlCreateProduct]
-                    @CODE = @CODE,
-                    @CODE1 = @CODE1,
-                    @CODE2 = @CODE2,
-                    @Description = @Description,
-                    @BrandId = @BrandId,
-                    @BusinessUnit = @BusinessUnit,
-                    @CreatedMTRL = @CreatedMTRL OUTPUT;
-                  SELECT @CreatedMTRL AS CreatedMTRL;
-                `) as { recordset: Array<{ CreatedMTRL: number }>; recordsets?: Array<Array<{ MTRL: number; CODE: string | null }>> };
-
-                // The procedure returns the created product in recordsets[0] and CreatedMTRL in recordset
-                createdMTRL = createResult.recordset?.[0]?.CreatedMTRL ?? createResult.recordsets?.[0]?.[0]?.MTRL ?? null;
-                createdCode = createResult.recordsets?.[0]?.[0]?.CODE ?? newCode;
-              } catch (retryErr) {
-                const isDuplicateKey = isRequestErrorWithNumber(retryErr) && retryErr.number === 2627;
-                if (isDuplicateKey && retryCount < MAX_RETRIES) {
-                  // Duplicate CODE error - retry with a new CODE
-                  retryCount++;
-                  console.warn(`Duplicate CODE detected for product ${product.ProductID}, retrying (attempt ${retryCount}/${MAX_RETRIES})...`);
-                  continue;
-                }
-                // Re-throw if not a duplicate key error or max retries reached
-                throw retryErr;
-              }
-            }
-
-            if (createdMTRL && createdCode) {
-              logger.info('create-draft-order-soft1 CreateProduct result', {
-                requestId,
-                offerId: normalizedId,
-                productId: product.ProductID,
-                createdMTRL,
-                createdCode,
-              });
-              logger.info('create-draft-order-soft1 DB update (created)', {
-                requestId,
-                offerId: normalizedId,
-                productId: product.ProductID,
-                erpId: createdMTRL,
-                erpCode: createdCode,
-              });
-              // Update FastQuote Products table with the new ERP IDs
-              const updateRequest = pool.request();
-              updateRequest.input('productId', sql.Int, product.ProductID);
-              updateRequest.input('erpId', sql.Int, createdMTRL);
-              updateRequest.input('erpCode', sql.NVarChar(255), createdCode);
-
-              await updateRequest.query(`
-                UPDATE dbo.Products
-                SET ERPID = @erpId,
-                    ERPCode = @erpCode,
-                    ModifiedOn = SYSUTCDATETIME()
-                WHERE ID = @productId
-              `);
-              successfullyUpdatedIds.push(product.ProductID);
-            } else {
-              throw new Error('Failed to create product after retries - could not get CreatedMTRL from tlm._mtrlCreateProduct');
-            }
+            await updateRequest.query(`
+              UPDATE dbo.Products
+              SET ERPID = @erpId,
+                  ERPCode = @erpCode,
+                  ModifiedOn = SYSUTCDATETIME()
+              WHERE ID = @productId
+            `);
+            successfullyUpdatedIds.push(product.ProductID);
           } catch (createErr) {
-            const isDefaultsError = isRequestErrorWithNumber(createErr) && createErr.number === 53012;
-            const isDuplicateKey = isRequestErrorWithNumber(createErr) && createErr.number === 2627;
-            
-            if (isDefaultsError) {
-              console.error(
-                `Failed to create product in ERP for product ${product.ProductID}: MtrlCreateDefaults missing for (COMPANY=1, SODTYPE=51). ` +
-                `Ensure tlm.MtrlCreateDefaults has a row for COMPANY=1, SODTYPE=51.`,
-                createErr
-              );
-            } else if (isDuplicateKey) {
-              console.error(
-                `Failed to create product in ERP for product ${product.ProductID}: Duplicate CODE detected after 3 retries. ` +
-                `The generated CODE already exists in the ERP database. This may indicate a race condition or CODE generation issue.`,
-                createErr
-              );
-            } else {
-              console.error(`Failed to create product in ERP for product ${product.ProductID}:`, createErr);
-            }
-            // Add to productMatches for manual attention
+            console.error(`Failed to create product in ERP for product ${product.ProductID}:`, createErr);
             productMatches.push({
               productId: product.ProductID,
               partNumber: product.PartNumberCleared,
@@ -1588,6 +1348,7 @@ export async function POST(
         name: offerDescription,
         prjcParent: null,
         trdr: erpCustomerId,
+        customerCode: erpCustomerCode,
         prjCategory: null,
         sourceSystem: 'FQ',
         createdByUser: 1011,
@@ -1622,23 +1383,6 @@ export async function POST(
     // Create customer order (FINDOC) and lines if we have the required data
     if (finalErpProjectId && finalErpProjectId > 0 && erpCustomerId && erpCustomerId > 0) {
       try {
-        const orderInfo = await createCustomerOrder({
-          prjcId: finalErpProjectId,
-          businessUnit,
-          trdr: erpCustomerId,
-          integrationKey: 'FASTQUOTE_CREATE_FINDOC',
-          series: 9001,
-          createdByUser: 1011,
-        });
-
-        logger.info('create-draft-order-soft1 order created (no-selections path)', {
-          requestId,
-          offerId: normalizedId,
-          findocId: orderInfo.findocId,
-          finCode: orderInfo.finCode,
-          seriesNum: orderInfo.seriesNum,
-        });
-
         // Load offer details that should become order lines
         const linesRequest = pool.request();
         linesRequest.input('offerId', sql.Int, normalizedId);
@@ -1649,6 +1393,7 @@ export async function POST(
           ListPrice: number | null;
           NetCost: number | null;
           ERPID: number | null;
+          ERPCode: string | null;
         }>(`
           SELECT
             od.TreeOrdering,
@@ -1656,7 +1401,8 @@ export async function POST(
             od.Quantity,
             od.ListPrice,
             od.NetCost,
-            p.ERPID
+            p.ERPID,
+            p.ERPCode
           FROM dbo.OfferDetails od
           INNER JOIN dbo.Products p ON od.ProductID = p.ID
           WHERE od.OfferID = @offerId
@@ -1670,47 +1416,43 @@ export async function POST(
           return ta - tb;
         });
 
-        let lineIndex = 0;
-        for (const line of lines) {
-          if (
-            line.ERPID == null ||
-            line.Quantity == null ||
-            line.Quantity <= 0 ||
-            line.ListPrice == null ||
-            line.ListPrice < 0
-          ) {
-            // Incomplete line - skip
-            continue;
-          }
+        const orderLines: OrderLineForCreation[] = lines
+          .filter(
+            (line) =>
+              line.ERPID != null &&
+              line.ERPCode != null &&
+              line.Quantity != null &&
+              line.Quantity > 0 &&
+              line.ListPrice != null &&
+              line.ListPrice >= 0,
+          )
+          .map((line) => ({
+            erpId: line.ERPID!,
+            erpCode: line.ERPCode!,
+            qty: Number(line.Quantity),
+            price: Number(line.ListPrice),
+            netCost: line.NetCost != null ? Number(line.NetCost) : null,
+          }));
 
-          lineIndex += 1;
-          const cccPosNo = String(lineIndex);
+        const orderInfo = await createOrderWithLines({
+          offerId: normalizedId,
+          description: offerDescription,
+          customerCode: erpCustomerCode ?? String(erpCustomerId),
+          prjcId: finalErpProjectId,
+          businessUnit,
+          trdr: erpCustomerId,
+          integrationKey: 'FASTQUOTE_CREATE_FINDOC',
+          series: 9001,
+          createdByUser: 1011,
+          lines: orderLines,
+        });
 
-          try {
-            await addOrderLine({
-              findocId: orderInfo.findocId,
-              cccPosNo,
-              mtrl: line.ERPID,
-              qty: Number(line.Quantity),
-              price: Number(line.ListPrice),
-              num01: line.NetCost != null ? Number(line.NetCost) : null,
-              createdByUser: 1011,
-            });
-          } catch (lineErr) {
-            logger.error(
-              'Failed to add order line (no-selections path)',
-              {
-                requestId,
-                offerId: normalizedId,
-                findocId: orderInfo.findocId,
-                productId: line.ProductID,
-                erpId: line.ERPID,
-                cccPosNo,
-              },
-              lineErr instanceof Error ? lineErr : undefined,
-            );
-          }
-        }
+        logger.info('create-draft-order-soft1 order created (no-selections path)', {
+          requestId,
+          offerId: normalizedId,
+          findocId: orderInfo.findocId,
+          finCode: orderInfo.finCode,
+        });
       } catch (orderErr) {
         logger.error(
           'Failed to create customer order (no-selections path)',

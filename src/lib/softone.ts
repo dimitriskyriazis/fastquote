@@ -103,6 +103,64 @@ export type SetProjectResult = {
   message?: string;
 };
 
+// ── setItem Types ─────────────────────────────────────────────────────────
+
+export type SetItemEntry = {
+  code: string;
+  name: string;
+  mtrunit: number;
+  vat: number;
+  mtracn: number;
+  mtrcategory: number;
+};
+
+export type SetItemParams = {
+  items: SetItemEntry[];
+};
+
+export type SetItemResultEntry = {
+  Item_id: number;
+  Item_code: string;
+  Item_name: string;
+};
+
+export type SetItemResult = {
+  success: boolean;
+  id: number;
+  Items: SetItemResultEntry[];
+};
+
+// ── setDocs Types ─────────────────────────────────────────────────────────
+
+export type SetDocsLineItem = {
+  productcode: string;
+  qty1: string;
+  price: string;
+  discount?: string;
+  lineval?: string;
+};
+
+export type SetDocsParams = {
+  custcode: string;
+  date?: string;
+  status?: string;
+  comments?: string;
+  comments1?: string;
+  shpaddr?: string;
+  shpzip?: string;
+  shpdistrict?: string;
+  shpcity?: string;
+  sumamnt?: number;
+  items: SetDocsLineItem[];
+};
+
+export type SetDocsResult = {
+  success: boolean;
+  id: number;
+  code: string;
+  message?: string;
+};
+
 type ServiceErrorResponse = {
   success: false;
   error: string;
@@ -320,6 +378,32 @@ class SoftOneClient {
 
     if (!result.success) {
       throw new Error(`SoftOne setProject failed: ${(result as unknown as ServiceErrorResponse).error ?? 'Unknown error'}`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Creates one or more items in SoftOne ERP via the setItem web service.
+   */
+  async setItem(params: SetItemParams): Promise<SetItemResult> {
+    const result = await this.callService<SetItemResult>('setItem', params as unknown as Record<string, unknown>);
+
+    if (!result.success) {
+      throw new Error(`SoftOne setItem failed: ${(result as unknown as ServiceErrorResponse).error ?? 'Unknown error'}`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Creates a document (order) with lines in SoftOne ERP via the setDocs web service.
+   */
+  async setDocs(params: SetDocsParams): Promise<SetDocsResult> {
+    const result = await this.callService<SetDocsResult>('setDocs', params as unknown as Record<string, unknown>);
+
+    if (!result.success) {
+      throw new Error(`SoftOne setDocs failed: ${(result as unknown as ServiceErrorResponse).error ?? 'Unknown error'}`);
     }
 
     return result;

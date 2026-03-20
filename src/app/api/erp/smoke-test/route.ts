@@ -49,6 +49,8 @@ export async function GET(_req: NextRequest) {
       wsConnectionError: wsHealthCheck.error ?? null,
       integrationConfig: configResult.recordset ?? [],
       projectCreationMode: process.env.SOFTONE_WS_PROJECT_CREATION === 'true' ? 'webservice' : 'sql',
+      itemCreationMode: process.env.SOFTONE_WS_ITEM_CREATION === 'true' ? 'webservice' : 'sql',
+      orderCreationMode: process.env.SOFTONE_WS_ORDER_CREATION === 'true' ? 'webservice' : 'sql',
       message:
         'ERP connectivity, WS connectivity, and IntegrationConfig checked. POST with { "offerId": <number> } to run full read-only smoke test.',
     });
@@ -98,7 +100,9 @@ export async function POST(req: NextRequest) {
       steps.wsConnection = {
         ok: wsHealth.ok,
         error: wsHealth.error ?? null,
-        mode: process.env.SOFTONE_WS_PROJECT_CREATION === 'true' ? 'webservice' : 'sql',
+        projectCreationMode: process.env.SOFTONE_WS_PROJECT_CREATION === 'true' ? 'webservice' : 'sql',
+        itemCreationMode: process.env.SOFTONE_WS_ITEM_CREATION === 'true' ? 'webservice' : 'sql',
+        orderCreationMode: process.env.SOFTONE_WS_ORDER_CREATION === 'true' ? 'webservice' : 'sql',
       };
     } catch (err) {
       steps.wsConnection = {
@@ -491,6 +495,353 @@ export async function POST(req: NextRequest) {
       };
     }
 
+    // ── Dry-run simulation ──────────────────────────────────────────────
+    // Steps 9–11 simulate what the create-draft-order flow would do,
+    // using only SELECT queries — no data is written.
+
+    // Step 9: Simulate item creation for unmatched products
+    try {
+      // Fetch all products from the offer with category/brand info
+      const allProducts = await pool
+        .request()
+        .input('offerId', sql.Int, offerId)
+        .query<{
+          ProductID: number;
+          PartNumberCleared: string | null;
+          ModelNumberCleared: string | null;
+          Description: string | null;
+          BrandName: string | null;
+          BrandID: number | null;
+          SubCategoryID: number | null;
+          TypeID: number | null;
+          ERPID: number | null;
+          ERPCode: string | null;
+        }>(`
+          SELECT DISTINCT
+            p.ID AS ProductID,
+            p.PartNumberCleared,
+            p.ModelNumberCleared,
+            p.Description,
+            b.Name AS BrandName,
+            p.BrandID,
+            p.SubCategoryID,
+            p.TypeID,
+            p.ERPID,
+            p.ERPCode
+          FROM dbo.OfferDetails od
+          INNER JOIN dbo.Products p ON od.ProductID = p.ID
+          LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
+          WHERE od.OfferID = @offerId
+            AND od.ProductID IS NOT NULL
+        `);
+
+      const products = allProducts.recordset ?? [];
+      const alreadyLinked = products.filter(p => p.ERPID != null);
+      const needsCreation = products.filter(
+        p => p.ERPID == null && p.Description && p.BrandID && p.SubCategoryID && p.TypeID,
+      );
+      const missingFields = products.filter(
+        p => p.ERPID == null && (!p.Description || !p.BrandID || !p.SubCategoryID || !p.TypeID),
+      );
+
+      // For products that would be created, resolve the code prefix (read-only)
+      const itemSimulations: unknown[] = [];
+      for (const product of needsCreation.slice(0, 5)) {
+        try {
+          // Resolve SubCategory code
+          const scResult = await pool.request()
+            .input('scId', sql.Int, product.SubCategoryID)
+            .query<{ Code: string | null }>('SELECT Code FROM dbo.ProductSubCategories WHERE ID = @scId');
+          const scCode = scResult.recordset?.[0]?.Code;
+          const scCode3 = scCode && scCode.length >= 3 ? scCode.substring(0, 3).toUpperCase() : null;
+
+          // Resolve Type first letter
+          const typeResult = await pool.request()
+            .input('tId', sql.Int, product.TypeID)
+            .query<{ Name: string | null }>('SELECT Name FROM dbo.ProductTypes WHERE ID = @tId');
+          const typeName = typeResult.recordset?.[0]?.Name;
+          const typeLetter = typeName ? typeName.trim().charAt(0).toUpperCase() : null;
+
+          // Resolve Brand code from ERP
+          let brandCode: string | null = null;
+          if (product.BrandName) {
+            const brandResult = await erpPool.request()
+              .input('brandName', sql.NVarChar(128), product.BrandName.trim())
+              .query<{ CODE: string | null }>(`
+                SELECT TOP (1) CODE FROM dbo.MTRMANFCTR
+                WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
+                ORDER BY MTRMANFCTR
+              `);
+            brandCode = brandResult.recordset?.[0]?.CODE ?? null;
+          }
+
+          const codePrefix = scCode3 && typeLetter && brandCode
+            ? `${scCode3}${typeLetter}.${brandCode}`
+            : null;
+
+          const wsMode = process.env.SOFTONE_WS_ITEM_CREATION === 'true';
+
+          itemSimulations.push({
+            productId: product.ProductID,
+            description: product.Description,
+            partNumber: product.PartNumberCleared,
+            modelNumber: product.ModelNumberCleared,
+            brandName: product.BrandName,
+            codePrefix,
+            codeWouldBe: codePrefix ? `${codePrefix}.<sequence>` : 'cannot resolve prefix',
+            mode: wsMode ? 'webservice (setItem)' : 'sql (_mtrlCreateProduct)',
+            wsParams: wsMode ? {
+              service: 'setItem',
+              items: [{
+                code: codePrefix ? `${codePrefix}.<sequence>` : '<unresolved>',
+                name: product.Description,
+                mtrunit: 1,
+                vat: 1410,
+                mtracn: 0,
+                mtrcategory: 1,
+              }],
+            } : null,
+            sqlParams: !wsMode ? {
+              procedure: 'tlm._mtrlCreateProduct',
+              CODE: codePrefix ? `${codePrefix}.<sequence>` : '<unresolved>',
+              CODE1: product.ModelNumberCleared,
+              CODE2: product.PartNumberCleared,
+              Description: product.Description,
+              BrandId: product.BrandID,
+            } : null,
+          });
+        } catch (err) {
+          itemSimulations.push({
+            productId: product.ProductID,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      steps.simulateItemCreation = {
+        ok: true,
+        totalProducts: products.length,
+        alreadyLinkedCount: alreadyLinked.length,
+        wouldCreateCount: needsCreation.length,
+        missingFieldsCount: missingFields.length,
+        missingFieldsProducts: missingFields.map(p => ({
+          productId: p.ProductID,
+          hasDescription: !!p.Description,
+          hasBrandID: !!p.BrandID,
+          hasSubCategoryID: !!p.SubCategoryID,
+          hasTypeID: !!p.TypeID,
+        })),
+        preview: itemSimulations,
+        note: 'Code sequence (<sequence>) not resolved to avoid reserving numbers. Actual code will be generated at creation time.',
+      };
+    } catch (err) {
+      steps.simulateItemCreation = {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+
+    // Step 10: Simulate order creation (setDocs / createOrderWithLines)
+    try {
+      // Resolve customer CODE
+      let custCode: string | null = null;
+      if (erpCustomerId && erpCustomerId > 0) {
+        const custResult = await erpPool.request()
+          .input('TRDR', sql.Int, erpCustomerId)
+          .query<{ CODE: string | null }>('SELECT TOP (1) CODE FROM dbo.TRDR WHERE TRDR = @TRDR');
+        custCode = custResult.recordset?.[0]?.CODE ?? null;
+      }
+
+      // Load offer lines (same query as the real flow)
+      const linesResult = await pool.request()
+        .input('offerId', sql.Int, offerId)
+        .query<{
+          TreeOrdering: number | null;
+          ProductID: number | null;
+          Quantity: number | null;
+          ListPrice: number | null;
+          NetCost: number | null;
+          ERPID: number | null;
+          ERPCode: string | null;
+          Description: string | null;
+        }>(`
+          SELECT
+            od.TreeOrdering,
+            od.ProductID,
+            od.Quantity,
+            od.ListPrice,
+            od.NetCost,
+            p.ERPID,
+            p.ERPCode,
+            p.Description
+          FROM dbo.OfferDetails od
+          INNER JOIN dbo.Products p ON od.ProductID = p.ID
+          WHERE od.OfferID = @offerId
+            AND od.ProductID IS NOT NULL
+          ORDER BY od.TreeOrdering
+        `);
+
+      const allLines = linesResult.recordset ?? [];
+      // Lines that already have ERPIDs (ready now)
+      const readyNow = allLines.filter(l => l.ERPID != null && l.ERPCode != null && l.Quantity != null && l.Quantity > 0 && l.ListPrice != null);
+      // Lines missing ERPID but with valid qty/price (would become ready after product matching/creation)
+      const pendingErpLink = allLines.filter(l => (l.ERPID == null || l.ERPCode == null) && l.Quantity != null && l.Quantity > 0 && l.ListPrice != null);
+      // Lines with invalid qty/price (would be skipped regardless)
+      const invalidLines = allLines.filter(l => l.Quantity == null || l.Quantity <= 0 || l.ListPrice == null);
+
+      // In the real flow, products get ERPIDs assigned BEFORE order creation,
+      // so we show all lines with valid qty/price as "would be included"
+      const allViableLines = allLines.filter(l => l.Quantity != null && l.Quantity > 0 && l.ListPrice != null);
+
+      // Determine business unit
+      const offerRow2 = await pool.request()
+        .input('offerId', sql.Int, offerId)
+        .query<{ SalesDivisionID: number | null; Description: string | null }>(`
+          SELECT o.SalesDivisionID, o.Description
+          FROM dbo.Offer o WHERE o.ID = @offerId
+        `);
+      const sdId = offerRow2.recordset?.[0]?.SalesDivisionID ?? null;
+      const offerDesc = offerRow2.recordset?.[0]?.Description ?? `FastQuote Project for offer ${offerId}`;
+      const bu = sdId === 3 ? 'TVS' : 'AVS';
+
+      const wsMode = process.env.SOFTONE_WS_ORDER_CREATION === 'true';
+      const totalLineValue = allViableLines.reduce((sum, l) => sum + (Number(l.Quantity) * Number(l.ListPrice)), 0);
+
+      steps.simulateOrderCreation = {
+        ok: true,
+        canCreateNow: !!(erpProjectId && erpProjectId > 0 && erpCustomerId && erpCustomerId > 0),
+        missingPrerequisites: {
+          hasProject: !!(erpProjectId && erpProjectId > 0),
+          hasCustomer: !!(erpCustomerId && erpCustomerId > 0),
+          customerCode: custCode,
+          customerCodeFallback: erpCustomerId ? String(erpCustomerId) : null,
+          note: (!erpProjectId || erpProjectId <= 0)
+            ? 'Project will be created automatically during the flow'
+            : (!erpCustomerId || erpCustomerId <= 0)
+              ? 'Customer must be selected/confirmed first'
+              : null,
+        },
+        totalOfferLines: allLines.length,
+        linesReadyNow: readyNow.length,
+        linesPendingErpLink: pendingErpLink.length,
+        linesInvalid: invalidLines.length,
+        linesAfterFlow: allViableLines.length,
+        totalLineValue: Math.round(totalLineValue * 100) / 100,
+        flowNote: pendingErpLink.length > 0
+          ? `${pendingErpLink.length} line(s) don't have ERPIDs yet but will get them during the product matching/creation step that runs BEFORE order creation. Showing all ${allViableLines.length} viable lines as the expected order.`
+          : undefined,
+        mode: wsMode ? 'webservice (setDocs — atomic)' : 'sql (createCustomerOrder + addOrderLine per line)',
+        expectedOrder: wsMode ? {
+          service: 'setDocs',
+          custcode: custCode ?? (erpCustomerId ? String(erpCustomerId) : '<to be resolved>'),
+          date: new Date().toISOString().split('T')[0],
+          status: '10',
+          comments: offerDesc,
+          comments1: `FastQuote Offer #${offerId}`,
+          items: allViableLines.slice(0, 10).map(l => ({
+            productcode: l.ERPCode ?? '<will be assigned>',
+            productDescription: l.Description,
+            qty1: Number(l.Quantity),
+            price: Number(l.ListPrice),
+            lineval: Math.round(Number(l.Quantity!) * Number(l.ListPrice!) * 100) / 100,
+            erpStatus: l.ERPID ? 'linked' : 'pending — will be matched/created first',
+          })),
+          itemsTruncated: allViableLines.length > 10,
+        } : {
+          createOrderProcedure: 'tlm._findocCreateCustomerOrder',
+          addLineProcedure: 'tlm._mtrlinesAddLine',
+          orderParams: {
+            IntegrationKey: 'FASTQUOTE_CREATE_FINDOC',
+            Prjc: erpProjectId ?? '<will be created>',
+            Trdr: erpCustomerId ?? '<to be resolved>',
+            BusinessUnit: bu,
+            Series: 9001,
+            CreatedByUser: 1011,
+          },
+          lines: allViableLines.slice(0, 10).map((l, i) => ({
+            CCCPosNo: String(i + 1),
+            MTRL: l.ERPID ?? '<will be assigned>',
+            productDescription: l.Description,
+            QTY: Number(l.Quantity),
+            PRICE: Number(l.ListPrice),
+            NUM01: l.NetCost != null ? Number(l.NetCost) : null,
+            erpStatus: l.ERPID ? 'linked' : 'pending — will be matched/created first',
+          })),
+          linesTruncated: allViableLines.length > 10,
+        },
+        invalidLines: invalidLines.length > 0 ? invalidLines.slice(0, 5).map(l => ({
+          productId: l.ProductID,
+          description: l.Description,
+          reason: l.Quantity == null || l.Quantity <= 0 ? 'invalid quantity' : 'missing price',
+          qty: l.Quantity,
+          listPrice: l.ListPrice,
+        })) : [],
+      };
+    } catch (err) {
+      steps.simulateOrderCreation = {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+
+    // Step 11: Simulate project creation (setProject / createProjectFromIntegration)
+    try {
+      const needsProject = !erpProjectId || erpProjectId <= 0;
+      const offerRow3 = await pool.request()
+        .input('offerId', sql.Int, offerId)
+        .query<{ Description: string | null; SalesDivisionID: number | null }>(`
+          SELECT o.Description, o.SalesDivisionID FROM dbo.Offer o WHERE o.ID = @offerId
+        `);
+      const desc = offerRow3.recordset?.[0]?.Description ?? `FastQuote Project for offer ${offerId}`;
+      const sdId2 = offerRow3.recordset?.[0]?.SalesDivisionID ?? null;
+      const bu2 = sdId2 === 3 ? 'TVS' : 'AVS';
+      const wsProjectMode = process.env.SOFTONE_WS_PROJECT_CREATION === 'true';
+
+      // Resolve customer CODE for project simulation
+      let prjCustCode: string | null = null;
+      if (erpCustomerId && erpCustomerId > 0) {
+        const custResult2 = await erpPool.request()
+          .input('TRDR', sql.Int, erpCustomerId)
+          .query<{ CODE: string | null }>('SELECT TOP (1) CODE FROM dbo.TRDR WHERE TRDR = @TRDR');
+        prjCustCode = custResult2.recordset?.[0]?.CODE ?? null;
+      }
+
+      steps.simulateProjectCreation = {
+        ok: true,
+        needsCreation: needsProject,
+        existingProjectId: erpProjectId,
+        existingProjectCode: erpProjectCode,
+        mode: wsProjectMode ? 'webservice (setProject)' : 'sql (tlm.prjc_CreateFromIntegration)',
+        wouldCreate: needsProject ? {
+          wsParams: wsProjectMode ? {
+            service: 'setProject',
+            name: desc,
+            shortdesc: desc,
+            businessunit: bu2 === 'AVS' ? '10' : '20',
+            prjstatus: '90',
+            custcode: prjCustCode ?? '<unknown>',
+            code: 'COV',
+          } : null,
+          sqlParams: !wsProjectMode ? {
+            procedure: 'tlm.prjc_CreateFromIntegration',
+            IntegrationKey: 'FASTQUOTE_CREATE_PRJC',
+            CodePrefix: 'COV',
+            Name: desc,
+            Trdr: erpCustomerId,
+            BusinessUnit: bu2,
+            PrjState: 90,
+            SourceSystem: 'FQ',
+            CreatedByUser: 1011,
+          } : null,
+        } : 'not needed — project already exists',
+      };
+    } catch (err) {
+      steps.simulateProjectCreation = {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+
     const overallOk = Object.values(steps).every(
       (step) => (step as { ok?: boolean })?.ok === true,
     );
@@ -498,7 +849,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: overallOk,
       steps,
-      note: 'Read-only smoke test. No data is written to any database.',
+      note: 'Read-only smoke test with dry-run simulation. No data is written to any database.',
     });
   } catch (err) {
     console.error('ERP smoke-test POST failed', err);
