@@ -59,6 +59,7 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
   const request = pool.request();
 
   const conditions: string[] = [];
+  const weights: number[] = [];
   let paramIdx = 0;
 
   const brandKey = normalizeBrandKey(brand);
@@ -66,46 +67,59 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
     const p = `brand_${paramIdx++}`;
     request.input(p, sql.NVarChar(255), brandKey);
     conditions.push(`${brandKeySql('b.Name')} = @${p}`);
+    weights.push(3);
   }
 
+  const addPartModelCondition = (value: string, prefix: string, weight: number) => {
+    const cleared = clearPartModelNumberUpper(value);
+    if (!cleared) return;
+    const p = `${prefix}_${paramIdx++}`;
+    request.input(p, sql.NVarChar(255), cleared);
+    conditions.push(
+      `(UPPER(ISNULL(p.PartNumberCleared, '')) = @${p} OR UPPER(ISNULL(p.ModelNumberCleared, '')) = @${p} OR UPPER(ISNULL(p.LegacyPartNoCleaned, '')) = @${p})`,
+    );
+    weights.push(weight);
+  };
+
   if (partNumber) {
-    const cleared = clearPartModelNumberUpper(partNumber);
-    if (cleared) {
-      const p = `pn_${paramIdx++}`;
-      request.input(p, sql.NVarChar(255), cleared);
-      conditions.push(
-        `(UPPER(ISNULL(p.PartNumberCleared, '')) = @${p} OR UPPER(ISNULL(p.ModelNumberCleared, '')) = @${p} OR UPPER(ISNULL(p.LegacyPartNoCleaned, '')) = @${p})`,
-      );
+    // Full value match (highest weight)
+    addPartModelCondition(partNumber, 'pn', 10);
+    // Also try individual tokens for multi-part values like "TEL152 71.04.0154"
+    const tokens = partNumber.split(/\s+/).filter((t) => t.length >= 2);
+    if (tokens.length > 1) {
+      for (const token of tokens) {
+        addPartModelCondition(token, 'pnt', 5);
+      }
     }
   }
 
   if (modelNumber) {
-    const cleared = clearPartModelNumberUpper(modelNumber);
-    if (cleared) {
-      const p = `mn_${paramIdx++}`;
-      request.input(p, sql.NVarChar(255), cleared);
-      conditions.push(
-        `(UPPER(ISNULL(p.PartNumberCleared, '')) = @${p} OR UPPER(ISNULL(p.ModelNumberCleared, '')) = @${p} OR UPPER(ISNULL(p.LegacyPartNoCleaned, '')) = @${p})`,
-      );
+    addPartModelCondition(modelNumber, 'mn', 10);
+    const tokens = modelNumber.split(/\s+/).filter((t) => t.length >= 2);
+    if (tokens.length > 1) {
+      for (const token of tokens) {
+        addPartModelCondition(token, 'mnt', 5);
+      }
     }
   }
 
-  const fullDesc = [desc1, desc2, desc3].filter(Boolean).join(' ');
+  const fullDesc = [desc1, desc2, desc3, partNumber, modelNumber].filter(Boolean).join(' ');
   const descWords = fullDesc
     .replace(/[^a-zA-Z0-9\u00C0-\u024F]+/g, ' ')
     .split(/\s+/)
     .filter((w) => w.length >= 3)
-    .slice(0, 8);
+    .slice(0, 12);
 
   for (const word of descWords) {
     const p = `dw_${paramIdx++}`;
     request.input(p, sql.NVarChar(255), `%${word}%`);
     conditions.push(`p.Description LIKE @${p}`);
+    weights.push(1);
   }
 
   if (conditions.length === 0) return [];
 
-  const scoreParts = conditions.map((_, i) => `CASE WHEN ${conditions[i]} THEN 1 ELSE 0 END`);
+  const scoreParts = conditions.map((cond, i) => `CASE WHEN ${cond} THEN ${weights[i]} ELSE 0 END`);
   const scoreExpr = scoreParts.join(' + ');
 
   const query = `

@@ -130,7 +130,8 @@ export default function MatchRequestedProductsModal({
   const currentEntryIdRef = useRef(entry.offerDetailId);
   currentEntryIdRef.current = entry.offerDetailId;
   const gridShellRef = useRef<HTMLDivElement | null>(null);
-  const userWantsSuggestionsRef = useRef(false);
+  const userWantsSuggestionsRef = useRef(true);
+  const handleSuggestProductsRef = useRef<(() => void) | null>(null);
 
   // Keep ref in sync so event listeners can read current value
   suggestedProductsRef.current = suggestedProducts;
@@ -471,6 +472,9 @@ export default function MatchRequestedProductsModal({
     }
   }, [suggesting, offerId, entry]);
 
+  // Keep ref in sync so the auto-suggest timer can call the latest version
+  handleSuggestProductsRef.current = handleSuggestProducts;
+
   const refreshProductsGrid = useCallback(() => {
     const api = productsApiRef.current;
     if (!api) return;
@@ -565,6 +569,10 @@ export default function MatchRequestedProductsModal({
     setAssigning(false);
     setComment('');
     setSuggestedProducts([]);
+    // Immediately update ref so autoSelectTopProduct (which runs in a later effect
+    // during the same commit phase) sees the cleared value rather than stale suggestions
+    // from the previous entry.
+    suggestedProductsRef.current = [];
     setSuggestionsVisible(true);
     appliedPrefetchRef.current = null;
   }, [entry.offerDetailId]);
@@ -587,15 +595,25 @@ export default function MatchRequestedProductsModal({
     }
   }, [prefetchedSuggestions, entry.offerDetailId]);
 
+  // Auto-fetch suggestions for the current entry if prefetched data doesn't arrive in time
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (suggestedProductsRef.current.length === 0) {
+        handleSuggestProductsRef.current?.();
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [entry.offerDetailId]);
+
   useEffect(() => {
     applyRequestedFilterModel(productsApiRef.current);
   }, [applyRequestedFilterModel]);
 
-  useEffect(() => {
-    // If the grid already has data loaded for the new requested item,
-    // make sure we still have a deterministic selection.
-    autoSelectTopProduct(productsApiRef.current);
-  }, [autoSelectTopProduct, entry.offerDetailId]);
+  // Auto-selection on entry change is handled by handleGridModelUpdated when the
+  // fresh server-side data arrives.  Running autoSelectTopProduct eagerly here
+  // would pick up a stale row from the previous entry's data (filters haven't
+  // taken effect yet), leaving selectedProduct pointing at a row that disappears
+  // once the new block loads.
 
   const remaining = Math.max(0, total - position);
 

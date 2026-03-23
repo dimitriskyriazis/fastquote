@@ -422,32 +422,36 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const uncached = entries.filter((e) => !suggestionCacheRef.current.has(e.offerDetailId));
     if (uncached.length === 0) return;
     batchPrefetchedRef.current = true;
-    fetch(`/api/offers/${encodeURIComponent(offerId)}/products/suggest-batch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        entries: uncached.map((e) => ({
-          offerDetailId: e.offerDetailId,
-          requestedBrand: e.requestedBrand,
-          requestedModelNumber: e.requestedModelNumber,
-          requestedPartNumber: e.requestedPartNumber,
-          requestedDescription: e.requestedDescription,
-          requestedDescription2: e.requestedDescription2,
-          requestedDescription3: e.requestedDescription3,
-        })),
-      }),
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        const results = (data as { results?: Record<string, Record<string, unknown>[]> } | null)?.results;
-        if (results) {
-          for (const [idStr, products] of Object.entries(results)) {
-            suggestionCacheRef.current.set(Number(idStr), products);
+
+    // Fire individual requests with bounded concurrency so results arrive progressively
+    const MAX_CONCURRENT = 5;
+    let idx = 0;
+    const fetchEntry = async () => {
+      while (idx < uncached.length) {
+        const entry = uncached[idx++];
+        try {
+          const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/suggest`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              requestedBrand: entry.requestedBrand,
+              requestedModelNumber: entry.requestedModelNumber,
+              requestedPartNumber: entry.requestedPartNumber,
+              requestedDescription: entry.requestedDescription,
+              requestedDescription2: entry.requestedDescription2,
+              requestedDescription3: entry.requestedDescription3,
+            }),
+          });
+          if (res.ok) {
+            const data = (await res.json()) as { ok: boolean; products?: Record<string, unknown>[] };
+            suggestionCacheRef.current.set(entry.offerDetailId, data.products ?? []);
+            setSuggestionCacheVersion((v) => v + 1);
           }
-          setSuggestionCacheVersion((v) => v + 1);
-        }
-      })
-      .catch(() => { /* noop */ });
+        } catch { /* noop */ }
+      }
+    };
+    const workers = Array.from({ length: Math.min(MAX_CONCURRENT, uncached.length) }, () => fetchEntry());
+    void Promise.all(workers);
   }, [offerId]);
 
   // Prefetch suggestions for ALL entries in one batch request
