@@ -130,6 +130,19 @@ export type SetItemResult = {
   Items: SetItemResultEntry[];
 };
 
+// ── updatePrjStatus Types ─────────────────────────────────────────────────
+
+export type UpdatePrjStatusParams = {
+  key: number;    // Project ID in ERP
+  status: number; // Status code (e.g. 7 = Προ Αίτημα Προσφοράς, 90 = Δεν έχουν ολοκληρωθεί οι λίστες)
+};
+
+export type UpdatePrjStatusResult = {
+  success: boolean;
+  id: number;
+  message?: string;
+};
+
 // ── setDocs Types ─────────────────────────────────────────────────────────
 
 export type SetDocsLineItem = {
@@ -404,6 +417,19 @@ class SoftOneClient {
 
     if (!result.success) {
       throw new Error(`SoftOne setDocs failed: ${(result as unknown as ServiceErrorResponse).error ?? 'Unknown error'}`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Updates a project's status in SoftOne ERP via the updatePrjStatus web service.
+   */
+  async updatePrjStatus(params: UpdatePrjStatusParams): Promise<UpdatePrjStatusResult> {
+    const result = await this.callService<UpdatePrjStatusResult>('updatePrjStatus', params as unknown as Record<string, unknown>);
+
+    if (!result.success) {
+      throw new Error(`SoftOne updatePrjStatus failed: ${(result as unknown as ServiceErrorResponse).error ?? 'Unknown error'}`);
     }
 
     return result;

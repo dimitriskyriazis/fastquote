@@ -47,9 +47,9 @@ export async function createProjectViaWebService(
     wsParams.prjparent = String(params.prjcParent);
   }
 
-  // Pass code prefix if provided (SoftOne may auto-generate the full code)
+  // Pass code prefix with wildcard — SoftOne auto-generates the sequence (e.g. "COV.*" → "COV.0236")
   if (params.codePrefix) {
-    wsParams.code = params.codePrefix;
+    wsParams.code = `${params.codePrefix}.*`;
   }
 
   logger.info('SoftOne WS: calling setProject', {

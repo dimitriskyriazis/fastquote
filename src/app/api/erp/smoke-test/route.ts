@@ -820,7 +820,7 @@ export async function POST(req: NextRequest) {
             businessunit: bu2 === 'AVS' ? '10' : '20',
             prjstatus: '90',
             custcode: prjCustCode ?? '<unknown>',
-            code: 'COV',
+            code: 'COV.*',
           } : null,
           sqlParams: !wsProjectMode ? {
             procedure: 'tlm.prjc_CreateFromIntegration',
