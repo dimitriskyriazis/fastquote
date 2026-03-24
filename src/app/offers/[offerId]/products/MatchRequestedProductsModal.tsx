@@ -130,8 +130,9 @@ export default function MatchRequestedProductsModal({
   const currentEntryIdRef = useRef(entry.offerDetailId);
   currentEntryIdRef.current = entry.offerDetailId;
   const gridShellRef = useRef<HTMLDivElement | null>(null);
-  const userWantsSuggestionsRef = useRef(true);
-  const handleSuggestProductsRef = useRef<(() => void) | null>(null);
+  const userWantsSuggestionsRef = useRef(false);
+  const userManuallySelectedRef = useRef(false);
+  const autoSelectingRef = useRef(false);
 
   // Keep ref in sync so event listeners can read current value
   suggestedProductsRef.current = suggestedProducts;
@@ -265,16 +266,18 @@ export default function MatchRequestedProductsModal({
     [selectedProduct],
   );
 
-  // Highlight selected suggestion row via DOM class toggle
+  // Highlight selected suggestion row via DOM class toggle.
+  // ag-grid positions pinned rows with absolute CSS so DOM element order can
+  // differ from visual order.  Match by row-id (= ProductID) instead.
   const updateSuggestionHighlight = useCallback(() => {
     const shell = gridShellRef.current;
     if (!shell) return;
     const sid = normalizeProductId(selectedProduct?.ProductID ?? null);
     const rows = shell.querySelectorAll<HTMLElement>('.ag-floating-top .ag-row');
-    rows.forEach((row, idx) => {
-      const product = suggestedProductsRef.current[idx];
-      const rowProductId = product ? normalizeProductId((product as MatcherRowData)?.ProductID ?? null) : null;
-      if (rowProductId != null && rowProductId === sid) {
+    rows.forEach((row) => {
+      const rowId = row.getAttribute('row-id');
+      const rowProductId = rowId != null ? normalizeProductId(rowId) : null;
+      if (sid != null && rowProductId != null && rowProductId === sid) {
         row.classList.add('suggestion-selected');
       } else {
         row.classList.remove('suggestion-selected');
@@ -299,6 +302,12 @@ export default function MatchRequestedProductsModal({
       // When a normal grid row is selected, use it (this clears any pinned row selection)
       if (rows.length > 0) {
         setSelectedProduct(rows[rows.length - 1]);
+        // selectionChanged fires on mousedown, before cellClicked (which fires on
+        // click).  Set the manual flag here so autoSelectTopProduct cannot override
+        // the user's choice even if modelUpdated fires between the two events.
+        if (!autoSelectingRef.current) {
+          userManuallySelectedRef.current = true;
+        }
       }
     },
     [],
@@ -306,6 +315,7 @@ export default function MatchRequestedProductsModal({
 
   const autoSelectTopProduct = useCallback((api: MatcherGridApi | null) => {
     if (!api) return;
+    if (userManuallySelectedRef.current) return;
     if (pendingSelectionProductIdRef.current != null) return;
     // Don't auto-select grid row if we have suggestions selected
     if (suggestedProductsRef.current.length > 0) return;
@@ -320,10 +330,12 @@ export default function MatchRequestedProductsModal({
       const firstNode = (api as unknown as { getDisplayedRowAtIndex?: (idx: number) => MatcherRowNode | null })
         .getDisplayedRowAtIndex?.(0);
       if (!firstNode?.data) return;
+      autoSelectingRef.current = true;
       firstNode.setSelected(true);
       setSelectedProduct(firstNode.data as MatcherRowData);
+      autoSelectingRef.current = false;
     } catch {
-      /* noop */
+      autoSelectingRef.current = false;
     }
   }, []);
 
@@ -415,6 +427,7 @@ export default function MatchRequestedProductsModal({
         try {
           api.deselectAll?.();
         } catch { /* noop */ }
+        userManuallySelectedRef.current = false;
         setSelectedProduct(event.data as MatcherRowData);
       }
     };
@@ -434,9 +447,29 @@ export default function MatchRequestedProductsModal({
     clearPinnedTopRow();
   }, [clearPinnedTopRow]);
 
+  const applyProducts = useCallback((products: MatcherRowData[]) => {
+    suggestedProductsRef.current = products;
+    setSuggestedProducts(products);
+    setSuggestionsVisible(true);
+    if (products.length > 0) {
+      try {
+        productsApiRef.current?.deselectAll?.();
+      } catch { /* noop */ }
+      userManuallySelectedRef.current = false;
+      setSelectedProduct(products[0]);
+    }
+  }, []);
+
   const handleSuggestProducts = useCallback(async () => {
     if (suggesting) return;
     userWantsSuggestionsRef.current = true;
+
+    // Use prefetched suggestions if already available (instant)
+    if (prefetchedSuggestions && prefetchedSuggestions.length > 0) {
+      applyProducts(prefetchedSuggestions);
+      return;
+    }
+
     const targetEntryId = entry.offerDetailId;
     setSuggesting(true);
     try {
@@ -456,24 +489,14 @@ export default function MatchRequestedProductsModal({
       // Discard result if the entry changed while we were fetching
       if (currentEntryIdRef.current !== targetEntryId) return;
       const data = (await res.json()) as { ok: boolean; products?: MatcherRowData[] };
-      const products = data.products ?? [];
-      setSuggestedProducts(products);
-      setSuggestionsVisible(true);
-      if (products.length > 0) {
-        try {
-          productsApiRef.current?.deselectAll?.();
-        } catch { /* noop */ }
-        setSelectedProduct(products[0]);
-      }
+      applyProducts(data.products ?? []);
     } catch (err) {
       console.error('AI suggest failed', err);
     } finally {
       setSuggesting(false);
     }
-  }, [suggesting, offerId, entry]);
+  }, [suggesting, offerId, entry, prefetchedSuggestions, applyProducts]);
 
-  // Keep ref in sync so the auto-suggest timer can call the latest version
-  handleSuggestProductsRef.current = handleSuggestProducts;
 
   const refreshProductsGrid = useCallback(() => {
     const api = productsApiRef.current;
@@ -534,13 +557,19 @@ export default function MatchRequestedProductsModal({
     attachCellClickListener(api);
     // The grid restores persisted filter state asynchronously via requestAnimationFrame,
     // which can overwrite the programmatic filters we just set for the current product.
-    // Schedule a re-application that runs after the persisted restoration.
+    // Re-apply only if the persisted restoration actually changed the filter model,
+    // avoiding a redundant second server-side data reload.
     requestAnimationFrame(() => {
       if ((api as unknown as { isDestroyed?: () => boolean }).isDestroyed?.()) return;
+      try {
+        const current = JSON.stringify(api.getFilterModel?.() ?? {});
+        const target = JSON.stringify(requestedFilterModel ?? {});
+        if (current === target) return;
+      } catch { /* noop */ }
       hasAppliedRequestedFiltersRef.current = false;
       applyRequestedFilterModel(api);
     });
-  }, [applyRequestedFilterModel, autoSelectTopProduct, ensureProductSort, trySelectPendingProduct, attachCellClickListener]);
+  }, [applyRequestedFilterModel, autoSelectTopProduct, ensureProductSort, trySelectPendingProduct, attachCellClickListener, requestedFilterModel]);
 
   const handleGridModelUpdated = useCallback(() => {
     const api = productsApiRef.current;
@@ -559,51 +588,36 @@ export default function MatchRequestedProductsModal({
     } catch {
       /* noop */
     }
-    // Clear any filters that were manually applied by the user
+    // Apply the new entry's filter directly instead of first clearing to null.
+    // Clearing to null then re-applying caused two server-side reloads that
+    // could race with user selections.
     try {
-      productsApiRef.current?.setFilterModel(null);
+      productsApiRef.current?.setFilterModel(requestedFilterModel ?? null);
     } catch {
       /* noop */
     }
+    hasAppliedRequestedFiltersRef.current = true;
     setSelectedProduct(null);
     setAssigning(false);
     setComment('');
     setSuggestedProducts([]);
-    // Immediately update ref so autoSelectTopProduct (which runs in a later effect
-    // during the same commit phase) sees the cleared value rather than stale suggestions
-    // from the previous entry.
+    // Immediately update refs so autoSelectTopProduct (which runs in a later effect
+    // during the same commit phase) sees the cleared values.
     suggestedProductsRef.current = [];
+    userManuallySelectedRef.current = false;
     setSuggestionsVisible(true);
-    appliedPrefetchRef.current = null;
-  }, [entry.offerDetailId]);
+  }, [entry.offerDetailId, requestedFilterModel]);
 
-  // Store prefetched suggestions; auto-show if user previously opted in
-  const appliedPrefetchRef = useRef<number | null>(null);
+  // Auto-apply prefetched suggestions when the user has previously opted in.
+  // On the first product userWantsSuggestionsRef is false, so the user must
+  // click "Suggest Products (AI)" to opt in.  After that, subsequent products
+  // will auto-show suggestions until the user clicks "Hide suggestions".
   useEffect(() => {
+    if (!userWantsSuggestionsRef.current) return;
+    if (suggestedProductsRef.current.length > 0) return;
     if (!prefetchedSuggestions || prefetchedSuggestions.length === 0) return;
-    if (appliedPrefetchRef.current === entry.offerDetailId) return;
-    appliedPrefetchRef.current = entry.offerDetailId;
-    setSuggestedProducts(prefetchedSuggestions);
-    if (userWantsSuggestionsRef.current) {
-      setSuggestionsVisible(true);
-      try {
-        productsApiRef.current?.deselectAll?.();
-      } catch { /* noop */ }
-      setSelectedProduct(prefetchedSuggestions[0]);
-    } else {
-      setSuggestionsVisible(false);
-    }
-  }, [prefetchedSuggestions, entry.offerDetailId]);
-
-  // Auto-fetch suggestions for the current entry if prefetched data doesn't arrive in time
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (suggestedProductsRef.current.length === 0) {
-        handleSuggestProductsRef.current?.();
-      }
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [entry.offerDetailId]);
+    applyProducts(prefetchedSuggestions);
+  }, [prefetchedSuggestions, entry.offerDetailId, applyProducts]);
 
   useEffect(() => {
     applyRequestedFilterModel(productsApiRef.current);
