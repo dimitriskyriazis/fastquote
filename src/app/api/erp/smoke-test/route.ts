@@ -48,9 +48,9 @@ export async function GET(_req: NextRequest) {
       wsConnectionOk: wsHealthCheck.ok,
       wsConnectionError: wsHealthCheck.error ?? null,
       integrationConfig: configResult.recordset ?? [],
-      projectCreationMode: process.env.SOFTONE_WS_PROJECT_CREATION === 'true' ? 'webservice' : 'sql',
-      itemCreationMode: process.env.SOFTONE_WS_ITEM_CREATION === 'true' ? 'webservice' : 'sql',
-      orderCreationMode: process.env.SOFTONE_WS_ORDER_CREATION === 'true' ? 'webservice' : 'sql',
+      projectCreationMode: 'webservice',
+      itemCreationMode: 'webservice',
+      orderCreationMode: 'webservice',
       message:
         'ERP connectivity, WS connectivity, and IntegrationConfig checked. POST with { "offerId": <number> } to run full read-only smoke test.',
     });
@@ -100,9 +100,9 @@ export async function POST(req: NextRequest) {
       steps.wsConnection = {
         ok: wsHealth.ok,
         error: wsHealth.error ?? null,
-        projectCreationMode: process.env.SOFTONE_WS_PROJECT_CREATION === 'true' ? 'webservice' : 'sql',
-        itemCreationMode: process.env.SOFTONE_WS_ITEM_CREATION === 'true' ? 'webservice' : 'sql',
-        orderCreationMode: process.env.SOFTONE_WS_ORDER_CREATION === 'true' ? 'webservice' : 'sql',
+        projectCreationMode: 'webservice',
+        itemCreationMode: 'webservice',
+        orderCreationMode: 'webservice',
       };
     } catch (err) {
       steps.wsConnection = {
@@ -579,8 +579,6 @@ export async function POST(req: NextRequest) {
             ? `${scCode3}${typeLetter}.${brandCode}`
             : null;
 
-          const wsMode = process.env.SOFTONE_WS_ITEM_CREATION === 'true';
-
           itemSimulations.push({
             productId: product.ProductID,
             description: product.Description,
@@ -589,8 +587,8 @@ export async function POST(req: NextRequest) {
             brandName: product.BrandName,
             codePrefix,
             codeWouldBe: codePrefix ? `${codePrefix}.<sequence>` : 'cannot resolve prefix',
-            mode: wsMode ? 'webservice (setItem)' : 'sql (_mtrlCreateProduct)',
-            wsParams: wsMode ? {
+            mode: 'webservice (setItem)',
+            wsParams: {
               service: 'setItem',
               items: [{
                 code: codePrefix ? `${codePrefix}.<sequence>` : '<unresolved>',
@@ -600,15 +598,7 @@ export async function POST(req: NextRequest) {
                 mtracn: 0,
                 mtrcategory: 1,
               }],
-            } : null,
-            sqlParams: !wsMode ? {
-              procedure: 'tlm._mtrlCreateProduct',
-              CODE: codePrefix ? `${codePrefix}.<sequence>` : '<unresolved>',
-              CODE1: product.ModelNumberCleared,
-              CODE2: product.PartNumberCleared,
-              Description: product.Description,
-              BrandId: product.BrandID,
-            } : null,
+            },
           });
         } catch (err) {
           itemSimulations.push({
@@ -696,15 +686,11 @@ export async function POST(req: NextRequest) {
       // Determine business unit
       const offerRow2 = await pool.request()
         .input('offerId', sql.Int, offerId)
-        .query<{ SalesDivisionID: number | null; Description: string | null }>(`
-          SELECT o.SalesDivisionID, o.Description
+        .query<{ Description: string | null }>(`
+          SELECT o.Description
           FROM dbo.Offer o WHERE o.ID = @offerId
         `);
-      const sdId = offerRow2.recordset?.[0]?.SalesDivisionID ?? null;
       const offerDesc = offerRow2.recordset?.[0]?.Description ?? `FastQuote Project for offer ${offerId}`;
-      const bu = sdId === 3 ? 'TVS' : 'AVS';
-
-      const wsMode = process.env.SOFTONE_WS_ORDER_CREATION === 'true';
       const totalLineValue = allViableLines.reduce((sum, l) => sum + (Number(l.Quantity) * Number(l.ListPrice)), 0);
 
       steps.simulateOrderCreation = {
@@ -730,8 +716,8 @@ export async function POST(req: NextRequest) {
         flowNote: pendingErpLink.length > 0
           ? `${pendingErpLink.length} line(s) don't have ERPIDs yet but will get them during the product matching/creation step that runs BEFORE order creation. Showing all ${allViableLines.length} viable lines as the expected order.`
           : undefined,
-        mode: wsMode ? 'webservice (setDocs — atomic)' : 'sql (createCustomerOrder + addOrderLine per line)',
-        expectedOrder: wsMode ? {
+        mode: 'webservice (setDocs — atomic)',
+        expectedOrder: {
           service: 'setDocs',
           custcode: custCode ?? (erpCustomerId ? String(erpCustomerId) : '<to be resolved>'),
           date: new Date().toISOString().split('T')[0],
@@ -747,27 +733,6 @@ export async function POST(req: NextRequest) {
             erpStatus: l.ERPID ? 'linked' : 'pending — will be matched/created first',
           })),
           itemsTruncated: allViableLines.length > 10,
-        } : {
-          createOrderProcedure: 'tlm._findocCreateCustomerOrder',
-          addLineProcedure: 'tlm._mtrlinesAddLine',
-          orderParams: {
-            IntegrationKey: 'FASTQUOTE_CREATE_FINDOC',
-            Prjc: erpProjectId ?? '<will be created>',
-            Trdr: erpCustomerId ?? '<to be resolved>',
-            BusinessUnit: bu,
-            Series: 9001,
-            CreatedByUser: 1011,
-          },
-          lines: allViableLines.slice(0, 10).map((l, i) => ({
-            CCCPosNo: String(i + 1),
-            MTRL: l.ERPID ?? '<will be assigned>',
-            productDescription: l.Description,
-            QTY: Number(l.Quantity),
-            PRICE: Number(l.ListPrice),
-            NUM01: l.NetCost != null ? Number(l.NetCost) : null,
-            erpStatus: l.ERPID ? 'linked' : 'pending — will be matched/created first',
-          })),
-          linesTruncated: allViableLines.length > 10,
         },
         invalidLines: invalidLines.length > 0 ? invalidLines.slice(0, 5).map(l => ({
           productId: l.ProductID,
@@ -795,8 +760,6 @@ export async function POST(req: NextRequest) {
       const desc = offerRow3.recordset?.[0]?.Description ?? `FastQuote Project for offer ${offerId}`;
       const sdId2 = offerRow3.recordset?.[0]?.SalesDivisionID ?? null;
       const bu2 = sdId2 === 3 ? 'TVS' : 'AVS';
-      const wsProjectMode = process.env.SOFTONE_WS_PROJECT_CREATION === 'true';
-
       // Resolve customer CODE for project simulation
       let prjCustCode: string | null = null;
       if (erpCustomerId && erpCustomerId > 0) {
@@ -811,28 +774,15 @@ export async function POST(req: NextRequest) {
         needsCreation: needsProject,
         existingProjectId: erpProjectId,
         existingProjectCode: erpProjectCode,
-        mode: wsProjectMode ? 'webservice (setProject)' : 'sql (tlm.prjc_CreateFromIntegration)',
+        mode: 'webservice (setProject)',
         wouldCreate: needsProject ? {
-          wsParams: wsProjectMode ? {
-            service: 'setProject',
-            name: desc,
-            shortdesc: desc,
-            businessunit: bu2 === 'AVS' ? '10' : '20',
-            prjstatus: '90',
-            custcode: prjCustCode ?? '<unknown>',
-            code: 'COV.*',
-          } : null,
-          sqlParams: !wsProjectMode ? {
-            procedure: 'tlm.prjc_CreateFromIntegration',
-            IntegrationKey: 'FASTQUOTE_CREATE_PRJC',
-            CodePrefix: 'COV',
-            Name: desc,
-            Trdr: erpCustomerId,
-            BusinessUnit: bu2,
-            PrjState: 90,
-            SourceSystem: 'FQ',
-            CreatedByUser: 1011,
-          } : null,
+          service: 'setProject',
+          name: desc,
+          shortdesc: desc,
+          businessunit: bu2 === 'AVS' ? '10' : '20',
+          prjstatus: '90',
+          custcode: prjCustCode ?? '<unknown>',
+          code: 'COV.*',
         } : 'not needed — project already exists',
       };
     } catch (err) {

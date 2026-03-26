@@ -1,7 +1,6 @@
 import sql from 'mssql';
 import { getPool, getErpPool } from './sql';
 import { createItemViaWebService } from './itemCreationWS';
-import { logger } from './logger';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -21,10 +20,6 @@ export type CreatedItemInfo = {
   mtrl: number;
   code: string;
 };
-
-// ── Feature flag ───────────────────────────────────────────────────────────
-
-const USE_WS_ITEM_CREATION = process.env.SOFTONE_WS_ITEM_CREATION === 'true';
 
 // ── Code generation (always SQL — depends on ERP sequence counters) ───────
 
@@ -115,91 +110,15 @@ export async function generateNewErpCode(
   return nextCode;
 }
 
-// ── SQL-based item creation ───────────────────────────────────────────────
-
-function isRequestErrorWithNumber(error: unknown): error is { number: number } {
-  return typeof error === 'object' && error !== null && 'number' in error && typeof (error as { number: unknown }).number === 'number';
-}
-
-async function createItemViaSql(
-  pool: Awaited<ReturnType<typeof getPool>>,
-  erpPool: Awaited<ReturnType<typeof getErpPool>>,
-  params: CreateItemParams,
-): Promise<CreatedItemInfo> {
-  let retryCount = 0;
-  const MAX_RETRIES = 3;
-  let createdMTRL: number | null = null;
-  let createdCode: string | null = null;
-
-  while (retryCount <= MAX_RETRIES && !createdMTRL) {
-    try {
-      const newCode = await generateNewErpCode(pool, erpPool, {
-        SubCategoryID: params.subCategoryId,
-        TypeID: params.typeId,
-        BrandID: params.brandId,
-        BrandName: params.brandName,
-      });
-
-      const createRequest = erpPool.request();
-      createRequest.input('CODE', sql.NVarChar(25), newCode);
-      createRequest.input('CODE1', sql.NVarChar(25), params.modelNumber);
-      createRequest.input('CODE2', sql.NVarChar(50), params.partNumber);
-      createRequest.input('Description', sql.NVarChar(128), params.description);
-      createRequest.input('BrandId', sql.Int, params.brandId);
-      createRequest.input('BusinessUnit', sql.NVarChar(20), params.businessUnit);
-
-      const createResult = await createRequest.query(`
-        DECLARE @CreatedMTRL INT;
-        EXEC [tlm].[_mtrlCreateProduct]
-          @CODE = @CODE,
-          @CODE1 = @CODE1,
-          @CODE2 = @CODE2,
-          @Description = @Description,
-          @BrandId = @BrandId,
-          @BusinessUnit = @BusinessUnit,
-          @CreatedMTRL = @CreatedMTRL OUTPUT;
-        SELECT @CreatedMTRL AS CreatedMTRL;
-      `) as { recordset: Array<{ CreatedMTRL: number }>; recordsets?: Array<Array<{ MTRL: number; CODE: string | null }>> };
-
-      createdMTRL = createResult.recordset?.[0]?.CreatedMTRL ?? createResult.recordsets?.[0]?.[0]?.MTRL ?? null;
-      createdCode = createResult.recordsets?.[0]?.[0]?.CODE ?? newCode;
-    } catch (retryErr) {
-      const isDuplicateKey = isRequestErrorWithNumber(retryErr) && retryErr.number === 2627;
-      if (isDuplicateKey && retryCount < MAX_RETRIES) {
-        retryCount++;
-        logger.warn(`Duplicate CODE detected for product ${params.productId}, retrying`, {
-          attempt: String(retryCount),
-          maxRetries: String(MAX_RETRIES),
-        });
-        continue;
-      }
-      throw retryErr;
-    }
-  }
-
-  if (!createdMTRL || !createdCode) {
-    throw new Error('Failed to create product after retries - could not get CreatedMTRL from tlm._mtrlCreateProduct');
-  }
-
-  return { mtrl: createdMTRL, code: createdCode };
-}
-
 // ── Public API ────────────────────────────────────────────────────────────
 
 /**
- * Creates an item in ERP.
- *
- * When SOFTONE_WS_ITEM_CREATION=true, uses the SoftOne setItem web service.
- * Otherwise falls back to the SQL stored procedure tlm._mtrlCreateProduct.
+ * Creates an item in ERP via the SoftOne setItem web service.
  */
 export async function createItemInErp(
   pool: Awaited<ReturnType<typeof getPool>>,
   erpPool: Awaited<ReturnType<typeof getErpPool>>,
   params: CreateItemParams,
 ): Promise<CreatedItemInfo> {
-  if (USE_WS_ITEM_CREATION) {
-    return createItemViaWebService(pool, erpPool, params);
-  }
-
-  return createItemViaSql(pool, erpPool, params);
+  return createItemViaWebService(pool, erpPool, params);
 }

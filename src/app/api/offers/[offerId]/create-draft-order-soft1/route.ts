@@ -648,7 +648,18 @@ export async function POST(
                         ModifiedOn = SYSUTCDATETIME()
                     WHERE ID = @productId
                   `);
-                  
+
+                  // Also update in-memory product so downstream checks see the new values
+                  if (needsCategory && suggestions.categoryId) {
+                    product.CategoryID = suggestions.categoryId;
+                  }
+                  if (needsSubCategory && suggestions.subCategoryId) {
+                    product.SubCategoryID = suggestions.subCategoryId;
+                  }
+                  if (needsType && suggestions.typeId) {
+                    product.TypeID = suggestions.typeId;
+                  }
+
                   logger.info('Auto-filled product categories using AI', {
                     requestId,
                     productId: product.ProductID,
@@ -888,6 +899,39 @@ export async function POST(
 
       await Promise.all(updatePromises);
 
+      // Split unresolved products: selectable (2+ matches) vs unresolvable (0 matches / failed creation)
+      const selectableMatches = productMatches.filter((pm) => pm.matches.length > 0);
+      const unresolvableProducts = productMatches.filter((pm) => pm.matches.length === 0);
+
+      // Only block if there are products the user can actually resolve via the modal
+      if (selectableMatches.length > 0) {
+        const updatedIds = selections.map((s) => s.productId);
+        logger.info('create-draft-order-soft1 returning needsSelection (selections path)', {
+          requestId,
+          offerId: normalizedId,
+          updatedCount: updatedIds.length,
+          needsSelectionCount: selectableMatches.length,
+          needsSelectionProductIds: selectableMatches.map((pm) => pm.productId),
+          skippedUnresolvableCount: unresolvableProducts.length,
+          skippedUnresolvableProductIds: unresolvableProducts.map((pm) => pm.productId),
+        });
+        return NextResponse.json({
+          ok: true,
+          message: 'Some products need selection before the order can be created.',
+          needsSelection: selectableMatches,
+          updated: updatedIds,
+        });
+      }
+
+      if (unresolvableProducts.length > 0) {
+        logger.warn('create-draft-order-soft1 skipping unresolvable products (selections path)', {
+          requestId,
+          offerId: normalizedId,
+          skippedCount: unresolvableProducts.length,
+          skippedProductIds: unresolvableProducts.map((pm) => pm.productId),
+        });
+      }
+
       // Ensure ERP project exists and is valid
       let finalErpProjectId = erpProjectId;
       let finalErpProjectCode = erpProjectCode;
@@ -1089,16 +1133,16 @@ export async function POST(
         requestId,
         offerId: normalizedId,
         updatedCount: updatedIds.length,
-        needsSelectionCount: productMatches.length,
-        updated: updatedIds,
-        needsSelectionProductIds: productMatches.map((pm) => pm.productId),
       });
 
       return NextResponse.json({
         ok: true,
-        message: 'Products updated successfully',
-        needsSelection: productMatches,
+        message: unresolvableProducts.length > 0
+          ? `Draft order created. ${unresolvableProducts.length} product(s) could not be matched and were skipped.`
+          : 'Draft order created successfully.',
+        needsSelection: [],
         updated: updatedIds,
+        skippedProducts: unresolvableProducts.map((pm) => pm.productId),
       });
     }
 
@@ -1264,6 +1308,38 @@ export async function POST(
           matches: [],
         });
       }
+    }
+
+    // Split unresolved products: selectable (2+ matches) vs unresolvable (0 matches / failed creation)
+    const selectableMatches = productMatches.filter((pm) => pm.matches.length > 0);
+    const unresolvableProducts = productMatches.filter((pm) => pm.matches.length === 0);
+
+    // Only block if there are products the user can actually resolve via the modal
+    if (selectableMatches.length > 0) {
+      logger.info('create-draft-order-soft1 returning needsSelection (no-selections path)', {
+        requestId,
+        offerId: normalizedId,
+        updatedCount: successfullyUpdatedIds.length,
+        needsSelectionCount: selectableMatches.length,
+        needsSelectionProductIds: selectableMatches.map((pm) => pm.productId),
+        skippedUnresolvableCount: unresolvableProducts.length,
+        skippedUnresolvableProductIds: unresolvableProducts.map((pm) => pm.productId),
+      });
+      return NextResponse.json({
+        ok: true,
+        message: 'Some products need selection before the order can be created.',
+        needsSelection: selectableMatches,
+        updated: successfullyUpdatedIds,
+      });
+    }
+
+    if (unresolvableProducts.length > 0) {
+      logger.warn('create-draft-order-soft1 skipping unresolvable products (no-selections path)', {
+        requestId,
+        offerId: normalizedId,
+        skippedCount: unresolvableProducts.length,
+        skippedProductIds: unresolvableProducts.map((pm) => pm.productId),
+      });
     }
 
     // Ensure ERP project exists and is valid
@@ -1466,15 +1542,16 @@ export async function POST(
       requestId,
       offerId: normalizedId,
       updatedCount: successfullyUpdatedIds.length,
-      needsSelectionCount: productMatches.length,
-      updated: successfullyUpdatedIds,
-      needsSelectionProductIds: productMatches.map((pm) => pm.productId),
     });
 
     return NextResponse.json({
       ok: true,
-      needsSelection: productMatches,
+      message: unresolvableProducts.length > 0
+        ? `Draft order created. ${unresolvableProducts.length} product(s) could not be matched and were skipped.`
+        : 'Draft order created successfully.',
+      needsSelection: [],
       updated: successfullyUpdatedIds,
+      skippedProducts: unresolvableProducts.map((pm) => pm.productId),
     });
   } catch (err) {
     logger.error('Failed to create draft offer', {}, err instanceof Error ? err : undefined);

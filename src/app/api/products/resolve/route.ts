@@ -138,6 +138,25 @@ export async function GET(req: NextRequest) {
     // Primary: use whitespace-insensitive brand key when provided.
     const productId = await runQuery(true);
     if (productId != null) {
+      // When no brand was provided, check if multiple products with different brands
+      // share the same part/model number. If so, don't auto-resolve — let the user
+      // pick the correct one via the manual match modal.
+      if (!brandKey && searchValue) {
+        const ambiguityRequest = pool.request();
+        ambiguityRequest.input('searchValue', sql.NVarChar(255), searchValue);
+        const ambiguityResult = await ambiguityRequest.query<{ BrandCount: number }>(`
+          SELECT COUNT(DISTINCT p.BrandID) AS BrandCount
+          FROM dbo.Products p
+          WHERE (${partModelNumberSql('p.PartNumber')} = @searchValue OR ${partModelNumberSql('p.ModelNumber')} = @searchValue OR ISNULL(p.LegacyPartNoCleaned, '') = @searchValue)
+        `);
+        const brandCount = ambiguityResult.recordset?.[0]?.BrandCount ?? 0;
+        if (brandCount > 1) {
+          return NextResponse.json(
+            { ok: false, error: 'Multiple brands found for this part number. Please specify a brand.', ambiguous: true },
+            { status: 404 },
+          );
+        }
+      }
       return NextResponse.json({ ok: true, productId, match: brandKey ? 'brandKey' : 'noBrand' });
     }
 

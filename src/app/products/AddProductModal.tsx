@@ -110,11 +110,11 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
 
   useEffect(() => {
     if (open) {
-      checkDuplicates({ partNumber: form.partNumber, modelNumber: form.modelNumber });
+      checkDuplicates({ partNumber: form.partNumber, modelNumber: form.modelNumber, brandId: form.brandId });
     } else {
       clearDuplicates();
     }
-  }, [form.partNumber, form.modelNumber, checkDuplicates, clearDuplicates, open]);
+  }, [form.partNumber, form.modelNumber, form.brandId, checkDuplicates, clearDuplicates, open]);
 
   const loadLookups = useCallback(async () => {
     setLookupsLoading(true);

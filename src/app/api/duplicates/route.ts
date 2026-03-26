@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
       lastName?: string;
       partNumber?: string;
       modelNumber?: string;
+      brandId?: string;
     };
 
     const entity = body.entity;
@@ -174,14 +175,18 @@ export async function POST(req: NextRequest) {
     if (entity === "product") {
       const partNumber = body.partNumber?.trim();
       const modelNumber = body.modelNumber?.trim();
+      const brandId = body.brandId ? parseInt(body.brandId, 10) : null;
 
       if (partNumber) {
         const cleared = partNumber.replace(/[-_\s.]+/g, "").toUpperCase();
-        const result = await pool.request()
-          .input("partNumber", sql.NVarChar(255), cleared)
-          .query<{ ID: number; PartNumber: string | null; ModelNumber: string | null; Description: string | null }>(
-            `SELECT TOP 10 p.ID, p.PartNumber, p.ModelNumber, p.Description FROM dbo.Products p WHERE p.PartNumberCleared = @partNumber OR p.LegacyPartNoCleaned = @partNumber`
-          );
+        const request = pool.request()
+          .input("partNumber", sql.NVarChar(255), cleared);
+        let partQuery = `SELECT TOP 10 p.ID, p.PartNumber, p.ModelNumber, p.Description FROM dbo.Products p WHERE (p.PartNumberCleared = @partNumber OR p.LegacyPartNoCleaned = @partNumber)`;
+        if (brandId) {
+          request.input("brandId", sql.Int, brandId);
+          partQuery += ` AND p.BrandID = @brandId`;
+        }
+        const result = await request.query<{ ID: number; PartNumber: string | null; ModelNumber: string | null; Description: string | null }>(partQuery);
         if (result.recordset.length > 0) {
           warnings.push({
             type: "partNumber",
@@ -198,11 +203,14 @@ export async function POST(req: NextRequest) {
 
       if (modelNumber) {
         const cleared = modelNumber.replace(/[-_\s.]+/g, "").toUpperCase();
-        const result = await pool.request()
-          .input("modelNumber", sql.NVarChar(255), cleared)
-          .query<{ ID: number; PartNumber: string | null; ModelNumber: string | null; Description: string | null }>(
-            `SELECT TOP 10 p.ID, p.PartNumber, p.ModelNumber, p.Description FROM dbo.Products p WHERE p.ModelNumberCleared = @modelNumber`
-          );
+        const request = pool.request()
+          .input("modelNumber", sql.NVarChar(255), cleared);
+        let modelQuery = `SELECT TOP 10 p.ID, p.PartNumber, p.ModelNumber, p.Description FROM dbo.Products p WHERE p.ModelNumberCleared = @modelNumber`;
+        if (brandId) {
+          request.input("brandId", sql.Int, brandId);
+          modelQuery += ` AND p.BrandID = @brandId`;
+        }
+        const result = await request.query<{ ID: number; PartNumber: string | null; ModelNumber: string | null; Description: string | null }>(modelQuery);
         if (result.recordset.length > 0) {
           warnings.push({
             type: "modelNumber",
