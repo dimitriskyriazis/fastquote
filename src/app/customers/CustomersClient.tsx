@@ -227,6 +227,13 @@ export default function CustomersClient() {
         cellRenderer: ActionCell,
       },
       {
+        field: "CustomerID",
+        headerName: "ID",
+        filter: "agNumberColumnFilter",
+        editable: false,
+        width: 100,
+      },
+      {
         field: "CustomerName",
         headerName: "Customer",
         filter: "agTextColumnFilter",
