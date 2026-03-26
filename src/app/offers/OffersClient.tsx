@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useCallback, useState, useRef, useEffect } from 'react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type {
   ColDef,
@@ -129,7 +129,6 @@ const normalizeProbability = (value: unknown): number | null => {
 
 export default function OffersClient() {
   const router = useRouter();
-  const pathname = usePathname();
   const searchParams = useSearchParams();
   const routerRef = useRef(router);
   routerRef.current = router;
@@ -209,72 +208,9 @@ export default function OffersClient() {
     }
   }, []);
 
-  const persistOffersColumnStateNow = useCallback((api: GridApi<Record<string, unknown>> | null) => {
-    if (!api || api.isDestroyed?.() || typeof window === 'undefined') return;
-    const sanitize = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const normalizedEndpoint = sanitize('/api/offers');
-    const normalizedUser = userId && userId.trim() ? userId.trim() : 'anon';
-    const normalizedContext = sanitize(pathname || '');
-    const storageKey = `fastquote-grid-column-state:${normalizedUser}:${normalizedEndpoint || 'grid'}:${normalizedContext || 'grid'}`;
-
-    const state = typeof api.getColumnState === 'function' ? api.getColumnState() : [];
-    if (!Array.isArray(state) || state.length === 0) return;
-
-    const columnOrderMap = new Map<string, number>();
-    const apiWithAllGridColumns = api as unknown as { getAllGridColumns?: () => Array<{ getColId: () => string }> };
-    const allGridColumns = typeof apiWithAllGridColumns.getAllGridColumns === 'function'
-      ? apiWithAllGridColumns.getAllGridColumns()
-      : null;
-    if (Array.isArray(allGridColumns) && allGridColumns.length > 0) {
-      allGridColumns.forEach((column, index) => {
-        const colId = typeof column?.getColId === 'function' ? column.getColId() : '';
-        if (colId) columnOrderMap.set(colId, index);
-      });
-    } else {
-      state.forEach((entry, index) => {
-        const colId = typeof entry?.colId === 'string' ? entry.colId : '';
-        if (colId) columnOrderMap.set(colId, index);
-      });
-    }
-
-    const columns = state
-      .map((entry) => {
-        const colId = typeof entry?.colId === 'string' ? entry.colId : '';
-        if (!colId) return null;
-        const width = typeof entry.width === 'number' && Number.isFinite(entry.width) && entry.width > 0
-          ? entry.width
-          : undefined;
-        const order = columnOrderMap.get(colId);
-        return {
-          colId,
-          pinned: (entry.pinned ?? null) as 'left' | 'right' | null,
-          width,
-          flex: entry.flex ?? null,
-          rowGroup: entry.rowGroup ?? undefined,
-          rowGroupIndex: typeof entry.rowGroupIndex === 'number' && Number.isFinite(entry.rowGroupIndex)
-            ? entry.rowGroupIndex
-            : undefined,
-          hide: typeof entry.hide === 'boolean' ? entry.hide : undefined,
-          order: typeof order === 'number' && Number.isFinite(order) ? order : undefined,
-        };
-      })
-      .filter((entry): entry is NonNullable<typeof entry> => entry != null);
-
-    try {
-      if (columns.length === 0) {
-        window.localStorage.removeItem(storageKey);
-        return;
-      }
-      window.localStorage.setItem(storageKey, JSON.stringify({ columns }));
-    } catch {
-      /* noop */
-    }
-  }, [pathname, userId]);
-
   useEffect(() => {
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return;
-    persistOffersColumnStateNow(api);
     api.refreshCells?.({ columns: ['OfferVersion'], force: true });
     api.refreshServerSide?.({ purge: false });
     if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
@@ -282,7 +218,7 @@ export default function OffersClient() {
     } else {
       setTimeout(() => restorePendingColumnState(api), 0);
     }
-  }, [expandedVersionGroups, persistOffersColumnStateNow, restorePendingColumnState]);
+  }, [expandedVersionGroups, restorePendingColumnState]);
 
   const handleModelUpdated = useCallback((api: GridApi<Record<string, unknown>>) => {
     restorePendingColumnState(api);
