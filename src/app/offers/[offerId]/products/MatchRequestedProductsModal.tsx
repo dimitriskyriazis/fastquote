@@ -190,20 +190,23 @@ export default function MatchRequestedProductsModal({
         field: 'PartNumber',
         headerName: 'Part Number',
         filter: 'agTextColumnFilter',
+        width: 225,
       },
       {
         field: 'Description',
         headerName: 'Description',
         filter: 'agTextColumnFilter',
         cellRenderer: DescriptionCellRenderer,
+        width: 500,
       },
-      { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter' },
+      { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter', width: 200 },
       {
         field: 'ModelNumber',
         headerName: 'Model Number',
         filter: 'agTextColumnFilter',
+        width: 225,
       },
-      { field: 'PriceListName', headerName: 'Price List', filter: 'agTextColumnFilter' },
+      { field: 'PriceListName', headerName: 'Price List', filter: 'agTextColumnFilter', width: 225},
       {
         field: 'ListPrice',
         headerName: 'List Price',
@@ -211,6 +214,7 @@ export default function MatchRequestedProductsModal({
         type: 'numericColumn',
         valueFormatter: priceValueFormatter,
         cellClassRules: priceListClassRules,
+        width: 150,
       },
       {
         field: 'UnitPrice',
@@ -218,6 +222,7 @@ export default function MatchRequestedProductsModal({
         filter: 'agNumberColumnFilter',
         type: 'numericColumn',
         valueFormatter: priceValueFormatter,
+        width: 150,
       },
     ],
     [],
@@ -754,7 +759,7 @@ export default function MatchRequestedProductsModal({
                 onGridReady={handleGridReady}
                 onModelUpdated={handleGridModelUpdated}
                 allowRowClickSelection
-                columnStateNamespace="match-requested-products-v2"
+                columnStateNamespace="match-requested-products-v3"
                 applyColumnStateOrder={true}
                 maintainColumnOrder={true}
                 disableAutoSize={true}
