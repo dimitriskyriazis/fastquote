@@ -13,7 +13,7 @@ export async function GET() {
         FROM dbo.Offer AS o
         JOIN dbo.OfferStatus AS os ON os.ID = o.StatusID
         WHERE o.Enabled = 1
-          AND os.Name NOT IN ('Order Signed', 'Delivery Due', 'Delivery Complete', 'Rejection')
+          AND os.Name NOT IN ('Order Signed', 'Delivery Due', 'Delivery Complete', 'Rejection', 'Cancelled')
       `),
       pool.request().query<StatusCount>(`
         SELECT os.Name, COUNT(*) AS count
@@ -41,7 +41,7 @@ export async function GET() {
           CAST(
             SUM(CASE WHEN os.Name IN ('Order Signed', 'Delivery Due', 'Delivery Complete') THEN 1 ELSE 0 END) AS FLOAT
           ) / NULLIF(
-            SUM(CASE WHEN os.Name IN ('Order Signed', 'Delivery Due', 'Delivery Complete', 'Rejection') THEN 1 ELSE 0 END), 0
+            SUM(CASE WHEN os.Name IN ('Order Signed', 'Delivery Due', 'Delivery Complete', 'Rejection', 'Cancelled') THEN 1 ELSE 0 END), 0
           ) AS winRate
         FROM dbo.Offer AS o
         JOIN dbo.OfferStatus AS os ON os.ID = o.StatusID

@@ -29,6 +29,7 @@ const STATUS_COLORS: Record<string, string> = {
   'Delivery Complete': '#86efac',
   // Negative
   'Rejection': '#fca5a5',
+  'Cancelled': '#fca5a5',
 };
 
 const getStatusColor = (status: string) =>

@@ -13,8 +13,8 @@
   position: relative;
   background: #ffffff;
   border-radius: 14px;
-  width: min(1400px, 100vw);
-  height: min(90vh, 900px);
+  width: min(1800px, 100vw);
+  height: min(95vh, 1100px);
   display: flex;
   flex-direction: column;
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
