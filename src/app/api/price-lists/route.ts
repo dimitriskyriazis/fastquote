@@ -38,6 +38,8 @@ type PriceListRow = {
   ResponsibleUserId: string | null;
   ResponsibleUserName: string | null;
   ValidityComment: string | null;
+  CreatedBy: string | null;
+  CreatedOn: string | Date | null;
 };
 
 type PriceListRowWithCount = PriceListRow & { __totalCount: number | bigint | null };
@@ -52,6 +54,8 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   SupplierName: "dbo.Suppliers.Name",
   ResponsibleUserName: "COALESCE(NULLIF(LTRIM(RTRIM(responsible.FullName)), ''), responsible.UserName)",
   ValidityComment: "dbo.PriceLists.ValidityComment",
+  CreatedBy: "COALESCE(NULLIF(LTRIM(RTRIM(created.FullName)), ''), NULLIF(LTRIM(RTRIM(created.UserName)), ''), CAST(dbo.PriceLists.CreatedBy AS NVARCHAR(450)))",
+  CreatedOn: "dbo.PriceLists.CreatedOn",
 };
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
   colId,
@@ -178,7 +182,9 @@ export async function POST(req: NextRequest) {
         dbo.Suppliers.Name AS SupplierName,
         dbo.PriceLists.ResponsibleUserId,
         COALESCE(NULLIF(LTRIM(RTRIM(responsible.FullName)), ''), responsible.UserName) AS ResponsibleUserName,
-        dbo.PriceLists.ValidityComment
+        dbo.PriceLists.ValidityComment,
+        COALESCE(NULLIF(LTRIM(RTRIM(created.FullName)), ''), NULLIF(LTRIM(RTRIM(created.UserName)), ''), CAST(dbo.PriceLists.CreatedBy AS NVARCHAR(450))) AS CreatedBy,
+        dbo.PriceLists.CreatedOn
     `;
 
     const from = `
@@ -186,6 +192,7 @@ export async function POST(req: NextRequest) {
       LEFT OUTER JOIN dbo.Suppliers ON dbo.PriceLists.SupplierID = dbo.Suppliers.ID
       LEFT OUTER JOIN dbo.Brands ON dbo.PriceLists.BrandID = dbo.Brands.ID
       LEFT OUTER JOIN dbo.AspNetUsers AS responsible ON dbo.PriceLists.ResponsibleUserId = responsible.Id
+      LEFT OUTER JOIN dbo.AspNetUsers AS created ON dbo.PriceLists.CreatedBy = created.Id
     `;
 
     const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);

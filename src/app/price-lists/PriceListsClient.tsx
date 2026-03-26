@@ -370,6 +370,21 @@ export default function PriceListsClient() {
         filter: "agTextColumnFilter"
       },
       {
+        field: "CreatedBy",
+        headerName: "Created By",
+        filter: "agTextColumnFilter",
+      },
+      {
+        field: "CreatedOn",
+        headerName: "Created On",
+        filter: "agDateColumnFilter",
+        valueFormatter: (params: ValueFormatterParams) => formatDateUK(params.value),
+        filterParams: {
+          browserDatePicker: false,
+          minValidYear: 2000,
+        },
+      },
+      {
         field: "Enabled",
         headerName: "Enabled",
         filter: "agSetColumnFilter",
