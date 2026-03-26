@@ -446,14 +446,14 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       } catch { /* noop */ }
     };
 
-    // Fetch the first entry (the one the user sees right now) on its own so it
-    // doesn't have to compete with the batch for API bandwidth.
-    void fetchOne(uncached[0]);
+    // Fetch the first few entries on their own so the user sees results quickly.
+    const priority = uncached.slice(0, 3);
+    void Promise.all(priority.map(fetchOne));
 
     // Batch-fetch the remaining entries with bounded concurrency
-    const rest = uncached.slice(1);
+    const rest = uncached.slice(3);
     if (rest.length > 0) {
-      const MAX_CONCURRENT = 4;
+      const MAX_CONCURRENT = 6;
       let idx = 0;
       const batchWorker = async () => {
         while (idx < rest.length) {
@@ -3228,24 +3228,28 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
 
   const handleManualAssign = useCallback(async (productId: number, comment: string) => {
     if (!currentRequestedMatch) return false;
-    const assignment = await assignRequestedRowToProduct(
-      currentRequestedMatch.offerDetailId,
-      productId,
-      currentRequestedMatch.parentCategoryId,
-      comment,
-    );
-    if (assignment) {
-      showToastMessage('Requested item filled', 'success');
-      try {
-        refreshOfferProductGrid(null, { purge: true });
-      } catch {
-        /* noop */
-      }
-      advanceMatchQueue();
-      return true;
-    }
-    showToastMessage('Unable to assign requested item. Please try again.', 'error');
-    return false;
+    const match = currentRequestedMatch;
+
+    // Optimistic: advance to the next product immediately so the user doesn't
+    // wait for the server round-trip.  The actual DB write happens in the background.
+    advanceMatchQueue();
+
+    assignRequestedRowToProduct(match.offerDetailId, productId, match.parentCategoryId, comment)
+      .then((assignment) => {
+        if (assignment) {
+          showToastMessage('Requested item filled', 'success');
+          try {
+            refreshOfferProductGrid(null, { purge: true });
+          } catch { /* noop */ }
+        } else {
+          showToastMessage('Unable to assign requested item. Please try again.', 'error');
+        }
+      })
+      .catch(() => {
+        showToastMessage('Unable to assign requested item. Please try again.', 'error');
+      });
+
+    return true;
   }, [advanceMatchQueue, assignRequestedRowToProduct, currentRequestedMatch, refreshOfferProductGrid]);
 
   const handleManualSkip = useCallback(() => {

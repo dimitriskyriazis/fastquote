@@ -344,11 +344,10 @@ export default function MatchRequestedProductsModal({
     if (assigning) return;
     setAssigning(true);
     try {
-      const success = await onAssign(productId, assignComment ?? comment);
-      if (success) {
-        setSelectedProduct(null);
-        setComment('');
-      }
+      await onAssign(productId, assignComment ?? comment);
+      // Don't reset selectedProduct/comment here — the cleanup effect handles
+      // it when the entry changes (which now happens optimistically inside onAssign,
+      // so the microtask resolution of this await would override autoSelectTopProduct).
     } finally {
       setAssigning(false);
     }
@@ -637,11 +636,28 @@ export default function MatchRequestedProductsModal({
     applyRequestedFilterModel(productsApiRef.current);
   }, [applyRequestedFilterModel]);
 
-  // Auto-selection on entry change is handled by handleGridModelUpdated when the
-  // fresh server-side data arrives.  Running autoSelectTopProduct eagerly here
-  // would pick up a stale row from the previous entry's data (filters haven't
-  // taken effect yet), leaving selectedProduct pointing at a row that disappears
-  // once the new block loads.
+  // Auto-selection is primarily handled by handleGridModelUpdated when fresh data
+  // arrives.  This retry loop covers the first-mount race where modelUpdated
+  // fires before the API ref is set or data is loaded.
+  useEffect(() => {
+    let cancelled = false;
+    let remaining = 6;
+    const trySelect = () => {
+      if (cancelled || remaining-- <= 0) return;
+      const api = productsApiRef.current;
+      if (!api) { setTimeout(trySelect, 400); return; }
+      if (userManuallySelectedRef.current) return;
+      if (suggestedProductsRef.current.length > 0) return;
+      const nodes = api.getSelectedNodes?.() ?? [];
+      if (nodes.length > 0) return;
+      autoSelectTopProduct(api);
+      // If it didn't find data yet, retry
+      const nodesAfter = api.getSelectedNodes?.() ?? [];
+      if (nodesAfter.length === 0) setTimeout(trySelect, 400);
+    };
+    setTimeout(trySelect, 300);
+    return () => { cancelled = true; };
+  }, [autoSelectTopProduct, entry.offerDetailId]);
 
   const remaining = Math.max(0, total - position);
 

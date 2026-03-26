@@ -108,7 +108,7 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
     .replace(/[^a-zA-Z0-9\u00C0-\u024F]+/g, ' ')
     .split(/\s+/)
     .filter((w) => w.length >= 3)
-    .slice(0, 12);
+    .slice(0, 6);
 
   for (const word of descWords) {
     const p = `dw_${paramIdx++}`;
@@ -166,6 +166,9 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
   }
 
   // --- Phase 2: AI ranking ---
+  // Only rank the top candidates to reduce prompt size and AI latency.
+  const aiCandidates = candidates.slice(0, 20);
+
   const requestedInfo = [
     brand && `Brand: ${brand}`,
     modelNumber && `Model Number: ${modelNumber}`,
@@ -175,7 +178,7 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
     desc3 && `Description 3: ${desc3}`,
   ].filter(Boolean).join('\n');
 
-  const candidateList = candidates.map((c) => ({
+  const candidateList = aiCandidates.map((c) => ({
     id: c.ProductID,
     partNumber: c.PartNumber,
     modelNumber: c.ModelNumber,
