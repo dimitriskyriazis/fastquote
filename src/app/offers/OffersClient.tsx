@@ -782,10 +782,20 @@ export default function OffersClient() {
         minValidYear: 2000,
       }
     },
+    {
+      field: 'CreatedOn',
+      headerName: 'Created On',
+      filter: 'agDateColumnFilter',
+      valueFormatter: (params) => formatDateDMY(params.value),
+      filterParams: {
+        browserDatePicker: false,
+        minValidYear: 2000,
+      },
+    },
     { field: 'PricingPolicyName', headerName: 'Pricing Policy', filter: 'agTextColumnFilter', enableRowGroup: true, hide: true },
     { field: 'ERPProjectCode', headerName: 'ERP Project Code', filter: 'agTextColumnFilter', hide: true },
     { field: 'ERPFWCProjectShortName', headerName: 'ERP FWC Project', filter: 'agTextColumnFilter', hide: true },
-    { field: 'Title', headerName: 'Title', filter: 'agTextColumnFilter' },
+    { field: 'Title', headerName: 'Title', filter: 'agTextColumnFilter', width: 210 },
     {field: 'Comments',  headerName: 'Comments', filter: 'agTextColumnFilter'},
 { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
     {

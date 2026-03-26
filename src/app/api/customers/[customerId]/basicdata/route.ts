@@ -7,6 +7,7 @@ import type {
   CustomerBasicRecord,
   CustomerBasicUpdateField,
 } from "../../../../customers/[customerId]/CustomerBasicDataTypes";
+import { sanitizeJsonUnsafeChars } from "../../../../../lib/normalize";
 import { requirePermission } from "../../../../../lib/authz";
 
 type UpdateInput = {
@@ -186,12 +187,16 @@ export async function PATCH(
 
     const updates = Array.isArray(body?.updates) ? body.updates : [];
     const normalizedUpdates: NormalizedUpdate[] = [];
+    const JSON_SANITIZED_FIELDS: ReadonlySet<CustomerBasicUpdateField> = new Set(['Name', 'BrandName']);
 
     updates.forEach((entry) => {
       if (!entry?.field) return;
       const config = FIELD_CONFIG[entry.field];
       if (!config) return;
-      const normalizedValue = normalizeValue(entry.value, config.type);
+      let normalizedValue = normalizeValue(entry.value, config.type);
+      if (JSON_SANITIZED_FIELDS.has(entry.field) && typeof normalizedValue === 'string') {
+        normalizedValue = sanitizeJsonUnsafeChars(normalizedValue);
+      }
       normalizedUpdates.push({ field: entry.field, config, value: normalizedValue });
     });
 

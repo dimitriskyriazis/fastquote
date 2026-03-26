@@ -7,6 +7,7 @@ import { resolveAuditUserId } from '../../../../lib/auditTrail';
 import { getRequestId } from '../../../../lib/requestId';
 import { handleApiError } from '../../../../lib/errorHandler';
 import { validateRequest, stringSchema, positiveIntSchema, emailSchema, urlSchema } from '../../../../lib/validation';
+import { sanitizeJsonUnsafeChars } from '../../../../lib/normalize';
 import { requirePermission } from '../../../../lib/authz';
 
 // Strict schema-based validation with rejection of unknown fields
@@ -66,8 +67,8 @@ export async function POST(req: NextRequest) {
     }
 
     const body = validation.data;
-    const name = body.name!; // Validated as required
-    const brandName = body.brandName;
+    const name = sanitizeJsonUnsafeChars(body.name!) ?? body.name!;
+    const brandName = body.brandName != null ? sanitizeJsonUnsafeChars(body.brandName) : null;
     const taxId = body.taxId;
     const taxOffice = body.taxOffice;
     const profession = body.profession;

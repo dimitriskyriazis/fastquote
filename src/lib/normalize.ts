@@ -92,3 +92,25 @@ export const normalizeDecimal = (value: unknown): number | null => {
   }
   return null;
 };
+
+/**
+ * Replaces characters that break JSON when embedded without escaping
+ * (e.g. Power Automate / Teams Adaptive Cards).
+ *
+ *   "  → '   (double quote → single quote)
+ *   \  → /   (backslash → forward slash)
+ *   \n → ' ' (newline → space)
+ *   \r → ' ' (carriage return → space)
+ *
+ * Collapses runs of multiple spaces into one, then trims.
+ * Returns null if the result is empty.
+ */
+export const sanitizeJsonUnsafeChars = (value: string): string | null => {
+  const sanitized = value
+    .replace(/\\/g, '/')
+    .replace(/"/g, "'")
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return sanitized.length > 0 ? sanitized : null;
+};

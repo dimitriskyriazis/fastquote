@@ -75,6 +75,7 @@ type OfferRow = {
   Enabled: boolean | number | null;
   OfferDate: string | null;
   ModifiedOn: string | null;
+  CreatedOn: string | null;
   Probability: number | null;
 };
 
@@ -117,6 +118,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Enabled: 'dbo.Offer.Enabled',
   OfferDate: 'dbo.Offer.OfferDate',
   ModifiedOn: LATEST_MODIFIED_EXPRESSION,
+  CreatedOn: 'dbo.Offer.CreatedOn',
   Probability: 'dbo.Offer.Probability',
 };
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
@@ -340,6 +342,7 @@ export async function POST(req: NextRequest) {
         dbo.Offer.Enabled,
         dbo.Offer.OfferDate,
         dbo.Offer.Probability,
+        dbo.Offer.CreatedOn AS CreatedOn,
         ${LATEST_MODIFIED_EXPRESSION} AS ModifiedOn
     `;
 
