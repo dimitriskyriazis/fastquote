@@ -133,6 +133,7 @@ export default function MatchRequestedProductsModal({
   const userWantsSuggestionsRef = useRef(false);
   const userManuallySelectedRef = useRef(false);
   const autoSelectingRef = useRef(false);
+  const handleSuggestProductsRef = useRef<(() => void) | null>(null);
 
   // Keep ref in sync so event listeners can read current value
   suggestedProductsRef.current = suggestedProducts;
@@ -497,6 +498,8 @@ export default function MatchRequestedProductsModal({
     }
   }, [suggesting, offerId, entry, prefetchedSuggestions, applyProducts]);
 
+  // Keep ref in sync so the auto-suggest timer can call the latest version
+  handleSuggestProductsRef.current = handleSuggestProducts;
 
   const refreshProductsGrid = useCallback(() => {
     const api = productsApiRef.current;
@@ -618,6 +621,17 @@ export default function MatchRequestedProductsModal({
     if (!prefetchedSuggestions || prefetchedSuggestions.length === 0) return;
     applyProducts(prefetchedSuggestions);
   }, [prefetchedSuggestions, entry.offerDetailId, applyProducts]);
+
+  // Fallback: if user opted in but prefetched data hasn't arrived after 2s, fetch manually
+  useEffect(() => {
+    if (!userWantsSuggestionsRef.current) return;
+    const timer = setTimeout(() => {
+      if (suggestedProductsRef.current.length === 0 && handleSuggestProductsRef.current) {
+        handleSuggestProductsRef.current();
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [entry.offerDetailId]);
 
   useEffect(() => {
     applyRequestedFilterModel(productsApiRef.current);
