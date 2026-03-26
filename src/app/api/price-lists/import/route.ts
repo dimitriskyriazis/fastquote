@@ -1213,7 +1213,7 @@ export async function POST(req: NextRequest) {
           // Detect description mismatches
           const importDesc = row.description?.trim() || "";
           const existingDesc = existingProduct?.Description?.trim() || "";
-          if (importDesc && existingDesc && importDesc.toLowerCase() !== existingDesc.toLowerCase()) {
+          if (importDesc && importDesc.toLowerCase() !== existingDesc.toLowerCase()) {
             descriptionMismatches.push({ productId: productId!, newDescription: row.description! });
           }
 
