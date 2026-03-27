@@ -423,7 +423,7 @@ type ProductGridRow = {
   PriceListID: number | null;
   PriceListName: string | null;
   ListPrice: number | null;
-  UnitPrice: number | null;
+  CostPrice: number | null;
   PriceListValidFromDate: Date | string | null;
   PriceListValidToDate: Date | string | null;
   PriceListEnabled: boolean | number | null;
@@ -449,7 +449,7 @@ async function handleProductGrid(
     BrandName: 'bp.BrandName',
     PriceListName: 'price.PriceListName',
     ListPrice: 'price.ListPrice',
-    UnitPrice: 'price.ListPrice',
+    CostPrice: 'price.CostPrice',
   };
 
   const { clauses, params } = buildWhereClauses(gridRequest.filterModel, columnExpressions);
@@ -525,7 +525,7 @@ async function handleProductGrid(
       price.PriceListID,
       price.PriceListName,
       price.ListPrice,
-      price.ListPrice AS UnitPrice,
+      price.CostPrice,
       price.PriceListValidFromDate,
       price.PriceListValidToDate,
       price.PriceListEnabled
@@ -536,6 +536,7 @@ async function handleProductGrid(
           pli.PriceListID,
           pl.Name AS PriceListName,
           pli.ListPrice,
+          pli.CostPrice,
           pl.ValidFromDate AS PriceListValidFromDate,
           pl.ValidToDate AS PriceListValidToDate,
           pl.Enabled AS PriceListEnabled
@@ -1427,16 +1428,7 @@ async function handleAssignProductToRequestedRow(
           END AS ComputedNetCost
       ) AS computed
     WHERE od.OfferID = @__offerId
-      AND od.ID = @__rowId
-      AND (
-        @__categoryId IS NULL
-        OR od.ParentOfferDetailID = @__categoryId
-        OR (
-          @__categoryTree IS NOT NULL
-          AND od.TreeOrdering LIKE CONCAT(@__categoryTree, '.%')
-        )
-      )
-      AND ${requestedRowCondition};
+      AND od.ID = @__rowId;
     SELECT TOP (1)
       urp.OfferDetailID,
       urp.Quantity,

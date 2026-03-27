@@ -24,7 +24,6 @@
   padding: 6px 16px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   border-bottom: 1px solid #e2e8f0;
 }
@@ -41,11 +40,91 @@
   margin-top: 4px;
 }
 
+.placementIndicator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #0f172a;
+  white-space: nowrap;
+}
+
+.placementText {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 400px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.placementRadioLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.placementNewItemNo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #0f172a;
+  white-space: nowrap;
+}
+
+.placementItemNoInput {
+  width: 60px;
+  padding: 2px 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #0f172a;
+  background: #fff;
+  outline: none;
+  transition: border-color 150ms ease;
+}
+
+.placementItemNoInput:focus {
+  border-color: #94a3b8;
+}
+
+.placementItemNoInput:disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
+  cursor: default;
+}
+
+.placementRadioLabel + .placementRadioLabel {
+  border-left: 1px solid #e2e8f0;
+  padding-left: 12px;
+}
+
+.placementRadio {
+  accent-color: #0f172a;
+  margin: 0;
+  cursor: pointer;
+}
+
 .headerActions {
   display: flex;
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .headerMeta {
@@ -91,18 +170,18 @@
 
 .commentLabel {
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   color: #0f172a;
   white-space: nowrap;
 }
 
 .commentInput {
   flex: 1;
-  min-width: 700px;
+  min-width: 200px;
   border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 0.9rem;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.8rem;
   color: #0f172a;
   outline: none;
   transition: border-color 150ms ease;

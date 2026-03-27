@@ -175,6 +175,8 @@ export default function ClientProductsPage({
   const [addingStandardPackage, setAddingStandardPackage] = useState(false);
   const [addStandardPackageError, setAddStandardPackageError] = useState<string | null>(null);
   const [undoState, setUndoState] = useState<{ canUndo: boolean; lastLabel: string | undefined }>({ canUndo: false, lastLabel: undefined });
+  const [placementAnchor, setPlacementAnchor] = useState<{ label: string; treeOrdering: string; isRequested: boolean; offerDetailId?: number; parentPath?: number[] } | null>(null);
+  const [defaultPlacementMode, setDefaultPlacementMode] = useState<'fill' | 'below'>('fill');
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
   const splitLeftRef = useRef<HTMLDivElement | null>(null);
   const layoutStorageKey = useMemo(() => buildLayoutStorageKey(userId), [userId]);
@@ -479,16 +481,88 @@ export default function ClientProductsPage({
     ? `${toolbarStyles.pivotToggle} ${toolbarStyles.pivotToggleActive} page-header-button`
     : `${toolbarStyles.pivotToggle} page-header-button`;
 
-  const handleProductsAdded = useCallback((count: number) => {
+  const handleProductsAdded = useCallback((count: number, insertedOfferDetailIds?: number[]) => {
     void count;
+    // Clear placement selection and deselect rows after adding
+    skipSelectionChangeUntilRef.current = Date.now() + 200;
+    setPlacementAnchor(null);
+    setDefaultPlacementMode('fill');
+    offerProductsPanelRef.current?.setInsertLineVisible?.(false);
+    offerProductsPanelRef.current?.deselectAllRows?.();
+    // Save scroll positions before refresh
+    const pageScrollY = window.scrollY;
+    const page = pageRef.current;
+    const pageScrollTop = page?.scrollTop ?? 0;
+    const gridHost = splitLeftRef.current;
+    const gridViewport = gridHost?.querySelector<HTMLElement>('.ag-body-viewport, .ag-center-cols-viewport');
+    const gridScrollTop = gridViewport?.scrollTop ?? 0;
+    // Set flash IDs BEFORE triggering refresh so handleGridModelUpdated picks them up
+    if (insertedOfferDetailIds && insertedOfferDetailIds.length > 0) {
+      offerProductsPanelRef.current?.flashRows?.(insertedOfferDetailIds);
+    }
     setRefreshToken((prev) => prev + 1);
+    // Restore scroll positions after grid reloads
+    const restore = () => {
+      if (page) page.scrollTop = pageScrollTop;
+      window.scrollTo({ top: pageScrollY, behavior: 'auto' });
+      if (gridViewport) gridViewport.scrollTop = gridScrollTop;
+    };
+    requestAnimationFrame(() => requestAnimationFrame(restore));
+    const t1 = window.setTimeout(restore, 50);
+    const t2 = window.setTimeout(restore, 150);
+    const t3 = window.setTimeout(restore, 350);
+    window.setTimeout(() => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.clearTimeout(t3);
+    }, 400);
   }, []);
   const handleGetAddInsertionAnchor = useCallback(
     () => offerProductsPanelRef.current?.getAddInsertionAnchor?.() ?? null,
     [],
   );
 
-  const handleCloseModal = useCallback(() => setShowAddProductModal(false), []);
+  const skipSelectionChangeUntilRef = useRef(0);
+
+  const handleMainGridSelectionChanged = useCallback((selectedRow: { offerDetailId: number; treeOrdering: string; label: string; isRequested: boolean; parentPath: number[] } | null) => {
+    if (Date.now() < skipSelectionChangeUntilRef.current) {
+      return;
+    }
+    if (selectedRow) {
+      setPlacementAnchor({
+        label: selectedRow.label,
+        treeOrdering: selectedRow.treeOrdering,
+        isRequested: selectedRow.isRequested,
+        offerDetailId: selectedRow.offerDetailId,
+        parentPath: selectedRow.parentPath,
+      });
+      setDefaultPlacementMode('fill');
+      offerProductsPanelRef.current?.setInsertLineVisible?.(false);
+    } else {
+      setPlacementAnchor(null);
+    }
+  }, []);
+
+  const handleRequestInsertProduct = useCallback((anchor: { offerDetailId: number; parentPath: number[]; label: string; treeOrdering: string; isRequested: boolean }) => {
+    skipSelectionChangeUntilRef.current = Date.now() + 200;
+    setPlacementAnchor({ label: anchor.label, treeOrdering: anchor.treeOrdering, isRequested: anchor.isRequested, offerDetailId: anchor.offerDetailId, parentPath: anchor.parentPath });
+    setDefaultPlacementMode('below');
+    if (anchor.isRequested) {
+      setInitialRequestedRowId(anchor.offerDetailId);
+    }
+    setShowAddProductModal(true);
+  }, []);
+
+  const handlePlacementModeChange = useCallback((mode: 'fill' | 'below') => {
+    offerProductsPanelRef.current?.setInsertLineVisible?.(mode === 'below');
+  }, []);
+
+  const handleCloseModal = useCallback(() => {
+    setShowAddProductModal(false);
+    setPlacementAnchor(null);
+    setDefaultPlacementMode('fill');
+    offerProductsPanelRef.current?.setInsertLineVisible?.(false);
+  }, []);
   const handleCloseRequestedModal = useCallback(() => setShowRequestedModal(false), []);
   const handleOpenAddProductForm = useCallback(() => setShowAddProductFormModal(true), []);
   const handleCloseAddProductForm = useCallback(() => setShowAddProductFormModal(false), []);
@@ -986,6 +1060,9 @@ export default function ClientProductsPage({
               onRequestAddStandardPackage={handleRequestAddStandardPackage}
               onUndoStateChange={setUndoState}
               offerCreatedByUserId={offerCreatedByUserId}
+              onMainGridSelectionChanged={handleMainGridSelectionChanged}
+              onRequestInsertProduct={handleRequestInsertProduct}
+              showInsertLineOnHover={showAddProductModal}
             />
           </div>
           {showAddProductModal ? (
@@ -1005,6 +1082,10 @@ export default function ClientProductsPage({
                 onRequestPayloadConsumed={handleClearNewProductId}
                 initialRequestedRowId={initialRequestedRowId}
                 onInitialRequestedRowConsumed={() => setInitialRequestedRowId(null)}
+                placementAnchor={placementAnchor}
+                defaultPlacementMode={defaultPlacementMode}
+                onPlacementModeChange={handlePlacementModeChange}
+                getLastClickedRowId={() => offerProductsPanelRef.current?.getLastClickedRowId?.() ?? null}
               />
             </div>
           ) : null}

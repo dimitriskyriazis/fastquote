@@ -140,6 +140,18 @@
   filter: none !important;
 }
 
+/* Vertically center the selection checkbox within its cell. */
+.ag-theme-quartz .ag-row .ag-cell .ag-cell-wrapper .ag-selection-checkbox {
+  display: flex !important;
+  align-items: center !important;
+  height: 100% !important;
+}
+
+.ag-theme-quartz .ag-row .ag-cell .ag-cell-wrapper {
+  min-height: 100% !important;
+  align-items: center !important;
+}
+
 .ag-theme-quartz .ag-cell-inline-editing input,
 .ag-theme-quartz .ag-cell-inline-editing textarea,
 .ag-theme-quartz .ag-cell.ag-cell-editing input,

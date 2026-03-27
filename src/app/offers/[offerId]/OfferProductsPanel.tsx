@@ -160,12 +160,15 @@ type Props = {
   onRequestAddStandardPackage?: (anchorOfferDetailId: number, anchorTreeOrdering: string) => void;
   onUndoStateChange?: (state: { canUndo: boolean; lastLabel: string | undefined }) => void;
   offerCreatedByUserId?: string | null;
+  onMainGridSelectionChanged?: (selectedRow: { offerDetailId: number; treeOrdering: string; label: string; isRequested: boolean; parentPath: number[] } | null) => void;
+  onRequestInsertProduct?: (anchor: { offerDetailId: number; parentPath: number[]; label: string; treeOrdering: string; isRequested: boolean }) => void;
+  showInsertLineOnHover?: boolean;
 };
 
 export type OfferProductsPanelHandle = {
   populateOffer: () => Promise<void>;
   getTemplateExportRows: () => Promise<OfferProductsTemplateExportRow[]>;
-  getAddInsertionAnchor: () => { offerDetailId: number; parentPath: number[] } | null;
+  getAddInsertionAnchor: () => { offerDetailId: number; parentPath: number[]; label: string; treeOrdering: string; isRequested: boolean } | null;
   getSelectedOfferDetailIdsForPriceUpdate: () => Promise<number[]>;
   getSelectedOfferDetailIds: () => Promise<number[]>;
   getSelectedRequestedOfferDetailId: () => number | null;
@@ -176,6 +179,10 @@ export type OfferProductsPanelHandle = {
   canUndo: boolean;
   performUndo: () => Promise<void>;
   lastUndoLabel: string | undefined;
+  setInsertLineVisible: (visible: boolean) => void;
+  deselectAllRows: () => void;
+  flashRows: (offerDetailIds: number[]) => void;
+  getLastClickedRowId: () => number | null;
 };
 
 export type OfferProductsTemplateExportRow = {
@@ -221,6 +228,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   onRequestAddStandardPackage,
   onUndoStateChange,
   offerCreatedByUserId,
+  onMainGridSelectionChanged,
+  onRequestInsertProduct,
+  showInsertLineOnHover = false,
 }: Props, ref) => {
   const router = useRouter();
   const { userId, roles } = useAuditUser();
@@ -933,8 +943,67 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     appliedTableLayoutRef.current = tableLayout;
   }, [captureColumnWidths, requestedColumnsReady, restoreColumnWidths, tableLayout]);
 
+  const applyPendingFlash = useCallback(() => {
+    const flashIds = pendingFlashIdsRef.current;
+    if (!flashIds || flashIds.size === 0) return;
+    const wrapper = gridWrapperRef.current;
+    const api = gridApiRef.current;
+    if (!wrapper || !api || api.isDestroyed?.()) return;
+    const vp = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
+    if (!vp) return;
+    const agRows = vp.querySelectorAll('.ag-row');
+    let found = 0;
+    const flashedElements: HTMLElement[] = [];
+    for (const agRow of agRows) {
+      const idx = agRow.getAttribute('row-index');
+      if (idx == null) continue;
+      const node = api.getDisplayedRowAtIndex(Number.parseInt(idx, 10));
+      const rowId = normalizeOfferDetailId((node?.data as { OfferDetailID?: unknown } | null)?.OfferDetailID ?? null);
+      if (rowId != null && flashIds.has(rowId)) {
+        const rowEl = agRow as HTMLElement;
+        // Only flash product columns (Item No onwards), not requested columns
+        const cells = rowEl.querySelectorAll(':scope > .ag-cell');
+        const flashCells: HTMLElement[] = [];
+        for (const cell of cells) {
+          const colId = cell.getAttribute('col-id') ?? '';
+          // Skip requested columns, checkbox column, and drag handle column
+          if (colId.startsWith('Requested')
+            || colId === 'ag-Grid-AutoColumn'
+            || colId === ''
+            || cell.classList.contains('ag-selection-checkbox')
+            || cell.querySelector('.ag-selection-checkbox, .ag-row-drag, .ag-drag-handle')
+          ) continue;
+          (cell as HTMLElement).style.setProperty('background-color', '#d4f3ff', 'important');
+          flashCells.push(cell as HTMLElement);
+        }
+        flashedElements.push(...flashCells);
+        found++;
+      }
+    }
+    if (found > 0) {
+      pendingFlashIdsRef.current = null;
+      // Fade OUT after a pause
+      setTimeout(() => {
+        for (const cellEl of flashedElements) {
+          cellEl.style.setProperty('transition', 'background-color 2s ease-out', 'important');
+          cellEl.style.removeProperty('background-color');
+        }
+        // Clean up
+        setTimeout(() => {
+          for (const cellEl of flashedElements) {
+            cellEl.style.removeProperty('transition');
+          }
+          }, 2200);
+        }, 800);
+    }
+  }, []);
+
   const handleGridResponse = useCallback((response: GridResponse | null) => {
     if (!response) return;
+    // After server data arrives, schedule flash on next animation frame (DOM needs to render)
+    if (pendingFlashIdsRef.current && pendingFlashIdsRef.current.size > 0) {
+      requestAnimationFrame(() => requestAnimationFrame(applyPendingFlash));
+    }
     lastRowCountRef.current = response?.rowCount ?? null;
     const hasRows = Boolean(response?.rowCount && response.rowCount > 0);
     serverRowsRef.current = response && Array.isArray(response.rows) ? response.rows : [];
@@ -1080,6 +1149,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       runHeavyUpdates();
     }
   }, [
+    applyPendingFlash,
     applyRequestedVisibilityToGrid,
     applyRequestedColumnVisibility,
     rebuildTreeOrderingRootMap,
@@ -1096,13 +1166,50 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   }, []);
 
   const [gridReadyApi, setGridReadyApi] = useState<GridApi<Record<string, unknown>> | null>(null);
+  const lastClickedRowRef = useRef<Record<string, unknown> | null>(null);
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     gridApiRef.current = api;
     setGridReadyApi(api);
 
+    // Track the last clicked row for "Fill row" functionality
+    api.addEventListener('rowClicked', ((event: { data?: Record<string, unknown> }) => {
+      lastClickedRowRef.current = event.data ?? null;
+    }) as unknown as (event: unknown) => void);
+
     // Real-time updates are handled by useRealtimeGridUpdates hook below
     setRequestedColumnsReadyFlag(true);
   }, [setRequestedColumnsReadyFlag]);
+  const handleMainGridSelectionChanged = useCallback((rows: Record<string, unknown>[]) => {
+    if (!rows || rows.length === 0) {
+      onMainGridSelectionChanged?.(null);
+      return;
+    }
+    // Use the last row in the array — with multi-select+click, the most recent click
+    // appends to the end of the selected rows array from forEachNode (display order).
+    // For single clicks (after deselectAll), there's only one row.
+    const row = rows[rows.length - 1];
+    if (!row) {
+      onMainGridSelectionChanged?.(null);
+      return;
+    }
+    const offerDetailId = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+    if (offerDetailId == null) {
+      onMainGridSelectionChanged?.(null);
+      return;
+    }
+    const treeOrderingRaw = (row as { TreeOrdering?: unknown }).TreeOrdering ?? null;
+    const path = parseTreeOrderingPath(treeOrderingRaw);
+    const treeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
+    const label = resolveRowLabel(row, '');
+    const requested = isRequestedRow(row);
+    onMainGridSelectionChanged?.({
+      offerDetailId,
+      treeOrdering,
+      label,
+      isRequested: requested,
+      parentPath: path.slice(0, -1),
+    });
+  }, [onMainGridSelectionChanged]);
 
   // Called by AgGridAll after it restores persisted column state (hide/show/width).
   // AgGridAll may restore stale hide:true values for req columns from a previous session.
@@ -1466,6 +1573,8 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     });
   }, [hasCategoryChildren]);
   toggleCategoryCollapsedRef.current = toggleCategoryCollapsed;
+
+  const pendingFlashIdsRef = useRef<Set<number> | null>(null);
 
   const getRowClass = useCallback((params: RowClassParams<Record<string, unknown>>) => {
     const rowType = resolveOfferProductRowType(params.data);
@@ -3585,7 +3694,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     return buildTemplateExportRows(rows);
   }, [buildTemplateExportRows, fetchExportRows]);
 
-  const getAddInsertionAnchor = useCallback((): { offerDetailId: number; parentPath: number[] } | null => {
+  const getAddInsertionAnchor = useCallback((): { offerDetailId: number; parentPath: number[]; label: string; treeOrdering: string; isRequested: boolean } | null => {
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return null;
     try {
@@ -3597,9 +3706,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         const row = selectedNodes[idx]?.data ?? null;
         const offerDetailId = normalizeOfferDetailId((row as { OfferDetailID?: unknown } | null)?.OfferDetailID ?? null);
         if (offerDetailId == null) continue;
-        const path = parseTreeOrderingPath((row as { TreeOrdering?: unknown } | null)?.TreeOrdering ?? null);
+        const treeOrderingRaw = (row as { TreeOrdering?: unknown } | null)?.TreeOrdering ?? null;
+        const path = parseTreeOrderingPath(treeOrderingRaw);
         if (path.length === 0) continue;
-        return { offerDetailId, parentPath: path.slice(0, -1) };
+        const treeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
+        const label = resolveRowLabel(row as Record<string, unknown> | null, '');
+        const requested = isRequestedRow(row as Record<string, unknown> | null);
+        return { offerDetailId, parentPath: path.slice(0, -1), label, treeOrdering, isRequested: requested };
       }
     } catch {
       /* noop */
@@ -3753,6 +3866,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     ? tryRestoreInitialSelection
     : null;
 
+  const setInsertLineVisibleRef = useRef<((visible: boolean) => void) | null>(null);
+
   useImperativeHandle(
     ref,
     () => ({
@@ -3769,6 +3884,20 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       canUndo,
       performUndo,
       lastUndoLabel: lastLabel,
+      setInsertLineVisible: (visible: boolean) => setInsertLineVisibleRef.current?.(visible),
+      deselectAllRows: () => {
+        const api = gridApiRef.current;
+        if (api && !api.isDestroyed?.()) {
+          try { api.deselectAll(); } catch { /* noop */ }
+        }
+      },
+      getLastClickedRowId: () => {
+        const row = lastClickedRowRef.current;
+        return row ? normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null) : null;
+      },
+      flashRows: (offerDetailIds: number[]) => {
+        pendingFlashIdsRef.current = new Set(offerDetailIds);
+      },
     }),
     [canUndo, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer],
   );
@@ -5417,6 +5546,207 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     },
   });
 
+  // Floating "+" insertion line between rows on hover
+  const insertLineRef = useRef<HTMLDivElement | null>(null); // hover "+" line
+  const pinnedLineRef = useRef<HTMLDivElement | null>(null); // pinned thick line (separate element)
+  const insertLineDataRef = useRef<{ offerDetailId: number; parentPath: number[]; label: string; treeOrdering: string; isRequested: boolean } | null>(null);
+  const insertLinePinnedRef = useRef(false);
+  const insertLinePinnedAtRef = useRef(0);
+  const insertLinePinTopRef = useRef(0);
+  const insertLinePinScrollRef = useRef(0);
+  const showInsertLineOnHoverRef = useRef(showInsertLineOnHover);
+  showInsertLineOnHoverRef.current = showInsertLineOnHover;
+  const onRequestInsertProductRef = useRef(onRequestInsertProduct);
+  onRequestInsertProductRef.current = onRequestInsertProduct;
+
+  useEffect(() => {
+    const wrapper = gridWrapperRef.current;
+    if (!wrapper) return;
+
+    const hide = () => {
+      // Always hide the hover "+" line (pinned line is a separate element)
+      const line = insertLineRef.current;
+      if (line) line.style.display = 'none';
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const line = insertLineRef.current;
+      if (!line) return;
+      const target = e.target as HTMLElement;
+      if (!showInsertLineOnHoverRef.current) {
+        if (!insertLinePinnedRef.current) hide();
+        return;
+      }
+      if (line.contains(target)) return;
+      // When pinned, still show the hover "+" so user can pick a new position
+      const agRow = target.closest('.ag-row') as HTMLElement | null;
+      if (!agRow) { hide(); return; }
+      const rowRect = agRow.getBoundingClientRect();
+      const mouseYInRow = e.clientY - rowRect.top;
+      const inBottomHalf = mouseYInRow > rowRect.height / 2;
+      if (!inBottomHalf) {
+        const rowIndexAttr = agRow.getAttribute('row-index');
+        const rowIndex = rowIndexAttr != null ? Number.parseInt(rowIndexAttr, 10) : NaN;
+        if (Number.isFinite(rowIndex) && rowIndex > 0) {
+          const api = gridApiRef.current;
+          if (api && !api.isDestroyed?.()) {
+            const prevNode = api.getDisplayedRowAtIndex(rowIndex - 1);
+            const prevData = prevNode?.data as Record<string, unknown> | null | undefined;
+            if (prevData) {
+              const prevId = normalizeOfferDetailId((prevData as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+              const prevTreeRaw = (prevData as { TreeOrdering?: unknown }).TreeOrdering ?? null;
+              const prevPath = parseTreeOrderingPath(prevTreeRaw);
+              if (prevId != null && prevPath.length > 0) {
+                const wrapperRect = wrapper.getBoundingClientRect();
+                const viewportEl = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
+                if (viewportEl) {
+                  const viewportRect = viewportEl.getBoundingClientRect();
+                  if (rowRect.top >= viewportRect.top && rowRect.top <= viewportRect.bottom) {
+                    line.style.display = 'flex';
+                    line.style.top = `${rowRect.top - wrapperRect.top}px`;
+                    const prevTree = typeof prevTreeRaw === 'string' ? prevTreeRaw.trim() : buildTreeOrderingKey(prevPath);
+                    const prevLabel = resolveRowLabel(prevData, '');
+                    const prevRequested = isRequestedRow(prevData);
+                    insertLineDataRef.current = { offerDetailId: prevId, parentPath: prevPath.slice(0, -1), label: prevLabel, treeOrdering: prevTree, isRequested: prevRequested };
+                    return;
+                  }
+                }
+              }
+            }
+          }
+        }
+        hide();
+        return;
+      }
+      const rowIndexAttr = agRow.getAttribute('row-index');
+      if (rowIndexAttr == null) { hide(); return; }
+      const rowIndex = Number.parseInt(rowIndexAttr, 10);
+      if (!Number.isFinite(rowIndex)) { hide(); return; }
+      const api = gridApiRef.current;
+      if (!api || api.isDestroyed?.()) { hide(); return; }
+      const rowNode = api.getDisplayedRowAtIndex(rowIndex);
+      const rowData = rowNode?.data as Record<string, unknown> | null | undefined;
+      if (!rowData) { hide(); return; }
+      const offerDetailId = normalizeOfferDetailId((rowData as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+      if (offerDetailId == null) { hide(); return; }
+      const treeOrderingRaw = (rowData as { TreeOrdering?: unknown }).TreeOrdering ?? null;
+      const path = parseTreeOrderingPath(treeOrderingRaw);
+      if (path.length === 0) { hide(); return; }
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const viewportEl = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
+      if (!viewportEl) { hide(); return; }
+      const viewportRect = viewportEl.getBoundingClientRect();
+      if (rowRect.bottom < viewportRect.top || rowRect.bottom > viewportRect.bottom) { hide(); return; }
+      line.style.display = 'flex';
+      line.style.top = `${rowRect.bottom - wrapperRect.top}px`;
+      const treeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
+      const label = resolveRowLabel(rowData, '');
+      const requested = isRequestedRow(rowData);
+      insertLineDataRef.current = { offerDetailId, parentPath: path.slice(0, -1), label, treeOrdering, isRequested: requested };
+    };
+
+    const handleScroll = () => {
+      if (insertLinePinnedRef.current) {
+        const pinLine = pinnedLineRef.current;
+        if (!pinLine) return;
+        const vp = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
+        if (!vp) return;
+        const scrollDelta = vp.scrollTop - insertLinePinScrollRef.current;
+        const newTop = insertLinePinTopRef.current - scrollDelta;
+        const vpRect = vp.getBoundingClientRect();
+        const wrapperRect = wrapper.getBoundingClientRect();
+        const vpTopInWrapper = vpRect.top - wrapperRect.top;
+        const vpBottomInWrapper = vpRect.bottom - wrapperRect.top;
+        if (newTop < vpTopInWrapper || newTop > vpBottomInWrapper) {
+          pinLine.style.display = 'none';
+        } else {
+          pinLine.style.display = 'flex';
+          pinLine.style.top = `${newTop}px`;
+        }
+      } else {
+        hide();
+      }
+    };
+
+    wrapper.addEventListener('mousemove', handleMouseMove);
+    wrapper.addEventListener('mouseleave', hide);
+    // Use capture phase on wrapper — scroll events don't bubble, and
+    // ag-body-viewport may not exist yet at mount time
+    wrapper.addEventListener('scroll', handleScroll, true);
+    return () => {
+      wrapper.removeEventListener('mousemove', handleMouseMove);
+      wrapper.removeEventListener('mouseleave', hide);
+      wrapper.removeEventListener('scroll', handleScroll, true);
+    };
+  }, []);
+
+  const handleInsertLineClick = useCallback(() => {
+    const data = insertLineDataRef.current;
+    if (!data) return;
+    // Deselect rows in main grid
+    const api = gridApiRef.current;
+    if (api && !api.isDestroyed?.()) {
+      try { api.deselectAll(); } catch { /* noop */ }
+    }
+    insertLinePinnedRef.current = true;
+    insertLinePinnedAtRef.current = Date.now();
+    const hoverLine = insertLineRef.current;
+    const pinLine = pinnedLineRef.current;
+    if (hoverLine && pinLine) {
+      const topVal = hoverLine.style.top;
+      pinLine.style.top = topVal;
+      pinLine.style.display = 'flex';
+      insertLinePinTopRef.current = parseFloat(topVal) || 0;
+      const wrapper = gridWrapperRef.current;
+      const vp = wrapper?.querySelector('.ag-body-viewport') as HTMLElement | null;
+      insertLinePinScrollRef.current = vp?.scrollTop ?? 0;
+    }
+    onRequestInsertProductRef.current?.(data);
+  }, []);
+
+  const setInsertLineVisible = useCallback((visible: boolean) => {
+    const pinLine = pinnedLineRef.current;
+    if (!pinLine) return;
+    if (visible) {
+      insertLinePinnedRef.current = true;
+      insertLinePinnedAtRef.current = Date.now();
+      // Position the line at the selected row
+      const anchor = getAddInsertionAnchor();
+      if (anchor) {
+        insertLineDataRef.current = anchor;
+        const api = gridApiRef.current;
+        const wrapper = gridWrapperRef.current;
+        if (api && wrapper && !api.isDestroyed?.()) {
+          const viewport = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
+          if (viewport) {
+            insertLinePinScrollRef.current = viewport.scrollTop;
+            const rows = viewport.querySelectorAll('.ag-row');
+            for (const row of rows) {
+              const idx = row.getAttribute('row-index');
+              if (idx == null) continue;
+              const node = api.getDisplayedRowAtIndex(Number.parseInt(idx, 10));
+              const rowId = normalizeOfferDetailId((node?.data as { OfferDetailID?: unknown } | null)?.OfferDetailID ?? null);
+              if (rowId === anchor.offerDetailId) {
+                const wrapperRect = wrapper.getBoundingClientRect();
+                const rowRect = (row as HTMLElement).getBoundingClientRect();
+                const topPos = rowRect.bottom - wrapperRect.top;
+                pinLine.style.top = `${topPos}px`;
+                insertLinePinTopRef.current = topPos;
+                break;
+              }
+            }
+          }
+        }
+      }
+      pinLine.style.display = 'flex';
+    } else {
+      insertLinePinnedRef.current = false;
+      pinLine.style.display = 'none';
+      insertLineDataRef.current = null;
+    }
+  }, [getAddInsertionAnchor]);
+  setInsertLineVisibleRef.current = setInsertLineVisible;
+
   return (
     <>
       <div className={styles.panel}>
@@ -5436,6 +5766,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             onCellValueChanged={handleCellEdit}
             refreshToken={refreshToken}
             onGridReady={handleGridReady}
+            onSelectionChanged={handleMainGridSelectionChanged}
             onModelUpdated={handleGridModelUpdated}
             onRowDoubleClicked={handleRowDoubleClicked}
             enableColumnStatePersistence
@@ -5460,6 +5791,27 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             rowBuffer={5}
             maxBlocksInCache={5}
           />
+          <div
+            ref={insertLineRef}
+            className={styles.insertLine}
+            style={{ display: 'none' }}
+            onClick={handleInsertLineClick}
+            onMouseDown={(e) => e.stopPropagation()}
+            role="button"
+            tabIndex={-1}
+            aria-label="Insert product here"
+          >
+            <div className={styles.insertLineBar} />
+            <div className={styles.insertLineButton}>+</div>
+            <div className={styles.insertLineBar} />
+          </div>
+          <div
+            ref={pinnedLineRef}
+            className={`${styles.insertLine} ${styles.insertLinePinned}`}
+            style={{ display: 'none' }}
+          >
+            <div className={styles.insertLineBar} />
+          </div>
           {emptyGridPasteMenu ? (
             <div
               className={styles.emptyGridContextMenu}

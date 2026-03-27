@@ -107,11 +107,18 @@ export type SetProjectResult = {
 
 export type SetItemEntry = {
   code: string;
+  code1?: string;
+  code2?: string;
   name: string;
   mtrunit: number;
   vat: number;
   mtracn: number;
   mtrcategory: number;
+  mtrmanfctr?: string;
+  busunits?: string;
+  category?: string;
+  subcateg?: string;
+  type?: string;
 };
 
 export type SetItemParams = {

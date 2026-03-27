@@ -112,6 +112,10 @@ export default function PriceListsClient() {
     router.push("/price-lists/import");
   }, [router]);
 
+  const handleFarnellClick = useCallback(() => {
+    router.push("/price-lists/farnell");
+  }, [router]);
+
   const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     const ActionMenu: React.FC = () => {
       const [open, setOpen] = useState(false);
@@ -496,6 +500,13 @@ export default function PriceListsClient() {
         }
         rightActions={
           <div style={{ display: "flex", gap: "0.75rem" }}>
+            <button
+              type="button"
+              className={`${styles.importButton} page-header-button`}
+              onClick={handleFarnellClick}
+            >
+              Lookup Farnell Products
+            </button>
             <button
               type="button"
               className={`${styles.importButton} page-header-button`}

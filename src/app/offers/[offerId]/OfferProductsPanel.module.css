@@ -5,11 +5,79 @@
   min-height: 0;
 }
 
+
 .gridWrapper {
   flex: 1;
   min-height: 0;
   width: 100%;
   display: flex;
+  position: relative;
+}
+
+.insertLine {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 0;
+  cursor: pointer;
+  pointer-events: auto;
+  transform: translateY(-1px);
+  padding: 10px 0;
+  margin: -10px 0;
+}
+
+.insertLine:hover .insertLineBar {
+  background: #2563eb;
+  height: 3px;
+}
+
+.insertLine:hover .insertLineButton {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Pinned state: thick line, no button */
+.insertLinePinned .insertLineBar {
+  background: #2563eb;
+  height: 3px;
+}
+
+.insertLinePinned .insertLineButton {
+  display: none;
+}
+
+.insertLinePinned {
+  pointer-events: none;
+}
+
+.insertLineBar {
+  flex: 1;
+  height: 1px;
+  background: #93c5fd;
+  transition: background 120ms ease, height 120ms ease;
+}
+
+.insertLineButton {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #2563eb;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  opacity: 0.7;
+  transform: scale(0.85);
+  transition: opacity 120ms ease, transform 120ms ease;
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.3);
+  flex-shrink: 0;
 }
 
 .emptyGridContextMenu {

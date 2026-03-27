@@ -1,0 +1,275 @@
+.page {
+  padding: 16px;
+  box-sizing: border-box;
+  height: 100vh;
+  width: 100%;
+  max-width: 100vw;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.searchCard {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.searchForm {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #3b4763;
+}
+
+.input {
+  width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  padding: 8px 11px;
+  font-size: 0.95rem;
+  color: #0f172a;
+  background: #f8fafc;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+  background: #ffffff;
+}
+
+.skuInput {
+  width: 300px;
+}
+
+.quantityInput {
+  width: 120px;
+}
+
+.searchButton {
+  border: 1px solid #111827;
+  background: linear-gradient(135deg, #2e2e2e 0%, #363636 100%);
+  color: #ffffff;
+  border-radius: 999px;
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  box-shadow: 0 10px 20px rgba(17, 24, 39, 0.24);
+}
+
+.searchButton:hover,
+.searchButton:focus-visible {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 24px rgba(17, 24, 39, 0.28);
+  outline: none;
+}
+
+.searchButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  transform: none;
+  box-shadow: none;
+}
+
+.resultsPanel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-right: 6px;
+}
+
+.productCard {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.productName {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+}
+
+.infoGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.infoItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.infoLabel {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.infoValue {
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.description {
+  grid-column: 1 / -1;
+}
+
+.stockInStock {
+  color: #16a34a;
+  font-weight: 600;
+}
+
+.stockOutOfStock {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.productLink {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.productLink:hover {
+  text-decoration: underline;
+}
+
+.priceTiersSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionHeading {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #1f2a44;
+}
+
+.priceTiersTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  max-width: 500px;
+}
+
+.priceTiersTable th,
+.priceTiersTable td {
+  border: 1px solid #d1d5db;
+  padding: 8px 12px;
+  text-align: left;
+  color: #0f172a;
+}
+
+.priceTiersTable th {
+  background: #f1f5f9;
+  font-weight: 700;
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #334155;
+}
+
+.matchedRow {
+  background: #e9f1ff;
+  font-weight: 600;
+}
+
+.matchedBadge {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #2563eb;
+  background: #dbeafe;
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+.noPricing {
+  font-size: 0.9rem;
+  color: #64748b;
+}
+
+.emptyState {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 14px;
+  padding: 48px 24px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+}
+
+.emptyIcon {
+  color: #94a3b8;
+  margin-bottom: 8px;
+}
+
+.emptyTitle {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+}
+
+.emptyDescription {
+  font-size: 0.9rem;
+  color: #64748b;
+  margin: 0;
+  max-width: 420px;
+  line-height: 1.5;
+}
+
+.message {
+  font-size: 0.95rem;
+  color: #475569;
+  padding: 12px 0;
+}
+
+.error {
+  color: #b91c1c;
+  font-weight: 600;
+}

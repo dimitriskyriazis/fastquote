@@ -160,7 +160,24 @@ export const buildTreeFromRows = (rows: TreeOrderingRow[]): TreeOrderingNode[] =
 };
 
 const buildSegmentList = (nodes: TreeOrderingNode[]): string[] => {
-  return nodes.map((_, idx) => String(idx + 1));
+  // Preserve existing segment numbers when they're already in ascending order.
+  // Only assign new numbers for nodes that are out of order or would collide.
+  // This avoids renumbering the entire tree when adding/moving a single item.
+  const result: string[] = [];
+  let lastUsed = 0;
+  for (const node of nodes) {
+    const existing = node.path.length > 0
+      ? Number.parseInt(node.path[node.path.length - 1], 10)
+      : NaN;
+    if (Number.isFinite(existing) && existing > lastUsed) {
+      result.push(String(existing));
+      lastUsed = existing;
+    } else {
+      lastUsed += 1;
+      result.push(String(lastUsed));
+    }
+  }
+  return result;
 };
 
 export const collectResequencedUpdates = (roots: TreeOrderingNode[]): TreeOrderingUpdateInput[] => {

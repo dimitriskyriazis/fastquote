@@ -614,7 +614,7 @@ export const createFarnellProduct = async (
         modelNumber: farnellProduct.manufacturerPartNumber ?? null,
         erpCode: null,
         description: farnellProduct.description ?? farnellProduct.displayName ?? null,
-        weblink: farnellProduct.productURL ?? null,
+        weblink: `https://be.farnell.com/en-BE/search?st=${encodeURIComponent(sku)}`,
         comments: null,
         typeId: null,
         categoryId: null,

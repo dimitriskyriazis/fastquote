@@ -10,10 +10,12 @@ import { getUserNumberLocale } from '../../../../lib/localeNumber';
 
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), { ssr: false });
 
+type PlacementAnchor = { label: string; treeOrdering: string; isRequested: boolean; offerDetailId?: number; parentPath?: number[] };
+
 type Props = {
   offerId: string;
   onClose: () => void;
-  onAdded: (inserted: number) => void;
+  onAdded: (inserted: number, insertedOfferDetailIds?: number[]) => void;
   getInsertionAnchor?: () => { offerDetailId: number; parentPath: number[] } | null;
   standardPackageMode?: boolean;
   showRequestedColumns?: boolean;
@@ -25,6 +27,10 @@ type Props = {
   refreshToken?: number;
   initialRequestedRowId?: number | null;
   onInitialRequestedRowConsumed?: () => void;
+  placementAnchor?: PlacementAnchor | null;
+  defaultPlacementMode?: 'fill' | 'below';
+  onPlacementModeChange?: (mode: 'fill' | 'below') => void;
+  getLastClickedRowId?: () => number | null;
 };
 
 type CategoryRow = {
@@ -41,7 +47,7 @@ type ProductRow = {
   ModelNumber?: string | null;
   PriceListName?: string | null;
   ListPrice?: number | string | null;
-  UnitPrice?: number | string | null;
+  CostPrice?: number | string | null;
   PriceListID?: number | null;
   PriceListItemID?: number | null;
   PriceListValidFromDate?: string | Date | null;
@@ -61,24 +67,6 @@ type RequestedRow = {
   RequestedQuantity: number | null;
 };
 
-const resolveRequestedRowLabel = (row: RequestedRow, showRequestedItemNo: boolean): string => {
-  const candidates = [
-    row.RequestedDescription,
-    row.RequestedDescription2,
-    row.RequestedPartNo,
-    row.RequestedModelNo,
-    row.RequestedBrand,
-    ...(showRequestedItemNo ? [row.RequestedItemNo] : []),
-    row.TreeOrdering,
-  ];
-  for (const candidate of candidates) {
-    if (typeof candidate !== 'string') continue;
-    const trimmed = candidate.trim();
-    if (trimmed) return trimmed;
-  }
-  return 'Requested item';
-};
-
 const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
@@ -89,6 +77,13 @@ const formatEuro = (value: unknown) => {
   const num = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(num)) return String(value);
   return `${currencyFormatter.format(num)} €`;
+};
+
+const computeNextItemNo = (treeOrdering: string): string => {
+  const parts = treeOrdering.split('.');
+  const last = Number.parseInt(parts[parts.length - 1] ?? '0', 10);
+  const next = Number.isFinite(last) ? last + 1 : 1;
+  return [...parts.slice(0, -1), String(next)].join('.');
 };
 
 const emptyColumnWidthDefaults = {};
@@ -132,8 +127,7 @@ const ProductsGridPanel = React.memo(function ProductsGridPanel({
           cacheBlockSize={200}
           rowBuffer={8}
           maxBlocksInCache={4}
-          rowSelection="multiple"
-          rowMultiSelectWithClick
+          rowSelection="single"
           rowDeselection
           allowRowClickSelection
           rowGroupPanelShow="never"
@@ -198,7 +192,6 @@ export default function AddProductsModal({
   onAdded,
   getInsertionAnchor,
   standardPackageMode = false,
-  showRequestedColumns = true,
   splitViewMode = false,
   onRequestAddProduct,
   newProductId,
@@ -207,61 +200,33 @@ export default function AddProductsModal({
   refreshToken,
   initialRequestedRowId,
   onInitialRequestedRowConsumed,
+  placementAnchor,
+  defaultPlacementMode,
+  onPlacementModeChange,
+  getLastClickedRowId,
 }: Props) {
-  const showRequestedItemNo = Boolean(showRequestedColumns);
-  const [selectedCategory, setSelectedCategory] = useState<CategoryRow | null>(null);
+  const [selectedCategory] = useState<CategoryRow | null>(null);
   const [selectedProducts, setSelectedProducts] = useState<ProductRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [comment, setComment] = useState('');
   const [requestedRows, setRequestedRows] = useState<RequestedRow[]>([]);
   const [requestedRowsLoading, setRequestedRowsLoading] = useState(false);
-  const [requestedRowsError, setRequestedRowsError] = useState<string | null>(null);
+  const [, setRequestedRowsError] = useState<string | null>(null);
   const [selectedRequestedRowId, setSelectedRequestedRowId] = useState<number | null>(null);
+  const [placementMode, setPlacementMode] = useState<'fill' | 'below'>('fill');
+  const [belowItemNo, setBelowItemNo] = useState('');
   const categoryApiRef = useRef<GridApi | null>(null);
   const productsApiRef = useRef<ProductsGridApi | null>(null);
   const requestedRowsFetchIdRef = useRef(0);
   const requestedRowsCacheRef = useRef<Record<string, RequestedRow[]>>({});
   const pendingSelectionProductIdRef = useRef<number | null>(null);
   const categoryRowClickHandlerRef = useRef<((event: { node?: RowNode }) => void) | null>(null);
-  const requestedListRef = useRef<HTMLDivElement | null>(null);
   const initialRequestedRowConsumedRef = useRef(false);
-  const categoryGridShellRef = useRef<HTMLDivElement | null>(null);
-  const categoryLastScrollTopRef = useRef(0);
-  const pendingCategoryScrollRestoreRef = useRef<number | null>(null);
-
-  const getCategoryViewport = useCallback((): HTMLElement | null => {
-    const root = categoryGridShellRef.current;
-    if (!root) return null;
-    return root.querySelector('.ag-body-viewport, .ag-center-cols-viewport');
-  }, []);
-  const queueCategoryViewportScrollRestore = useCallback((scrollTop: number) => {
-    categoryLastScrollTopRef.current = scrollTop;
-    if (scrollTop === 0) return;
-    pendingCategoryScrollRestoreRef.current = scrollTop;
-  }, []);
-  const flushCategoryViewportScrollRestore = useCallback(() => {
-    const pending = pendingCategoryScrollRestoreRef.current;
-    if (pending == null) return;
-    pendingCategoryScrollRestoreRef.current = null;
-    const nextViewport = getCategoryViewport();
-    if (!nextViewport) return;
-    if (Math.abs(nextViewport.scrollTop - pending) <= 1) return;
-    nextViewport.scrollTop = pending;
-  }, [getCategoryViewport]);
-  const categoryRequestPayload = useMemo(() => ({ action: 'categories' }), []);
   const productRequestPayload = useMemo(() => {
     const payload: Record<string, unknown> = { action: 'products' };
     if (newProductId != null) payload.newProductId = newProductId;
     return payload;
   }, [newProductId]);
-
-  const handleCategorySelection = useCallback((rows: CategoryRow[]) => {
-    const viewport = getCategoryViewport();
-    const scrollTop = viewport?.scrollTop ?? 0;
-    categoryLastScrollTopRef.current = scrollTop;
-    setSelectedCategory(rows[0] ?? null);
-    queueCategoryViewportScrollRestore(scrollTop);
-  }, [getCategoryViewport, queueCategoryViewportScrollRestore]);
 
   const handleProductSelection = useCallback((rows: ProductRow[]) => {
     setSelectedProducts(rows ?? []);
@@ -277,6 +242,28 @@ export default function AddProductsModal({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // Reset placement mode when anchor changes
+  useEffect(() => {
+    const mode = defaultPlacementMode ?? 'fill';
+    setPlacementMode(mode);
+    setBelowItemNo(placementAnchor?.treeOrdering ? computeNextItemNo(placementAnchor.treeOrdering) : '');
+    onPlacementModeChange?.(mode);
+  }, [placementAnchor, defaultPlacementMode, onPlacementModeChange]);
+
+  // Sync selectedRequestedRowId with placement mode for anchor-based requested rows
+  useEffect(() => {
+    if (!placementAnchor?.isRequested) return;
+    if (placementMode === 'fill' && initialRequestedRowId != null) {
+      setSelectedRequestedRowId(initialRequestedRowId);
+    } else if (placementMode === 'below') {
+      setSelectedRequestedRowId((prev) => {
+        // Only clear if the current selection is the anchor's requested row
+        if (prev === initialRequestedRowId) return null;
+        return prev;
+      });
+    }
+  }, [placementMode, placementAnchor?.isRequested, initialRequestedRowId]);
 
   const endpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
@@ -355,39 +342,12 @@ export default function AddProductsModal({
       initialRequestedRowConsumedRef.current = true;
       setSelectedRequestedRowId(match.OfferDetailID);
       onInitialRequestedRowConsumed?.();
-      // Scroll to the matched item in the requested list
-      requestAnimationFrame(() => {
-        const container = requestedListRef.current;
-        if (!container) return;
-        const button = container.querySelector(`[data-requested-id="${match.OfferDetailID}"]`);
-        if (button) {
-          button.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        }
-      });
     }
   }, [initialRequestedRowId, requestedRows, requestedRowsLoading, onInitialRequestedRowConsumed]);
 
-  const categoryColumns: ColDef[] = useMemo(
-    () => [
-      {
-        field: 'TreeOrdering',
-        headerName: '#',
-        width: 50,
-        filter: 'agTextColumnFilter',
-        sortingOrder: ['asc', 'desc', null],
-      },
-      {
-        field: 'Description',
-        headerName: 'Category',
-        filter: 'agTextColumnFilter',
-        width: 375,
-      },
-    ],
-    [],
-  );
-
   const productColumns: ColDef[] = useMemo(() => {
     const columns: ColDef[] = [
+      { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter', width: 150 },
       {
         field: 'PartNumber',
         headerName: 'Part Number',
@@ -405,6 +365,7 @@ export default function AddProductsModal({
         field: 'Description',
         headerName: 'Description',
         filter: 'agTextColumnFilter',
+        width: 550,
         cellRenderer: DescriptionCellRenderer,
         editable: true,
         valueParser: (params) => {
@@ -414,12 +375,11 @@ export default function AddProductsModal({
           return trimmed.length > 0 ? trimmed : null;
         },
       },
-      { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter', width: 150 },
       {
         field: 'ModelNumber',
         headerName: 'Model Number',
         filter: 'agTextColumnFilter',
-        width: 150,
+        width: 200,
         editable: true,
         valueParser: (params) => {
           const raw = params.newValue;
@@ -431,22 +391,25 @@ export default function AddProductsModal({
     ];
     if (!standardPackageMode) {
       columns.push(
-        { field: 'PriceListName', headerName: 'Price List', filter: 'agTextColumnFilter', width: 170 },
         {
           field: 'ListPrice',
           headerName: 'List Price',
           filter: 'agNumberColumnFilter',
           type: 'numericColumn',
+          width: 130,
           valueFormatter: (params) => formatEuro(params.value),
           cellClassRules: priceListStatusClassRules(),
         },
         {
-          field: 'UnitPrice',
-          headerName: 'Unit Price',
+          field: 'CostPrice',
+          headerName: 'Cost Price',
           filter: 'agNumberColumnFilter',
           type: 'numericColumn',
+          width: 130,
           valueFormatter: (params) => formatEuro(params.value),
+          cellClassRules: priceListStatusClassRules(),
         },
+        { field: 'PriceListName', headerName: 'Price List', filter: 'agTextColumnFilter', width: 170 },
       );
     }
     return columns;
@@ -534,22 +497,28 @@ export default function AddProductsModal({
       showToastMessage('Select one or more valid products first', 'info');
       return;
     }
-    const isAssigningRequestedRow = selectedRequestedRowId != null;
+    const fillRequestedRowId = placementMode === 'fill'
+      ? (placementAnchor?.offerDetailId ?? getLastClickedRowId?.() ?? selectedRequestedRowId ?? null)
+      : null;
+    const isAssigningRequestedRow = fillRequestedRowId != null;
     if (isAssigningRequestedRow && productPayload.length !== 1) {
-      showToastMessage('Select exactly one valid product to fill the requested row', 'info');
+      showToastMessage('Select exactly one product to fill the row', 'info');
       return;
     }
     setSubmitting(true);
     try {
+      // Use placementAnchor directly when in "below" mode (grid selection may have been cleared)
       const insertionAnchor = !isAssigningRequestedRow
-        ? (getInsertionAnchor?.() ?? null)
+        ? (placementMode === 'below' && placementAnchor?.offerDetailId != null && placementAnchor?.parentPath != null
+          ? { offerDetailId: placementAnchor.offerDetailId, parentPath: placementAnchor.parentPath }
+          : (getInsertionAnchor?.() ?? null))
         : null;
       const baseCategory = selectedCategory?.OfferDetailID ?? null;
       const trimmedComment = comment.trim() || undefined;
       const payload = isAssigningRequestedRow
         ? {
             action: 'assign-requested',
-            requestedRowId: selectedRequestedRowId,
+            requestedRowId: fillRequestedRowId,
             categoryId: baseCategory,
             productId: productPayload[0].productId,
             ...(trimmedComment ? { comment: trimmedComment } : {}),
@@ -588,7 +557,7 @@ export default function AddProductsModal({
       if (!res.ok || !data?.ok) {
         throw new Error(data?.error ?? `Failed to add products (status ${res.status})`);
       }
-      if (!isAssigningRequestedRow && insertionAnchor) {
+      if (!isAssigningRequestedRow) {
         const insertedIds = Array.isArray(data?.insertedOfferDetailIds)
           ? data.insertedOfferDetailIds
             .map((value: number | string | null) => {
@@ -602,23 +571,61 @@ export default function AddProductsModal({
             .filter((value: number | null): value is number => value != null)
           : [];
         if (insertedIds.length > 0) {
-          const reorderRes = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'reorder',
-              sourceIds: insertedIds,
-              position: 'after',
-              beforeId: insertionAnchor.offerDetailId,
-              parentPath: insertionAnchor.parentPath,
-            }),
-          });
-          const reorderPayload = (await reorderRes.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-          if (!reorderRes.ok || !reorderPayload?.ok) {
-            showToastMessage(
-              'Products were added, but could not be positioned below the selected row.',
-              'error',
-            );
+          const desiredItemNo = placementMode === 'below' ? belowItemNo.trim() : '';
+          const autoItemNo = placementAnchor?.treeOrdering ? computeNextItemNo(placementAnchor.treeOrdering) : '';
+          const hasCustomItemNo = desiredItemNo && desiredItemNo !== autoItemNo;
+
+          if (hasCustomItemNo && insertedIds.length === 1) {
+            // User typed a custom item number — set it directly (grid sorts by TreeOrdering)
+            try {
+              const patchRes = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  updates: [{ OfferDetailID: insertedIds[0], TreeOrdering: desiredItemNo }],
+                }),
+              });
+              const patchPayload = (await patchRes.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+              if (!patchRes.ok || !patchPayload?.ok) {
+                showToastMessage('Product added, but could not set the desired item number.', 'error');
+              }
+            } catch {
+              showToastMessage('Product added, but could not set the desired item number.', 'error');
+            }
+          } else if (insertionAnchor) {
+            // Standard reorder: place after the anchor row
+            const reorderRes = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'reorder',
+                sourceIds: insertedIds,
+                position: 'after',
+                beforeId: insertionAnchor.offerDetailId,
+                parentPath: insertionAnchor.parentPath,
+              }),
+            });
+            const reorderPayload = (await reorderRes.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+            if (!reorderRes.ok || !reorderPayload?.ok) {
+              showToastMessage(
+                'Products were added, but could not be positioned below the selected row.',
+                'error',
+              );
+            }
+            // Set the auto-calculated item number if in "below" mode
+            if (desiredItemNo && insertedIds.length === 1) {
+              try {
+                await fetch(`/api/offers/${encodeURIComponent(offerId)}/products`, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    updates: [{ OfferDetailID: insertedIds[0], TreeOrdering: desiredItemNo }],
+                  }),
+                });
+              } catch {
+                /* best effort */
+              }
+            }
           }
         }
       }
@@ -627,14 +634,19 @@ export default function AddProductsModal({
         : typeof data.inserted === 'number'
           ? data.inserted
           : productPayload.length;
+      // Collect all affected row IDs for flash effect
+      const affectedIds: number[] = isAssigningRequestedRow && fillRequestedRowId != null
+        ? [fillRequestedRowId]
+        : (Array.isArray(data?.insertedOfferDetailIds)
+          ? data.insertedOfferDetailIds
+              .map((v: number | string | null) => typeof v === 'number' ? Math.trunc(v) : typeof v === 'string' ? Number.parseInt(v, 10) : NaN)
+              .filter((v: number) => Number.isFinite(v))
+          : []);
       showToastMessage(
-        isAssigningRequestedRow ? 'Requested item filled' : 'Products added',
+        isAssigningRequestedRow ? 'Row filled' : 'Products added',
         'success',
       );
-      onAdded(addedCount);
-      if (isAssigningRequestedRow) {
-        void fetchRequestedRows(baseCategory, { force: true });
-      }
+      onAdded(addedCount, affectedIds);
       setSelectedRequestedRowId(null);
       setSelectedProducts([]);
       setComment('');
@@ -646,12 +658,15 @@ export default function AddProductsModal({
       setSubmitting(false);
     }
   }, [
+    belowItemNo,
     comment,
     endpoint,
-    fetchRequestedRows,
     getInsertionAnchor,
+    getLastClickedRowId,
     onAdded,
     offerId,
+    placementAnchor,
+    placementMode,
     selectedCategory?.OfferDetailID,
     selectedProducts,
     selectedRequestedRowId,
@@ -822,31 +837,6 @@ export default function AddProductsModal({
     void fetchRequestedRows(selectedCategoryIdRef.current, { force: true });
   }, [refreshToken, refreshCategoryGrid, refreshProductsGrid, fetchRequestedRows]);
 
-  const handleCategoryGridReady = useCallback((api: GridApi) => {
-    const previousApi = categoryApiRef.current;
-    const existingHandler = categoryRowClickHandlerRef.current;
-    if (previousApi && existingHandler) {
-      previousApi.removeEventListener('rowClicked', existingHandler as unknown as (event: unknown) => void);
-    }
-    categoryApiRef.current = api;
-    const handler = existingHandler ?? ((event: { node?: RowNode }) => {
-      const node = event?.node;
-      if (!node) return;
-      const viewport = getCategoryViewport();
-      const scrollTop = viewport?.scrollTop ?? 0;
-      categoryLastScrollTopRef.current = scrollTop;
-      if (node.isSelected()) {
-        node.setSelected(false, true);
-        queueCategoryViewportScrollRestore(scrollTop);
-        return;
-      }
-      node.setSelected(true, true);
-      queueCategoryViewportScrollRestore(scrollTop);
-    });
-    categoryRowClickHandlerRef.current = handler;
-    api.addEventListener('rowClicked', handler as unknown as (event: unknown) => void);
-  }, [getCategoryViewport, queueCategoryViewportScrollRestore]);
-
   useEffect(() => () => {
     const api = categoryApiRef.current;
     const handler = categoryRowClickHandlerRef.current;
@@ -861,10 +851,6 @@ export default function AddProductsModal({
     trySelectPendingProduct(api as ProductsGridApi);
   }, [ensureProductSort, trySelectPendingProduct]);
 
-  const handleCategoryGridModelUpdated = useCallback(() => {
-    flushCategoryViewportScrollRestore();
-  }, [flushCategoryViewportScrollRestore]);
-
   const handleProductsGridModelUpdated = useCallback(() => {
     const api = productsApiRef.current;
     if (!api) return;
@@ -872,7 +858,71 @@ export default function AddProductsModal({
     trySelectPendingProduct(api);
   }, [ensureProductSort, trySelectPendingProduct]);
 
-  const selectedCategoryLabel = selectedCategory?.Description?.trim() || selectedCategory?.TreeOrdering || 'All';
+  // Build placement indicator content
+  // "below" default = user clicked "+" between rows → only show "Add below"
+  // "fill" default = user selected a row → show "Fill row" with option to switch
+  const placementIndicator = placementAnchor ? (
+    defaultPlacementMode === 'below' ? (
+      <div className={styles.placementIndicator}>
+        <span className={styles.placementText}>
+          Add below ({placementAnchor.treeOrdering})
+        </span>
+        <span className={styles.placementNewItemNo}>
+          New Item No
+          <input
+            type="text"
+            className={styles.placementItemNoInput}
+            value={belowItemNo}
+            onChange={(e) => setBelowItemNo(e.target.value)}
+            disabled={submitting}
+            data-fastquote-keep-selection="true"
+          />
+        </span>
+      </div>
+    ) : (
+      <div className={styles.placementIndicator}>
+        <label className={styles.placementRadioLabel}>
+          <input
+            type="radio"
+            name="placementMode"
+            className={styles.placementRadio}
+            checked={placementMode === 'fill'}
+            onChange={() => { setPlacementMode('fill'); onPlacementModeChange?.('fill'); }}
+            disabled={submitting}
+          />
+          Fill row
+        </label>
+        <label className={styles.placementRadioLabel}>
+          <input
+            type="radio"
+            name="placementMode"
+            className={styles.placementRadio}
+            checked={placementMode === 'below'}
+            onChange={() => { setPlacementMode('below'); onPlacementModeChange?.('below'); }}
+            disabled={submitting}
+          />
+          Add below ({placementAnchor.treeOrdering})
+        </label>
+        {placementMode === 'below' ? (
+          <span className={styles.placementNewItemNo}>
+            New Item No
+            <input
+              type="text"
+              className={styles.placementItemNoInput}
+              value={belowItemNo}
+              onChange={(e) => setBelowItemNo(e.target.value)}
+              disabled={submitting}
+              data-fastquote-keep-selection="true"
+            />
+          </span>
+        ) : null}
+      </div>
+    )
+  ) : (
+    <div className={styles.placementIndicator}>
+      <span className={styles.placementText}>Select a row to fill or click between rows to add products there</span>
+    </div>
+  );
 
   if (splitViewMode) {
     return (
@@ -884,16 +934,10 @@ export default function AddProductsModal({
       >
         <div className={styles.splitViewCard}>
           <div className={styles.header}>
-          <div>
-            <div className={styles.title}>Add Products</div>
-            <div className={styles.subtitle}>Pick products to append. Category is optional.</div>
-          </div>
+          <div className={styles.title}>Add Products</div>
+          {placementIndicator}
           <div className={styles.headerActions}>
             <div className={styles.headerMeta}>
-              <div className={styles.headerMetaItem}>
-                <span className={styles.headerMetaLabel}>Category:</span>
-                <span className={styles.headerMetaValue}>{selectedCategoryLabel}</span>
-              </div>
               <div className={styles.headerMetaItem}>
                 <span className={styles.headerMetaLabel}>Products selected:</span>
                 <span className={styles.headerMetaValue}>{selectedProducts.length}</span>
@@ -938,80 +982,7 @@ export default function AddProductsModal({
         </div>
 
         <div className={styles.body}>
-          <section className={`${styles.section} ${styles.splitPane}`}>
-            <div className={`${styles.sectionInner} ${styles.categoriesColumn}`}>
-              <div className={styles.categoryGridShell} ref={categoryGridShellRef}>
-                <AgGridAll
-                  endpoint={endpoint}
-                  columnDefs={categoryColumns}
-                  defaultColDef={defaultColDef}
-                  requestPayload={categoryRequestPayload}
-                  rowSelection="single"
-                  rowDeselection
-                  suppressRowClickSelection
-                  onSelectionChanged={handleCategorySelection as (rows: Record<string, unknown>[], api: GridApi) => void}
-                  rowGroupPanelShow="never"
-                  autoSizeExclusions={['Description']}
-                  suppressSideBar
-                  allowCellSelectionInPerformanceMode={false}
-                  onGridReady={handleCategoryGridReady}
-                  onModelUpdated={handleCategoryGridModelUpdated}
-                />
-              </div>
-            <div 
-              className={styles.requestedSection}
-              data-fastquote-keep-selection="true"
-              onClick={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <div className={styles.requestedSectionHeader}>
-                <div>
-                  <div className={styles.sectionTitle}>Requested Items</div>
-                </div>
-              </div>
-              <div className={styles.requestedList} ref={requestedListRef}>
-                {requestedRowsLoading ? (
-                  <div className={styles.requestedRowEmpty}>Loading requested rows...</div>
-                ) : requestedRowsError ? (
-                  <div className={styles.requestedRowEmpty}>{requestedRowsError}</div>
-                ) : requestedRows.length === 0 ? (
-                  <div className={styles.requestedRowEmpty}>No requested items found.</div>
-                ) : (
-                  requestedRows.map((row) => {
-                    const isSelected = selectedRequestedRowId === row.OfferDetailID;
-                    const metaParts: string[] = [];
-                    if (row.TreeOrdering) metaParts.push(`Tree ${row.TreeOrdering}`);
-                    if (row.RequestedItemNo && showRequestedItemNo) metaParts.push(`Item ${row.RequestedItemNo}`);
-                    if (row.RequestedQuantity != null) metaParts.push(`Qty ${row.RequestedQuantity}`);
-                    return (
-                      <button
-                        type="button"
-                        key={row.OfferDetailID}
-                        data-requested-id={row.OfferDetailID}
-                        className={`${styles.requestedRow} ${isSelected ? styles.requestedRowSelected : ''}`}
-                        aria-pressed={isSelected}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          setSelectedRequestedRowId((prev) => (prev === row.OfferDetailID ? null : row.OfferDetailID));
-                        }}
-                      >
-                        <div className={styles.requestedRowLabel}>
-                          {resolveRequestedRowLabel(row, showRequestedItemNo)}
-                        </div>
-                        <div className={styles.requestedRowMeta}>
-                          {metaParts.map((item) => (
-                            <span key={item} className={styles.requestedRowMetaItem}>{item}</span>
-                          ))}
-                        </div>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-            </div>
-
+          <section className={styles.section}>
             <ProductsGridPanel
               endpoint={endpoint}
               productColumns={productColumns}
@@ -1042,14 +1013,10 @@ export default function AddProductsModal({
         <div className={styles.header}>
           <div>
             <div className={styles.title}>Add Products</div>
-            <div className={styles.subtitle}>Pick products to append. Category is optional.</div>
+            {placementIndicator}
           </div>
           <div className={styles.headerActions}>
             <div className={styles.headerMeta}>
-              <div className={styles.headerMetaItem}>
-                <span className={styles.headerMetaLabel}>Category:</span>
-                <span className={styles.headerMetaValue}>{selectedCategoryLabel}</span>
-              </div>
               <div className={styles.headerMetaItem}>
                 <span className={styles.headerMetaLabel}>Products selected:</span>
                 <span className={styles.headerMetaValue}>{selectedProducts.length}</span>
@@ -1094,80 +1061,7 @@ export default function AddProductsModal({
         </div>
 
         <div className={styles.body}>
-          <section className={`${styles.section} ${styles.splitPane}`}>
-            <div className={`${styles.sectionInner} ${styles.categoriesColumn}`}>
-              <div className={styles.categoryGridShell} ref={categoryGridShellRef}>
-                <AgGridAll
-                  endpoint={endpoint}
-                  columnDefs={categoryColumns}
-                  defaultColDef={defaultColDef}
-                  requestPayload={categoryRequestPayload}
-                  rowSelection="single"
-                  rowDeselection
-                  suppressRowClickSelection
-                  onSelectionChanged={handleCategorySelection as (rows: Record<string, unknown>[], api: GridApi) => void}
-                  rowGroupPanelShow="never"
-                  autoSizeExclusions={['Description']}
-                  suppressSideBar
-                  allowCellSelectionInPerformanceMode={false}
-                  onGridReady={handleCategoryGridReady}
-                  onModelUpdated={handleCategoryGridModelUpdated}
-                />
-              </div>
-            <div 
-              className={styles.requestedSection}
-              data-fastquote-keep-selection="true"
-              onClick={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <div className={styles.requestedSectionHeader}>
-                <div>
-                  <div className={styles.sectionTitle}>Requested Items</div>
-                </div>
-              </div>
-              <div className={styles.requestedList} ref={requestedListRef}>
-                {requestedRowsLoading ? (
-                  <div className={styles.requestedRowEmpty}>Loading requested rows...</div>
-                ) : requestedRowsError ? (
-                  <div className={styles.requestedRowEmpty}>{requestedRowsError}</div>
-                ) : requestedRows.length === 0 ? (
-                  <div className={styles.requestedRowEmpty}>No requested items found.</div>
-                ) : (
-                  requestedRows.map((row) => {
-                    const isSelected = selectedRequestedRowId === row.OfferDetailID;
-                    const metaParts: string[] = [];
-                    if (row.TreeOrdering) metaParts.push(`Tree ${row.TreeOrdering}`);
-                    if (row.RequestedItemNo && showRequestedItemNo) metaParts.push(`Item ${row.RequestedItemNo}`);
-                    if (row.RequestedQuantity != null) metaParts.push(`Qty ${row.RequestedQuantity}`);
-                    return (
-                      <button
-                        type="button"
-                        key={row.OfferDetailID}
-                        data-requested-id={row.OfferDetailID}
-                        className={`${styles.requestedRow} ${isSelected ? styles.requestedRowSelected : ''}`}
-                        aria-pressed={isSelected}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          setSelectedRequestedRowId((prev) => (prev === row.OfferDetailID ? null : row.OfferDetailID));
-                        }}
-                      >
-                        <div className={styles.requestedRowLabel}>
-                          {resolveRequestedRowLabel(row, showRequestedItemNo)}
-                        </div>
-                        <div className={styles.requestedRowMeta}>
-                          {metaParts.map((item) => (
-                            <span key={item} className={styles.requestedRowMetaItem}>{item}</span>
-                          ))}
-                        </div>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-            </div>
-
+          <section className={styles.section}>
             <ProductsGridPanel
               endpoint={endpoint}
               productColumns={productColumns}

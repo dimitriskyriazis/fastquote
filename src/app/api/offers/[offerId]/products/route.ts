@@ -783,6 +783,11 @@ async function handleReorderRow(
   for (const node of sourceNodes) {
     siblings.splice(currentIndex, 0, node);
     node.parent = targetParentNode;
+    // Clear the last path segment so buildSegmentList assigns a fresh number
+    // instead of preserving the stale auto-generated one
+    if (node.path.length > 0) {
+      node.path = [...node.path.slice(0, -1), '0'];
+    }
     currentIndex += 1;
   }
 
