@@ -160,7 +160,7 @@ type Props = {
   onRequestAddStandardPackage?: (anchorOfferDetailId: number, anchorTreeOrdering: string) => void;
   onUndoStateChange?: (state: { canUndo: boolean; lastLabel: string | undefined }) => void;
   offerCreatedByUserId?: string | null;
-  onMainGridSelectionChanged?: (selectedRow: { offerDetailId: number; treeOrdering: string; label: string; isRequested: boolean; parentPath: number[] } | null) => void;
+  onMainGridSelectionChanged?: (selectedRow: { offerDetailId: number; treeOrdering: string; label: string; isRequested: boolean; parentPath: number[]; requestedBrand?: string | null; requestedPartNo?: string | null; requestedModelNo?: string | null; requestedDescription?: string | null } | null) => void;
   onRequestInsertProduct?: (anchor: { offerDetailId: number; parentPath: number[]; label: string; treeOrdering: string; isRequested: boolean }) => void;
   showInsertLineOnHover?: boolean;
 };
@@ -943,7 +943,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     appliedTableLayoutRef.current = tableLayout;
   }, [captureColumnWidths, requestedColumnsReady, restoreColumnWidths, tableLayout]);
 
-  const applyPendingFlash = useCallback(() => {
+  const flashIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const flashPhaseRef = useRef<'paint' | 'fade' | null>(null);
+
+  const paintFlashCells = useCallback(() => {
     const flashIds = pendingFlashIdsRef.current;
     if (!flashIds || flashIds.size === 0) return;
     const wrapper = gridWrapperRef.current;
@@ -952,57 +955,79 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const vp = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
     if (!vp) return;
     const agRows = vp.querySelectorAll('.ag-row');
-    let found = 0;
-    const flashedElements: HTMLElement[] = [];
     for (const agRow of agRows) {
       const idx = agRow.getAttribute('row-index');
       if (idx == null) continue;
       const node = api.getDisplayedRowAtIndex(Number.parseInt(idx, 10));
       const rowId = normalizeOfferDetailId((node?.data as { OfferDetailID?: unknown } | null)?.OfferDetailID ?? null);
       if (rowId != null && flashIds.has(rowId)) {
-        const rowEl = agRow as HTMLElement;
-        // Only flash product columns (Item No onwards), not requested columns
-        const cells = rowEl.querySelectorAll(':scope > .ag-cell');
-        const flashCells: HTMLElement[] = [];
+        const cells = (agRow as HTMLElement).querySelectorAll(':scope > .ag-cell');
         for (const cell of cells) {
           const colId = cell.getAttribute('col-id') ?? '';
-          // Skip requested columns, checkbox column, and drag handle column
           if (colId.startsWith('Requested')
             || colId === 'ag-Grid-AutoColumn'
             || colId === ''
             || cell.classList.contains('ag-selection-checkbox')
             || cell.querySelector('.ag-selection-checkbox, .ag-row-drag, .ag-drag-handle')
           ) continue;
-          (cell as HTMLElement).style.setProperty('background-color', '#d4f3ff', 'important');
-          flashCells.push(cell as HTMLElement);
+          const el = cell as HTMLElement;
+          if (flashPhaseRef.current === 'paint') {
+            el.style.setProperty('background-color', '#d4f3ff', 'important');
+            el.style.removeProperty('transition');
+          }
         }
-        flashedElements.push(...flashCells);
-        found++;
       }
     }
-    if (found > 0) {
-      pendingFlashIdsRef.current = null;
-      // Fade OUT after a pause
-      setTimeout(() => {
-        for (const cellEl of flashedElements) {
-          cellEl.style.setProperty('transition', 'background-color 2s ease-out', 'important');
-          cellEl.style.removeProperty('background-color');
+  }, []);
+
+  const stopFlash = useCallback(() => {
+    if (flashIntervalRef.current) {
+      clearInterval(flashIntervalRef.current);
+      flashIntervalRef.current = null;
+    }
+    flashPhaseRef.current = null;
+    // Apply fade-out to all currently highlighted cells
+    const wrapper = gridWrapperRef.current;
+    if (!wrapper) return;
+    const vp = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
+    if (!vp) return;
+    const flashIds = pendingFlashIdsRef.current;
+    pendingFlashIdsRef.current = null;
+    if (!flashIds) return;
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    const agRows = vp.querySelectorAll('.ag-row');
+    for (const agRow of agRows) {
+      const idx = agRow.getAttribute('row-index');
+      if (idx == null) continue;
+      const node = api.getDisplayedRowAtIndex(Number.parseInt(idx, 10));
+      const rowId = normalizeOfferDetailId((node?.data as { OfferDetailID?: unknown } | null)?.OfferDetailID ?? null);
+      if (rowId != null && flashIds.has(rowId)) {
+        const cells = (agRow as HTMLElement).querySelectorAll(':scope > .ag-cell');
+        for (const cell of cells) {
+          const el = cell as HTMLElement;
+          el.style.setProperty('transition', 'background-color 2s ease-out', 'important');
+          el.style.removeProperty('background-color');
         }
-        // Clean up
+        // Clean up transition after fade
         setTimeout(() => {
-          for (const cellEl of flashedElements) {
-            cellEl.style.removeProperty('transition');
+          for (const cell of cells) {
+            (cell as HTMLElement).style.removeProperty('transition');
           }
-          }, 2200);
-        }, 800);
+        }, 2200);
+      }
     }
   }, []);
 
   const handleGridResponse = useCallback((response: GridResponse | null) => {
     if (!response) return;
-    // After server data arrives, schedule flash on next animation frame (DOM needs to render)
-    if (pendingFlashIdsRef.current && pendingFlashIdsRef.current.size > 0) {
-      requestAnimationFrame(() => requestAnimationFrame(applyPendingFlash));
+    // Start flash painting when new data arrives (after grid renders the rows)
+    if (pendingFlashIdsRef.current && pendingFlashIdsRef.current.size > 0 && flashPhaseRef.current === 'paint' && !flashIntervalRef.current) {
+      requestAnimationFrame(() => {
+        paintFlashCells();
+        flashIntervalRef.current = setInterval(paintFlashCells, 200);
+        setTimeout(() => stopFlash(), 1500);
+      });
     }
     lastRowCountRef.current = response?.rowCount ?? null;
     const hasRows = Boolean(response?.rowCount && response.rowCount > 0);
@@ -1149,14 +1174,15 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       runHeavyUpdates();
     }
   }, [
-    applyPendingFlash,
     applyRequestedVisibilityToGrid,
     applyRequestedColumnVisibility,
+    paintFlashCells,
     rebuildTreeOrderingRootMap,
     requestedColumnVisibility,
     requestedItemNoVisible,
     scheduleCategoryAncestorsUpdate,
     showRequestedColumns,
+    stopFlash,
     tableLayout,
   ]);
 
@@ -1202,12 +1228,20 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const treeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
     const label = resolveRowLabel(row, '');
     const requested = isRequestedRow(row);
+    const strField = (key: string) => {
+      const v = (row as Record<string, unknown>)[key];
+      return typeof v === 'string' ? v.trim() || null : null;
+    };
     onMainGridSelectionChanged?.({
       offerDetailId,
       treeOrdering,
       label,
       isRequested: requested,
       parentPath: path.slice(0, -1),
+      requestedBrand: strField('RequestedBrand'),
+      requestedPartNo: strField('RequestedPartNo'),
+      requestedModelNo: strField('RequestedModelNo'),
+      requestedDescription: strField('RequestedDescription'),
     });
   }, [onMainGridSelectionChanged]);
 
@@ -3896,7 +3930,14 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         return row ? normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null) : null;
       },
       flashRows: (offerDetailIds: number[]) => {
+        // Clear any existing flash
+        if (flashIntervalRef.current) {
+          clearInterval(flashIntervalRef.current);
+          flashIntervalRef.current = null;
+        }
         pendingFlashIdsRef.current = new Set(offerDetailIds);
+        flashPhaseRef.current = 'paint';
+        // Don't paint yet — wait for handleGridResponse to signal new data has arrived
       },
     }),
     [canUndo, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer],

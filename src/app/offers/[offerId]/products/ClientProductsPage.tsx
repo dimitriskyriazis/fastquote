@@ -175,7 +175,7 @@ export default function ClientProductsPage({
   const [addingStandardPackage, setAddingStandardPackage] = useState(false);
   const [addStandardPackageError, setAddStandardPackageError] = useState<string | null>(null);
   const [undoState, setUndoState] = useState<{ canUndo: boolean; lastLabel: string | undefined }>({ canUndo: false, lastLabel: undefined });
-  const [placementAnchor, setPlacementAnchor] = useState<{ label: string; treeOrdering: string; isRequested: boolean; offerDetailId?: number; parentPath?: number[] } | null>(null);
+  const [placementAnchor, setPlacementAnchor] = useState<{ label: string; treeOrdering: string; isRequested: boolean; offerDetailId?: number; parentPath?: number[]; requestedBrand?: string | null; requestedPartNo?: string | null; requestedModelNo?: string | null; requestedDescription?: string | null } | null>(null);
   const [defaultPlacementMode, setDefaultPlacementMode] = useState<'fill' | 'below'>('fill');
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
   const splitLeftRef = useRef<HTMLDivElement | null>(null);
@@ -524,7 +524,7 @@ export default function ClientProductsPage({
 
   const skipSelectionChangeUntilRef = useRef(0);
 
-  const handleMainGridSelectionChanged = useCallback((selectedRow: { offerDetailId: number; treeOrdering: string; label: string; isRequested: boolean; parentPath: number[] } | null) => {
+  const handleMainGridSelectionChanged = useCallback((selectedRow: { offerDetailId: number; treeOrdering: string; label: string; isRequested: boolean; parentPath: number[]; requestedBrand?: string | null; requestedPartNo?: string | null; requestedModelNo?: string | null; requestedDescription?: string | null } | null) => {
     if (Date.now() < skipSelectionChangeUntilRef.current) {
       return;
     }
@@ -535,6 +535,10 @@ export default function ClientProductsPage({
         isRequested: selectedRow.isRequested,
         offerDetailId: selectedRow.offerDetailId,
         parentPath: selectedRow.parentPath,
+        requestedBrand: selectedRow.requestedBrand,
+        requestedPartNo: selectedRow.requestedPartNo,
+        requestedModelNo: selectedRow.requestedModelNo,
+        requestedDescription: selectedRow.requestedDescription,
       });
       setDefaultPlacementMode('fill');
       offerProductsPanelRef.current?.setInsertLineVisible?.(false);

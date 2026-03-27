@@ -10,7 +10,17 @@ import { getUserNumberLocale } from '../../../../lib/localeNumber';
 
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), { ssr: false });
 
-type PlacementAnchor = { label: string; treeOrdering: string; isRequested: boolean; offerDetailId?: number; parentPath?: number[] };
+type PlacementAnchor = {
+  label: string;
+  treeOrdering: string;
+  isRequested: boolean;
+  offerDetailId?: number;
+  parentPath?: number[];
+  requestedBrand?: string | null;
+  requestedPartNo?: string | null;
+  requestedModelNo?: string | null;
+  requestedDescription?: string | null;
+};
 
 type Props = {
   offerId: string;
@@ -250,6 +260,29 @@ export default function AddProductsModal({
     setBelowItemNo(placementAnchor?.treeOrdering ? computeNextItemNo(placementAnchor.treeOrdering) : '');
     onPlacementModeChange?.(mode);
   }, [placementAnchor, defaultPlacementMode, onPlacementModeChange]);
+
+  // Apply requested data as filters on the products grid when selecting a row to fill
+  useEffect(() => {
+    const api = productsApiRef.current;
+    if (!api) return;
+    if (defaultPlacementMode === 'fill' && placementAnchor) {
+      const { requestedBrand, requestedPartNo, requestedModelNo, requestedDescription } = placementAnchor;
+      const hasAnyFilter = requestedBrand || requestedPartNo || requestedModelNo || requestedDescription;
+      if (hasAnyFilter) {
+        const filterModel: Record<string, { filterType: string; type: string; filter: string }> = {};
+        if (requestedPartNo) filterModel.PartNumber = { filterType: 'text', type: 'contains', filter: requestedPartNo };
+        if (requestedBrand) filterModel.BrandName = { filterType: 'text', type: 'contains', filter: requestedBrand };
+        if (requestedModelNo) filterModel.ModelNumber = { filterType: 'text', type: 'contains', filter: requestedModelNo };
+        if (requestedDescription) filterModel.Description = { filterType: 'text', type: 'contains', filter: requestedDescription };
+        api.setFilterModel(filterModel);
+      } else {
+        api.setFilterModel(null);
+      }
+    } else {
+      // Clear filters when switching to "add below" or when no anchor
+      api.setFilterModel(null);
+    }
+  }, [placementAnchor, defaultPlacementMode]);
 
   // Sync selectedRequestedRowId with placement mode for anchor-based requested rows
   useEffect(() => {
@@ -651,6 +684,7 @@ export default function AddProductsModal({
       setSelectedProducts([]);
       setComment('');
       try { productsApiRef.current?.deselectAll?.(); } catch { /* noop */ }
+      try { productsApiRef.current?.setFilterModel?.(null); } catch { /* noop */ }
     } catch (err) {
       console.error('Failed to add products to offer', err);
       showToastMessage('Unable to add products. Please try again.', 'error');

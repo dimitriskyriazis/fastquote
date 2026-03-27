@@ -1140,12 +1140,19 @@ const reorderRowsByTreeOrdering = (api: GridApi<RowData>) => {
 const TREE_DEPENDENT_COLUMNS = ['TreeOrdering', 'BrandName', 'TotalPrice', 'TotalNet', 'TotalCost'];
 const ROW_DRAG_EDGE_THRESHOLD = 10;
 
+// Stable default values for object/array props to avoid creating new references on every render.
+// Unstable defaults (e.g. `= {}` or `= []` in the parameter list) cause useMemo chains
+// (resolvedColumnWidthDefaults → resolvedColumnDefs → datasource) to recompute each render,
+// which makes AG Grid re-process column definitions and reset user-resized column widths.
+const EMPTY_COLUMN_WIDTH_DEFAULTS: Record<string, ColumnWidthAssignment> = {};
+const EMPTY_AUTO_SIZE_EXCLUSIONS: string[] = [];
+
 // MAIN COMPONENT - AgGridAll
 export default function AgGridAll({
   endpoint,
   persistenceEndpoint,
   columnDefs,
-  columnWidthDefaults = {},
+  columnWidthDefaults = EMPTY_COLUMN_WIDTH_DEFAULTS,
   defaultColDef,
   enablePivotMode = false,
   onPivotModeChanged,
@@ -1175,7 +1182,7 @@ export default function AgGridAll({
   getRowHeight,
   onModelUpdated,
   refreshToken = 0,
-  autoSizeExclusions = [],
+  autoSizeExclusions = EMPTY_AUTO_SIZE_EXCLUSIONS,
   onTotalsChange,
   suppressColumnVirtualisation = false,
   suppressMovableColumns = false,
