@@ -26,8 +26,8 @@
   cursor: pointer;
   pointer-events: auto;
   transform: translateY(-1px);
-  padding: 10px 0;
-  margin: -10px 0;
+  padding: 5px 0;
+  margin: -5px 0;
 }
 
 .insertLine:hover .insertLineBar {
