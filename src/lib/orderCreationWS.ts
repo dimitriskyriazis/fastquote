@@ -41,6 +41,7 @@ export async function createOrderViaWebService(
 
   const result = await client.setDocs({
     custcode: params.customerCode,
+    projectcode: params.projectCode ?? undefined,
     date: today,
     status: '10',
     comments: params.description,

@@ -103,6 +103,25 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
     }
   }
 
+  // Extract model-like tokens from descriptions (e.g. "CX-30", "TDC-7100", "C-10")
+  // These are alphanumeric+dash/dot patterns that look like model identifiers
+  const allDescText = [desc1, desc2, desc3].filter(Boolean).join(' ');
+  const modelLikeTokens = allDescText
+    .match(/\b[A-Za-z]+[-.]?\d[\w.-]*\b|\b\d[\w.-]*[-.]?[A-Za-z]+\b/g)
+    ?.filter((t) => t.length >= 3) ?? [];
+  // Also consider the brand name might appear in description - skip it as a model token
+  const brandUpper = brand?.toUpperCase();
+  const uniqueModelTokens = [...new Set(modelLikeTokens.map((t) => t.toUpperCase()))]
+    .filter((t) => t !== brandUpper)
+    .slice(0, 4);
+
+  for (const token of uniqueModelTokens) {
+    if (!partNumber && !modelNumber) {
+      // No explicit part/model number provided, so try matching these tokens as part/model
+      addPartModelCondition(token, 'dmt', 8);
+    }
+  }
+
   const fullDesc = [desc1, desc2, desc3, partNumber, modelNumber].filter(Boolean).join(' ');
   const descWords = fullDesc
     .replace(/[^a-zA-Z0-9\u00C0-\u024F]+/g, ' ')
@@ -195,15 +214,16 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
       messages: [
         {
           role: 'system',
-          content: `You are a product matching assistant for a B2B AV equipment catalog. Given a requested product and a list of candidate catalog products, select up to 8 that best match the requested product. Rank them by relevance (best match first).
+          content: `You are a product matching assistant for a B2B AV equipment catalog. Given a requested product and a list of candidate catalog products, select ONLY the products that are genuinely a match for the requested product. Be selective — do NOT pad the results. If only 1 or 2 products match well, return only those.
 
-Return a JSON object: { "ids": [id1, id2, ...] } with up to 8 product IDs.
+Return a JSON object: { "ids": [id1, id2, ...] } with the matching product IDs (max 8), ranked by relevance (best match first).
 
-Consider:
-- Exact or close part/model number matches are the strongest signal
-- Brand match is important
-- Description similarity matters when numbers don't match
-- Prefer products that match multiple criteria`,
+Matching rules:
+- Exact or close part/model number matches are the strongest signal — a product with a different model number (e.g. CX-30 vs CX-20 vs C-10) is NOT a match
+- The model identifier in descriptions (e.g. "CX-30" in "Clickshare CX-30") is critical — only match products with the same model identifier
+- Brand match is important but not sufficient alone
+- Different variants of the same model (e.g. with 1 button vs 2 buttons) ARE valid matches
+- Do NOT include products from the same product family but with different model numbers`,
         },
         {
           role: 'user',
@@ -239,16 +259,6 @@ Consider:
       void MatchScore;
       orderedProducts.push(rest);
       usedIds.add(id);
-    }
-  }
-
-  if (orderedProducts.length < 8) {
-    for (const candidate of candidates) {
-      if (orderedProducts.length >= 8) break;
-      if (usedIds.has(candidate.ProductID)) continue;
-      const { MatchScore, ...rest } = candidate;
-      void MatchScore;
-      orderedProducts.push(rest);
     }
   }
 

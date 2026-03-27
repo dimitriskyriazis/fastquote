@@ -155,6 +155,7 @@ export type SetDocsLineItem = {
 
 export type SetDocsParams = {
   custcode: string;
+  projectcode?: string;
   date?: string;
   status?: string;
   comments?: string;

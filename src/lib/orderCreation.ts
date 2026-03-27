@@ -12,6 +12,7 @@ export type CreateOrderWithLinesParams = {
   offerId: number;
   description: string;
   customerCode: string;  // alphanumeric CODE from dbo.TRDR.CODE
+  projectCode: string | null; // alphanumeric CODE from dbo.PRJC.CODE (e.g. 'COV.0239')
   prjcId: number;
   businessUnit: 'AVS' | 'TVS';
   trdr: number;
