@@ -34,6 +34,76 @@ async function resolveErpManufacturerId(
   return id != null ? String(id) : undefined;
 }
 
+const MAX_ITEM_NAME_LENGTH = 120;
+
+/**
+ * Shortens a product description using AI so that the full item name
+ * (model number + separator + description) fits within the character limit.
+ */
+async function shortenDescriptionWithAI(
+  description: string,
+  maxDescriptionLength: number,
+): Promise<string> {
+  const openaiApiKey = process.env.OPENAI_API_KEY;
+  if (!openaiApiKey) {
+    logger.warn('OpenAI API key not configured, truncating description instead of using AI');
+    return description.slice(0, maxDescriptionLength);
+  }
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a helpful assistant that shortens product descriptions. Return ONLY the shortened description, nothing else. Keep the most important technical details and product identity. Do not add quotes around the result.',
+          },
+          {
+            role: 'user',
+            content: `Shorten this product description to at most ${maxDescriptionLength} characters while preserving key information:\n\n${description}`,
+          },
+        ],
+        temperature: 0.3,
+        max_tokens: 200,
+      }),
+    });
+
+    if (!response.ok) {
+      logger.error('OpenAI API error while shortening description', { status: response.status });
+      return description.slice(0, maxDescriptionLength);
+    }
+
+    const data = await response.json();
+    const shortened = (data.choices?.[0]?.message?.content?.trim() || '').replace(/^["']|["']$/g, '');
+
+    if (!shortened || shortened.length > maxDescriptionLength) {
+      logger.warn('AI-shortened description still too long or empty, truncating', {
+        originalLength: description.length,
+        shortenedLength: shortened.length,
+        maxDescriptionLength,
+      });
+      return (shortened || description).slice(0, maxDescriptionLength);
+    }
+
+    logger.info('Description shortened by AI', {
+      originalLength: description.length,
+      shortenedLength: shortened.length,
+      maxDescriptionLength,
+    });
+
+    return shortened;
+  } catch (err) {
+    logger.error('Failed to shorten description with AI', {}, err instanceof Error ? err : undefined);
+    return description.slice(0, maxDescriptionLength);
+  }
+}
+
 /**
  * Creates an item in SoftOne ERP via the setItem web service.
  *
@@ -68,10 +138,21 @@ export async function createItemViaWebService(
   const client = getSoftOneClient();
 
   // Format name as "{ModelNumber} - {Description}" or just "{Description}" if no model number
-  const nameParts: string[] = [];
-  if (params.modelNumber) nameParts.push(params.modelNumber);
-  nameParts.push(params.description);
-  const itemName = nameParts.join(' - ');
+  const separator = ' - ';
+  const modelPrefix = params.modelNumber ? params.modelNumber + separator : '';
+  let description = params.description;
+
+  if ((modelPrefix + description).length > MAX_ITEM_NAME_LENGTH) {
+    const maxDescriptionLength = MAX_ITEM_NAME_LENGTH - modelPrefix.length;
+    logger.info('Item name exceeds limit, shortening description with AI', {
+      originalLength: (modelPrefix + description).length,
+      modelPrefixLength: modelPrefix.length,
+      maxDescriptionLength,
+    });
+    description = await shortenDescriptionWithAI(description, maxDescriptionLength);
+  }
+
+  const itemName = modelPrefix + description;
 
   const item: SetItemEntry = {
     code: newCode,
