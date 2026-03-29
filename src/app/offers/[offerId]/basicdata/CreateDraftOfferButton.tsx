@@ -43,8 +43,12 @@ export default function CreateDraftOfferButton({ offerId, className }: Props) {
   const [showCustomerCodeInput, setShowCustomerCodeInput] = useState(false);
   const [customerCodeInput, setCustomerCodeInput] = useState('');
   const [customerToConfirm, setCustomerToConfirm] = useState<CustomerMatch | null>(null);
+  const [brandsToCreate, setBrandsToCreate] = useState<string[]>([]);
 
-  const handleCreateDraftOffer = useCallback(async (confirmedCustomer?: CustomerMatch) => {
+  const handleCreateDraftOffer = useCallback(async (
+    confirmedCustomer?: CustomerMatch,
+    options?: { brandCreationConfirmed?: boolean },
+  ) => {
     setIsCreatingDraftOffer(true);
     setIsInProcess(true); // Mark the entire process as started
     try {
@@ -53,7 +57,13 @@ export default function CreateDraftOfferButton({ offerId, className }: Props) {
         customerSelection?: { TRDR: number; CODE: string | null };
         customerCode?: string;
         customerConfirmed?: boolean;
+        brandCreationConfirmed?: boolean;
       } = {};
+
+      // Add brand creation confirmation if user approved
+      if (options?.brandCreationConfirmed) {
+        requestBody.brandCreationConfirmed = true;
+      }
 
       // Add product selections if any
       if (selectedMatches.size > 0) {
@@ -91,6 +101,7 @@ export default function CreateDraftOfferButton({ offerId, className }: Props) {
             needsCustomerSelection?: CustomerMatch[];
             needsCustomerConfirmation?: CustomerMatch;
             needsCustomerCode?: boolean;
+            needsBrandCreation?: string[];
             updated?: number[];
             error?: string;
             message?: string;
@@ -122,6 +133,13 @@ export default function CreateDraftOfferButton({ offerId, className }: Props) {
         return;
       }
 
+      // Check if brand creation is needed
+      if (payload.needsBrandCreation && payload.needsBrandCreation.length > 0) {
+        setBrandsToCreate(payload.needsBrandCreation);
+        setIsCreatingDraftOffer(false);
+        return;
+      }
+
       // Check if product selection is needed
       if (payload.needsSelection && payload.needsSelection.length > 0) {
         setProductSelections(payload.needsSelection);
@@ -135,6 +153,7 @@ export default function CreateDraftOfferButton({ offerId, className }: Props) {
         setShowCustomerCodeInput(false);
         setCustomerCodeInput('');
         setCustomerToConfirm(null);
+        setBrandsToCreate([]);
         setIsInProcess(false); // Reset process flag on success
         // Refresh the page to show updated data
         window.location.reload();
@@ -216,6 +235,16 @@ export default function CreateDraftOfferButton({ offerId, className }: Props) {
     // User rejected the customer, show code input instead
     setCustomerToConfirm(null);
     setShowCustomerCodeInput(true);
+  }, []);
+
+  const handleConfirmBrandCreation = useCallback(async () => {
+    setBrandsToCreate([]);
+    await handleCreateDraftOffer(undefined, { brandCreationConfirmed: true });
+  }, [handleCreateDraftOffer]);
+
+  const handleRejectBrandCreation = useCallback(() => {
+    setBrandsToCreate([]);
+    setIsInProcess(false);
   }, []);
 
   return (
@@ -448,6 +477,43 @@ export default function CreateDraftOfferButton({ offerId, className }: Props) {
             style={{ width: '100%', padding: '8px 12px', fontSize: '0.9rem' }}
             autoFocus
           />
+        </LookupModal>
+      )}
+
+      {brandsToCreate.length > 0 && (
+        <LookupModal
+          open={brandsToCreate.length > 0}
+          title="Create Brands in Soft1"
+          onClose={handleRejectBrandCreation}
+          onConfirm={handleConfirmBrandCreation}
+          confirmLabel="Create Brands"
+          cancelLabel="Cancel"
+          saving={isCreatingDraftOffer}
+          cardClassName={lookupStyles.cardWide}
+          cardStyle={{ width: 'min(600px, calc(100% - 32px))', maxWidth: '90vw' }}
+        >
+          <div style={{ marginBottom: '16px', fontSize: '0.95rem', fontWeight: 500 }}>
+            The following brand(s) do not exist in Soft1. Do you want to create them?
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {brandsToCreate.map((brand) => (
+              <div
+                key={brand}
+                style={{
+                  padding: '10px 14px',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '8px',
+                  fontWeight: 600,
+                  fontSize: '0.9rem',
+                }}
+              >
+                {brand}
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: '16px', fontSize: '0.85rem', color: '#64748b', fontStyle: 'italic' }}>
+            Clicking &quot;Create Brands&quot; will create these brands in Soft1 and continue with the draft order creation.
+          </div>
         </LookupModal>
       )}
     </>

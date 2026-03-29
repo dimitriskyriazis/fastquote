@@ -34,6 +34,40 @@ async function resolveErpManufacturerId(
   return id != null ? String(id) : undefined;
 }
 
+/**
+ * Creates a manufacturer (brand) in the ERP via stored procedure.
+ * Returns the new MTRMANFCTR ID and CODE.
+ */
+export async function createManufacturerInErp(
+  erpPool: Awaited<ReturnType<typeof getErpPool>>,
+  brandName: string,
+): Promise<{ mtrmanfctrId: number; mtrmanfctrCode: string }> {
+  const request = erpPool.request();
+  request.input('Name', sql.VarChar(50), brandName.trim());
+
+  const result = await request.query<{ MTRMANFCTR_ID: number; MTRMANFCTR_CODE: string }>(`
+    DECLARE @NewId INT, @NewCode VARCHAR(10);
+    EXEC [tlm].[mtrmanfctr_CreateFromIntegration]
+      @Name = @Name,
+      @NewId = @NewId OUTPUT,
+      @NewCode = @NewCode OUTPUT;
+    SELECT @NewId AS MTRMANFCTR_ID, @NewCode AS MTRMANFCTR_CODE;
+  `);
+
+  const row = result.recordset?.[0];
+  if (!row?.MTRMANFCTR_ID || !row?.MTRMANFCTR_CODE) {
+    throw new Error(`Failed to create manufacturer for brand: ${brandName}`);
+  }
+
+  logger.info('Created manufacturer in ERP', {
+    brandName,
+    mtrmanfctrId: row.MTRMANFCTR_ID,
+    mtrmanfctrCode: row.MTRMANFCTR_CODE,
+  });
+
+  return { mtrmanfctrId: row.MTRMANFCTR_ID, mtrmanfctrCode: row.MTRMANFCTR_CODE };
+}
+
 const MAX_ITEM_NAME_LENGTH = 120;
 
 /**
@@ -164,6 +198,9 @@ export async function createItemViaWebService(
     mtrcategory: 1,
     mtrmanfctr,
     busunits: mapBusinessUnit(params.businessUnit),
+    category: String(params.categoryId),
+    subcateg: String(params.subCategoryId),
+    type: String(params.typeId),
   };
 
   logger.info('SoftOne WS: calling setItem', {
@@ -173,6 +210,9 @@ export async function createItemViaWebService(
     name: itemName,
     businessUnit: params.businessUnit,
     mtrmanfctr: mtrmanfctr ?? null,
+    categoryId: String(params.categoryId),
+    subCategoryId: String(params.subCategoryId),
+    typeId: String(params.typeId),
   });
 
   const result = await client.setItem({ items: [item] });

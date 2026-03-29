@@ -7,6 +7,7 @@ import { createProjectFromIntegration } from '../../../../../lib/projectCreation
 import { createOrderWithLines } from '../../../../../lib/orderCreation';
 import type { OrderLineForCreation } from '../../../../../lib/orderCreation';
 import { createItemInErp } from '../../../../../lib/itemCreation';
+import { createManufacturerInErp } from '../../../../../lib/itemCreationWS';
 import { getRequestId } from '../../../../../lib/requestId';
 import { logger } from '../../../../../lib/logger';
 import { requirePermission } from '../../../../../lib/authz';
@@ -43,6 +44,7 @@ type CreateDraftOfferRequestBody = {
   customerSelection?: CustomerSelection;
   customerCode?: string;
   customerConfirmed?: boolean;
+  brandCreationConfirmed?: boolean;
 };
 
 type LookupRow = {
@@ -97,6 +99,7 @@ async function suggestProductCategories(
   brandName: string | null,
   modelNumber: string | null,
   description: string | null,
+  existingCategoryId?: number | null,
 ): Promise<{ categoryId: number | null; subCategoryId: number | null; typeId: number | null }> {
   if (!brandName || !description) {
     return { categoryId: null, subCategoryId: null, typeId: null };
@@ -252,39 +255,34 @@ IMPORTANT RULES:
       return { categoryId: null, subCategoryId: null, typeId: null };
     }
 
-    // Validate that the suggested IDs exist AND that subcategory belongs to category
-    let validatedCategoryId = suggestions.categoryId && categories.find(c => c.id === suggestions.categoryId) 
-      ? suggestions.categoryId 
-      : null;
-    
-    // Validate subcategory exists AND belongs to the suggested category
+    // Validate that the suggested IDs exist.
+    // Subcategory is the most specific, so trust it first and derive the category from its parent.
+    let validatedCategoryId: number | null = null;
     let validatedSubCategoryId: number | null = null;
+
     if (suggestions.subCategoryId) {
       const foundSubCategory = subCategories.find(sc => sc.id === suggestions.subCategoryId);
       if (foundSubCategory) {
-        // Check if the subcategory belongs to the suggested category
-        if (validatedCategoryId && foundSubCategory.categoryId === validatedCategoryId) {
-          validatedSubCategoryId = suggestions.subCategoryId;
-        } else if (!validatedCategoryId && foundSubCategory.categoryId != null) {
-          // If category wasn't suggested but subcategory was, use subcategory's parent category
-          validatedCategoryId = foundSubCategory.categoryId;
-          validatedSubCategoryId = suggestions.subCategoryId;
-          logger.info("Auto-corrected categoryId from subcategory parent", {
-            originalCategoryId: suggestions.categoryId,
-            correctedCategoryId: validatedCategoryId,
-            subCategoryId: validatedSubCategoryId,
-          });
-        } else if (validatedCategoryId && foundSubCategory.categoryId !== validatedCategoryId) {
-          // Category was suggested but doesn't match subcategory's parent - use subcategory's parent
-          logger.warn("SubCategory does not belong to suggested Category, using subcategory's parent", {
-            suggestedCategoryId: validatedCategoryId,
+        // Accept the subcategory and use its parent as the category (most specific wins)
+        validatedSubCategoryId = suggestions.subCategoryId;
+        validatedCategoryId = foundSubCategory.categoryId;
+
+        if (existingCategoryId && foundSubCategory.categoryId !== existingCategoryId) {
+          logger.info("Overriding existing categoryId to match subcategory parent", {
+            existingCategoryId,
             suggestedSubCategoryId: suggestions.subCategoryId,
-            subCategoryParentId: foundSubCategory.categoryId,
+            newCategoryId: foundSubCategory.categoryId,
           });
-          validatedCategoryId = foundSubCategory.categoryId;
-          validatedSubCategoryId = suggestions.subCategoryId;
         }
       }
+    }
+
+    // If no valid subcategory, fall back to AI-suggested or existing category
+    if (!validatedCategoryId) {
+      const fallbackCategoryId = suggestions.categoryId ?? existingCategoryId;
+      validatedCategoryId = fallbackCategoryId && categories.find(c => c.id === fallbackCategoryId)
+        ? fallbackCategoryId
+        : null;
     }
     
     const validatedTypeId = suggestions.typeId && types.find(t => t.id === suggestions.typeId)
@@ -611,6 +609,7 @@ export async function POST(
                 product.BrandName,
                 product.ModelNumber,
                 product.Description,
+                product.CategoryID,
               );
 
               logger.info('Received AI category suggestions', {
@@ -621,14 +620,18 @@ export async function POST(
                 suggestedTypeId: suggestions.typeId,
               });
 
-              // Only update if we got suggestions and the field is currently null
+              // Only update if we got suggestions
               if (suggestions.categoryId || suggestions.subCategoryId || suggestions.typeId) {
                 const updateRequest = pool.request();
                 updateRequest.input('productId', sql.Int, product.ProductID);
-                
+
                 // Build dynamic UPDATE query based on what needs updating
                 const updates: string[] = [];
-                if (needsCategory && suggestions.categoryId) {
+
+                // Update category if missing, or if subcategory's parent differs from existing
+                const shouldUpdateCategory = needsCategory
+                  || (suggestions.categoryId && suggestions.categoryId !== product.CategoryID);
+                if (shouldUpdateCategory && suggestions.categoryId) {
                   updateRequest.input('categoryId', sql.Int, suggestions.categoryId);
                   updates.push('CategoryID = @categoryId');
                 }
@@ -650,7 +653,7 @@ export async function POST(
                   `);
 
                   // Also update in-memory product so downstream checks see the new values
-                  if (needsCategory && suggestions.categoryId) {
+                  if (shouldUpdateCategory && suggestions.categoryId) {
                     product.CategoryID = suggestions.categoryId;
                   }
                   if (needsSubCategory && suggestions.subCategoryId) {
@@ -663,7 +666,7 @@ export async function POST(
                   logger.info('Auto-filled product categories using AI', {
                     requestId,
                     productId: product.ProductID,
-                    updatedCategoryId: needsCategory && suggestions.categoryId ? suggestions.categoryId : null,
+                    updatedCategoryId: shouldUpdateCategory && suggestions.categoryId ? suggestions.categoryId : null,
                     updatedSubCategoryId: needsSubCategory && suggestions.subCategoryId ? suggestions.subCategoryId : null,
                     updatedTypeId: needsType && suggestions.typeId ? suggestions.typeId : null,
                   });
@@ -697,6 +700,69 @@ export async function POST(
 
     // Wait for all category updates to complete before continuing
     await Promise.all(categoryUpdatePromises);
+
+    // Check if any brands need to be created in ERP
+    const brandCreationConfirmed = body?.brandCreationConfirmed ?? false;
+    const uniqueBrandNames = [...new Set(
+      products
+        .filter((p) => p.BrandName && p.BrandID)
+        .map((p) => p.BrandName!.trim()),
+    )];
+
+    if (uniqueBrandNames.length > 0) {
+      const missingBrands: string[] = [];
+      for (const brandName of uniqueBrandNames) {
+        const checkRequest = erpPool.request();
+        checkRequest.input('brandName', sql.NVarChar(128), brandName);
+        const checkResult = await checkRequest.query<{ MTRMANFCTR: number }>(`
+          SELECT TOP (1) MTRMANFCTR
+          FROM dbo.MTRMANFCTR
+          WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
+          ORDER BY MTRMANFCTR
+        `);
+        if (!checkResult.recordset?.[0]) {
+          missingBrands.push(brandName);
+        }
+      }
+
+      if (missingBrands.length > 0) {
+        if (!brandCreationConfirmed) {
+          logger.info('create-draft-order-soft1 brands missing in ERP, prompting user', {
+            requestId,
+            offerId: normalizedId,
+            missingBrands,
+          });
+          return NextResponse.json({
+            ok: true,
+            needsBrandCreation: missingBrands,
+          });
+        }
+
+        // User confirmed — create the missing brands
+        for (const brandName of missingBrands) {
+          try {
+            const created = await createManufacturerInErp(erpPool, brandName);
+            logger.info('create-draft-order-soft1 brand created in ERP', {
+              requestId,
+              offerId: normalizedId,
+              brandName,
+              mtrmanfctrId: created.mtrmanfctrId,
+              mtrmanfctrCode: created.mtrmanfctrCode,
+            });
+          } catch (brandErr) {
+            logger.error('Failed to create brand in ERP', {
+              requestId,
+              offerId: normalizedId,
+              brandName,
+            }, brandErr instanceof Error ? brandErr : undefined);
+            return NextResponse.json(
+              { ok: false, error: `Failed to create brand "${brandName}" in Soft1: ${brandErr instanceof Error ? brandErr.message : 'Unknown error'}` },
+              { status: 500 },
+            );
+          }
+        }
+      }
+    }
 
     const productMatches: ProductMatch[] = [];
     const updatePromises: Promise<void>[] = [];
@@ -779,6 +845,7 @@ export async function POST(
                 if (
                   !product.Description ||
                   !product.BrandID ||
+                  !product.CategoryID ||
                   !product.SubCategoryID ||
                   !product.TypeID
                 ) {
@@ -788,6 +855,7 @@ export async function POST(
                     productId: product.ProductID,
                     hasDescription: !!product.Description,
                     hasBrandID: !!product.BrandID,
+                    hasCategoryID: !!product.CategoryID,
                     hasSubCategoryID: !!product.SubCategoryID,
                     hasTypeID: !!product.TypeID,
                   });
@@ -809,6 +877,7 @@ export async function POST(
                   partNumber: product.PartNumberCleared,
                   brandId: product.BrandID,
                   brandName: product.BrandName!,
+                  categoryId: product.CategoryID!,
                   subCategoryId: product.SubCategoryID,
                   typeId: product.TypeID,
                   businessUnit,
@@ -1226,6 +1295,7 @@ export async function POST(
               partNumber: product.PartNumberCleared,
               brandId: product.BrandID,
               brandName: product.BrandName!,
+              categoryId: product.CategoryID!,
               subCategoryId: product.SubCategoryID,
               typeId: product.TypeID,
               businessUnit,

@@ -11,6 +11,7 @@ export type CreateItemParams = {
   partNumber: string | null;
   brandId: number;
   brandName: string;
+  categoryId: number;
   subCategoryId: number;
   typeId: number;
   businessUnit: 'AVS' | 'TVS';
