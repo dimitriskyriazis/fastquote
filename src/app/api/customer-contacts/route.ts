@@ -131,10 +131,15 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
   return { where, params };
 };
 
+const IMPORTANCE_SORT_COLUMNS = new Set(["Importance"]);
+
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "";
   const parts = sortModel.map((s) => {
     const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
+    if (IMPORTANCE_SORT_COLUMNS.has(s.colId)) {
+      return `CASE ${expression} WHEN 'High' THEN 1 WHEN 'Med' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ${s.sort.toUpperCase()}`;
+    }
     return `${expression} ${s.sort.toUpperCase()}`;
   });
   return `ORDER BY ${parts.join(", ")}`;

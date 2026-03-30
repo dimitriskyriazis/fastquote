@@ -67,7 +67,7 @@ type ContactLookupsResponse = {
   };
 };
 
-const DEFAULT_IMPORTANCE_VALUES: Array<string | number> = ["", "1", "2", "3"];
+const DEFAULT_IMPORTANCE_VALUES: Array<string | number> = ["", "High", "Med", "Low"];
 
 const CONTACT_FIELD_LABELS: Record<string, string> = {
   Title: "Title",

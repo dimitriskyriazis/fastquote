@@ -33,9 +33,9 @@ export async function POST(
     }>(`
       SELECT
         COUNT(*) AS TotalCount,
-        SUM(CASE WHEN Importance = 1 THEN 1 ELSE 0 END) AS Importance1,
-        SUM(CASE WHEN Importance = 2 THEN 1 ELSE 0 END) AS Importance2,
-        SUM(CASE WHEN Importance = 3 THEN 1 ELSE 0 END) AS Importance3
+        SUM(CASE WHEN Importance = 'High' THEN 1 ELSE 0 END) AS Importance1,
+        SUM(CASE WHEN Importance = 'Med' THEN 1 ELSE 0 END) AS Importance2,
+        SUM(CASE WHEN Importance = 'Low' THEN 1 ELSE 0 END) AS Importance3
       FROM dbo.ContactsGroupLists
       WHERE ContactGroupID = @groupId
     `);

@@ -559,6 +559,10 @@ export default function ClientProductsPage({
   }, []);
 
   const handlePlacementModeChange = useCallback((mode: 'fill' | 'below') => {
+    if (mode === 'below') {
+      skipSelectionChangeUntilRef.current = Date.now() + 200;
+      offerProductsPanelRef.current?.deselectAllRows?.();
+    }
     offerProductsPanelRef.current?.setInsertLineVisible?.(mode === 'below');
   }, []);
 

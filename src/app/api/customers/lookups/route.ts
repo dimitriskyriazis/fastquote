@@ -28,7 +28,7 @@ const LOOKUP_KEYS: LookupKey[] = [
   'countries',
 ];
 
-const IMPORTANCE_VALUES = ['', '1', '2', '3'];
+const IMPORTANCE_VALUES = ['', 'High', 'Med', 'Low'];
 const IMPORTANCE_OPTIONS: DropdownOption[] = IMPORTANCE_VALUES.map((value) => ({
   value,
   label: value === '' ? 'Empty' : value,

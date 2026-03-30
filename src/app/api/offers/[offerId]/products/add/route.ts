@@ -13,6 +13,12 @@ import {
 } from '../../../../../../lib/gridFilters';
 import { clearPartModelNumberUpper } from '../../../../../../lib/partModelNumber';
 import { requirePermission } from '../../../../../../lib/authz';
+import {
+  buildTreeFromRows,
+  collectResequencedUpdates,
+  TreeOrderingRow,
+  TreeOrderingUpdateInput,
+} from '../treeOrdering';
 import type {
   TextCondition as TextFilterModel,
   CompoundTextFilter as CompoundTextFilterModel,
@@ -41,6 +47,68 @@ const TREE_ORDERING_HIERARCHY_EXPRESSION = `
     ELSE TRY_CONVERT(hierarchyid, CONCAT('/', REPLACE(${TREE_ORDERING_RAW_EXPRESSION}, '.', '/'), '/'))
   END
 `;
+const TREE_ORDERING_SORT_PRIORITY_EXPRESSION = `
+  CASE
+    WHEN ${TREE_ORDERING_RAW_EXPRESSION} IS NULL THEN 1
+    WHEN TRY_CONVERT(hierarchyid, CONCAT('/', REPLACE(${TREE_ORDERING_RAW_EXPRESSION}, '.', '/'), '/')) IS NOT NULL THEN 0
+    ELSE 2
+  END
+`;
+
+const TREE_ORDERING_UPDATE_CHUNK_SIZE = 200;
+
+async function resequenceTreeOrdering(
+  pool: Awaited<ReturnType<typeof getPool>>,
+  offerId: number,
+  userId: number | null,
+): Promise<number> {
+  const readReq = pool.request();
+  readReq.input('__offerId', sql.Int, offerId);
+  const readResult = await readReq.query<TreeOrderingRow>(`
+    SELECT od.ID AS OfferDetailID, od.TreeOrdering
+    FROM dbo.OfferDetails od
+    WHERE od.OfferID = @__offerId
+      AND ${TREE_ORDERING_RAW_EXPRESSION} IS NOT NULL
+    ORDER BY ${TREE_ORDERING_SORT_PRIORITY_EXPRESSION}, ${TREE_ORDERING_HIERARCHY_EXPRESSION}, od.TreeOrdering;
+  `);
+  const rows = readResult.recordset ?? [];
+  const roots = buildTreeFromRows(rows);
+  const updates = collectResequencedUpdates(roots);
+  if (updates.length === 0) return 0;
+
+  let rowsAffected = 0;
+  for (let idx = 0; idx < updates.length; idx += TREE_ORDERING_UPDATE_CHUNK_SIZE) {
+    const chunk = updates.slice(idx, idx + TREE_ORDERING_UPDATE_CHUNK_SIZE);
+    if (chunk.length === 0) continue;
+    const req = pool.request();
+    req.input('__offerId', sql.Int, offerId);
+    req.input('__modifiedBy', sql.Int, userId);
+    const valueClauses: string[] = [];
+    chunk.forEach((entry: TreeOrderingUpdateInput, chunkIdx: number) => {
+      const idParam = `odid_${chunkIdx}`;
+      const orderingParam = `ordering_${chunkIdx}`;
+      req.input(idParam, sql.Int, entry.OfferDetailID);
+      req.input(orderingParam, sql.NVarChar(255), entry.TreeOrdering);
+      valueClauses.push(`(@${idParam}, @${orderingParam})`);
+    });
+    const updateQuery = `
+      WITH PendingUpdates (OfferDetailID, TreeOrdering) AS (
+        SELECT v.OfferDetailID, v.TreeOrdering
+        FROM (VALUES ${valueClauses.join(', ')}) AS v (OfferDetailID, TreeOrdering)
+      )
+      UPDATE od
+      SET od.TreeOrdering = PendingUpdates.TreeOrdering,
+          od.ModifiedOn = SYSUTCDATETIME(),
+          od.ModifiedBy = @__modifiedBy
+      FROM dbo.OfferDetails od
+        INNER JOIN PendingUpdates ON od.ID = PendingUpdates.OfferDetailID
+      WHERE od.OfferID = @__offerId;
+    `;
+    const result = await req.query(updateQuery);
+    rowsAffected += result.rowsAffected?.[0] ?? 0;
+  }
+  return rowsAffected;
+}
 
 const normalizeOfferId = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isInteger(value)) return value;
@@ -981,6 +1049,20 @@ async function handleAddProducts(
       .map((row) => normalizeOfferDetailId((row as { OfferDetailID?: unknown })?.OfferDetailID ?? null))
       .filter((id): id is number => id != null)
     : [];
+
+  // Resequence tree ordering to close any gaps
+  if (inserted > 0) {
+    try {
+      await resequenceTreeOrdering(pool, offerId, typeof auditUserId === 'number' ? auditUserId : null);
+    } catch (reseqErr) {
+      logger.error(
+        `[add-products] resequence failed for offerId=${offerId}`,
+        { endpoint: `/api/offers/${offerId}/products/add`, method: 'POST', category: 'mutation' },
+        reseqErr instanceof Error ? reseqErr : undefined,
+      );
+    }
+  }
+
   return NextResponse.json({ ok: true, inserted, insertedOfferDetailIds });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Server error';

@@ -34,9 +34,9 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Note: "cg.Note",
   Enabled: "cg.Enabled",
   TotalCount: "(SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID)",
-  Importance1: "(SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID AND Importance = 1)",
-  Importance2: "(SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID AND Importance = 2)",
-  Importance3: "(SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID AND Importance = 3)",
+  Importance1: "(SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID AND Importance = 'High')",
+  Importance2: "(SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID AND Importance = 'Med')",
+  Importance3: "(SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID AND Importance = 'Low')",
 };
 
 const QUICK_FILTER_COLUMNS = [
@@ -103,10 +103,15 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
   };
 }
 
+const IMPORTANCE_SORT_COLUMNS = new Set(["GroupImportance"]);
+
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "";
   const parts = sortModel.map((entry) => {
     const expr = COLUMN_EXPRESSIONS[entry.colId] ?? `[${entry.colId}]`;
+    if (IMPORTANCE_SORT_COLUMNS.has(entry.colId)) {
+      return `CASE ${expr} WHEN 'High' THEN 1 WHEN 'Med' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ${entry.sort.toUpperCase()}`;
+    }
     return `${expr} ${entry.sort.toUpperCase()}`;
   });
   return `ORDER BY ${parts.join(", ")}`;
@@ -153,9 +158,9 @@ export async function POST(req: NextRequest) {
         cg.Note,
         cg.Enabled,
         (SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID) AS TotalCount,
-        (SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID AND Importance = 1) AS Importance1,
-        (SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID AND Importance = 2) AS Importance2,
-        (SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID AND Importance = 3) AS Importance3
+        (SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID AND Importance = 'High') AS Importance1,
+        (SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID AND Importance = 'Med') AS Importance2,
+        (SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID AND Importance = 'Low') AS Importance3
       FROM dbo.ContactGroups cg
       LEFT JOIN dbo.SalesDivision sd ON sd.ID = cg.SalesDivisionID
     `;

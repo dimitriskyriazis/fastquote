@@ -56,10 +56,15 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"], extraWhere
   };
 }
 
+const IMPORTANCE_SORT_COLUMNS = new Set(["MinimumImportance"]);
+
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "";
   const parts = sortModel.map((entry) => {
     const expr = COLUMN_EXPRESSIONS[entry.colId] ?? `[${entry.colId}]`;
+    if (IMPORTANCE_SORT_COLUMNS.has(entry.colId)) {
+      return `CASE ${expr} WHEN 'High' THEN 1 WHEN 'Med' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ${entry.sort.toUpperCase()}`;
+    }
     return `${expr} ${entry.sort.toUpperCase()}`;
   });
   return `ORDER BY ${parts.join(", ")}`;
@@ -179,7 +184,7 @@ export async function PATCH(
       request.input("mcgId", sql.Int, mcgId);
 
       if (field === "MinimumImportance") {
-        request.input("value", sql.Int, value != null ? Number(value) : null);
+        request.input("value", sql.NVarChar(50), value != null ? String(value).trim() : null);
         await request.query(`UPDATE dbo.MailContactGroups SET MinimumImportance = @value WHERE ID = @mcgId`);
       } else if (field === "Note") {
         request.input("value", sql.NVarChar(sql.MAX), value != null ? String(value).trim() : null);

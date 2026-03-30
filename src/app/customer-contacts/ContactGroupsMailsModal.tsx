@@ -8,7 +8,7 @@ type GroupEntry = {
   ContactGroupListID: number;
   ContactGroupID: number;
   Description: string | null;
-  Importance: number | null;
+  Importance: string | null;
   Note: string | null;
 };
 

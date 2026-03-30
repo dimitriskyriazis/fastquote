@@ -7,7 +7,7 @@ type LookupRow = RawDropdownRow & { ID: number | string | null; Name: string | n
 const mapLookupRows = (rows: LookupRow[] | undefined | null): CustomerDropdownOption[] =>
   toDropdownOptions<LookupRow>(rows);
 
-export const IMPORTANCE_VALUES = ['', '1', '2', '3'];
+export const IMPORTANCE_VALUES = ['', 'High', 'Med', 'Low'];
 export const IMPORTANCE_OPTIONS: CustomerDropdownOption[] = IMPORTANCE_VALUES.map((value) => ({
   value,
   label: value === '' ? 'Empty' : value,

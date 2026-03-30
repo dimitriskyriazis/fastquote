@@ -118,7 +118,7 @@ export default function MailContactsClient({ mailId }: Props) {
     { field: "FirstName", headerName: "First Name", filter: "agTextColumnFilter" },
     { field: "Email", headerName: "Email", filter: "agTextColumnFilter" },
     { field: "Fax", headerName: "Fax", filter: "agTextColumnFilter" },
-    { field: "Importance", headerName: "Importance", filter: "agNumberColumnFilter", editable: true },
+    { field: "Importance", headerName: "Importance", filter: "agTextColumnFilter", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", "High", "Med", "Low"] } },
     { field: "Note", headerName: "Note", filter: "agTextColumnFilter", editable: true },
     {
       field: "Sent", headerName: "Sent", filter: "agSetColumnFilter",

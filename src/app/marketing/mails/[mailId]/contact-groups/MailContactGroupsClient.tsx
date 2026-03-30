@@ -136,17 +136,17 @@ export default function MailContactGroupsClient({ mailId }: Props) {
     },
     {
       field: "Importance1",
-      headerName: "Imp. 1",
+      headerName: "Imp. High",
       filter: "agNumberColumnFilter",
     },
     {
       field: "Importance2",
-      headerName: "Imp. 2",
+      headerName: "Imp. Med",
       filter: "agNumberColumnFilter",
     },
     {
       field: "Importance3",
-      headerName: "Imp. 3",
+      headerName: "Imp. Low",
       filter: "agNumberColumnFilter",
     },
     {
@@ -170,8 +170,10 @@ export default function MailContactGroupsClient({ mailId }: Props) {
     {
       field: "MinimumImportance",
       headerName: "Min. Importance",
-      filter: "agNumberColumnFilter",
+      filter: "agTextColumnFilter",
       editable: true,
+      cellEditor: "agSelectCellEditor",
+      cellEditorParams: { values: ["", "High", "Med", "Low"] },
     },
     {
       field: "Note",

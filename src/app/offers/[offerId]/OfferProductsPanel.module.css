@@ -12,12 +12,12 @@
   width: 100%;
   display: flex;
   position: relative;
+  overflow: hidden;
 }
 
 .insertLine {
   position: absolute;
   left: 0;
-  right: 0;
   z-index: 5;
   display: flex;
   align-items: center;

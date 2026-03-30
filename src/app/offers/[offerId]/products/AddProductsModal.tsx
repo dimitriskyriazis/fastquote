@@ -954,7 +954,7 @@ export default function AddProductsModal({
     )
   ) : (
     <div className={styles.placementIndicator}>
-      <span className={styles.placementText}>Select a row to fill or click between rows to add products there</span>
+      <span className={styles.placementText}>Adding product at the end of the list — select a row to fill or click between rows to insert there</span>
     </div>
   );
 
