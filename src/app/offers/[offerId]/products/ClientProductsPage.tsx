@@ -1046,6 +1046,7 @@ export default function ClientProductsPage({
           refreshToken={refreshToken}
           layout={pivotLayout}
           onExitPivot={() => setPivotView(false)}
+          onDataChanged={() => setRefreshToken((prev) => prev + 1)}
         />
       ) : (
         <div className={toolbarStyles.splitLayout}>

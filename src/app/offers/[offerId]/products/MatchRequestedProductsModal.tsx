@@ -124,6 +124,7 @@ export default function MatchRequestedProductsModal({
   const [suggesting, setSuggesting] = useState(false);
   const [suggestedProducts, setSuggestedProducts] = useState<MatcherRowData[]>([]);
   const [suggestionsVisible, setSuggestionsVisible] = useState(true);
+  const [noSuggestionsFound, setNoSuggestionsFound] = useState(false);
   const productsApiRef = useRef<MatcherGridApi | null>(null);
   const pendingSelectionProductIdRef = useRef<number | null>(null);
   const suggestedProductsRef = useRef<MatcherRowData[]>([]);
@@ -456,6 +457,7 @@ export default function MatchRequestedProductsModal({
     suggestedProductsRef.current = products;
     setSuggestedProducts(products);
     setSuggestionsVisible(true);
+    setNoSuggestionsFound(products.length === 0);
     if (products.length > 0) {
       try {
         productsApiRef.current?.deselectAll?.();
@@ -608,6 +610,7 @@ export default function MatchRequestedProductsModal({
     setAssigning(false);
     setComment('');
     setSuggestedProducts([]);
+    setNoSuggestionsFound(false);
     // Immediately update refs so autoSelectTopProduct (which runs in a later effect
     // during the same commit phase) sees the cleared values.
     suggestedProductsRef.current = [];
@@ -696,6 +699,9 @@ export default function MatchRequestedProductsModal({
                   'Suggest Products (AI)'
                 )}
               </button>
+              )}
+              {noSuggestionsFound && suggestedProducts.length === 0 && !suggesting && (
+                <span className={styles.noSuggestionsLabel}>No matching products found</span>
               )}
               {suggestedProducts.length > 0 && suggestionsVisible && (
                 <button

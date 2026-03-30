@@ -237,6 +237,12 @@
   }
 }
 
+.noSuggestionsLabel {
+  color: #92400e;
+  font-size: 13px;
+  font-weight: 500;
+}
+
 /* Suggested (pinned) row styling
    Cell-level rules use .gridShell repeated 3× to beat the high-specificity
    catch-all in ag-grid-overrides.css (0,7,0) that would otherwise paint

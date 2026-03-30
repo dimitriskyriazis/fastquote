@@ -63,6 +63,16 @@ export const costModifierMenuIcon = `
   </span>
 `;
 
+export const discountMenuIcon = `
+  <span class="fastquote-menu-icon fastquote-menu-icon--discount" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 7h.01" />
+      <path d="M17 17h.01" />
+      <path d="M20.59 4.41a2 2 0 0 1 0 2.83l-13.35 13.35a2 2 0 0 1-2.83 0l-.01-.01a2 2 0 0 1 0-2.83L17.76 4.41a2 2 0 0 1 2.83 0z" />
+    </svg>
+  </span>
+`;
+
 export const copyRowsMenuIcon = `
   <span class="fastquote-menu-icon fastquote-menu-icon--copy" aria-hidden="true">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">

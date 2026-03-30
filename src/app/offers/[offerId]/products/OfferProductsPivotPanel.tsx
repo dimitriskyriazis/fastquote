@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import type {
+  CellDoubleClickedEvent,
   ColumnState,
   ColumnPivotModeChangedEvent,
   ColDef,
@@ -18,6 +19,7 @@ import {
   EventApiModule,
   ModuleRegistry,
   NumberFilterModule,
+  QuickFilterModule,
   RowApiModule,
   RowStyleModule,
   TextFilterModule,
@@ -40,6 +42,7 @@ import {
   StatusBarModule,
 } from 'ag-grid-enterprise';
 import { GridQuickSearchContext } from '../../../components/GridQuickSearchProvider';
+import LookupModal from '../../../components/LookupModal';
 import { showToastMessage } from '../../../../lib/toast';
 import gridStyles from '../../../components/AgGridAll.module.css';
 import panelStyles from '../OfferProductsPanel.module.css';
@@ -51,7 +54,18 @@ type Props = {
   offerId: string;
   refreshToken?: number;
   onExitPivot?: () => void;
+  onDataChanged?: () => void;
   layout: 'category' | 'brand';
+};
+
+type BulkEditField = 'CustomerDiscount' | 'TelmacoDiscount' | 'Margin';
+
+const BULK_EDIT_FIELDS: ReadonlySet<string> = new Set<BulkEditField>(['CustomerDiscount', 'TelmacoDiscount', 'Margin']);
+
+const BULK_EDIT_LABELS: Record<BulkEditField, string> = {
+  CustomerDiscount: 'Customer Discount',
+  TelmacoDiscount: 'Telmaco Discount',
+  Margin: 'Margin',
 };
 
 const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -129,13 +143,14 @@ if (!(globalThis as unknown as { __AG_GRID_PIVOT_MODULES_REGISTERED__?: boolean 
     ColumnAutoSizeModule,
     RowStyleModule,
     RowApiModule,
+    QuickFilterModule,
   ]);
   (globalThis as unknown as { __AG_GRID_PIVOT_MODULES_REGISTERED__?: boolean }).__AG_GRID_PIVOT_MODULES_REGISTERED__ = true;
 }
 
 LicenseManager.setLicenseKey(process.env.NEXT_PUBLIC_AG_GRID_LICENSE || '');
 
-export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onExitPivot, layout }: Props) {
+export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onExitPivot, onDataChanged, layout }: Props) {
   const quickSearch = useContext(GridQuickSearchContext);
   const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const lastFetchSignatureRef = useRef<string>('');
@@ -143,6 +158,13 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
   const [rowData, setRowData] = useState<RowData[]>([]);
   const [loading, setLoading] = useState(false);
   const [rowCount, setRowCount] = useState<number | null>(null);
+
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkEditField, setBulkEditField] = useState<BulkEditField>('CustomerDiscount');
+  const [bulkEditBrand, setBulkEditBrand] = useState('');
+  const [bulkEditValue, setBulkEditValue] = useState('');
+  const [bulkEditSaving, setBulkEditSaving] = useState(false);
+  const [bulkEditError, setBulkEditError] = useState<string | null>(null);
 
   const endpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products`,
@@ -254,6 +276,122 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     });
   }, [layout]);
 
+  const handleCellDoubleClicked = useCallback((event: CellDoubleClickedEvent<RowData>) => {
+    if (layout !== 'brand') return;
+    const { node, colDef } = event;
+    if (!node.group || !colDef.field || !BULK_EDIT_FIELDS.has(colDef.field)) return;
+    const brandName = String(node.key ?? '').trim();
+    if (!brandName) return;
+    // AG Grid 'avg' aggFunc stores {count, value}; 'sum' stores a plain number
+    const raw = event.value;
+    const num = typeof raw === 'number' ? raw
+      : (raw && typeof raw === 'object' && 'value' in raw && typeof (raw as { value: unknown }).value === 'number')
+        ? (raw as { value: number }).value
+        : 0;
+    setBulkEditField(colDef.field as BulkEditField);
+    setBulkEditBrand(brandName);
+    setBulkEditValue(String(Math.round(num * 100) / 100));
+    setBulkEditError(null);
+    setBulkEditOpen(true);
+  }, [layout]);
+
+  const refreshPivotData = useCallback(() => {
+    lastFetchSignatureRef.current = '';
+    setLoading(true);
+    const run = async () => {
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            request: { allRows: true, view: 'pivot', quickFilterText: quickSearch?.value ?? null },
+            fields: fieldList,
+          }),
+        });
+        const payload = (await res.json().catch(() => null)) as
+          | { ok?: boolean; error?: string; rows?: RowData[]; rowCount?: number }
+          | null;
+        if (!res.ok || !payload?.ok) throw new Error(payload?.error ?? 'Failed to reload');
+        const rows = Array.isArray(payload.rows) ? payload.rows : [];
+        setRowData(rows);
+        setRowCount(typeof payload.rowCount === 'number' ? payload.rowCount : rows.length);
+      } catch {
+        showToastMessage('Unable to reload pivot data.', 'error');
+      } finally {
+        setLoading(false);
+      }
+    };
+    void run();
+  }, [endpoint, fieldList, quickSearch?.value]);
+
+  const confirmBulkEdit = useCallback(async () => {
+    const valueNumber = Number(bulkEditValue);
+    if (!Number.isFinite(valueNumber)) {
+      setBulkEditError('Please enter a valid number.');
+      return;
+    }
+    if (bulkEditField === 'Margin' && (valueNumber < -100 || valueNumber > 100)) {
+      setBulkEditError('Margin must be between -100 and 100.');
+      return;
+    }
+    setBulkEditSaving(true);
+    setBulkEditError(null);
+    try {
+      // Fetch all OfferDetailIDs for this brand
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request: {
+            allRows: true,
+            view: 'pivot',
+            filterModel: {
+              BrandName: { filterType: 'text', type: 'equals', filter: bulkEditBrand },
+            },
+          },
+          fields: ['OfferDetailID'],
+        }),
+      });
+      const payload = (await res.json().catch(() => null)) as
+        | { ok?: boolean; rows?: RowData[] }
+        | null;
+      if (!res.ok || !payload?.ok) throw new Error('Failed to fetch brand rows.');
+      const ids = (payload.rows ?? [])
+        .map((r) => r.OfferDetailID)
+        .filter((id): id is number => typeof id === 'number');
+      if (ids.length === 0) {
+        setBulkEditError('No products found for this brand.');
+        return;
+      }
+      // Batch PATCH updates
+      const chunkSize = 200;
+      for (let idx = 0; idx < ids.length; idx += chunkSize) {
+        const chunk = ids.slice(idx, idx + chunkSize);
+        const updates = chunk.map((OfferDetailID) => ({
+          OfferDetailID,
+          [bulkEditField]: valueNumber,
+        }));
+        const patchRes = await fetch(endpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates }),
+        });
+        if (!patchRes.ok) throw new Error('Failed to apply updates.');
+      }
+      showToastMessage(
+        `${BULK_EDIT_LABELS[bulkEditField]} updated for ${bulkEditBrand} (${ids.length} items)`,
+        'success',
+      );
+      setBulkEditOpen(false);
+      refreshPivotData();
+      onDataChanged?.();
+    } catch (err) {
+      setBulkEditError(err instanceof Error ? err.message : 'Update failed.');
+    } finally {
+      setBulkEditSaving(false);
+    }
+  }, [bulkEditBrand, bulkEditField, bulkEditValue, endpoint, onDataChanged, refreshPivotData]);
+
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
@@ -296,6 +434,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     void run();
     return () => {
       cancelled = true;
+      lastFetchSignatureRef.current = '';
     };
   }, [endpoint, fieldList, offerId, refreshToken, quickSearch?.value]);
 
@@ -365,6 +504,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
             rowHeight={32}
             headerHeight={38}
             rowModelType="clientSide"
+            onCellDoubleClicked={handleCellDoubleClicked}
             sideBar={{
               toolPanels: [
                 {
@@ -421,6 +561,37 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
           <span className={panelStyles.totalValue}>{formatPercentTotal(totals.totalMargin)}</span>
         </div>
       </div>
+      <LookupModal
+        open={bulkEditOpen}
+        title={`Set ${BULK_EDIT_LABELS[bulkEditField]} for "${bulkEditBrand}"`}
+        onClose={() => setBulkEditOpen(false)}
+        onConfirm={confirmBulkEdit}
+        confirmLabel="Apply"
+        saving={bulkEditSaving}
+        error={bulkEditError}
+      >
+        <p style={{ margin: '0 0 12px', color: '#64748b', fontSize: '0.9rem' }}>
+          This will update <strong>{BULK_EDIT_LABELS[bulkEditField]}</strong> for all products
+          of brand <strong>{bulkEditBrand}</strong> in this offer.
+        </p>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.9rem' }}>
+          {BULK_EDIT_LABELS[bulkEditField]} (%)
+          <input
+            type="number"
+            step="any"
+            value={bulkEditValue}
+            onChange={(e) => setBulkEditValue(e.target.value)}
+            autoFocus
+            style={{
+              padding: '6px 8px',
+              border: '1px solid #cbd5e1',
+              borderRadius: 4,
+              fontSize: '0.9rem',
+              width: '100%',
+            }}
+          />
+        </label>
+      </LookupModal>
     </div>
   );
 }

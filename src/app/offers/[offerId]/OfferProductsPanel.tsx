@@ -75,6 +75,7 @@ import {
   commentMenuIcon,
   brandBulkEditMenuIcon,
   costModifierMenuIcon,
+  discountMenuIcon,
   copyRowsMenuIcon,
   pasteRowsMenuIcon,
   addStandardPackageMenuIcon,
@@ -510,7 +511,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [matchAddedProductId, setMatchAddedProductId] = useState<number | null>(null);
   const clearMatchAddedProductId = useCallback(() => setMatchAddedProductId(null), []);
   const [brandBulkEditOpen, setBrandBulkEditOpen] = useState(false);
-  const [brandBulkEditField, setBrandBulkEditField] = useState<'CurrencyCostModifier' | 'Margin'>('CurrencyCostModifier');
+  const [brandBulkEditField, setBrandBulkEditField] = useState<'CurrencyCostModifier' | 'Margin' | 'CustomerDiscount' | 'TelmacoDiscount'>('CurrencyCostModifier');
   const [brandBulkEditBrandName, setBrandBulkEditBrandName] = useState('');
   const [brandBulkEditValue, setBrandBulkEditValue] = useState('');
   const [brandBulkEditSaving, setBrandBulkEditSaving] = useState(false);
@@ -1292,11 +1293,13 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       const v = (row as Record<string, unknown>)[key];
       return typeof v === 'string' ? v.trim() || null : null;
     };
-    // Highlight the selected row's product columns
+    // Highlight the selected row's product columns (only when add products is open)
     clearSelectedRowHighlight();
-    selectedRowIdRef.current = offerDetailId;
-    applySelectedRowHighlight();
-    selectedRowHighlightIntervalRef.current = setInterval(applySelectedRowHighlight, 200);
+    if (showInsertLineOnHover) {
+      selectedRowIdRef.current = offerDetailId;
+      applySelectedRowHighlight();
+      selectedRowHighlightIntervalRef.current = setInterval(applySelectedRowHighlight, 200);
+    }
 
     onMainGridSelectionChanged?.({
       offerDetailId,
@@ -1309,7 +1312,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       requestedModelNo: strField('RequestedModelNo'),
       requestedDescription: strField('RequestedDescription'),
     });
-  }, [onMainGridSelectionChanged, clearSelectedRowHighlight, applySelectedRowHighlight]);
+  }, [onMainGridSelectionChanged, clearSelectedRowHighlight, applySelectedRowHighlight, showInsertLineOnHover]);
 
   // Called by AgGridAll after it restores persisted column state (hide/show/width).
   // AgGridAll may restore stale hide:true values for req columns from a previous session.
@@ -4007,7 +4010,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       },
       clearSelectedRowHighlight,
     }),
-    [canUndo, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer],
+    [canUndo, clearSelectedRowHighlight, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer],
   );
 
 
@@ -4015,7 +4018,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   const manualMatchPosition = currentRequestedMatch ? processedRequestedMatches + 1 : 0;
 
   const openBrandBulkEdit = useCallback((
-    field: 'CurrencyCostModifier' | 'Margin',
+    field: 'CurrencyCostModifier' | 'Margin' | 'CustomerDiscount' | 'TelmacoDiscount',
     brandName: string,
     currentValue?: unknown,
     scope: 'brand' | 'offer' = 'brand',
@@ -4056,7 +4059,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       return;
     }
     const valueNumber = coerceNumber(brandBulkEditValue);
-    const label = brandBulkEditField === 'CurrencyCostModifier' ? 'Cost modifier' : 'Margin';
+    const label = brandBulkEditField === 'CurrencyCostModifier' ? 'Cost modifier'
+      : brandBulkEditField === 'CustomerDiscount' ? 'Customer discount'
+      : brandBulkEditField === 'TelmacoDiscount' ? 'Telmaco discount'
+      : 'Margin';
     if (valueNumber == null || !Number.isFinite(valueNumber)) {
       setBrandBulkEditError(`Please enter a valid ${label.toLowerCase()}.`);
       return;
@@ -4433,6 +4439,18 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         icon: brandBulkEditMenuIcon,
         action: () => openBrandBulkEdit('Margin', rowBrandName, currentMargin, 'brand'),
       };
+      const currentCustomerDiscount = (rowData as { CustomerDiscount?: unknown }).CustomerDiscount ?? null;
+      const currentTelmacoDiscount = (rowData as { TelmacoDiscount?: unknown }).TelmacoDiscount ?? null;
+      const setCustomerDiscountItem: MenuItemDef = {
+        name: 'Set customer discount for this brand',
+        icon: discountMenuIcon,
+        action: () => openBrandBulkEdit('CustomerDiscount', rowBrandName, currentCustomerDiscount, 'brand'),
+      };
+      const setTelmacoDiscountItem: MenuItemDef = {
+        name: 'Set telmaco discount for this brand',
+        icon: discountMenuIcon,
+        action: () => openBrandBulkEdit('TelmacoDiscount', rowBrandName, currentTelmacoDiscount, 'brand'),
+      };
       const bulkItems: MenuItemDef[] = [];
       if (rowHasModifier) {
         bulkItems.push(setModifierItem);
@@ -4441,6 +4459,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         bulkItems.push(setOfferModifierItem);
       }
       bulkItems.push(setMarginItem);
+      bulkItems.push(setCustomerDiscountItem);
+      bulkItems.push(setTelmacoDiscountItem);
       if (bulkItems.length > 0) {
         if (deleteIndexAfterHistory >= 0) {
           items.splice(deleteIndexAfterHistory, 0, ...bulkItems);
@@ -6091,8 +6111,14 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         open={brandBulkEditOpen}
         title={
           brandBulkEditScope === 'offer'
-            ? (brandBulkEditField === 'CurrencyCostModifier' ? 'Bulk edit cost modifier for offer' : 'Bulk edit margin for offer')
-            : (brandBulkEditField === 'CurrencyCostModifier' ? 'Bulk edit cost modifier by brand' : 'Bulk edit margin by brand')
+            ? (brandBulkEditField === 'CurrencyCostModifier' ? 'Bulk edit cost modifier for offer'
+              : brandBulkEditField === 'CustomerDiscount' ? 'Bulk edit customer discount for offer'
+              : brandBulkEditField === 'TelmacoDiscount' ? 'Bulk edit telmaco discount for offer'
+              : 'Bulk edit margin for offer')
+            : (brandBulkEditField === 'CurrencyCostModifier' ? 'Bulk edit cost modifier by brand'
+              : brandBulkEditField === 'CustomerDiscount' ? 'Bulk edit customer discount by brand'
+              : brandBulkEditField === 'TelmacoDiscount' ? 'Bulk edit telmaco discount by brand'
+              : 'Bulk edit margin by brand')
         }
         onClose={closeBrandBulkEdit}
         onConfirm={confirmBrandBulkEdit}
@@ -6115,7 +6141,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         )}
         <div className={lookupStyles.field}>
           <label className={lookupStyles.fieldLabel} htmlFor="bulk-edit-brand-value">
-            {brandBulkEditField === 'CurrencyCostModifier' ? 'Cost modifier' : 'Margin (%)'}
+            {brandBulkEditField === 'CurrencyCostModifier' ? 'Cost modifier'
+              : brandBulkEditField === 'CustomerDiscount' ? 'Customer discount (%)'
+              : brandBulkEditField === 'TelmacoDiscount' ? 'Telmaco discount (%)'
+              : 'Margin (%)'}
           </label>
           <input
             id="bulk-edit-brand-value"
