@@ -183,6 +183,7 @@ export type OfferProductsPanelHandle = {
   deselectAllRows: () => void;
   flashRows: (offerDetailIds: number[]) => void;
   getLastClickedRowId: () => number | null;
+  clearSelectedRowHighlight: () => void;
 };
 
 export type OfferProductsTemplateExportRow = {
@@ -961,19 +962,22 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       const node = api.getDisplayedRowAtIndex(Number.parseInt(idx, 10));
       const rowId = normalizeOfferDetailId((node?.data as { OfferDetailID?: unknown } | null)?.OfferDetailID ?? null);
       if (rowId != null && flashIds.has(rowId)) {
-        const cells = (agRow as HTMLElement).querySelectorAll(':scope > .ag-cell');
-        for (const cell of cells) {
-          const colId = cell.getAttribute('col-id') ?? '';
-          if (colId.startsWith('Requested')
-            || colId === 'ag-Grid-AutoColumn'
-            || colId === ''
-            || cell.classList.contains('ag-selection-checkbox')
-            || cell.querySelector('.ag-selection-checkbox, .ag-row-drag, .ag-drag-handle')
-          ) continue;
-          const el = cell as HTMLElement;
-          if (flashPhaseRef.current === 'paint') {
-            el.style.setProperty('background-color', '#d4f3ff', 'important');
-            el.style.removeProperty('transition');
+        const allRowEls = vp.querySelectorAll(`.ag-row[row-index="${idx}"]`);
+        for (const rowEl of allRowEls) {
+          const cells = (rowEl as HTMLElement).querySelectorAll(':scope > .ag-cell');
+          for (const cell of cells) {
+            const colId = cell.getAttribute('col-id') ?? '';
+            if (colId.startsWith('Requested')
+              || colId === 'ag-Grid-AutoColumn'
+              || colId === ''
+              || cell.classList.contains('ag-selection-checkbox')
+              || cell.querySelector('.ag-selection-checkbox, .ag-row-drag, .ag-drag-handle')
+            ) continue;
+            const el = cell as HTMLElement;
+            if (flashPhaseRef.current === 'paint') {
+              el.style.setProperty('background-color', '#d4f3ff', 'important');
+              el.style.removeProperty('transition');
+            }
           }
         }
       }
@@ -1205,8 +1209,64 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     // Real-time updates are handled by useRealtimeGridUpdates hook below
     setRequestedColumnsReadyFlag(true);
   }, [setRequestedColumnsReadyFlag]);
+  const selectedRowHighlightRef = useRef<HTMLElement[]>([]);
+  const selectedRowIdRef = useRef<number | null>(null);
+  const selectedRowHighlightIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const clearSelectedRowHighlight = useCallback(() => {
+    for (const el of selectedRowHighlightRef.current) {
+      el.style.removeProperty('background-color');
+    }
+    selectedRowHighlightRef.current = [];
+    selectedRowIdRef.current = null;
+    if (selectedRowHighlightIntervalRef.current) {
+      clearInterval(selectedRowHighlightIntervalRef.current);
+      selectedRowHighlightIntervalRef.current = null;
+    }
+  }, []);
+
+  const applySelectedRowHighlight = useCallback(() => {
+    const rowId = selectedRowIdRef.current;
+    if (rowId == null) return;
+    const wrapper = gridWrapperRef.current;
+    const api = gridApiRef.current;
+    if (!wrapper || !api || api.isDestroyed?.()) return;
+    const vp = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
+    if (!vp) return;
+    // Clear previous
+    for (const el of selectedRowHighlightRef.current) el.style.removeProperty('background-color');
+    selectedRowHighlightRef.current = [];
+    const agRows = vp.querySelectorAll('.ag-row');
+    for (const agRow of agRows) {
+      const idx = agRow.getAttribute('row-index');
+      if (idx == null) continue;
+      const node = api.getDisplayedRowAtIndex(Number.parseInt(idx, 10));
+      const id = normalizeOfferDetailId((node?.data as { OfferDetailID?: unknown } | null)?.OfferDetailID ?? null);
+      if (id === rowId) {
+        // Find ALL row elements with this row-index (pinned-left, center, pinned-right containers)
+        const allRowEls = vp.querySelectorAll(`.ag-row[row-index="${idx}"]`);
+        for (const rowEl of allRowEls) {
+          const cells = (rowEl as HTMLElement).querySelectorAll(':scope > .ag-cell');
+          for (const cell of cells) {
+            const colId = cell.getAttribute('col-id') ?? '';
+            if (colId.startsWith('Requested')
+              || colId === 'ag-Grid-AutoColumn'
+              || colId === ''
+              || cell.classList.contains('ag-selection-checkbox')
+              || cell.querySelector('.ag-selection-checkbox, .ag-row-drag, .ag-drag-handle')
+            ) continue;
+            (cell as HTMLElement).style.setProperty('background-color', '#93c5fd', 'important');
+            selectedRowHighlightRef.current.push(cell as HTMLElement);
+          }
+        }
+        break;
+      }
+    }
+  }, []);
+
   const handleMainGridSelectionChanged = useCallback((rows: Record<string, unknown>[]) => {
     if (!rows || rows.length === 0) {
+      clearSelectedRowHighlight();
       onMainGridSelectionChanged?.(null);
       return;
     }
@@ -1232,6 +1292,12 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       const v = (row as Record<string, unknown>)[key];
       return typeof v === 'string' ? v.trim() || null : null;
     };
+    // Highlight the selected row's product columns
+    clearSelectedRowHighlight();
+    selectedRowIdRef.current = offerDetailId;
+    applySelectedRowHighlight();
+    selectedRowHighlightIntervalRef.current = setInterval(applySelectedRowHighlight, 200);
+
     onMainGridSelectionChanged?.({
       offerDetailId,
       treeOrdering,
@@ -1243,7 +1309,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       requestedModelNo: strField('RequestedModelNo'),
       requestedDescription: strField('RequestedDescription'),
     });
-  }, [onMainGridSelectionChanged]);
+  }, [onMainGridSelectionChanged, clearSelectedRowHighlight, applySelectedRowHighlight]);
 
   // Called by AgGridAll after it restores persisted column state (hide/show/width).
   // AgGridAll may restore stale hide:true values for req columns from a previous session.
@@ -3939,6 +4005,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         flashPhaseRef.current = 'paint';
         // Don't paint yet — wait for handleGridResponse to signal new data has arrived
       },
+      clearSelectedRowHighlight,
     }),
     [canUndo, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer],
   );
@@ -5721,10 +5788,100 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     };
   }, []);
 
+  const shiftIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const shiftInsertYRef = useRef<number | null>(null);
+
+  const applyRowShift = useCallback(() => {
+    const insertY = shiftInsertYRef.current;
+    if (insertY == null) return;
+    const wrapper = gridWrapperRef.current;
+    if (!wrapper) return;
+    const vp = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
+    if (!vp) return;
+    const halfGap = 16;
+    const rows = vp.querySelectorAll('.ag-row');
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    for (const row of rows) {
+      const el = row as HTMLElement;
+      const idx = el.getAttribute('row-index');
+      if (idx == null) continue;
+      const node = api.getDisplayedRowAtIndex(Number.parseInt(idx, 10));
+      const rowTop = node?.rowTop;
+      if (rowTop == null) continue;
+      const shift = rowTop >= insertY ? halfGap : -halfGap;
+      el.style.transform = `translateY(${rowTop + shift}px)`;
+    }
+    // Sync the pinned line position to match the insertY in screen coordinates
+    const pinLine = pinnedLineRef.current;
+    if (pinLine) {
+      const wrapper = gridWrapperRef.current;
+      if (wrapper) {
+        const vpRect = vp.getBoundingClientRect();
+        const wrapperRect = wrapper.getBoundingClientRect();
+        const vpOffset = vpRect.top - wrapperRect.top;
+        const pinTop = insertY - vp.scrollTop + vpOffset;
+        if (pinTop < vpOffset || pinTop > vpOffset + vpRect.height) {
+          pinLine.style.display = 'none';
+        } else {
+          pinLine.style.display = 'flex';
+          pinLine.style.top = `${pinTop}px`;
+        }
+      }
+    }
+  }, []);
+
+  const startRowShift = useCallback(() => {
+    // Use the anchor row's rowTop from the grid API as the insertion Y
+    const data = insertLineDataRef.current;
+    if (!data) return;
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    // Find the anchor row's rowTop
+    let anchorRowTop: number | null = null;
+    api.forEachNode((node) => {
+      if (anchorRowTop != null) return;
+      const rowId = normalizeOfferDetailId((node.data as { OfferDetailID?: unknown } | null)?.OfferDetailID ?? null);
+      if (rowId === data.offerDetailId) {
+        anchorRowTop = (node.rowTop ?? 0) + (node.rowHeight ?? 32);
+      }
+    });
+    if (anchorRowTop == null) return;
+    shiftInsertYRef.current = anchorRowTop;
+    applyRowShift();
+    if (shiftIntervalRef.current) clearInterval(shiftIntervalRef.current);
+    shiftIntervalRef.current = setInterval(applyRowShift, 80);
+  }, [applyRowShift]);
+
+  const stopRowShift = useCallback(() => {
+    if (shiftIntervalRef.current) {
+      clearInterval(shiftIntervalRef.current);
+      shiftIntervalRef.current = null;
+    }
+    shiftInsertYRef.current = null;
+    // Restore original transforms using grid API
+    const wrapper = gridWrapperRef.current;
+    const vp = wrapper?.querySelector('.ag-body-viewport') as HTMLElement | null;
+    const api = gridApiRef.current;
+    if (vp && api && !api.isDestroyed?.()) {
+      const rows = vp.querySelectorAll('.ag-row');
+      for (const row of rows) {
+        const el = row as HTMLElement;
+        const idx = el.getAttribute('row-index');
+        if (idx == null) continue;
+        const node = api.getDisplayedRowAtIndex(Number.parseInt(idx, 10));
+        if (node?.rowTop != null) {
+          el.style.transform = `translateY(${node.rowTop}px)`;
+        }
+      }
+    }
+  }, []);
+
   const handleInsertLineClick = useCallback(() => {
     const data = insertLineDataRef.current;
     if (!data) return;
-    // Deselect rows in main grid
+    // Clear row highlight and deselect rows in main grid
+    clearSelectedRowHighlight();
     const api = gridApiRef.current;
     if (api && !api.isDestroyed?.()) {
       try { api.deselectAll(); } catch { /* noop */ }
@@ -5741,9 +5898,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       const wrapper = gridWrapperRef.current;
       const vp = wrapper?.querySelector('.ag-body-viewport') as HTMLElement | null;
       insertLinePinScrollRef.current = vp?.scrollTop ?? 0;
+      startRowShift();
     }
     onRequestInsertProductRef.current?.(data);
-  }, []);
+  }, [clearSelectedRowHighlight, startRowShift]);
 
   const setInsertLineVisible = useCallback((visible: boolean) => {
     const pinLine = pinnedLineRef.current;
@@ -5780,12 +5938,14 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         }
       }
       pinLine.style.display = 'flex';
+      startRowShift();
     } else {
       insertLinePinnedRef.current = false;
       pinLine.style.display = 'none';
       insertLineDataRef.current = null;
+      stopRowShift();
     }
-  }, [getAddInsertionAnchor]);
+  }, [getAddInsertionAnchor, startRowShift, stopRowShift]);
   setInsertLineVisibleRef.current = setInsertLineVisible;
 
   return (

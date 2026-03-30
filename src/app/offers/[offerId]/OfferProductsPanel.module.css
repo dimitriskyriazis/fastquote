@@ -40,18 +40,18 @@
   transform: scale(1);
 }
 
-/* Pinned state: thick line, no button */
+/* Pinned state: row-sized highlight centered at insertion point */
 .insertLinePinned .insertLineBar {
-  background: #2563eb;
-  height: 3px;
-}
-
-.insertLinePinned .insertLineButton {
-  display: none;
+  background: #93c5fd;
+  height: 32px;
 }
 
 .insertLinePinned {
   pointer-events: none;
+}
+
+.insertLinePinned .insertLineButton {
+  display: none;
 }
 
 .insertLineBar {

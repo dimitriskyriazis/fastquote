@@ -2123,7 +2123,8 @@ export async function PATCH(
               : costFieldsProvided && computedNetCostFromOther != null
                 ? computedNetCostFromOther
                 : normalizeMoneyValue(current.NetCost ?? null);
-            resolvedPricing = {
+            const commentInput: PricingInput = {
+              listPrice: fallbackListPrice,
               customerDiscount: entry.hasCustomerDiscount
                 ? entry.customerDiscount
                 : normalizePercentValue(current.CustomerDiscount ?? null, { allowNegative: true }),
@@ -2137,7 +2138,26 @@ export async function PATCH(
               margin: entry.hasMargin
                 ? entry.margin
                 : normalizePercentValue(current.Margin ?? null, { allowNegative: true }),
+              provided: {
+                listPrice: entry.hasListPrice,
+                customerDiscount: entry.hasCustomerDiscount,
+                telmacoDiscount: entry.hasTelmacoDiscount,
+                netUnitPrice: entry.hasNetUnitPrice,
+                netCost: entry.hasNetCost || costFieldsProvided,
+                margin: entry.hasMargin,
+              },
             };
+
+            resolvedPricing = resolvePricing(commentInput);
+            if (!resolvedPricing) {
+              resolvedPricing = {
+                customerDiscount: commentInput.customerDiscount,
+                telmacoDiscount: commentInput.telmacoDiscount,
+                netUnitPrice: commentInput.netUnitPrice,
+                netCost: commentInput.netCost,
+                margin: commentInput.margin,
+              };
+            }
           } else {
             const nextNetCost = entry.hasNetCost
               ? entry.netCost

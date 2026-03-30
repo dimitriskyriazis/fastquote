@@ -488,6 +488,7 @@ export default function ClientProductsPage({
     setPlacementAnchor(null);
     setDefaultPlacementMode('fill');
     offerProductsPanelRef.current?.setInsertLineVisible?.(false);
+    offerProductsPanelRef.current?.clearSelectedRowHighlight?.();
     offerProductsPanelRef.current?.deselectAllRows?.();
     // Save scroll positions before refresh
     const pageScrollY = window.scrollY;
