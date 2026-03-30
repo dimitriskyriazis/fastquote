@@ -181,7 +181,7 @@ export const buildQuickFilterClause = (
   quickFilterText: string | null | undefined,
   columnExpressions: Array<QuickFilterColumn | string>,
   paramPrefix = "quickFilter",
-  options?: { enableFuzzyText?: boolean },
+  options?: { enableFuzzyText?: boolean; legacyPartNoExpression?: string; partNumberClearedExpression?: string; modelNumberClearedExpression?: string },
 ): { clause: string; params: QueryParam[] } => {
   const enableFuzzyText = options?.enableFuzzyText ?? true;
   const normalized = typeof quickFilterText === "string" ? quickFilterText.trim() : "";
@@ -221,26 +221,44 @@ export const buildQuickFilterClause = (
   );
   const hasPartModelCrossSearch = partNumberColumn && modelNumberColumn;
 
+  // When override expressions are provided, use them instead of deriving from the column expression
+  // This is needed when PartNumber/ModelNumber come from a table without Cleared columns (e.g. OfferDetails)
+  const resolvePartNumberSql = (expr: string) =>
+    options?.partNumberClearedExpression && /\.PartNumber/i.test(expr)
+      ? `UPPER(ISNULL(${options.partNumberClearedExpression}, ''))`
+      : partModelNumberSql(expr);
+  const resolveModelNumberSql = (expr: string) =>
+    options?.modelNumberClearedExpression && /\.ModelNumber/i.test(expr)
+      ? `UPPER(ISNULL(${options.modelNumberClearedExpression}, ''))`
+      : partModelNumberSql(expr);
+  const resolvePartModelSql = (expr: string) => {
+    if (/\.PartNumber/i.test(expr)) return resolvePartNumberSql(expr);
+    if (/\.ModelNumber/i.test(expr)) return resolveModelNumberSql(expr);
+    return partModelNumberSql(expr);
+  };
+
   rawTerms.forEach((term, termIdx) => {
     // Normalize term for part/model number searches
     const normalizedTerm = normalizePartModelNumber(term).toUpperCase();
     const likeParts: string[] = [];
     const processedColumns = new Set<string>();
-    
+
     columns.forEach((col, colIdx) => {
       const expr = col.expression;
       const isPartNumber = partNumberColumn && expr === partNumberColumn.expression;
       const isModelNumber = modelNumberColumn && expr === modelNumberColumn.expression;
-      
+
       // For PartNumber and ModelNumber, add cross-search (also searches LegacyPartNoCleaned)
       if (isPartNumber && hasPartModelCrossSearch && !processedColumns.has('partmodel')) {
         // When searching PartNumber, also search ModelNumber and LegacyPartNoCleaned
         const paramKey = `${paramPrefix}_${termIdx}_partmodel`;
         params.push({ key: paramKey, value: `%${normalizedTerm}%` });
-        const legacyExpr = legacyPartNoClearedSql(expr);
+        const legacyExpr = options?.legacyPartNoExpression
+          ? `UPPER(ISNULL(${options.legacyPartNoExpression}, ''))`
+          : legacyPartNoClearedSql(expr);
         const legacyClause = legacyExpr ? ` OR ${legacyExpr} LIKE @${paramKey}` : '';
         likeParts.push(
-          `(${partModelNumberSql(expr)} LIKE @${paramKey} OR ${partModelNumberSql(modelNumberColumn.expression)} LIKE @${paramKey}${legacyClause})`,
+          `(${resolvePartModelSql(expr)} LIKE @${paramKey} OR ${resolvePartModelSql(modelNumberColumn.expression)} LIKE @${paramKey}${legacyClause})`,
         );
         processedColumns.add('partmodel');
         processedColumns.add(expr);
@@ -249,10 +267,12 @@ export const buildQuickFilterClause = (
         // When searching ModelNumber, also search PartNumber and LegacyPartNoCleaned
         const paramKey = `${paramPrefix}_${termIdx}_partmodel`;
         params.push({ key: paramKey, value: `%${normalizedTerm}%` });
-        const legacyExpr = legacyPartNoClearedSql(partNumberColumn.expression);
+        const legacyExpr = options?.legacyPartNoExpression
+          ? `UPPER(ISNULL(${options.legacyPartNoExpression}, ''))`
+          : legacyPartNoClearedSql(partNumberColumn.expression);
         const legacyClause = legacyExpr ? ` OR ${legacyExpr} LIKE @${paramKey}` : '';
         likeParts.push(
-          `(${partModelNumberSql(partNumberColumn.expression)} LIKE @${paramKey} OR ${partModelNumberSql(expr)} LIKE @${paramKey}${legacyClause})`,
+          `(${resolvePartModelSql(partNumberColumn.expression)} LIKE @${paramKey} OR ${resolvePartModelSql(expr)} LIKE @${paramKey}${legacyClause})`,
         );
         processedColumns.add('partmodel');
         processedColumns.add(expr);

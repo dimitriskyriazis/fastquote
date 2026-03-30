@@ -972,12 +972,18 @@ const normalizePartModelNumber = (value: string): string => {
 // Helper to get the cleared column name for part/model numbers
 // Uses the existing PartNumberCleared and ModelNumberCleared columns for better performance
 const partModelNumberSql = (expr: string) => {
-  // Replace PartNumber/ModelNumber with their cleared versions
+  // OfferDetails (od) doesn't have Cleared columns — use Products (p) table instead
   if (expr.includes('.PartNumber')) {
-    return `ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, '')`;
+    const cleared = expr.startsWith('od.')
+      ? 'p.PartNumberCleared'
+      : expr.replace('.PartNumber', '.PartNumberCleared');
+    return `ISNULL(${cleared}, '')`;
   }
   if (expr.includes('.ModelNumber')) {
-    return `ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, '')`;
+    const cleared = expr.startsWith('od.')
+      ? 'p.ModelNumberCleared'
+      : expr.replace('.ModelNumber', '.ModelNumberCleared');
+    return `ISNULL(${cleared}, '')`;
   }
   // Fallback for edge cases
   return `ISNULL(${expr}, '')`;
@@ -1395,7 +1401,11 @@ export async function POST(
       : [];
     const whereClauses = [`od.OfferID = @__id`, ...viewClauses, ...clauses];
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-    const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, PRODUCTS_QUICK_FILTER_COLUMNS);
+    const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, PRODUCTS_QUICK_FILTER_COLUMNS, undefined, {
+      legacyPartNoExpression: 'p.LegacyPartNoCleaned',
+      partNumberClearedExpression: 'p.PartNumberCleared',
+      modelNumberClearedExpression: 'p.ModelNumberCleared',
+    });
     const combinedWhereSql = mergeWhereClauses(whereSql, quickFilterClause.clause);
     const combinedParams = [...filterParams, ...quickFilterClause.params];
     const orderSql = buildOrder(gridRequest.sortModel) || `ORDER BY ${TREE_ORDERING_SORT_PRIORITY_EXPRESSION}, TreeOrderingHierarchy, od.TreeOrdering, od.ID`;

@@ -66,7 +66,9 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
   if (brandKey) {
     const p = `brand_${paramIdx++}`;
     request.input(p, sql.NVarChar(255), brandKey);
-    conditions.push(`${brandKeySql('b.Name')} = @${p}`);
+    const bk = brandKeySql('b.Name');
+    // Bi-directional starts-with: "d&b" matches "d&b audiotechnik" and vice versa
+    conditions.push(`(CHARINDEX(@${p}, ${bk}) = 1 OR (LEN(${bk}) > 0 AND CHARINDEX(${bk}, @${p}) = 1))`);
     weights.push(3);
   }
 
@@ -81,9 +83,23 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
     weights.push(weight);
   };
 
+  // Prefix match: e.g. requested "Z5803" matches DB "Z5803000" (from "Z5803.000")
+  const addPartModelPrefixCondition = (value: string, prefix: string, weight: number) => {
+    const cleared = clearPartModelNumberUpper(value);
+    if (!cleared) return;
+    const p = `${prefix}_${paramIdx++}`;
+    request.input(p, sql.NVarChar(255), cleared);
+    conditions.push(
+      `(UPPER(ISNULL(p.PartNumberCleared, '')) LIKE @${p} + N'%' OR UPPER(ISNULL(p.ModelNumberCleared, '')) LIKE @${p} + N'%' OR UPPER(ISNULL(p.LegacyPartNoCleaned, '')) LIKE @${p} + N'%')`,
+    );
+    weights.push(weight);
+  };
+
   if (partNumber) {
     // Full value match (highest weight)
     addPartModelCondition(partNumber, 'pn', 10);
+    // Prefix match for part numbers with sub-variants (e.g. "Z5803" → "Z5803.000")
+    addPartModelPrefixCondition(partNumber, 'pnpfx', 7);
     // Also try individual tokens for multi-part values like "TEL152 71.04.0154"
     const tokens = partNumber.split(/\s+/).filter((t) => t.length >= 2);
     if (tokens.length > 1) {
@@ -95,6 +111,8 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
 
   if (modelNumber) {
     addPartModelCondition(modelNumber, 'mn', 10);
+    // Prefix match for model numbers with sub-variants
+    addPartModelPrefixCondition(modelNumber, 'mnpfx', 7);
     const tokens = modelNumber.split(/\s+/).filter((t) => t.length >= 2);
     if (tokens.length > 1) {
       for (const token of tokens) {
