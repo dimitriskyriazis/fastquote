@@ -43,6 +43,7 @@ const serperSemaphore = new Semaphore(5);
 const KNOWN_BRAND_DOMAINS: Record<string, string> = {
   "grass valley": "grassvalley.com",
   "grassvalley": "grassvalley.com",
+  "bosch": "commerce.keenfinity.tech",
 };
 
 const normalizeProductId = (value: unknown): number | null => {

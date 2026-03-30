@@ -1,0 +1,321 @@
+.stepBar {
+  display: flex;
+  gap: 0;
+  padding: 0 20px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  overflow-x: auto;
+}
+
+.stepItem {
+  flex: 1;
+  text-align: center;
+  padding: 8px 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #94a3b8;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.stepItemActive {
+  color: #0f172a;
+  border-bottom-color: #dc2626;
+}
+
+.stepItemDone {
+  color: #15803d;
+  border-bottom-color: #15803d;
+}
+
+.stepContent {
+  padding: 16px 20px;
+  overflow-y: auto;
+  max-height: 55vh;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.loadingBox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 24px 0;
+  justify-content: center;
+  font-size: 0.9rem;
+  color: #64748b;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #e2e8f0;
+  border-top-color: #0f172a;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.sectionTitle {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #475569;
+  margin: 0;
+}
+
+.card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.cardGreen {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.cardBlue {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.cardAmber {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.cardGray {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+
+.customerCard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 2px solid #3b82f6;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.customerName {
+  font-weight: 700;
+  font-size: 1rem;
+  color: #1e40af;
+}
+
+.customerMeta {
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.table th {
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #475569;
+  border-bottom: 2px solid #e2e8f0;
+}
+
+.table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #0f172a;
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+.tableRight {
+  text-align: right;
+}
+
+.totalRow td {
+  border-top: 2px solid #0f172a;
+  font-weight: 700;
+  padding-top: 8px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+.badgeAi {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.badgeNew {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.badgeMatched {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badgeSkipped {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.sectionCount {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #64748b;
+  margin-left: 6px;
+}
+
+.progressList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.progressItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.9rem;
+  color: #64748b;
+}
+
+.progressItemActive {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.progressItemDone {
+  color: #15803d;
+}
+
+.progressItemFailed {
+  color: #b91c1c;
+}
+
+.progressIcon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.progressPending {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  margin: 5px;
+}
+
+.actionsList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: #334155;
+  padding-left: 16px;
+}
+
+.actionsList li {
+  margin-bottom: 2px;
+}
+
+.warningText {
+  font-size: 0.82rem;
+  color: #92400e;
+  font-style: italic;
+}
+
+.successBox {
+  text-align: center;
+  padding: 20px;
+}
+
+.successTitle {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #15803d;
+  margin-bottom: 6px;
+}
+
+.successCode {
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.errorBox {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-size: 0.85rem;
+}
+
+.dangerButton {
+  background: #dc2626 !important;
+  border-color: #dc2626 !important;
+  color: #ffffff !important;
+}
+
+.dangerButton:hover {
+  background: #b91c1c !important;
+  border-color: #b91c1c !important;
+}
+
+.select {
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  color: #0f172a;
+  background: #ffffff;
+  width: 100%;
+  max-width: 100%;
+}
+
+.select:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+.noProducts {
+  text-align: center;
+  padding: 20px;
+  color: #64748b;
+  font-size: 0.9rem;
+}

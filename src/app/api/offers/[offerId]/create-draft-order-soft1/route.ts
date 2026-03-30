@@ -19,6 +19,8 @@ type ProductMatch = {
   modelNumber: string | null;
   partNumberActual: string | null;
   modelNumberActual: string | null;
+  description?: string | null;
+  brandName?: string | null;
   matches: Array<{
     MTRL: number;
     CODE: string | null;
@@ -40,11 +42,16 @@ type CustomerSelection = {
 };
 
 type CreateDraftOfferRequestBody = {
+  step?: WizardStep;
   selections?: ProductSelection[];
   customerSelection?: CustomerSelection;
   customerCode?: string;
   customerConfirmed?: boolean;
   brandCreationConfirmed?: boolean;
+  // Accumulated wizard state (passed forward by frontend)
+  resolvedCustomer?: { TRDR: number; CODE: string | null; NAME: string | null };
+  missingBrands?: string[];
+  matchResults?: MatchResultsState;
 };
 
 type LookupRow = {
@@ -64,6 +71,39 @@ type LookupOption = {
 type SubCategoryOption = LookupOption & {
   categoryId: number | null;
 };
+
+// ── Wizard step types ──────────────────────────────────────────────────────────
+
+type WizardStep =
+  | 'resolve-customer'
+  | 'categorize-products'
+  | 'check-brands'
+  | 'match-products'
+  | 'prepare-summary'
+  | 'execute';
+
+type OfferContext = {
+  pool: Awaited<ReturnType<typeof getPool>>;
+  erpPool: Awaited<ReturnType<typeof getErpPool>>;
+  offerId: number;
+  requestId: string;
+  offerDescription: string;
+  salesDivisionId: number | null;
+  businessUnit: 'AVS' | 'TVS';
+  erpCustomerId: number | null;
+  customerName: string | null;
+  erpProjectId: number | null;
+  erpProjectCode: string | null;
+};
+
+type MatchResultsState = {
+  autoMatched: Array<{ productId: number; MTRL: number; CODE: string | null }>;
+  toCreate: Array<{ productId: number }>;
+  userSelected: Array<{ productId: number; MTRL: number; CODE: string | null }>;
+  skipped: Array<{ productId: number }>;
+};
+
+// ── End wizard step types ──────────────────────────────────────────────────────
 
 const normalizeName = (value: string | null | undefined): string => {
   if (!value) return "";
@@ -307,6 +347,755 @@ IMPORTANT RULES:
   }
 }
 
+// ── Shared helpers ─────────────────────────────────────────────────────────────
+
+async function fetchOfferProducts(
+  pool: Awaited<ReturnType<typeof getPool>>,
+  offerId: number,
+) {
+  const productsRequest = pool.request();
+  productsRequest.input('offerId', sql.Int, offerId);
+  const productsResult = await productsRequest.query<{
+    ProductID: number;
+    PartNumberCleared: string | null;
+    ModelNumberCleared: string | null;
+    PartNumber: string | null;
+    ModelNumber: string | null;
+    Description: string | null;
+    BrandName: string | null;
+    BrandID: number | null;
+    CategoryID: number | null;
+    SubCategoryID: number | null;
+    TypeID: number | null;
+  }>(`
+    SELECT DISTINCT
+      p.ID AS ProductID,
+      p.PartNumberCleared,
+      p.ModelNumberCleared,
+      p.PartNumber,
+      p.ModelNumber,
+      p.Description,
+      b.Name AS BrandName,
+      p.BrandID,
+      p.CategoryID,
+      p.SubCategoryID,
+      p.TypeID
+    FROM dbo.OfferDetails od
+    INNER JOIN dbo.Products p ON od.ProductID = p.ID
+    LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
+    WHERE od.OfferID = @offerId
+      AND od.ProductID IS NOT NULL
+      AND (p.PartNumberCleared IS NOT NULL OR p.ModelNumberCleared IS NOT NULL)
+  `);
+  return productsResult.recordset ?? [];
+}
+
+async function searchProductInErp(
+  erpPool: Awaited<ReturnType<typeof getErpPool>>,
+  partNumberCleared: string | null,
+  modelNumberCleared: string | null,
+) {
+  const erpRequest = erpPool.request();
+  erpRequest.input('PartNo', sql.NVarChar(200), partNumberCleared);
+  erpRequest.input('ModelNo', sql.NVarChar(200), modelNumberCleared);
+  erpRequest.input('TopN', sql.Int, 200);
+
+  const erpResult = await erpRequest.query(`
+    DECLARE @FoundCount INT;
+    EXEC [tlm].[_mtrlFindProduct]
+      @PartNo = @PartNo,
+      @ModelNo = @ModelNo,
+      @TopN = @TopN,
+      @FoundCount = @FoundCount OUTPUT;
+  `) as { recordset: Array<{ FoundCount: number }>; recordsets?: Array<Array<unknown>> };
+
+  const foundCountResult = (erpResult.recordsets?.[0] as Array<{ FoundCount: number }>) ?? erpResult.recordset;
+  const foundCount = foundCountResult[0]?.FoundCount ?? 0;
+  const matches = (erpResult.recordsets?.[1] ?? []) as Array<{
+    MTRL: number;
+    CODE: string | null;
+    NAME1: string | null;
+    CODE1: string | null;
+    CODE2: string | null;
+  }>;
+
+  return { foundCount, matches };
+}
+
+async function resolveOrCreateProject(
+  ctx: OfferContext,
+  erpCustomerCode: string | null,
+): Promise<{ prjcId: number; prjcCode: string; isNew: boolean }> {
+  let finalErpProjectId = ctx.erpProjectId;
+  let finalErpProjectCode = ctx.erpProjectCode;
+
+  if (finalErpProjectId && finalErpProjectId > 0) {
+    let codeToValidate = finalErpProjectCode;
+    if (!codeToValidate) {
+      const projectRequest = ctx.erpPool.request();
+      projectRequest.input('PRJC', sql.Int, finalErpProjectId);
+      const projectResult = await projectRequest.query<{ CODE: string | null }>(`
+        SELECT CODE FROM dbo.PRJC WHERE PRJC = @PRJC
+      `);
+      codeToValidate = projectResult.recordset?.[0]?.CODE ?? null;
+    }
+
+    if (codeToValidate) {
+      const projectValidation = await findProject(finalErpProjectId, codeToValidate);
+      if (projectValidation.statusCode === PROJECT_FIND_STATUS.OK) {
+        finalErpProjectCode = codeToValidate;
+      } else if (projectValidation.statusCode === PROJECT_FIND_STATUS.NOT_FOUND) {
+        finalErpProjectId = null;
+        finalErpProjectCode = null;
+      } else {
+        throw new Error(`Project validation failed: ${projectValidation.statusText}`);
+      }
+    }
+  }
+
+  if (!finalErpProjectId || finalErpProjectId <= 0) {
+    if (!ctx.erpCustomerId) {
+      throw new Error('Cannot create project without a valid customer.');
+    }
+    const createdProject = await createProjectFromIntegration({
+      integrationKey: 'FASTQUOTE_CREATE_PRJC',
+      codePrefix: 'COV',
+      name: ctx.offerDescription,
+      prjcParent: null,
+      trdr: ctx.erpCustomerId,
+      customerCode: erpCustomerCode,
+      prjCategory: null,
+      sourceSystem: 'FQ',
+      createdByUser: 1011,
+      businessUnit: ctx.businessUnit,
+      prjState: 90,
+    });
+
+    // Persist ERP project back to FastQuote Offer
+    const updateOfferRequest = ctx.pool.request();
+    updateOfferRequest.input('offerId', sql.Int, ctx.offerId);
+    updateOfferRequest.input('erpProjectId', sql.Int, createdProject.prjcId);
+    updateOfferRequest.input('erpProjectCode', sql.NVarChar(25), createdProject.prjcCode);
+    await updateOfferRequest.query(`
+      UPDATE dbo.Offer
+      SET ERPProjectID = @erpProjectId,
+          ERPProjectCode = @erpProjectCode,
+          ModifiedOn = SYSUTCDATETIME()
+      WHERE ID = @offerId
+    `);
+
+    return { prjcId: createdProject.prjcId, prjcCode: createdProject.prjcCode, isNew: true };
+  }
+
+  return { prjcId: finalErpProjectId, prjcCode: finalErpProjectCode!, isNew: false };
+}
+
+// ── Step handlers ──────────────────────────────────────────────────────────────
+
+async function handleResolveCustomer(
+  ctx: OfferContext,
+  body: CreateDraftOfferRequestBody,
+): Promise<NextResponse> {
+  const { pool, erpPool, offerId, requestId } = ctx;
+  let erpCustomerId = ctx.erpCustomerId;
+  let erpCustomerCode: string | null = null;
+
+  const customerSelection = body.customerSelection ?? null;
+  const customerCode = body.customerCode ?? null;
+  const customerConfirmed = body.customerConfirmed ?? false;
+
+  if (!erpCustomerId) {
+    if (customerSelection && customerConfirmed) {
+      erpCustomerId = customerSelection.TRDR;
+      erpCustomerCode = customerSelection.CODE ?? null;
+    } else if (customerSelection && !customerConfirmed) {
+      return NextResponse.json({
+        ok: true, step: 'resolve-customer',
+        needsConfirmation: customerSelection,
+      });
+    } else if (customerCode) {
+      const searchReq = erpPool.request();
+      searchReq.input('SearchValue', sql.NVarChar(200), customerCode.trim());
+      const searchRes = await searchReq.query<{ TRDR: number; CODE: string | null; NAME: string | null }>(`
+        EXEC tlm.FindCustomer @SearchValue = @SearchValue
+      `);
+      const matches = searchRes.recordset ?? [];
+
+      if (matches.length === 0) {
+        return NextResponse.json({ ok: true, step: 'resolve-customer', needsCode: true, message: `No customer found with code: ${customerCode}` });
+      } else if (matches.length === 1) {
+        return NextResponse.json({ ok: true, step: 'resolve-customer', needsConfirmation: matches[0] });
+      } else {
+        return NextResponse.json({ ok: true, step: 'resolve-customer', needsSelection: matches });
+      }
+    } else if (ctx.customerName) {
+      const searchReq = erpPool.request();
+      searchReq.input('SearchValue', sql.NVarChar(200), ctx.customerName);
+      const searchRes = await searchReq.query<{ TRDR: number; CODE: string | null; NAME: string | null }>(`
+        EXEC tlm.FindCustomer @SearchValue = @SearchValue
+      `);
+      let matches = searchRes.recordset ?? [];
+
+      if (matches.length === 0) {
+        matches = await fuzzyCustomerSearch(erpPool, ctx.customerName);
+      }
+
+      if (matches.length === 0) {
+        return NextResponse.json({ ok: true, step: 'resolve-customer', needsCode: true, message: `No customer found matching: ${ctx.customerName}` });
+      } else if (matches.length === 1) {
+        return NextResponse.json({ ok: true, step: 'resolve-customer', needsConfirmation: matches[0] });
+      } else {
+        return NextResponse.json({ ok: true, step: 'resolve-customer', needsSelection: matches });
+      }
+    } else {
+      return NextResponse.json({ ok: false, error: 'No customer information available.' }, { status: 400 });
+    }
+
+    // Persist customer ERPID to FastQuote DB
+    if (erpCustomerId) {
+      const updateReq = pool.request();
+      updateReq.input('offerId', sql.Int, offerId);
+      updateReq.input('erpCustomerId', sql.Int, erpCustomerId);
+      await updateReq.query(`
+        UPDATE dbo.Customers
+        SET ERPID = @erpCustomerId, ModifiedOn = SYSUTCDATETIME()
+        WHERE ID = (SELECT CustomerID FROM dbo.Offer WHERE ID = @offerId) AND ERPID IS NULL
+      `);
+    }
+  }
+
+  // Resolve customer CODE from ERP
+  if (erpCustomerId && !erpCustomerCode) {
+    const codeReq = erpPool.request();
+    codeReq.input('TRDR', sql.Int, erpCustomerId);
+    const codeRes = await codeReq.query<{ CODE: string | null }>(`SELECT TOP (1) CODE FROM dbo.TRDR WHERE TRDR = @TRDR`);
+    erpCustomerCode = codeRes.recordset?.[0]?.CODE ?? null;
+  }
+
+  // Resolve customer NAME from ERP for display
+  let resolvedName = ctx.customerName;
+  if (erpCustomerId && !resolvedName) {
+    const nameReq = erpPool.request();
+    nameReq.input('TRDR', sql.Int, erpCustomerId);
+    const nameRes = await nameReq.query<{ NAME: string | null }>(`SELECT TOP (1) NAME FROM dbo.TRDR WHERE TRDR = @TRDR`);
+    resolvedName = nameRes.recordset?.[0]?.NAME ?? null;
+  }
+
+  logger.info('wizard resolve-customer done', { requestId, offerId, erpCustomerId, erpCustomerCode });
+
+  return NextResponse.json({
+    ok: true, step: 'resolve-customer',
+    resolved: { TRDR: erpCustomerId, CODE: erpCustomerCode, NAME: resolvedName },
+  });
+}
+
+async function handleCategorizeProducts(
+  ctx: OfferContext,
+): Promise<NextResponse> {
+  const { pool, offerId, requestId } = ctx;
+  const products = await fetchOfferProducts(pool, offerId);
+
+  if (products.length === 0) {
+    return NextResponse.json({ ok: true, step: 'categorize-products', products: [] });
+  }
+
+  // Run AI categorization for products missing categories
+  const aiCategorized = new Set<number>();
+  const categoryUpdatePromises: Promise<void>[] = [];
+
+  for (const product of products) {
+    const needsCategory = product.CategoryID == null;
+    const needsSubCategory = product.SubCategoryID == null;
+    const needsType = product.TypeID == null;
+
+    if (needsCategory || needsSubCategory || needsType) {
+      categoryUpdatePromises.push(
+        (async () => {
+          try {
+            const suggestions = await suggestProductCategories(
+              pool, product.BrandName, product.ModelNumber, product.Description, product.CategoryID,
+            );
+            if (suggestions.categoryId || suggestions.subCategoryId || suggestions.typeId) {
+              const updateRequest = pool.request();
+              updateRequest.input('productId', sql.Int, product.ProductID);
+              const updates: string[] = [];
+              const shouldUpdateCategory = needsCategory || (suggestions.categoryId && suggestions.categoryId !== product.CategoryID);
+              if (shouldUpdateCategory && suggestions.categoryId) {
+                updateRequest.input('categoryId', sql.Int, suggestions.categoryId);
+                updates.push('CategoryID = @categoryId');
+              }
+              if (needsSubCategory && suggestions.subCategoryId) {
+                updateRequest.input('subCategoryId', sql.Int, suggestions.subCategoryId);
+                updates.push('SubCategoryID = @subCategoryId');
+              }
+              if (needsType && suggestions.typeId) {
+                updateRequest.input('typeId', sql.Int, suggestions.typeId);
+                updates.push('TypeID = @typeId');
+              }
+              if (updates.length > 0) {
+                await updateRequest.query(`
+                  UPDATE dbo.Products SET ${updates.join(', ')}, ModifiedOn = SYSUTCDATETIME() WHERE ID = @productId
+                `);
+                if (shouldUpdateCategory && suggestions.categoryId) product.CategoryID = suggestions.categoryId;
+                if (needsSubCategory && suggestions.subCategoryId) product.SubCategoryID = suggestions.subCategoryId;
+                if (needsType && suggestions.typeId) product.TypeID = suggestions.typeId;
+                aiCategorized.add(product.ProductID);
+              }
+            }
+          } catch (err) {
+            logger.error(`Failed to auto-fill categories for product ${product.ProductID}`, { requestId, productId: product.ProductID }, err instanceof Error ? err : undefined);
+          }
+        })(),
+      );
+    }
+  }
+
+  await Promise.all(categoryUpdatePromises);
+
+  // Resolve category/subcategory/type names for display
+  const [categoriesRes, subCategoriesRes, typesRes] = await Promise.all([
+    pool.request().query<LookupRow>("SELECT ID, Name FROM dbo.ProductCategories"),
+    pool.request().query<SubCategoryRow>("SELECT ID, Name, CategoryID FROM dbo.ProductSubCategories"),
+    pool.request().query<LookupRow>("SELECT ID, Name FROM dbo.ProductTypes"),
+  ]);
+  const catMap = new Map((categoriesRes.recordset ?? []).map(r => [r.ID, r.Name]));
+  const subCatMap = new Map((subCategoriesRes.recordset ?? []).map(r => [r.ID, r.Name]));
+  const typeMap = new Map((typesRes.recordset ?? []).map(r => [r.ID, r.Name]));
+
+  const productList = products.map(p => ({
+    productId: p.ProductID,
+    partNumber: p.PartNumber,
+    modelNumber: p.ModelNumber,
+    description: p.Description,
+    brandName: p.BrandName,
+    categoryName: p.CategoryID ? (catMap.get(p.CategoryID) ?? null) : null,
+    subCategoryName: p.SubCategoryID ? (subCatMap.get(p.SubCategoryID) ?? null) : null,
+    typeName: p.TypeID ? (typeMap.get(p.TypeID) ?? null) : null,
+    wasAiCategorized: aiCategorized.has(p.ProductID),
+  }));
+
+  logger.info('wizard categorize-products done', { requestId, offerId, total: products.length, aiCategorized: aiCategorized.size });
+
+  return NextResponse.json({ ok: true, step: 'categorize-products', products: productList });
+}
+
+async function handleCheckBrands(
+  ctx: OfferContext,
+): Promise<NextResponse> {
+  const { pool, erpPool, offerId, requestId } = ctx;
+  const products = await fetchOfferProducts(pool, offerId);
+
+  const uniqueBrandNames = [...new Set(
+    products.filter(p => p.BrandName && p.BrandID).map(p => p.BrandName!.trim()),
+  )];
+
+  const missingBrands: string[] = [];
+  const existingBrands: string[] = [];
+
+  for (const brandName of uniqueBrandNames) {
+    const checkReq = erpPool.request();
+    checkReq.input('brandName', sql.NVarChar(128), brandName);
+    const checkRes = await checkReq.query<{ MTRMANFCTR: number }>(`
+      SELECT TOP (1) MTRMANFCTR FROM dbo.MTRMANFCTR
+      WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
+      ORDER BY MTRMANFCTR
+    `);
+    if (checkRes.recordset?.[0]) {
+      existingBrands.push(brandName);
+    } else {
+      missingBrands.push(brandName);
+    }
+  }
+
+  logger.info('wizard check-brands done', { requestId, offerId, existing: existingBrands.length, missing: missingBrands.length });
+
+  return NextResponse.json({ ok: true, step: 'check-brands', missingBrands, existingBrands });
+}
+
+async function handleMatchProducts(
+  ctx: OfferContext,
+  body: CreateDraftOfferRequestBody,
+): Promise<NextResponse> {
+  const { pool, erpPool, offerId, requestId } = ctx;
+  const products = await fetchOfferProducts(pool, offerId);
+  const userSelections = body.selections ?? [];
+  const selectionMap = new Map(userSelections.map(s => [s.productId, { MTRL: s.MTRL, CODE: s.CODE }]));
+
+  const autoMatched: Array<{ productId: number; partNumber: string | null; modelNumber: string | null; description: string | null; brandName: string | null; MTRL: number; CODE: string | null; NAME1: string | null }> = [];
+  const toCreate: Array<{ productId: number; partNumber: string | null; modelNumber: string | null; description: string | null; brandName: string | null; missingFields: string[] }> = [];
+  const needsSelection: ProductMatch[] = [];
+  const skipped: Array<{ productId: number; partNumber: string | null; modelNumber: string | null; reason: string }> = [];
+
+  for (const product of products) {
+    // If user already selected a match for this product, it goes into autoMatched
+    const userSel = selectionMap.get(product.ProductID);
+    if (userSel) {
+      autoMatched.push({
+        productId: product.ProductID,
+        partNumber: product.PartNumber,
+        modelNumber: product.ModelNumber,
+        description: product.Description,
+        brandName: product.BrandName,
+        MTRL: userSel.MTRL,
+        CODE: userSel.CODE,
+        NAME1: null,
+      });
+      continue;
+    }
+
+    try {
+      const { foundCount, matches } = await searchProductInErp(erpPool, product.PartNumberCleared, product.ModelNumberCleared);
+
+      logger.info('wizard match-products FindProduct', {
+        requestId, offerId, productId: product.ProductID,
+        partNo: product.PartNumberCleared, modelNo: product.ModelNumberCleared,
+        foundCount,
+      });
+
+      if (foundCount === 0) {
+        // Check if product has all required fields for creation
+        const missing: string[] = [];
+        if (!product.Description) missing.push('description');
+        if (!product.BrandID) missing.push('brand');
+        if (!product.SubCategoryID) missing.push('subcategory');
+        if (!product.TypeID) missing.push('type');
+
+        if (missing.length > 0) {
+          skipped.push({
+            productId: product.ProductID,
+            partNumber: product.PartNumber,
+            modelNumber: product.ModelNumber,
+            reason: `Missing: ${missing.join(', ')}`,
+          });
+        } else {
+          toCreate.push({
+            productId: product.ProductID,
+            partNumber: product.PartNumber,
+            modelNumber: product.ModelNumber,
+            description: product.Description,
+            brandName: product.BrandName,
+            missingFields: [],
+          });
+        }
+      } else if (foundCount === 1) {
+        autoMatched.push({
+          productId: product.ProductID,
+          partNumber: product.PartNumber,
+          modelNumber: product.ModelNumber,
+          description: product.Description,
+          brandName: product.BrandName,
+          MTRL: matches[0].MTRL,
+          CODE: matches[0].CODE,
+          NAME1: matches[0].NAME1,
+        });
+      } else {
+        needsSelection.push({
+          productId: product.ProductID,
+          partNumber: product.PartNumberCleared,
+          modelNumber: product.ModelNumberCleared,
+          partNumberActual: product.PartNumber,
+          modelNumberActual: product.ModelNumber,
+          description: product.Description,
+          brandName: product.BrandName,
+          matches,
+        });
+      }
+    } catch (err) {
+      logger.error(`wizard match-products error for product ${product.ProductID}`, { requestId, offerId }, err instanceof Error ? err : undefined);
+      skipped.push({
+        productId: product.ProductID,
+        partNumber: product.PartNumber,
+        modelNumber: product.ModelNumber,
+        reason: 'ERP search failed',
+      });
+    }
+  }
+
+  logger.info('wizard match-products done', {
+    requestId, offerId,
+    autoMatched: autoMatched.length, toCreate: toCreate.length,
+    needsSelection: needsSelection.length, skipped: skipped.length,
+  });
+
+  return NextResponse.json({
+    ok: true, step: 'match-products',
+    autoMatched, toCreate, needsSelection, skipped,
+  });
+}
+
+async function handlePrepareSummary(
+  ctx: OfferContext,
+  body: CreateDraftOfferRequestBody,
+): Promise<NextResponse> {
+  const { pool, erpPool, offerId, requestId } = ctx;
+  const resolvedCustomer = body.resolvedCustomer;
+  const matchResults = body.matchResults;
+  const missingBrands = body.missingBrands ?? [];
+
+  if (!resolvedCustomer) {
+    return NextResponse.json({ ok: false, error: 'Missing resolved customer' }, { status: 400 });
+  }
+
+  // Determine project status
+  let projectStatus: 'existing' | 'will-create' = 'will-create';
+  let projectCode: string | null = ctx.erpProjectCode;
+
+  if (ctx.erpProjectId && ctx.erpProjectId > 0) {
+    let codeToValidate = ctx.erpProjectCode;
+    if (!codeToValidate) {
+      const projReq = erpPool.request();
+      projReq.input('PRJC', sql.Int, ctx.erpProjectId);
+      const projRes = await projReq.query<{ CODE: string | null }>(`SELECT CODE FROM dbo.PRJC WHERE PRJC = @PRJC`);
+      codeToValidate = projRes.recordset?.[0]?.CODE ?? null;
+    }
+    if (codeToValidate) {
+      const validation = await findProject(ctx.erpProjectId, codeToValidate);
+      if (validation.statusCode === PROJECT_FIND_STATUS.OK) {
+        projectStatus = 'existing';
+        projectCode = codeToValidate;
+      }
+    }
+  }
+
+  // Fetch order lines
+  const linesReq = pool.request();
+  linesReq.input('offerId', sql.Int, offerId);
+  const linesRes = await linesReq.query<{
+    TreeOrdering: number | null;
+    ProductID: number | null;
+    Quantity: number | null;
+    ListPrice: number | null;
+    NetCost: number | null;
+    ERPID: number | null;
+    ERPCode: string | null;
+    ProductDescription: string | null;
+    PartNumber: string | null;
+    ModelNumber: string | null;
+  }>(`
+    SELECT
+      od.TreeOrdering,
+      od.ProductID,
+      od.Quantity,
+      od.ListPrice,
+      od.NetCost,
+      p.ERPID,
+      p.ERPCode,
+      p.Description AS ProductDescription,
+      p.PartNumber,
+      p.ModelNumber
+    FROM dbo.OfferDetails od
+    INNER JOIN dbo.Products p ON od.ProductID = p.ID
+    WHERE od.OfferID = @offerId
+      AND od.ProductID IS NOT NULL
+  `);
+
+  const allLines = (linesRes.recordset ?? []).sort((a, b) => (a.TreeOrdering ?? 0) - (b.TreeOrdering ?? 0));
+
+  // Build order lines from all products (matched, to-create, user-selected)
+  const resolvedProductIds = new Set<number>();
+  if (matchResults) {
+    for (const m of matchResults.autoMatched) resolvedProductIds.add(m.productId);
+    for (const m of matchResults.toCreate) resolvedProductIds.add(m.productId);
+    for (const m of matchResults.userSelected) resolvedProductIds.add(m.productId);
+  }
+
+  const orderLines = allLines
+    .filter(line => line.ProductID != null && resolvedProductIds.has(line.ProductID!) && line.Quantity != null && line.Quantity > 0 && line.ListPrice != null && line.ListPrice >= 0)
+    .map(line => ({
+      productId: line.ProductID,
+      productCode: line.ERPCode ?? '(new)',
+      productName: [line.ModelNumber, line.ProductDescription].filter(Boolean).join(' - ') || 'Unknown',
+      qty: Number(line.Quantity),
+      price: Number(line.ListPrice),
+      lineTotal: Number(line.Quantity!) * Number(line.ListPrice!),
+    }));
+
+  const totalValue = orderLines.reduce((sum, l) => sum + l.lineTotal, 0);
+
+  logger.info('wizard prepare-summary done', { requestId, offerId, lineCount: orderLines.length, totalValue });
+
+  return NextResponse.json({
+    ok: true, step: 'prepare-summary',
+    customer: resolvedCustomer,
+    project: { status: projectStatus, code: projectCode, id: ctx.erpProjectId },
+    orderLines,
+    totals: { lineCount: orderLines.length, totalValue },
+    actions: {
+      brandsToCreate: missingBrands.length,
+      productsToCreate: matchResults?.toCreate?.length ?? 0,
+      productsToMatch: (matchResults?.autoMatched?.length ?? 0) + (matchResults?.userSelected?.length ?? 0),
+      projectToCreate: projectStatus === 'will-create',
+    },
+    missingBrands,
+  });
+}
+
+async function handleExecute(
+  ctx: OfferContext,
+  body: CreateDraftOfferRequestBody,
+): Promise<NextResponse> {
+  const { pool, erpPool, offerId, requestId } = ctx;
+  const resolvedCustomer = body.resolvedCustomer;
+  const matchResults = body.matchResults;
+  const missingBrands = body.missingBrands ?? [];
+
+  if (!resolvedCustomer) {
+    return NextResponse.json({ ok: false, error: 'Missing resolved customer' }, { status: 400 });
+  }
+
+  const erpCustomerId = resolvedCustomer.TRDR;
+  const erpCustomerCode = resolvedCustomer.CODE;
+  const results: {
+    brandsCreated: string[];
+    productsCreated: Array<{ productId: number; mtrl: number; code: string }>;
+    productsLinked: Array<{ productId: number; mtrl: number; code: string }>;
+    project: { id: number; code: string; isNew: boolean } | null;
+    order: { findocId: number; finCode: string } | null;
+  } = {
+    brandsCreated: [],
+    productsCreated: [],
+    productsLinked: [],
+    project: null,
+    order: null,
+  };
+
+  // 1. Create missing brands
+  for (const brandName of missingBrands) {
+    // Idempotency: check if brand was already created
+    const checkReq = erpPool.request();
+    checkReq.input('brandName', sql.NVarChar(128), brandName);
+    const checkRes = await checkReq.query<{ MTRMANFCTR: number }>(`
+      SELECT TOP (1) MTRMANFCTR FROM dbo.MTRMANFCTR
+      WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
+      ORDER BY MTRMANFCTR
+    `);
+    if (!checkRes.recordset?.[0]) {
+      const created = await createManufacturerInErp(erpPool, brandName);
+      logger.info('wizard execute brand created', { requestId, offerId, brandName, mtrmanfctrId: created.mtrmanfctrId });
+    }
+    results.brandsCreated.push(brandName);
+  }
+
+  // 2. Create new products + link matched/selected products
+  const products = await fetchOfferProducts(pool, offerId);
+  const productMap = new Map(products.map(p => [p.ProductID, p]));
+
+  if (matchResults) {
+    // Link auto-matched products
+    for (const match of matchResults.autoMatched) {
+      const updateReq = pool.request();
+      updateReq.input('productId', sql.Int, match.productId);
+      updateReq.input('erpId', sql.Int, match.MTRL);
+      updateReq.input('erpCode', sql.NVarChar(255), match.CODE);
+      await updateReq.query(`
+        UPDATE dbo.Products SET ERPID = @erpId, ERPCode = @erpCode, ModifiedOn = SYSUTCDATETIME() WHERE ID = @productId
+      `);
+      results.productsLinked.push({ productId: match.productId, mtrl: match.MTRL, code: match.CODE ?? '' });
+    }
+
+    // Link user-selected products
+    for (const sel of matchResults.userSelected) {
+      const updateReq = pool.request();
+      updateReq.input('productId', sql.Int, sel.productId);
+      updateReq.input('erpId', sql.Int, sel.MTRL);
+      updateReq.input('erpCode', sql.NVarChar(255), sel.CODE);
+      await updateReq.query(`
+        UPDATE dbo.Products SET ERPID = @erpId, ERPCode = @erpCode, ModifiedOn = SYSUTCDATETIME() WHERE ID = @productId
+      `);
+      results.productsLinked.push({ productId: sel.productId, mtrl: sel.MTRL, code: sel.CODE ?? '' });
+    }
+
+    // Create new products in ERP
+    for (const item of matchResults.toCreate) {
+      const product = productMap.get(item.productId);
+      if (!product || !product.Description || !product.BrandID || !product.SubCategoryID || !product.TypeID) {
+        logger.warn('wizard execute skip product creation - missing fields', { requestId, productId: item.productId });
+        continue;
+      }
+
+      try {
+        const created = await createItemInErp(pool, erpPool, {
+          productId: product.ProductID,
+          description: product.Description,
+          modelNumber: product.ModelNumberCleared,
+          partNumber: product.PartNumberCleared,
+          brandId: product.BrandID,
+          brandName: product.BrandName!,
+          categoryId: product.CategoryID!,
+          subCategoryId: product.SubCategoryID,
+          typeId: product.TypeID,
+          businessUnit: ctx.businessUnit,
+        });
+
+        const updateReq = pool.request();
+        updateReq.input('productId', sql.Int, product.ProductID);
+        updateReq.input('erpId', sql.Int, created.mtrl);
+        updateReq.input('erpCode', sql.NVarChar(255), created.code);
+        await updateReq.query(`
+          UPDATE dbo.Products SET ERPID = @erpId, ERPCode = @erpCode, ModifiedOn = SYSUTCDATETIME() WHERE ID = @productId
+        `);
+
+        results.productsCreated.push({ productId: product.ProductID, mtrl: created.mtrl, code: created.code });
+      } catch (err) {
+        logger.error(`wizard execute failed to create product ${item.productId}`, { requestId, offerId }, err instanceof Error ? err : undefined);
+        throw new Error(`Failed to create product ${product.PartNumber || product.ModelNumber || item.productId} in Soft1: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    }
+  }
+
+  // 3. Create/validate project
+  const projectCtx: OfferContext = { ...ctx, erpCustomerId };
+  const project = await resolveOrCreateProject(projectCtx, erpCustomerCode);
+  results.project = { id: project.prjcId, code: project.prjcCode, isNew: project.isNew };
+  logger.info('wizard execute project', { requestId, offerId, prjcId: project.prjcId, prjcCode: project.prjcCode, isNew: project.isNew });
+
+  // 4. Create order
+  if (erpCustomerId && erpCustomerId > 0) {
+    const linesReq = pool.request();
+    linesReq.input('offerId', sql.Int, offerId);
+    const linesRes = await linesReq.query<{
+      TreeOrdering: number | null;
+      ProductID: number | null;
+      Quantity: number | null;
+      ListPrice: number | null;
+      NetCost: number | null;
+      ERPID: number | null;
+      ERPCode: string | null;
+    }>(`
+      SELECT od.TreeOrdering, od.ProductID, od.Quantity, od.ListPrice, od.NetCost, p.ERPID, p.ERPCode
+      FROM dbo.OfferDetails od
+      INNER JOIN dbo.Products p ON od.ProductID = p.ID
+      WHERE od.OfferID = @offerId AND od.ProductID IS NOT NULL AND p.ERPID IS NOT NULL
+    `);
+
+    const lines = (linesRes.recordset ?? []).sort((a, b) => (a.TreeOrdering ?? 0) - (b.TreeOrdering ?? 0));
+    const orderLines: OrderLineForCreation[] = lines
+      .filter(l => l.ERPID != null && l.ERPCode != null && l.Quantity != null && l.Quantity > 0 && l.ListPrice != null && l.ListPrice >= 0)
+      .map(l => ({ erpId: l.ERPID!, erpCode: l.ERPCode!, qty: Number(l.Quantity), price: Number(l.ListPrice), netCost: l.NetCost != null ? Number(l.NetCost) : null }));
+
+    const orderInfo = await createOrderWithLines({
+      offerId,
+      description: ctx.offerDescription,
+      customerCode: erpCustomerCode ?? String(erpCustomerId),
+      projectCode: project.prjcCode,
+      prjcId: project.prjcId,
+      businessUnit: ctx.businessUnit,
+      trdr: erpCustomerId,
+      integrationKey: 'FASTQUOTE_CREATE_FINDOC',
+      series: 9001,
+      createdByUser: 1011,
+      lines: orderLines,
+    });
+
+    results.order = { findocId: orderInfo.findocId, finCode: orderInfo.finCode };
+    logger.info('wizard execute order created', { requestId, offerId, findocId: orderInfo.findocId, finCode: orderInfo.finCode });
+  }
+
+  return NextResponse.json({ ok: true, step: 'execute', ...results });
+}
+
+// ── Legacy handler (existing monolithic flow) ──────────────────────────────────
+
 // First call: Find matches for all products
 export async function POST(
   req: NextRequest,
@@ -379,6 +1168,39 @@ export async function POST(
       const name = salesDivisionName?.toUpperCase() ?? '';
       businessUnit = name.includes('TVS') ? 'TVS' : 'AVS';
     }
+
+    // ── Wizard step dispatcher ───────────────────────────────────────────────
+    if (body?.step) {
+      const ctx: OfferContext = {
+        pool, erpPool, offerId: normalizedId, requestId,
+        offerDescription,
+        salesDivisionId,
+        businessUnit,
+        erpCustomerId,
+        customerName,
+        erpProjectId,
+        erpProjectCode,
+      };
+
+      switch (body.step as WizardStep) {
+        case 'resolve-customer':
+          return await handleResolveCustomer(ctx, body);
+        case 'categorize-products':
+          return await handleCategorizeProducts(ctx);
+        case 'check-brands':
+          return await handleCheckBrands(ctx);
+        case 'match-products':
+          return await handleMatchProducts(ctx, body);
+        case 'prepare-summary':
+          return await handlePrepareSummary(ctx, body);
+        case 'execute':
+          return await handleExecute(ctx, body);
+        default:
+          return NextResponse.json({ ok: false, error: `Unknown step: ${body.step}` }, { status: 400 });
+      }
+    }
+
+    // ── Legacy monolithic flow (backward compatibility) ──────────────────────
 
     // Customer finding logic: search for customer before searching for project
     const customerSelection = body?.customerSelection ?? null;
