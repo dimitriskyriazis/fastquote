@@ -77,7 +77,7 @@ const CUSTOMER_FIELD_LABELS: Record<string, string> = {
 
 export default function CustomersClient() {
   const router = useRouter();
-  const { roles } = useAuditUser();
+  const { roles, userId } = useAuditUser();
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
@@ -432,6 +432,10 @@ export default function CustomersClient() {
         name: "Create an offer for this customer",
         icon: createOfferMenuIcon,
         action: () => {
+          try {
+            const user = userId?.trim() || 'anon';
+            localStorage.removeItem(`fastquote.draft:offer-create:${user}`);
+          } catch { /* ignore */ }
           router.push(`/offers/create?customerId=${encodeURIComponent(String(clickedCustomerId))}`);
         },
       };
@@ -444,7 +448,7 @@ export default function CustomersClient() {
 
       return items;
     },
-    [customerRowDeletion, router],
+    [customerRowDeletion, router, userId],
   );
 
   return (

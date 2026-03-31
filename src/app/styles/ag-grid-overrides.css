@@ -181,9 +181,9 @@
 .drop-toast {
   background: rgba(0, 0, 0, 0.96);
   color: #f8fafc;
-  padding: 10px 16px;
+  padding: 12px 20px;
   border-radius: 8px;
-  font-size: 0.9rem;
+  font-size: 1rem;
   box-shadow: 0 8px 30px rgba(15, 23, 42, 0.45);
   opacity: 0;
   transform: translateY(6px);

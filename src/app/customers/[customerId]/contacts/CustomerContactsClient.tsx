@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import React, { useMemo, useCallback, useRef, useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import type { CellValueChangedEvent, ColDef, GetContextMenuItemsParams, GridApi } from "ag-grid-community";
@@ -88,6 +89,17 @@ const BOOLEAN_OPTIONS = [
 
 const TITLE_PRIORITY_ORDER = ["Mr", "Mrs", "\u039A\u03BF\u03C2", "\u039A\u03B1", "Dr", "\u0394\u03C1"] as const;
 
+const createOfferMenuIcon = `
+  <span class="fastquote-menu-icon fastquote-menu-icon--copy" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 3H7a2 2 0 0 0-2 2v12" />
+      <path d="M17 7h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-2" />
+      <path d="M12 11v6" />
+      <path d="M9 14h6" />
+    </svg>
+  </span>
+`;
+
 const sortTitleOptions = (options: DropdownOption[]): DropdownOption[] => {
   const priorityIndex = new Map<string, number>(
     TITLE_PRIORITY_ORDER.map((label, index) => [label, index]),
@@ -113,7 +125,8 @@ type Props = {
 };
 
 export default function CustomerContactsClient({ customerId, customerName, statuses, importances, titles }: Props) {
-  const { roles } = useAuditUser();
+  const router = useRouter();
+  const { roles, userId } = useAuditUser();
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const encodedCustomerId = encodeURIComponent(customerId);
@@ -453,9 +466,29 @@ export default function CustomerContactsClient({ customerId, customerName, statu
   );
 
   const contactContextMenuItems = useCallback(
-    (params: GetContextMenuItemsParams<Record<string, unknown>>) =>
-      contactRowDeletion.getContextMenuItems(params),
-    [contactRowDeletion],
+    (params: GetContextMenuItemsParams<Record<string, unknown>>) => {
+      const deleteItems = contactRowDeletion.getContextMenuItems(params);
+      const contactId = normalizeContactId(
+        (params.node?.data as { ContactID?: unknown } | undefined)?.ContactID ?? null,
+      );
+      const createOfferItem = contactId != null
+        ? [
+            {
+              name: "Create an offer for this contact",
+              icon: createOfferMenuIcon,
+              action: () => {
+                try {
+                  const user = userId?.trim() || 'anon';
+                  localStorage.removeItem(`fastquote.draft:offer-create:${user}`);
+                } catch { /* ignore */ }
+                router.push(`/offers/create?customerId=${encodeURIComponent(customerId)}&contactId=${encodeURIComponent(String(contactId))}`);
+              },
+            },
+          ]
+        : [];
+      return [...(createOfferItem.length > 0 ? [...createOfferItem, "separator" as const] : []), ...deleteItems];
+    },
+    [contactRowDeletion, customerId, router, userId],
   );
 
   const heading = customerName ? `${customerName} – Contacts` : "Customer Contacts";

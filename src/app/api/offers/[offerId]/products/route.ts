@@ -748,7 +748,17 @@ async function handleReorderRow(
   const detachNode = (node: TreeOrderingNode) => {
     const collection = node.parent ? node.parent.children : roots;
     const idx = collection.indexOf(node);
-    if (idx >= 0) collection.splice(idx, 1);
+    if (idx >= 0) {
+      collection.splice(idx, 1);
+      // Reset path segments of siblings after the removed position so
+      // buildSegmentList closes the gap instead of preserving stale numbers
+      for (let i = idx; i < collection.length; i++) {
+        const sibling = collection[i];
+        if (sibling.path.length > 0) {
+          sibling.path = [...sibling.path.slice(0, -1), '0'];
+        }
+      }
+    }
     node.parent = null;
   };
   sourceNodes.forEach(detachNode);
@@ -2740,7 +2750,7 @@ export async function DELETE(
       const chunk = normalizedIds.slice(idx, idx + chunkSize);
       if (chunk.length === 0) continue;
 
-      // Pre-fetch rows that will be deleted (including cascaded children)
+      // Pre-fetch rows that will be deleted
       const prefetchReq = pool.request();
       prefetchReq.input('__offerId', sql.Int, offerId);
       const prefetchParamNames: string[] = [];
@@ -2750,31 +2760,81 @@ export async function DELETE(
         prefetchParamNames.push(`@${paramName}`);
       });
       const prefetchResult = await prefetchReq.query<Record<string, unknown>>(`
-        WITH PendingDeletes AS (
-          SELECT od.ID AS OfferDetailID,
-                 ${TREE_ORDERING_RAW_EXPRESSION} AS TreeOrderingTrimmed
-          FROM dbo.OfferDetails od
-          WHERE od.OfferID = @__offerId
-            AND od.ID IN (${prefetchParamNames.join(', ')})
-        )
         SELECT od.*
         FROM dbo.OfferDetails od
         WHERE od.OfferID = @__offerId
-          AND (
-            od.ID IN (SELECT OfferDetailID FROM PendingDeletes)
-            OR EXISTS (
-              SELECT 1
-              FROM PendingDeletes pd
-              WHERE pd.TreeOrderingTrimmed IS NOT NULL
-                AND ${TREE_ORDERING_RAW_EXPRESSION} IS NOT NULL
-                AND (
-                  ${TREE_ORDERING_RAW_EXPRESSION} = pd.TreeOrderingTrimmed
-                  OR ${TREE_ORDERING_RAW_EXPRESSION} LIKE pd.TreeOrderingTrimmed + '.%'
-                )
-            )
-          )
+          AND od.ID IN (${prefetchParamNames.join(', ')})
       `);
       allDeletedRows.push(...(prefetchResult.recordset ?? []));
+
+      // Promote children of deleted rows before deleting the parents.
+      // 1) Reassign ParentOfferDetailID so FK CASCADE doesn't delete children.
+      //    This is done via a single UPDATE that joins to the parent row to get
+      //    the grandparent ID — no dependency on TreeOrdering.
+      // 2) Update TreeOrdering so children move up one level.
+      //    resequenceTreeOrdering will clean up numbering afterwards.
+      const reparentReq = pool.request();
+      reparentReq.input('__offerId', sql.Int, offerId);
+      reparentReq.input('__modifiedBy', sql.Int, audit.userId);
+      const reparentChunkParamNames: string[] = [];
+      chunk.forEach((id, chunkIdx) => {
+        const paramName = `rp_${chunkIdx}`;
+        reparentReq.input(paramName, sql.Int, id);
+        reparentChunkParamNames.push(`@${paramName}`);
+      });
+      await reparentReq.query(`
+        UPDATE child
+        SET child.ParentOfferDetailID = parent.ParentOfferDetailID,
+            child.ModifiedOn = SYSUTCDATETIME(),
+            child.ModifiedBy = @__modifiedBy
+        FROM dbo.OfferDetails child
+        INNER JOIN dbo.OfferDetails parent ON child.ParentOfferDetailID = parent.ID
+        WHERE parent.OfferID = @__offerId
+          AND parent.ID IN (${reparentChunkParamNames.join(', ')})
+          AND child.ID NOT IN (${reparentChunkParamNames.join(', ')})
+      `);
+
+      // Update TreeOrdering: children inherit the deleted parent's position.
+      // Direct child "11.1" → "11" (takes parent's slot).
+      // Grandchild "11.1.3" → "11.3" (stays nested under promoted child).
+      // resequenceTreeOrdering will clean up numbering afterwards.
+      for (const deletedRow of prefetchResult.recordset ?? []) {
+        const rawTO = (deletedRow as Record<string, unknown>).TreeOrdering;
+        if (rawTO == null) continue;
+        const toStr = String(rawTO).trim();
+        if (!toStr) continue;
+        const parentPrefix = toStr + '.';
+        const promoteReq = pool.request();
+        promoteReq.input('__offerId', sql.Int, offerId);
+        promoteReq.input('__parentPrefix', sql.NVarChar, parentPrefix);
+        promoteReq.input('__parentPrefixLen', sql.Int, parentPrefix.length);
+        promoteReq.input('__parentTO', sql.NVarChar, toStr);
+        promoteReq.input('__modifiedBy', sql.Int, audit.userId);
+        const excludeParamNames: string[] = [];
+        chunk.forEach((id, chunkIdx) => {
+          const paramName = `exc_${chunkIdx}`;
+          promoteReq.input(paramName, sql.Int, id);
+          excludeParamNames.push(`@${paramName}`);
+        });
+        await promoteReq.query(`
+          UPDATE od
+          SET od.TreeOrdering =
+              CASE
+                WHEN CHARINDEX('.', rel.val) > 0
+                THEN @__parentTO + '.' + SUBSTRING(rel.val, CHARINDEX('.', rel.val) + 1, LEN(rel.val))
+                ELSE @__parentTO
+              END,
+              od.ModifiedOn = SYSUTCDATETIME(),
+              od.ModifiedBy = @__modifiedBy
+          FROM dbo.OfferDetails od
+          CROSS APPLY (
+            SELECT SUBSTRING(LTRIM(RTRIM(od.TreeOrdering)), @__parentPrefixLen + 1, LEN(LTRIM(RTRIM(od.TreeOrdering)))) AS val
+          ) rel
+          WHERE od.OfferID = @__offerId
+            AND LTRIM(RTRIM(od.TreeOrdering)) LIKE @__parentPrefix + '%'
+            AND od.ID NOT IN (${excludeParamNames.join(', ')})
+        `);
+      }
 
       // Now perform the actual delete
       const request = pool.request();
@@ -2786,34 +2846,10 @@ export async function DELETE(
         paramNames.push(`@${paramName}`);
       });
       const query = `
-        WITH PendingDeletes AS (
-          SELECT od.ID AS OfferDetailID,
-                 ${TREE_ORDERING_RAW_EXPRESSION} AS TreeOrderingTrimmed
-          FROM dbo.OfferDetails od
-          WHERE od.OfferID = @__offerId
-            AND od.ID IN (${paramNames.join(', ')})
-        ),
-        RowsToDelete AS (
-          SELECT od.ID
-          FROM dbo.OfferDetails od
-          WHERE od.OfferID = @__offerId
-            AND (
-              od.ID IN (SELECT OfferDetailID FROM PendingDeletes)
-              OR EXISTS (
-                SELECT 1
-                FROM PendingDeletes pd
-                WHERE pd.TreeOrderingTrimmed IS NOT NULL
-                  AND ${TREE_ORDERING_RAW_EXPRESSION} IS NOT NULL
-                  AND (
-                    ${TREE_ORDERING_RAW_EXPRESSION} = pd.TreeOrderingTrimmed
-                    OR ${TREE_ORDERING_RAW_EXPRESSION} LIKE pd.TreeOrderingTrimmed + '.%'
-                  )
-              )
-            )
-        )
         DELETE od
         FROM dbo.OfferDetails od
-          INNER JOIN RowsToDelete rtd ON od.ID = rtd.ID
+        WHERE od.OfferID = @__offerId
+          AND od.ID IN (${paramNames.join(', ')})
       `;
       const result = await request.query(query);
       deleted += result.rowsAffected?.[0] ?? 0;

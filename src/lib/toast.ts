@@ -8,7 +8,7 @@ export type ToastAction = {
 export const showToastMessage = (
   message: string,
   tone: ToastTone = 'info',
-  durationMs = 3200,
+  durationMs = 5000,
   action?: ToastAction,
 ): (() => void) => {
   if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};

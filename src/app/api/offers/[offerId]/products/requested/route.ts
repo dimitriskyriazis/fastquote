@@ -193,21 +193,66 @@ const parseRootSegment = (treeOrdering: string | null): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+/**
+ * Positive signals that a description is a category header rather than a
+ * product with missing data.  We require at least one signal before treating
+ * a row as a category — this avoids false-positives for product rows that
+ * simply lack quantity / part-number / brand.
+ */
+const descriptionLooksLikeCategory = (desc: string): boolean => {
+  const trimmed = desc.trim();
+  if (!trimmed) return false;
+
+  // Very short (≤ 5 words) and fully UPPERCASE → strong category signal
+  // e.g. "AUDIO", "ACCESS CONTROL", "INDOOR UNITS"
+  const wordCount = trimmed.split(/\s+/).length;
+  if (wordCount <= 5 && trimmed === trimmed.toUpperCase() && /[A-Z]/.test(trimmed)) return true;
+
+  // Starts with a section-like numbering pattern followed by text
+  // e.g. "1. Audio Systems", "A) CCTV", "Section 2 - Lighting"
+  if (/^\d+[\.\)\-]\s+\S/.test(trimmed)) return true;
+  if (/^[A-Z][\.\)]\s+\S/.test(trimmed)) return true;
+  if (/^(section|phase|part)\s+\d/i.test(trimmed)) return true;
+
+  // Contains model-number-like patterns → probably a product, not a category
+  // e.g. "DS-2CD2147G2" or "NVR-7608"
+  if (/[A-Za-z]{1,5}[-]?\d{3,}/.test(trimmed)) return false;
+  if (/\d{3,}[-]?[A-Za-z]/.test(trimmed)) return false;
+
+  // Short description (≤ 4 words) without numbers → likely a category
+  // e.g. "Accessories", "Optional Items", "Spare Parts"
+  if (wordCount <= 4 && !/\d/.test(trimmed)) return true;
+
+  return false;
+};
+
 const isCategoryCandidate = (row: NormalizedRow) => {
   if (!row) return false;
   const hasDescription = Boolean(row.description || row.description2 || row.description3);
   const hasQuantity = row.quantity != null && !Object.is(row.quantity, 0);
   const hasLookup = Boolean(row.partNumber || row.modelNumber || row.brand);
-  return hasDescription && !hasQuantity && !hasLookup;
+
+  // If it has quantity or lookup fields, it's a product — not a category
+  if (hasQuantity || hasLookup) return false;
+  if (!hasDescription) return false;
+
+  // Must also positively look like a category header
+  const desc = getPrimaryDescription(row);
+  if (!desc) return false;
+  return descriptionLooksLikeCategory(desc);
 };
 
 const COMMENT_KEYWORDS = ['grand total', 'subtotal', 'sub total', 'sub-total', 'total', 'options', 'summary'];
+const COMMENT_PATTERNS = [
+  /\bgrand\s+total\b/, /\bsub[-\s]?total\b/, /^total\b/, /\bsummary\b/,
+];
 
 const isCommentCandidate = (row: NormalizedRow) => {
   const desc = getPrimaryDescription(row);
   if (!desc) return false;
   const lower = desc.toLowerCase().trim();
-  return COMMENT_KEYWORDS.includes(lower);
+  if (COMMENT_KEYWORDS.includes(lower)) return true;
+  return COMMENT_PATTERNS.some(p => p.test(lower));
 };
 
 const assignSequentialOrdering = (

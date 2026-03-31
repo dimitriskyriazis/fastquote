@@ -158,6 +158,17 @@ const viewCustomerMenuIcon = `
   </span>
 `;
 
+const createOfferMenuIcon = `
+  <span class="fastquote-menu-icon fastquote-menu-icon--copy" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 3H7a2 2 0 0 0-2 2v12" />
+      <path d="M17 7h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-2" />
+      <path d="M12 11v6" />
+      <path d="M9 14h6" />
+    </svg>
+  </span>
+`;
+
 const viewGroupsMailsMenuIcon = `
   <span class="fastquote-menu-icon" aria-hidden="true">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -179,7 +190,7 @@ export default function ContactsClient({
   initialContactLastName,
 }: Props) {
   const router = useRouter();
-  const { roles } = useAuditUser();
+  const { roles, userId } = useAuditUser();
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const initialContactFilterAppliedRef = useRef(false);
@@ -725,6 +736,21 @@ export default function ContactsClient({
             },
           ]
         : [];
+      const createOfferItem = customerId != null && contactId != null
+        ? [
+            {
+              name: "Create an offer for this contact",
+              icon: createOfferMenuIcon,
+              action: () => {
+                try {
+                  const user = userId?.trim() || 'anon';
+                  localStorage.removeItem(`fastquote.draft:offer-create:${user}`);
+                } catch { /* ignore */ }
+                router.push(`/offers/create?customerId=${encodeURIComponent(String(customerId))}&contactId=${encodeURIComponent(String(contactId))}`);
+              },
+            },
+          ]
+        : [];
       const viewGroupsMailsItem = contactId != null
         ? [
             {
@@ -739,10 +765,10 @@ export default function ContactsClient({
             },
           ]
         : [];
-      const customerItems = [...viewCustomerItem, ...changeCustomerItem, ...viewGroupsMailsItem];
+      const customerItems = [...viewCustomerItem, ...changeCustomerItem, ...createOfferItem, ...viewGroupsMailsItem];
       return [...(customerItems.length > 0 ? [...customerItems, "separator" as const] : []), ...deleteItems];
     },
-    [contactRowDeletion, router],
+    [contactRowDeletion, router, userId],
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {

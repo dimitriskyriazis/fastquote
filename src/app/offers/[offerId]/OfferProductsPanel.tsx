@@ -2915,6 +2915,16 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     }
   }, [collapsedCategoryPaths]);
 
+  useEffect(() => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    try {
+      api.redrawRows();
+    } catch {
+      /* noop */
+    }
+  }, [categoryPathsWithChildren]);
+
   const prevOfferIdForCookieRef = useRef(offerId);
   useEffect(() => {
     if (prevOfferIdForCookieRef.current !== offerId) {
@@ -2938,15 +2948,19 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         resolveRowId: (row) =>
           normalizeOfferDetailId((row as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null),
         resolveRowLabel,
-        resolveRowTypeLabel: resolveOfferProductTypeLabel,
+        resolveRowTypeLabel: (row) => {
+          const base = resolveOfferProductTypeLabel(row);
+          if (base === 'product') return 'product row';
+          return base;
+        },
         resolveMultiRowTypeLabel: (rows) => {
           const types = new Set(
             rows.map((row) => resolveOfferProductTypeLabel(row)).filter((value) => value && value.trim().length > 0),
           );
-          if (types.size !== 1) return 'items';
+          if (types.size !== 1) return 'rows';
           const [type] = Array.from(types);
           if (type === 'category') return 'categories';
-          if (type === 'product') return 'products';
+          if (type === 'product') return 'product rows';
           if (type === 'comment') return 'comments';
           if (type.endsWith('s')) return type;
           return `${type}s`;
@@ -4169,7 +4183,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     params: GetContextMenuItemsParams<Record<string, unknown>>,
   ) => {
     const baseItems = productRowDeletion.getContextMenuItems(params) ?? [];
-    const items = [...baseItems];
+    const items = [...baseItems].filter((item) => item !== 'copy' && item !== 'copyWithHeaders' && item !== 'copyWithGroupHeaders');
     if (pendingContextMenuSelectionClearRef.current) {
       pendingContextMenuSelectionClearRef.current = false;
       setGridRowDeletionContextMenuSelectionSnapshot(params.api ?? null, []);
@@ -4273,12 +4287,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       return [pasteOnlyItem];
     }
 
-    // Copy/Paste clipboard items (placed first in custom actions section)
+    // Copy submenu (Copy cells + Copy with Headers + Copy with Group Headers + Copy Rows)
     const selectedNodesForCopy = api && typeof api.getSelectedNodes === 'function'
       ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
       : [];
     const hasSelection = selectedNodesForCopy.length > 0;
-    const copyItem: MenuItemDef = {
+    const copyRowsItem: MenuItemDef = {
       name: 'Copy Rows',
       icon: copyRowsMenuIcon,
       disabled: !hasSelection,
@@ -4304,7 +4318,17 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         showToastMessage(`Copied ${clipboardRows.length} row(s) to clipboard.`, 'success');
       },
     };
-    const clipboardItems: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> = [copyItem];
+    const copySubmenu: MenuItemDef = {
+      name: 'Copy',
+      icon: copyRowsMenuIcon,
+      subMenu: [
+        'copy' as unknown as MenuItemDef,
+        'copyWithHeaders' as unknown as MenuItemDef,
+        'copyWithGroupHeaders' as unknown as MenuItemDef,
+        copyRowsItem,
+      ],
+    };
+    const clipboardItems: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> = [copySubmenu];
     if (onRequestPaste && clipboardHasRows) {
       const pasteItem: MenuItemDef = {
         name: 'Paste Rows',
@@ -4435,22 +4459,29 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         icon: costModifierMenuIcon,
         action: () => openBrandBulkEdit('CurrencyCostModifier', '', currentModifier, 'offer'),
       };
-      const setMarginItem: MenuItemDef = {
-        name: 'Set margin for this brand',
-        icon: brandBulkEditMenuIcon,
-        action: () => openBrandBulkEdit('Margin', rowBrandName, currentMargin, 'brand'),
-      };
       const currentCustomerDiscount = (rowData as { CustomerDiscount?: unknown }).CustomerDiscount ?? null;
       const currentTelmacoDiscount = (rowData as { TelmacoDiscount?: unknown }).TelmacoDiscount ?? null;
-      const setCustomerDiscountItem: MenuItemDef = {
-        name: 'Set customer discount for this brand',
-        icon: discountMenuIcon,
-        action: () => openBrandBulkEdit('CustomerDiscount', rowBrandName, currentCustomerDiscount, 'brand'),
-      };
-      const setTelmacoDiscountItem: MenuItemDef = {
-        name: 'Set telmaco discount for this brand',
-        icon: discountMenuIcon,
-        action: () => openBrandBulkEdit('TelmacoDiscount', rowBrandName, currentTelmacoDiscount, 'brand'),
+      // Brand submenu: margin + discounts
+      const brandSubmenu: MenuItemDef = {
+        name: 'Set for this brand',
+        icon: brandBulkEditMenuIcon,
+        subMenu: [
+          {
+            name: 'Margin',
+            icon: brandBulkEditMenuIcon,
+            action: () => openBrandBulkEdit('Margin', rowBrandName, currentMargin, 'brand'),
+          },
+          {
+            name: 'Customer discount',
+            icon: discountMenuIcon,
+            action: () => openBrandBulkEdit('CustomerDiscount', rowBrandName, currentCustomerDiscount, 'brand'),
+          },
+          {
+            name: 'Telmaco discount',
+            icon: discountMenuIcon,
+            action: () => openBrandBulkEdit('TelmacoDiscount', rowBrandName, currentTelmacoDiscount, 'brand'),
+          },
+        ],
       };
       const bulkItems: MenuItemDef[] = [];
       if (rowHasModifier) {
@@ -4459,9 +4490,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       if (anyRowHasModifier) {
         bulkItems.push(setOfferModifierItem);
       }
-      bulkItems.push(setMarginItem);
-      bulkItems.push(setCustomerDiscountItem);
-      bulkItems.push(setTelmacoDiscountItem);
+      bulkItems.push(brandSubmenu);
       if (bulkItems.length > 0) {
         if (deleteIndexAfterHistory >= 0) {
           items.splice(deleteIndexAfterHistory, 0, ...bulkItems);
@@ -4741,7 +4770,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       }
     }
 
-    // --- Add web links item (product rows only) ---
+    // --- AI features submenu (web links + enhance description, product rows only) ---
     const selectedNodes = getContextMenuSelectionSnapshot(params.api ?? null);
     const targetNodes = selectedNodes.length > 0 ? selectedNodes : (params.node ? [params.node] : []);
     const targetProductNodes = targetNodes.filter((n) => isOfferProductProduct(n.data));
@@ -4862,12 +4891,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           }
         },
       };
-      const deleteIdx = findDeleteMenuItemIndex(items);
-      items.splice(deleteIdx >= 0 ? deleteIdx : items.length, 0, webLinkItem);
-    }
 
-    // --- Enhance description item (product rows only) ---
-    if (targetIds.length > 0 || isSelectAllActive) {
       const targetOfferDetailIds = targetProducts
         .map((p) => {
           const pid = (() => {
@@ -4912,9 +4936,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             if (!confirmed) return;
             try {
               const allProductIds = await fetchAllFilteredOfferProductIds();
-              // For select-all we only have product IDs; we need offer detail IDs too
               const allDetailIds = await fetchAllFilteredOfferDetailIds();
-              // Pair them: fetch from grid rows if possible
               idsToProcess = allProductIds.map((pid, i) => ({
                 productId: pid,
                 offerDetailId: allDetailIds[i] ?? 0,
@@ -5004,8 +5026,14 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           }
         },
       };
-      const enhanceDeleteIdx = findDeleteMenuItemIndex(items);
-      items.splice(enhanceDeleteIdx >= 0 ? enhanceDeleteIdx : items.length, 0, enhanceDescItem);
+
+      const aiSubmenu: MenuItemDef = {
+        name: 'AI features',
+        icon: enhanceDescriptionMenuIcon,
+        subMenu: [webLinkItem, enhanceDescItem],
+      };
+      const aiDeleteIdx = findDeleteMenuItemIndex(items);
+      items.splice(aiDeleteIdx >= 0 ? aiDeleteIdx : items.length, 0, aiSubmenu);
     }
 
     return items;

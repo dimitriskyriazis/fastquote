@@ -213,6 +213,8 @@ export default function OfferCreateClient({
   const lookupRefreshInFlightRef = useRef(new Set<LookupKey>());
   const contactRefreshTokenRef = useRef(0);
   const initialCustomerIdParam = (searchParams?.get('customerId') ?? '').trim();
+  const initialContactIdParam = (searchParams?.get('contactId') ?? '').trim();
+  const appliedContactParamRef = useRef(false);
 
   const defaultPricingPolicyId = useMemo(
     () => resolveDefaultPricingPolicyId(localPricingPolicies),
@@ -581,6 +583,16 @@ export default function OfferCreateClient({
       }
     };
   }, [loadContactsForCustomer, values.customerId]);
+
+  useEffect(() => {
+    if (appliedContactParamRef.current) return;
+    if (!initialContactIdParam) return;
+    if (contactOptions.length === 0) return;
+    const match = contactOptions.find((option) => option.value?.trim() === initialContactIdParam);
+    appliedContactParamRef.current = true;
+    if (!match) return;
+    setValues((prev) => ({ ...prev, contactId: match.value }));
+  }, [contactOptions, initialContactIdParam]);
 
   const handleChange = useCallback((field: keyof FormValues, value: string) => {
     setValues((prev) => ({ ...prev, [field]: value }));

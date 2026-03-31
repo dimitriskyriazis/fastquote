@@ -24,14 +24,6 @@ export const setGridRowDeletionContextMenuSelectionSnapshot = <RowData>(
 ) => {
   if (!api) return;
   const key = api as GridApi<unknown>;
-  const existing = contextMenuSelectionSnapshots.get(key);
-  const existingCount = Array.isArray(existing) ? existing.length : 0;
-  const newCount = Array.isArray(selection) ? selection.length : 0;
-  // Only prevent updating if going from multi-selection to single selection (preserve multi-select intent)
-  // But always allow updates when selection is cleared (0 nodes) or when explicitly changing to a different multi-selection
-  if (existingCount > 1 && newCount === 1) {
-    return;
-  }
   contextMenuSelectionSnapshots.set(key, selection ? selection.slice() : []);
 };
 
