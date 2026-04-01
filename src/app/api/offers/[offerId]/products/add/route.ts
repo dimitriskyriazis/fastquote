@@ -1112,16 +1112,40 @@ async function handleUnassignRequestedRows(
 
   try {
     const pool = await getPool();
+
+    // Build parameterised IN list
+    const idParamEntries = ids.map((id, i) => ({ name: `__id${i}`, value: id }));
+    const idParamNames = idParamEntries.map((e) => `@${e.name}`).join(', ');
+
+    // Pre-fetch rows that will be cleared so the client can undo
+    const prefetchReq = pool.request();
+    prefetchReq.input('__offerId', sql.Int, offerId);
+    for (const entry of idParamEntries) {
+      prefetchReq.input(entry.name, sql.Int, entry.value);
+    }
+    const prefetchResult = await prefetchReq.query<Record<string, unknown>>(`
+      SELECT od.ID AS OfferDetailID,
+             od.ProductID, od.BrandID, od.PartNumber, od.ModelNumber,
+             od.ProductDescription, od.ListPrice, od.NetUnitPrice, od.TotalPrice, od.TotalNet,
+             od.TelmacoDiscount, od.CustomerDiscount, od.NetCost, od.NetCostOtherCurrency,
+             od.OtherCurrencyID, od.CurrencyCostModifier,
+             od.Margin, od.GrossProfit, od.TotalCost,
+             od.PriceListID, od.PriceListItemID,
+             od.Quantity, od.TelmacoWarranty, od.Warranty,
+             od.IsCategory, od.IsComment, od.IsPrintable, od.Comment
+      FROM dbo.OfferDetails od
+      WHERE od.OfferID = @__offerId
+        AND od.ID IN (${idParamNames})
+        AND ${requestedRowCondition}
+    `);
+    const previousRows = prefetchResult.recordset ?? [];
+
     const request = pool.request();
     request.input('__offerId', sql.Int, offerId);
     request.input('__modifiedBy', sql.Int, auditUserId);
-
-    // Build parameterised IN list
-    const idParams = ids.map((id, i) => {
-      const paramName = `__id${i}`;
-      request.input(paramName, sql.Int, id);
-      return `@${paramName}`;
-    });
+    for (const entry of idParamEntries) {
+      request.input(entry.name, sql.Int, entry.value);
+    }
 
     const query = `
       UPDATE od
@@ -1157,14 +1181,14 @@ async function handleUnassignRequestedRows(
         od.ModifiedBy = @__modifiedBy
       FROM dbo.OfferDetails od
       WHERE od.OfferID = @__offerId
-        AND od.ID IN (${idParams.join(', ')})
+        AND od.ID IN (${idParamNames})
         AND ${requestedRowCondition};
     `;
 
     const result = await request.query(query);
     const rowsAffected = result.rowsAffected?.[0] ?? 0;
 
-    return NextResponse.json({ ok: true, cleared: rowsAffected });
+    return NextResponse.json({ ok: true, cleared: rowsAffected, previousRows });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Server error';
     logger.error(

@@ -75,7 +75,6 @@ import {
   commentMenuIcon,
   brandBulkEditMenuIcon,
   costModifierMenuIcon,
-  discountMenuIcon,
   copyRowsMenuIcon,
   pasteRowsMenuIcon,
   addStandardPackageMenuIcon,
@@ -112,6 +111,7 @@ import {
   hasRequestedRowData,
   hasRequestedPseudoFields,
   buildRequestedLookupInfo,
+  type RequestedLookupInfo,
   resolveProductIdFromRequestedInfo,
   fetchProductSummary,
   isFarnellBrand,
@@ -3050,10 +3050,32 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'unassign-requested', offerDetailIds: idsToUnassign }),
           });
-          const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+          const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string; previousRows?: Record<string, unknown>[] } | null;
           if (!res.ok || !payload?.ok) {
             showToastMessage(payload?.error ?? 'Failed to clear existing product data for re-population.', 'error');
             return;
+          }
+          // Push undo so the user can restore the previously-assigned product data
+          const previousRows = Array.isArray(payload?.previousRows) ? payload.previousRows : [];
+          if (previousRows.length > 0) {
+            const capturedEndpoint = resolvedEndpoint;
+            pushUndo({
+              label: `Unassign ${previousRows.length} requested product(s)`,
+              undo: async () => {
+                const updates = previousRows.map((row) => {
+                  const { OfferDetailID, ...fields } = row;
+                  return { OfferDetailID, ...fields };
+                });
+                const undoRes = await fetch(capturedEndpoint, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ updates }),
+                });
+                const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+                if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to restore unassigned data');
+                refreshOfferProductGrid(null, { purge: true });
+              },
+            });
           }
           // Reset local node data directly (without setDataValue) to avoid
           // triggering cell-changed handlers that spam validation toasts.
@@ -3095,6 +3117,22 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     let productsAdded = 0;
     const unmatchedRequestedRows: RequestedProductMatchEntry[] = [];
     const unfoundFarnellPartNumbers: string[] = [];
+    const brandMismatchPending: Array<{
+      node: (typeof requestedNodes)[0];
+      data: Record<string, unknown>;
+      offerDetailId: number;
+      productId: number;
+      productMeta: ProductSummary;
+      lookupInfo: RequestedLookupInfo;
+      brandIsFarnell: boolean;
+      farnellLookupResponse: FarnellLookupResponse | null;
+      parentCategoryId: number | null;
+      requestedQuantityValue: number | null;
+      actualQuantityValue: number | null;
+      descriptionOverride: string | null;
+      requestedBrand: string;
+      matchedBrand: string;
+    }> = [];
     const farnellProductCache = new Map<string, number>();
     const farnellLookupCache = new Map<string, FarnellLookupResponse | null>();
     const getFarnellLookupCacheKey = (partNumber: string, quantity: number, searchType: 'id' | 'manuPartNum' = 'id') => `${searchType}::${partNumber}::${quantity}`;
@@ -3264,6 +3302,38 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             }
             continue;
           }
+
+          // Fetch product summary early so we can check for brand mismatch before assignment
+          const productMeta = await fetchProductSummary(productId);
+          const requestedBrandNorm = lookupInfo.brand
+            ? lookupInfo.brand.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
+            : null;
+          const matchedBrandNorm = productMeta?.BrandName
+            ? productMeta.BrandName.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
+            : null;
+          if (requestedBrandNorm && matchedBrandNorm && requestedBrandNorm !== matchedBrandNorm) {
+            const parentCategoryId = normalizeOfferDetailId(
+              (data as { ParentOfferDetailID?: unknown }).ParentOfferDetailID ?? null,
+            );
+            brandMismatchPending.push({
+              node,
+              data,
+              offerDetailId,
+              productId,
+              productMeta: productMeta!,
+              lookupInfo,
+              brandIsFarnell,
+              farnellLookupResponse,
+              parentCategoryId,
+              requestedQuantityValue,
+              actualQuantityValue,
+              descriptionOverride,
+              requestedBrand: lookupInfo.brand!,
+              matchedBrand: productMeta!.BrandName!,
+            });
+            continue;
+          }
+
           const parentCategoryId = normalizeOfferDetailId(
             (data as { ParentOfferDetailID?: unknown }).ParentOfferDetailID ?? null,
           );
@@ -3277,7 +3347,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             continue;
           }
 
-          const productMeta = await fetchProductSummary(productId);
+          // productMeta already fetched above (before brand mismatch check)
           const assignedProductBrandIsFarnell = brandIsFarnell || isFarnellBrand(productMeta?.BrandName ?? null);
           const productPartNumber = typeof productMeta?.PartNumber === 'string'
             ? productMeta.PartNumber.trim()
@@ -3342,6 +3412,101 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           console.error('Failed to populate requested row in offer', err);
         }
         continue;
+      }
+
+      // Handle brand-mismatched items: prompt user before assigning
+      if (brandMismatchPending.length > 0) {
+        const mismatchSummary = brandMismatchPending
+          .map((item) => `${item.requestedBrand} → ${item.matchedBrand}`)
+          .join(', ');
+        const confirmed = await showConfirmDialog({
+          title: 'Brand mismatch detected',
+          message: `${brandMismatchPending.length} product${brandMismatchPending.length === 1 ? '' : 's'} matched with a different brand than requested (${mismatchSummary}). Accept these brand changes or send them to manual matching?`,
+          confirmLabel: 'Accept Changes',
+          cancelLabel: 'Manual Match',
+        });
+        if (confirmed) {
+          for (const pending of brandMismatchPending) {
+            try {
+              const assignment = await assignRequestedRowToProduct(
+                pending.offerDetailId,
+                pending.productId,
+                pending.parentCategoryId,
+              );
+              if (!assignment) {
+                unmatchedRequestedRows.push(buildRequestedProductMatchEntry(pending.data, pending.offerDetailId));
+                continue;
+              }
+
+              const pm = pending.productMeta;
+              const assignedProductBrandIsFarnell = pending.brandIsFarnell || isFarnellBrand(pm?.BrandName ?? null);
+              const productPartNumber = typeof pm?.PartNumber === 'string' ? pm.PartNumber.trim() : '';
+              const assignedPartNumber = pending.lookupInfo.partNumber
+                ?? (productPartNumber.length > 0 ? productPartNumber : null);
+
+              if (assignedProductBrandIsFarnell && assignedPartNumber) {
+                const quantityForLookupRaw = assignment.pricing?.quantity ?? pending.requestedQuantityValue ?? pending.actualQuantityValue ?? 1;
+                const quantityForLookup = quantityForLookupRaw > 0 ? Math.trunc(quantityForLookupRaw) : 1;
+                let lookupResponse = pending.farnellLookupResponse;
+                if (!lookupResponse || quantityForLookup !== 1 || pending.lookupInfo.partNumber !== assignedPartNumber) {
+                  lookupResponse = await getFarnellLookupCached(assignedPartNumber, quantityForLookup);
+                }
+                if (lookupResponse?.product.matchedPrice != null) {
+                  const farnellPatch = buildFarnellPricingPatch(
+                    pending.offerDetailId,
+                    lookupResponse.product.matchedPrice,
+                    assignment.pricing,
+                  );
+                  if (farnellPatch) {
+                    updates.push(farnellPatch);
+                  }
+                }
+              }
+
+              const productDescription = normalizeDescriptionValue(pm?.Description ?? null);
+              const description = productDescription ?? pending.descriptionOverride ?? null;
+              const requestedModelNumberRaw = getExactTextValue(
+                (pending.data as { RequestedModelNo?: unknown }).RequestedModelNo ?? null,
+              );
+              const requestedBrandRaw = getExactTextValue(
+                (pending.data as { RequestedBrand?: unknown }).RequestedBrand ?? null,
+              );
+              const partNumber = pm?.PartNumber ?? null;
+              const modelNumber = requestedModelNumberRaw
+                ?? getExactTextValue((pending.data as { ModelNumber?: unknown }).ModelNumber ?? null)
+                ?? pm?.ModelNumber
+                ?? null;
+              const brandName = requestedBrandRaw
+                ?? getExactTextValue((pending.data as { BrandName?: unknown }).BrandName ?? null)
+                ?? pm?.BrandName
+                ?? null;
+              const fallbackProductMeta: ProductSummary = {
+                ProductID: pending.productId,
+                PartNumber: null,
+                ModelNumber: null,
+                BrandName: null,
+                Description: null,
+              };
+              const summary = pm ?? fallbackProductMeta;
+              promoteNodeToProduct(
+                pending.node,
+                summary,
+                partNumber ?? null,
+                modelNumber ?? null,
+                brandName ?? null,
+                description ?? null,
+              );
+              productsAdded += 1;
+            } catch (err) {
+              console.error('Failed to assign brand-mismatched row', err);
+            }
+          }
+        } else {
+          // User declined — send all brand-mismatched items to manual matching
+          for (const pending of brandMismatchPending) {
+            unmatchedRequestedRows.push(buildRequestedProductMatchEntry(pending.data, pending.offerDetailId));
+          }
+        }
       }
 
       if (updates.length > 0) {
@@ -3416,7 +3581,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       // AG Grid state drift caused by cell updates or grid refreshes.
       forceReapplyRef.current?.();
     }
-  }, [addProductsEndpoint, assignRequestedRowToProduct, promoteNodeToCategory, promoteNodeToProduct, refreshOfferProductGrid, resolvedEndpoint]);
+  }, [addProductsEndpoint, assignRequestedRowToProduct, promoteNodeToCategory, promoteNodeToProduct, pushUndo, refreshOfferProductGrid, resolvedEndpoint]);
 
   const currentRequestedMatch = requestedMatchQueue[0] ?? null;
   void suggestionCacheVersion; // trigger re-read from ref on cache update
@@ -4110,8 +4275,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         };
       }
       const fetchFields = isOfferScope && brandBulkEditField === 'CurrencyCostModifier'
-        ? ['OfferDetailID', 'OtherCurrencyID', 'OtherCurrencyName']
-        : ['OfferDetailID'];
+        ? ['OfferDetailID', 'OtherCurrencyID', 'OtherCurrencyName', brandBulkEditField]
+        : ['OfferDetailID', brandBulkEditField];
       const res = await fetch(resolvedEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4147,6 +4312,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         throw new Error(isOfferScope ? 'No non-Euro product rows found in this offer.' : 'No product rows found for this brand.');
       }
 
+      // Capture old values for undo before overwriting
+      const capturedField = brandBulkEditField;
+      const capturedOldValues = filteredRows.map((row) => ({
+        OfferDetailID: normalizeOfferDetailId((row as { OfferDetailID?: unknown })?.OfferDetailID ?? null),
+        value: (row as Record<string, unknown>)[capturedField] ?? null,
+      }));
+
       const chunkSize = 200;
       for (let idx = 0; idx < ids.length; idx += chunkSize) {
         const chunk = ids.slice(idx, idx + chunkSize);
@@ -4165,8 +4337,34 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         }
       }
 
+      const capturedEndpoint = resolvedEndpoint;
+      pushUndo({
+        label: `${label} bulk update (${ids.length} items)`,
+        undo: async () => {
+          const undoChunkSize = 200;
+          for (let idx = 0; idx < capturedOldValues.length; idx += undoChunkSize) {
+            const chunk = capturedOldValues.slice(idx, idx + undoChunkSize);
+            const updates = chunk.map((entry) => ({
+              OfferDetailID: entry.OfferDetailID,
+              [capturedField]: entry.value,
+            }));
+            const undoRes = await fetch(capturedEndpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ updates }),
+            });
+            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert bulk edit');
+          }
+          refreshOfferProductGrid(null, { purge: false });
+        },
+      });
+
       const target = isOfferScope ? 'this offer' : brandName;
-      showToastMessage(`${label} updated for ${target} (${ids.length} items)`, 'success');
+      showToastMessage(`${label} updated for ${target} (${ids.length} items)`, 'success', 5500, {
+        label: 'Undo',
+        onClick: () => performUndo(),
+      });
       setBrandBulkEditOpen(false);
       refreshOfferProductGrid(null, { purge: false });
     } catch (err) {
@@ -4181,6 +4379,8 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     brandBulkEditSaving,
     brandBulkEditScope,
     brandBulkEditValue,
+    pushUndo,
+    performUndo,
     refreshOfferProductGrid,
     resolvedEndpoint,
   ]);
@@ -4523,7 +4723,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
                 const keepLabel = ids.length === 1 ? 'Keep product' : 'Keep products';
                 const confirmed = await showConfirmDialog({
                   title: confirmLabel,
-                  message: `Delete ${ids.length} ${countLabel}? This action cannot be undone.`,
+                  message: `Delete ${ids.length} ${countLabel}?`,
                   confirmLabel,
                   cancelLabel: keepLabel,
                   tone: 'danger',
@@ -4535,11 +4735,30 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ OfferDetailIDs: ids }),
                 });
-                const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+                const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string; deletedRows?: Record<string, unknown>[] } | null;
                 if (!res.ok || !payload?.ok) {
                   throw new Error(payload?.error ?? `Failed to delete rows (status ${res.status})`);
                 }
-                showToastMessage(ids.length === 1 ? 'Product deleted' : `${ids.length} products deleted`, 'success');
+                const deletedRows = Array.isArray(payload?.deletedRows) ? payload.deletedRows : [];
+                if (deletedRows.length > 0) {
+                  pushUndo({
+                    label: ids.length === 1 ? 'Product deleted' : `${ids.length} products deleted`,
+                    undo: async () => {
+                      const undoRes = await fetch(`${resolvedEndpoint}/restore`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ rows: deletedRows }),
+                      });
+                      const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+                      if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to restore');
+                      refreshOfferProductGrid(null, { purge: true });
+                    },
+                  });
+                }
+                showToastMessage(ids.length === 1 ? 'Product deleted' : `${ids.length} products deleted`, 'success', 5500, {
+                  label: 'Undo',
+                  onClick: () => performUndo(),
+                });
                 refreshOfferProductGrid(params.api ?? null, { purge: true });
               } catch (err) {
                 console.error('Failed to delete selected products', err);
@@ -4632,7 +4851,30 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             if (!res.ok || !payload?.ok) {
               throw new Error(payload?.error ?? `Unable to mark category (status ${res.status})`);
             }
-            showToastMessage('Marked as category', 'success');
+            const capturedDetailId = offerDetailId;
+            const capturedPrev: Record<string, unknown> = { OfferDetailID: capturedDetailId };
+            if (previousIsCategory != null) capturedPrev.IsCategory = previousIsCategory;
+            if (previousIsComment != null) capturedPrev.IsComment = previousIsComment;
+            if (previousIsPrintable != null) capturedPrev.IsPrintable = previousIsPrintable;
+            if (previousDescription != null) capturedPrev.Description = previousDescription;
+            if (previousTreeOrdering != null) capturedPrev.TreeOrdering = previousTreeOrdering;
+            pushUndo({
+              label: 'Set as category',
+              undo: async () => {
+                const undoRes = await fetch(resolvedEndpoint, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ updates: [capturedPrev] }),
+                });
+                const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+                if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+                refreshOfferProductGrid(null, { purge: true });
+              },
+            });
+            showToastMessage('Marked as category', 'success', 5500, {
+              label: 'Undo',
+              onClick: () => performUndo(),
+            });
             refreshOfferProductGrid(null, { purge: true });
           } catch (err) {
             if (rowNode) {
@@ -4724,11 +4966,32 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             throw new Error(payload?.error ?? `Unable to mark as comment (status ${res.status})`);
           }
           const label = printable ? 'printable comment' : 'non-printable comment';
+          const capturedUndoUpdates = prevStates.map((prev) => ({
+            OfferDetailID: normalizeOfferDetailId((prev.node.data as { OfferDetailID?: unknown })?.OfferDetailID ?? null),
+            IsCategory: prev.IsCategory,
+            IsComment: prev.IsComment,
+            IsPrintable: prev.IsPrintable,
+          }));
+          pushUndo({
+            label: commentTargetNodes.length === 1 ? `Set as ${label}` : `${commentTargetNodes.length} rows set as ${label}`,
+            undo: async () => {
+              const undoRes = await fetch(resolvedEndpoint, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ updates: capturedUndoUpdates }),
+              });
+              const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+              if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+              refreshOfferProductGrid(null, { purge: true });
+            },
+          });
           showToastMessage(
             commentTargetNodes.length === 1
               ? `Marked as ${label}`
               : `${commentTargetNodes.length} rows marked as ${label}`,
             'success',
+            5500,
+            { label: 'Undo', onClick: () => performUndo() },
           );
           try { api?.deselectAll?.(); } catch { /* noop */ }
           refreshOfferProductGrid(null, { purge: true });
@@ -5041,6 +5304,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     isAddingWebLinks,
     isEnhancingDescriptions,
     pushUndo,
+    performUndo,
     refreshOfferProductGrid,
     roles,
     isOfferCreator,

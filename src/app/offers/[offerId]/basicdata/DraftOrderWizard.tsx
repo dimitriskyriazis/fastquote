@@ -32,15 +32,6 @@ type AutoMatchedProduct = {
   NAME1: string | null;
 };
 
-type ProductToCreate = {
-  productId: number;
-  partNumber: string | null;
-  modelNumber: string | null;
-  description: string | null;
-  brandName: string | null;
-  missingFields: string[];
-};
-
 type SkippedProduct = {
   productId: number;
   partNumber: string | null;
@@ -56,6 +47,11 @@ type ProductNeedsSelection = {
   modelNumberActual: string | null;
   description: string | null;
   brandName: string | null;
+  categoryName: string | null;
+  subCategoryName: string | null;
+  typeName: string | null;
+  canCreate: boolean;
+  missingFields: string[];
   matches: Array<{ MTRL: number; CODE: string | null; CODE1: string | null; CODE2: string | null; NAME1: string | null }>;
 };
 
@@ -117,6 +113,8 @@ function formatCurrency(value: number): string {
   return new Intl.NumberFormat('el-GR', { style: 'currency', currency: 'EUR' }).format(value);
 }
 
+const CREATE_NEW_SENTINEL = -1;
+
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
@@ -139,14 +137,16 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   // Step 3: Brand check
   const [missingBrands, setMissingBrands] = useState<string[]>([]);
   const [existingBrands, setExistingBrands] = useState<string[]>([]);
+  const [nearMatchBrands, setNearMatchBrands] = useState<Array<{ fastquoteName: string; erpName: string; MTRMANFCTR: number }>>([]);
+  const [brandDecisions, setBrandDecisions] = useState<Map<string, 'accept' | 'create'>>(new Map());
   const [brandsCheckComplete, setBrandsCheckComplete] = useState(false);
 
   // Step 4: Product matching
   const [autoMatched, setAutoMatched] = useState<AutoMatchedProduct[]>([]);
-  const [toCreate, setToCreate] = useState<ProductToCreate[]>([]);
   const [needsSelection, setNeedsSelection] = useState<ProductNeedsSelection[]>([]);
   const [skipped, setSkipped] = useState<SkippedProduct[]>([]);
   const [userSelections, setUserSelections] = useState<Map<number, { MTRL: number; CODE: string | null }>>(new Map());
+  const [confirmedCreates, setConfirmedCreates] = useState<number[]>([]);
   const [matchComplete, setMatchComplete] = useState(false);
 
   // Step 5: Summary
@@ -220,6 +220,8 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     if (!result) return;
     setMissingBrands(result.missingBrands ?? []);
     setExistingBrands(result.existingBrands ?? []);
+    setNearMatchBrands(result.nearMatchBrands ?? []);
+    setBrandDecisions(new Map());
     setBrandsCheckComplete(true);
   }, [callStep]);
 
@@ -231,20 +233,22 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     const result = await callStep('match-products', extra);
     if (!result) return;
     setAutoMatched(result.autoMatched ?? []);
-    setToCreate(result.toCreate ?? []);
     setNeedsSelection(result.needsSelection ?? []);
     setSkipped(result.skipped ?? []);
     setUserSelections(new Map());
+    setConfirmedCreates([]);
     setMatchComplete(true);
   }, [callStep]);
 
   const runPrepareSummary = useCallback(async () => {
     const matchResults = {
       autoMatched: autoMatched.map(m => ({ productId: m.productId, MTRL: m.MTRL, CODE: m.CODE })),
-      toCreate: toCreate.map(p => ({ productId: p.productId })),
-      userSelected: Array.from(userSelections.entries()).map(([productId, match]) => ({
-        productId, MTRL: match.MTRL, CODE: match.CODE,
-      })),
+      userConfirmedCreate: confirmedCreates.map(productId => ({ productId })),
+      userSelected: Array.from(userSelections.entries())
+        .filter(([, match]) => match.MTRL !== CREATE_NEW_SENTINEL)
+        .map(([productId, match]) => ({
+          productId, MTRL: match.MTRL, CODE: match.CODE,
+        })),
       skipped: skipped.map(s => ({ productId: s.productId })),
     };
     const result = await callStep('prepare-summary', {
@@ -254,15 +258,17 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     });
     if (!result) return;
     setSummary(result);
-  }, [callStep, resolvedCustomer, missingBrands, autoMatched, toCreate, userSelections, skipped]);
+  }, [callStep, resolvedCustomer, missingBrands, autoMatched, confirmedCreates, userSelections, skipped]);
 
   const runExecute = useCallback(async () => {
     const matchResults = {
       autoMatched: autoMatched.map(m => ({ productId: m.productId, MTRL: m.MTRL, CODE: m.CODE })),
-      toCreate: toCreate.map(p => ({ productId: p.productId })),
-      userSelected: Array.from(userSelections.entries()).map(([productId, match]) => ({
-        productId, MTRL: match.MTRL, CODE: match.CODE,
-      })),
+      userConfirmedCreate: confirmedCreates.map(productId => ({ productId })),
+      userSelected: Array.from(userSelections.entries())
+        .filter(([, match]) => match.MTRL !== CREATE_NEW_SENTINEL)
+        .map(([productId, match]) => ({
+          productId, MTRL: match.MTRL, CODE: match.CODE,
+        })),
       skipped: skipped.map(s => ({ productId: s.productId })),
     };
     const result = await callStep('execute', {
@@ -272,7 +278,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     });
     if (!result) return;
     setExecutionResult(result);
-  }, [callStep, resolvedCustomer, missingBrands, autoMatched, toCreate, userSelections, skipped]);
+  }, [callStep, resolvedCustomer, missingBrands, autoMatched, confirmedCreates, userSelections, skipped]);
 
   // ── Auto-run step on mount / step change ─────────────────────────────────
 
@@ -306,7 +312,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       case 'categorize-products':
         return categorizeComplete;
       case 'check-brands':
-        return brandsCheckComplete;
+        return brandsCheckComplete && nearMatchBrands.every(nm => brandDecisions.has(nm.fastquoteName));
       case 'match-products':
         // Must be complete AND all needsSelection items must have a user selection
         return matchComplete && needsSelection.every(ns => userSelections.has(ns.productId));
@@ -327,12 +333,33 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       return;
     }
 
+    if (currentStep.id === 'check-brands' && nearMatchBrands.length > 0) {
+      // Resolve near-match brand decisions before moving to match-products
+      const newExisting = [...existingBrands];
+      const newMissing = [...missingBrands];
+      for (const nm of nearMatchBrands) {
+        const decision = brandDecisions.get(nm.fastquoteName);
+        if (decision === 'accept') {
+          newExisting.push(nm.fastquoteName);
+        } else {
+          newMissing.push(nm.fastquoteName);
+        }
+      }
+      setExistingBrands(newExisting);
+      setMissingBrands(newMissing);
+      setNearMatchBrands([]);
+    }
+
     if (currentStep.id === 'match-products' && needsSelection.length > 0) {
-      // Move user selections into autoMatched for the summary step
+      // Split user selections into matched products vs confirmed creates
       const newAutoMatched = [...autoMatched];
+      const newConfirmedCreates: number[] = [];
       for (const ns of needsSelection) {
         const sel = userSelections.get(ns.productId);
-        if (sel) {
+        if (!sel) continue;
+        if (sel.MTRL === CREATE_NEW_SENTINEL) {
+          newConfirmedCreates.push(ns.productId);
+        } else {
           newAutoMatched.push({
             productId: ns.productId,
             partNumber: ns.partNumberActual,
@@ -346,11 +373,12 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
         }
       }
       setAutoMatched(newAutoMatched);
+      setConfirmedCreates(newConfirmedCreates);
       setNeedsSelection([]);
     }
 
     setCurrentStepIndex(i => i + 1);
-  }, [currentStep, needsSelection, userSelections, autoMatched, onClose]);
+  }, [currentStep, needsSelection, userSelections, autoMatched, nearMatchBrands, brandDecisions, existingBrands, missingBrands, onClose]);
 
   const handleRetry = useCallback(() => {
     setError(null);
@@ -618,6 +646,56 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
             </div>
           </div>
         )}
+        {nearMatchBrands.length > 0 && (
+          <div className={`${styles.card} ${styles.cardAmber}`}>
+            <p className={styles.sectionTitle} style={{ color: '#92400e' }}>
+              Possible matches ({nearMatchBrands.length})
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
+              {nearMatchBrands.map(nm => {
+                const decision = brandDecisions.get(nm.fastquoteName);
+                return (
+                  <div key={nm.fastquoteName} style={{ borderBottom: '1px solid #fde68a', paddingBottom: '10px' }}>
+                    <div style={{ fontSize: '0.85rem', marginBottom: '6px' }}>
+                      <span style={{ fontWeight: 700, color: '#0f172a' }}>{nm.fastquoteName}</span>
+                      <span style={{ color: '#64748b' }}>{' → '}</span>
+                      <span style={{ fontWeight: 700, color: '#166534' }}>{nm.erpName}</span>
+                      <span style={{ color: '#64748b', fontSize: '0.75rem' }}> in Soft1</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        type="button"
+                        style={{
+                          padding: '6px 16px', fontSize: '0.85rem', borderRadius: '4px', cursor: 'pointer',
+                          border: decision === 'accept' ? '2px solid #166534' : '1px solid #d1d5db',
+                          background: decision === 'accept' ? '#dcfce7' : '#fff',
+                          color: decision === 'accept' ? '#166534' : '#374151',
+                          fontWeight: decision === 'accept' ? 700 : 400,
+                        }}
+                        onClick={() => setBrandDecisions(prev => { const next = new Map(prev); next.set(nm.fastquoteName, 'accept'); return next; })}
+                      >
+                        Use &quot;{nm.erpName}&quot;
+                      </button>
+                      <button
+                        type="button"
+                        style={{
+                          padding: '6px 16px', fontSize: '0.85rem', borderRadius: '4px', cursor: 'pointer',
+                          border: decision === 'create' ? '2px solid #92400e' : '1px solid #d1d5db',
+                          background: decision === 'create' ? '#fef3c7' : '#fff',
+                          color: decision === 'create' ? '#92400e' : '#374151',
+                          fontWeight: decision === 'create' ? 700 : 400,
+                        }}
+                        onClick={() => setBrandDecisions(prev => { const next = new Map(prev); next.set(nm.fastquoteName, 'create'); return next; })}
+                      >
+                        Create new
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {missingBrands.length > 0 && (
           <div className={`${styles.card} ${styles.cardAmber}`}>
             <p className={styles.sectionTitle} style={{ color: '#92400e' }}>
@@ -642,7 +720,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
 
     if (!matchComplete) return null;
 
-    const total = autoMatched.length + toCreate.length + needsSelection.length + skipped.length;
+    const total = autoMatched.length + needsSelection.length + skipped.length;
     if (total === 0) return <div className={styles.noProducts}>No products to match.</div>;
 
     return (
@@ -675,86 +753,159 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
           </div>
         )}
 
-        {toCreate.length > 0 && (
-          <div className={`${styles.card} ${styles.cardBlue}`}>
-            <p className={styles.sectionTitle} style={{ color: '#1e40af' }}>
-              Will be created in Soft1 ({toCreate.length})
-            </p>
-            <table className={styles.table} style={{ marginTop: '6px' }}>
-              <thead>
-                <tr>
-                  <th>Part No</th>
-                  <th>Brand</th>
-                  <th>Description</th>
-                </tr>
-              </thead>
-              <tbody>
-                {toCreate.map(p => (
-                  <tr key={p.productId}>
-                    <td>{productLabel(p.partNumber, p.modelNumber, p.productId)}</td>
-                    <td>{p.brandName ?? '—'}</td>
-                    <td>{[p.modelNumber, p.description].filter(Boolean).join(' - ') || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {needsSelection.length > 0 && (
-          <div className={`${styles.card} ${styles.cardAmber}`}>
-            <p className={styles.sectionTitle} style={{ color: '#92400e' }}>
-              Needs your selection ({needsSelection.length})
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '8px' }}>
-              {needsSelection.map(ns => {
-                const label = productLabel(ns.partNumberActual, ns.modelNumberActual, ns.productId);
-                const desc = [ns.modelNumberActual, ns.description].filter(Boolean).join(' - ');
-                return (
-                  <div key={ns.productId} style={{ borderBottom: '1px solid #fde68a', paddingBottom: '14px' }}>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '2px' }}>
-                      <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0f172a' }}>{label}</span>
-                      {ns.brandName && <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0f172a' }}>{ns.brandName}</span>}
-                    </div>
-                    {desc && (
-                      <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }} title={desc}>
-                        {desc}
+        {needsSelection.filter(ns => ns.matches.length > 0).length > 0 && (() => {
+          const withMatches = needsSelection.filter(ns => ns.matches.length > 0);
+          return (
+            <div className={`${styles.card} ${styles.cardAmber}`}>
+              <p className={styles.sectionTitle} style={{ color: '#92400e' }}>
+                Needs your selection ({withMatches.length})
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '8px' }}>
+                {withMatches.map(ns => {
+                  const label = productLabel(ns.partNumberActual, ns.modelNumberActual, ns.productId);
+                  const desc = [ns.modelNumberActual, ns.description].filter(Boolean).join(' - ');
+                  const categoryPath = [ns.categoryName, ns.subCategoryName, ns.typeName].filter(Boolean).join(' > ');
+                  const selectedMtrl = userSelections.get(ns.productId)?.MTRL;
+                  const selectValue = selectedMtrl === CREATE_NEW_SENTINEL
+                    ? 'CREATE_NEW'
+                    : selectedMtrl?.toString() ?? '';
+                  return (
+                    <div key={ns.productId} style={{ borderBottom: '1px solid #fde68a', paddingBottom: '14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '2px' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0f172a' }}>{label}</span>
+                        {ns.brandName && <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0f172a' }}>{ns.brandName}</span>}
                       </div>
-                    )}
-                    <div style={{ fontSize: '0.75rem', color: '#92400e', marginBottom: '6px' }}>
-                      Found {ns.matches.length} matching product(s) in ERP
+                      {desc && (
+                        <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }} title={desc}>
+                          {desc}
+                        </div>
+                      )}
+                      {categoryPath && (
+                        <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '4px' }}>
+                          {categoryPath}
+                        </div>
+                      )}
+                      <div style={{ fontSize: '0.75rem', color: '#92400e', marginBottom: '6px' }}>
+                        Found {ns.matches.length} near-match(es) in ERP
+                      </div>
+                      <select
+                        className={styles.select}
+                        value={selectValue}
+                        onChange={e => {
+                          const val = e.target.value;
+                          if (val === 'CREATE_NEW') {
+                            setUserSelections(prev => {
+                              const next = new Map(prev);
+                              next.set(ns.productId, { MTRL: CREATE_NEW_SENTINEL, CODE: null });
+                              return next;
+                            });
+                          } else if (val) {
+                            const mtrl = Number.parseInt(val, 10);
+                            const match = ns.matches.find(m => m.MTRL === mtrl);
+                            if (match) {
+                              setUserSelections(prev => {
+                                const next = new Map(prev);
+                                next.set(ns.productId, { MTRL: match.MTRL, CODE: match.CODE });
+                                return next;
+                              });
+                            }
+                          } else {
+                            setUserSelections(prev => {
+                              const next = new Map(prev);
+                              next.delete(ns.productId);
+                              return next;
+                            });
+                          }
+                        }}
+                      >
+                        <option value="">Select a product...</option>
+                        {ns.matches.map(match => {
+                          const parts: string[] = [];
+                          if (match.CODE) parts.push(match.CODE);
+                          if (match.CODE2) parts.push(match.CODE2);
+                          if (match.NAME1) parts.push(match.NAME1);
+                          const displayText = parts.length > 0 ? parts.join(', ') : `MTRL: ${match.MTRL}`;
+                          return <option key={match.MTRL} value={match.MTRL} title={displayText}>{displayText}</option>;
+                        })}
+                        <option value="CREATE_NEW" disabled={!ns.canCreate}>
+                          {ns.canCreate
+                            ? '+ Create new product'
+                            : `+ Create new (missing: ${ns.missingFields.join(', ')})`}
+                        </option>
+                      </select>
                     </div>
-                    <select
-                      className={styles.select}
-                      value={userSelections.get(ns.productId)?.MTRL?.toString() ?? ''}
-                      onChange={e => {
-                        const mtrl = Number.parseInt(e.target.value, 10);
-                        const match = ns.matches.find(m => m.MTRL === mtrl);
-                        if (match) {
-                          setUserSelections(prev => {
-                            const next = new Map(prev);
-                            next.set(ns.productId, { MTRL: match.MTRL, CODE: match.CODE });
-                            return next;
-                          });
-                        }
-                      }}
-                    >
-                      <option value="">Select a product...</option>
-                      {ns.matches.map(match => {
-                        const parts: string[] = [];
-                        if (match.CODE) parts.push(match.CODE);
-                        if (match.CODE2) parts.push(match.CODE2);
-                        if (match.NAME1) parts.push(match.NAME1);
-                        const displayText = parts.length > 0 ? parts.join(', ') : `MTRL: ${match.MTRL}`;
-                        return <option key={match.MTRL} value={match.MTRL} title={displayText}>{displayText}</option>;
-                      })}
-                    </select>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
+
+        {needsSelection.filter(ns => ns.matches.length === 0).length > 0 && (() => {
+          const noMatches = needsSelection.filter(ns => ns.matches.length === 0);
+          return (
+            <div className={`${styles.card} ${styles.cardRed}`}>
+              <p className={styles.sectionTitle} style={{ color: '#991b1b' }}>
+                No matches found ({noMatches.length})
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
+                {noMatches.map(ns => {
+                  const label = productLabel(ns.partNumberActual, ns.modelNumberActual, ns.productId);
+                  const desc = [ns.modelNumberActual, ns.description].filter(Boolean).join(' - ');
+                  const categoryPath = [ns.categoryName, ns.subCategoryName, ns.typeName].filter(Boolean).join(' > ');
+                  const isConfirmed = userSelections.get(ns.productId)?.MTRL === CREATE_NEW_SENTINEL;
+                  return (
+                    <div key={ns.productId} style={{ borderBottom: '1px solid #fecaca', paddingBottom: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '2px' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0f172a' }}>{label}</span>
+                        {ns.brandName && <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0f172a' }}>{ns.brandName}</span>}
+                      </div>
+                      {desc && (
+                        <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }} title={desc}>
+                          {desc}
+                        </div>
+                      )}
+                      {categoryPath && (
+                        <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '4px' }}>
+                          {categoryPath}
+                        </div>
+                      )}
+                      {ns.canCreate ? (
+                        <button
+                          type="button"
+                          style={{
+                            marginTop: '4px', padding: '5px 14px', fontSize: '0.8rem', borderRadius: '4px', cursor: 'pointer',
+                            border: isConfirmed ? '2px solid #166534' : '1px solid #fca5a5',
+                            background: isConfirmed ? '#dcfce7' : '#fff',
+                            color: isConfirmed ? '#166534' : '#991b1b',
+                            fontWeight: isConfirmed ? 700 : 500,
+                          }}
+                          onClick={() => {
+                            setUserSelections(prev => {
+                              const next = new Map(prev);
+                              if (isConfirmed) {
+                                next.delete(ns.productId);
+                              } else {
+                                next.set(ns.productId, { MTRL: CREATE_NEW_SENTINEL, CODE: null });
+                              }
+                              return next;
+                            });
+                          }}
+                        >
+                          {isConfirmed ? 'Will be created in Soft1' : 'Confirm creation in Soft1'}
+                        </button>
+                      ) : (
+                        <div style={{ fontSize: '0.8rem', color: '#dc2626', marginTop: '4px' }}>
+                          Cannot create — missing: {ns.missingFields?.join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {skipped.length > 0 && (
           <div className={`${styles.card} ${styles.cardGray}`}>

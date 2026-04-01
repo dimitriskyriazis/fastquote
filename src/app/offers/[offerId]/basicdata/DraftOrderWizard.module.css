@@ -96,6 +96,11 @@
   background: #f8fafc;
 }
 
+.cardRed {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
 .customerCard {
   display: flex;
   flex-direction: column;

@@ -27,6 +27,7 @@ export type CandidateRow = {
   PriceListName: string | null;
   ListPrice: number | null;
   UnitPrice: number | null;
+  CostPrice: number | null;
 };
 
 const trim = (v: string | null | undefined): string | null => {
@@ -169,13 +170,15 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
       price.PriceListName,
       price.ListPrice,
       price.ListPrice AS UnitPrice,
+      price.CostPrice,
       (${scoreExpr}) AS MatchScore
     FROM dbo.Products p
       LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
       OUTER APPLY (
         SELECT TOP (1)
           pl.Name AS PriceListName,
-          pli.ListPrice
+          pli.ListPrice,
+          pli.CostPrice
         FROM dbo.PriceListItems pli
           INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         WHERE pli.ProductID = p.ID

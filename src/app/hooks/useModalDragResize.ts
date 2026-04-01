@@ -102,19 +102,50 @@ export function useModalDragResize(options: Options = {}) {
       if (INTERACTIVE_TAGS.has(tag)) return;
       if ((e.target as HTMLElement).closest('button, a, input, textarea, select')) return;
 
+      const el = cardElRef.current;
+      if (!el) return;
+
       e.preventDefault();
+
+      // Lock the current size on first drag so CSS-driven size won't shift
+      if (sizeRef.current.w == null) {
+        const rect = el.getBoundingClientRect();
+        sizeRef.current = { w: rect.width, h: rect.height };
+        applyTransform();
+      }
+
       const startX = e.clientX;
       const startY = e.clientY;
       const startOffset = { ...offsetRef.current };
       const header = e.currentTarget as HTMLElement;
       header.setPointerCapture(e.pointerId);
 
+      // Capture rect ONCE — compute clamped positions mathematically to avoid
+      // getBoundingClientRect() on every pointermove (which forces reflow).
+      const startRect = el.getBoundingClientRect();
+      const naturalLeft = startRect.left - startOffset.x;
+      const naturalTop = startRect.top - startOffset.y;
+      const modalW = startRect.width;
+      const modalH = startRect.height;
+
       const onMove = (me: globalThis.PointerEvent) => {
-        offsetRef.current = {
-          x: startOffset.x + (me.clientX - startX),
-          y: startOffset.y + (me.clientY - startY),
-        };
-        clampOffset();
+        let x = startOffset.x + (me.clientX - startX);
+        let y = startOffset.y + (me.clientY - startY);
+
+        // Clamp so the modal stays within the viewport
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const left = naturalLeft + x;
+        const top = naturalTop + y;
+        const right = left + modalW;
+        const bottom = top + modalH;
+
+        if (left < VIEWPORT_MARGIN) x += VIEWPORT_MARGIN - left;
+        if (top < VIEWPORT_MARGIN) y += VIEWPORT_MARGIN - top;
+        if (right > vw - VIEWPORT_MARGIN) x -= right - (vw - VIEWPORT_MARGIN);
+        if (bottom > vh - VIEWPORT_MARGIN) y -= bottom - (vh - VIEWPORT_MARGIN);
+
+        offsetRef.current = { x, y };
         applyTransform();
       };
       const onUp = () => {
@@ -125,7 +156,7 @@ export function useModalDragResize(options: Options = {}) {
       header.addEventListener('pointermove', onMove);
       header.addEventListener('pointerup', onUp);
     },
-    [draggable, applyTransform, clampOffset],
+    [draggable, applyTransform],
   );
 
   const handleHeaderDoubleClick = useCallback(() => {

@@ -12,6 +12,7 @@ import { getRequestId } from '../../../../../lib/requestId';
 import { logger } from '../../../../../lib/logger';
 import { requirePermission } from '../../../../../lib/authz';
 import { fuzzyCustomerSearch } from '../../../../../lib/customerSearch';
+import { clearPartModelNumberUpper } from '../../../../../lib/partModelNumber';
 
 type ProductMatch = {
   productId: number;
@@ -21,6 +22,11 @@ type ProductMatch = {
   modelNumberActual: string | null;
   description?: string | null;
   brandName?: string | null;
+  categoryName?: string | null;
+  subCategoryName?: string | null;
+  typeName?: string | null;
+  canCreate?: boolean;
+  missingFields?: string[];
   matches: Array<{
     MTRL: number;
     CODE: string | null;
@@ -98,7 +104,7 @@ type OfferContext = {
 
 type MatchResultsState = {
   autoMatched: Array<{ productId: number; MTRL: number; CODE: string | null }>;
-  toCreate: Array<{ productId: number }>;
+  userConfirmedCreate: Array<{ productId: number }>;
   userSelected: Array<{ productId: number; MTRL: number; CODE: string | null }>;
   skipped: Array<{ productId: number }>;
 };
@@ -422,6 +428,57 @@ async function searchProductInErp(
   return { foundCount, matches };
 }
 
+type ErpProductMatch = {
+  MTRL: number;
+  CODE: string | null;
+  CODE1: string | null;
+  CODE2: string | null;
+  NAME1: string | null;
+};
+
+function findExactCode2Match(
+  matches: ErpProductMatch[],
+  partNumberCleared: string | null,
+): ErpProductMatch | null {
+  if (!partNumberCleared) return null;
+  const target = clearPartModelNumberUpper(partNumberCleared);
+  if (!target) return null;
+  return matches.find(m => {
+    if (!m.CODE2) return false;
+    return clearPartModelNumberUpper(m.CODE2) === target;
+  }) ?? null;
+}
+
+async function fuzzySearchByCode2(
+  erpPool: Awaited<ReturnType<typeof getErpPool>>,
+  partNumberCleared: string,
+): Promise<ErpProductMatch[]> {
+  const erpRequest = erpPool.request();
+  erpRequest.input('Code2Cleaned', sql.NVarChar(200), partNumberCleared);
+  erpRequest.input('TopN', sql.Int, 20);
+
+  const result = await erpRequest.query<ErpProductMatch>(`
+    EXEC [tlm].[_mtrlFuzzySearchByCode2]
+      @Code2Cleaned = @Code2Cleaned,
+      @TopN = @TopN;
+  `);
+
+  return result.recordset ?? [];
+}
+
+async function loadCategoryNameMaps(pool: Awaited<ReturnType<typeof getPool>>) {
+  const [categoriesRes, subCategoriesRes, typesRes] = await Promise.all([
+    pool.request().query<LookupRow>("SELECT ID, Name FROM dbo.ProductCategories"),
+    pool.request().query<SubCategoryRow>("SELECT ID, Name, CategoryID FROM dbo.ProductSubCategories"),
+    pool.request().query<LookupRow>("SELECT ID, Name FROM dbo.ProductTypes"),
+  ]);
+  return {
+    catMap: new Map((categoriesRes.recordset ?? []).map(r => [r.ID, r.Name])),
+    subCatMap: new Map((subCategoriesRes.recordset ?? []).map(r => [r.ID, r.Name])),
+    typeMap: new Map((typesRes.recordset ?? []).map(r => [r.ID, r.Name])),
+  };
+}
+
 async function resolveOrCreateProject(
   ctx: OfferContext,
   erpCustomerCode: string | null,
@@ -691,8 +748,10 @@ async function handleCheckBrands(
 
   const missingBrands: string[] = [];
   const existingBrands: string[] = [];
+  const nearMatchBrands: Array<{ fastquoteName: string; erpName: string; MTRMANFCTR: number }> = [];
 
   for (const brandName of uniqueBrandNames) {
+    // 1. Try exact match (trimmed, case-insensitive)
     const checkReq = erpPool.request();
     checkReq.input('brandName', sql.NVarChar(128), brandName);
     const checkRes = await checkReq.query<{ MTRMANFCTR: number }>(`
@@ -702,14 +761,41 @@ async function handleCheckBrands(
     `);
     if (checkRes.recordset?.[0]) {
       existingBrands.push(brandName);
-    } else {
-      missingBrands.push(brandName);
+      continue;
     }
+
+    // 2. Try fuzzy match — strip spaces and special chars, compare
+    const cleanedBrand = brandName.replace(/[-_\s./,()"'&+]+/g, '').toUpperCase();
+    if (cleanedBrand) {
+      const fuzzyReq = erpPool.request();
+      fuzzyReq.input('cleanedBrand', sql.NVarChar(128), cleanedBrand);
+      const fuzzyRes = await fuzzyReq.query<{ MTRMANFCTR: number; NAME: string }>(`
+        SELECT TOP (5) MTRMANFCTR, NAME FROM dbo.MTRMANFCTR
+        WHERE UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                NAME,
+                '-', ''), ' ', ''), '_', ''), '.', ''), '/', ''), ',', ''), '(', ''), ')', ''))
+              = @cleanedBrand
+        ORDER BY MTRMANFCTR
+      `);
+      if (fuzzyRes.recordset?.length) {
+        nearMatchBrands.push({
+          fastquoteName: brandName,
+          erpName: fuzzyRes.recordset[0].NAME.trim(),
+          MTRMANFCTR: fuzzyRes.recordset[0].MTRMANFCTR,
+        });
+        continue;
+      }
+    }
+
+    missingBrands.push(brandName);
   }
 
-  logger.info('wizard check-brands done', { requestId, offerId, existing: existingBrands.length, missing: missingBrands.length });
+  logger.info('wizard check-brands done', {
+    requestId, offerId,
+    existing: existingBrands.length, nearMatch: nearMatchBrands.length, missing: missingBrands.length,
+  });
 
-  return NextResponse.json({ ok: true, step: 'check-brands', missingBrands, existingBrands });
+  return NextResponse.json({ ok: true, step: 'check-brands', missingBrands, existingBrands, nearMatchBrands });
 }
 
 async function handleMatchProducts(
@@ -721,10 +807,40 @@ async function handleMatchProducts(
   const userSelections = body.selections ?? [];
   const selectionMap = new Map(userSelections.map(s => [s.productId, { MTRL: s.MTRL, CODE: s.CODE }]));
 
+  // Load category/subcategory/type names for display
+  const { catMap, subCatMap, typeMap } = await loadCategoryNameMaps(pool);
+
   const autoMatched: Array<{ productId: number; partNumber: string | null; modelNumber: string | null; description: string | null; brandName: string | null; MTRL: number; CODE: string | null; NAME1: string | null }> = [];
-  const toCreate: Array<{ productId: number; partNumber: string | null; modelNumber: string | null; description: string | null; brandName: string | null; missingFields: string[] }> = [];
   const needsSelection: ProductMatch[] = [];
   const skipped: Array<{ productId: number; partNumber: string | null; modelNumber: string | null; reason: string }> = [];
+
+  const buildMissingFields = (product: typeof products[0]): string[] => {
+    const missing: string[] = [];
+    if (!product.Description) missing.push('description');
+    if (!product.BrandID) missing.push('brand');
+    if (!product.SubCategoryID) missing.push('subcategory');
+    if (!product.TypeID) missing.push('type');
+    return missing;
+  };
+
+  const buildNeedsSelection = (product: typeof products[0], matches: ErpProductMatch[]): ProductMatch => {
+    const missing = buildMissingFields(product);
+    return {
+      productId: product.ProductID,
+      partNumber: product.PartNumberCleared,
+      modelNumber: product.ModelNumberCleared,
+      partNumberActual: product.PartNumber,
+      modelNumberActual: product.ModelNumber,
+      description: product.Description,
+      brandName: product.BrandName,
+      categoryName: catMap.get(product.CategoryID) ?? null,
+      subCategoryName: subCatMap.get(product.SubCategoryID) ?? null,
+      typeName: typeMap.get(product.TypeID) ?? null,
+      canCreate: missing.length === 0,
+      missingFields: missing,
+      matches,
+    };
+  };
 
   for (const product of products) {
     // If user already selected a match for this product, it goes into autoMatched
@@ -752,53 +868,52 @@ async function handleMatchProducts(
         foundCount,
       });
 
-      if (foundCount === 0) {
-        // Check if product has all required fields for creation
-        const missing: string[] = [];
-        if (!product.Description) missing.push('description');
-        if (!product.BrandID) missing.push('brand');
-        if (!product.SubCategoryID) missing.push('subcategory');
-        if (!product.TypeID) missing.push('type');
+      // Check for exact cleaned CODE2 match
+      const exactMatch = findExactCode2Match(matches, product.PartNumberCleared);
 
-        if (missing.length > 0) {
-          skipped.push({
-            productId: product.ProductID,
-            partNumber: product.PartNumber,
-            modelNumber: product.ModelNumber,
-            reason: `Missing: ${missing.join(', ')}`,
-          });
-        } else {
-          toCreate.push({
-            productId: product.ProductID,
-            partNumber: product.PartNumber,
-            modelNumber: product.ModelNumber,
-            description: product.Description,
-            brandName: product.BrandName,
-            missingFields: [],
-          });
-        }
-      } else if (foundCount === 1) {
+      if (exactMatch) {
+        // Exact CODE2 match → auto-match, no user intervention
         autoMatched.push({
           productId: product.ProductID,
           partNumber: product.PartNumber,
           modelNumber: product.ModelNumber,
           description: product.Description,
           brandName: product.BrandName,
-          MTRL: matches[0].MTRL,
-          CODE: matches[0].CODE,
-          NAME1: matches[0].NAME1,
+          MTRL: exactMatch.MTRL,
+          CODE: exactMatch.CODE,
+          NAME1: exactMatch.NAME1,
         });
+      } else if (foundCount > 0) {
+        // SP returned results but no exact CODE2 match → user must select or create
+        needsSelection.push(buildNeedsSelection(product, matches));
+      } else if (product.PartNumberCleared) {
+        // SP returned 0 results, try fuzzy search by CODE2
+        let fuzzyMatches: ErpProductMatch[] = [];
+        try {
+          fuzzyMatches = await fuzzySearchByCode2(erpPool, product.PartNumberCleared);
+          logger.info('wizard match-products fuzzyCode2', {
+            requestId, offerId, productId: product.ProductID,
+            partNo: product.PartNumberCleared, fuzzyCount: fuzzyMatches.length,
+          });
+        } catch {
+          logger.warn('wizard match-products fuzzy search failed, continuing without', {
+            requestId, offerId, productId: product.ProductID,
+          });
+        }
+        // Show fuzzy results (may be empty) — user picks or creates
+        needsSelection.push(buildNeedsSelection(product, fuzzyMatches));
       } else {
-        needsSelection.push({
-          productId: product.ProductID,
-          partNumber: product.PartNumberCleared,
-          modelNumber: product.ModelNumberCleared,
-          partNumberActual: product.PartNumber,
-          modelNumberActual: product.ModelNumber,
-          description: product.Description,
-          brandName: product.BrandName,
-          matches,
-        });
+        // No PartNumberCleared at all — check if we can still present for creation
+        if (!product.PartNumberCleared && !product.ModelNumberCleared) {
+          skipped.push({
+            productId: product.ProductID,
+            partNumber: product.PartNumber,
+            modelNumber: product.ModelNumber,
+            reason: 'No part number or model number',
+          });
+        } else {
+          needsSelection.push(buildNeedsSelection(product, []));
+        }
       }
     } catch (err) {
       logger.error(`wizard match-products error for product ${product.ProductID}`, { requestId, offerId }, err instanceof Error ? err : undefined);
@@ -813,13 +928,13 @@ async function handleMatchProducts(
 
   logger.info('wizard match-products done', {
     requestId, offerId,
-    autoMatched: autoMatched.length, toCreate: toCreate.length,
+    autoMatched: autoMatched.length,
     needsSelection: needsSelection.length, skipped: skipped.length,
   });
 
   return NextResponse.json({
     ok: true, step: 'match-products',
-    autoMatched, toCreate, needsSelection, skipped,
+    autoMatched, needsSelection, skipped,
   });
 }
 
@@ -895,7 +1010,7 @@ async function handlePrepareSummary(
   const resolvedProductIds = new Set<number>();
   if (matchResults) {
     for (const m of matchResults.autoMatched) resolvedProductIds.add(m.productId);
-    for (const m of matchResults.toCreate) resolvedProductIds.add(m.productId);
+    for (const m of matchResults.userConfirmedCreate) resolvedProductIds.add(m.productId);
     for (const m of matchResults.userSelected) resolvedProductIds.add(m.productId);
   }
 
@@ -922,7 +1037,7 @@ async function handlePrepareSummary(
     totals: { lineCount: orderLines.length, totalValue },
     actions: {
       brandsToCreate: missingBrands.length,
-      productsToCreate: matchResults?.toCreate?.length ?? 0,
+      productsToCreate: matchResults?.userConfirmedCreate?.length ?? 0,
       productsToMatch: (matchResults?.autoMatched?.length ?? 0) + (matchResults?.userSelected?.length ?? 0),
       projectToCreate: projectStatus === 'will-create',
     },
@@ -1006,7 +1121,7 @@ async function handleExecute(
     }
 
     // Create new products in ERP
-    for (const item of matchResults.toCreate) {
+    for (const item of matchResults.userConfirmedCreate) {
       const product = productMap.get(item.productId);
       if (!product || !product.Description || !product.BrandID || !product.SubCategoryID || !product.TypeID) {
         logger.warn('wizard execute skip product creation - missing fields', { requestId, productId: item.productId });
