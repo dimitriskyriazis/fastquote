@@ -4,7 +4,11 @@ import OpenAI from "openai";
 
 export const runtime = "nodejs";
 
-const openai = new OpenAI();
+let _openai: OpenAI | null = null;
+function getOpenAI() {
+  if (!_openai) _openai = new OpenAI();
+  return _openai;
+}
 
 export async function POST(req: NextRequest) {
   logRequest(req, "/api/products/shorten-description");
@@ -24,7 +28,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ shortened: description });
     }
 
-    const res = await openai.responses.create({
+    const res = await getOpenAI().responses.create({
       model: "gpt-4o-mini",
       temperature: 0,
       input: [
