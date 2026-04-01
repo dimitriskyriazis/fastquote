@@ -5,7 +5,11 @@ import { fetchFarnellProduct, fetchFarnellProducts, type FarnellProduct } from '
 import { getPool } from '../../../../lib/sql';
 import OpenAI from 'openai';
 
-const openai = new OpenAI();
+let _openai: OpenAI | null = null;
+function getOpenAI() {
+  if (!_openai) _openai = new OpenAI();
+  return _openai;
+}
 
 let cachedFarnellBrandId: number | null | undefined = undefined;
 
@@ -55,7 +59,7 @@ async function fetchCachedMulti(sku: string, quantity: number, searchType: 'id' 
 
 async function generateFarnellSearchTerms(description: string): Promise<string[]> {
   try {
-    const res = await openai.responses.create({
+    const res = await getOpenAI().responses.create({
       model: 'gpt-4o-mini',
       temperature: 0,
       input: [
