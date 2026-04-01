@@ -82,7 +82,7 @@ export async function requirePermission(
     return {
       ok: false,
       response: NextResponse.json(
-        { ok: false, error: 'Forbidden', requiredPermission: permission },
+        { ok: false, error: 'You do not have rights to perform this action', requiredPermission: permission },
         { status: 403 },
       ),
     };

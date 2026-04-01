@@ -3,6 +3,9 @@ import { logRequest } from '../../../../lib/apiHelpers';
 import { requirePermission } from '../../../../lib/authz';
 import { fetchFarnellProduct, fetchFarnellProducts, type FarnellProduct } from '../../../../lib/farnell';
 import { getPool } from '../../../../lib/sql';
+import OpenAI from 'openai';
+
+const openai = new OpenAI();
 
 let cachedFarnellBrandId: number | null | undefined = undefined;
 
@@ -20,24 +23,76 @@ function evictStale<T>(cache: Map<string, { ts: number } & T>) {
   }
 }
 
-async function fetchCached(sku: string, quantity: number, searchType: 'id' | 'manuPartNum'): Promise<FarnellProduct | null> {
+async function fetchCached(sku: string, quantity: number, searchType: 'id' | 'manuPartNum' | 'keyword'): Promise<FarnellProduct | null> {
   const key = `${searchType}::${sku}::${quantity}`;
   const entry = singleCache.get(key);
   if (entry && Date.now() - entry.ts <= CACHE_TTL_MS) return entry.product;
   const product = await fetchFarnellProduct(sku, quantity, searchType);
-  singleCache.set(key, { product, ts: Date.now() });
-  evictStale(singleCache);
+  if (product != null) {
+    singleCache.set(key, { product, ts: Date.now() });
+    evictStale(singleCache);
+  } else {
+    singleCache.delete(key);
+  }
   return product;
 }
 
-async function fetchCachedMulti(sku: string, quantity: number, searchType: 'id' | 'manuPartNum'): Promise<FarnellProduct[]> {
+async function fetchCachedMulti(sku: string, quantity: number, searchType: 'id' | 'manuPartNum' | 'keyword'): Promise<FarnellProduct[]> {
   const key = `multi::${searchType}::${sku}::${quantity}`;
   const entry = multiCache.get(key);
   if (entry && Date.now() - entry.ts <= CACHE_TTL_MS) return entry.products;
   const products = await fetchFarnellProducts(sku, quantity, searchType);
-  multiCache.set(key, { products, ts: Date.now() });
-  evictStale(multiCache);
+  // Only cache non-empty results — empty results may be due to transient
+  // issues or code changes (e.g. hyphen fix) and should be retried.
+  if (products.length > 0) {
+    multiCache.set(key, { products, ts: Date.now() });
+    evictStale(multiCache);
+  } else {
+    multiCache.delete(key);
+  }
   return products;
+}
+
+async function generateFarnellSearchTerms(description: string): Promise<string[]> {
+  try {
+    const res = await openai.responses.create({
+      model: 'gpt-4o-mini',
+      temperature: 0,
+      input: [
+        {
+          role: 'system',
+          content: [
+            'You are a Farnell/Element14 product search assistant.',
+            'Given a product description, generate the most likely manufacturer part numbers or search terms that would find this exact product on Farnell.',
+            '',
+            'RULES:',
+            '- Return ONLY a JSON array of exactly 2 search terms as strings',
+            '- FIRST term: the most specific, full manufacturer part number (e.g. RPI5-4GB-SINGLE, SC1157, SC1159)',
+            '- SECOND term: a shorter/alternative part number or 2-3 keyword search',
+            '- Put the LONGEST, most complete part number FIRST — this is critical',
+            '- For Raspberry Pi: full part numbers include suffixes like -SINGLE, -EU, -UK',
+            '- Do NOT include generic terms like just "RPI5" or brand names alone',
+            '- Do NOT wrap in markdown code blocks',
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: description,
+        },
+      ],
+      stream: false,
+    });
+
+    const text = res.output_text?.trim() ?? '';
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((t): t is string => typeof t === 'string' && t.trim().length > 0).slice(0, 2);
+    }
+    return [];
+  } catch (err) {
+    console.error('Failed to generate Farnell search terms', err);
+    return [];
+  }
 }
 
 async function resolveFarnellBrandId(): Promise<number | null> {
@@ -77,14 +132,94 @@ export async function GET(req: NextRequest) {
 
     const searchTypeParam = searchParams.get('searchType');
 
-    if (searchTypeParam === 'auto') {
-      // Try both in parallel, but only use part number results if order code found nothing
-      const [byId, byPartNum] = await Promise.all([
-        fetchCachedMulti(sku, quantity, 'id'),
-        fetchCachedMulti(sku, quantity, 'manuPartNum'),
-      ]);
+    if (searchTypeParam === 'keyword') {
+      const products = await fetchCachedMulti(sku, quantity, 'keyword');
+      if (products.length === 0) {
+        return NextResponse.json(
+          { ok: false, error: `No products found for "${sku}"` },
+          { status: 404 },
+        );
+      }
+      const farnellBrandId = await resolveFarnellBrandId();
+      return NextResponse.json({ ok: true, product: products[0], products, farnellBrandId });
+    }
 
-      const results = byId.length > 0 ? byId : byPartNum;
+    if (searchTypeParam === 'ai') {
+      // Use AI to generate likely part numbers, then search sequentially
+      // to avoid rate-limiting (403) from too many parallel API calls.
+      const aiTerms = await generateFarnellSearchTerms(sku);
+      const seen = new Set<string>();
+      const products: FarnellProduct[] = [];
+
+      for (const term of aiTerms) {
+        const trimmed = term.trim();
+        if (!trimmed) continue;
+        const hasSpaces = /\s/.test(trimmed);
+
+        let batch: FarnellProduct[] = [];
+        try {
+          if (!hasSpaces) {
+            // AI generates manufacturer part numbers, not Farnell order codes —
+            // only try manuPartNum to minimize API calls and avoid rate limiting.
+            batch = await fetchCachedMulti(trimmed, quantity, 'manuPartNum');
+          } else {
+            batch = await fetchCachedMulti(trimmed, quantity, 'keyword');
+          }
+        } catch {
+          // Stop on any error (likely 403 rate limit) — don't hammer the API
+          break;
+        }
+
+        for (const p of batch) {
+          if (!seen.has(p.sku)) {
+            seen.add(p.sku);
+            products.push(p);
+          }
+        }
+        // Stop once we have enough results
+        if (products.length >= 10) break;
+      }
+
+      // Fallback to keyword with original description if AI terms found nothing
+      if (products.length === 0) {
+        const kwResults = await fetchCachedMulti(sku, quantity, 'keyword');
+        for (const p of kwResults) {
+          if (!seen.has(p.sku)) {
+            seen.add(p.sku);
+            products.push(p);
+          }
+        }
+      }
+
+      if (products.length === 0) {
+        return NextResponse.json(
+          { ok: false, error: `No product found for ${sku}` },
+          { status: 404 },
+        );
+      }
+
+      const farnellBrandId = await resolveFarnellBrandId();
+      return NextResponse.json({ ok: true, product: products[0], products, farnellBrandId });
+    }
+
+    if (searchTypeParam === 'auto') {
+      // Terms with spaces are not valid order codes or part numbers —
+      // skip id/manuPartNum to avoid 500 errors from the Element14 API.
+      const hasSpaces = /\s/.test(sku);
+      let results: FarnellProduct[] = [];
+
+      if (!hasSpaces) {
+        const [byId, byPartNum] = await Promise.all([
+          fetchCachedMulti(sku, quantity, 'id'),
+          fetchCachedMulti(sku, quantity, 'manuPartNum'),
+        ]);
+        results = byId.length > 0 ? byId : byPartNum;
+      }
+
+      // Fallback to keyword search when id/manuPartNum didn't match (or were skipped)
+      if (results.length === 0) {
+        results = await fetchCachedMulti(sku, quantity, 'keyword');
+      }
 
       // Deduplicate by SKU
       const seen = new Set<string>();
@@ -122,6 +257,12 @@ export async function GET(req: NextRequest) {
     const farnellBrandId = await resolveFarnellBrandId();
     return NextResponse.json({ ok: true, product, farnellBrandId });
   } catch (err) {
+    if (err instanceof Error && err.message === 'FARNELL_RATE_LIMITED') {
+      return NextResponse.json(
+        { ok: false, error: 'Farnell API rate limited. Please try again in a moment.' },
+        { status: 429 },
+      );
+    }
     console.error('Farnell lookup failed', err);
     const message = err instanceof Error ? err.message : 'Server error';
     return NextResponse.json({ ok: false, error: message }, { status: 500 });

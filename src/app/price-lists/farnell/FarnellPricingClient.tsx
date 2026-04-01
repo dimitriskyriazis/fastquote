@@ -27,6 +27,7 @@ type FarnellProductResult = {
 
 export default function FarnellPricingClient() {
   const [sku, setSku] = useState("");
+  const [searchBy, setSearchBy] = useState<"code" | "description">("code");
   const [products, setProducts] = useState<FarnellProductResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +45,8 @@ export default function FarnellPricingClient() {
       setSearched(true);
 
       try {
-        const params = new URLSearchParams({ sku: trimmed, searchType: "auto", quantity: "1" });
+        const searchType = searchBy === "description" ? "keyword" : "auto";
+        const params = new URLSearchParams({ sku: trimmed, searchType, quantity: "1" });
         const res = await fetch(`/api/farnell/lookup?${params.toString()}`);
         const data = await res.json().catch(() => null);
 
@@ -70,7 +72,7 @@ export default function FarnellPricingClient() {
         setLoading(false);
       }
     },
-    [sku],
+    [sku, searchBy],
   );
 
   const formatPrice = (value: number) =>
@@ -95,20 +97,35 @@ export default function FarnellPricingClient() {
         <div className={styles.searchCard}>
           <form className={styles.searchForm} onSubmit={handleSearch}>
             <div className={styles.field}>
+              <label className={styles.label} htmlFor="farnell-search-by">
+                Search by
+              </label>
+              <select
+                id="farnell-search-by"
+                className={styles.input}
+                value={searchBy}
+                onChange={(e) => setSearchBy(e.target.value as "code" | "description")}
+              >
+                <option value="code">Order Code / Part Number</option>
+                <option value="description">Description</option>
+              </select>
+            </div>
+
+            <div className={styles.field}>
               <label className={styles.label} htmlFor="farnell-sku">
-                Order Code / Part Number
+                {searchBy === "code" ? "Order Code / Part Number" : "Description"}
               </label>
               <input
                 id="farnell-sku"
                 type="text"
                 className={`${styles.input} ${styles.skuInput}`}
-                placeholder="Enter order code or part number"
+                placeholder={searchBy === "code" ? "Enter order code or part number" : "Enter product description keywords"}
                 value={sku}
                 onChange={(e) => setSku(e.target.value)}
               />
             </div>
 
-              <button
+            <button
               type="submit"
               className={styles.searchButton}
               disabled={loading || !sku.trim()}
@@ -129,7 +146,7 @@ export default function FarnellPricingClient() {
               </div>
               <p className={styles.emptyTitle}>Search Farnell Products</p>
               <p className={styles.emptyDescription}>
-                Enter a Farnell order code or manufacturer part number to look up product details, stock levels, and pricing.
+                Enter a Farnell order code, manufacturer part number, or description keywords to look up product details, stock levels, and pricing.
               </p>
             </div>
           )}
@@ -146,7 +163,7 @@ export default function FarnellPricingClient() {
             <div className={styles.emptyState}>
               <p className={styles.emptyTitle}>No product found</p>
               <p className={styles.emptyDescription}>
-                Try a different order code or manufacturer part number.
+                Try a different order code, part number, or description.
               </p>
             </div>
           )}

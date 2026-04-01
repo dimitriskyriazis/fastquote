@@ -509,6 +509,34 @@
   background-color: #ffffff !important; /* Default to white */
 }
 
+/* When row is SELECTED, range-selected cells must keep the selected-row color */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product.ag-row-selected .ag-cell.ag-cell-range-single-cell) {
+  background-color: #d1d5db !important;
+}
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-comment.ag-row-selected .ag-cell.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-comment.ag-row-selected .ag-cell.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-comment.ag-row-selected .ag-cell.ag-cell-range-single-cell) {
+  background-color: #bde0ff !important;
+}
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-comment.ag-row-selected .ag-cell.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-comment.ag-row-selected .ag-cell.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-comment.ag-row-selected .ag-cell.ag-cell-range-single-cell) {
+  background-color: #ffb7b7 !important;
+}
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--category.ag-row-selected .ag-cell.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--category.ag-row-selected .ag-cell.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--category.ag-row-selected .ag-cell.ag-cell-range-single-cell) {
+  background-color: #c5c9d0 !important;
+}
+/* Default rows (no specific row class) that are selected + range-selected */
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.ag-cell-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.ag-range-selected),
+:global(.offer-products-grid) .gridShell :global(.ag-row.ag-row-selected:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell.ag-cell-range-single-cell) {
+  background-color: #d1d5db !important;
+}
+
 /* Preserve price list status cell colors when range-selected */
 /* These must be more specific than row-level rules - include row classes to override */
 /* Active price list: light green - override all row types */

@@ -574,6 +574,42 @@ export const fetchFarnellLookup = async (
   }
 };
 
+export const fetchFarnellSearchProducts = async (
+  term: string,
+  quantity?: number,
+  searchType: 'auto' | 'keyword' | 'ai' = 'auto',
+  signal?: AbortSignal,
+): Promise<{ products: FarnellLookupResult[]; farnellBrandId: number | null }> => {
+  try {
+    const params = new URLSearchParams({ sku: term, searchType });
+    if (quantity != null && quantity > 0) {
+      params.set('quantity', String(Math.trunc(quantity)));
+    }
+    const res = await fetch(`/api/farnell/lookup?${params.toString()}`, { signal });
+    if (!res.ok) return { products: [], farnellBrandId: null };
+    const payload = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      product?: FarnellLookupResult;
+      products?: FarnellLookupResult[];
+      farnellBrandId?: number | null;
+    } | null;
+    if (!payload?.ok) return { products: [], farnellBrandId: null };
+    const products = Array.isArray(payload.products)
+      ? payload.products
+      : payload.product
+        ? [payload.product]
+        : [];
+    const farnellBrandId = typeof payload.farnellBrandId === 'number' ? payload.farnellBrandId : null;
+    return { products, farnellBrandId };
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      return { products: [], farnellBrandId: null };
+    }
+    console.error('Failed to fetch Farnell search products', err);
+    return { products: [], farnellBrandId: null };
+  }
+};
+
 export const resolveFarnellProductByPartNumber = async (
   partNumber: string,
 ): Promise<number | null> => {
@@ -605,6 +641,30 @@ export const createFarnellProduct = async (
   sku: string,
 ): Promise<number | null> => {
   try {
+    const rawDescription = farnellProduct.description ?? farnellProduct.displayName ?? null;
+
+    // Shorten description to max 60 characters via AI
+    let description = rawDescription;
+    if (rawDescription && rawDescription.length > 60) {
+      try {
+        const shortenRes = await fetch('/api/products/shorten-description', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            description: rawDescription,
+            brand: farnellProduct.brandName ?? undefined,
+            partNumber: sku,
+          }),
+        });
+        if (shortenRes.ok) {
+          const { shortened } = (await shortenRes.json()) as { shortened: string | null };
+          if (shortened) description = shortened;
+        }
+      } catch {
+        // Fall back to raw description on failure
+      }
+    }
+
     const res = await fetch('/api/products/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -613,7 +673,7 @@ export const createFarnellProduct = async (
         partNumber: sku,
         modelNumber: farnellProduct.manufacturerPartNumber ?? null,
         erpCode: null,
-        description: farnellProduct.description ?? farnellProduct.displayName ?? null,
+        description,
         weblink: `https://be.farnell.com/en-BE/search?st=${encodeURIComponent(sku)}`,
         comments: null,
         typeId: null,

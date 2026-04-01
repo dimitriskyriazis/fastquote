@@ -504,3 +504,83 @@
   overflow: hidden;
   border: 1px solid #e2e8f0;
 }
+
+/* Farnell search result (pinned) row styling — amber tones.
+   Target rows by row-id attribute since Farnell rows use "farnell-{sku}" IDs. */
+.productsGridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"]) {
+  background: #fef3c7 !important;
+}
+.productsGridShell.productsGridShell.productsGridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"] .ag-cell) {
+  background-color: #fef3c7 !important;
+}
+.productsGridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"].ag-row-hover) {
+  background: #fde68a !important;
+}
+.productsGridShell.productsGridShell.productsGridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"].ag-row-hover .ag-cell) {
+  background-color: #fde68a !important;
+}
+.productsGridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"].ag-row-selected) {
+  background: #fbbf24 !important;
+}
+.productsGridShell.productsGridShell.productsGridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"].ag-row-selected .ag-cell) {
+  background-color: #fbbf24 !important;
+}
+
+.farnellSearchGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.farnellSearchInput {
+  width: 160px;
+  padding: 5px 10px;
+  border: 1px solid #fbbf24;
+  border-radius: 999px;
+  font-size: 12px;
+  background: #fffbeb;
+  color: #78350f;
+  outline: none;
+  transition: border-color 150ms ease;
+}
+.farnellSearchInput:focus {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.25);
+}
+.farnellSearchInput::placeholder {
+  color: #b45309;
+  opacity: 0.6;
+}
+.farnellSearchInput:disabled {
+  opacity: 0.6;
+}
+
+.farnellButton {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fbbf24;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 150ms ease;
+  white-space: nowrap;
+}
+.farnellButton:hover {
+  background: #fde68a;
+}
+.farnellButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.noFarnellLabel {
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}

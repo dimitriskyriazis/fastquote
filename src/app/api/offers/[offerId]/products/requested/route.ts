@@ -415,6 +415,48 @@ const readRequestedColumnLengths = async (pool: ConnectionPool): Promise<ColumnL
   return defaults;
 };
 
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ offerId: string }> },
+) {
+  logRequest(req, '/api/offers/[offerId]/products/requested [GET]');
+  try {
+    const { offerId: offerIdParam } = await params;
+    const normalizedId = decodeURIComponent(String(offerIdParam ?? '')).trim();
+    if (!normalizedId) {
+      return NextResponse.json({ ok: false, error: 'Missing id', itemNos: [] }, { status: 400 });
+    }
+    const offerId = Number(normalizedId);
+    if (!Number.isInteger(offerId)) {
+      return NextResponse.json({ ok: false, error: 'Invalid id', itemNos: [] }, { status: 400 });
+    }
+    const pool = await getPool();
+    const request = pool.request();
+    request.input('__offerId', sql.Int, offerId);
+    const result = await request.query<{ TreeOrdering: string | null; RequestedItemNo: string | null }>(`
+      SELECT
+        NULLIF(LTRIM(RTRIM(od.TreeOrdering)), '') AS TreeOrdering,
+        NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') AS RequestedItemNo
+      FROM dbo.OfferDetails od
+      WHERE od.OfferID = @__offerId
+        AND (
+          NULLIF(LTRIM(RTRIM(od.TreeOrdering)), '') IS NOT NULL
+          OR NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') IS NOT NULL
+        )
+    `);
+    const itemNos = new Set<string>();
+    (result.recordset ?? []).forEach((r) => {
+      if (r.TreeOrdering) itemNos.add(r.TreeOrdering);
+      if (r.RequestedItemNo) itemNos.add(r.RequestedItemNo);
+    });
+    return NextResponse.json({ ok: true, itemNos: Array.from(itemNos) });
+  } catch (err) {
+    console.error('Failed to fetch existing item numbers', err);
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ ok: false, error: message, itemNos: [] }, { status: 500 });
+  }
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
@@ -535,6 +577,17 @@ export async function POST(
             RequestedDescription2 = payload.RequestedDescription2,
             RequestedDescription3 = payload.RequestedDescription3,
             RequestedQuantity = payload.RequestedQuantity,
+            IsCategory = CASE
+              WHEN ISNULL(od.IsCategory, 0) = 1
+                AND (
+                  (payload.RequestedQuantity IS NOT NULL AND payload.RequestedQuantity <> 0)
+                  OR NULLIF(LTRIM(RTRIM(ISNULL(payload.RequestedBrand, ''))), '') IS NOT NULL
+                  OR NULLIF(LTRIM(RTRIM(ISNULL(payload.RequestedPartNo, ''))), '') IS NOT NULL
+                  OR NULLIF(LTRIM(RTRIM(ISNULL(payload.RequestedModelNo, ''))), '') IS NOT NULL
+                )
+              THEN 0
+              ELSE od.IsCategory
+            END,
             ProductDescription = CASE
               WHEN ISNULL(od.IsCategory, 0) = 1 THEN payload.ProductDescription
               ELSE od.ProductDescription

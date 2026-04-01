@@ -281,6 +281,102 @@
   background-color: #7dd3fc !important;
 }
 
+/* Farnell search result (pinned) row styling — amber tones matching button.
+   Uses [row-id^="farnell-"] attribute selector since AG Grid re-renders can
+   strip JS-applied classes, but row-id persists from getRowId. */
+.gridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"]) {
+  background: #fef3c7 !important;
+}
+.gridShell.gridShell.gridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"] .ag-cell) {
+  background-color: #fef3c7 !important;
+}
+.gridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"].ag-row-hover) {
+  background: #fde68a !important;
+}
+.gridShell.gridShell.gridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"].ag-row-hover .ag-cell) {
+  background-color: #fde68a !important;
+}
+.gridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"].suggestion-selected) {
+  background: #fbbf24 !important;
+}
+.gridShell.gridShell.gridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"].suggestion-selected .ag-cell) {
+  background-color: #fbbf24 !important;
+}
+.gridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"].suggestion-selected.ag-row-hover) {
+  background: #f59e0b !important;
+}
+.gridShell.gridShell.gridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"].suggestion-selected.ag-row-hover .ag-cell) {
+  background-color: #f59e0b !important;
+}
+
+.farnellSearchGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.farnellSearchInput {
+  width: 180px;
+  padding: 8px 12px;
+  border: 1px solid #fbbf24;
+  border-radius: 999px;
+  font-size: 13px;
+  background: #fffbeb;
+  color: #78350f;
+  outline: none;
+  transition: border-color 150ms ease;
+}
+.farnellSearchInput:focus {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.25);
+}
+.farnellSearchInput::placeholder {
+  color: #b45309;
+  opacity: 0.6;
+}
+.farnellSearchInput:disabled {
+  opacity: 0.6;
+}
+
+.farnellButton {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fbbf24;
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 150ms ease, transform 120ms ease;
+}
+.farnellButton:hover {
+  background: #fde68a;
+  transform: translateY(-1px);
+}
+.farnellButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.farnellButtonSpinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(146, 64, 14, 0.2);
+  border-top-color: #92400e;
+  border-radius: 50%;
+  animation: aiSpin 0.6s linear infinite;
+}
+
+.noFarnellLabel {
+  color: #92400e;
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .descriptionCell {
   display: flex;
   flex-direction: column;

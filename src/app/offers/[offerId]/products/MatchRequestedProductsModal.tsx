@@ -10,6 +10,9 @@ import { priceListStatusClassRules } from '../../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../../lib/localeNumber';
 import styles from './MatchRequestedProductsModal.module.css';
 import { useModalDragResize } from '../../../hooks/useModalDragResize';
+import { useFarnellSearch, isFarnellRow, type FarnellSearchRow } from '../../../hooks/useFarnellSearch';
+import { useFarnellProductResolver } from '../../../hooks/useFarnellProductResolver';
+import { isFarnellBrand } from '../offerProductsUtils';
 
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), {
   ssr: false,
@@ -136,6 +139,22 @@ export default function MatchRequestedProductsModal({
   const autoSelectingRef = useRef(false);
   const handleSuggestProductsRef = useRef<(() => void) | null>(null);
 
+  // Farnell search state
+  const [brandFilterIsFarnell, setBrandFilterIsFarnell] = useState(() => isFarnellBrand(entry.requestedBrand));
+  const [farnellVisible, setFarnellVisible] = useState(true);
+  const [farnellPartNumber, setFarnellPartNumber] = useState<string | null>(entry.requestedPartNumber ?? null);
+  const [farnellDescription, setFarnellDescription] = useState<string | null>(entry.requestedDescription ?? null);
+
+  const { farnellResults, farnellLoading, noFarnellResults, searchFarnell, clearFarnellResults } = useFarnellSearch({
+    partNumber: farnellPartNumber,
+    description: farnellDescription,
+    quantity: entry.quantity ?? undefined,
+  });
+  const farnellResultsRef = useRef<FarnellSearchRow[]>([]);
+  farnellResultsRef.current = farnellResults;
+
+  const { resolveFarnellProduct, resolving: farnellResolving } = useFarnellProductResolver();
+
   // Keep ref in sync so event listeners can read current value
   suggestedProductsRef.current = suggestedProducts;
 
@@ -170,14 +189,21 @@ export default function MatchRequestedProductsModal({
     }
   }, [setPinnedSuggestions]);
 
-  // Sync pinned rows when suggestedProducts or visibility changes
+  // Sync pinned rows when suggestedProducts, farnellResults, or visibility changes
   useEffect(() => {
+    const rows: MatcherRowData[] = [];
     if (suggestedProducts.length > 0 && suggestionsVisible) {
-      setPinnedSuggestions(suggestedProducts);
+      rows.push(...suggestedProducts);
+    }
+    if (farnellResults.length > 0 && farnellVisible) {
+      rows.push(...farnellResults);
+    }
+    if (rows.length > 0) {
+      setPinnedSuggestions(rows);
     } else {
       clearPinnedTopRow();
     }
-  }, [suggestedProducts, suggestionsVisible, setPinnedSuggestions, clearPinnedTopRow]);
+  }, [suggestedProducts, suggestionsVisible, farnellResults, farnellVisible, setPinnedSuggestions, clearPinnedTopRow]);
 
   const getRowStyle = useCallback((params: RowClassParams): RowStyle | undefined => {
     // Pinned top row default/hover/selected styling handled via CSS on .ag-floating-top
@@ -207,7 +233,6 @@ export default function MatchRequestedProductsModal({
         filter: 'agTextColumnFilter',
         width: 225,
       },
-      { field: 'PriceListName', headerName: 'Price List', filter: 'agTextColumnFilter', width: 225},
       {
         field: 'ListPrice',
         headerName: 'List Price',
@@ -218,13 +243,14 @@ export default function MatchRequestedProductsModal({
         width: 150,
       },
       {
-        field: 'UnitPrice',
-        headerName: 'Unit Price',
+        field: 'CostPrice',
+        headerName: 'Cost Price',
         filter: 'agNumberColumnFilter',
         type: 'numericColumn',
         valueFormatter: priceValueFormatter,
         width: 150,
       },
+      { field: 'PriceListName', headerName: 'Price List', filter: 'agTextColumnFilter', width: 225 },
     ],
     [],
   );
@@ -273,18 +299,19 @@ export default function MatchRequestedProductsModal({
     [selectedProduct],
   );
 
+  const selectedProductIsFarnell = isFarnellRow(selectedProduct as Record<string, unknown> | null);
+
   // Highlight selected suggestion row via DOM class toggle.
   // ag-grid positions pinned rows with absolute CSS so DOM element order can
   // differ from visual order.  Match by row-id (= ProductID) instead.
   const updateSuggestionHighlight = useCallback(() => {
     const shell = gridShellRef.current;
     if (!shell) return;
-    const sid = normalizeProductId(selectedProduct?.ProductID ?? null);
+    const selectedId = selectedProduct?.ProductID != null ? String(selectedProduct.ProductID) : null;
     const rows = shell.querySelectorAll<HTMLElement>('.ag-floating-top .ag-row');
     rows.forEach((row) => {
       const rowId = row.getAttribute('row-id');
-      const rowProductId = rowId != null ? normalizeProductId(rowId) : null;
-      if (sid != null && rowProductId != null && rowProductId === sid) {
+      if (selectedId != null && rowId === selectedId) {
         row.classList.add('suggestion-selected');
       } else {
         row.classList.remove('suggestion-selected');
@@ -298,7 +325,7 @@ export default function MatchRequestedProductsModal({
     // Also run after a frame so ag-grid has time to render new pinned rows
     const raf = requestAnimationFrame(updateSuggestionHighlight);
     return () => cancelAnimationFrame(raf);
-  }, [updateSuggestionHighlight, suggestedProducts]);
+  }, [updateSuggestionHighlight, suggestedProducts, farnellResults]);
 
   const handleSlotRef = useCallback((node: HTMLDivElement | null) => {
     setSearchSlot(node);
@@ -369,18 +396,33 @@ export default function MatchRequestedProductsModal({
     return normalizeProductId((candidate?.ProductID ?? null));
   }, []);
 
-  const handleAssign = useCallback(() => {
+  const handleAssign = useCallback(async () => {
+    // Handle Farnell row: resolve/create product first
+    if (selectedProductIsFarnell && selectedProduct) {
+      const resolvedId = await resolveFarnellProduct(selectedProduct as unknown as FarnellSearchRow);
+      if (resolvedId == null) return;
+      void handleAssignWithId(resolvedId);
+      return;
+    }
     const id = selectedProductId ?? getSelectedProductIdFromApi();
     if (id == null) return;
     void handleAssignWithId(id);
-  }, [selectedProductId, handleAssignWithId, getSelectedProductIdFromApi]);
+  }, [selectedProductId, selectedProductIsFarnell, selectedProduct, handleAssignWithId, getSelectedProductIdFromApi, resolveFarnellProduct]);
 
-  const handleRowDoubleClick = useCallback((event: RowDoubleClickedEvent<MatcherRowData>) => {
-    const rawProductId = (event.data as { ProductID?: unknown }).ProductID ?? null;
+  const handleRowDoubleClick = useCallback(async (event: RowDoubleClickedEvent<MatcherRowData>) => {
+    const data = event.data as MatcherRowData;
+    // Handle Farnell row
+    if (isFarnellRow(data as Record<string, unknown>)) {
+      const resolvedId = await resolveFarnellProduct(data as unknown as FarnellSearchRow);
+      if (resolvedId == null) return;
+      void handleAssignWithId(resolvedId, comment);
+      return;
+    }
+    const rawProductId = (data as { ProductID?: unknown }).ProductID ?? null;
     const productId = normalizeProductId(rawProductId);
     if (productId == null) return;
     void handleAssignWithId(productId, comment);
-  }, [handleAssignWithId, comment]);
+  }, [handleAssignWithId, comment, resolveFarnellProduct]);
 
   const trySelectPendingProduct = useCallback((api: MatcherGridApi) => {
     const targetId = pendingSelectionProductIdRef.current;
@@ -443,11 +485,41 @@ export default function MatchRequestedProductsModal({
     } catch { /* noop */ }
   }, []);
 
+  // Attach filter change listener to detect when BrandName filter is Farnell
+  const filterListenerRef = useRef<(() => void) | null>(null);
+
+  const attachFilterListener = useCallback((api: MatcherGridApi) => {
+    if (filterListenerRef.current) {
+      try {
+        api.removeEventListener('filterChanged', filterListenerRef.current as never);
+      } catch { /* noop */ }
+    }
+    const listener = () => {
+      try {
+        const model = api.getFilterModel?.() ?? {};
+        const brandFilter = (model as Record<string, { filter?: string }>).BrandName;
+        const brandValue = brandFilter?.filter ?? '';
+        setBrandFilterIsFarnell(
+          typeof brandValue === 'string' && brandValue.toLowerCase().includes('farnell'),
+        );
+        // Track current filter values for Farnell search
+        const partFilter = (model as Record<string, { filter?: string }>).PartNumber;
+        const descFilter = (model as Record<string, { filter?: string }>).Description;
+        setFarnellPartNumber(partFilter?.filter ?? null);
+        setFarnellDescription(descFilter?.filter ?? null);
+      } catch { /* noop */ }
+    };
+    filterListenerRef.current = listener;
+    try {
+      api.addEventListener('filterChanged', listener as never);
+    } catch { /* noop */ }
+  }, []);
+
   useEffect(() => {
-    if (newProductId == null && suggestedProducts.length === 0) {
+    if (newProductId == null && suggestedProducts.length === 0 && farnellResults.length === 0) {
       clearPinnedTopRow();
     }
-  }, [newProductId, clearPinnedTopRow, suggestedProducts.length]);
+  }, [newProductId, clearPinnedTopRow, suggestedProducts.length, farnellResults.length]);
 
   useEffect(() => () => {
     clearPinnedTopRow();
@@ -564,6 +636,7 @@ export default function MatchRequestedProductsModal({
     applyRequestedFilterModel(api);
     autoSelectTopProduct(api);
     attachCellClickListener(api);
+    attachFilterListener(api);
     // The grid restores persisted filter state asynchronously via requestAnimationFrame,
     // which can overwrite the programmatic filters we just set for the current product.
     // Re-apply only if the persisted restoration actually changed the filter model,
@@ -578,7 +651,7 @@ export default function MatchRequestedProductsModal({
       hasAppliedRequestedFiltersRef.current = false;
       applyRequestedFilterModel(api);
     });
-  }, [applyRequestedFilterModel, autoSelectTopProduct, ensureProductSort, trySelectPendingProduct, attachCellClickListener, requestedFilterModel]);
+  }, [applyRequestedFilterModel, autoSelectTopProduct, ensureProductSort, trySelectPendingProduct, attachCellClickListener, attachFilterListener, requestedFilterModel]);
 
   const handleGridModelUpdated = useCallback(() => {
     const api = productsApiRef.current;
@@ -616,7 +689,13 @@ export default function MatchRequestedProductsModal({
     suggestedProductsRef.current = [];
     userManuallySelectedRef.current = false;
     setSuggestionsVisible(true);
-  }, [entry.offerDetailId, requestedFilterModel]);
+    // Reset Farnell state for the new entry
+    clearFarnellResults();
+    setBrandFilterIsFarnell(isFarnellBrand(entry.requestedBrand));
+    setFarnellVisible(true);
+    setFarnellPartNumber(entry.requestedPartNumber ?? null);
+    setFarnellDescription(entry.requestedDescription ?? null);
+  }, [entry.offerDetailId, requestedFilterModel, clearFarnellResults, entry.requestedBrand, entry.requestedPartNumber, entry.requestedDescription]);
 
   // Auto-apply prefetched suggestions when the user has previously opted in.
   // On the first product userWantsSuggestionsRef is false, so the user must
@@ -723,6 +802,46 @@ export default function MatchRequestedProductsModal({
                   Show suggestions (AI)
                 </button>
               )}
+              {brandFilterIsFarnell && (
+                <button
+                  type="button"
+                  className={styles.farnellButton}
+                  onClick={() => { clearFarnellResults(); void searchFarnell(); }}
+                  disabled={farnellLoading || assigning}
+                >
+                  {farnellLoading ? (
+                    <>
+                      <span className={styles.farnellButtonSpinner} />
+                      Searching Farnell…
+                    </>
+                  ) : (
+                    'Look up Farnell'
+                  )}
+                </button>
+              )}
+              {brandFilterIsFarnell && noFarnellResults && farnellResults.length === 0 && !farnellLoading && (
+                <span className={styles.noFarnellLabel}>No Farnell results</span>
+              )}
+              {farnellResults.length > 0 && farnellVisible && (
+                <button
+                  type="button"
+                  className={styles.farnellButton}
+                  onClick={() => setFarnellVisible(false)}
+                  disabled={assigning}
+                >
+                  Hide Farnell ({farnellResults.length})
+                </button>
+              )}
+              {farnellResults.length > 0 && !farnellVisible && (
+                <button
+                  type="button"
+                  className={styles.farnellButton}
+                  onClick={() => setFarnellVisible(true)}
+                  disabled={assigning}
+                >
+                  Show Farnell ({farnellResults.length})
+                </button>
+              )}
               <button type="button" className={styles.secondaryButton} onClick={onRequestAddProduct}>
                 Add product
               </button>
@@ -780,7 +899,7 @@ export default function MatchRequestedProductsModal({
                 className={styles.commentInput}
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
-                disabled={assigning || selectedProductId == null}
+                disabled={assigning || farnellResolving || (selectedProductId == null && !selectedProductIsFarnell)}
                 placeholder=""
                 data-fastquote-keep-selection="true"
               />
@@ -789,9 +908,9 @@ export default function MatchRequestedProductsModal({
                 className={styles.primaryButton}
                 data-fastquote-keep-selection="true"
                 onClick={handleAssign}
-                disabled={assigning || selectedProductId == null}
+                disabled={assigning || farnellResolving || (selectedProductId == null && !selectedProductIsFarnell)}
               >
-                {assigning ? 'Matching…' : 'Assign product'}
+                {assigning || farnellResolving ? 'Matching…' : 'Assign product'}
               </button>
               <button
                 type="button"

@@ -819,6 +819,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
   const [submitting, setSubmitting] = useState(false);
   const analysisRunRef = useRef(0);
   const overlayPointerDownOnOverlayRef = useRef(false);
+  const fileHandleRef = useRef<FileSystemFileHandle | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -850,12 +851,13 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
   );
 
   const applySheets = useCallback((sheets: SheetMapping[]) => {
-    const evaluated = evaluateValidation(sheets, 0);
+    const defaultIndex = sheets.length > 1 ? 1 : 0;
+    const evaluated = evaluateValidation(sheets, defaultIndex);
     setValidation({
       status: evaluated.status,
       message: evaluated.message,
       sheets,
-      activeSheetIndex: 0,
+      activeSheetIndex: defaultIndex,
       mappedColumnCount: evaluated.mappedColumnCount,
     });
   }, []);
@@ -919,7 +921,30 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
   const handleFileChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextFile = event.target.files?.[0] ?? null;
     event.target.value = '';
+    fileHandleRef.current = null;
     handleFileSelection(nextFile);
+  }, [handleFileSelection]);
+
+  const handleLabelClick = useCallback((event: React.MouseEvent<HTMLLabelElement>) => {
+    const win = window as unknown as Record<string, unknown>;
+    if (typeof win.showOpenFilePicker !== 'function') return;
+    event.preventDefault();
+    const showOpenFilePicker = win.showOpenFilePicker as (opts: Record<string, unknown>) => Promise<FileSystemFileHandle[]>;
+    showOpenFilePicker({
+      types: [{
+        description: 'Excel files',
+        accept: {
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+          'application/vnd.ms-excel.sheet.macroEnabled.12': ['.xlsm'],
+          'application/vnd.ms-excel': ['.xls'],
+        },
+      }],
+      multiple: false,
+    }).then(async ([handle]) => {
+      fileHandleRef.current = handle;
+      const pickedFile = await handle.getFile();
+      handleFileSelection(pickedFile);
+    }).catch(() => { /* user cancelled */ });
   }, [handleFileSelection]);
 
   const handleFileDrop = useCallback((event: DragEvent<HTMLLabelElement>) => {
@@ -1101,7 +1126,32 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
         });
       }
 
-      downloadWorkbookFile(outputBuffer, outputFilename, workbookType);
+      const win = window as unknown as Record<string, unknown>;
+      if (typeof win.showSaveFilePicker === 'function') {
+        const showSaveFilePicker = win.showSaveFilePicker as (opts: Record<string, unknown>) => Promise<FileSystemFileHandle & { createWritable: () => Promise<WritableStream & { write: (data: Blob) => Promise<void>; close: () => Promise<void> }> }>;
+        const mimeType = getWorkbookMimeType(workbookType);
+        const extMap: Record<string, string[]> = {
+          xlsx: ['.xlsx'],
+          xlsm: ['.xlsm'],
+          xls: ['.xls'],
+        };
+        const pickerOpts: Record<string, unknown> = {
+          suggestedName: outputFilename,
+          types: [{
+            description: 'Excel file',
+            accept: { [mimeType]: extMap[workbookType] ?? [`.${workbookType}`] },
+          }],
+        };
+        if (fileHandleRef.current) {
+          pickerOpts.startIn = fileHandleRef.current;
+        }
+        const saveHandle = await showSaveFilePicker(pickerOpts);
+        const writable = await saveHandle.createWritable();
+        await writable.write(new Blob([outputBuffer], { type: mimeType }));
+        await writable.close();
+      } else {
+        downloadWorkbookFile(outputBuffer, outputFilename, workbookType);
+      }
       const writtenCount = alignedRows.filter((r) => !r.skipRow).length;
       showToastMessage(
         `Exported ${writtenCount} row${writtenCount === 1 ? '' : 's'} to "${activeSheet.name}" (from row ${writeResult.startRow}).`,
@@ -1177,6 +1227,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
             <label
               htmlFor="offer-products-export-file"
               className={`${styles.uploadLabel} ${isDragging ? styles.uploadLabelDragging : ''}`}
+              onClick={handleLabelClick}
               onDrop={handleFileDrop}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}

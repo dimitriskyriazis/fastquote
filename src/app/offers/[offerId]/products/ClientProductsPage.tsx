@@ -178,6 +178,8 @@ export default function ClientProductsPage({
   const [placementAnchor, setPlacementAnchor] = useState<{ label: string; treeOrdering: string; isRequested: boolean; offerDetailId?: number; parentPath?: number[]; requestedBrand?: string | null; requestedPartNo?: string | null; requestedModelNo?: string | null; requestedDescription?: string | null } | null>(null);
   const [defaultPlacementMode, setDefaultPlacementMode] = useState<'fill' | 'below'>('fill');
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
+  const showAddProductModalRef = useRef(showAddProductModal);
+  showAddProductModalRef.current = showAddProductModal;
   const splitLeftRef = useRef<HTMLDivElement | null>(null);
   const layoutStorageKey = useMemo(() => buildLayoutStorageKey(userId), [userId]);
   const layoutLoadedRef = useRef<string | null>(null);
@@ -340,6 +342,13 @@ export default function ClientProductsPage({
         setTableLayout('wReq');
       }
       setShowAddProductModal(true);
+      // If no row is selected, show insertion line at end after layout settles
+      const anchor = offerProductsPanelRef.current?.getAddInsertionAnchor?.() ?? null;
+      if (!anchor) {
+        const show = () => offerProductsPanelRef.current?.setInsertLineVisible?.(true, true);
+        setTimeout(show, 300);
+        setTimeout(show, 700);
+      }
       return;
     }
     if (pendingAction) {
@@ -545,6 +554,11 @@ export default function ClientProductsPage({
       offerProductsPanelRef.current?.setInsertLineVisible?.(false);
     } else {
       setPlacementAnchor(null);
+      // When the add modal is open and no row is selected, show the insertion
+      // line below the last row so the user sees where the product will go.
+      if (showAddProductModalRef.current) {
+        offerProductsPanelRef.current?.setInsertLineVisible?.(true, true);
+      }
     }
   }, []);
 

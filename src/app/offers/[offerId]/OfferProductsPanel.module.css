@@ -54,6 +54,23 @@
   display: none;
 }
 
+/* Thin line at the very end of the grid (no row below to highlight) */
+.insertLinePinnedEnd .insertLineBar {
+  background: #93c5fd;
+  height: 3px;
+}
+
+.insertLinePinnedEnd {
+  pointer-events: none;
+  transform: translateY(0);
+  padding: 0;
+  margin: 0;
+}
+
+.insertLinePinnedEnd .insertLineButton {
+  display: none;
+}
+
 .insertLineBar {
   flex: 1;
   height: 1px;

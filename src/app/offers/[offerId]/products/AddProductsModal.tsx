@@ -7,6 +7,9 @@ import styles from './AddProductsModal.module.css';
 import { showToastMessage } from '../../../../lib/toast';
 import { priceListStatusClassRules } from '../../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../../lib/localeNumber';
+import { useFarnellSearch, isFarnellRow, type FarnellSearchRow } from '../../../hooks/useFarnellSearch';
+import { useFarnellProductResolver } from '../../../hooks/useFarnellProductResolver';
+import { isFarnellBrand } from '../offerProductsUtils';
 
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), { ssr: false });
 
@@ -213,8 +216,9 @@ export default function AddProductsModal({
   placementAnchor,
   defaultPlacementMode,
   onPlacementModeChange,
-  getLastClickedRowId,
+  getLastClickedRowId: _getLastClickedRowId,
 }: Props) {
+  void _getLastClickedRowId;
   const [selectedCategory] = useState<CategoryRow | null>(null);
   const [selectedProducts, setSelectedProducts] = useState<ProductRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -232,6 +236,19 @@ export default function AddProductsModal({
   const pendingSelectionProductIdRef = useRef<number | null>(null);
   const categoryRowClickHandlerRef = useRef<((event: { node?: RowNode }) => void) | null>(null);
   const initialRequestedRowConsumedRef = useRef(false);
+
+  // Farnell search state
+  const [brandFilterIsFarnell, setBrandFilterIsFarnell] = useState(() => isFarnellBrand(placementAnchor?.requestedBrand ?? null));
+  const [farnellVisible, setFarnellVisible] = useState(true);
+  const [farnellPartNumber, setFarnellPartNumber] = useState<string | null>(placementAnchor?.requestedPartNo ?? null);
+  const [farnellDescription, setFarnellDescription] = useState<string | null>(placementAnchor?.requestedDescription ?? null);
+
+  const { farnellResults, farnellLoading, noFarnellResults, searchFarnell, clearFarnellResults } = useFarnellSearch({
+    partNumber: farnellPartNumber,
+    description: farnellDescription,
+  });
+  const { resolveFarnellProduct, resolving: farnellResolving } = useFarnellProductResolver();
+
   const productRequestPayload = useMemo(() => {
     const payload: Record<string, unknown> = { action: 'products' };
     if (newProductId != null) payload.newProductId = newProductId;
@@ -253,13 +270,19 @@ export default function AddProductsModal({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // Reset placement mode when anchor changes
+  // Reset placement mode and Farnell state when anchor changes
   useEffect(() => {
     const mode = defaultPlacementMode ?? 'fill';
     setPlacementMode(mode);
     setBelowItemNo(placementAnchor?.treeOrdering ? computeNextItemNo(placementAnchor.treeOrdering) : '');
     onPlacementModeChange?.(mode);
-  }, [placementAnchor, defaultPlacementMode, onPlacementModeChange]);
+    // Reset Farnell state for new anchor
+    clearFarnellResults();
+    setBrandFilterIsFarnell(isFarnellBrand(placementAnchor?.requestedBrand ?? null));
+    setFarnellVisible(true);
+    setFarnellPartNumber(placementAnchor?.requestedPartNo ?? null);
+    setFarnellDescription(placementAnchor?.requestedDescription ?? null);
+  }, [placementAnchor, defaultPlacementMode, onPlacementModeChange, clearFarnellResults]);
 
   // Apply requested data as filters on the products grid when selecting a row to fill
   useEffect(() => {
@@ -458,6 +481,8 @@ export default function AddProductsModal({
   );
 
   const handleProductCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    // Skip editing for Farnell pinned rows
+    if (event.node?.rowPinned === 'top' && isFarnellRow(event.data as Record<string, unknown> | null)) return;
     const field = typeof event.colDef?.field === 'string' ? event.colDef.field : null;
     if (!field) return;
     const editableFields: Record<string, { label: string; payloadKey: 'partNumber' | 'modelNumber' | 'description' }> = {
@@ -520,7 +545,20 @@ export default function AddProductsModal({
       showToastMessage('Select one or more products first', 'info');
       return;
     }
-    const productPayload = selectedProducts
+    // Resolve Farnell products before proceeding
+    const resolvedProducts = [...selectedProducts];
+    for (let i = 0; i < resolvedProducts.length; i++) {
+      const row = resolvedProducts[i];
+      if (isFarnellRow(row as Record<string, unknown>)) {
+        const resolvedId = await resolveFarnellProduct(row as unknown as FarnellSearchRow);
+        if (resolvedId == null) {
+          showToastMessage('Unable to create Farnell product. Please try again.', 'error');
+          return;
+        }
+        resolvedProducts[i] = { ...row, ProductID: resolvedId };
+      }
+    }
+    const productPayload = resolvedProducts
       .map((row, idx) => ({
         productId: row.ProductID,
         sequence: idx + 1,
@@ -531,7 +569,7 @@ export default function AddProductsModal({
       return;
     }
     const fillRequestedRowId = placementMode === 'fill'
-      ? (placementAnchor?.offerDetailId ?? getLastClickedRowId?.() ?? selectedRequestedRowId ?? null)
+      ? ((placementAnchor?.isRequested ? placementAnchor.offerDetailId : null) ?? selectedRequestedRowId ?? null)
       : null;
     const isAssigningRequestedRow = fillRequestedRowId != null;
     if (isAssigningRequestedRow && productPayload.length !== 1) {
@@ -645,20 +683,9 @@ export default function AddProductsModal({
                 'error',
               );
             }
-            // Set the auto-calculated item number if in "below" mode
-            if (desiredItemNo && insertedIds.length === 1) {
-              try {
-                await fetch(`/api/offers/${encodeURIComponent(offerId)}/products`, {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    updates: [{ OfferDetailID: insertedIds[0], TreeOrdering: desiredItemNo }],
-                  }),
-                });
-              } catch {
-                /* best effort */
-              }
-            }
+            // The reorder + resequence already assigned the correct TreeOrdering;
+            // do NOT overwrite it with the stale auto-computed desiredItemNo
+            // (which was based on the original anchor TreeOrdering before resequencing).
           }
         }
       }
@@ -696,7 +723,6 @@ export default function AddProductsModal({
     comment,
     endpoint,
     getInsertionAnchor,
-    getLastClickedRowId,
     onAdded,
     offerId,
     placementAnchor,
@@ -704,6 +730,7 @@ export default function AddProductsModal({
     selectedCategory?.OfferDetailID,
     selectedProducts,
     selectedRequestedRowId,
+    resolveFarnellProduct,
   ]);
 
   const clearPinnedTopRow = useCallback(() => {
@@ -879,11 +906,72 @@ export default function AddProductsModal({
     }
   }, []);
 
+  // Farnell filter listener
+  const filterListenerRef = useRef<(() => void) | null>(null);
+
+  const attachFilterListener = useCallback((api: GridApi) => {
+    if (filterListenerRef.current) {
+      try {
+        api.removeEventListener('filterChanged', filterListenerRef.current as never);
+      } catch { /* noop */ }
+    }
+    const listener = () => {
+      try {
+        const model = api.getFilterModel?.() ?? {};
+        const brandFilter = (model as Record<string, { filter?: string }>).BrandName;
+        const brandValue = brandFilter?.filter ?? '';
+        setBrandFilterIsFarnell(
+          typeof brandValue === 'string' && brandValue.toLowerCase().includes('farnell'),
+        );
+        const partFilter = (model as Record<string, { filter?: string }>).PartNumber;
+        const descFilter = (model as Record<string, { filter?: string }>).Description;
+        setFarnellPartNumber(partFilter?.filter ?? null);
+        setFarnellDescription(descFilter?.filter ?? null);
+      } catch { /* noop */ }
+    };
+    filterListenerRef.current = listener;
+    try {
+      api.addEventListener('filterChanged', listener as never);
+    } catch { /* noop */ }
+  }, []);
+
+  // Sync Farnell pinned rows
+  useEffect(() => {
+    const api = productsApiRef.current;
+    if (!api) return;
+    const setter = api.setPinnedTopRowData;
+    if (typeof setter !== 'function') return;
+    if (farnellResults.length > 0 && farnellVisible) {
+      try { setter(farnellResults as unknown as Record<string, unknown>[]); } catch { /* noop */ }
+    } else if (newProductId == null) {
+      try { setter([]); } catch { /* noop */ }
+    }
+  }, [farnellResults, farnellVisible, newProductId]);
+
+  // Attach cell click listener for Farnell pinned rows
+  const farnellCellClickRef = useRef<((event: { node?: RowNode; data?: unknown }) => void) | null>(null);
+
+  const attachFarnellCellClickListener = useCallback((api: GridApi) => {
+    if (farnellCellClickRef.current) {
+      try { api.removeEventListener('cellClicked', farnellCellClickRef.current as never); } catch { /* noop */ }
+    }
+    const listener = (event: { node?: RowNode; data?: unknown }) => {
+      if (event.node?.rowPinned === 'top' && event.data && isFarnellRow(event.data as Record<string, unknown>)) {
+        try { api.deselectAll?.(); } catch { /* noop */ }
+        setSelectedProducts([event.data as ProductRow]);
+      }
+    };
+    farnellCellClickRef.current = listener;
+    try { api.addEventListener('cellClicked', listener as never); } catch { /* noop */ }
+  }, []);
+
   const handleProductsGridReady = useCallback((api: GridApi) => {
     productsApiRef.current = api as ProductsGridApi;
     ensureProductSort();
     trySelectPendingProduct(api as ProductsGridApi);
-  }, [ensureProductSort, trySelectPendingProduct]);
+    attachFilterListener(api);
+    attachFarnellCellClickListener(api);
+  }, [ensureProductSort, trySelectPendingProduct, attachFilterListener, attachFarnellCellClickListener]);
 
   const handleProductsGridModelUpdated = useCallback(() => {
     const api = productsApiRef.current;
@@ -891,6 +979,43 @@ export default function AddProductsModal({
     ensureProductSort();
     trySelectPendingProduct(api);
   }, [ensureProductSort, trySelectPendingProduct]);
+
+  // Farnell button fragment — shared between split view and modal view
+  const farnellButtons = brandFilterIsFarnell ? (
+    <>
+      <button
+        type="button"
+        className={styles.farnellButton}
+        onClick={() => { clearFarnellResults(); void searchFarnell(); }}
+        disabled={farnellLoading || submitting}
+      >
+        {farnellLoading ? 'Searching Farnell…' : 'Look up Farnell'}
+      </button>
+      {noFarnellResults && farnellResults.length === 0 && !farnellLoading && (
+        <span className={styles.noFarnellLabel}>No Farnell results</span>
+      )}
+      {farnellResults.length > 0 && farnellVisible && (
+        <button
+          type="button"
+          className={styles.farnellButton}
+          onClick={() => setFarnellVisible(false)}
+          disabled={submitting}
+        >
+          Hide Farnell ({farnellResults.length})
+        </button>
+      )}
+      {farnellResults.length > 0 && !farnellVisible && (
+        <button
+          type="button"
+          className={styles.farnellButton}
+          onClick={() => setFarnellVisible(true)}
+          disabled={submitting}
+        >
+          Show Farnell ({farnellResults.length})
+        </button>
+      )}
+    </>
+  ) : null;
 
   // Build placement indicator content
   // "below" default = user clicked "+" between rows → only show "Add below"
@@ -991,6 +1116,7 @@ export default function AddProductsModal({
                 />
               </>
             ) : null}
+            {farnellButtons}
             {onRequestAddProduct ? (
               <button
                 type="button"
@@ -1005,9 +1131,9 @@ export default function AddProductsModal({
               type="button"
               className={styles.primaryButton}
               onClick={handleAddProducts}
-              disabled={submitting}
+              disabled={submitting || farnellResolving}
             >
-              Add {selectedProducts.length > 0 ? `(${selectedProducts.length})` : ''}
+              {farnellResolving ? 'Creating…' : `Add ${selectedProducts.length > 0 ? `(${selectedProducts.length})` : ''}`}
             </button>
             <button type="button" className={styles.ghostButton} onClick={onClose} disabled={submitting}>
               Close
@@ -1070,6 +1196,7 @@ export default function AddProductsModal({
                 />
               </>
             ) : null}
+            {farnellButtons}
             {onRequestAddProduct ? (
               <button
                 type="button"
@@ -1084,9 +1211,9 @@ export default function AddProductsModal({
               type="button"
               className={styles.primaryButton}
               onClick={handleAddProducts}
-              disabled={submitting}
+              disabled={submitting || farnellResolving}
             >
-              Add {selectedProducts.length > 0 ? `(${selectedProducts.length})` : ''}
+              {farnellResolving ? 'Creating…' : `Add ${selectedProducts.length > 0 ? `(${selectedProducts.length})` : ''}`}
             </button>
             <button type="button" className={styles.ghostButton} onClick={onClose} disabled={submitting}>
               Close

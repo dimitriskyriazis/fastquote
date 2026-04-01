@@ -180,7 +180,7 @@ export type OfferProductsPanelHandle = {
   canUndo: boolean;
   performUndo: () => Promise<void>;
   lastUndoLabel: string | undefined;
-  setInsertLineVisible: (visible: boolean) => void;
+  setInsertLineVisible: (visible: boolean, atEnd?: boolean) => void;
   deselectAllRows: () => void;
   flashRows: (offerDetailIds: number[]) => void;
   getLastClickedRowId: () => number | null;
@@ -1653,6 +1653,12 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
             pendingGridScrollRestoreRef.current = null;
           }
         }
+      }
+      // When the add-products modal is open and no insertion point is pinned,
+      // auto-show the insertion line below the last row so the user sees where
+      // a new product will be appended.
+      if (showInsertLineOnHoverRef.current && !insertLinePinnedRef.current) {
+        setInsertLineVisibleRef.current?.(true, true);
       }
     });
   }, [getGridViewportElement, scheduleCategoryAncestorsUpdate, tryRestoreInitialViewportScroll]);
@@ -3984,7 +3990,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     ? tryRestoreInitialSelection
     : null;
 
-  const setInsertLineVisibleRef = useRef<((visible: boolean) => void) | null>(null);
+  const setInsertLineVisibleRef = useRef<((visible: boolean, atEnd?: boolean) => void) | null>(null);
 
   useImperativeHandle(
     ref,
@@ -4002,7 +4008,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       canUndo,
       performUndo,
       lastUndoLabel: lastLabel,
-      setInsertLineVisible: (visible: boolean) => setInsertLineVisibleRef.current?.(visible),
+      setInsertLineVisible: (visible: boolean, atEnd?: boolean) => setInsertLineVisibleRef.current?.(visible, atEnd),
       deselectAllRows: () => {
         const api = gridApiRef.current;
         if (api && !api.isDestroyed?.()) {
@@ -4183,7 +4189,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     params: GetContextMenuItemsParams<Record<string, unknown>>,
   ) => {
     const baseItems = productRowDeletion.getContextMenuItems(params) ?? [];
-    const items = [...baseItems].filter((item) => item !== 'copy' && item !== 'copyWithHeaders' && item !== 'copyWithGroupHeaders');
+    const items = [...baseItems].filter((item) => item !== 'copy' && item !== 'copyWithHeaders' && item !== 'copyWithGroupHeaders' && item !== 'cut' && item !== 'paste');
     if (pendingContextMenuSelectionClearRef.current) {
       pendingContextMenuSelectionClearRef.current = false;
       setGridRowDeletionContextMenuSelectionSnapshot(params.api ?? null, []);
@@ -4320,15 +4326,19 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     };
     const copySubmenu: MenuItemDef = {
       name: 'Copy',
-      icon: copyRowsMenuIcon,
+      icon: '<span class="ag-icon ag-icon-copy"></span>',
       subMenu: [
         'copy' as unknown as MenuItemDef,
         'copyWithHeaders' as unknown as MenuItemDef,
         'copyWithGroupHeaders' as unknown as MenuItemDef,
-        copyRowsItem,
       ],
     };
-    const clipboardItems: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> = [copySubmenu];
+    const clipboardItems: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> = [
+      'cut' as unknown as MenuItemDef,
+      copySubmenu,
+      'paste' as unknown as MenuItemDef,
+    ];
+    clipboardItems.push(copyRowsItem);
     if (onRequestPaste && clipboardHasRows) {
       const pasteItem: MenuItemDef = {
         name: 'Paste Rows',
@@ -4358,22 +4368,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       clipboardItems.push(addStandardPackageItem);
     }
     if (clipboardItems.length > 0) {
-      const deleteIndexForClipboard = findDeleteMenuItemIndex(items);
-      if (deleteIndexForClipboard >= 0) {
-        items.splice(
-          deleteIndexForClipboard,
-          0,
-          'separator' as unknown as DefaultMenuItem,
-          ...clipboardItems,
-          'separator' as unknown as DefaultMenuItem,
-        );
-      } else {
-        items.push(
-          'separator' as unknown as DefaultMenuItem,
-          ...clipboardItems,
-          'separator' as unknown as DefaultMenuItem,
-        );
-      }
+      items.unshift(
+        ...clipboardItems,
+        'separator' as unknown as DefaultMenuItem,
+      );
     }
 
     const rawProductId = (rowData as { ProductID?: unknown }).ProductID;
@@ -4473,12 +4471,12 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           },
           {
             name: 'Customer discount',
-            icon: discountMenuIcon,
+            icon: brandBulkEditMenuIcon,
             action: () => openBrandBulkEdit('CustomerDiscount', rowBrandName, currentCustomerDiscount, 'brand'),
           },
           {
             name: 'Telmaco discount',
-            icon: discountMenuIcon,
+            icon: brandBulkEditMenuIcon,
             action: () => openBrandBulkEdit('TelmacoDiscount', rowBrandName, currentTelmacoDiscount, 'brand'),
           },
         ],
@@ -5711,6 +5709,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   const insertLinePinnedAtRef = useRef(0);
   const insertLinePinTopRef = useRef(0);
   const insertLinePinScrollRef = useRef(0);
+  const insertLineAtEndPendingRef = useRef(false);
   const showInsertLineOnHoverRef = useRef(showInsertLineOnHover);
   showInsertLineOnHoverRef.current = showInsertLineOnHover;
   const onRequestInsertProductRef = useRef(onRequestInsertProduct);
@@ -5745,7 +5744,58 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       if (line.contains(target)) return;
       // When pinned, still show the hover "+" so user can pick a new position
       const agRow = target.closest('.ag-row') as HTMLElement | null;
-      if (!agRow) { hide(); return; }
+      if (!agRow) {
+        // Show "+" below the last row when hovering in empty viewport space
+        const vpEl = target.closest('.ag-body-viewport, .ag-center-cols-viewport, .ag-center-cols-container') as HTMLElement | null;
+        if (vpEl) {
+          const api = gridApiRef.current;
+          if (api && !api.isDestroyed?.()) {
+            const rowCount = api.getDisplayedRowCount();
+            if (rowCount > 0) {
+              const lastNode = api.getDisplayedRowAtIndex(rowCount - 1);
+              const lastData = lastNode?.data as Record<string, unknown> | null | undefined;
+              if (lastData) {
+                const lastId = normalizeOfferDetailId((lastData as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+                const lastTreeRaw = (lastData as { TreeOrdering?: unknown }).TreeOrdering ?? null;
+                const lastPath = parseTreeOrderingPath(lastTreeRaw);
+                if (lastId != null && lastPath.length > 0) {
+                  // Find the last row element to get its bottom position
+                  const viewport = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
+                  if (viewport) {
+                    let lastRowEl: HTMLElement | null = null;
+                    let lastRowIdx = -1;
+                    const rowEls = viewport.querySelectorAll('.ag-row');
+                    for (const row of rowEls) {
+                      const idx = row.getAttribute('row-index');
+                      if (idx == null) continue;
+                      const rowIdx = Number.parseInt(idx, 10);
+                      if (rowIdx > lastRowIdx) { lastRowIdx = rowIdx; lastRowEl = row as HTMLElement; }
+                    }
+                    if (lastRowEl) {
+                      const wrapperRect = wrapper.getBoundingClientRect();
+                      const viewportEl = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
+                      const viewportRect = viewportEl?.getBoundingClientRect();
+                      const lastRowRect = lastRowEl.getBoundingClientRect();
+                      if (viewportRect && lastRowRect.bottom >= viewportRect.top && lastRowRect.bottom <= viewportRect.bottom) {
+                        line.style.display = 'flex';
+                        line.style.top = `${lastRowRect.bottom - wrapperRect.top}px`;
+                        line.style.width = getLineWidth();
+                        const lastTree = typeof lastTreeRaw === 'string' ? lastTreeRaw.trim() : buildTreeOrderingKey(lastPath);
+                        const lastLabel = resolveRowLabel(lastData, '');
+                        const lastRequested = isRequestedRow(lastData);
+                        insertLineDataRef.current = { offerDetailId: lastId, parentPath: lastPath.slice(0, -1), label: lastLabel, treeOrdering: lastTree, isRequested: lastRequested };
+                        return;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        hide();
+        return;
+      }
       const rowRect = agRow.getBoundingClientRect();
       const mouseYInRow = e.clientY - rowRect.top;
       const inBottomHalf = mouseYInRow > rowRect.height / 2;
@@ -5831,6 +5881,13 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
           pinLine.style.top = `${newTop}px`;
           pinLine.style.width = getLineWidth();
         }
+      } else if (insertLineAtEndPendingRef.current) {
+        // User scrolled — wait for AG Grid to render, then check if last row is visible
+        requestAnimationFrame(() => {
+          if (insertLineAtEndPendingRef.current && !insertLinePinnedRef.current) {
+            setInsertLineVisibleRef.current?.(true, true);
+          }
+        });
       } else {
         hide();
       }
@@ -5858,7 +5915,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     if (!wrapper) return;
     const vp = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
     if (!vp) return;
-    const halfGap = 16;
+    const gap = 32;
     const rows = vp.querySelectorAll('.ag-row');
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return;
@@ -5869,7 +5926,10 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
       const node = api.getDisplayedRowAtIndex(Number.parseInt(idx, 10));
       const rowTop = node?.rowTop;
       if (rowTop == null) continue;
-      const shift = rowTop >= insertY ? halfGap : -halfGap;
+      // Only shift rows at/below the insertion point downward.
+      // Don't shift rows above upward — that pushes the top row
+      // out of the scrollable area.
+      const shift = rowTop >= insertY ? gap : 0;
       el.style.transform = `translateY(${rowTop + shift}px)`;
     }
     // Sync the pinned line position to match the insertY in screen coordinates
@@ -5880,7 +5940,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         const vpRect = vp.getBoundingClientRect();
         const wrapperRect = wrapper.getBoundingClientRect();
         const vpOffset = vpRect.top - wrapperRect.top;
-        const pinTop = insertY - vp.scrollTop + vpOffset;
+        // +16 so the 32px highlight bar sits in the gap below the anchor row
+        // (rows below shift down by 32px, rows above stay put)
+        const pinTop = insertY - vp.scrollTop + vpOffset + 16;
         if (pinTop < vpOffset || pinTop > vpOffset + vpRect.height) {
           pinLine.style.display = 'none';
         } else {
@@ -5965,18 +6027,21 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     onRequestInsertProductRef.current?.(data);
   }, [clearSelectedRowHighlight, getLineWidth, startRowShift]);
 
-  const setInsertLineVisible = useCallback((visible: boolean) => {
+  const setInsertLineVisible = useCallback((visible: boolean, atEnd?: boolean) => {
     const pinLine = pinnedLineRef.current;
     if (!pinLine) return;
     if (visible) {
-      insertLinePinnedRef.current = true;
-      insertLinePinnedAtRef.current = Date.now();
-      // Position the line at the selected row
-      const anchor = getAddInsertionAnchor();
+      // When atEnd is explicitly requested, clear any prior pinned position
+      // so we always re-compute from the last row.
+      if (atEnd) insertLineDataRef.current = null;
+      const anchor = atEnd ? null : getAddInsertionAnchor();
+      let positioned = false;
+      let positionedAtEnd = false;
+      const api = gridApiRef.current;
+      const wrapper = gridWrapperRef.current;
       if (anchor) {
+        // Position the line below the selected row
         insertLineDataRef.current = anchor;
-        const api = gridApiRef.current;
-        const wrapper = gridWrapperRef.current;
         if (api && wrapper && !api.isDestroyed?.()) {
           const viewport = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
           if (viewport) {
@@ -5993,23 +6058,87 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
                 const topPos = rowRect.bottom - wrapperRect.top;
                 pinLine.style.top = `${topPos}px`;
                 insertLinePinTopRef.current = topPos;
+                positioned = true;
                 break;
               }
             }
           }
         }
+      } else if (insertLineDataRef.current) {
+        // Prior pinned position exists (e.g. from an insertion line click) — keep it
+        positioned = true;
+      } else if (api && wrapper && !api.isDestroyed?.()) {
+        // No selection and no prior pin — show below the last row only if it's visible
+        const viewport = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
+        if (viewport) {
+          const totalRows = api.getDisplayedRowCount();
+          if (totalRows > 0) {
+            const lastIdx = totalRows - 1;
+            // Check if the last row is rendered in the DOM and visible
+            const vpRect = viewport.getBoundingClientRect();
+            const rowEls = viewport.querySelectorAll('.ag-row');
+            let lastRowEl: HTMLElement | null = null;
+            for (const row of rowEls) {
+              const idx = row.getAttribute('row-index');
+              if (idx != null && Number.parseInt(idx, 10) === lastIdx) {
+                lastRowEl = row as HTMLElement;
+                break;
+              }
+            }
+            if (lastRowEl) {
+              const rowRect = lastRowEl.getBoundingClientRect();
+              // Only show if the last row's bottom is within the viewport
+              if (rowRect.bottom >= vpRect.top && rowRect.bottom <= vpRect.bottom + 32) {
+                const node = api.getDisplayedRowAtIndex(lastIdx);
+                const rowData = node?.data as Record<string, unknown> | null | undefined;
+                if (rowData) {
+                  const lastId = normalizeOfferDetailId((rowData as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+                  const treeOrderingRaw = (rowData as { TreeOrdering?: unknown }).TreeOrdering ?? null;
+                  const path = parseTreeOrderingPath(treeOrderingRaw);
+                  if (lastId != null && path.length > 0) {
+                    const treeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
+                    insertLineDataRef.current = { offerDetailId: lastId, parentPath: path.slice(0, -1), label: resolveRowLabel(rowData, ''), treeOrdering, isRequested: isRequestedRow(rowData) };
+                    const wrapperRect = wrapper.getBoundingClientRect();
+                    const topPos = rowRect.bottom - wrapperRect.top + 16;
+                    pinLine.style.top = `${topPos}px`;
+                    insertLinePinScrollRef.current = viewport.scrollTop;
+                    insertLinePinTopRef.current = topPos;
+                    positioned = true;
+                    positionedAtEnd = true;
+                  }
+                }
+              }
+            }
+            // If last row isn't visible yet, mark pending so scroll handler shows it
+            // when user scrolls there
+            if (!positioned) {
+              insertLineAtEndPendingRef.current = true;
+            } else {
+              insertLineAtEndPendingRef.current = false;
+            }
+          }
+        }
       }
-      pinLine.style.display = 'flex';
-      pinLine.style.width = getLineWidth();
-      startRowShift();
+      // Only show the line if we actually have a valid position
+      if (positioned) {
+        insertLinePinnedRef.current = true;
+        insertLinePinnedAtRef.current = Date.now();
+        pinLine.className = `${styles.insertLine} ${styles.insertLinePinned}`;
+        pinLine.style.display = 'flex';
+        pinLine.style.width = getLineWidth();
+        if (!positionedAtEnd) startRowShift();
+      }
     } else {
       insertLinePinnedRef.current = false;
+      insertLineAtEndPendingRef.current = false;
       pinLine.style.display = 'none';
+      pinLine.className = `${styles.insertLine} ${styles.insertLinePinned}`;
       insertLineDataRef.current = null;
       stopRowShift();
     }
   }, [getAddInsertionAnchor, getLineWidth, startRowShift, stopRowShift]);
   setInsertLineVisibleRef.current = setInsertLineVisible;
+
 
   return (
     <>
@@ -6061,6 +6190,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             style={{ display: 'none' }}
             onClick={handleInsertLineClick}
             onMouseDown={(e) => e.stopPropagation()}
+            data-fastquote-keep-selection="true"
             role="button"
             tabIndex={-1}
             aria-label="Insert product here"
@@ -6073,6 +6203,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             ref={pinnedLineRef}
             className={`${styles.insertLine} ${styles.insertLinePinned}`}
             style={{ display: 'none' }}
+            data-fastquote-keep-selection="true"
           >
             <div className={styles.insertLineBar} />
           </div>

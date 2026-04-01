@@ -419,6 +419,9 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
   const validationRunId = useRef(0);
   const [showSheetSelector, setShowSheetSelector] = useState(false);
   const [multiSelectEnabled, setMultiSelectEnabled] = useState(false);
+  const [manualRows, setManualRows] = useState<PayloadRow[]>([]);
+  const [manualRow, setManualRow] = useState<PayloadRow>({});
+  const [existingItemNos, setExistingItemNos] = useState<Set<string>>(new Set());
 
   const applySheets = useCallback((sheets: SheetMapping[]) => {
     let normalizedSheets = sheets.map(enrichSheet);
@@ -534,6 +537,27 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
       const evaluation = evaluateSelection(sheets, prev.activeSheetIndex);
       return { ...prev, ...evaluation, sheets };
     });
+  }, []);
+
+  const updateManualRowField = useCallback((key: HeaderColumnKey, value: string) => {
+    setManualRow((prev) => ({ ...prev, [key]: value || null }));
+  }, []);
+
+  const manualItemNoConflict = useMemo(() => {
+    const raw = ((manualRow.itemNo as string) ?? '').trim().replace(/\s+/g, '');
+    if (!raw) return false;
+    return existingItemNos.has(raw);
+  }, [manualRow.itemNo, existingItemNos]);
+
+  const addManualRow = useCallback(() => {
+    if (!hasPayloadValues(manualRow)) return;
+    if (manualItemNoConflict) return;
+    setManualRows((prev) => [...prev, manualRow]);
+    setManualRow({});
+  }, [manualRow, manualItemNoConflict]);
+
+  const removeManualRow = useCallback((index: number) => {
+    setManualRows((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const handleFileSelection = useCallback((nextFile: File | null) => {
@@ -690,8 +714,11 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
         }
       });
     });
+    manualRows.forEach((row) => {
+      if (hasPayloadValues(row)) payload.push(row);
+    });
     return payload;
-  }, [fileValidation.sheets]);
+  }, [fileValidation.sheets, manualRows]);
 
   const handleImport = useCallback(async () => {
     setError(null);
@@ -699,12 +726,10 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
       setError('Please wait for the file analysis to finish.');
       return;
     }
-    if (fileValidation.status !== 'valid') {
-      setError('Select at least one column on an enabled sheet.');
-      return;
-    }
-    if (!fileValidation.sheets.length) {
-      setError('Provide data via paste or file upload before importing.');
+    const hasSheetData = fileValidation.status === 'valid' && fileValidation.sheets.length > 0;
+    const hasManualData = manualRows.length > 0;
+    if (!hasSheetData && !hasManualData) {
+      setError('Provide data via paste, file upload, or add rows manually before importing.');
       return;
     }
     const rows = extractRows();
@@ -739,6 +764,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
     extractRows,
     fileValidation.status,
     fileValidation.sheets.length,
+    manualRows.length,
     offerId,
     onClose,
     onImported,
@@ -770,6 +796,18 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/offers/${encodeURIComponent(offerId)}/products/requested`)
+      .then((res) => res.json())
+      .then((data: { ok?: boolean; itemNos?: string[] }) => {
+        if (cancelled || !data?.ok) return;
+        setExistingItemNos(new Set((data.itemNos ?? []).map((v) => v.trim().replace(/\s+/g, ''))));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [offerId]);
+
   const statusTitle = fileValidation.status === 'valid'
     ? 'Workbook ready'
     : fileValidation.status === 'invalid'
@@ -781,7 +819,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
   const statusMessage = fileValidation.message
     ?? 'Pick the columns you want to import. None of them are mandatory.';
 
-  const canSubmit = fileValidation.status === 'valid' && !submitting;
+  const canSubmit = (fileValidation.status === 'valid' || manualRows.length > 0) && !submitting;
 
   return (
     <>
@@ -959,6 +997,67 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
                 </div>
               </>
             ) : null}
+            <div className={styles.manualEntryCard}>
+              <div className={styles.manualEntryHeader}>
+                <div className={styles.manualEntryTitle}>Add rows manually</div>
+                <div className={styles.manualEntryDescription}>Fill in the fields below and click &quot;Add row&quot; to append a row.</div>
+              </div>
+              <div className={styles.manualEntryFields}>
+                {COLUMN_DISPLAY.map((col) => {
+                  const itemNoValue = col.key === 'itemNo' ? ((manualRow.itemNo as string) ?? '').trim().replace(/\s+/g, '') : '';
+                  const itemNoExists = col.key === 'itemNo' && itemNoValue !== '' && existingItemNos.has(itemNoValue);
+                  return (
+                    <label key={col.key} className={styles.manualEntryField}>
+                      <span className={styles.manualEntryFieldLabel}>{col.label}</span>
+                      <input
+                        type={col.key === 'quantity' ? 'number' : 'text'}
+                        className={`${styles.manualEntryInput} ${itemNoExists ? styles.manualEntryInputWarning : ''}`}
+                        value={(manualRow[col.key] as string) ?? ''}
+                        onChange={(e) => updateManualRowField(col.key, e.target.value)}
+                        placeholder={col.label}
+                        onKeyDown={(e) => { if (e.key === 'Enter') addManualRow(); }}
+                      />
+                      {itemNoExists ? (
+                        <span className={styles.manualEntryWarning}>Item {itemNoValue} already exists — use a different number</span>
+                      ) : null}
+                    </label>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                className={styles.addRowButton}
+                onClick={addManualRow}
+                disabled={!hasPayloadValues(manualRow) || manualItemNoConflict}
+              >
+                + Add row
+              </button>
+              {manualRows.length > 0 ? (
+                <div className={styles.manualRowsList}>
+                  <div className={styles.manualRowsCount}>{manualRows.length} manual row{manualRows.length === 1 ? '' : 's'}</div>
+                  {manualRows.map((row, idx) => {
+                    const summary = [row.brand, row.modelNumber, row.partNumber, row.description]
+                      .filter(Boolean)
+                      .join(' — ');
+                    return (
+                      <div key={idx} className={styles.manualRowItem}>
+                        <span className={styles.manualRowIndex}>{idx + 1}</span>
+                        <span className={styles.manualRowSummary}>{summary || 'Row'}</span>
+                        {row.quantity != null && row.quantity !== '' ? <span className={styles.manualRowQty}>×{row.quantity}</span> : null}
+                        <button
+                          type="button"
+                          className={styles.manualRowRemove}
+                          onClick={() => removeManualRow(idx)}
+                          aria-label="Remove row"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
           </div>
           <div className={styles.previewColumn}>
             <div className={styles.statusCard}>

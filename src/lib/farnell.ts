@@ -81,8 +81,9 @@ function mapRawProduct(product: any, sku: string, qty: number): FarnellProduct {
 
 async function callFarnellApi(
   sku: string,
-  searchType: 'id' | 'manuPartNum',
+  searchType: 'id' | 'manuPartNum' | 'keyword',
   maxResults: number,
+  responseGroup: 'small' | 'medium' | 'large' | 'prices' = 'large',
 ): Promise<unknown> {
   const apiKey = process.env.FARNELL_API_KEY;
   if (!apiKey) {
@@ -90,27 +91,41 @@ async function callFarnellApi(
     return null;
   }
 
+  // For keyword search, replace all hyphens with spaces.
+  // The Element14 API interprets hyphens as NOT operators.
+  const searchValue = searchType === 'keyword'
+    ? sku.replace(/-/g, ' ')
+    : sku;
+  const term = searchType === 'keyword' ? `any:${searchValue}` : `${searchType}:${searchValue}`;
+  // offset, numberOfResults, and filters are only for keyword search
+  // per the API docs: "mandatory for keyword search - Not used for other functions"
   const params = new URLSearchParams({
     'versionNumber': '1.4',
-    'term': `${searchType}:${sku}`,
+    'term': term,
     'storeInfo.id': 'be.farnell.com',
-    'resultsSettings.offset': '0',
-    'resultsSettings.numberOfResults': String(maxResults),
-    'resultsSettings.responseGroup': 'large',
-    'callInfo.omitXmlSchema': 'false',
+    'resultsSettings.responseGroup': responseGroup,
     'callInfo.responseDataFormat': 'json',
     'callInfo.apiKey': apiKey,
   });
+  if (searchType === 'keyword') {
+    params.set('resultsSettings.offset', '0');
+    params.set('resultsSettings.numberOfResults', String(maxResults));
+    params.set('resultsSettings.refinements.filters', 'inStock');
+  }
 
   const url = `https://api.element14.com/catalog/products?${params.toString()}`;
 
   const response = await fetch(url, {
     method: 'GET',
     headers: { 'Accept': 'application/json' },
+    signal: AbortSignal.timeout(60000),
   });
 
   if (!response.ok) {
     console.error(`Farnell API returned status ${response.status} for SKU ${sku}`);
+    if (response.status === 403) {
+      throw new Error('FARNELL_RATE_LIMITED');
+    }
     return null;
   }
 
@@ -120,7 +135,7 @@ async function callFarnellApi(
 export async function fetchFarnellProduct(
   sku: string,
   quantity?: number,
-  searchType: 'id' | 'manuPartNum' = 'id',
+  searchType: 'id' | 'manuPartNum' | 'keyword' = 'id',
 ): Promise<FarnellProduct | null> {
   try {
     const data = await callFarnellApi(sku, searchType, 1);
@@ -137,16 +152,21 @@ export async function fetchFarnellProduct(
 export async function fetchFarnellProducts(
   sku: string,
   quantity?: number,
-  searchType: 'id' | 'manuPartNum' = 'id',
+  searchType: 'id' | 'manuPartNum' | 'keyword' = 'id',
   maxResults = 10,
 ): Promise<FarnellProduct[]> {
   try {
-    const data = await callFarnellApi(sku, searchType, maxResults);
+    // Use 'prices' response group for keyword searches — includes prices,
+    // sku, displayName, brandName, manuPartNum but is lightweight to avoid timeouts.
+    const group = searchType === 'keyword' ? 'prices' : 'large';
+    const data = await callFarnellApi(sku, searchType, maxResults, group);
     const products = parseApiProducts(data);
     if (products.length === 0) return [];
     const qty = quantity != null && quantity > 0 ? quantity : 1;
     return products.map((p) => mapRawProduct(p, sku, qty));
   } catch (err) {
+    // Propagate rate-limit errors so callers can stop making further requests
+    if (err instanceof Error && err.message === 'FARNELL_RATE_LIMITED') throw err;
     console.error('Failed to fetch Farnell products', err);
     return [];
   }
