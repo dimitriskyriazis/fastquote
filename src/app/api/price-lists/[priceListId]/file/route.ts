@@ -72,9 +72,10 @@ export async function GET(
     let rawFile: Buffer;
     try {
       rawFile = await fs.readFile(absolutePath);
-    } catch {
+    } catch (readErr) {
+      console.error("File read error:", readErr);
       return NextResponse.json(
-        { ok: false, error: "The file could not be found on the server. It may have been moved or deleted." },
+        { ok: false, error: "File not found", debug_path: absolutePath, debug_upload_root: process.env.PRICELIST_UPLOAD_ROOT },
         { status: 404 },
       );
     }
