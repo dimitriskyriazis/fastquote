@@ -20,15 +20,10 @@ const requirePriceListUploadRoot = (): string => {
 };
 
 /** Resolve the stored FilePath to an absolute path on disk.
- *  If the stored value is already absolute (drive letter or UNC), use it directly.
- *  Otherwise, treat it as a filename and join with PRICELIST_UPLOAD_ROOT.
+ *  Always uses PRICELIST_UPLOAD_ROOT + the basename, so the server-side
+ *  mount point (env var) controls access regardless of what is stored in the DB.
  */
 const resolveAbsoluteFilePath = (filePath: string): string => {
-  // Windows absolute paths: C:\... or \\server\...
-  if (/^[a-zA-Z]:[\\/]/.test(filePath) || filePath.startsWith("\\\\")) {
-    return filePath;
-  }
-  // Treat as bare filename (or relative) — join with upload root
   const uploadRoot = requirePriceListUploadRoot();
   return path.join(uploadRoot, path.basename(filePath));
 };
