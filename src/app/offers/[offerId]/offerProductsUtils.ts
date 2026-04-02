@@ -210,6 +210,34 @@ export const parseTreeOrderingPath = (value: unknown): number[] => {
 
 export const buildTreeOrderingKey = (segments: number[]) => segments.join('.');
 
+export function computeDisplayOrderingMap(rows: Record<string, unknown>[]): Map<string, string> {
+  const sorted = rows
+    .filter((row): row is Record<string, unknown> => row != null && row.TreeOrdering != null)
+    .sort((a, b) => compareTreeOrderingValues(a.TreeOrdering, b.TreeOrdering));
+
+  const result = new Map<string, string>();
+  const counters = new Map<string, number>();
+
+  for (const row of sorted) {
+    const actualKey = String(row.TreeOrdering ?? '').trim();
+    if (!actualKey) continue;
+    const path = parseTreeOrderingPath(actualKey);
+    if (path.length === 0) continue;
+
+    if (resolveOfferProductRowType(row) === 'non-printable-comment') continue;
+
+    const actualParentKey = path.slice(0, -1).join('.');
+    const n = (counters.get(actualParentKey) ?? 0) + 1;
+    counters.set(actualParentKey, n);
+
+    const parentDisplayKey = path.length === 1 ? '' : (result.get(actualParentKey) ?? actualParentKey);
+    const displayKey = parentDisplayKey ? `${parentDisplayKey}.${n}` : String(n);
+    result.set(actualKey, displayKey);
+  }
+
+  return result;
+}
+
 export const normalizeOfferDetailId = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isInteger(value)) return value;
   if (typeof value === 'string') {

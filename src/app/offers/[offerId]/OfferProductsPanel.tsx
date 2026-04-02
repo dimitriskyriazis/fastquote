@@ -95,6 +95,7 @@ import {
   compareTreeOrderingValues,
   parseTreeOrderingPath,
   buildTreeOrderingKey,
+  computeDisplayOrderingMap,
   normalizeOfferDetailId,
   resolveRowLabel,
   resolveOfferProductTypeLabel,
@@ -494,6 +495,8 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const categoryChildrenKnownRef = useRef(categoryChildrenKnown);
   categoryChildrenKnownRef.current = categoryChildrenKnown;
   const treeOrderingRootMapRef = useRef<Map<string, number>>(new Map());
+  const allRowsForDisplayRef = useRef<Map<string, Record<string, unknown>>>(new Map());
+  const displayOrderingMapRef = useRef<Map<string, string>>(new Map());
   const serverRowsRef = useRef<Array<Record<string, unknown>>>([]);
   const appliedRequestedColumnVisibilityRef = useRef<Record<RequestedDisplayFieldKey, boolean> | null>(null);
   const appliedRequestedItemNoVisibleRef = useRef<boolean | null>(null);
@@ -559,6 +562,17 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       }
     });
     treeOrderingRootMapRef.current = map;
+  }, []);
+  const rebuildDisplayOrderingMap = useCallback((rows?: Array<Record<string, unknown>>, reset = false) => {
+    if (reset) allRowsForDisplayRef.current = new Map();
+    (rows ?? []).forEach((row) => {
+      if (!row) return;
+      const key = String((row as Record<string, unknown>)?.TreeOrdering ?? '').trim();
+      if (key) allRowsForDisplayRef.current.set(key, row as Record<string, unknown>);
+    });
+    displayOrderingMapRef.current = computeDisplayOrderingMap(
+      Array.from(allRowsForDisplayRef.current.values()),
+    );
   }, []);
   const formatDisplayTreeOrdering = useCallback((value: unknown) => {
     if (value == null) return '';
@@ -788,6 +802,11 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       return next;
     });
     setCategoryChildrenKnown(true);
+    const newDisplayMap = computeDisplayOrderingMap(rows);
+    displayOrderingMapRef.current = newDisplayMap;
+    if (api && !api.isDestroyed?.()) {
+      api.refreshCells({ columns: ['TreeOrdering'], force: true });
+    }
   }, []);
   const categoryAncestorsUpdateQueuedRef = useRef(false);
   const scheduleCategoryAncestorsUpdate = useCallback(() => {
@@ -1041,6 +1060,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     serverRowsRef.current = response && Array.isArray(response.rows) ? response.rows : [];
     const shouldResetRoots = response?.request?.startRow === 0;
     rebuildTreeOrderingRootMap(response?.rows as Array<Record<string, unknown>> | undefined, shouldResetRoots);
+    rebuildDisplayOrderingMap(response?.rows as Array<Record<string, unknown>> | undefined, shouldResetRoots);
     const preserveWReqVisibility = showRequestedColumns && tableLayout === 'wReq';
     const isFirstPage = (response?.request?.startRow ?? 0) === 0;
     if (preserveWReqVisibility) {
@@ -1184,6 +1204,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     applyRequestedVisibilityToGrid,
     applyRequestedColumnVisibility,
     paintFlashCells,
+    rebuildDisplayOrderingMap,
     rebuildTreeOrderingRootMap,
     requestedColumnVisibility,
     requestedItemNoVisible,
@@ -1763,7 +1784,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
 
   const TreeOrderingCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     const rawValue = params.value ?? (params.data as { TreeOrdering?: unknown } | undefined)?.TreeOrdering ?? null;
-    const value = formatDisplayTreeOrdering(rawValue);
+    formatDisplayTreeOrdering(rawValue); // side-effect: keep treeOrderingRootMapRef updated
     const rowData = params.data ?? null;
     const isCategory = isOfferProductCategory(rowData);
     const shouldShowIndicator = isCategory;
@@ -1791,7 +1812,16 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       ? (collapsed ? 'Expand category' : 'Collapse category')
       : 'Category without child entries';
 
-    const display = value;
+    const rowType = resolveOfferProductRowType(rowData);
+    let display: string;
+    if (rowType === 'non-printable-comment') {
+      display = '';
+    } else {
+      const actualKey = rawValue != null ? String(rawValue).trim() : '';
+      display = actualKey
+        ? (displayOrderingMapRef.current.get(actualKey) ?? formatDisplayTreeOrdering(rawValue))
+        : formatDisplayTreeOrdering(rawValue);
+    }
     return (
       <span className={styles.treeOrderingCell}>
         {indicator && (
@@ -3943,6 +3973,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
   }, [dataEndpoint]);
 
   const buildTemplateExportRows = useCallback((rows: OfferExportRow[]): OfferProductsTemplateExportRow[] => {
+    const displayMap = computeDisplayOrderingMap(rows as unknown as Record<string, unknown>[]);
     const includedRows = rows.filter((row) => {
       const rowType = resolveOfferProductRowType(row as unknown as Record<string, unknown>);
       return rowType === 'product' || rowType === 'category' || rowType === 'printable-comment';
@@ -3964,8 +3995,9 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
         && !model
         && !description
         && listPrice == null;
+      const actualKey = String(row.TreeOrdering ?? '').trim();
       return {
-        no: normalizeNoForExport(row.TreeOrdering),
+        no: normalizeNoForExport(displayMap.get(actualKey) ?? row.TreeOrdering),
         productReference: row.PartNumber?.toString().trim() ?? '',
         manufacturer: (row.AVC4BrandName?.toString().trim() || row.BrandName?.toString().trim()) ?? '',
         descriptionType,
