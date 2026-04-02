@@ -629,7 +629,24 @@ const patchWorksheetXmlWithAppendedRows = (
 
   rows.forEach((row, rowOffset) => {
     const rowIndex = startRow + rowOffset;
-    if (row.skipRow) return;
+    if (row.skipRow) {
+      const existingRow = rowByIndex.get(rowIndex);
+      if (existingRow) {
+        selectedMappings.forEach(({ columnIndex }) => {
+          const cellElement = getOrCreateCellElement(existingRow, rowIndex, columnIndex);
+          clearCellContents(cellElement);
+          const styleId = cellElement.getAttribute('s') ?? styleByColumn.get(columnIndex) ?? null;
+          if (styleId != null && styleId !== '') cellElement.setAttribute('s', styleId);
+          cellElement.setAttribute('t', 'inlineStr');
+          const inlineStringElement = xmlDoc.createElementNS(ns, 'is');
+          const textElement = xmlDoc.createElementNS(ns, 't');
+          textElement.textContent = '';
+          inlineStringElement.appendChild(textElement);
+          cellElement.appendChild(inlineStringElement);
+        });
+      }
+      return;
+    }
     const rowElement = getOrCreateRowElement(rowIndex);
     selectedMappings.forEach(({ field, columnIndex }) => {
       const value = resolveFieldValue(row, field.key);
@@ -778,7 +795,13 @@ const applyRowsToSheet = (
 
   rows.forEach((row, rowOffset) => {
     const rowIndex = startRow + rowOffset;
-    if (row.skipRow) return;
+    if (row.skipRow) {
+      selectedMappings.forEach(({ columnIndex }) => {
+        const address = xlsx.utils.encode_cell({ r: rowIndex, c: columnIndex });
+        if (sheet[address]) setCellValuePreservingFormat(rowIndex, columnIndex, '');
+      });
+      return;
+    }
     selectedMappings.forEach(({ field, columnIndex }) => {
       const value = resolveFieldValue(row, field.key);
       setCellValuePreservingFormat(rowIndex, columnIndex, value);

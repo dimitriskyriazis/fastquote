@@ -40,6 +40,7 @@ type PriceListRow = {
   ValidityComment: string | null;
   CreatedBy: string | null;
   CreatedOn: string | Date | null;
+  FilePath: string | null;
 };
 
 type PriceListRowWithCount = PriceListRow & { __totalCount: number | bigint | null };
@@ -184,7 +185,8 @@ export async function POST(req: NextRequest) {
         COALESCE(NULLIF(LTRIM(RTRIM(responsible.FullName)), ''), responsible.UserName) AS ResponsibleUserName,
         dbo.PriceLists.ValidityComment,
         COALESCE(NULLIF(LTRIM(RTRIM(created.FullName)), ''), NULLIF(LTRIM(RTRIM(created.UserName)), ''), CAST(dbo.PriceLists.CreatedBy AS NVARCHAR(450))) AS CreatedBy,
-        dbo.PriceLists.CreatedOn
+        dbo.PriceLists.CreatedOn,
+        dbo.PriceLists.FilePath
     `;
 
     const from = `

@@ -1059,10 +1059,12 @@ export default function PriceListBasicDataClient({
             const isBrandField = field.id === 'brand';
             const isSupplierField = field.id === 'supplier';
 
+            const isFilePathField = field.id === 'filePath';
+
             return (
               <div key={field.id} className={`${styles.fieldBlock} ${spanClass}`}>
                 <label className={styles.fieldLabel} htmlFor={`price-list-field-${field.id}`}>
-                  {isBrandField || isSupplierField ? (
+                  {isBrandField || isSupplierField || isFilePathField ? (
                     <span className={styles.fieldLabelRow}>
                       <span>{field.label}</span>
                       {isBrandField ? (
@@ -1081,6 +1083,15 @@ export default function PriceListBasicDataClient({
                           onClick={() => setIsAddSupplierOpen(true)}
                         >
                           Add New Supplier
+                        </button>
+                      ) : null}
+                      {isFilePathField && record.FilePath ? (
+                        <button
+                          type="button"
+                          className={lookupButtonStyles.lookupAddButton}
+                          onClick={() => window.open(`/api/price-lists/${encodeURIComponent(priceListId)}/file`, '_blank')}
+                        >
+                          View Original File
                         </button>
                       ) : null}
                     </span>
