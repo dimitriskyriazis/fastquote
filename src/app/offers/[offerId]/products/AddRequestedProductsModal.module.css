@@ -316,6 +316,33 @@
   color: #64748b;
 }
 
+.previewSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.previewHeading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-weight: 700;
+  color: #334155;
+  font-size: 0.9rem;
+}
+
+.previewHint {
+  font-weight: 400;
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.previewEmpty {
+  font-size: 0.85rem;
+  color: #64748b;
+  font-style: italic;
+}
+
 .previewList {
   display: flex;
   flex-direction: column;

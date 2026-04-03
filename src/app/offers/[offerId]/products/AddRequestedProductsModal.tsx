@@ -461,6 +461,34 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
     [fileValidation.activeSheetIndex, fileValidation.sheets],
   );
 
+  const previewColumns = useMemo(() => {
+    if (!activeSheet) return [];
+    return COLUMN_DISPLAY
+      .map((col) => {
+        const columnIndex = activeSheet.selection[col.key];
+        if (columnIndex == null) return null;
+        return { key: col.key, label: col.label, columnIndex };
+      })
+      .filter((col): col is { key: HeaderColumnKey; label: string; columnIndex: number } => col !== null);
+  }, [activeSheet]);
+
+  const previewRows = useMemo(() => {
+    if (!activeSheet) return [];
+    return getSheetDataRows(activeSheet)
+      .filter((row) => Array.isArray(row) && row.some(hasCellValue))
+      .slice(0, 3)
+      .map((row) => {
+        const preview: Record<number, string> = {};
+        (row as unknown[]).forEach((cell, idx) => {
+          if (cell != null) {
+            const str = typeof cell === 'string' ? cell.trim() : String(cell);
+            if (str) preview[idx] = str;
+          }
+        });
+        return preview;
+      });
+  }, [activeSheet]);
+
   const handleSheetChange = useCallback((nextIndex: number) => {
     setFileValidation((prev) => {
       const boundedIndex = Math.max(0, Math.min(nextIndex, prev.sheets.length - 1));
@@ -995,6 +1023,34 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
                     );
                   })}
                 </div>
+                {previewColumns.length > 0 && previewRows.length > 0 ? (
+                  <div className={styles.previewSection}>
+                    <div className={styles.previewHeading}>
+                      <span>Sample rows (first {previewRows.length})</span>
+                      <span className={styles.previewHint}>Showing mapped columns only.</span>
+                    </div>
+                    <div className={styles.previewTableWrapper}>
+                      <table className={styles.previewTable}>
+                        <thead>
+                          <tr>
+                            {previewColumns.map((col) => (
+                              <th key={col.key}>{col.label}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {previewRows.map((row, rowIdx) => (
+                            <tr key={rowIdx}>
+                              {previewColumns.map((col) => (
+                                <td key={col.key}>{row[col.columnIndex] ?? ''}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
               </>
             ) : null}
             <div className={styles.manualEntryCard}>

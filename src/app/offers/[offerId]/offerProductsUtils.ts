@@ -216,7 +216,6 @@ export function computeDisplayOrderingMap(rows: Record<string, unknown>[]): Map<
     .sort((a, b) => compareTreeOrderingValues(a.TreeOrdering, b.TreeOrdering));
 
   const result = new Map<string, string>();
-  const counters = new Map<string, number>();
 
   for (const row of sorted) {
     const actualKey = String(row.TreeOrdering ?? '').trim();
@@ -226,12 +225,10 @@ export function computeDisplayOrderingMap(rows: Record<string, unknown>[]): Map<
 
     if (resolveOfferProductRowType(row) === 'non-printable-comment') continue;
 
+    const lastSegment = path[path.length - 1];
     const actualParentKey = path.slice(0, -1).join('.');
-    const n = (counters.get(actualParentKey) ?? 0) + 1;
-    counters.set(actualParentKey, n);
-
     const parentDisplayKey = path.length === 1 ? '' : (result.get(actualParentKey) ?? actualParentKey);
-    const displayKey = parentDisplayKey ? `${parentDisplayKey}.${n}` : String(n);
+    const displayKey = parentDisplayKey ? `${parentDisplayKey}.${lastSegment}` : String(lastSegment);
     result.set(actualKey, displayKey);
   }
 

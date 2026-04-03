@@ -702,6 +702,52 @@ export default function AddProductsModal({
               .map((v: number | string | null) => typeof v === 'number' ? Math.trunc(v) : typeof v === 'string' ? Number.parseInt(v, 10) : NaN)
               .filter((v: number) => Number.isFinite(v))
           : []);
+      // Apply Farnell prices for any Farnell-brand products that were added.
+      // Two paths:
+      //  A) Farnell search rows: price already in the row — PATCH directly (no extra API call)
+      //  B) Regular grid rows with Farnell brand: price unknown — call update-prices to fetch it
+      const farnellPricePatches: Array<{ OfferDetailID: number; ListPrice: number }> = [];
+      const regularFarnellIds: number[] = [];
+      for (let i = 0; i < resolvedProducts.length; i++) {
+        const row = resolvedProducts[i];
+        const affectedId = isAssigningRequestedRow ? fillRequestedRowId : (affectedIds[i] ?? null);
+        if (affectedId == null) continue;
+        if (isFarnellRow(row as Record<string, unknown>)) {
+          // Path A: price known from search result
+          const farnellRow = row as unknown as FarnellSearchRow;
+          const listPrice = farnellRow.ListPrice ?? farnellRow.__farnellProduct?.matchedPrice ?? null;
+          if (listPrice != null && Number.isFinite(listPrice) && listPrice > 0) {
+            farnellPricePatches.push({ OfferDetailID: affectedId, ListPrice: listPrice });
+          }
+        } else if (isFarnellBrand((row as ProductRow).BrandName)) {
+          // Path B: price must be fetched from Farnell API
+          regularFarnellIds.push(affectedId);
+        }
+      }
+      // Path A: direct price patch
+      if (farnellPricePatches.length > 0) {
+        try {
+          await fetch(`/api/offers/${encodeURIComponent(offerId)}/products`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates: farnellPricePatches }),
+          });
+        } catch {
+          // Non-blocking
+        }
+      }
+      // Path B: fetch live prices via update-prices endpoint
+      if (regularFarnellIds.length > 0) {
+        try {
+          await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/update-prices`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ offerDetailIds: regularFarnellIds }),
+          });
+        } catch {
+          // Non-blocking
+        }
+      }
       showToastMessage(
         isAssigningRequestedRow ? 'Row filled' : 'Products added',
         'success',

@@ -40,12 +40,15 @@ type NormalizedRow = {
   quantity: number | null;
 };
 
-type RowForInsert = NormalizedRow & {
-  resolvedTreeOrdering: string;
-  parentTreeOrdering: string | null;
+type ClassifiedRow = NormalizedRow & {
   isCategory: boolean;
   isComment: boolean;
   productDescription: string | null;
+};
+
+type RowForResolvedInsert = ClassifiedRow & {
+  resolvedTreeOrdering: string;
+  parentTreeOrdering: string | null;
 };
 
 type RequestedFieldKey =
@@ -76,7 +79,7 @@ const REQUESTED_COLUMN_METADATA: Array<{ key: ColumnLengthKey; column: string }>
 ];
 
 const SQL_PARAMETER_LIMIT = 2000;
-const UPDATE_ROW_PARAM_COUNT = 11;
+const UPDATE_ROW_PARAM_COUNT = 13;
 const INSERT_ROW_PARAM_COUNT = 14;
 const computeChunkSize = (baseParams: number, perRowParams: number) => {
   const available = SQL_PARAMETER_LIMIT - baseParams;
@@ -177,8 +180,8 @@ const normalizeRows = (rows: RequestedRowInput[] | undefined): NormalizedRow[] =
   return normalized;
 };
 
-const dedupeRowsByTree = (rows: NormalizedRow[]): NormalizedRow[] => {
-  const seen = new Map<string, NormalizedRow>();
+const dedupeRowsByTree = <TRow extends NormalizedRow>(rows: TRow[]): TRow[] => {
+  const seen = new Map<string, TRow>();
   rows.forEach((row) => {
     if (!row.treeOrdering) return;
     seen.set(row.treeOrdering, row);
@@ -255,23 +258,62 @@ const isCommentCandidate = (row: NormalizedRow) => {
   return COMMENT_PATTERNS.some(p => p.test(lower));
 };
 
+const hasProductSignals = (row: NormalizedRow) => (
+  (row.quantity != null && !Object.is(row.quantity, 0))
+  || Boolean(row.partNumber || row.modelNumber || row.brand)
+);
+
+const buildAncestorOrderingSet = (rows: NormalizedRow[]) => {
+  const ancestors = new Set<string>();
+  const orderings = new Set<string>();
+
+  rows.forEach((row) => {
+    if (row.treeOrdering) orderings.add(row.treeOrdering);
+  });
+
+  orderings.forEach((treeOrdering) => {
+    let parent = resolveParentOrdering(treeOrdering);
+    while (parent) {
+      ancestors.add(parent);
+      parent = resolveParentOrdering(parent);
+    }
+  });
+
+  return ancestors;
+};
+
+const classifyRows = (rows: NormalizedRow[]): ClassifiedRow[] => {
+  const ancestorOrderings = buildAncestorOrderingSet(rows);
+
+  return rows.map((row) => {
+    const hasDescendants = row.treeOrdering ? ancestorOrderings.has(row.treeOrdering) : false;
+    const isCategory = hasDescendants || isCategoryCandidate(row);
+    const isComment = !hasDescendants && !hasProductSignals(row) && !isCategory && isCommentCandidate(row);
+
+    return {
+      ...row,
+      isCategory,
+      isComment,
+      productDescription: getPrimaryDescription(row),
+    };
+  });
+};
+
 const assignSequentialOrdering = (
-  rows: NormalizedRow[],
+  rows: ClassifiedRow[],
   lastRootValue: number,
-): { rows: RowForInsert[]; nextRoot: number } => {
+): { rows: RowForResolvedInsert[]; nextRoot: number } => {
   let nextRoot = lastRootValue;
-  const resolved: RowForInsert[] = [];
+  const resolved: RowForResolvedInsert[] = [];
   let currentCategoryRoot: string | null = null;
   const childCounters = new Map<string, number>();
 
   rows.forEach((row) => {
     if (!row) return;
-    const isComment = isCommentCandidate(row);
-    const isCategory = isCategoryCandidate(row) && !isComment;
     let resolvedTreeOrdering = row.treeOrdering;
     let parentTreeOrdering: string | null = null;
 
-    if (isCategory) {
+    if (row.isCategory) {
       if (!resolvedTreeOrdering) {
         nextRoot += 1;
         resolvedTreeOrdering = String(nextRoot);
@@ -311,9 +353,6 @@ const assignSequentialOrdering = (
       ...row,
       resolvedTreeOrdering: finalTreeOrdering,
       parentTreeOrdering: parentTreeOrdering,
-      isCategory,
-      isComment,
-      productDescription: getPrimaryDescription(row),
     });
   });
   return { rows: resolved, nextRoot };
@@ -492,12 +531,18 @@ export async function POST(
     const pool = await getPool();
     const columnLengths = await readRequestedColumnLengths(pool);
     const normalizedRows = normalizedRowsRaw.map((row) => applyColumnLengthsToRow(row, columnLengths));
+    const classifiedRows = classifyRows(normalizedRows);
 
-    const rowsWithTreeRaw = dedupeRowsByTree(normalizedRows.filter((row) => row.treeOrdering));
-    const rowsWithoutTree = normalizedRows.filter((row) => !row.treeOrdering);
+    const rowsWithTreeRaw = dedupeRowsByTree(classifiedRows.filter((row) => row.treeOrdering));
+    const rowsWithoutTree = classifiedRows.filter((row) => !row.treeOrdering);
     let updatedCount = 0;
     let insertedCount = 0;
-    const rowsNeedingInsert: NormalizedRow[] = [...rowsWithoutTree];
+    const rowsNeedingInsert: ClassifiedRow[] = [...rowsWithoutTree];
+    const rowsWithTreeByOrdering = new Map(
+      rowsWithTreeRaw
+        .filter((row) => row.treeOrdering)
+        .map((row) => [row.treeOrdering as string, row] as const),
+    );
 
     let rowsWithTree = rowsWithTreeRaw;
     if (rowsWithTree.length) {
@@ -507,7 +552,7 @@ export async function POST(
         rowsWithTree.map((row) => row.treeOrdering ?? '').filter(Boolean),
       );
       if (existingTreeOrderings.size) {
-        const available: NormalizedRow[] = [];
+        const available: ClassifiedRow[] = [];
         rowsWithTree.forEach((row) => {
           const treeOrdering = row.treeOrdering ?? null;
           if (treeOrdering && existingTreeOrderings.has(treeOrdering)) {
@@ -539,11 +584,13 @@ export async function POST(
           request.input(`desc2_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description2);
           request.input(`desc3_${chunkIdx}`, sql.NVarChar(sql.MAX), row.description3);
           request.input(`qty_${chunkIdx}`, getDecimalType(), row.quantity);
-          request.input(`productDesc_${chunkIdx}`, sql.NVarChar(sql.MAX), getPrimaryDescription(row));
+          request.input(`isCategory_${chunkIdx}`, sql.Bit, row.isCategory ? 1 : 0);
+          request.input(`isComment_${chunkIdx}`, sql.Bit, row.isComment ? 1 : 0);
+          request.input(`productDesc_${chunkIdx}`, sql.NVarChar(sql.MAX), row.productDescription);
         });
         const values = chunk
           .map((_, chunkIdx) =>
-            `(@tree_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @webLink_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @qty_${chunkIdx}, @productDesc_${chunkIdx})`,
+            `(@tree_${chunkIdx}, @item_${chunkIdx}, @brand_${chunkIdx}, @model_${chunkIdx}, @part_${chunkIdx}, @webLink_${chunkIdx}, @desc_${chunkIdx}, @desc2_${chunkIdx}, @desc3_${chunkIdx}, @qty_${chunkIdx}, @isCategory_${chunkIdx}, @isComment_${chunkIdx}, @productDesc_${chunkIdx})`,
           )
           .join(', ');
         const query = `
@@ -558,10 +605,12 @@ export async function POST(
             RequestedDescription2 NVARCHAR(MAX) NULL,
             RequestedDescription3 NVARCHAR(MAX) NULL,
             RequestedQuantity DECIMAL(18, 4) NULL,
+            IsCategory BIT NOT NULL,
+            IsComment BIT NOT NULL,
             ProductDescription NVARCHAR(MAX) NULL
           );
 
-          INSERT INTO @payload (TreeOrdering, RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo, RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity, ProductDescription)
+          INSERT INTO @payload (TreeOrdering, RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo, RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity, IsCategory, IsComment, ProductDescription)
           VALUES ${values};
 
           DECLARE @updated TABLE (TreeOrdering NVARCHAR(255) NOT NULL);
@@ -577,20 +626,11 @@ export async function POST(
             RequestedDescription2 = payload.RequestedDescription2,
             RequestedDescription3 = payload.RequestedDescription3,
             RequestedQuantity = payload.RequestedQuantity,
-            IsCategory = CASE
-              WHEN ISNULL(od.IsCategory, 0) = 1
-                AND (
-                  (payload.RequestedQuantity IS NOT NULL AND payload.RequestedQuantity <> 0)
-                  OR NULLIF(LTRIM(RTRIM(ISNULL(payload.RequestedBrand, ''))), '') IS NOT NULL
-                  OR NULLIF(LTRIM(RTRIM(ISNULL(payload.RequestedPartNo, ''))), '') IS NOT NULL
-                  OR NULLIF(LTRIM(RTRIM(ISNULL(payload.RequestedModelNo, ''))), '') IS NOT NULL
-                )
-              THEN 0
-              ELSE od.IsCategory
-            END,
+            IsCategory = payload.IsCategory,
+            IsComment = payload.IsComment,
             ProductDescription = CASE
-              WHEN ISNULL(od.IsCategory, 0) = 1 THEN payload.ProductDescription
-              ELSE od.ProductDescription
+              WHEN payload.IsCategory = 1 OR payload.IsComment = 1 THEN payload.ProductDescription
+              ELSE NULL
             END,
             ModifiedOn = SYSUTCDATETIME(),
             ModifiedBy = @__modifiedBy
@@ -600,16 +640,7 @@ export async function POST(
           WHERE od.OfferID = @__offerId;
 
           SELECT payload.TreeOrdering,
-                 payload.RequestedItemNo,
-                 payload.RequestedBrand,
-                 payload.RequestedModelNo,
-                 payload.RequestedPartNo,
-                 payload.RequestedWebLink,
-                 payload.RequestedDescription,
-                 payload.RequestedDescription2,
-                 payload.RequestedDescription3,
-                 payload.RequestedQuantity,
-                 payload.ProductDescription
+                 payload.RequestedItemNo
           FROM @payload payload
           WHERE NOT EXISTS (
             SELECT 1 FROM @updated updated WHERE updated.TreeOrdering = payload.TreeOrdering
@@ -618,36 +649,14 @@ export async function POST(
         const result = await request.query<{
           TreeOrdering: string | null;
           RequestedItemNo: string | null;
-          RequestedBrand: string | null;
-          RequestedModelNo: string | null;
-          RequestedPartNo: string | null;
-          RequestedWebLink: string | null;
-          RequestedDescription: string | null;
-          RequestedDescription2: string | null;
-          RequestedDescription3: string | null;
-          RequestedQuantity: number | null;
-          ProductDescription: string | null;
         }>(query);
         const unmatched = result.recordset ?? [];
         updatedCount += chunk.length - unmatched.length;
         if (unmatched.length) {
           rowsNeedingInsert.push(
-            ...unmatched.map((row) => {
-              const originalRow = normalizedRows.find((nr) => nr.treeOrdering === row.TreeOrdering);
-              return applyColumnLengthsToRow({
-                originalIndex: originalRow?.originalIndex ?? Number.MAX_SAFE_INTEGER,
-                itemNo: row.RequestedItemNo ?? null,
-                treeOrdering: row.TreeOrdering ?? null,
-                brand: row.RequestedBrand ?? null,
-                modelNumber: row.RequestedModelNo ?? null,
-                partNumber: row.RequestedPartNo ?? null,
-                webLink: row.RequestedWebLink ?? null,
-                description: row.RequestedDescription ?? null,
-                description2: row.RequestedDescription2 ?? null,
-                description3: row.RequestedDescription3 ?? null,
-                quantity: row.RequestedQuantity ?? null,
-              }, columnLengths);
-            }),
+            ...unmatched
+              .map((row) => (row.TreeOrdering ? rowsWithTreeByOrdering.get(row.TreeOrdering) ?? null : null))
+              .filter((row): row is ClassifiedRow => row !== null),
           );
         }
       }
