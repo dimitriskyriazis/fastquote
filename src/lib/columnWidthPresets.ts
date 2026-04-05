@@ -119,6 +119,21 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   Sent: 1,
   FaxSent: 1,
   MinimumImportance: 2,
+  CustomerRef: 2,
+  PaymentTerms: 3,
+  InstallationSchedule: 3,
+  OfferNotesClosing: 3,
+  OfferValidity: 2,
+  DeliveryTime: 2,
+  OfferNotesIntroduction: 3,
+  ContactFullName: 3,
+  ApprovalUserName: 3,
+  DraftRequestDate: 'date',
+  DraftOfferDate: 'date',
+  RequestDate: 'date',
+  OfferDeadlineDate: 'date',
+  OrderSignedDate: 'date',
+  DeliveryDueDate: 'date',
 };
 
 export const resolveColumnWidthAssignments = (

@@ -38,14 +38,12 @@ export type OfferBasicRecord = {
   ERPFWCProjectID: number | null;
   Probability: number | null;
   CustomerRef: string | null;
-  InitialRequest: Date | string | null;
-  DraftOffer: Date | string | null;
-  OfficialRequest: Date | string | null;
-  OfferDeadline: Date | string | null;
-  OfficialQuoteOffer: Date | string | null;
-  OrderSigned: Date | string | null;
-  DeliveryDue: Date | string | null;
-  Delivery: Date | string | null;
+  DraftRequestDate: Date | string | null;
+  DraftOfferDate: Date | string | null;
+  RequestDate: Date | string | null;
+  OfferDeadlineDate: Date | string | null;
+  OrderSignedDate: Date | string | null;
+  DeliveryDueDate: Date | string | null;
   OfferDate: Date | string | null;
   ModifiedOn: Date | string | null;
   ModifiedByUserName: string | null;
@@ -86,13 +84,11 @@ export type OfferBasicUpdateField =
   | 'ERPFWCProjectID'
   | 'Probability'
   | 'CustomerRef'
-  | 'InitialRequest'
-  | 'DraftOffer'
-  | 'OfficialRequest'
-  | 'OfferDeadline'
-  | 'OfficialQuoteOffer'
-  | 'OrderSigned'
-  | 'DeliveryDue'
-  | 'Delivery'
+  | 'DraftRequestDate'
+  | 'DraftOfferDate'
+  | 'RequestDate'
+  | 'OfferDeadlineDate'
+  | 'OrderSignedDate'
+  | 'DeliveryDueDate'
   | 'OfferDate'
   | 'ProtocolNo';

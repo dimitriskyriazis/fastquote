@@ -77,6 +77,20 @@ type OfferRow = {
   ModifiedOn: string | null;
   CreatedOn: string | null;
   Probability: number | null;
+  PaymentTerms: string | null;
+  InstallationSchedule: string | null;
+  OfferNotesClosing: string | null;
+  OfferValidity: string | null;
+  DeliveryTime: string | null;
+  OfferNotesIntroduction: string | null;
+  ContactFullName: string | null;
+  ApprovalUserName: string | null;
+  DraftRequestDate: string | null;
+  DraftOfferDate: string | null;
+  RequestDate: string | null;
+  OfferDeadlineDate: string | null;
+  OrderSignedDate: string | null;
+  DeliveryDueDate: string | null;
 };
 
 type OfferRowWithCount = OfferRow & { __totalCount: number | bigint | null };
@@ -120,6 +134,20 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   ModifiedOn: LATEST_MODIFIED_EXPRESSION,
   CreatedOn: 'dbo.Offer.CreatedOn',
   Probability: 'dbo.Offer.Probability',
+  PaymentTerms: 'dbo.Offer.PaymentTerms',
+  InstallationSchedule: 'dbo.Offer.InstallationSchedule',
+  OfferNotesClosing: 'dbo.Offer.OfferNotesClosing',
+  OfferValidity: 'dbo.Offer.OfferValidity',
+  DeliveryTime: 'dbo.Offer.DeliveryTime',
+  OfferNotesIntroduction: 'dbo.Offer.OfferNotesIntroduction',
+  ContactFullName: `TRIM(CONCAT(ISNULL(contact.FirstName, ''), ' ', ISNULL(contact.LastName, '')))`,
+  ApprovalUserName: 'approval.FullName',
+  DraftRequestDate: 'dbo.Offer.DraftRequestDate',
+  DraftOfferDate: 'dbo.Offer.DraftOfferDate',
+  RequestDate: 'dbo.Offer.RequestDate',
+  OfferDeadlineDate: 'dbo.Offer.OfferDeadlineDate',
+  OrderSignedDate: 'dbo.Offer.OrderSignedDate',
+  DeliveryDueDate: 'dbo.Offer.DeliveryDueDate',
 };
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
   colId,
@@ -343,7 +371,21 @@ export async function POST(req: NextRequest) {
         dbo.Offer.OfferDate,
         dbo.Offer.Probability,
         dbo.Offer.CreatedOn AS CreatedOn,
-        ${LATEST_MODIFIED_EXPRESSION} AS ModifiedOn
+        ${LATEST_MODIFIED_EXPRESSION} AS ModifiedOn,
+        dbo.Offer.PaymentTerms,
+        dbo.Offer.InstallationSchedule,
+        dbo.Offer.OfferNotesClosing,
+        dbo.Offer.OfferValidity,
+        dbo.Offer.DeliveryTime,
+        dbo.Offer.OfferNotesIntroduction,
+        TRIM(CONCAT(ISNULL(contact.FirstName, ''), ' ', ISNULL(contact.LastName, ''))) AS ContactFullName,
+        approval.FullName AS ApprovalUserName,
+        dbo.Offer.DraftRequestDate,
+        dbo.Offer.DraftOfferDate,
+        dbo.Offer.RequestDate,
+        dbo.Offer.OfferDeadlineDate,
+        dbo.Offer.OrderSignedDate,
+        dbo.Offer.DeliveryDueDate
     `;
 
     const from = `
@@ -364,6 +406,8 @@ export async function POST(req: NextRequest) {
 	        LEFT JOIN dbo.AspNetUsers AS created ON dbo.Offer.CreatedBy = created.Id
 	        INNER JOIN dbo.OfferStatus ON dbo.Offer.StatusID = dbo.OfferStatus.ID
 	        LEFT JOIN dbo.FWCs AS fwc ON fwc.ID = dbo.Offer.ERPFWCProjectID
+	        LEFT JOIN dbo.Contacts AS contact ON dbo.Offer.ContactID = contact.ID
+	        LEFT JOIN dbo.AspNetUsers AS approval ON dbo.Offer.ApprovalUserId = approval.Id
 	        OUTER APPLY (
 	          SELECT MAX(od.ModifiedOn) AS DetailsModifiedOn
 	          FROM dbo.OfferDetails od

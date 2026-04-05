@@ -40,10 +40,8 @@ type FormValues = {
   draftOffer: string;
   officialRequest: string;
   offerDeadline: string;
-  officialQuoteOffer: string;
   orderSigned: string;
   deliveryDue: string;
-  delivery: string;
   offerDate: string;
   protocolNo: string;
 };
@@ -272,10 +270,8 @@ export default function OfferCreateClient({
     draftOffer: '',
     officialRequest: '',
     offerDeadline: '',
-    officialQuoteOffer: '',
     orderSigned: '',
     deliveryDue: '',
-    delivery: '',
     offerDate: '',
     protocolNo: '',
   }), [
@@ -651,10 +647,8 @@ export default function OfferCreateClient({
       draftOffer: toNullableString(values.draftOffer),
       officialRequest: toNullableString(values.officialRequest),
       offerDeadline: toNullableString(values.offerDeadline),
-      officialQuoteOffer: toNullableString(values.officialQuoteOffer),
       orderSigned: toNullableString(values.orderSigned),
       deliveryDue: toNullableString(values.deliveryDue),
-      delivery: toNullableString(values.delivery),
       offerDate: toNullableString(values.offerDate),
       protocolNo: toNumberOrNull(values.protocolNo),
     };
@@ -710,15 +704,13 @@ export default function OfferCreateClient({
       { id: 'probability', label: 'Probability', section: 'code', inputType: 'number' },
       { id: 'protocolNo', label: 'Protocol No', section: 'code', inputType: 'number' },
 
-      { id: 'initialRequest', label: 'Initial Request', section: 'dates', type: 'date' },
-      { id: 'officialRequest', label: 'Official Request', section: 'dates', type: 'date' },
+      { id: 'initialRequest', label: 'Draft Request', section: 'dates', type: 'date' },
       { id: 'draftOffer', label: 'Draft Offer', section: 'dates', type: 'date' },
-      { id: 'officialQuoteOffer', label: 'Official Quote Offer', section: 'dates', type: 'date' },
-      { id: 'offerDate', label: 'Offer Date', section: 'dates', type: 'date' },
+      { id: 'officialRequest', label: 'Request', section: 'dates', type: 'date' },
+      { id: 'offerDate', label: 'Offer', section: 'dates', type: 'date' },
       { id: 'offerDeadline', label: 'Offer Deadline', section: 'dates', type: 'date' },
       { id: 'orderSigned', label: 'Order Signed', section: 'dates', type: 'date' },
       { id: 'deliveryDue', label: 'Delivery Due', section: 'dates', type: 'date' },
-      { id: 'delivery', label: 'Delivery', section: 'dates', type: 'date' },
     ],
     [
       contactOptions,

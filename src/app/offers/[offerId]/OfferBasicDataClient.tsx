@@ -280,15 +280,13 @@ const buildFieldDefinitions = (
   { id: 'customerRef', label: 'Customer Ref', section: 'code', recordKey: 'CustomerRef', updateField: 'CustomerRef' },
   { id: 'protocolNo', label: 'Protocol No', section: 'code', recordKey: 'ProtocolNo', updateField: 'ProtocolNo', valueType: 'number', inputType: 'number' },
 
-  { id: 'initialRequest', label: 'Initial Request', section: 'dates', recordKey: 'InitialRequest', updateField: 'InitialRequest', inputType: 'date', valueType: 'date' },
-  { id: 'officialRequest', label: 'Official Request', section: 'dates', recordKey: 'OfficialRequest', updateField: 'OfficialRequest', inputType: 'date', valueType: 'date' },
-  { id: 'draftOffer', label: 'Draft Offer', section: 'dates', recordKey: 'DraftOffer', updateField: 'DraftOffer', inputType: 'date', valueType: 'date' },
-  { id: 'officialQuote', label: 'Official Quote Offer', section: 'dates', recordKey: 'OfficialQuoteOffer', updateField: 'OfficialQuoteOffer', inputType: 'date', valueType: 'date' },
-  { id: 'offerDate', label: 'Offer Date', section: 'dates', recordKey: 'OfferDate', updateField: 'OfferDate', inputType: 'date', valueType: 'date' },
-  { id: 'offerDeadline', label: 'Offer Deadline', section: 'dates', recordKey: 'OfferDeadline', updateField: 'OfferDeadline', inputType: 'date', valueType: 'date' },
-  { id: 'orderSigned', label: 'Order Signed', section: 'dates', recordKey: 'OrderSigned', updateField: 'OrderSigned', inputType: 'date', valueType: 'date' },
-  { id: 'deliveryDue', label: 'Delivery Due', section: 'dates', recordKey: 'DeliveryDue', updateField: 'DeliveryDue', inputType: 'date', valueType: 'date' },
-  { id: 'delivery', label: 'Delivery', section: 'dates', recordKey: 'Delivery', updateField: 'Delivery', inputType: 'date', valueType: 'date' },
+  { id: 'initialRequest', label: 'Draft Request', section: 'dates', recordKey: 'DraftRequestDate', updateField: 'DraftRequestDate', inputType: 'date', valueType: 'date' },
+  { id: 'draftOffer', label: 'Draft Offer', section: 'dates', recordKey: 'DraftOfferDate', updateField: 'DraftOfferDate', inputType: 'date', valueType: 'date' },
+  { id: 'officialRequest', label: 'Request', section: 'dates', recordKey: 'RequestDate', updateField: 'RequestDate', inputType: 'date', valueType: 'date' },
+  { id: 'offerDate', label: 'Offer', section: 'dates', recordKey: 'OfferDate', updateField: 'OfferDate', inputType: 'date', valueType: 'date' },
+  { id: 'offerDeadline', label: 'Offer Deadline', section: 'dates', recordKey: 'OfferDeadlineDate', updateField: 'OfferDeadlineDate', inputType: 'date', valueType: 'date' },
+  { id: 'orderSigned', label: 'Order Signed', section: 'dates', recordKey: 'OrderSignedDate', updateField: 'OrderSignedDate', inputType: 'date', valueType: 'date' },
+  { id: 'deliveryDue', label: 'Delivery Due', section: 'dates', recordKey: 'DeliveryDueDate', updateField: 'DeliveryDueDate', inputType: 'date', valueType: 'date' },
 ];
 
 

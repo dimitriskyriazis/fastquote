@@ -33,10 +33,8 @@ type CreateOfferRequestBody = {
   draftOffer?: string | Date | null;
   officialRequest?: string | Date | null;
   offerDeadline?: string | Date | null;
-  officialQuoteOffer?: string | Date | null;
   orderSigned?: string | Date | null;
   deliveryDue?: string | Date | null;
-  delivery?: string | Date | null;
   offerDate?: string | Date | null;
   protocolNo?: number | string | null;
 };
@@ -99,14 +97,12 @@ export async function POST(req: NextRequest) {
   const protocolNo = normalizeInt(body?.protocolNo);
 
     const dateFields = {
-      initialRequest: normalizeDate(body?.initialRequest),
-      draftOffer: normalizeDate(body?.draftOffer),
-      officialRequest: normalizeDate(body?.officialRequest),
-      offerDeadline: normalizeDate(body?.offerDeadline),
-      officialQuoteOffer: normalizeDate(body?.officialQuoteOffer),
-      orderSigned: normalizeDate(body?.orderSigned),
-      deliveryDue: normalizeDate(body?.deliveryDue),
-      delivery: normalizeDate(body?.delivery),
+      draftRequest: normalizeDate(body?.initialRequest),
+      draftOfferDate: normalizeDate(body?.draftOffer),
+      requestDate: normalizeDate(body?.officialRequest),
+      offerDeadlineDate: normalizeDate(body?.offerDeadline),
+      orderSignedDate: normalizeDate(body?.orderSigned),
+      deliveryDueDate: normalizeDate(body?.deliveryDue),
       offerDate: normalizeDate(body?.offerDate),
     };
 
@@ -237,14 +233,12 @@ export async function POST(req: NextRequest) {
     request.input('PrintLevelGroupingID', sql.Int, 1);
     request.input('CustomerRef', sql.NVarChar(500), customerRef);
     request.input('Probability', sql.Int, probability);
-    request.input('InitialRequest', sql.DateTime2, dateFields.initialRequest);
-    request.input('DraftOffer', sql.DateTime2, dateFields.draftOffer);
-    request.input('OfficialRequest', sql.DateTime2, dateFields.officialRequest);
-    request.input('OfferDeadline', sql.DateTime2, dateFields.offerDeadline);
-    request.input('OfficialQuoteOffer', sql.DateTime2, dateFields.officialQuoteOffer);
-    request.input('OrderSigned', sql.DateTime2, dateFields.orderSigned);
-    request.input('DeliveryDue', sql.DateTime2, dateFields.deliveryDue);
-    request.input('Delivery', sql.DateTime2, dateFields.delivery);
+    request.input('DraftRequestDate', sql.DateTime2, dateFields.draftRequest);
+    request.input('DraftOfferDate', sql.DateTime2, dateFields.draftOfferDate);
+    request.input('RequestDate', sql.DateTime2, dateFields.requestDate);
+    request.input('OfferDeadlineDate', sql.DateTime2, dateFields.offerDeadlineDate);
+    request.input('OrderSignedDate', sql.DateTime2, dateFields.orderSignedDate);
+    request.input('DeliveryDueDate', sql.DateTime2, dateFields.deliveryDueDate);
     request.input('OfferDate', sql.DateTime2, dateFields.offerDate);
     request.input('ApprovalUserId', sql.NVarChar(450), approvalUserId);
     request.input('ProtocolNo', sql.Int, protocolNo);
@@ -276,14 +270,12 @@ export async function POST(req: NextRequest) {
         PrintLevelGroupingID,
         CustomerRef,
         Probability,
-        InitialRequest,
-        DraftOffer,
-        OfficialRequest,
-        OfferDeadline,
-        OfficialQuoteOffer,
-        OrderSigned,
-        DeliveryDue,
-        Delivery,
+        DraftRequestDate,
+        DraftOfferDate,
+        RequestDate,
+        OfferDeadlineDate,
+        OrderSignedDate,
+        DeliveryDueDate,
         OfferDate,
         ApprovalUserId,
         ProtocolNo,
@@ -319,14 +311,12 @@ export async function POST(req: NextRequest) {
         @PrintLevelGroupingID,
         @CustomerRef,
         @Probability,
-        @InitialRequest,
-        @DraftOffer,
-        @OfficialRequest,
-        @OfferDeadline,
-        @OfficialQuoteOffer,
-        @OrderSigned,
-        @DeliveryDue,
-        @Delivery,
+        @DraftRequestDate,
+        @DraftOfferDate,
+        @RequestDate,
+        @OfferDeadlineDate,
+        @OrderSignedDate,
+        @DeliveryDueDate,
         @OfferDate,
         @ApprovalUserId,
         @ProtocolNo,

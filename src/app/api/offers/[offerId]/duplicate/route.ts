@@ -53,14 +53,12 @@ type ExistingOfferRecord = {
   ERPFWCProjectID: number | null;
   PrintLevelGroupingID: number | null;
   CustomerRef: string | null;
-  InitialRequest: Date | null;
-  DraftOffer: Date | null;
-  OfficialRequest: Date | null;
-  OfferDeadline: Date | null;
-  OfficialQuoteOffer: Date | null;
-  OrderSigned: Date | null;
-  DeliveryDue: Date | null;
-  Delivery: Date | null;
+  DraftRequestDate: Date | null;
+  DraftOfferDate: Date | null;
+  RequestDate: Date | null;
+  OfferDeadlineDate: Date | null;
+  OrderSignedDate: Date | null;
+  DeliveryDueDate: Date | null;
   OfferDate: Date | null;
   ApprovalUserId: string | null;
   ProtocolNo: number | null;
@@ -326,14 +324,12 @@ export async function POST(
         ERPFWCProjectID,
         PrintLevelGroupingID,
         CustomerRef,
-        InitialRequest,
-        DraftOffer,
-        OfficialRequest,
-        OfferDeadline,
-        OfficialQuoteOffer,
-        OrderSigned,
-        DeliveryDue,
-        Delivery,
+        DraftRequestDate,
+        DraftOfferDate,
+        RequestDate,
+        OfferDeadlineDate,
+        OrderSignedDate,
+        DeliveryDueDate,
         OfferDate,
         ApprovalUserId,
         ProtocolNo,
@@ -406,14 +402,12 @@ export async function POST(
       insertRequest.input('ERPFWCProjectID', sql.Int, existingOffer.ERPFWCProjectID);
       insertRequest.input('PrintLevelGroupingID', sql.Int, existingOffer.PrintLevelGroupingID);
       insertRequest.input('CustomerRef', sql.NVarChar(500), existingOffer.CustomerRef);
-      insertRequest.input('InitialRequest', sql.DateTime2, existingOffer.InitialRequest);
-      insertRequest.input('DraftOffer', sql.DateTime2, existingOffer.DraftOffer);
-      insertRequest.input('OfficialRequest', sql.DateTime2, existingOffer.OfficialRequest);
-      insertRequest.input('OfferDeadline', sql.DateTime2, existingOffer.OfferDeadline);
-      insertRequest.input('OfficialQuoteOffer', sql.DateTime2, existingOffer.OfficialQuoteOffer);
-      insertRequest.input('OrderSigned', sql.DateTime2, existingOffer.OrderSigned);
-      insertRequest.input('DeliveryDue', sql.DateTime2, existingOffer.DeliveryDue);
-      insertRequest.input('Delivery', sql.DateTime2, existingOffer.Delivery);
+      insertRequest.input('DraftRequestDate', sql.DateTime2, existingOffer.DraftRequestDate);
+      insertRequest.input('DraftOfferDate', sql.DateTime2, existingOffer.DraftOfferDate);
+      insertRequest.input('RequestDate', sql.DateTime2, existingOffer.RequestDate);
+      insertRequest.input('OfferDeadlineDate', sql.DateTime2, existingOffer.OfferDeadlineDate);
+      insertRequest.input('OrderSignedDate', sql.DateTime2, existingOffer.OrderSignedDate);
+      insertRequest.input('DeliveryDueDate', sql.DateTime2, existingOffer.DeliveryDueDate);
       insertRequest.input('OfferDate', sql.DateTime2, existingOffer.OfferDate);
       insertRequest.input('ApprovalUserId', sql.NVarChar(450), normalizedApprovalUserId);
       insertRequest.input('ParentOfferID', sql.Int, targetParentOfferId);
@@ -448,14 +442,12 @@ export async function POST(
           ERPFWCProjectID,
           PrintLevelGroupingID,
           CustomerRef,
-          InitialRequest,
-          DraftOffer,
-          OfficialRequest,
-          OfferDeadline,
-          OfficialQuoteOffer,
-          OrderSigned,
-          DeliveryDue,
-          Delivery,
+          DraftRequestDate,
+          DraftOfferDate,
+          RequestDate,
+          OfferDeadlineDate,
+          OrderSignedDate,
+          DeliveryDueDate,
           OfferDate,
           ApprovalUserId,
           ParentOfferID,
@@ -492,14 +484,12 @@ export async function POST(
           @ERPFWCProjectID,
           @PrintLevelGroupingID,
           @CustomerRef,
-          @InitialRequest,
-          @DraftOffer,
-          @OfficialRequest,
-          @OfferDeadline,
-          @OfficialQuoteOffer,
-          @OrderSigned,
-          @DeliveryDue,
-          @Delivery,
+          @DraftRequestDate,
+          @DraftOfferDate,
+          @RequestDate,
+          @OfferDeadlineDate,
+          @OrderSignedDate,
+          @DeliveryDueDate,
           @OfferDate,
           @ApprovalUserId,
           @ParentOfferID,

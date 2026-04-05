@@ -14,19 +14,14 @@ type DashboardStatsData = {
 
 const STATUS_COLORS: Record<string, string> = {
   // Early / In Progress
-  'Initial Request': '#93c5fd',
+  'Draft Request': '#93c5fd',
   'Draft Offer': '#93c5fd',
-  'Official Request': '#93c5fd',
-  'Final clarification': '#93c5fd',
-  // Deadlines / Urgency
-  'Offer Expiration': '#fcd34d',
-  'Offer Deadline': '#fcd34d',
-  // Finalized Offer
-  'Official Quote Offer': '#c4b5fd',
-  // Fulfillment
+  'Request': '#93c5fd',
+  // Active Offer / Deadlines
+  'Offer': '#fcd34d',
+  'Offer Expired': '#fcd34d',
+  // Won
   'Order Signed': '#86efac',
-  'Delivery Due': '#86efac',
-  'Delivery Complete': '#86efac',
   // Negative
   'Rejection': '#fca5a5',
   'Cancelled': '#fca5a5',
