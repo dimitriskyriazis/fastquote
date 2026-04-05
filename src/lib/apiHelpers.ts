@@ -448,7 +448,6 @@ export function logRequest(req: NextRequest, endpoint: string): void {
   }
 
   if (category === 'view') {
-    logger.info(buildDescriptiveMessage(req.method, requestPath), baseContext);
     return;
   }
 

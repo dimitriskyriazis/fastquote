@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { logRequest } from '../../../lib/apiHelpers';
 import sql from "mssql";
 import type { Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
@@ -114,7 +113,6 @@ async function readGridRequest(req: NextRequest): Promise<GridRequest> {
 }
 
 export async function POST(req: NextRequest) {
-  logRequest(req, '/api/logs');
   try {
     const auth = await requirePermission(req, "manageUsers");
     if (!auth.ok) return auth.response;
