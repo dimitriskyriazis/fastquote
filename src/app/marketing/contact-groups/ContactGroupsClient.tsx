@@ -136,7 +136,7 @@ export default function ContactGroupsClient() {
         },
         resolveRowTypeLabel: () => "contact group",
         buildPayload: (ids) => ({ ContactGroupIDs: ids }),
-        confirmTitle: ({ isSingle }) => (isSingle ? "Delete contact group" : "Delete contact groups"),
+        confirmTitle: ({ isSingle }) => (isSingle ? "Delete Contact Group" : "Delete Contact Group(s)"),
         confirmConfirmLabel: ({ isSingle }) => (isSingle ? "Delete" : "Delete all"),
         confirmCancelLabel: () => "Cancel",
         successToastMessage: (_, label) => `${label} deleted`,
@@ -183,7 +183,7 @@ export default function ContactGroupsClient() {
         dangerouslySetInnerHTML={{ __html: viewDetailsIcon }}
       />
     );
-  }, []);
+  }, [viewDetailsIcon]);
 
   const columnDefs = useMemo<ColDef[]>(
     () => [
