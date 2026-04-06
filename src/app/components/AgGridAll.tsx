@@ -590,6 +590,10 @@ type Props = {
   serverSideHeaderSelectMode?: 'loaded' | 'all';
   suppressColumnMoveAnimation?: boolean;
   onColumnStateRestored?: () => void;
+  /** Called for each row returned by the server before it enters the grid.
+   *  Return false to exclude the row. Uses a ref internally so the callback
+   *  identity does not need to be stable. */
+  filterServerRow?: (row: RowData) => boolean;
 };
 
 type RowData = Record<string, unknown>;
@@ -1211,6 +1215,7 @@ export default function AgGridAll({
   serverSideHeaderSelectMode = 'all',
   suppressColumnMoveAnimation = false,
   onColumnStateRestored,
+  filterServerRow,
 }: Props) {
   // Initialize editor focus management hooks
   useMutationCaret();
@@ -2857,6 +2862,8 @@ export default function AgGridAll({
   // SERVER-SIDE DATASOURCE - Request Payload & Cache Management
 const requestPayloadRef = useRef(requestPayload);
 requestPayloadRef.current = requestPayload;
+const filterServerRowRef = useRef(filterServerRow);
+filterServerRowRef.current = filterServerRow;
 const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 
   // TREE ORDERING - Path Calculation & Parent Path Derivation
@@ -3012,7 +3019,26 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
             [PERSISTED_TREE_KEY]: normalizedOrdering,
           };
         });
-        const resolvedRowCount = typeof data.rowCount === 'number' ? data.rowCount : normalizedRows.length;
+        const filterFn = filterServerRowRef.current;
+        const hasFilter = typeof filterFn === 'function';
+        const filteredRows = hasFilter
+          ? normalizedRows.filter(filterFn)
+          : normalizedRows;
+        const serverRowCount = typeof data.rowCount === 'number' ? data.rowCount : normalizedRows.length;
+        const startRow = params.request.startRow ?? 0;
+        const isLastServerBlock = startRow + normalizedRows.length >= serverRowCount;
+        // When a client-side filter is active, don't report rowCount for
+        // intermediate blocks — AG Grid stays in partial/lazy mode and won't
+        // show "Loading" placeholders for filtered-out positions.  For the
+        // last block, report the adjusted total so the grid knows the end.
+        let resolvedRowCount: number | undefined;
+        if (hasFilter && isLastServerBlock) {
+          resolvedRowCount = startRow + filteredRows.length;
+        } else if (hasFilter) {
+          resolvedRowCount = undefined;
+        } else {
+          resolvedRowCount = serverRowCount;
+        }
         if (typeof onTotalsChange === 'function') {
           const parsedTotals = parseTotalsPayload(data.totals ?? null);
           onTotalsChange(parsedTotals);
@@ -3020,7 +3046,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
         if (typeof onResponse === 'function') {
           onResponse({ ...data, request: serverRequest });
         }
-        params.success({ rowData: normalizedRows, rowCount: resolvedRowCount });
+        params.success({ rowData: filteredRows, rowCount: resolvedRowCount });
       } catch (e) {
         console.error('Datasource fetch exception', e);
         params.fail();

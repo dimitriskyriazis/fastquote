@@ -38,7 +38,7 @@ const deleteMenuIcon = `
 `;
 
 export default function CountriesClient() {
-  const router = useRouter();
+  useRouter();
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const [isAddCountryOpen, setIsAddCountryOpen] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -334,14 +334,6 @@ export default function CountriesClient() {
           title="Countries"
           leftActions={
             <>
-              <button
-                type="button"
-                className={`page-header-button ${styles.headerButton}`}
-                onClick={() => router.push("/suppliers")}
-              >
-                <span aria-hidden="true">←</span>
-                Back to Suppliers
-              </button>
               {canUndo && (
                 <button
                   type="button"

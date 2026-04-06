@@ -91,6 +91,7 @@ type OfferRow = {
   OfferDeadlineDate: string | null;
   OrderSignedDate: string | null;
   DeliveryDueDate: string | null;
+  PossibleOrderDate: string | null;
 };
 
 type OfferRowWithCount = OfferRow & { __totalCount: number | bigint | null };
@@ -148,6 +149,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferDeadlineDate: 'dbo.Offer.OfferDeadlineDate',
   OrderSignedDate: 'dbo.Offer.OrderSignedDate',
   DeliveryDueDate: 'dbo.Offer.DeliveryDueDate',
+  PossibleOrderDate: 'dbo.Offer.PossibleOrderDate',
 };
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
   colId,
@@ -385,7 +387,8 @@ export async function POST(req: NextRequest) {
         dbo.Offer.RequestDate,
         dbo.Offer.OfferDeadlineDate,
         dbo.Offer.OrderSignedDate,
-        dbo.Offer.DeliveryDueDate
+        dbo.Offer.DeliveryDueDate,
+        dbo.Offer.PossibleOrderDate
     `;
 
     const from = `

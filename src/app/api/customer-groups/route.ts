@@ -34,7 +34,6 @@ type CustomerGroupRow = {
   CustomerGroupID: number | null;
   Name: string | null;
   Enabled: boolean | number | null;
-  CreatedOn: string | Date | null;
 };
 
 type CustomerGroupRowWithCount = CustomerGroupRow & { __totalCount: number | bigint | null };
@@ -43,7 +42,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   CustomerGroupID: "dbo.CustomerGroups.ID",
   Name: "dbo.CustomerGroups.Name",
   Enabled: "dbo.CustomerGroups.Enabled",
-  CreatedOn: "dbo.CustomerGroups.CreatedOn" };
+};
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
   colId,
   expression }));
@@ -171,8 +170,7 @@ export async function POST(req: NextRequest) {
         COUNT_BIG(1) OVER () AS __totalCount,
         dbo.CustomerGroups.ID AS CustomerGroupID,
         dbo.CustomerGroups.Name,
-        dbo.CustomerGroups.Enabled,
-        dbo.CustomerGroups.CreatedOn
+        dbo.CustomerGroups.Enabled
       FROM dbo.CustomerGroups
       ${combinedWhere}
       ${orderClause}

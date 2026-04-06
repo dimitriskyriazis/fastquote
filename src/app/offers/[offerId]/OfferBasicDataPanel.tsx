@@ -63,6 +63,7 @@ async function fetchOfferBasicRecord(offerId: number) {
         o.OfferDeadlineDate,
         o.OrderSignedDate,
         o.DeliveryDueDate,
+        o.PossibleOrderDate,
         o.OfferDate,
         o.ModifiedOn,
         modified.FullName AS ModifiedByFullName,

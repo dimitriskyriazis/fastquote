@@ -59,6 +59,7 @@ type ExistingOfferRecord = {
   OfferDeadlineDate: Date | null;
   OrderSignedDate: Date | null;
   DeliveryDueDate: Date | null;
+  PossibleOrderDate: Date | null;
   OfferDate: Date | null;
   ApprovalUserId: string | null;
   ProtocolNo: number | null;
@@ -330,6 +331,7 @@ export async function POST(
         OfferDeadlineDate,
         OrderSignedDate,
         DeliveryDueDate,
+        PossibleOrderDate,
         OfferDate,
         ApprovalUserId,
         ProtocolNo,
@@ -408,6 +410,7 @@ export async function POST(
       insertRequest.input('OfferDeadlineDate', sql.DateTime2, existingOffer.OfferDeadlineDate);
       insertRequest.input('OrderSignedDate', sql.DateTime2, existingOffer.OrderSignedDate);
       insertRequest.input('DeliveryDueDate', sql.DateTime2, existingOffer.DeliveryDueDate);
+      insertRequest.input('PossibleOrderDate', sql.DateTime2, existingOffer.PossibleOrderDate);
       insertRequest.input('OfferDate', sql.DateTime2, existingOffer.OfferDate);
       insertRequest.input('ApprovalUserId', sql.NVarChar(450), normalizedApprovalUserId);
       insertRequest.input('ParentOfferID', sql.Int, targetParentOfferId);
@@ -448,6 +451,7 @@ export async function POST(
           OfferDeadlineDate,
           OrderSignedDate,
           DeliveryDueDate,
+          PossibleOrderDate,
           OfferDate,
           ApprovalUserId,
           ParentOfferID,
@@ -490,6 +494,7 @@ export async function POST(
           @OfferDeadlineDate,
           @OrderSignedDate,
           @DeliveryDueDate,
+          @PossibleOrderDate,
           @OfferDate,
           @ApprovalUserId,
           @ParentOfferID,

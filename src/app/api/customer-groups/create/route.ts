@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { logRequest } from '../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../lib/sql";
-import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { requirePermission } from "../../../../lib/authz";
 
 const normalizeTextValue = (value: unknown, maxLength = 255): string | null => {
@@ -47,18 +46,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Group name is required." }, { status: 400 });
     }
     const enabled = normalizeBoolean(payload.enabled ?? true);
-    const auditUserId = resolveAuditUserId(req);
 
     const pool = await getPool();
     const insertRequest = pool.request();
     insertRequest.input("name", sql.NVarChar(255), name);
     insertRequest.input("enabled", sql.Bit, enabled ? 1 : 0);
-    insertRequest.input("createdBy", sql.NVarChar(450), auditUserId ?? null);
-    insertRequest.input("modifiedBy", sql.NVarChar(450), auditUserId ?? null);
     const insertResult = await insertRequest.query<{ ID: number }>(`
-      INSERT INTO dbo.CustomerGroups (Name, Enabled, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy)
+      INSERT INTO dbo.CustomerGroups (Name, Enabled)
       OUTPUT inserted.ID
-      VALUES (@name, @enabled, SYSUTCDATETIME(), @createdBy, SYSUTCDATETIME(), @modifiedBy)
+      VALUES (@name, @enabled)
     `);
     const groupId = insertResult.recordset?.[0]?.ID ?? null;
     if (groupId == null) {
@@ -71,13 +67,11 @@ export async function POST(req: NextRequest) {
       CustomerGroupID: number;
       Name: string | null;
       Enabled: boolean | number | null;
-      CreatedOn: string | Date | null;
     }>(`
       SELECT
         ID AS CustomerGroupID,
         Name,
-        Enabled,
-        CreatedOn
+        Enabled
       FROM dbo.CustomerGroups
       WHERE ID = @groupId
     `);

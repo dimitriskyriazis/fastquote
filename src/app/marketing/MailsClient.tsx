@@ -518,7 +518,7 @@ export default function MailsClient() {
     <>
       <main className={styles.page}>
         <PageHeader
-          title="Mail Lists"
+          title="Marketing - Mail Lists"
           leftActions={
             canUndo ? (
               <button
@@ -554,13 +554,6 @@ export default function MailsClient() {
                 onClick={openAddMail}
               >
                 Create Mail List
-              </button>
-              <button
-                type="button"
-                className={`page-header-button ${styles.headerButton}`}
-                onClick={() => router.push("/marketing/contact-groups")}
-              >
-                View Contact Groups
               </button>
             </div>
           }

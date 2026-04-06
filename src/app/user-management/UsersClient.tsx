@@ -2,7 +2,6 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import type { CellEditingStartedEvent, CellValueChangedEvent, ColDef, GridApi } from "ag-grid-community";
 import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
@@ -421,22 +420,14 @@ export default function UsersClient() {
             ) : undefined
           }
           rightActions={
-            <div className={styles.headerActions}>
-              <Link
-                href="/logs"
-                className={`page-header-button ${styles.headerButton}`}
-              >
-                View Logs
-              </Link>
-              <button
-                type="button"
-                className={`page-header-button ${styles.headerButton}`}
-                onClick={() => setIsAddOpen(true)}
-                disabled={optionsLoading}
-              >
-                Add New User
-              </button>
-            </div>
+            <button
+              type="button"
+              className={`page-header-button ${styles.headerButton}`}
+              onClick={() => setIsAddOpen(true)}
+              disabled={optionsLoading}
+            >
+              Add New User
+            </button>
           }
         >
           <GridQuickSearchProvider>

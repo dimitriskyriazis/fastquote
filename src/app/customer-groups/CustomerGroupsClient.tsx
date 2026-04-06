@@ -8,7 +8,6 @@ import type {
   ColDef,
   GetContextMenuItemsParams,
   GridApi,
-  ValueFormatterParams,
 } from "ag-grid-community";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
@@ -29,7 +28,6 @@ import {
 } from "./groupModalHelpers";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
-import { formatDateUK } from "../lib/formatDateTime";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -72,7 +70,7 @@ const GROUP_FIELD_LABELS: Record<string, string> = {
 };
 
 export default function CustomerGroupsClient() {
-  const router = useRouter();
+  useRouter();
   const { roles } = useAuditUser();
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
@@ -135,17 +133,6 @@ export default function CustomerGroupsClient() {
           (params.data as Record<string, unknown>).Enabled = normalizeBoolean(params.newValue);
           return true;
         },
-      },
-      {
-        field: "CreatedOn",
-        headerName: "Created On",
-        filter: "agDateColumnFilter",
-        valueFormatter: (params: ValueFormatterParams) => formatDateUK(params.value),
-        filterParams: { 
-          browserDatePicker: false, 
-          minValidYear: 2000,
-        },
-        width: 160,
       },
     ],
     [enabledOptions],
@@ -268,14 +255,6 @@ export default function CustomerGroupsClient() {
         title="Customer Groups"
         leftActions={
           <>
-            <button
-              type="button"
-              className={`${styles.backLink} page-header-button`}
-              onClick={() => router.push("/customers")}
-            >
-              <span aria-hidden="true">←</span>
-              Back to customers
-            </button>
             {canUndo && (
               <button type="button" className={`page-header-button ${styles.headerButton}`} onClick={performUndo}>
                 ↩ Undo{lastLabel ? `: ${lastLabel}` : ""}

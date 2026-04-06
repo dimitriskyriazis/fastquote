@@ -993,22 +993,13 @@ export default function ProductsClient() {
             ) : undefined
           }
           rightActions={
-            <div className={styles.headerActions}>
-              <button
-                type="button"
-                className={`${styles.headerButton} page-header-button`}
-                onClick={() => router.push("/brands")}
-              >
-                View Brands
-              </button>
-              <button
-                type="button"
-                className={`${styles.headerButton} page-header-button`}
-                onClick={openAddProduct}
-              >
-                Add Product
-              </button>
-            </div>
+            <button
+              type="button"
+              className={`${styles.headerButton} page-header-button`}
+              onClick={openAddProduct}
+            >
+              Add Product
+            </button>
           }
         >
           <GridQuickSearchProvider>

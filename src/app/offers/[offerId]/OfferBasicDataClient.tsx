@@ -286,6 +286,7 @@ const buildFieldDefinitions = (
   { id: 'offerDate', label: 'Offer', section: 'dates', recordKey: 'OfferDate', updateField: 'OfferDate', inputType: 'date', valueType: 'date' },
   { id: 'offerDeadline', label: 'Offer Deadline', section: 'dates', recordKey: 'OfferDeadlineDate', updateField: 'OfferDeadlineDate', inputType: 'date', valueType: 'date' },
   { id: 'orderSigned', label: 'Order Signed', section: 'dates', recordKey: 'OrderSignedDate', updateField: 'OrderSignedDate', inputType: 'date', valueType: 'date' },
+  { id: 'possibleOrderDate', label: 'Possible Order', section: 'dates', recordKey: 'PossibleOrderDate', updateField: 'PossibleOrderDate', inputType: 'date', valueType: 'date' },
   { id: 'deliveryDue', label: 'Delivery Due', section: 'dates', recordKey: 'DeliveryDueDate', updateField: 'DeliveryDueDate', inputType: 'date', valueType: 'date' },
 ];
 

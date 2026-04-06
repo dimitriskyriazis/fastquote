@@ -62,6 +62,7 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   OfferDeadlineDate: { column: 'OfferDeadlineDate', type: 'date', sqlType: sql.DateTime2 },
   OrderSignedDate: { column: 'OrderSignedDate', type: 'date', sqlType: sql.DateTime2 },
   DeliveryDueDate: { column: 'DeliveryDueDate', type: 'date', sqlType: sql.DateTime2 },
+  PossibleOrderDate: { column: 'PossibleOrderDate', type: 'date', sqlType: sql.DateTime2 },
   OfferDate: { column: 'OfferDate', type: 'date', sqlType: sql.DateTime2 },
   ProtocolNo: { column: 'ProtocolNo', type: 'number', sqlType: sql.Int },
 };

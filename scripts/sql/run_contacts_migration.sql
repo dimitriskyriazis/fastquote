@@ -1,6 +1,6 @@
 /*
-Run on: teldb2 (or TELQUOTEWEB\SQLEXPRESS for test)
-Database: FastQuote (or TelQuote for test)
+Run on: T00229,53272
+Database: FastQuote
 
 Purpose:
 - Build/refresh staging table from source DB (optional):
@@ -137,12 +137,13 @@ BEGIN TRY
     )
 )
 INSERT INTO dbo.Contacts (
-    CustomerID, TitleID, LastName, FirstName, Position, Phone, Mobile, Email, Notes,
+    ID, CustomerID, TitleID, LastName, FirstName, Position, Phone, Mobile, Email, Notes,
     Importance, Enabled, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, ' + QUOTENAME(@OldContactKeyCol) +
     CASE WHEN @HasEmailStatus = 1 THEN N', EmailStatusID' ELSE N'' END +
     CASE WHEN @OldTitleCol IS NOT NULL THEN N', ' + QUOTENAME(@OldTitleCol) ELSE N'' END + N'
 )
 SELECT
+    (SELECT ISNULL(MAX(ID),0) FROM dbo.Contacts) + ROW_NUMBER() OVER (ORDER BY src.ContactID),
     c.ID AS CustomerID,
     COALESCE(tt.ID, ' + ISNULL(CAST(@DefaultTitleID as nvarchar(20)), N'NULL') + N') AS TitleID,
     LEFT(
@@ -166,7 +167,7 @@ SELECT
     LEFT(NULLIF(LTRIM(RTRIM(src.Mobile)), ''''), ' + CAST(@MobileMax as nvarchar(20)) + N'),
     LEFT(NULLIF(LTRIM(RTRIM(src.Email)), ''''), ' + CAST(@EmailMax as nvarchar(20)) + N'),
     LEFT(NULLIF(LTRIM(RTRIM(src.Note)), ''''), ' + CAST(@NotesMax as nvarchar(20)) + N'),
-    src.Importance,
+    CASE src.Importance WHEN 1 THEN N''High'' WHEN 2 THEN N''Med'' WHEN 3 THEN N''Low'' ELSE NULL END AS Importance,
     CASE WHEN ISNULL(src.DeletedItem, 0) = 1 THEN 0 ELSE 1 END AS Enabled,
     GETDATE(), ' + CAST(@AuditUserID as nvarchar(20)) + N', GETDATE(), ' + CAST(@AuditUserID as nvarchar(20)) + N',
     src.ContactID' +
@@ -188,7 +189,7 @@ FROM src
 JOIN dbo.Customers c
   ON c._OldCustomerID = src.CustomerID
 LEFT JOIN dbo.Titles tt
-  ON tt.ID = TRY_CONVERT(int, src.TitleID);';
+  ON tt.OldID = TRY_CONVERT(int, src.TitleID);';
 
     EXEC sys.sp_executesql @Sql;
 

@@ -1,0 +1,130 @@
+.page {
+  padding: 16px;
+  box-sizing: border-box;
+  height: 100vh;
+  width: 100%;
+  max-width: 100vw;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.gridFrame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-row-odd .ag-cell) {
+  background: #f4f6fb !important;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-row-even .ag-cell) {
+  background: #ffffff !important;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-row-hover .ag-cell) {
+  background: #e9f1ff !important;
+}
+
+.gridFrame :global(.ag-theme-quartz .ag-cell) {
+  transition: background-color 140ms ease;
+}
+
+.loading {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-tertiary, #888);
+}
+
+/* Brand filtered dropdown — sized to match "Search all columns" input */
+.brandComboWrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.brandComboInput {
+  font-size: 0.9rem;
+  font-weight: 400;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(255, 255, 255, 0.95);
+  color: #0f172a;
+  width: 200px;
+  height: 32px;
+  box-sizing: border-box;
+}
+
+.brandComboInput:focus {
+  outline: 2px solid rgba(59, 130, 246, 0.8);
+  outline-offset: 1px;
+}
+
+.brandComboList {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  min-width: 100%;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+  display: flex;
+  flex-direction: column;
+}
+
+.brandComboOption {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 6px 10px;
+  font-size: 0.95rem;
+  color: #0f172a;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.brandComboOption:hover,
+.brandComboOption:focus {
+  background: #e5efff;
+  outline: none;
+}
+
+.emptyState {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #475569);
+  font-size: 0.9375rem;
+}
+
+/* View Details button in grid row */
+.detailsButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #64748b;
+  padding: 0;
+  transition: color 120ms ease;
+}
+
+.detailsButton:hover {
+  color: #3b82f6;
+}

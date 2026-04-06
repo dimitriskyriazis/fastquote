@@ -100,7 +100,7 @@ function normalizeBrandContextMenuItems(
 }
 
 export default function BrandsClient() {
-  const router = useRouter();
+  useRouter();
   const { roles } = useAuditUser();
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
@@ -329,14 +329,6 @@ export default function BrandsClient() {
           title="Brands"
           leftActions={
             <>
-              <button
-                type="button"
-                className={`page-header-button ${styles.headerButton}`}
-                onClick={() => router.push("/suppliers")}
-              >
-                <span aria-hidden="true">←</span>
-                Back to Suppliers
-              </button>
               {canUndo && (
                 <button
                   type="button"

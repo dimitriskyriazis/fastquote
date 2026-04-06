@@ -19,25 +19,67 @@ import {
   AdminIcon,
 } from "./NavIcons";
 
+type SubItem = {
+  label: string;
+  href: string;
+};
+
 type NavItem = {
   label: string;
   href: string;
   icon: ReactNode;
   requiresRoles?: string[];
+  subItems?: SubItem[];
 };
 
 const navItems: NavItem[] = [
   { label: "Home", href: "/", icon: <HomeIcon /> },
-  { label: "Offers", href: "/offers", icon: <OffersIcon /> },
-  { label: "Price Lists", href: "/price-lists", icon: <PriceListsIcon /> },
+  {
+    label: "Offers", href: "/offers", icon: <OffersIcon />,
+    subItems: [
+      { label: "Markets", href: "/markets" },
+      { label: "Manufacturer's Pipeline", href: "/manufacturers-pipeline" },
+    ],
+  },
+  {
+    label: "Price Lists", href: "/price-lists", icon: <PriceListsIcon />,
+    subItems: [
+      { label: "Farnell Pricing Lookup", href: "/price-lists/farnell" },
+    ],
+  },
   { label: "Pricing Policies", href: "/pricing-policies", icon: <PricingPoliciesIcon /> },
-  { label: "Products", href: "/products", icon: <ProductsIcon /> },
+  {
+    label: "Products", href: "/products", icon: <ProductsIcon />,
+    subItems: [
+      { label: "Brands", href: "/brands" },
+    ],
+  },
   { label: "Standard Packages", href: "/standard-packages", icon: <StandardPackagesIcon /> },
-  { label: "Customers", href: "/customers", icon: <CustomersIcon /> },
+  {
+    label: "Customers", href: "/customers", icon: <CustomersIcon />,
+    subItems: [
+      { label: "Groups", href: "/customer-groups" },
+    ],
+  },
   { label: "Contacts", href: "/contacts", icon: <ContactsIcon /> },
-  { label: "Suppliers", href: "/suppliers", icon: <SuppliersIcon /> },
-  { label: "Marketing", href: "/marketing", icon: <MarketingIcon /> },
-  { label: "Admin", href: "/user-management", icon: <AdminIcon />, requiresRoles: ["Administrator", "Developer"] },
+  {
+    label: "Suppliers", href: "/suppliers", icon: <SuppliersIcon />,
+    subItems: [
+      { label: "Countries", href: "/countries" },
+    ],
+  },
+  {
+    label: "Marketing", href: "/marketing", icon: <MarketingIcon />,
+    subItems: [
+      { label: "Contact Groups", href: "/marketing/contact-groups" },
+    ],
+  },
+  {
+    label: "Admin", href: "/user-management", icon: <AdminIcon />, requiresRoles: ["Administrator", "Developer"],
+    subItems: [
+      { label: "Logs", href: "/logs" },
+    ],
+  },
 ];
 
 const SIDENAV_COLLAPSED_COOKIE_NAME = "fastquote_sidenav_collapsed";
@@ -112,21 +154,47 @@ export default function SideNav({ initialCollapsed = false }: SideNavProps) {
       <div className="side-nav__divider" aria-hidden="true" />
       <nav className="side-nav__items" aria-label="Primary">
         {visibleNavItems.map((item) => {
-        const active =
-          item.href === '/'
-            ? pathname === '/' || pathname === ''
-            : pathname?.startsWith(item.href);
+          const active =
+            item.href === '/'
+              ? pathname === '/' || pathname === ''
+              : pathname?.startsWith(item.href);
+          const subActive = item.subItems?.some((sub) => pathname?.startsWith(sub.href)) ?? false;
+          const expanded = active || subActive;
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="side-nav__link"
-              data-active={active}
-              title={item.label}
-            >
-              <span className="side-nav__icon">{item.icon}</span>
-              <span className="side-nav__label">{item.label}</span>
-            </Link>
+            <div key={item.href} className="side-nav__group">
+              <Link
+                href={item.href}
+                className="side-nav__link"
+                data-active={active && !subActive}
+                title={item.label}
+              >
+                <span className="side-nav__icon">{item.icon}</span>
+                <span className="side-nav__label">{item.label}</span>
+              </Link>
+              {item.subItems && expanded && (
+                <div className="side-nav__sub-items">
+                  {item.subItems.map((sub) => {
+                    const subItemActive = pathname?.startsWith(sub.href);
+                    return (
+                      <Link
+                        key={sub.href}
+                        href={sub.href}
+                        className="side-nav__sub-link"
+                        data-active={subItemActive}
+                        title={sub.label}
+                      >
+                        <span className="side-nav__sub-icon" aria-hidden="true">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M4 4v12h12" />
+                          </svg>
+                        </span>
+                        <span className="side-nav__sub-label">{sub.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           );
         })}
       </nav>

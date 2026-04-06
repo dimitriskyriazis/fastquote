@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useMemo, useCallback, useRef, useState } from "react";
-import Link from "next/link";
 import dynamic from "next/dynamic";
 import type {
   CellEditingStartedEvent,
@@ -381,10 +380,6 @@ export default function MarketsClient({ salesDivisions }: Props) {
           title="Markets"
           leftActions={
             <>
-              <Link href="/offers" className={`page-header-button ${styles.headerButton}`}>
-                <span aria-hidden="true">←</span>
-                Back to offers
-              </Link>
               {canUndo && (
                 <button
                   type="button"

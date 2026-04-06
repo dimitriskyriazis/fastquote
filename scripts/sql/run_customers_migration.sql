@@ -1,14 +1,15 @@
 /*
-Run on: teldb2
+Run on: T00229,53272
 Database: FastQuote
 
 Purpose:
-- Build/refresh staging tables from source DB:
+- Build/refresh staging table from source DB:
   - oldTelquote.dbo.Customers -> FastQuote.dbo._Customers
-  - oldTelquote.dbo.[Customer Groups] -> FastQuote.dbo._CustomerGroups
 - Optionally apply city/country text overrides from:
   - FastQuote.dbo._CustomerLocationOverrides
 - Populate dbo.Customers safely and idempotently
+- Map CustomerGroupID via CustomerGroups.Code
+- Map Importance: 1->High, 2->Med, 3->Low
 - Keep legacy location text in:
   - dbo.Customers._OldCountryName
   - dbo.Customers._OldCityName
@@ -17,13 +18,11 @@ Purpose:
 - Resolve ParentCustomerID by _OldCustomerID mapping
 
 How to use:
-1) Open this file in SSMS connected to teldb2.
-2) Set @ReloadStaging = 1 to recreate/reload _Customers and _CustomerGroups.
-3) Option A: set @LoadOverridesFromCsv = 1 and set @OverridesCsvPath.
-4) Option B: keep @LoadOverridesFromCsv = 0 and manually load dbo._CustomerLocationOverridesRaw.
-5) Set @DoCommit = 0 for dry run (recommended first).
-6) Run script, review result sets.
-7) Set @DoCommit = 1 and run again to commit.
+1) Run premigration.js first (loads staging tables + CSV overrides).
+2) Set @ReloadStaging = 0 (staging already loaded by premigration).
+3) Set @DoCommit = 0 for dry run (recommended first).
+4) Run script, review result sets.
+5) Set @DoCommit = 1 and run again to commit.
 */
 
 USE [FastQuote];
@@ -37,7 +36,7 @@ DECLARE @OverridesCsvPath nvarchar(4000);
 
 SET @DoCommit = 0;
 SET @AuditUserID = 36;
-SET @ReloadStaging = 1;
+SET @ReloadStaging = 0;
 SET @LoadOverridesFromCsv = 0;
 SET @OverridesCsvPath = N'C:\Users\dim.kyriazis\fastquote\docs\tes.csv';
 
@@ -52,21 +51,14 @@ BEGIN
     IF OBJECT_ID('dbo._Customers', 'U') IS NOT NULL
         DROP TABLE dbo._Customers;
 
-    IF OBJECT_ID('dbo._CustomerGroups', 'U') IS NOT NULL
-        DROP TABLE dbo._CustomerGroups;
-
     SELECT *
     INTO dbo._Customers
     FROM [oldTelquote].dbo.Customers;
-
-    SELECT *
-    INTO dbo._CustomerGroups
-    FROM [oldTelquote].dbo.[Customer Groups];
 END
 
-IF OBJECT_ID('dbo._Customers', 'U') IS NULL OR OBJECT_ID('dbo._CustomerGroups', 'U') IS NULL
+IF OBJECT_ID('dbo._Customers', 'U') IS NULL
 BEGIN
-    RAISERROR('Staging tables dbo._Customers or dbo._CustomerGroups are missing.', 16, 1);
+    RAISERROR('Staging table dbo._Customers is missing.', 16, 1);
     RETURN;
 END
 
@@ -136,6 +128,18 @@ BEGIN
     GROUP BY r._OldCustomerID;
 END
 
+/* Ensure legacy text helper columns exist (must be outside BEGIN TRY
+   so SQL Server sees them at compile time for the INSERT below) */
+IF COL_LENGTH('dbo.Customers', '_OldCountryName') IS NULL
+    ALTER TABLE dbo.Customers ADD _OldCountryName nvarchar(100) NULL;
+
+IF COL_LENGTH('dbo.Customers', '_OldCityName') IS NULL
+    ALTER TABLE dbo.Customers ADD _OldCityName nvarchar(100) NULL;
+
+/* Ensure CustomerGroups.Enabled column exists (default true for all rows) */
+IF COL_LENGTH('dbo.CustomerGroups', 'Enabled') IS NULL
+    ALTER TABLE dbo.CustomerGroups ADD Enabled BIT NOT NULL DEFAULT 1;
+
 BEGIN TRY
     BEGIN TRAN;
 
@@ -150,8 +154,12 @@ BEGIN TRY
     DECLARE @CountrySelectCols nvarchar(max);
     DECLARE @CountryInsertSql nvarchar(max);
 
-    SET @CountryInsertCols = N'[Name]';
-    SET @CountrySelectCols = N's.CountryName';
+    /* Check if ID is an identity column */
+    DECLARE @CountryIdIsIdentity bit;
+    SET @CountryIdIsIdentity = CASE WHEN COLUMNPROPERTY(OBJECT_ID('dbo.Countries'), 'ID', 'IsIdentity') = 1 THEN 1 ELSE 0 END;
+
+    SET @CountryInsertCols = CASE WHEN @CountryIdIsIdentity = 0 THEN N'[ID],' ELSE N'' END + N'[Name]';
+    SET @CountrySelectCols = CASE WHEN @CountryIdIsIdentity = 0 THEN N'(SELECT ISNULL(MAX(ID),0) FROM dbo.Countries) + ROW_NUMBER() OVER (ORDER BY s.CountryName),' ELSE N'' END + N's.CountryName';
 
     IF COL_LENGTH('dbo.Countries', 'Enabled') IS NOT NULL
     BEGIN
@@ -198,13 +206,6 @@ WHERE c.[Name] IS NULL;';
 
     EXEC sys.sp_executesql @CountryInsertSql, N'@AuditUserID int', @AuditUserID;
 
-    /* Ensure legacy text helper columns exist */
-    IF COL_LENGTH('dbo.Customers', '_OldCountryName') IS NULL
-        ALTER TABLE dbo.Customers ADD _OldCountryName nvarchar(100) NULL;
-
-    IF COL_LENGTH('dbo.Customers', '_OldCityName') IS NULL
-        ALTER TABLE dbo.Customers ADD _OldCityName nvarchar(100) NULL;
-
     IF COL_LENGTH('dbo.Customers', 'City') IS NULL
     BEGIN
         RAISERROR('Expected dbo.Customers.City column (nvarchar) was not found.', 16, 1);
@@ -242,19 +243,6 @@ WHERE c.[Name] IS NULL;';
            OR LEN(ISNULL(LTRIM(RTRIM(c.[Web Site])), '')) > 50;
     END
 
-    /* Group map: old GroupID -> new CustomerGroups.ID by name */
-    IF OBJECT_ID('tempdb..#GroupMap') IS NOT NULL DROP TABLE #GroupMap;
-    CREATE TABLE #GroupMap (
-        OldGroupID nvarchar(3) PRIMARY KEY,
-        NewCustomerGroupID int NOT NULL
-    );
-
-    INSERT INTO #GroupMap (OldGroupID, NewCustomerGroupID)
-    SELECT og.GroupID, ng.ID
-    FROM dbo._CustomerGroups og
-    JOIN dbo.CustomerGroups ng
-      ON LTRIM(RTRIM(og.[Group])) = LTRIM(RTRIM(ng.Name));
-
     /* Insert missing customers only (idempotent by _OldCustomerID) */
     ;WITH src AS (
         SELECT c.*
@@ -266,16 +254,17 @@ WHERE c.[Name] IS NULL;';
         )
     )
     INSERT INTO dbo.Customers (
-        Name, BrandName, CustomerGroupID, TaxID, TaxOffice, CountryID, City,
+        ID, Name, BrandName, CustomerGroupID, TaxID, TaxOffice, CountryID, City,
         Address, PostalCode, Phone, Profession, Email, WebSite,
         IsParent, ParentCustomerID, Importance, Notes, Enabled,
         CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, PricingPolicyID, _OldCustomerID,
         _OldCountryName, _OldCityName
     )
     SELECT
+        (SELECT ISNULL(MAX(ID),0) FROM dbo.Customers) + ROW_NUMBER() OVER (ORDER BY src.CustomerID),
         LEFT(src.[Company Name], 50),
         LEFT(src.[Official Name], 50),
-        gm.NewCustomerGroupID,
+        cg.ID,
         LEFT(NULLIF(LTRIM(RTRIM(src.[ΑΦΜ])), ''), 18),
         LEFT(NULLIF(LTRIM(RTRIM(src.[ΔΟΥ])), ''), 50),
         co.ID,  -- exact country name match only
@@ -294,7 +283,7 @@ WHERE c.[Name] IS NULL;';
         LEFT(NULLIF(LTRIM(RTRIM(src.[Web Site])), ''), 50),
         CASE WHEN src.ParentCustomerID IS NULL THEN 1 ELSE 0 END,
         NULL, -- set after insert
-        src.Importance,
+        CASE src.Importance WHEN 1 THEN N'High' WHEN 2 THEN N'Med' WHEN 3 THEN N'Low' ELSE NULL END,
         CONVERT(nvarchar(max), src.Notes),
         CASE WHEN ISNULL(src.DeletedItem, 0) = 1 THEN 0 ELSE 1 END,
         GETDATE(), @AuditUserID, GETDATE(), @AuditUserID,
@@ -303,10 +292,10 @@ WHERE c.[Name] IS NULL;';
         NULLIF(LTRIM(RTRIM(src.Country)), ''),
         NULLIF(LTRIM(RTRIM(src.City)), '')
     FROM src
+    LEFT JOIN dbo.CustomerGroups cg
+      ON cg.Code = src.GroupID
     LEFT JOIN dbo._CustomerLocationOverrides ov
       ON ov._OldCustomerID = src.CustomerID
-    LEFT JOIN #GroupMap gm
-      ON gm.OldGroupID = src.GroupID
     LEFT JOIN dbo.Countries co
       ON LTRIM(RTRIM(co.Name)) = LTRIM(RTRIM(
             COALESCE(

@@ -278,10 +278,6 @@ export default function OffersClient() {
     }
   }, []);
 
-  const handleViewMarketsClick = useCallback(() => {
-    routerRef.current.push('/markets');
-  }, []);
-
   const handleViewStatusHistory = useCallback((offerId: number | null) => {
     if (offerId == null) return;
     setStatusHistoryOfferId(offerId);
@@ -811,13 +807,6 @@ export default function OffersClient() {
           title="Offers"
           rightActions={
             <div className={styles.headerActions}>
-              <button
-                type="button"
-                className={`${styles.primaryButton} page-header-button`}
-                onClick={handleViewMarketsClick}
-              >
-                View Markets
-              </button>
               <button
                 type="button"
                 className={`${styles.primaryButton} page-header-button`}

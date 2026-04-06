@@ -117,6 +117,85 @@ export function MarketingIcon({ size = 22 }: IconProps): ReactNode {
   );
 }
 
+export function MarketsIcon({ size = 22 }: IconProps): ReactNode {
+  return (
+    <svg {...s(size)}>
+      <path d="M3 20h18" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M6 16V10M10 16V6M14 16V12M18 16V8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function BrandOffersIcon({ size = 22 }: IconProps): ReactNode {
+  return (
+    <svg {...s(size)}>
+      <path d="M12 2L2 7l10 5 10-5-10-5z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" fill="none" />
+      <path d="M2 17l10 5 10-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path d="M2 12l10 5 10-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </svg>
+  );
+}
+
+export function FarnellIcon({ size = 22 }: IconProps): ReactNode {
+  return (
+    <svg {...s(size)}>
+      <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.6" fill="none" />
+      <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function BrandsIcon({ size = 22 }: IconProps): ReactNode {
+  return (
+    <svg {...s(size)}>
+      <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" fill="none" />
+      <circle cx="7" cy="7" r="1.5" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function GroupsIcon({ size = 22 }: IconProps): ReactNode {
+  return (
+    <svg {...s(size)}>
+      <circle cx="9" cy="7" r="3" stroke="currentColor" strokeWidth="1.6" fill="none" />
+      <circle cx="17" cy="7" r="3" stroke="currentColor" strokeWidth="1.6" fill="none" />
+      <path d="M3 20c0-3 2.5-5.5 6-5.5s6 2.5 6 5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+      <path d="M15 14.5c2 0 4 1.2 4.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+    </svg>
+  );
+}
+
+export function CountriesIcon({ size = 22 }: IconProps): ReactNode {
+  return (
+    <svg {...s(size)}>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" fill="none" />
+      <path d="M3.6 9h16.8M3.6 15h16.8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+      <ellipse cx="12" cy="12" rx="4" ry="9" stroke="currentColor" strokeWidth="1.6" fill="none" />
+    </svg>
+  );
+}
+
+export function ContactGroupsIcon({ size = 22 }: IconProps): ReactNode {
+  return (
+    <svg {...s(size)}>
+      <path d="M17 20h5v-2a3 3 0 00-5.356-1.857" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path d="M2 20h5v-2a3 3 0 015.356-1.857" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <circle cx="19.5" cy="13" r="2.5" stroke="currentColor" strokeWidth="1.6" fill="none" />
+      <circle cx="4.5" cy="13" r="2.5" stroke="currentColor" strokeWidth="1.6" fill="none" />
+      <circle cx="12" cy="8" r="3" stroke="currentColor" strokeWidth="1.6" fill="none" />
+      <path d="M8 20c0-2.2 1.8-4 4-4s4 1.8 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+    </svg>
+  );
+}
+
+export function ManufacturersPipelineIcon({ size = 22 }: IconProps): ReactNode {
+  return (
+    <svg {...s(size)}>
+      <path d="M3 4h18v4l-6 5v6l-6 2V13L3 8z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" fill="none" />
+    </svg>
+  );
+}
+
 export function LogsIcon({ size = 22 }: IconProps): ReactNode {
   return (
     <svg {...s(size)}>

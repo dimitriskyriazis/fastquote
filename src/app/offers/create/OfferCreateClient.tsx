@@ -42,6 +42,7 @@ type FormValues = {
   offerDeadline: string;
   orderSigned: string;
   deliveryDue: string;
+  possibleOrderDate: string;
   offerDate: string;
   protocolNo: string;
 };
@@ -272,6 +273,7 @@ export default function OfferCreateClient({
     offerDeadline: '',
     orderSigned: '',
     deliveryDue: '',
+    possibleOrderDate: '',
     offerDate: '',
     protocolNo: '',
   }), [
@@ -649,6 +651,7 @@ export default function OfferCreateClient({
       offerDeadline: toNullableString(values.offerDeadline),
       orderSigned: toNullableString(values.orderSigned),
       deliveryDue: toNullableString(values.deliveryDue),
+      possibleOrderDate: toNullableString(values.possibleOrderDate),
       offerDate: toNullableString(values.offerDate),
       protocolNo: toNumberOrNull(values.protocolNo),
     };
@@ -710,6 +713,7 @@ export default function OfferCreateClient({
       { id: 'offerDate', label: 'Offer', section: 'dates', type: 'date' },
       { id: 'offerDeadline', label: 'Offer Deadline', section: 'dates', type: 'date' },
       { id: 'orderSigned', label: 'Order Signed', section: 'dates', type: 'date' },
+      { id: 'possibleOrderDate', label: 'Possible Order', section: 'dates', type: 'date' },
       { id: 'deliveryDue', label: 'Delivery Due', section: 'dates', type: 'date' },
     ],
     [

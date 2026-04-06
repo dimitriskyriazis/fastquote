@@ -35,6 +35,7 @@ type CreateOfferRequestBody = {
   offerDeadline?: string | Date | null;
   orderSigned?: string | Date | null;
   deliveryDue?: string | Date | null;
+  possibleOrderDate?: string | Date | null;
   offerDate?: string | Date | null;
   protocolNo?: number | string | null;
 };
@@ -103,6 +104,7 @@ export async function POST(req: NextRequest) {
       offerDeadlineDate: normalizeDate(body?.offerDeadline),
       orderSignedDate: normalizeDate(body?.orderSigned),
       deliveryDueDate: normalizeDate(body?.deliveryDue),
+      possibleOrderDate: normalizeDate(body?.possibleOrderDate),
       offerDate: normalizeDate(body?.offerDate),
     };
 
@@ -239,6 +241,7 @@ export async function POST(req: NextRequest) {
     request.input('OfferDeadlineDate', sql.DateTime2, dateFields.offerDeadlineDate);
     request.input('OrderSignedDate', sql.DateTime2, dateFields.orderSignedDate);
     request.input('DeliveryDueDate', sql.DateTime2, dateFields.deliveryDueDate);
+    request.input('PossibleOrderDate', sql.DateTime2, dateFields.possibleOrderDate);
     request.input('OfferDate', sql.DateTime2, dateFields.offerDate);
     request.input('ApprovalUserId', sql.NVarChar(450), approvalUserId);
     request.input('ProtocolNo', sql.Int, protocolNo);
@@ -276,6 +279,7 @@ export async function POST(req: NextRequest) {
         OfferDeadlineDate,
         OrderSignedDate,
         DeliveryDueDate,
+        PossibleOrderDate,
         OfferDate,
         ApprovalUserId,
         ProtocolNo,
@@ -317,6 +321,7 @@ export async function POST(req: NextRequest) {
         @OfferDeadlineDate,
         @OrderSignedDate,
         @DeliveryDueDate,
+        @PossibleOrderDate,
         @OfferDate,
         @ApprovalUserId,
         @ProtocolNo,

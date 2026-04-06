@@ -105,7 +105,7 @@ function normalizeSupplierContextMenuItems(
 }
 
 export default function SuppliersClient({ countries }: Props) {
-  const router = useRouter();
+  useRouter();
   const { roles } = useAuditUser();
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
@@ -410,29 +410,13 @@ export default function SuppliersClient({ countries }: Props) {
             ) : undefined
           }
           rightActions={
-            <div className={styles.headerActions}>
-              <button
-                type="button"
-                className={`page-header-button ${styles.headerButton}`}
-                onClick={() => router.push("/countries")}
-              >
-                View Countries
-              </button>
-              <button
-                type="button"
-                className={`page-header-button ${styles.headerButton}`}
-                onClick={() => router.push("/brands")}
-              >
-                View Brands
-              </button>
-              <button
-                type="button"
-                className={`page-header-button ${styles.headerButton}`}
-                onClick={() => setIsAddSupplierOpen(true)}
-              >
-                Add Supplier
-              </button>
-            </div>
+            <button
+              type="button"
+              className={`page-header-button ${styles.headerButton}`}
+              onClick={() => setIsAddSupplierOpen(true)}
+            >
+              Add Supplier
+            </button>
           }
         >
           <GridQuickSearchProvider>

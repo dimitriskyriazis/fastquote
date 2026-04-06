@@ -51,8 +51,17 @@ next-env.d.ts
 # cursor
 .cursor/
 
+# codex
+.codex
+
 # docs
 docs/
 
 # bat files
 *.bat
+
+# sql migration files
+sql/
+
+# docs
+docs/

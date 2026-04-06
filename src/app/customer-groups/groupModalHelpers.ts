@@ -33,7 +33,6 @@ export type GroupCreationResult = {
     CustomerGroupID: number;
     Name: string | null;
     Enabled: boolean | number | null;
-    CreatedOn: string | Date | null;
   };
   error?: string;
 };

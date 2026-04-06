@@ -1572,6 +1572,14 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     return false;
   }, []);
 
+  const filterServerRow = useCallback((row: Record<string, unknown>) => {
+    const collapsed = collapsedCategoryPathsRef.current;
+    if (collapsed.size === 0) return true;
+    const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+    if (path.length === 0) return true;
+    return !hasCollapsedAncestorInSet(path, collapsed);
+  }, [hasCollapsedAncestorInSet]);
+
   const determineRowHeight = useCallback((params: { data?: Record<string, unknown> }) => {
     const row = params.data;
     if (!row) return DEFAULT_ROW_HEIGHT;
@@ -1642,6 +1650,29 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       modelUpdateRafRef.current = null;
     }
   }, []);
+
+  const removeCollapsedDescendantsFromGrid = useCallback((collapsedSet: Set<string>) => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    if (collapsedSet.size === 0) return;
+    const rowsToRemove: Array<Record<string, unknown>> = [];
+    api.forEachNode((node) => {
+      const row = node.data ?? null;
+      if (!row) return;
+      const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+      if (path.length === 0) return;
+      if (hasCollapsedAncestorInSet(path, collapsedSet)) {
+        rowsToRemove.push(row);
+      }
+    });
+    if (rowsToRemove.length > 0) {
+      try {
+        api.applyServerSideTransaction({ remove: rowsToRemove });
+      } catch {
+        /* noop */
+      }
+    }
+  }, [hasCollapsedAncestorInSet]);
 
   const handleGridModelUpdated = useCallback(() => {
     if (skipModelUpdateRef.current) {
@@ -1743,29 +1774,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     }
     return classes.join(' ');
   }, [isCategoryRowCollapsed, hasCategoryChildren]);
-
-  const removeCollapsedDescendantsFromGrid = useCallback((collapsedSet: Set<string>) => {
-    const api = gridApiRef.current;
-    if (!api || api.isDestroyed?.()) return;
-    if (collapsedSet.size === 0) return;
-    const rowsToRemove: Array<Record<string, unknown>> = [];
-    api.forEachNode((node) => {
-      const row = node.data ?? null;
-      if (!row) return;
-      const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
-      if (path.length === 0) return;
-      if (hasCollapsedAncestorInSet(path, collapsedSet)) {
-        rowsToRemove.push(row);
-      }
-    });
-    if (rowsToRemove.length > 0) {
-      try {
-        api.applyServerSideTransaction({ remove: rowsToRemove });
-      } catch {
-        /* noop */
-      }
-    }
-  }, [hasCollapsedAncestorInSet]);
 
   const handleRowDoubleClicked = useCallback((params: RowDoubleClickedEvent<Record<string, unknown>>) => {
     const target = params.event?.target;
@@ -2933,7 +2941,11 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
     const added = Array.from(next).filter((key) => !prev.has(key));
     const removed = Array.from(prev).filter((key) => !next.has(key));
     if (added.length > 0) {
+      // Remove loaded descendants immediately, then refresh so the grid
+      // re-fetches with the datasource filter active and gets a correct
+      // rowCount (avoids "Loading" placeholders for unloaded blocks).
       removeCollapsedDescendantsFromGrid(next);
+      api.refreshServerSide?.({ purge: false });
     }
     if (removed.length > 0) {
       api.refreshServerSide?.({ purge: false });
@@ -6479,6 +6491,7 @@ const requestedColumnDefsMap = useMemo<Record<RequestedDisplayFieldKey, ColDef>>
             cacheBlockSize={100}
             rowBuffer={5}
             maxBlocksInCache={5}
+            filterServerRow={filterServerRow}
           />
           <div
             ref={insertLineRef}

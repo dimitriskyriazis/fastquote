@@ -232,6 +232,7 @@ export default function CustomersClient() {
         filter: "agNumberColumnFilter",
         editable: false,
         width: 100,
+        hide: true,
       },
       {
         field: "CustomerName",
@@ -467,26 +468,15 @@ export default function CustomersClient() {
           ) : undefined
         }
         rightActions={
-          <div className={styles.headerActions}>
-            <button
-              type="button"
-              className={`${styles.headerButton} page-header-button`}
-              onClick={() => {
-                router.push("/customer-groups");
-              }}
-            >
-              View Groups
-            </button>
-            <button
-              type="button"
-              className={`${styles.headerButton} page-header-button`}
-              onClick={() => {
-                router.push("/customers/create");
-              }}
-            >
-              Add Customer
-            </button>
-          </div>
+          <button
+            type="button"
+            className={`${styles.headerButton} page-header-button`}
+            onClick={() => {
+              router.push("/customers/create");
+            }}
+          >
+            Add Customer
+          </button>
         }
       >
         <GridQuickSearchProvider>

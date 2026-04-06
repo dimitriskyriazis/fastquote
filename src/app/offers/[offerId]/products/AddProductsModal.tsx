@@ -284,7 +284,10 @@ export default function AddProductsModal({
     setFarnellDescription(placementAnchor?.requestedDescription ?? null);
   }, [placementAnchor, defaultPlacementMode, onPlacementModeChange, clearFarnellResults]);
 
-  // Apply requested data as filters on the products grid when selecting a row to fill
+  // Apply requested data as filters on the products grid when selecting a row to fill.
+  // Only update filters when a row is actively selected in "fill" mode — never clear
+  // the filter model on deselection or mode switch so that filters persist when the
+  // user clicks between rows or stays idle.
   useEffect(() => {
     const api = productsApiRef.current;
     if (!api) return;
@@ -301,10 +304,9 @@ export default function AddProductsModal({
       } else {
         api.setFilterModel(null);
       }
-    } else {
-      // Clear filters when switching to "add below" or when no anchor
-      api.setFilterModel(null);
     }
+    // When placementAnchor is null (deselected / between rows) or mode is "below",
+    // keep existing filters so they are not erased while the user is idle.
   }, [placementAnchor, defaultPlacementMode]);
 
   // Sync selectedRequestedRowId with placement mode for anchor-based requested rows

@@ -44,6 +44,7 @@ export type OfferBasicRecord = {
   OfferDeadlineDate: Date | string | null;
   OrderSignedDate: Date | string | null;
   DeliveryDueDate: Date | string | null;
+  PossibleOrderDate: Date | string | null;
   OfferDate: Date | string | null;
   ModifiedOn: Date | string | null;
   ModifiedByUserName: string | null;
@@ -90,5 +91,6 @@ export type OfferBasicUpdateField =
   | 'OfferDeadlineDate'
   | 'OrderSignedDate'
   | 'DeliveryDueDate'
+  | 'PossibleOrderDate'
   | 'OfferDate'
   | 'ProtocolNo';
