@@ -41,8 +41,8 @@
 }
 
 .cardWide {
-  width: min(640px, calc(100% - 32px));
-  max-height: 640px;
+  width: min(720px, calc(100% - 32px));
+  max-height: 90vh;
 }
 
 .overlayHigh {

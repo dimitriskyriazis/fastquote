@@ -21,6 +21,7 @@ type GridRequest = {
   endRow?: number;
   filterModel?: Record<string, KnownFilterModel> | null;
   quickFilterText?: string | null;
+  enableFuzzyText?: boolean;
   sortModel?: Array<{ colId: string; sort: "asc" | "desc" }>;
   rowGroupCols?: Array<{ field?: string | null; colId?: string | null }>;
   groupKeys?: Array<string | null>;
@@ -424,7 +425,7 @@ export async function POST(req: NextRequest) {
     `;
 
     const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);
-    const quickFilterClause = buildQuickFilterClause(requestPayload.quickFilterText, QUICK_FILTER_COLUMNS);
+    const quickFilterClause = buildQuickFilterClause(requestPayload.quickFilterText, QUICK_FILTER_COLUMNS, undefined, { enableFuzzyText: requestPayload.enableFuzzyText ?? true });
     const combinedWhere = mergeWhereClauses(where, quickFilterClause.clause);
     const combinedParams = [...whereParams, ...quickFilterClause.params];
     const orderClause =

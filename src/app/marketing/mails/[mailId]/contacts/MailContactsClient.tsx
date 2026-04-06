@@ -7,6 +7,7 @@ import type { ColDef, CellValueChangedEvent } from 'ag-grid-community';
 import { showToastMessage } from '../../../../../lib/toast';
 import { formatBooleanValue } from '../../../../lib/formatBooleanValue';
 import LookupModal from '../../../../components/LookupModal';
+import modalStyles from '../../../../components/LookupModal.module.css';
 import styles from './MailContactsClient.module.css';
 
 const AgGridAll = dynamic(() => import('../../../../components/AgGridAll'), {
@@ -26,9 +27,10 @@ type AvailableContact = {
 
 type Props = {
   mailId: string;
+  description: string | null;
 };
 
-export default function MailContactsClient({ mailId }: Props) {
+export default function MailContactsClient({ mailId, description }: Props) {
   const [refreshToken, setRefreshToken] = useState(0);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -45,9 +47,6 @@ export default function MailContactsClient({ mailId }: Props) {
     }
     setSearching(true);
     try {
-      const filterModel: Record<string, unknown> = {};
-      filterModel.CustomerName = { filterType: 'text', type: 'contains', filter: q };
-
       const res = await fetch('/api/customer-contacts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -56,6 +55,7 @@ export default function MailContactsClient({ mailId }: Props) {
             startRow: 0,
             endRow: 200,
             quickFilterText: q,
+            enableFuzzyText: false,
           },
         }),
       });
@@ -168,7 +168,7 @@ export default function MailContactsClient({ mailId }: Props) {
             </Link>
           </div>
           <h1 className={styles.heading}>
-            Mail {mailId} - Contacts List
+            {description || `Mail ${mailId}`} - Contacts List
           </h1>
           <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
             <button
@@ -208,6 +208,7 @@ export default function MailContactsClient({ mailId }: Props) {
         confirmLabel={adding ? 'Adding…' : `Add Selected (${selectedContactIds.size})`}
         saving={adding}
         error={null}
+        cardClassName={modalStyles.cardWide}
       >
         <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
           <input
@@ -234,7 +235,7 @@ export default function MailContactsClient({ mailId }: Props) {
         </div>
 
         {searchResults.length > 0 && (
-          <div style={{ maxHeight: '350px', overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '13px' }}>
+          <div style={{ overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '13px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f1f5f9', position: 'sticky', top: 0 }}>

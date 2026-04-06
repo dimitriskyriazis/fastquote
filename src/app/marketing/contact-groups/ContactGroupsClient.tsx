@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useCallback, useState, useRef, useEffect } from 'react';
+import React, { useMemo, useCallback, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type {
@@ -13,10 +13,6 @@ import type {
   DefaultMenuItem,
   IMenuActionParams,
 } from 'ag-grid-community';
-import { createPortal } from 'react-dom';
-import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from '../../components/actionMenuMarkers';
-import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from '../../components/useActionMenuCoordinator';
-import { useActionMenuPosition } from '../../components/useActionMenuPosition';
 import { GridRowDeletion } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
 import { useAuditUser } from '../../components/AuditUserProvider';
@@ -163,98 +159,30 @@ export default function ContactGroupsClient() {
     [groupRowDeletion],
   );
 
+  const viewDetailsIcon = `
+    <span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+        <circle cx="12" cy="12" r="3"/>
+      </svg>
+    </span>
+  `;
+
   const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
-    const ActionMenu: React.FC = () => {
-      const [open, setOpen] = useState(false);
-      const closeMenu = useCallback(() => setOpen(false), []);
-      const instanceId = useActionMenuCloseListener(closeMenu);
-      const { buttonRef, menuRef, menuPos } = useActionMenuPosition(open);
-      const id = params?.data?.ContactGroupID as number | undefined;
-      const encodedId = id != null ? encodeURIComponent(String(id)) : '';
-
-      const preventRangeSelection = (event: React.SyntheticEvent) => {
-        event.preventDefault();
-        event.stopPropagation();
-      };
-
-      useEffect(() => {
-        if (!open) return;
-        const onDocClick = (e: MouseEvent) => {
-          if (!(e.target instanceof Node)) return setOpen(false);
-          if (buttonRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
-          setOpen(false);
-        };
-        window.addEventListener('click', onDocClick);
-        return () => window.removeEventListener('click', onDocClick);
-      }, [open, buttonRef, menuRef]);
-
-      const lines = (
-        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="3" y="4" width="10" height="1.5" rx="0.75" fill="currentColor"/>
-          <rect x="3" y="7.25" width="10" height="1.5" rx="0.75" fill="currentColor"/>
-          <rect x="3" y="10.5" width="10" height="1.5" rx="0.75" fill="currentColor"/>
-        </svg>
-      );
-
-      return (
-        <div
-          className={styles.actionCell}
-          {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }}
-        >
-          <button
-            type="button"
-            aria-haspopup="menu"
-            aria-expanded={open}
-            className={styles.actionButton}
-            {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (!open) dispatchActionMenuCloseEvent(instanceId);
-              setOpen((v) => !v);
-            }}
-            onMouseDownCapture={preventRangeSelection}
-            onPointerDownCapture={preventRangeSelection}
-            onContextMenuCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
-            disabled={!encodedId}
-            title={encodedId ? 'Open menu' : 'Missing group ID'}
-            ref={buttonRef}
-          >
-            {lines}
-          </button>
-          {open && menuPos && createPortal(
-            <div
-              role="menu"
-              className={styles.actionMenu}
-              style={{ top: menuPos.top, left: menuPos.left }}
-              ref={menuRef}
-              {...{ [ACTION_MENU_PANEL_ATTRIBUTE]: 'true' }}
-              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
-            >
-              <button
-                type="button"
-                role="menuitem"
-                className={styles.actionMenuItem}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setOpen(false);
-                  if (encodedId) {
-                    window.open(`/marketing/contact-groups/${encodedId}`, '_blank', 'noopener,noreferrer');
-                  }
-                }}
-              >
-                View Contact Group Lists
-              </button>
-            </div>,
-            document.body
-          )}
-        </div>
-      );
-    };
-
-    return <ActionMenu />;
+    if (!params.data) return null;
+    const id = params.data.ContactGroupID as number | undefined;
+    if (!id) return null;
+    return (
+      <button
+        type="button"
+        className={styles.detailsButton}
+        title="View Contact Group Lists"
+        onClick={() => {
+          window.open(`/marketing/contact-groups/${encodeURIComponent(String(id))}`, '_blank', 'noopener,noreferrer');
+        }}
+        dangerouslySetInnerHTML={{ __html: viewDetailsIcon }}
+      />
+    );
   }, []);
 
   const columnDefs = useMemo<ColDef[]>(

@@ -238,6 +238,7 @@ export default function CustomersClient() {
         field: "CustomerName",
         headerName: "Customer",
         filter: "agTextColumnFilter",
+        minWidth: 300,
       },
       {
         field: "BrandName",

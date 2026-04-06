@@ -24,6 +24,7 @@ type RowData = Record<string, unknown>;
 
 type Props = {
   mailId: string;
+  description: string | null;
 };
 
 type AllGroupRow = {
@@ -55,9 +56,56 @@ function normalizeContextMenuItems(
   });
 }
 
-export default function MailContactGroupsClient({ mailId }: Props) {
+type AssignedGroupRow = {
+  MailContactGroupID: number;
+  ContactGroupID: number;
+  Description: string | null;
+  TotalCount: number | null;
+  MinimumImportance: string | null;
+  Note: string | null;
+};
+
+function normalizeAssignedContextMenuItems(
+  items: Array<string | DefaultMenuItem | MenuItemDef<AssignedGroupRow, unknown>>,
+): Array<string | DefaultMenuItem | MenuItemDef<RowData, unknown>> {
+  return items.map((item) => {
+    if (typeof item === "string") return item;
+    const typed = item as MenuItemDef<AssignedGroupRow, unknown>;
+    return {
+      ...typed,
+      action: typeof typed.action === "function"
+        ? (params: IMenuActionParams<RowData, unknown>) =>
+            typed.action?.(params as unknown as IMenuActionParams<AssignedGroupRow, unknown>)
+        : undefined,
+    } as MenuItemDef<RowData, unknown>;
+  });
+}
+
+export default function MailContactGroupsClient({ mailId, description }: Props) {
   const [refreshToken, setRefreshToken] = useState(0);
   const topGridApiRef = useRef<GridApi | null>(null);
+  const bottomGridApiRef = useRef<GridApi | null>(null);
+
+  const handleRemoveGroups = useCallback(async (mcgIds: number[]) => {
+    if (mcgIds.length === 0) return;
+    try {
+      const res = await fetch(`/api/marketing/mails/${encodeURIComponent(mailId)}/contact-groups`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ MailContactGroupIDs: mcgIds }),
+      });
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !data?.ok) {
+        showToastMessage(data?.error ?? 'Failed to remove group(s)', 'error');
+        return;
+      }
+      setRefreshToken((prev) => prev + 1);
+      showToastMessage(`${mcgIds.length} group(s) removed from mail list`, 'success');
+    } catch (err) {
+      console.error('Failed to remove group(s)', err);
+      showToastMessage('Failed to remove group(s)', 'error');
+    }
+  }, [mailId]);
 
   const handleAddGroups = useCallback(async (groupIds: number[]) => {
     if (groupIds.length === 0) return;
@@ -88,6 +136,7 @@ export default function MailContactGroupsClient({ mailId }: Props) {
 
       items.push({
         name: 'Add to Mail List',
+        icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
         action: () => {
           const api = topGridApiRef.current;
           const selectedNodes = api?.getSelectedNodes?.() ?? [];
@@ -116,6 +165,43 @@ export default function MailContactGroupsClient({ mailId }: Props) {
       return normalizeContextMenuItems(items);
     },
     [handleAddGroups],
+  );
+
+  const getBottomContextMenuItems = useCallback(
+    (params: GetContextMenuItemsParams<RowData>) => {
+      const typedParams = params as unknown as GetContextMenuItemsParams<AssignedGroupRow>;
+      const clickedRow = typedParams.node?.data;
+      const items: Array<string | DefaultMenuItem | MenuItemDef<AssignedGroupRow, unknown>> = [];
+
+      items.push({
+        name: 'Remove from Mail List',
+        icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14"/></svg>',
+        action: () => {
+          const api = bottomGridApiRef.current;
+          const selectedNodes = api?.getSelectedNodes?.() ?? [];
+          const selectedIds = selectedNodes
+            .map((n) => (n.data as AssignedGroupRow | undefined)?.MailContactGroupID)
+            .filter((id): id is number => id != null);
+
+          if (clickedRow?.MailContactGroupID != null && !selectedIds.includes(clickedRow.MailContactGroupID)) {
+            void handleRemoveGroups([clickedRow.MailContactGroupID]);
+            return;
+          }
+
+          if (selectedIds.length > 0) {
+            void handleRemoveGroups(selectedIds);
+          } else if (clickedRow?.MailContactGroupID != null) {
+            void handleRemoveGroups([clickedRow.MailContactGroupID]);
+          }
+        },
+      });
+
+      items.push('separator');
+      items.push('copy');
+
+      return normalizeAssignedContextMenuItems(items);
+    },
+    [handleRemoveGroups],
   );
 
   const allGroupsColumnDefs = useMemo<ColDef[]>(() => [
@@ -220,7 +306,7 @@ export default function MailContactGroupsClient({ mailId }: Props) {
           </Link>
         </div>
         <h1 className={styles.heading}>
-          Mail {mailId} - Contact Group List
+          {description || `Mail ${mailId}`} - Contact Group List
         </h1>
         <div className={`${styles.headerSide} ${styles.headerSideEnd}`} />
       </div>
@@ -249,6 +335,8 @@ export default function MailContactGroupsClient({ mailId }: Props) {
               endpoint={`/api/marketing/mails/${encodeURIComponent(mailId)}/contact-groups`}
               columnDefs={assignedColumnDefs}
               columnStateNamespace={`mail-contact-groups-${mailId}`}
+              getContextMenuItems={getBottomContextMenuItems}
+              onGridReady={(api) => { bottomGridApiRef.current = api; }}
               onCellValueChanged={handleCellEdit}
               refreshToken={refreshToken}
               rowSelection="multiple"

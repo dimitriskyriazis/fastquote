@@ -20,7 +20,9 @@
 
 .heading {
   margin: 0;
-  font-size: 24px;
+  font-size: var(--page-heading-font-size);
+  font-weight: var(--page-heading-font-weight);
+  letter-spacing: var(--page-heading-letter-spacing);
   text-align: center;
   margin-left: auto;
   margin-right: auto;
@@ -71,8 +73,8 @@
 .sectionTitle {
   font-size: 16px;
   font-weight: 600;
-  color: #ffffff;
-  background: #1e3a5f;
+  color: #0f172a;
+  background: #e5e7eb;
   padding: 6px 12px;
   border-radius: 6px;
   flex-shrink: 0;

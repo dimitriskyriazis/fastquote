@@ -20,7 +20,9 @@
 
 .heading {
   margin: 0;
-  font-size: 24px;
+  font-size: var(--page-heading-font-size);
+  font-weight: var(--page-heading-font-weight);
+  letter-spacing: var(--page-heading-letter-spacing);
   text-align: center;
   margin-left: auto;
   margin-right: auto;

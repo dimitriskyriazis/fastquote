@@ -82,7 +82,8 @@ export async function PATCH(
       request.input("value", sql.NVarChar(sql.MAX), value != null ? String(value).trim() : null);
       await request.query(`UPDATE dbo.ContactGroups SET [${field}] = @value WHERE ID = @groupId`);
     } else if (field === "GroupImportance") {
-      request.input("value", sql.NVarChar(255), value != null ? String(value).trim() : null);
+      const imp = value != null ? String(value).trim() : "";
+      request.input("value", sql.NVarChar(255), imp || null);
       await request.query(`UPDATE dbo.ContactGroups SET GroupImportance = @value WHERE ID = @groupId`);
     } else if (field === "Enabled") {
       const boolVal = value === true || value === 1 || value === "true" || value === "Yes";

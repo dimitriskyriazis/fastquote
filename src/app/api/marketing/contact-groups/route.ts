@@ -110,7 +110,8 @@ function buildOrder(sortModel: GridRequest["sortModel"]) {
   const parts = sortModel.map((entry) => {
     const expr = COLUMN_EXPRESSIONS[entry.colId] ?? `[${entry.colId}]`;
     if (IMPORTANCE_SORT_COLUMNS.has(entry.colId)) {
-      return `CASE ${expr} WHEN 'High' THEN 1 WHEN 'Med' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ${entry.sort.toUpperCase()}`;
+      const dir = entry.sort.toUpperCase();
+      return `CASE cg.GroupImportance WHEN 'High' THEN 1 WHEN 'Med' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ${dir}`;
     }
     return `${expr} ${entry.sort.toUpperCase()}`;
   });
@@ -235,7 +236,8 @@ export async function PATCH(req: NextRequest) {
         request.input("value", sql.NVarChar(sql.MAX), normalizeTextValue(update.value));
         await request.query(`UPDATE dbo.ContactGroups SET [${update.field}] = @value WHERE ID = @id`);
       } else if (update.field === "GroupImportance") {
-        request.input("value", sql.NVarChar(255), normalizeTextValue(update.value));
+        const imp = normalizeTextValue(update.value);
+        request.input("value", sql.NVarChar(255), imp || null);
         await request.query(`UPDATE dbo.ContactGroups SET GroupImportance = @value WHERE ID = @id`);
       } else if (update.field === "SalespersonID") {
         const spId = normalizeTextValue(update.value);

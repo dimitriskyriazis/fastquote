@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import type { ColDef, CellValueChangedEvent } from 'ag-grid-community';
 import { showToastMessage } from '../../../../lib/toast';
 import LookupModal from '../../../components/LookupModal';
+import modalStyles from '../../../components/LookupModal.module.css';
 import styles from './ContactGroupDetailClient.module.css';
 
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), {
@@ -20,14 +21,14 @@ type AvailableContact = {
   LastName: string | null;
   FirstName: string | null;
   Email: string | null;
-  Fax: string | null;
 };
 
 type Props = {
   groupId: string;
+  description: string | null;
 };
 
-export default function ContactGroupDetailClient({ groupId }: Props) {
+export default function ContactGroupDetailClient({ groupId, description }: Props) {
   const [refreshToken, setRefreshToken] = useState(0);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -52,16 +53,23 @@ export default function ContactGroupDetailClient({ groupId }: Props) {
             startRow: 0,
             endRow: 200,
             quickFilterText: q,
+            enableFuzzyText: false,
           },
         }),
       });
-      const data = (await res.json().catch(() => null)) as { ok?: boolean; rows?: AvailableContact[] } | null;
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; rows?: AvailableContact[]; error?: string } | null;
       if (data?.ok && data.rows) {
         setSearchResults(data.rows);
         setSelectedContactIds(new Set());
+      } else {
+        setSearchResults([]);
+        const msg = data?.error ?? 'Search failed';
+        console.error('Search returned error:', msg);
+        showToastMessage(msg, 'error');
       }
     } catch (err) {
       console.error('Failed to search contacts', err);
+      showToastMessage('Unable to search contacts', 'error');
     } finally {
       setSearching(false);
     }
@@ -114,7 +122,6 @@ export default function ContactGroupDetailClient({ groupId }: Props) {
     { field: "FirstName", headerName: "First Name", filter: "agTextColumnFilter" },
     { field: "Position", headerName: "Position", filter: "agTextColumnFilter" },
     { field: "Email", headerName: "Email", filter: "agTextColumnFilter" },
-    { field: "Fax", headerName: "Fax", filter: "agTextColumnFilter" },
     { field: "Importance", headerName: "Importance", filter: "agTextColumnFilter", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", "High", "Med", "Low"] } },
     { field: "Note", headerName: "Note", filter: "agTextColumnFilter", editable: true },
   ], []);
@@ -157,7 +164,7 @@ export default function ContactGroupDetailClient({ groupId }: Props) {
             </Link>
           </div>
           <h1 className={styles.heading}>
-            Contact Group {groupId} - Members
+            {description || `Contact Group ${groupId}`} - Members
           </h1>
           <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
             <button
@@ -197,6 +204,7 @@ export default function ContactGroupDetailClient({ groupId }: Props) {
         confirmLabel={adding ? 'Adding…' : `Add Selected (${selectedContactIds.size})`}
         saving={adding}
         error={null}
+        cardClassName={modalStyles.cardWide}
       >
         <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
           <input
@@ -223,7 +231,7 @@ export default function ContactGroupDetailClient({ groupId }: Props) {
         </div>
 
         {searchResults.length > 0 && (
-          <div style={{ maxHeight: '350px', overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '13px' }}>
+          <div style={{ overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '13px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f1f5f9', position: 'sticky', top: 0 }}>
