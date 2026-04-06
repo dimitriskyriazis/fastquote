@@ -32,6 +32,7 @@ type Props = {
 
 export default function MailContactsClient({ mailId, description }: Props) {
   const [refreshToken, setRefreshToken] = useState(0);
+  const [exporting, setExporting] = useState(false);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<AvailableContact[]>([]);
@@ -102,6 +103,37 @@ export default function MailContactsClient({ mailId, description }: Props) {
     }
   }, [mailId, selectedContactIds]);
 
+  const handleExportList = useCallback(async () => {
+    setExporting(true);
+    try {
+      const res = await fetch('/api/marketing/mails/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mailId: Number(mailId) }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null) as { error?: string } | null;
+        showToastMessage(errData?.error ?? 'Export failed', 'error');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `MailCustomerEmailList_${mailId}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToastMessage('Export downloaded', 'success');
+    } catch (err) {
+      console.error('Export failed', err);
+      showToastMessage('Export failed', 'error');
+    } finally {
+      setExporting(false);
+    }
+  }, [mailId]);
+
   const toggleContact = useCallback((contactId: number) => {
     setSelectedContactIds((prev) => {
       const next = new Set(prev);
@@ -171,6 +203,14 @@ export default function MailContactsClient({ mailId, description }: Props) {
             {description || `Mail ${mailId}`} - Contacts List
           </h1>
           <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
+            <button
+              type="button"
+              className="page-header-button"
+              onClick={handleExportList}
+              disabled={exporting}
+            >
+              {exporting ? 'Exporting…' : 'Export List'}
+            </button>
             <button
               type="button"
               className="page-header-button"
