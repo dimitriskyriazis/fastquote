@@ -47,6 +47,16 @@ const formatDiscountValue = (value: number | null | undefined): string => {
   return numberFormatter.format(value);
 };
 
+const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const formatPrice = (value: number | null | undefined): string => {
+  if (value == null || !Number.isFinite(value)) return "";
+  return `${currencyFormatter.format(value)} €`;
+};
+
 export type PreviousPriceListOption = DropdownOption & {
   brandId: number | null;
   brandName: string | null;
@@ -815,6 +825,28 @@ export default function PriceListImportClient({
   const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [importSummary, setImportSummary] = useState<{
+    priceListId: string | null;
+    totalRows: number;
+    createdProductCount: number;
+    matchedProductCount: number;
+    skippedRows: number;
+    priceChanges: Array<{
+      partNumber: string | null;
+      description: string | null;
+      oldListPrice: number | null;
+      newListPrice: number | null;
+      oldCostPrice: number | null;
+      newCostPrice: number | null;
+    }>;
+    newProducts: Array<{
+      partNumber: string | null;
+      description: string | null;
+      listPrice: number | null;
+      costPrice: number | null;
+    }>;
+  } | null>(null);
+  const [summaryTab, setSummaryTab] = useState<"priceChanges" | "newProducts">("priceChanges");
   const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [brandText, setBrandText] = useState(() => {
     if (prefill?.brandId) {
@@ -1761,6 +1793,20 @@ export default function PriceListImportClient({
         totalRows?: number;
         descriptionMismatches?: { productId: number; newDescription: string }[];
         modelNumberMismatches?: { productId: number; newModelNumber: string }[];
+        priceChanges?: Array<{
+          partNumber: string | null;
+          description: string | null;
+          oldListPrice: number | null;
+          newListPrice: number | null;
+          oldCostPrice: number | null;
+          newCostPrice: number | null;
+        }>;
+        newProducts?: Array<{
+          partNumber: string | null;
+          description: string | null;
+          listPrice: number | null;
+          costPrice: number | null;
+        }>;
       };
       const raw = await response.text().catch(() => "");
       const typedPayload: ImportResponse | null = (() => {
@@ -1843,10 +1889,33 @@ export default function PriceListImportClient({
         }
       }
 
-      const targetId =
-        typedPayload.priceListId != null ? encodeURIComponent(String(typedPayload.priceListId)) : null;
-      if (targetId) {
-        router.push(`/price-lists/${targetId}/products`);
+      const hasSummaryData =
+        (typedPayload.priceChanges && typedPayload.priceChanges.length > 0) ||
+        (typedPayload.newProducts && typedPayload.newProducts.length > 0);
+
+      if (hasSummaryData) {
+        const targetId =
+          typedPayload.priceListId != null ? String(typedPayload.priceListId) : null;
+        setImportSummary({
+          priceListId: targetId,
+          totalRows: typedPayload.totalRows ?? 0,
+          createdProductCount: typedPayload.createdProductCount ?? 0,
+          matchedProductCount: typedPayload.matchedProductCount ?? 0,
+          skippedRows: typedPayload.skippedRows ?? 0,
+          priceChanges: typedPayload.priceChanges ?? [],
+          newProducts: typedPayload.newProducts ?? [],
+        });
+        setSummaryTab(
+          typedPayload.priceChanges && typedPayload.priceChanges.length > 0
+            ? "priceChanges"
+            : "newProducts",
+        );
+      } else {
+        const targetId =
+          typedPayload.priceListId != null ? encodeURIComponent(String(typedPayload.priceListId)) : null;
+        if (targetId) {
+          router.push(`/price-lists/${targetId}/products`);
+        }
       }
     } catch (err) {
       const rawMessage = err instanceof Error ? err.message : "";
@@ -1916,6 +1985,7 @@ export default function PriceListImportClient({
                     </span>
                     <button
                       type="button"
+                      tabIndex={-1}
                       className={lookupButtonStyles.lookupAddButton}
                       onClick={() => setIsAddBrandOpen(true)}
                     >
@@ -1950,6 +2020,7 @@ export default function PriceListImportClient({
                         <button
                           key={option.value}
                           type="button"
+                          tabIndex={-1}
                           className={styles.comboOption}
                           onMouseDown={(event) => event.preventDefault()}
                           onClick={() => {
@@ -2001,6 +2072,7 @@ export default function PriceListImportClient({
                   >
                     <button
                       type="button"
+                      tabIndex={-1}
                       className={`${styles.buttonSecondary} ${styles.rulePickerButton}`}
                       onClick={() => {
                         if (!hasBrandSelection) {
@@ -2043,6 +2115,7 @@ export default function PriceListImportClient({
                     </span>
                     <button
                       type="button"
+                      tabIndex={-1}
                       className={lookupButtonStyles.lookupAddButton}
                       onClick={() => setIsAddSupplierOpen(true)}
                     >
@@ -2092,6 +2165,7 @@ export default function PriceListImportClient({
                           <button
                             key={option.value}
                             type="button"
+                            tabIndex={-1}
                             className={styles.comboOption}
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => handleCountrySelect(option)}
@@ -2337,6 +2411,7 @@ export default function PriceListImportClient({
                                 <span>Multi-select</span>
                                 <button
                                   type="button"
+                                  tabIndex={-1}
                                   className={`${styles.toggleSwitch} ${multiSelectEnabled ? styles.toggleSwitchOn : ""}`}
                                   onClick={() => setMultiSelectEnabled((prev) => !prev)}
                                 >
@@ -2351,6 +2426,7 @@ export default function PriceListImportClient({
                                 return (
                                   <button
                                     type="button"
+                                    tabIndex={-1}
                                     key={sheet.name || idx}
                                     className={`${styles.sheetTab} ${isActive ? styles.sheetTabActive : ""} ${included ? styles.sheetTabIncluded : ""}`}
                                     onClick={() => {
@@ -2368,6 +2444,7 @@ export default function PriceListImportClient({
                                     {multiSelectEnabled && fileValidation.sheets.length > 1 ? (
                                       <input
                                         type="checkbox"
+                                        tabIndex={-1}
                                         checked={included}
                                         className={styles.sheetTabCheckbox}
                                         onChange={(e) => {
@@ -2832,6 +2909,193 @@ export default function PriceListImportClient({
               }
               return null;
             })()}
+          </div>
+        </div>
+      ) : null}
+      {importSummary ? (
+        <div className={styles.summaryOverlay}>
+          <div className={styles.summaryCard}>
+            <div className={styles.summaryHeader}>
+              <div className={styles.summaryTitle}>Import Summary</div>
+              <button
+                type="button"
+                className={styles.sheetSelectorClose}
+                aria-label="Close dialog"
+                onClick={() => {
+                  const targetId = importSummary.priceListId;
+                  setImportSummary(null);
+                  if (targetId) {
+                    router.push(`/price-lists/${encodeURIComponent(targetId)}/products`);
+                  }
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div className={styles.summaryStats}>
+              <span className={styles.summaryStat}>
+                Total: <span className={styles.summaryStatValue}>{importSummary.totalRows}</span>
+              </span>
+              <span className={styles.summaryStat}>
+                New: <span className={styles.summaryStatValue}>{importSummary.createdProductCount}</span>
+              </span>
+              <span className={styles.summaryStat}>
+                Matched: <span className={styles.summaryStatValue}>{importSummary.matchedProductCount}</span>
+              </span>
+              <span className={styles.summaryStat}>
+                Skipped: <span className={styles.summaryStatValue}>{importSummary.skippedRows}</span>
+              </span>
+            </div>
+            <div className={styles.summaryTabs}>
+              <button
+                type="button"
+                className={`${styles.summaryTab} ${summaryTab === "priceChanges" ? styles.summaryTabActive : ""}`}
+                onClick={() => setSummaryTab("priceChanges")}
+              >
+                Price Changes
+                <span className={styles.summaryTabBadge}>{importSummary.priceChanges.length}</span>
+              </button>
+              <button
+                type="button"
+                className={`${styles.summaryTab} ${summaryTab === "newProducts" ? styles.summaryTabActive : ""}`}
+                onClick={() => setSummaryTab("newProducts")}
+              >
+                New Products
+                <span className={styles.summaryTabBadge}>{importSummary.newProducts.length}</span>
+              </button>
+            </div>
+            <div className={styles.summaryBody}>
+              {summaryTab === "priceChanges" ? (
+                importSummary.priceChanges.length > 0 ? (
+                  <div className={styles.summaryTableWrapper}>
+                    <table className={styles.summaryTable}>
+                      <thead>
+                        <tr>
+                          <th>Part Number</th>
+                          <th>Description</th>
+                          <th style={{ textAlign: "right" }}>Old List</th>
+                          <th style={{ textAlign: "right" }}>New List</th>
+                          <th style={{ textAlign: "right" }}>List %</th>
+                          <th style={{ textAlign: "right" }}>Old Cost</th>
+                          <th style={{ textAlign: "right" }}>New Cost</th>
+                          <th style={{ textAlign: "right" }}>Cost %</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importSummary.priceChanges.map((item, idx) => {
+                          const listDiff =
+                            item.oldListPrice != null && item.newListPrice != null
+                              ? item.newListPrice - item.oldListPrice
+                              : null;
+                          const listPct =
+                            listDiff != null && item.oldListPrice
+                              ? (listDiff / item.oldListPrice) * 100
+                              : null;
+                          const costDiff =
+                            item.oldCostPrice != null && item.newCostPrice != null
+                              ? item.newCostPrice - item.oldCostPrice
+                              : null;
+                          const costPct =
+                            costDiff != null && item.oldCostPrice
+                              ? (costDiff / item.oldCostPrice) * 100
+                              : null;
+                          return (
+                            <tr key={idx}>
+                              <td>{item.partNumber ?? ""}</td>
+                              <td>{item.description ?? ""}</td>
+                              <td className={styles.summaryPriceValue}>
+                                {formatPrice(item.oldListPrice)}
+                              </td>
+                              <td className={styles.summaryPriceValue}>
+                                {formatPrice(item.newListPrice)}
+                              </td>
+                              <td
+                                className={`${styles.summaryPriceValue} ${
+                                  listDiff != null && listDiff > 0
+                                    ? styles.summaryPriceUp
+                                    : listDiff != null && listDiff < 0
+                                      ? styles.summaryPriceDown
+                                      : ""
+                                }`}
+                              >
+                                {listPct != null
+                                  ? `${listPct > 0 ? "+" : ""}${listPct.toFixed(1)}%`
+                                  : ""}
+                              </td>
+                              <td className={styles.summaryPriceValue}>
+                                {formatPrice(item.oldCostPrice)}
+                              </td>
+                              <td className={styles.summaryPriceValue}>
+                                {formatPrice(item.newCostPrice)}
+                              </td>
+                              <td
+                                className={`${styles.summaryPriceValue} ${
+                                  costDiff != null && costDiff > 0
+                                    ? styles.summaryPriceUp
+                                    : costDiff != null && costDiff < 0
+                                      ? styles.summaryPriceDown
+                                      : ""
+                                }`}
+                              >
+                                {costPct != null
+                                  ? `${costPct > 0 ? "+" : ""}${costPct.toFixed(1)}%`
+                                  : ""}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className={styles.summaryEmpty}>No price changes detected.</div>
+                )
+              ) : importSummary.newProducts.length > 0 ? (
+                <div className={styles.summaryTableWrapper}>
+                  <table className={styles.summaryTable}>
+                    <thead>
+                      <tr>
+                        <th>Part Number</th>
+                        <th>Description</th>
+                        <th style={{ textAlign: "right" }}>List Price</th>
+                        <th style={{ textAlign: "right" }}>Cost Price</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importSummary.newProducts.map((item, idx) => (
+                        <tr key={idx}>
+                          <td>{item.partNumber ?? ""}</td>
+                          <td>{item.description ?? ""}</td>
+                          <td className={styles.summaryPriceValue}>
+                            {formatPrice(item.listPrice)}
+                          </td>
+                          <td className={styles.summaryPriceValue}>
+                            {formatPrice(item.costPrice)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className={styles.summaryEmpty}>No new products.</div>
+              )}
+            </div>
+            <div className={styles.summaryFooter}>
+              <button
+                type="button"
+                className={styles.submitButton}
+                onClick={() => {
+                  const targetId = importSummary.priceListId;
+                  setImportSummary(null);
+                  if (targetId) {
+                    router.push(`/price-lists/${encodeURIComponent(targetId)}/products`);
+                  }
+                }}
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

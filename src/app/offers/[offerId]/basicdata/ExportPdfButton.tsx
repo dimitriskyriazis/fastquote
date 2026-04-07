@@ -73,6 +73,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
   const [printCategories, setPrintCategories] = useState(false);
   const [printSubCategories, setPrintSubCategories] = useState(false);
   const [printSubSubCategories, setPrintSubSubCategories] = useState(false);
+  const [smallOffer, setSmallOffer] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -188,7 +189,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
       setIsExporting(true);
       try {
         const columnsParam = encodeURIComponent(selectedColumns.join(','));
-        const printParams = `&printProducts=${printProducts ? '1' : '0'}&printCategories=${printCategories ? '1' : '0'}&printSubCategories=${printSubCategories ? '1' : '0'}&printSubSubCategories=${printSubSubCategories ? '1' : '0'}`;
+        const printParams = `&printProducts=${printProducts ? '1' : '0'}&printCategories=${printCategories ? '1' : '0'}&printSubCategories=${printSubCategories ? '1' : '0'}&printSubSubCategories=${printSubSubCategories ? '1' : '0'}&smallOffer=${smallOffer ? '1' : '0'}`;
         const res = await fetch(
           `/api/offers/${encodeURIComponent(offerId)}/pdf?lang=${selectedLang}&orientation=${orientation}&columns=${columnsParam}${printParams}`,
         );
@@ -212,7 +213,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
         setIsExporting(false);
       }
     },
-    [offerId, selectedColumns, selectedLang, printProducts, printCategories, printSubCategories, printSubSubCategories],
+    [offerId, selectedColumns, selectedLang, printProducts, printCategories, printSubCategories, printSubSubCategories, smallOffer],
   );
 
   const handlePreviewClose = useCallback(() => {
@@ -493,7 +494,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                     letterSpacing: '0.05em',
                   }}
                 >
-                  &larr; Columns
+                  &larr; Totals
                 </button>
               </div>
               <div style={{ padding: '4px 16px 2px', fontSize: 11, color: '#64748b' }}>
@@ -565,7 +566,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                     letterSpacing: '0.05em',
                   }}
                 >
-                  &larr; {selectedColumns.includes('unitPrice') || selectedColumns.includes('total') ? (noOfLevels > 0 ? 'Totals' : 'Columns') : 'Columns'}
+                  &larr; Language
                 </button>
               </div>
               <button
@@ -607,9 +608,16 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                     letterSpacing: '0.05em',
                   }}
                 >
-                  &larr; Language
+                  &larr; Orientation
                 </button>
               </div>
+              <div style={{ padding: '6px 16px 10px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={smallOffer} onChange={(e) => setSmallOffer(e.target.checked)} />
+                  <span>Small Offer <span style={{ fontSize: 11, color: '#64748b' }}>(no cover page)</span></span>
+                </label>
+              </div>
+              <div style={{ borderTop: '1px solid #e5e7eb' }} />
               <button
                 type="button"
                 onClick={() => handleExport('portrait')}

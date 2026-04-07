@@ -26,6 +26,7 @@ import LookupModal from '../components/LookupModal';
 import { showToastMessage } from '../../lib/toast';
 import { formatBooleanValue } from '../lib/formatBooleanValue';
 import { formatDateUK } from '../lib/formatDateTime';
+import UKDatePicker from '../components/DatePicker';
 import { normalizeBoolean } from '../../lib/normalizeBoolean';
 import { useUndoStack } from '../hooks/useUndoStack';
 import { pushCellEditUndo, makePatternAUndoFn } from '../../lib/undoHelpers';
@@ -590,11 +591,9 @@ export default function MailsClient() {
             <label style={{ display: 'block', marginBottom: '4px', fontSize: '13px', fontWeight: 500 }}>
               Date
             </label>
-            <input
-              type="date"
-              style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '13px' }}
+            <UKDatePicker
               value={mailForm.date}
-              onChange={(e) => setMailField("date", e.target.value)}
+              onChange={(val) => setMailField("date", val)}
             />
           </div>
           <div>

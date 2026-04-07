@@ -287,7 +287,7 @@ export default function BrandOffersClient({ brands }: Props) {
               />
             ) : (
               <div className={styles.emptyState}>
-                Select a brand to view open offers
+                Select a brand from the top-left dropdown menu to view open offers.
               </div>
             )}
           </div>

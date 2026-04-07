@@ -982,6 +982,33 @@ export async function POST(req: NextRequest) {
       }
     });
 
+    // Load previous prices for import summary comparison
+    const previousPriceMap = new Map<number, { listPrice: number | null; costPrice: number | null }>();
+    {
+      let comparePriceListId = previousPriceListId;
+      if (!comparePriceListId) {
+        const latestReq = pool.request();
+        latestReq.input("BrandID_cmp", sql.Int, brandId);
+        const latestResult = await latestReq.query<{ ID: number }>(`
+          SELECT TOP 1 ID FROM dbo.PriceLists
+          WHERE BrandID = @BrandID_cmp AND Enabled = 1
+          ORDER BY CreatedOn DESC
+        `);
+        comparePriceListId = latestResult.recordset?.[0]?.ID ?? null;
+      }
+      if (comparePriceListId) {
+        const prevReq = pool.request();
+        prevReq.input("PLId_cmp", sql.Int, comparePriceListId);
+        const prevResult = await prevReq.query<{ ProductID: number; ListPrice: number | null; CostPrice: number | null }>(`
+          SELECT ProductID, ListPrice, CostPrice FROM dbo.PriceListItems
+          WHERE PriceListID = @PLId_cmp AND Enabled = 1
+        `);
+        for (const item of prevResult.recordset) {
+          previousPriceMap.set(item.ProductID, { listPrice: item.ListPrice, costPrice: item.CostPrice });
+        }
+      }
+    }
+
     const { relativePath, fileName, absolutePath } = await saveUploadedFile(buffer, file.name, name);
 
     const TransactionCtor = (sql as unknown as {
@@ -1104,6 +1131,20 @@ export async function POST(req: NextRequest) {
       let skippedRows = 0;
       const descriptionMismatches: { productId: number; newDescription: string }[] = [];
       const modelNumberMismatches: { productId: number; newModelNumber: string }[] = [];
+      const newProductDetails: Array<{
+        partNumber: string | null;
+        description: string | null;
+        listPrice: number | null;
+        costPrice: number | null;
+      }> = [];
+      const priceChangeDetails: Array<{
+        partNumber: string | null;
+        description: string | null;
+        oldListPrice: number | null;
+        newListPrice: number | null;
+        oldCostPrice: number | null;
+        newCostPrice: number | null;
+      }> = [];
 
       let legacyUpdatedCount = 0;
 
@@ -1157,6 +1198,12 @@ export async function POST(req: NextRequest) {
         if (!productId) {
           productId = await createProduct(transaction, row, brandId!, auditUserId);
           createdProductCount += 1;
+          newProductDetails.push({
+            partNumber: row.partNumber,
+            description: row.description,
+            listPrice: row.listPrice,
+            costPrice: row.costPrice,
+          });
         }
 
         if (!productId || seenProducts.has(productId)) {
@@ -1166,6 +1213,22 @@ export async function POST(req: NextRequest) {
 
         if (isExistingProduct) {
           matchedProductCount += 1;
+
+          const oldPrice = previousPriceMap.get(productId!);
+          if (oldPrice) {
+            const listChanged = oldPrice.listPrice != null && row.listPrice != null && oldPrice.listPrice !== row.listPrice;
+            const costChanged = oldPrice.costPrice != null && row.costPrice != null && oldPrice.costPrice !== row.costPrice;
+            if (listChanged || costChanged) {
+              priceChangeDetails.push({
+                partNumber: row.partNumber ?? existingProduct?.PartNumber ?? null,
+                description: row.description ?? existingProduct?.Description ?? null,
+                oldListPrice: oldPrice.listPrice,
+                newListPrice: row.listPrice,
+                oldCostPrice: oldPrice.costPrice,
+                newCostPrice: row.costPrice,
+              });
+            }
+          }
 
           // When matched by legacy part number AND a new part number is available,
           // swap old->new part number and store the legacy.
@@ -1273,6 +1336,8 @@ export async function POST(req: NextRequest) {
         totalRows: parsedRows.length,
         descriptionMismatches,
         modelNumberMismatches,
+        priceChanges: priceChangeDetails,
+        newProducts: newProductDetails,
       });
     } catch (err) {
       await transaction.rollback();

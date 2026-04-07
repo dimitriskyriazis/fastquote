@@ -107,6 +107,15 @@ export function AdminIcon({ size = 22 }: IconProps): ReactNode {
   );
 }
 
+export function UserInfoIcon({ size = 22 }: IconProps): ReactNode {
+  return (
+    <svg {...s(size)}>
+      <circle cx="12" cy="8" r="4" stroke="currentColor" strokeWidth="1.6" fill="none" />
+      <path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+    </svg>
+  );
+}
+
 export function MarketingIcon({ size = 22 }: IconProps): ReactNode {
   return (
     <svg {...s(size)}>

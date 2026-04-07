@@ -26,7 +26,7 @@ export type OfferPdfData = {
     taxOffice: string | null;
   };
   contactFullName: string | null;
-  salesPerson: { nameGR: string | null; nameEN: string | null; signTitle: string | null; nameCode: string | null };
+  salesPerson: { nameGR: string | null; nameEN: string | null; signTitle: string | null; nameCode: string | null; email: string | null };
   approvalUser: { nameGR: string | null; nameEN: string | null; signTitle: string | null };
   products: OfferProductRow[];
   terms: {
@@ -79,6 +79,7 @@ const LABELS = {
     refNo: 'Α/Α',
     date: 'Ημερομηνία',
     responsible: 'Αρμόδιος',
+    responsibleEmail: 'Email',
     colNo: 'Α/Α',
     colQty: 'Τεμ',
     colBrand: 'Οίκος',
@@ -118,6 +119,7 @@ const LABELS = {
     refNo: 'Ref No',
     date: 'Date',
     responsible: 'Responsible',
+    responsibleEmail: 'Email',
     colNo: 'No',
     colQty: 'Qty',
     colBrand: 'Brand',
@@ -172,8 +174,8 @@ const COMPANY = {
   email: 'info@telmaco.gr',
   website: 'www.telmaco.gr',
   afm: '094150597',
-  doy: 'ΦΑΕ ΑΘΗΝΩΝ',
-  doyEN: 'FAE ATHINON',
+  doy: 'ΚΕΦΟΔΕ ΑΤΤΙΚΗΣ',
+  doyEN: 'KEFODE ATTIKIS',
 };
 
 const PAGE_MARGINS: Record<PdfOrientation, [number, number, number, number]> = {
@@ -396,6 +398,111 @@ function buildDescriptionCell(
   };
 }
 
+function buildCompactHeader(data: OfferPdfData, L: Labels, lang: PdfLang, orientation: PdfOrientation, logo: string) {
+  const meta = getOfferMeta(data, lang);
+
+  const companyName = lang === 'el' ? COMPANY.name : COMPANY.nameEN;
+  const companyAddress = lang === 'el' ? COMPANY.address : COMPANY.addressEN;
+  const companyPhone = lang === 'en' ? `+30 ${COMPANY.phone}` : COMPANY.phone;
+  const taxLine =
+    lang === 'el'
+      ? `ΑΦΜ: ${COMPANY.afm}, ΔΟΥ: ${COMPANY.doy}`
+      : `Tax ID: ${COMPANY.afm}, Tax Office: ${COMPANY.doyEN}`;
+
+  const salesEmail = str(data.salesPerson.email);
+  const leftInfo = [
+    { label: L.to, value: meta.customerName || '-' },
+    { label: L.attn, value: meta.attn },
+    { label: L.address, value: str(data.customer.address) },
+    { label: L.phone, value: str(data.customer.phone) },
+    { label: L.taxId, value: str(data.customer.taxId) },
+  ].filter((r) => r.value);
+
+  const rightInfo = [
+    { label: L.refNo, value: meta.refNo },
+    { label: L.date, value: meta.date },
+    { label: L.responsible, value: meta.salesName || '-' },
+    ...(salesEmail ? [{ label: L.responsibleEmail, value: salesEmail }] : []),
+  ];
+
+  const compactStyle = { fontSize: 7.5, color: COLORS.secondaryText };
+  const compactValue = { fontSize: 8, color: COLORS.primaryText, bold: true };
+
+  return [
+    {
+      columns: [
+        { width: 'auto', image: logo, fit: INNER_LOGO_FIT[orientation] },
+        {
+          width: '*',
+          stack: [
+            { text: `${companyName}  |  ${companyAddress}`, ...compactStyle, alignment: 'right' },
+            { text: `${companyPhone} | ${COMPANY.email} | ${COMPANY.website}`, ...compactStyle, alignment: 'right', margin: [0, 1, 0, 0] },
+            { text: taxLine, ...compactStyle, alignment: 'right', margin: [0, 1, 0, 0] },
+          ],
+        },
+      ],
+    },
+    {
+      canvas: [
+        {
+          type: 'line',
+          x1: 0,
+          y1: 0,
+          x2: innerContentWidth(orientation),
+          y2: 0,
+          lineWidth: 1,
+          lineColor: COLORS.accentRed,
+        },
+      ],
+      margin: [0, 6, 0, 6],
+    },
+    {
+      margin: [0, 0, 0, 10],
+      table: {
+        widths: ['*', '*'],
+        body: [
+          [
+            {
+              table: {
+                widths: [54, '*'],
+                body:
+                  leftInfo.length > 0
+                    ? leftInfo.map((row) => [
+                        { text: row.label, ...compactStyle },
+                        { text: row.value, ...compactValue },
+                      ])
+                    : [[{ text: '', ...compactStyle }, { text: '', ...compactValue }]],
+              },
+              layout: 'noBorders',
+              margin: [4, 2, 4, 2],
+            },
+            {
+              table: {
+                widths: [66, '*'],
+                body: rightInfo.map((row) => [
+                  { text: row.label, ...compactStyle },
+                  { text: row.value, ...compactValue },
+                ]),
+              },
+              layout: 'noBorders',
+              margin: [4, 2, 4, 2],
+            },
+          ],
+        ],
+      },
+      layout: {
+        fillColor: () => COLORS.lightBg,
+        hLineWidth: () => 0,
+        vLineWidth: () => 0,
+        paddingLeft: () => 6,
+        paddingRight: () => 6,
+        paddingTop: () => 4,
+        paddingBottom: () => 4,
+      },
+    },
+  ];
+}
+
 function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientation: PdfOrientation, logo: string) {
   const meta = getOfferMeta(data, lang);
   const isLandscape = orientation === 'landscape';
@@ -409,14 +516,17 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
     { label: L.taxId, value: str(data.customer.taxId) },
   ].filter((r) => r.value);
 
+  const salesEmail = str(data.salesPerson.email);
   const rightInfo = [
     { label: L.refNo, value: meta.refNo },
     { label: L.date, value: meta.date },
     { label: L.responsible, value: meta.salesName || '-' },
+    ...(salesEmail ? [{ label: L.responsibleEmail, value: salesEmail }] : []),
   ];
 
   const companyName = lang === 'el' ? COMPANY.name : COMPANY.nameEN;
   const companyAddress = lang === 'el' ? COMPANY.address : COMPANY.addressEN;
+  const companyPhone = lang === 'en' ? `+30 ${COMPANY.phone}` : COMPANY.phone;
   const taxLine =
     lang === 'el'
       ? `ΑΦΜ: ${COMPANY.afm}, ΔΟΥ: ${COMPANY.doy}`
@@ -431,7 +541,7 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
           stack: [
             { text: companyName, style: 'secondary', alignment: 'right' },
             { text: companyAddress, style: 'secondary', alignment: 'right', margin: [0, 2, 0, 0] },
-            { text: `${COMPANY.phone} | ${COMPANY.email}`, style: 'secondary', alignment: 'right', margin: [0, 2, 0, 0] },
+            { text: `${companyPhone} | ${COMPANY.email}`, style: 'secondary', alignment: 'right', margin: [0, 2, 0, 0] },
             { text: COMPANY.website, style: 'secondary', alignment: 'right', margin: [0, 2, 0, 0] },
             { text: taxLine, style: 'secondary', alignment: 'right', margin: [0, 2, 0, 0] },
           ],
@@ -940,6 +1050,7 @@ function buildTotalsAndTerms(
   L: Labels,
   orientation: PdfOrientation,
   selectedColumns: PdfProductColumn[],
+  smallOffer: boolean = false,
 ) {
   const showDiscountSummary = selectedColumns.includes('discount');
   const discountSummary = calculateDiscountSummary(data);
@@ -1029,7 +1140,7 @@ function buildTotalsAndTerms(
   blocks.push({
       text: L.termsTitle,
       style: 'h2',
-      pageBreak: 'before',
+      ...(smallOffer ? {} : { pageBreak: 'before' as const }),
       margin: [0, 10, 0, 10],
     });
 
@@ -1120,6 +1231,7 @@ export async function generateOfferPdf(
   orientation: PdfOrientation = 'portrait',
   selectedColumns: PdfProductColumn[] = DEFAULT_PDF_PRODUCT_COLUMNS,
   printSettings: PdfPrintSettings | null = null,
+  smallOffer: boolean = false,
 ): Promise<Buffer> {
   ensurePdfmake();
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -1130,7 +1242,7 @@ export async function generateOfferPdf(
   const cols = selectedColumns.length > 0 ? selectedColumns : DEFAULT_PDF_PRODUCT_COLUMNS;
 
   const itemsTable = buildItemsTable(data, L, orientation, cols, printSettings);
-  const totalsAndTerms = buildTotalsAndTerms(data, L, orientation, cols);
+  const totalsAndTerms = buildTotalsAndTerms(data, L, orientation, cols, smallOffer);
   const openingNote = str(data.notesIntroduction)
     ? [
         { text: fixObviousTypos(str(data.notesIntroduction)), style: 'body', margin: [0, 0, 0, 8] },
@@ -1179,6 +1291,10 @@ export async function generateOfferPdf(
     pageMargins: PAGE_MARGINS[orientation],
 
     header: (currentPage: number) => {
+      if (smallOffer) {
+        if (currentPage <= 1) return null;
+        return buildHeaderFull(data, L, lang, orientation, logo);
+      }
       if (currentPage === 1) return null;
       return buildHeaderFull(data, L, lang, orientation, logo);
     },
@@ -1191,7 +1307,9 @@ export async function generateOfferPdf(
     }),
 
     content: [
-      ...buildCoverPage(data, L, lang, orientation, logo),
+      ...(smallOffer
+        ? buildCompactHeader(data, L, lang, orientation, logo)
+        : buildCoverPage(data, L, lang, orientation, logo)),
       ...openingNote,
       itemsTable,
       ...totalsAndTerms,

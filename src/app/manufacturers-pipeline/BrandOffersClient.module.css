@@ -106,8 +106,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-muted, #475569);
-  font-size: 0.9375rem;
+  color: #94a3b8;
+  font-size: 1rem;
 }
 
 /* View Details button in grid row */

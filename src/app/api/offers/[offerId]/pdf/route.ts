@@ -34,6 +34,7 @@ type OfferHeaderRow = {
   ApprovalUserSignTitle: string | null;
   SalesDivisionName: string | null;
   SalesPersonNameCode: string | null;
+  SalesPersonEmail: string | null;
 };
 
 type ProductRow = {
@@ -85,6 +86,7 @@ export async function GET(
     const printCategories = req.nextUrl.searchParams.get('printCategories') === '1' ? 1 : 0;
     const printSubCategories = req.nextUrl.searchParams.get('printSubCategories') === '1' ? 1 : 0;
     const printSubSubCategories = req.nextUrl.searchParams.get('printSubSubCategories') === '1' ? 1 : 0;
+    const smallOffer = req.nextUrl.searchParams.get('smallOffer') === '1';
 
     const pool = await getPool();
 
@@ -121,6 +123,7 @@ export async function GET(
           sales.FullNameGR AS SalesPersonNameGR,
           sales.SignTitle AS SalesPersonSignTitle,
           sales.NameCode AS SalesPersonNameCode,
+          sales.Email AS SalesPersonEmail,
           approver.FullName AS ApprovalUserNameEN,
           approver.FullNameGR AS ApprovalUserNameGR,
           approver.SignTitle AS ApprovalUserSignTitle,
@@ -250,6 +253,7 @@ export async function GET(
         nameEN: header.SalesPersonNameEN,
         signTitle: header.SalesPersonSignTitle,
         nameCode: header.SalesPersonNameCode,
+        email: header.SalesPersonEmail,
       },
       approvalUser: {
         nameGR: header.ApprovalUserNameGR,
@@ -276,7 +280,7 @@ export async function GET(
       printSubSubCategories: !!printSubSubCategories,
     };
 
-    const buffer = await generateOfferPdf(pdfData, lang, orientation, productColumns, pdfPrintSettings);
+    const buffer = await generateOfferPdf(pdfData, lang, orientation, productColumns, pdfPrintSettings, smallOffer);
 
     const customerSlug = (header.CustomerName ?? 'Offer')
       .replace(/[^a-zA-Z0-9\u0370-\u03FF\u0400-\u04FF _-]/g, '')
