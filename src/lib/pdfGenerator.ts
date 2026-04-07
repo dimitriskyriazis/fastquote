@@ -285,7 +285,7 @@ function fixObviousTypos(text: string): string {
 
 function getLogoBase64(): string {
   if (_logoBase64) return _logoBase64;
-  const logoPath = path.join(process.cwd(), 'src', 'app', 'telmaco.jpg');
+  const logoPath = path.join(process.cwd(), 'public', 'telmaco.jpg');
   const buf = fs.readFileSync(logoPath);
   _logoBase64 = `data:image/jpeg;base64,${buf.toString('base64')}`;
   return _logoBase64;

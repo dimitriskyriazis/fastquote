@@ -1,6 +1,6 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import telmacoLogo from './telmaco.jpg';
+const telmacoLogo = '/telmaco.jpg';
 import styles from './page.module.css';
 import DashboardStats from './DashboardStats';
 import RecentOffersSection from './RecentOffersSection';

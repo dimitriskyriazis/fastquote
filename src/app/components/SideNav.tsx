@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -136,7 +137,14 @@ export default function SideNav({ initialCollapsed = false }: SideNavProps) {
             </svg>
           </span>
         </button>
-        <span className="side-nav__brand">FastQuote</span>
+        <Image
+          src="/telmaco_logo_transparent_negative.png"
+          alt="Telmaco"
+          width={110}
+          height={28}
+          className="side-nav__brand"
+          priority
+        />
       </div>
       <button
         type="button"
