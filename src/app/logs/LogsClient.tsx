@@ -2,7 +2,7 @@
 
 import React, { useMemo } from "react";
 import dynamic from "next/dynamic";
-import Link from "next/link";
+
 import type { ColDef } from "ag-grid-community";
 import styles from "./LogsClient.module.css";
 import PageHeader from "../components/PageHeader";
@@ -126,23 +126,14 @@ export default function LogsClient() {
   if (!canAccess) return <AccessDeniedPage />;
 
   return (
-    <GridQuickSearchProvider>
-      <main className={styles.page}>
-        <PageHeader
-          title="Logs"
-          rightActions={
-            <Link
-              href="/user-management"
-              className="page-header-button"
-            >
-              View User Management
-            </Link>
-          }
-        />
-        <div className={styles.gridFrame}>
-          <AgGridAll endpoint="/api/logs" columnDefs={columnDefs} disableAutoSize />
-        </div>
-      </main>
-    </GridQuickSearchProvider>
+    <main className={styles.page}>
+      <PageHeader title="Logs">
+        <GridQuickSearchProvider>
+          <div className={styles.gridFrame}>
+            <AgGridAll endpoint="/api/logs" columnDefs={columnDefs} disableAutoSize />
+          </div>
+        </GridQuickSearchProvider>
+      </PageHeader>
+    </main>
   );
 }
