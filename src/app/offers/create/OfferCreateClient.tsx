@@ -136,6 +136,8 @@ const requiredFieldIds: Array<keyof FormValues> = [
   'marketId',
   'salesDivisionId',
   'salesCreationPersonId',
+  'salesPersonId',
+  'approvalUserId',
 ];
 
 const toNumberOrNull = (value: string): number | null => {
@@ -244,6 +246,12 @@ export default function OfferCreateClient({
     return salesUsers.some((user) => user.value === suggestedUserId) ? suggestedUserId : '';
   }, [defaultValues.suggestedUserId, salesUsers]);
 
+  const defaultApprovalUserId = useMemo(() => {
+    const suggestedUserId = (defaultValues.suggestedUserId ?? '').trim();
+    if (!suggestedUserId) return '';
+    return approvalUsers.some((user) => user.value === suggestedUserId) ? suggestedUserId : '';
+  }, [defaultValues.suggestedUserId, approvalUsers]);
+
   const initialValues = useMemo<FormValues>(() => ({
     title: 'Financial Proposal',
     description: '',
@@ -262,7 +270,7 @@ export default function OfferCreateClient({
     salesDivisionId: '',
     salesCreationPersonId: defaultSuggestedUserId,
     salesPersonId: defaultSuggestedUserId,
-    approvalUserId: '',
+    approvalUserId: defaultApprovalUserId,
     projectCode: '',
     erpFwcProjectId: '',
     customerRef: '',
@@ -283,6 +291,7 @@ export default function OfferCreateClient({
     defaultValues.deliveryTime,
     defaultValues.offerValidity,
     defaultValues.paymentTerms,
+    defaultApprovalUserId,
   ]);
 
   const [values, setValues] = useState<FormValues>(initialValues);
@@ -635,7 +644,7 @@ export default function OfferCreateClient({
       marketId: toNumberOrNull(values.marketId),
       salesDivisionId: toNumberOrNull(values.salesDivisionId),
       salesCreationPersonId: toNullableString(values.salesCreationPersonId),
-      salesPersonId: toNullableString(values.salesPersonId) ?? toNullableString(values.salesCreationPersonId),
+      salesPersonId: toNullableString(values.salesPersonId),
       approvalUserId: toNullableString(values.approvalUserId),
       installationSchedule: toNullableString(values.installationSchedule),
       closingNote: toNullableString(values.closingNote),
@@ -698,8 +707,8 @@ export default function OfferCreateClient({
       { id: 'marketId', label: 'Market', section: 'commercial', required: true, type: 'select', options: localMarkets },
       { id: 'salesDivisionId', label: 'Sales Division', section: 'commercial', required: true, type: 'select', options: localSalesDivisions },
       { id: 'salesCreationPersonId', label: 'Sales Creation Person', section: 'commercial', required: true, type: 'select', options: salesUsers, readOnly: true },
-      { id: 'salesPersonId', label: 'Sales Person', section: 'commercial', type: 'select', options: salesUsers },
-      { id: 'approvalUserId', label: 'Approval User', section: 'commercial', type: 'select', options: approvalUsers },
+      { id: 'salesPersonId', label: 'Sales Person', section: 'commercial', required: true, type: 'select', options: salesUsers },
+      { id: 'approvalUserId', label: 'Approval User', section: 'commercial', required: true, type: 'select', options: approvalUsers },
 
       { id: 'projectCode', label: 'ERP Project Code', section: 'code' },
       { id: 'erpFwcProjectId', label: 'ERP FWC Project', section: 'code', type: 'select', options: localFwcProjects },

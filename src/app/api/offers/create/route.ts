@@ -90,8 +90,7 @@ export async function POST(req: NextRequest) {
   const auditUserId = resolveAuditUserId(req);
   const salesCreationPersonId =
     normalizeUserId(body?.salesCreationPersonId) ?? auditUserId ?? null;
-  const salesPersonId =
-    normalizeUserId(body?.salesPersonId) ?? salesCreationPersonId ?? auditUserId ?? null;
+  const salesPersonId = normalizeUserId(body?.salesPersonId);
   const salesManagerId = salesCreationPersonId;
   const erpProjectCode = body?.projectCode?.trim() || null;
   const erpFwcProjectId = normalizeInt(body?.erpFwcProjectId);
@@ -122,6 +121,7 @@ export async function POST(req: NextRequest) {
     if (!salesDivisionId) errors.push('Sales division is required.');
     if (!salesCreationPersonId) errors.push('Sales creation person is required.');
     if (!salesPersonId) errors.push('Sales person is required.');
+    if (!approvalUserId) errors.push('Approval user is required.');
     if (probabilityWasProvided && normalizedProbability == null) {
       errors.push('Probability must be an integer between 0 and 100.');
     }
