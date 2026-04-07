@@ -17,7 +17,8 @@ export type Permission =
   | 'manageMarkets'
   | 'createOffers'
   | 'editOffers'
-  | 'manageCustomersContacts';
+  | 'manageCustomersContacts'
+  | 'manageMarketing';
 
 export const APP_ROLE_ORDER: readonly AppRole[] = [
   'Developer',

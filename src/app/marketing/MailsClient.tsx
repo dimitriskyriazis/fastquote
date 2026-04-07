@@ -394,12 +394,14 @@ export default function MailsClient() {
         headerName: "Description",
         filter: "agTextColumnFilter",
         editable: true,
+        width: 400,
       },
       {
         field: "Note",
         headerName: "Note",
         filter: "agTextColumnFilter",
         editable: true,
+        width: 400,
       },
       {
         field: "IsPresent",

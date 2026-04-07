@@ -15,6 +15,7 @@ import type {
 } from 'ag-grid-community';
 import { GridRowDeletion } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
+import { coerceRoles, roleHasPermission } from '../../../lib/roles';
 import { useAuditUser } from '../../components/AuditUserProvider';
 import PageHeader from '../../components/PageHeader';
 import { GridQuickSearchProvider } from '../../components/GridQuickSearchProvider';
@@ -102,6 +103,7 @@ export default function ContactGroupsClient() {
   const routerRef = useRef(router);
   routerRef.current = router;
   const { roles } = useAuditUser();
+  const canManage = useMemo(() => roleHasPermission(coerceRoles([...roles]), 'manageMarketing'), [roles]);
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const [refreshToken, setRefreshToken] = useState(0);
   const gridApiRef = useRef<GridApi | null>(null);
@@ -145,7 +147,7 @@ export default function ContactGroupsClient() {
           if (!api || typeof api.refreshServerSide !== "function") return;
           try { api.refreshServerSide({ purge: true }); } catch { /* noop */ }
         },
-        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageCustomersContacts'),
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageMarketing'),
       }),
     [roles],
   );
@@ -204,10 +206,10 @@ export default function ContactGroupsClient() {
         cellClass: styles.actionCellContainer,
         cellRenderer: ActionCell,
       },
-      { field: "Description", headerName: "Description", filter: "agTextColumnFilter", editable: true },
-      { field: "Division", headerName: "Division", filter: "agTextColumnFilter", editable: true },
-      { field: "GroupImportance", headerName: "Group Importance", filter: "agTextColumnFilter", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", "High", "Med", "Low"] } },
-      { field: "Note", headerName: "Note", filter: "agTextColumnFilter", editable: true },
+      { field: "Description", headerName: "Description", filter: "agTextColumnFilter", editable: canManage, width: 400 },
+      { field: "Division", headerName: "Division", filter: "agTextColumnFilter", editable: canManage },
+      { field: "GroupImportance", headerName: "Group Importance", filter: "agTextColumnFilter", editable: canManage, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", "High", "Med", "Low"] } },
+      { field: "Note", headerName: "Note", filter: "agTextColumnFilter", editable: canManage, width: 400 },
       { field: "TotalCount", headerName: "Total Count", filter: "agNumberColumnFilter", editable: false },
       { field: "Importance1", headerName: "Imp. High", filter: "agNumberColumnFilter", editable: false },
       { field: "Importance2", headerName: "Imp. Med", filter: "agNumberColumnFilter", editable: false },
@@ -221,7 +223,7 @@ export default function ContactGroupsClient() {
           values: ["true", "false"],
           valueFormatter: (params: { value?: unknown }) => formatBooleanValue(params.value),
         },
-        editable: true,
+        editable: canManage,
         cellEditor: "agSelectCellEditor",
         cellEditorParams: { values: enabledOptions },
         valueSetter: (params) => {
@@ -231,7 +233,7 @@ export default function ContactGroupsClient() {
         },
       },
     ],
-    [enabledOptions, ActionCell],
+    [enabledOptions, ActionCell, canManage],
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
@@ -322,9 +324,11 @@ export default function ContactGroupsClient() {
           }
           rightActions={
             <div className={styles.headerActions}>
-              <button type="button" className={`page-header-button ${styles.headerButton}`} onClick={openAddGroup}>
-                Add Contact Group
-              </button>
+              {canManage && (
+                <button type="button" className={`page-header-button ${styles.headerButton}`} onClick={openAddGroup}>
+                  Add Contact Group
+                </button>
+              )}
             </div>
           }
         >

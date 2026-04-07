@@ -202,7 +202,7 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   logRequest(req, '/api/marketing/contact-groups');
   try {
-    const auth = await requirePermission(req, "manageCustomersContacts");
+    const auth = await requirePermission(req, "manageMarketing");
     if (!auth.ok) return auth.response;
 
     const body = await req.json().catch(() => null);
@@ -273,7 +273,7 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   logRequest(req, '/api/marketing/contact-groups');
   try {
-    const auth = await requirePermission(req, "manageCustomersContacts");
+    const auth = await requirePermission(req, "manageMarketing");
     if (!auth.ok) return auth.response;
 
     const body = (await req.json().catch(() => null)) as { ContactGroupIDs?: Array<number | string> } | null;

@@ -12,7 +12,7 @@ type ToMailBody = {
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/marketing/contact-groups/to-mail');
   try {
-    const auth = await requirePermission(req, "manageCustomersContacts");
+    const auth = await requirePermission(req, "manageMarketing");
     if (!auth.ok) return auth.response;
 
     const body = (await req.json().catch(() => null)) as ToMailBody | null;

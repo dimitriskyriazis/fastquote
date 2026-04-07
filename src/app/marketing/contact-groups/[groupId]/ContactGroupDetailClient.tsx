@@ -5,6 +5,8 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import type { ColDef, CellValueChangedEvent } from 'ag-grid-community';
 import { showToastMessage } from '../../../../lib/toast';
+import { useAuditUser } from '../../../components/AuditUserProvider';
+import { coerceRoles, roleHasPermission } from '../../../../lib/roles';
 import LookupModal from '../../../components/LookupModal';
 import modalStyles from '../../../components/LookupModal.module.css';
 import styles from './ContactGroupDetailClient.module.css';
@@ -29,6 +31,8 @@ type Props = {
 };
 
 export default function ContactGroupDetailClient({ groupId, description }: Props) {
+  const { roles } = useAuditUser();
+  const canManage = useMemo(() => roleHasPermission(coerceRoles([...roles]), 'manageMarketing'), [roles]);
   const [refreshToken, setRefreshToken] = useState(0);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -122,9 +126,9 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
     { field: "FirstName", headerName: "First Name", filter: "agTextColumnFilter" },
     { field: "Position", headerName: "Position", filter: "agTextColumnFilter" },
     { field: "Email", headerName: "Email", filter: "agTextColumnFilter" },
-    { field: "Importance", headerName: "Importance", filter: "agTextColumnFilter", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", "High", "Med", "Low"] } },
-    { field: "Note", headerName: "Note", filter: "agTextColumnFilter", editable: true },
-  ], []);
+    { field: "Importance", headerName: "Importance", filter: "agTextColumnFilter", editable: canManage, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", "High", "Med", "Low"] } },
+    { field: "Note", headerName: "Note", filter: "agTextColumnFilter", editable: canManage },
+  ], [canManage]);
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
@@ -167,13 +171,15 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
             {description || `Contact Group ${groupId}`} - Members
           </h1>
           <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
-            <button
-              type="button"
-              className="page-header-button"
-              onClick={() => setAddModalOpen(true)}
-            >
-              Add Customer
-            </button>
+            {canManage && (
+              <button
+                type="button"
+                className="page-header-button"
+                onClick={() => setAddModalOpen(true)}
+              >
+                Add Customer
+              </button>
+            )}
           </div>
         </div>
 

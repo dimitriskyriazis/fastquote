@@ -171,7 +171,7 @@ export async function PATCH(
 ) {
   logRequest(req, '/api/marketing/contact-groups/[groupId]/contacts');
   try {
-    const auth = await requirePermission(req, "manageCustomersContacts");
+    const auth = await requirePermission(req, "manageMarketing");
     if (!auth.ok) return auth.response;
 
     await params;
@@ -218,7 +218,7 @@ export async function DELETE(
 ) {
   logRequest(req, '/api/marketing/contact-groups/[groupId]/contacts');
   try {
-    const auth = await requirePermission(req, "manageCustomersContacts");
+    const auth = await requirePermission(req, "manageMarketing");
     if (!auth.ok) return auth.response;
 
     const { groupId: rawId } = await params;

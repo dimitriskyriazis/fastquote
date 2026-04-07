@@ -10,7 +10,7 @@ export async function POST(
 ) {
   logRequest(req, '/api/marketing/contact-groups/[groupId]/copy');
   try {
-    const auth = await requirePermission(req, "manageCustomersContacts");
+    const auth = await requirePermission(req, "manageMarketing");
     if (!auth.ok) return auth.response;
 
     const { groupId: rawId } = await params;
