@@ -238,9 +238,10 @@ export default function PriceListProductsClient({
       },
       {
         field: "Description",
-        headerName: "Product",
+        headerName: "Product Description",
         filter: "agTextColumnFilter",
         filterParams: TWO_CONDITION_FILTER_PARAMS,
+        width: 400,
       },
       {
         field: "PartNumber",

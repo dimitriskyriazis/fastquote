@@ -306,6 +306,7 @@ export default function ProductsClient() {
       field: "Description",
       headerName: "Description",
       filter: "agTextColumnFilter",
+      width: 400,
       editable: true,
       valueParser: (params) => normalizeEditableValue(params.newValue),
     },

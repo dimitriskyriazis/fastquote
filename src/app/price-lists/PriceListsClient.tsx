@@ -356,7 +356,7 @@ export default function PriceListsClient() {
         cellClass: styles.actionCellContainer,
         cellRenderer: ActionCell,
       },
-      { field: "Name", headerName: "Price List", filter: "agTextColumnFilter" },
+      { field: "Name", headerName: "Price List Name", filter: "agTextColumnFilter" },
       { field: "BrandName", headerName: "Brand", filter: "agTextColumnFilter" },
       { field: "SupplierName", headerName: "Supplier", filter: "agTextColumnFilter", enableRowGroup: true },
       {

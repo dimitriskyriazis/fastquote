@@ -679,7 +679,8 @@ export default function OffersClient() {
     },
     {
       field: 'ModifiedOn',
-      headerName: 'Last Modified',
+      headerName: 'Last Modified (You)',
+      width: 180,
       filter: 'agDateColumnFilter',
       valueFormatter: (params) => formatLastModifiedValue(params.value),
       filterParams: {
