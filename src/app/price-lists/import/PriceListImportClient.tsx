@@ -1791,8 +1791,8 @@ export default function PriceListImportClient({
         matchedProductCount?: number;
         skippedRows?: number;
         totalRows?: number;
-        descriptionMismatches?: { productId: number; newDescription: string }[];
-        modelNumberMismatches?: { productId: number; newModelNumber: string }[];
+        descriptionMismatches?: { productId: number; partNumber: string; oldDescription: string; newDescription: string }[];
+        modelNumberMismatches?: { productId: number; partNumber: string; oldModelNumber: string; newModelNumber: string }[];
         priceChanges?: Array<{
           partNumber: string | null;
           description: string | null;
@@ -1841,6 +1841,10 @@ export default function PriceListImportClient({
           message: `${mismatches.length} product(s) don't match the products' original descriptions. Do you want to overwrite them?`,
           confirmLabel: "Yes",
           cancelLabel: "No",
+          details: {
+            columns: ["Part Number", "Current Description", "New Description"],
+            rows: mismatches.map((m) => [m.partNumber || "-", m.oldDescription || "-", m.newDescription || "-"]),
+          },
         });
         if (confirmed) {
           try {
@@ -1869,6 +1873,10 @@ export default function PriceListImportClient({
           message: `${modelMismatches.length} product(s) don't match the products' original model numbers. Do you want to overwrite them?`,
           confirmLabel: "Yes",
           cancelLabel: "No",
+          details: {
+            columns: ["Part Number", "Current Model", "New Model"],
+            rows: modelMismatches.map((m) => [m.partNumber || "-", m.oldModelNumber || "-", m.newModelNumber || "-"]),
+          },
         });
         if (confirmed) {
           try {
@@ -2917,20 +2925,6 @@ export default function PriceListImportClient({
           <div className={styles.summaryCard}>
             <div className={styles.summaryHeader}>
               <div className={styles.summaryTitle}>Import Summary</div>
-              <button
-                type="button"
-                className={styles.sheetSelectorClose}
-                aria-label="Close dialog"
-                onClick={() => {
-                  const targetId = importSummary.priceListId;
-                  setImportSummary(null);
-                  if (targetId) {
-                    router.push(`/price-lists/${encodeURIComponent(targetId)}/products`);
-                  }
-                }}
-              >
-                ×
-              </button>
             </div>
             <div className={styles.summaryStats}>
               <span className={styles.summaryStat}>
@@ -3084,7 +3078,7 @@ export default function PriceListImportClient({
             <div className={styles.summaryFooter}>
               <button
                 type="button"
-                className={styles.submitButton}
+                className={styles.summaryCloseButton}
                 onClick={() => {
                   const targetId = importSummary.priceListId;
                   setImportSummary(null);

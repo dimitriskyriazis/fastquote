@@ -13,13 +13,13 @@
   position: relative;
   width: min(520px, calc(100% - 32px));
   background: #ffffff;
-  border-radius: 16px;
-  border: 1px solid #dfe3f0;
-  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.35);
+  border-radius: 14px;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.35);
   display: flex;
   flex-direction: column;
   max-height: 90vh;
   overflow: hidden;
+  color: #0f172a;
 }
 
 .header {
@@ -27,17 +27,14 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px 20px;
-  border-bottom: 1px solid #d1d5db;
-  background: #fff5f5;
+  padding: 20px 24px;
+  border-bottom: 1px solid #e5e7eb;
 }
 
 .title {
-  font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: #111827;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #2b2b2b;
 }
 
 .cardWide {
@@ -50,26 +47,29 @@
 }
 
 .closeButton {
-  border: 1px solid #b91c1c;
-  border-radius: 12px;
-  background: #ffffff;
-  color: #b91c1c;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #9ca3af;
   width: 32px;
   height: 32px;
-  font-size: 1.1rem;
-  font-weight: 700;
+  font-size: 1.2rem;
+  font-weight: 500;
   line-height: 1;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 140ms ease, color 140ms ease;
 }
 
 .closeButton:hover {
-  background: #dc2626;
-  color: #ffffff;
-  border-color: #dc2626;
+  background: #f3f4f6;
+  color: #374151;
 }
 
 .body {
-  padding: 16px 20px;
+  padding: 16px 24px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -86,8 +86,6 @@
   font-size: 0.85rem;
   font-weight: 600;
   color: #475569;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
 }
 
 .labelRow {
@@ -169,7 +167,7 @@
 
 .comboOption:hover,
 .comboOption:focus {
-  background: #fff1f2;
+  background: #f3f4f6;
   outline: none;
 }
 
@@ -216,52 +214,53 @@
 }
 
 .footer {
-  padding: 14px 20px;
-  border-top: 1px solid #d1d5db;
+  padding: 16px 24px;
+  border-top: 1px solid #e5e7eb;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 10px;
-  background: #fff5f5;
+}
+
+.footerHint {
+  margin-right: auto;
+  font-size: 0.92rem;
+  color: #dc2626;
+  font-weight: 500;
 }
 
 .cancelButton,
 .confirmButton {
-  border-radius: 999px;
-  padding: 8px 20px;
-  font-size: 0.85rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  border-radius: 9999px;
+  padding: 8px 18px;
+  font-size: 0.95rem;
+  font-weight: 500;
   cursor: pointer;
-  border: 1px solid transparent;
+  border: none;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
 }
 
 .cancelButton {
-  border: 1px solid rgba(15, 23, 42, 0.2);
-  background: #f8fafc;
-  color: #0f172a;
+  background: #d1d5db;
+  color: #1f2937;
 }
 
 .cancelButton:hover {
-  background: #d1d5db;
-  border-color: rgba(15, 23, 42, 0.35);
+  background: #c4c8cd;
 }
 
 .confirmButton {
-  border: 1px solid #111827;
   background: #000000;
   color: #ffffff;
-  box-shadow: 0 6px 12px rgba(17, 24, 39, 0.28);
+  box-shadow: 0 6px 18px rgba(17, 24, 39, 0.35);
 }
 
 .confirmButton:hover {
-  background: #b91c1c;
-  border-color: #b91c1c;
-  box-shadow: 0 8px 16px rgba(185, 28, 28, 0.28);
+  background: #374151;
 }
 
 .confirmButton:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: not-allowed;
   box-shadow: none;
 }

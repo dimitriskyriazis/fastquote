@@ -1129,8 +1129,8 @@ export async function POST(req: NextRequest) {
       let createdProductCount = 0;
       let matchedProductCount = 0;
       let skippedRows = 0;
-      const descriptionMismatches: { productId: number; newDescription: string }[] = [];
-      const modelNumberMismatches: { productId: number; newModelNumber: string }[] = [];
+      const descriptionMismatches: { productId: number; partNumber: string; oldDescription: string; newDescription: string }[] = [];
+      const modelNumberMismatches: { productId: number; partNumber: string; oldModelNumber: string; newModelNumber: string }[] = [];
       const newProductDetails: Array<{
         partNumber: string | null;
         description: string | null;
@@ -1277,14 +1277,14 @@ export async function POST(req: NextRequest) {
           const importDesc = row.description?.trim() || "";
           const existingDesc = existingProduct?.Description?.trim() || "";
           if (importDesc && importDesc.toLowerCase() !== existingDesc.toLowerCase()) {
-            descriptionMismatches.push({ productId: productId!, newDescription: row.description! });
+            descriptionMismatches.push({ productId: productId!, partNumber: existingProduct?.PartNumber || row.partNumber || "", oldDescription: existingDesc, newDescription: row.description! });
           }
 
           // Detect model number mismatches
           const importModel = row.modelNumber?.trim() || "";
           const existingModel = existingProduct?.ModelNumber?.trim() || "";
           if (importModel && existingModel && importModel.toLowerCase() !== existingModel.toLowerCase()) {
-            modelNumberMismatches.push({ productId: productId!, newModelNumber: row.modelNumber! });
+            modelNumberMismatches.push({ productId: productId!, partNumber: existingProduct?.PartNumber || row.partNumber || "", oldModelNumber: existingModel, newModelNumber: row.modelNumber! });
           }
 
           // Update WebLink if provided in the import

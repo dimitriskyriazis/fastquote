@@ -80,12 +80,18 @@ export const showMultiChoiceDialog = async ({
   });
 };
 
+export type ConfirmDialogDetail = {
+  columns: string[];
+  rows: string[][];
+};
+
 export type ConfirmDialogOptions = {
   title?: string;
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
   tone?: 'default' | 'danger';
+  details?: ConfirmDialogDetail;
 };
 
 export const showConfirmDialog = async ({
@@ -94,6 +100,7 @@ export const showConfirmDialog = async ({
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   tone = 'default',
+  details,
 }: ConfirmDialogOptions): Promise<boolean> => {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     return true;
@@ -105,6 +112,9 @@ export const showConfirmDialog = async ({
 
     const dialog = document.createElement('div');
     dialog.className = 'fastquote-confirm-dialog';
+    if (details) {
+      dialog.style.width = 'min(680px, calc(100% - 32px))';
+    }
 
     if (title) {
       const heading = document.createElement('h3');
@@ -117,6 +127,40 @@ export const showConfirmDialog = async ({
     messageEl.className = 'fastquote-confirm-message';
     messageEl.textContent = message;
     dialog.appendChild(messageEl);
+
+    if (details && details.rows.length > 0) {
+      const wrapper = document.createElement('div');
+      wrapper.style.cssText = 'max-height:220px;overflow-y:auto;margin-bottom:16px;border:1px solid #e5e7eb;border-radius:8px;';
+
+      const table = document.createElement('table');
+      table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.85rem;';
+
+      const thead = document.createElement('thead');
+      const headerRow = document.createElement('tr');
+      details.columns.forEach((col) => {
+        const th = document.createElement('th');
+        th.textContent = col;
+        th.style.cssText = 'text-align:left;padding:6px 10px;background:#f3f4f6;border-bottom:1px solid #e5e7eb;font-weight:600;position:sticky;top:0;';
+        headerRow.appendChild(th);
+      });
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      details.rows.forEach((row) => {
+        const tr = document.createElement('tr');
+        row.forEach((cell) => {
+          const td = document.createElement('td');
+          td.textContent = cell;
+          td.style.cssText = 'padding:5px 10px;border-bottom:1px solid #f0f0f0;';
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      wrapper.appendChild(table);
+      dialog.appendChild(wrapper);
+    }
 
     const buttons = document.createElement('div');
     buttons.className = 'fastquote-confirm-buttons';

@@ -22,6 +22,7 @@ type Props = {
   titleClassName?: string;
   bodyClassName?: string;
   footerClassName?: string;
+  footerHint?: React.ReactNode;
   confirmFirst?: boolean;
   draggable?: boolean;
   resizable?: boolean;
@@ -45,6 +46,7 @@ export default function LookupModal({
   titleClassName = '',
   bodyClassName = '',
   footerClassName = '',
+  footerHint,
   confirmFirst = false,
   draggable = true,
   resizable = true,
@@ -136,6 +138,7 @@ export default function LookupModal({
           {error ? <div className={styles.error}>{error}</div> : null}
         </div>
         <div className={`${styles.footer} ${footerClassName}`.trim()}>
+          {footerHint && <div className={styles.footerHint}>{footerHint}</div>}
           {confirmFirst ? (
             <>
               <button

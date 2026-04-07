@@ -1,8 +1,8 @@
 .stepBar {
   display: flex;
   gap: 0;
-  padding: 0 20px 12px;
-  border-bottom: 1px solid #e2e8f0;
+  padding: 0 24px 12px;
+  border-bottom: 1px solid #e5e7eb;
   overflow-x: auto;
 }
 
@@ -10,18 +10,17 @@
   flex: 1;
   text-align: center;
   padding: 8px 4px 10px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #94a3b8;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #9ca3af;
   border-bottom: 2px solid transparent;
   white-space: nowrap;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .stepItemActive {
-  color: #0f172a;
-  border-bottom-color: #dc2626;
+  color: #111827;
+  border-bottom-color: #111827;
+  font-weight: 600;
 }
 
 .stepItemDone {
@@ -30,7 +29,7 @@
 }
 
 .stepContent {
-  padding: 16px 20px;
+  padding: 16px 24px;
   overflow-y: auto;
   max-height: 55vh;
   display: flex;
@@ -45,14 +44,14 @@
   padding: 24px 0;
   justify-content: center;
   font-size: 0.9rem;
-  color: #64748b;
+  color: #6b7280;
 }
 
 .spinner {
   width: 18px;
   height: 18px;
-  border: 2px solid #e2e8f0;
-  border-top-color: #0f172a;
+  border: 2px solid #e5e7eb;
+  border-top-color: #111827;
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }
@@ -62,16 +61,14 @@
 }
 
 .sectionTitle {
-  font-size: 0.8rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #475569;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #374151;
   margin: 0;
 }
 
 .card {
-  border: 1px solid #e2e8f0;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
   padding: 12px 14px;
 }
@@ -92,8 +89,8 @@
 }
 
 .cardGray {
-  border-color: #e2e8f0;
-  background: #f8fafc;
+  border-color: #e5e7eb;
+  background: #f9fafb;
 }
 
 .cardRed {
@@ -106,20 +103,20 @@
   flex-direction: column;
   gap: 4px;
   padding: 14px 16px;
-  border: 2px solid #3b82f6;
+  border: 1px solid #bfdbfe;
   border-radius: 8px;
   background: #eff6ff;
 }
 
 .customerName {
-  font-weight: 700;
+  font-weight: 600;
   font-size: 1rem;
   color: #1e40af;
 }
 
 .customerMeta {
   font-size: 0.85rem;
-  color: #64748b;
+  color: #6b7280;
 }
 
 .table {
@@ -130,18 +127,17 @@
 
 .table th {
   text-align: left;
-  padding: 6px 8px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #475569;
-  border-bottom: 2px solid #e2e8f0;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #374151;
+  background: #f3f4f6;
+  border-bottom: 1px solid #e5e7eb;
 }
 
 .table td {
-  padding: 6px 8px;
-  border-bottom: 1px solid #f1f5f9;
+  padding: 5px 10px;
+  border-bottom: 1px solid #f0f0f0;
   color: #0f172a;
 }
 
@@ -154,7 +150,7 @@
 }
 
 .totalRow td {
-  border-top: 2px solid #0f172a;
+  border-top: 2px solid #111827;
   font-weight: 700;
   padding-top: 8px;
 }
@@ -164,9 +160,7 @@
   padding: 1px 6px;
   border-radius: 4px;
   font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  font-weight: 600;
   vertical-align: middle;
   margin-left: 4px;
 }
@@ -187,14 +181,14 @@
 }
 
 .badgeSkipped {
-  background: #f1f5f9;
-  color: #64748b;
+  background: #f3f4f6;
+  color: #6b7280;
 }
 
 .sectionCount {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #6b7280;
   margin-left: 6px;
 }
 
@@ -210,11 +204,11 @@
   align-items: center;
   gap: 10px;
   font-size: 0.9rem;
-  color: #64748b;
+  color: #6b7280;
 }
 
 .progressItemActive {
-  color: #0f172a;
+  color: #111827;
   font-weight: 600;
 }
 
@@ -241,7 +235,7 @@
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #e2e8f0;
+  background: #e5e7eb;
   margin: 5px;
 }
 
@@ -271,7 +265,7 @@
 
 .successTitle {
   font-size: 1.1rem;
-  font-weight: 700;
+  font-weight: 600;
   color: #15803d;
   margin-bottom: 6px;
 }
@@ -321,6 +315,16 @@
 .noProducts {
   text-align: center;
   padding: 20px;
-  color: #64748b;
+  color: #6b7280;
   font-size: 0.9rem;
+}
+
+.validationHint {
+  font-size: 0.82rem;
+  color: #dc2626;
+  padding: 8px 12px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  text-align: center;
 }

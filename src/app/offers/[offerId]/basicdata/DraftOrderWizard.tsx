@@ -148,6 +148,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   const [userSelections, setUserSelections] = useState<Map<number, { MTRL: number; CODE: string | null }>>(new Map());
   const [confirmedCreates, setConfirmedCreates] = useState<number[]>([]);
   const [matchComplete, setMatchComplete] = useState(false);
+  const [showMatchHint, setShowMatchHint] = useState(false);
 
   // Step 5: Summary
   const [summary, setSummary] = useState<SummaryData | null>(null);
@@ -930,6 +931,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
             </table>
           </div>
         )}
+
       </>
     );
   };
@@ -1083,9 +1085,16 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   const confirmDisabled = isLoading || waitingForCustomerInput || (!canContinue() && !error);
 
   const safeHandleConfirm = useCallback(() => {
-    if (confirmDisabled) return;
+    if (confirmDisabled) {
+      // Show hint if on match-products step and not all selections are made
+      if (currentStep.id === 'match-products' && matchComplete && !isLoading && !error) {
+        setShowMatchHint(true);
+      }
+      return;
+    }
+    setShowMatchHint(false);
     handleConfirm();
-  }, [confirmDisabled, handleConfirm]);
+  }, [confirmDisabled, handleConfirm, currentStep.id, matchComplete, isLoading, error]);
 
   return (
     <LookupModal
@@ -1096,6 +1105,9 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       confirmLabel={getConfirmLabel()}
       cancelLabel={currentStep.id === 'execute' && executionResult ? 'Close' : 'Cancel'}
       saving={isLoading}
+      footerHint={showMatchHint && needsSelection.filter(ns => !userSelections.has(ns.productId)).length > 0
+        ? `Confirm creation for the above (${needsSelection.filter(ns => !userSelections.has(ns.productId)).length}) products before continuing`
+        : undefined}
       cardClassName={lookupStyles.cardWide}
       cardStyle={{ width: 'min(1200px, calc(100% - 32px))', maxWidth: '95vw', maxHeight: '85vh' }}
     >
