@@ -38,8 +38,8 @@ export default function Page() {
             <Image
               src={telmacoLogo}
               alt="Telmaco logo"
-              width={120}
-              height={40}
+              width={480}
+              height={160}
               className={styles.logoImage}
               loading="eager"
             />
