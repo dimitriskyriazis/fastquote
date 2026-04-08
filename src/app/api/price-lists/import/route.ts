@@ -51,6 +51,8 @@ const HEADER_SYNONYMS: Record<HeaderColumnKey, string[]> = {
     "articleno", "article no", "article number", "articlenumber",
     "orderno", "order no", "order number", "ordernumber",
     "code", "catalog", "catalogno", "catalog no",
+    "référence", "références", "réf",
+    "codice", "codigo", "código",
     "κωδικός", "κωδικος", "κωδικοσ",
   ],
   modelNumber: [
@@ -60,16 +62,21 @@ const HEADER_SYNONYMS: Record<HeaderColumnKey, string[]> = {
   ],
   description: [
     "name", "description", "desc", "detail", "details",
+    "designation", "désignation", "produit", "produkt", "producto",
+    "bezeichnung", "beschreibung", "descrizione", "descripción", "descripcion",
     "περιγραφή", "περιγραφη", "όνομα", "ονομα", "ονομασία", "ονομασια",
   ],
   listPrice: [
     "listprice", "list price", "price", "msrp", "rrp",
     "retail", "retailprice", "retail price",
+    "prix", "tarif", "preis", "prezzo", "precio",
     "τιμή", "τιμη", "λιανική", "λιανικη", "κατάλογος", "καταλογος",
   ],
   costPrice: [
     "costprice", "cost price", "cost",
+    "netprice", "net price", "net",
     "κόστος", "κοστος", "τιμή κόστους", "τιμη κοστους",
+    "καθαρή τιμή", "καθαρη τιμη",
   ],
   warning: [
     "warning", "warn", "note", "remark",
@@ -203,6 +210,9 @@ const normalizeHeaderValue = (value: unknown): string | null => {
     .replace(/[|_/\\-]+/g, " ")
     .replace(/\s+/g, " ");
   if (!trimmed) return null;
+  // Skip long sentences — real headers are short labels, not metadata prose
+  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  if (wordCount > 6) return null;
   return trimmed.replace(/[^\p{L}\p{N}]+/gu, "");
 };
 
@@ -361,6 +371,19 @@ const findHeaderRow = (rows: unknown[][]) => {
       );
     });
 
+  const buildColumnMap = (row: unknown[]) => {
+    const columnMap: Partial<Record<HeaderColumnKey, number>> = {};
+    row.forEach((cell, colIdx) => {
+      const normalized = normalizeHeaderValue(cell);
+      if (!normalized) return;
+      (Object.keys(HEADER_SYNONYMS) as HeaderColumnKey[]).forEach((key) => {
+        if (columnMap[key] != null) return;
+        if (matchesHeaderKey(normalized, key)) columnMap[key] = colIdx;
+      });
+    });
+    return columnMap;
+  };
+
   const isLikelyHeaderRow = (row: unknown[]) => {
     const matchedKeys = new Set<HeaderColumnKey>();
     row.forEach((cell) => {
@@ -370,46 +393,49 @@ const findHeaderRow = (rows: unknown[][]) => {
         if (matchesHeaderKey(normalized, key)) matchedKeys.add(key);
       });
     });
-    const hasPart = matchedKeys.has("partNumber");
+    const hasIdentifier = matchedKeys.has("partNumber") || matchedKeys.has("modelNumber");
     const hasSecondary =
-      matchedKeys.has("description") || matchedKeys.has("modelNumber") || matchedKeys.has("listPrice");
-    return hasPart && hasSecondary && matchedKeys.size >= 2;
+      matchedKeys.has("description") || matchedKeys.has("listPrice");
+    return hasIdentifier && hasSecondary && matchedKeys.size >= 2;
   };
 
-  // Prefer the first strongly matching header row to avoid treating data rows as headers.
+  const hasCellVal = (v: unknown) => v !== null && v !== undefined && (typeof v !== "string" || v.trim().length > 0);
+
+  /** Merge two adjacent rows for multi-row header detection. */
+  const mergeRows = (row1: unknown[], row2: unknown[]): unknown[] => {
+    const len = Math.max(row1.length, row2.length);
+    const merged: unknown[] = [];
+    for (let i = 0; i < len; i += 1) {
+      merged[i] = hasCellVal(row1[i]) ? row1[i] : row2[i] ?? null;
+    }
+    return merged;
+  };
+
+  // Pass 1: prefer the first strongly matching single header row.
   for (let idx = 0; idx < limit; idx += 1) {
     const row = rows[idx];
     if (!Array.isArray(row)) continue;
     if (isLikelyHeaderRow(row)) {
-      const columnMap: Partial<Record<HeaderColumnKey, number>> = {};
-      row.forEach((cell, colIdx) => {
-        const normalized = normalizeHeaderValue(cell);
-        if (!normalized) return;
-        (Object.keys(HEADER_SYNONYMS) as HeaderColumnKey[]).forEach((key) => {
-          if (columnMap[key] != null) return;
-          if (matchesHeaderKey(normalized, key)) columnMap[key] = colIdx;
-        });
-      });
-      return { headerRowIndex: idx, columnMap };
+      return { headerRowIndex: idx, columnMap: buildColumnMap(row) };
     }
   }
 
+  // Pass 2: try multi-row headers — merge row[idx] with row[idx+1] and check.
+  for (let idx = 0; idx < limit - 1; idx += 1) {
+    const row = rows[idx];
+    const nextRow = rows[idx + 1];
+    if (!Array.isArray(row) || !Array.isArray(nextRow)) continue;
+    const merged = mergeRows(row, nextRow);
+    if (isLikelyHeaderRow(merged)) {
+      return { headerRowIndex: idx, columnMap: buildColumnMap(merged) };
+    }
+  }
+
+  // Pass 3: fallback scoring.
   for (let idx = 0; idx < limit; idx += 1) {
     const row = rows[idx];
     if (!Array.isArray(row)) continue;
-    const columnMap: Partial<Record<HeaderColumnKey, number>> = {};
-    row.forEach((cell, colIdx) => {
-      const normalized = normalizeHeaderValue(cell);
-      if (!normalized) return;
-      (Object.keys(HEADER_SYNONYMS) as HeaderColumnKey[]).forEach((key) => {
-        if (columnMap[key] != null) return;
-        const matchesHeader = matchesHeaderKey(normalized, key);
-        if (matchesHeader) {
-          columnMap[key] = colIdx;
-        }
-      });
-    });
-
+    const columnMap = buildColumnMap(row);
     const detectedCount = Object.keys(columnMap).length;
     if (detectedCount > bestScore) {
       bestScore = detectedCount;

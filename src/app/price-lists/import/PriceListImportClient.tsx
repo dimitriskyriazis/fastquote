@@ -138,6 +138,13 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "order_",
     "catalog",
     "cat ",
+    "référence",
+    "références",
+    "réf ",
+    "réf.",
+    "codice",
+    "codigo",
+    "código",
     "κωδικός",
     "κωδικος",
     "κωδ.",
@@ -163,8 +170,7 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "mpn",
     "mfg",
     "family",
-    "version",
-    "rev",
+    "rev ",
     "revision",
     "μοντέλο",
     "μοντελο",
@@ -186,6 +192,16 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "description",
     "name",
     "detail",
+    "designation",
+    "désignation",
+    "produit",
+    "produkt",
+    "producto",
+    "bezeichnung",
+    "beschreibung",
+    "descrizione",
+    "descripción",
+    "descripcion",
     "περιγραφή",
     "περιγραφη",
     "όνομα",
@@ -204,6 +220,11 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "msrp",
     "rrp",
     "retail",
+    "prix",
+    "tarif",
+    "preis",
+    "prezzo",
+    "precio",
     "τιμή",
     "τιμη",
     "λιανική",
@@ -214,7 +235,7 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "χονδρική",
     "χονδρικη",
     "euros",
-    "eur",
+    "eur ",
     "ευρώ",
     "€",
     "dollars",
@@ -226,15 +247,23 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "costprice",
     "cost price",
     "cost",
+    "net price",
+    "netprice",
+    "net ",
+    "net_",
     "κόστος",
     "κοστος",
     "τιμή κόστους",
     "τιμη κοστους",
+    "καθαρή τιμή",
+    "καθαρη τιμη",
   ],
 
   warning: [
     "warn",
     "remark",
+    "note",
+    "notes",
     "σημείωση",
     "σημειωση",
     "σημ.",
@@ -369,14 +398,47 @@ const normalizeHeaderText = (value: unknown): string | null => {
 
 const normalizeHeaderCompact = (value: string) => value.replace(/[^\p{L}\p{N}]+/gu, "");
 
+/**
+ * Max word count for a cell to be considered a plausible column header.
+ * Real headers are short labels ("Part Number", "List Price").
+ * Cells with more words are metadata/sentences (e.g. "This price list is issued to partners…").
+ */
+const MAX_HEADER_CELL_WORDS = 6;
+
+const isPlausibleHeaderCell = (normalizedText: string): boolean => {
+  const wordCount = normalizedText.split(/\s+/).filter(Boolean).length;
+  return wordCount <= MAX_HEADER_CELL_WORDS;
+};
+
 const headerContainsKeyword = (header: string, keyword: string) => {
-  const normalizedKeyword = normalizeHeaderText(keyword);
-  if (!normalizedKeyword) return false;
-  if (header.includes(normalizedKeyword)) return true;
-  const compactHeader = normalizeHeaderCompact(header);
-  const compactKeyword = normalizeHeaderCompact(normalizedKeyword);
-  if (!compactKeyword) return false;
-  return compactHeader.includes(compactKeyword);
+  // Normalize keyword content but detect intentional word-boundary spaces.
+  // Keywords like "part " use trailing space to avoid matching inside "partner".
+  const normalized = keyword
+    .toLowerCase()
+    .replace(/[\u00a0]+/g, " ")
+    .replace(/[|_/\\-]+/g, " ")
+    .replace(/\s+/g, " ");
+  const core = normalized.trim();
+  if (!core) return false;
+
+  const needsLeadingBound = normalized.startsWith(" ");
+  const needsTrailingBound = normalized.endsWith(" ");
+
+  // Pad header so boundaries work at string start/end too
+  const padded = ` ${header} `;
+  const search =
+    (needsLeadingBound ? " " : "") + core + (needsTrailingBound ? " " : "");
+  if (padded.includes(search)) return true;
+
+  // Compact fallback (handles "Part-Number" ↔ "partnumber") — only for keywords
+  // without boundary requirements, otherwise "part" would match inside "partner"
+  if (!needsLeadingBound && !needsTrailingBound) {
+    const compactHeader = normalizeHeaderCompact(header);
+    const compactKeyword = normalizeHeaderCompact(core);
+    if (compactKeyword && compactHeader.includes(compactKeyword)) return true;
+  }
+
+  return false;
 };
 
 const LIST_PRICE_POSITIVE_HINTS = [
@@ -396,6 +458,7 @@ const LIST_PRICE_NEGATIVE_HINTS = [
   "discount",
   "disc",
   "net",
+  "cost",
   "offer",
   "promo",
   "special",
@@ -434,6 +497,8 @@ const scoreHeaderRow = (row: unknown[]) => {
   let keywordHits = 0;
 
   normalizedCells.forEach((cell) => {
+    // Skip long sentences — they are metadata, not column headers
+    if (!isPlausibleHeaderCell(cell)) return;
     (Object.keys(columnKeywords) as HeaderColumnKey[]).forEach((key) => {
       const matches = columnKeywords[key].some((keyword) => headerContainsKeyword(cell, keyword));
       if (!matches) return;
@@ -445,24 +510,48 @@ const scoreHeaderRow = (row: unknown[]) => {
   return matchedKeys.size * 100 + keywordHits * 10 + normalizedCells.length;
 };
 
-const isLikelyHeaderRow = (row: unknown[]) => {
+const matchHeaderKeys = (row: unknown[]): Set<HeaderColumnKey> => {
   const matchedKeys = new Set<HeaderColumnKey>();
+  row.forEach((cell) => {
+    const normalized = normalizeHeaderText(cell);
+    if (!normalized || !isPlausibleHeaderCell(normalized)) return;
+    (Object.keys(columnKeywords) as HeaderColumnKey[]).forEach((key) => {
+      if (columnKeywords[key].some((keyword) => headerContainsKeyword(normalized, keyword))) {
+        matchedKeys.add(key);
+      }
+    });
+  });
+  return matchedKeys;
+};
+
+const isLikelyHeaderRow = (row: unknown[]) => {
   const normalizedCells = row
     .map((cell) => normalizeHeaderText(cell))
     .filter((value): value is string => Boolean(value));
-  if (normalizedCells.length < 2) return false;
+  // Require at least 3 filled cells — metadata rows with 2 cells (e.g. "Version:" + "MSRP ONLY PRICE LIST")
+  // can accidentally match keywords. Real header rows have 3+ columns.
+  if (normalizedCells.length < 3) return false;
 
-  normalizedCells.forEach((cell) => {
-    (Object.keys(columnKeywords) as HeaderColumnKey[]).forEach((key) => {
-      const matches = columnKeywords[key].some((keyword) => headerContainsKeyword(cell, keyword));
-      if (matches) matchedKeys.add(key);
-    });
-  });
-
-  const hasPartNumber = matchedKeys.has("partNumber");
+  const matchedKeys = matchHeaderKeys(row);
+  // Accept partNumber OR modelNumber as the identifier column —
+  // some pricelists use "Model" instead of "Part Number".
+  const hasIdentifier = matchedKeys.has("partNumber") || matchedKeys.has("modelNumber");
   const hasSecondaryKey =
-    matchedKeys.has("description") || matchedKeys.has("modelNumber") || matchedKeys.has("listPrice");
-  return hasPartNumber && hasSecondaryKey && matchedKeys.size >= 2;
+    matchedKeys.has("description") || matchedKeys.has("listPrice");
+  return hasIdentifier && hasSecondaryKey && matchedKeys.size >= 2;
+};
+
+/**
+ * Merge two adjacent rows into one virtual row for multi-row header detection.
+ * For each column, prefer the non-empty cell (row2 fills gaps left by row1).
+ */
+const mergeHeaderRows = (row1: unknown[], row2: unknown[]): unknown[] => {
+  const len = Math.max(row1.length, row2.length);
+  const merged: unknown[] = [];
+  for (let i = 0; i < len; i += 1) {
+    merged[i] = hasCellValue(row1[i]) ? row1[i] : row2[i] ?? null;
+  }
+  return merged;
 };
 
 const hasCellValue = (value: unknown) => {
@@ -533,16 +622,37 @@ const stringifyCellValue = (value: unknown): string => {
   return "";
 };
 
-const detectHeaderRowIndex = (rows: unknown[][]) => {
+/** Check if a row contains any cell that looks like a long sentence (metadata/title). */
+const hasLongTextCell = (row: unknown[]): boolean =>
+  row.some((cell) => {
+    const normalized = normalizeHeaderText(cell);
+    return normalized !== null && !isPlausibleHeaderCell(normalized);
+  });
+
+type HeaderDetectionResult = { index: number; span: number; mergedRow: unknown[] | null };
+
+const detectHeaderRow = (rows: unknown[][]): HeaderDetectionResult => {
   const limit = Math.min(rows.length, 100);
 
-  // Prefer the first strongly matching header row so normal data rows are never treated as headers.
+  // Pass 1: prefer the first strongly matching single header row.
   for (let idx = 0; idx < limit; idx += 1) {
     const row = rows[idx];
     if (!Array.isArray(row)) continue;
-    if (isLikelyHeaderRow(row)) return idx;
+    if (isLikelyHeaderRow(row)) return { index: idx, span: 1, mergedRow: null };
   }
 
+  // Pass 2: try multi-row headers — merge row[idx] with row[idx+1] and check.
+  // Handles cases like "Pricing" spanning above "List Price" / "Net Price".
+  for (let idx = 0; idx < limit - 1; idx += 1) {
+    const row = rows[idx];
+    const nextRow = rows[idx + 1];
+    if (!Array.isArray(row) || !Array.isArray(nextRow)) continue;
+    if (hasLongTextCell(row) || hasLongTextCell(nextRow)) continue;
+    const merged = mergeHeaderRows(row, nextRow);
+    if (isLikelyHeaderRow(merged)) return { index: idx, span: 2, mergedRow: merged };
+  }
+
+  // Pass 3: fallback scoring — find the row that most looks like a header.
   let bestIdx = 0;
   let bestScore = -1;
   for (let idx = 0; idx < limit; idx += 1) {
@@ -566,13 +676,21 @@ const detectHeaderRowIndex = (rows: unknown[][]) => {
     //    these are likely title/metadata rows, not headers
     const sparsePenalty = filledCells.length <= 2 && base <= 100 ? 30 : 0;
 
-    const score = base + dataBelow - numericPenalty - sparsePenalty;
+    // 5. Bonus for wide rows — real headers have many columns (4+),
+    //    metadata rows typically have 1-3 filled cells
+    const widthBonus = filledCells.length >= 4 ? Math.min(filledCells.length * 3, 30) : 0;
+
+    // 6. Heavy penalty if the row contains any long-text cell (sentence/paragraph) —
+    //    real header rows only have short labels, never prose
+    const longTextPenalty = hasLongTextCell(row) ? 200 : 0;
+
+    const score = base + dataBelow + widthBonus - numericPenalty - sparsePenalty - longTextPenalty;
     if (score > bestScore) {
       bestScore = score;
       bestIdx = idx;
     }
   }
-  return bestIdx;
+  return { index: bestIdx, span: 1, mergedRow: null };
 };
 
 const buildColumns = (headerRow: unknown[]): ColumnOption[] =>
@@ -629,16 +747,18 @@ const autoSelectUniqueSuggestions = (
 };
 
 const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: number, enabled: boolean): SheetMapping => {
-  const headerRowIndex = detectHeaderRowIndex(rows);
-  const headerRow = Array.isArray(rows[headerRowIndex]) ? rows[headerRowIndex] : [];
+  const detection = detectHeaderRow(rows);
+  // For multi-row headers use the merged row as column source; data starts after all header rows.
+  const headerRow = detection.mergedRow ?? (Array.isArray(rows[detection.index]) ? rows[detection.index] : []);
+  const dataStartIndex = detection.index + detection.span;
   const columns = buildColumns(headerRow);
   const suggestions = buildSuggestions(columns);
-  
+
   // Auto-select suggested columns, but do not map the same source column twice.
   const selection = autoSelectUniqueSuggestions(suggestions);
-  
+
   const nonEmptyDataRows = rows
-    .slice(headerRowIndex + 1)
+    .slice(dataStartIndex)
     .filter((row) => Array.isArray(row) && row.some(hasCellValue));
   const rowCount = nonEmptyDataRows.length;
   const previewRows = nonEmptyDataRows
@@ -653,7 +773,7 @@ const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: numbe
 
   return {
     name: sheetName || `Sheet ${fallbackIndex + 1}`,
-    headerRowIndex,
+    headerRowIndex: detection.index,
     columns,
     suggestions,
     selection,
