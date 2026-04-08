@@ -2247,7 +2247,7 @@ export default function PriceListImportClient({
                       className={lookupButtonStyles.lookupAddButton}
                       onClick={() => setIsAddSupplierOpen(true)}
                     >
-                      Add new Supplier
+                      Add New Supplier
                     </button>
                   </span>
                   <select
