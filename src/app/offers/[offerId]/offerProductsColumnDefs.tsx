@@ -38,7 +38,7 @@ import {
   REQUESTED_DISPLAY_FIELD_KEYS,
   type RequestedDisplayFieldKey,
 } from './offerProductsUtils';
-import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
+import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 

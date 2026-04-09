@@ -18,8 +18,6 @@ import type {
   RowClassParams,
   RowDoubleClickedEvent,
   RowNode,
-  ValueGetterParams,
-  ValueSetterParams,
 } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
@@ -66,7 +64,6 @@ import { useAuditUser } from '../../components/AuditUserProvider';
 import LookupModal from '../../components/LookupModal';
 import lookupStyles from '../../components/LookupModal.module.css';
 
-import MultilineTextCellEditor from './MultilineTextCellEditor';
 import {
   productHistoryMenuIcon,
   enhanceDescriptionMenuIcon,
@@ -96,9 +93,6 @@ import {
   readCollapsedCategoryPathsFromCookie,
   writeCollapsedCategoryPathsToCookie,
   coerceNumber,
-  percentageFormatter,
-  euroFormatter,
-  zeroBlankNumberFormatter,
   normalizeProductId,
   compareTreeOrderingValues,
   parseTreeOrderingPath,
@@ -108,7 +102,6 @@ import {
   resolveRowLabel,
   resolveOfferProductTypeLabel,
   isRequestedRow,
-  isRequestedDescriptionField,
   canEditRequestedField,
   normalizeDescriptionValue,
   getNormalizedRequestedDescriptionValues,
@@ -132,12 +125,6 @@ import {
   normalizeNoForExport,
   recalcProductTotals,
   refreshCategoryAggregates,
-  categoryTotalPriceGetter,
-  categoryTotalNetGetter,
-  categoryTotalCostGetter,
-  productAccentCellClassRules,
-  productPriceListClassRules,
-  totalPriceCellClassRules,
   PRICING_FIELD_LABELS,
   PRICING_EDITABLE_FIELDS,
   COST_ANALYSIS_COLUMNS,
