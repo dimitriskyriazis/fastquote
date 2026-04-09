@@ -57,11 +57,6 @@ const buildAdjacentSwapVariants = (value: string): string[] => {
   return Array.from(variants);
 };
 
-const buildSubsequenceLikePattern = (value: string): string => {
-  if (!value) return '%';
-  return `%${value.split('').join('%')}%`;
-};
-
 export const isSensitiveColumn = (colId: string): boolean => {
   if (!colId) return true;
   const normalized = colId.trim();
@@ -157,15 +152,9 @@ export const buildTextMatchPredicate = (
       extraClauses.push(`(${ciExpr} LIKE @${key})`);
     }
 
-    // Omitted-character subsequence match with the same positional guardrails.
-    for (let i = 0; i < upperTerm.length; i += 1) {
-      if (i < 2 || i >= upperTerm.length - 1) continue;
-      const remainder = `${upperTerm.slice(0, i)}${upperTerm.slice(i + 1)}`;
-      if (remainder.length < 4) continue;
-      const key = `${paramKey}_seq${i}`;
-      params.push({ key, value: buildSubsequenceLikePattern(remainder) });
-      extraClauses.push(`(${ciExpr} LIKE @${key})`);
-    }
+    // Subsequence matching removed — patterns like %T%E%L%M%A%C%O% are too
+    // broad and produce excessive false positives on text columns (e.g.
+    // "telmaco" matching "Byte Computer Applications Ltd").
   }
 
   // Phonetic matching disabled due to frequent false positives in UI searches.
