@@ -627,6 +627,7 @@ export default function StandardPackagesClient() {
       headerName: 'Description',
       filter: 'agTextColumnFilter',
       editable: true,
+      width: 400,
       comparator: localeStringComparator,
       valueSetter: (params) => {
         params.data = params.data ?? {};
@@ -667,6 +668,7 @@ export default function StandardPackagesClient() {
       headerName: 'Comments',
       filter: 'agTextColumnFilter',
       editable: true,
+      width: 400,
       valueSetter: (params) => {
         params.data = params.data ?? {};
         (params.data as Record<string, unknown>).Comments = params.newValue;

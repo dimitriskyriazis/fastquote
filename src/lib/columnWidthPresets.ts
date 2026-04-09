@@ -65,7 +65,7 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   SupplierName: 2,
   ValidFromDate: 'date',
   ValidToDate: 'date',
-  Enabled: 2,
+  Enabled: 1,
   ValidityComment: 3,
   Description: 3,
   LastName: 2,
