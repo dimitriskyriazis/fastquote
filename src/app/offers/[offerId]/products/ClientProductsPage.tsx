@@ -5,7 +5,12 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import PageHeader from '../../../components/PageHeader';
 import { GridQuickSearchProvider } from '../../../components/GridQuickSearchProvider';
-import OfferProductsPanel, { type OfferProductsPanelHandle } from '../OfferProductsPanel';
+import type { OfferProductsPanelHandle } from '../OfferProductsPanel';
+
+const OfferProductsPanel = dynamic(
+  () => import('../OfferProductsPanel'),
+  { ssr: false, loading: () => <div style={{ padding: '2rem', opacity: 0.5 }}>Loading products…</div> },
+);
 import { showToastMessage } from '../../../../lib/toast';
 import { addRecentOffer } from '../../../lib/recentOffers';
 import { useAuditUser } from '../../../components/AuditUserProvider';

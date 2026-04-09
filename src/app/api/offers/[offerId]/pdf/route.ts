@@ -3,7 +3,7 @@ import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../../../lib/sql';
 import { requirePermission } from '../../../../../lib/authz';
-import { generateOfferPdf, type OfferPdfData, type OfferProductRow, type PdfLang, type PdfOrientation, type PdfPrintSettings } from '../../../../../lib/pdfGenerator';
+import type { OfferPdfData, OfferProductRow, PdfLang, PdfOrientation, PdfPrintSettings } from '../../../../../lib/pdfGenerator';
 import { parsePdfProductColumnsParam } from '../../../../../lib/pdfColumns';
 
 type OfferHeaderRow = {
@@ -280,6 +280,7 @@ export async function GET(
       printSubSubCategories: !!printSubSubCategories,
     };
 
+    const { generateOfferPdf } = await import('../../../../../lib/pdfGenerator');
     const buffer = await generateOfferPdf(pdfData, lang, orientation, productColumns, pdfPrintSettings, smallOffer);
 
     const customerSlug = (header.CustomerName ?? 'Offer')
