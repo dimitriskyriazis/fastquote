@@ -66,6 +66,7 @@ const normalizeValue = (value: unknown, type: FieldType): NormalizedValue => {
     return trimmed.length > 0 ? trimmed : null;
   }
   if (type === "number") {
+    if (typeof value === "boolean") return value ? 1 : 0;
     if (typeof value === "number" && Number.isFinite(value)) return value;
     if (typeof value === "string") {
       const parsed = Number(value.trim());
