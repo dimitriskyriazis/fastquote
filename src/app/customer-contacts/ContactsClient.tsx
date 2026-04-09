@@ -82,6 +82,7 @@ const CONTACT_FIELD_LABELS: Record<string, string> = {
   Mobile: "Mobile",
   Importance: "Importance",
   Enabled: "Enabled",
+  CustomerEnabled: "Enabled customer",
 };
 
 const normalizeContactId = (value: unknown): number | null => {
@@ -551,6 +552,7 @@ export default function ContactsClient({
         api.setFilterModel({
           ...nextModel,
           Enabled: { filterType: "set", values: ["true"] },
+          CustomerEnabled: { filterType: "set", values: ["true"] },
         });
       }
       defaultEnabledFilterAppliedRef.current = true;
@@ -652,6 +654,22 @@ export default function ContactsClient({
         editable: true,
         cellEditor: "agSelectCellEditor",
         cellEditorParams: { values: importanceDropdownValues },
+      },
+      {
+        field: "CustomerEnabled",
+        headerName: "Enabled Customer",
+        filter: "agSetColumnFilter",
+        valueFormatter: (params) => formatBooleanValue(params.value),
+        filterParams: {
+          values: ["true", "false"],
+          valueFormatter: (params: { value?: unknown }) => formatBooleanValue(params.value),
+          comparator: (a: string, b: string) => {
+            if (a === b) return 0;
+            return a === "true" ? -1 : 1;
+          },
+        },
+        width: 150,
+        hide: true,
       },
       {
         field: "Enabled",

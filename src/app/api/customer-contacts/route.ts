@@ -42,6 +42,7 @@ type ContactRow = {
   Mobile: string | null;
   Importance: string | null;
   Enabled: boolean | number | null;
+  CustomerEnabled: boolean | number | null;
 };
 
 type ContactRowWithCount = ContactRow & { __totalCount: number | bigint | null };
@@ -61,7 +62,8 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Phone: "dbo.Contacts.Phone",
   Mobile: "dbo.Contacts.Mobile",
   Importance: "dbo.Contacts.Importance",
-  Enabled: "dbo.Contacts.Enabled" };
+  Enabled: "dbo.Contacts.Enabled",
+  CustomerEnabled: "dbo.Customers.Enabled" };
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
   colId,
   expression }));
@@ -413,7 +415,8 @@ export async function POST(req: NextRequest) {
         dbo.Contacts.Phone,
         dbo.Contacts.Mobile,
         dbo.Contacts.Importance,
-        dbo.Contacts.Enabled
+        dbo.Contacts.Enabled,
+        dbo.Customers.Enabled AS CustomerEnabled
     `;
 
     const from = `
