@@ -272,7 +272,10 @@ export default function MarketsClient({ salesDivisions }: Props) {
       {
         field: "SalesDivision",
         headerName: "Sales Division",
-        filter: "agTextColumnFilter",
+        filter: "agSetColumnFilter",
+        filterParams: {
+          values: ["AVS", "TVS"],
+        },
         enableRowGroup: true,
         editable: true,
         cellEditor: "agSelectCellEditor",

@@ -178,7 +178,10 @@ export default function UsersClient() {
       {
         field: "SalesDivision",
         headerName: "Sales Division",
-        filter: "agTextColumnFilter",
+        filter: "agSetColumnFilter",
+        filterParams: {
+          values: ["AVS", "TVS"],
+        },
         editable: true,
         cellEditor: "agSelectCellEditor",
         cellEditorParams: {
