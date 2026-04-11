@@ -63,6 +63,7 @@ type ExistingOfferRecord = {
   OfferDate: Date | null;
   ApprovalUserId: string | null;
   ProtocolNo: number | null;
+  ParentOfferID: number | null;
   OfferVersion: number | null;
   Enabled: number | boolean | null;
   IsStandardPackage: number | boolean | null;
@@ -334,6 +335,7 @@ export async function POST(
         PossibleOrderDate,
         OfferDate,
         ApprovalUserId,
+        ParentOfferID,
         ProtocolNo,
         OfferVersion,
         Enabled,
@@ -358,10 +360,40 @@ export async function POST(
       normalizeNullableString(existingOffer.CreatedBy) ??
       normalizeNullableString(existingOffer.ModifiedBy) ??
       null;
-    const existingVersion = Math.max(0, Number(existingOffer.OfferVersion ?? 0));
-    const nextVersion = existingVersion + 1;
-    const targetVersion = duplicateMode === 'copy' ? 1 : nextVersion;
-    const targetParentOfferId = duplicateMode === 'copy' ? null : normalizedId;
+
+    let targetParentOfferId: number | null = null;
+    let targetVersion: number;
+
+    if (duplicateMode === 'copy') {
+      targetParentOfferId = null;
+      targetVersion = 1;
+    } else {
+      // Resolve the root offer ID by walking up the parent chain
+      const rootRequest = pool.request();
+      rootRequest.input('offerId', sql.Int, normalizedId);
+      const rootResult = await rootRequest.query<{ RootOfferID: number }>(`
+        WITH Chain AS (
+          SELECT ID, ParentOfferID FROM dbo.Offer WHERE ID = @offerId
+          UNION ALL
+          SELECT o.ID, o.ParentOfferID FROM dbo.Offer o
+          INNER JOIN Chain c ON c.ParentOfferID = o.ID
+        )
+        SELECT TOP 1 ID AS RootOfferID FROM Chain WHERE ParentOfferID IS NULL
+      `);
+      const rootOfferId = rootResult.recordset?.[0]?.RootOfferID ?? normalizedId;
+      targetParentOfferId = rootOfferId;
+
+      // Get the max version across all offers in this version group
+      const maxVerRequest = pool.request();
+      maxVerRequest.input('rootOfferId', sql.Int, rootOfferId);
+      const maxVerResult = await maxVerRequest.query<{ MaxVersion: number | null }>(`
+        SELECT MAX(OfferVersion) AS MaxVersion
+        FROM dbo.Offer
+        WHERE ID = @rootOfferId OR ParentOfferID = @rootOfferId
+      `);
+      const maxVersion = Math.max(0, Number(maxVerResult.recordset?.[0]?.MaxVersion ?? 0));
+      targetVersion = maxVersion + 1;
+    }
     const enabledValue = typeof existingOffer.Enabled === 'boolean'
       ? existingOffer.Enabled
       : existingOffer.Enabled != null

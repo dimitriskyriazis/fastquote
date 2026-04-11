@@ -47,6 +47,13 @@ type CustomerSelection = {
   CODE: string | null;
 };
 
+type CategoryUpdate = {
+  productId: number;
+  categoryId: number | null;
+  subCategoryId: number | null;
+  typeId: number | null;
+};
+
 type CreateDraftOfferRequestBody = {
   step?: WizardStep;
   selections?: ProductSelection[];
@@ -54,6 +61,7 @@ type CreateDraftOfferRequestBody = {
   customerCode?: string;
   customerConfirmed?: boolean;
   brandCreationConfirmed?: boolean;
+  categoryUpdate?: CategoryUpdate;
   // Accumulated wizard state (passed forward by frontend)
   resolvedCustomer?: { TRDR: number; CODE: string | null; NAME: string | null };
   missingBrands?: string[];
@@ -83,6 +91,7 @@ type SubCategoryOption = LookupOption & {
 type WizardStep =
   | 'resolve-customer'
   | 'categorize-products'
+  | 'update-product-category'
   | 'check-brands'
   | 'match-products'
   | 'prepare-summary'
@@ -725,15 +734,64 @@ async function handleCategorizeProducts(
     modelNumber: p.ModelNumber,
     description: p.Description,
     brandName: p.BrandName,
+    categoryId: p.CategoryID ?? null,
+    subCategoryId: p.SubCategoryID ?? null,
+    typeId: p.TypeID ?? null,
     categoryName: p.CategoryID ? (catMap.get(p.CategoryID) ?? null) : null,
     subCategoryName: p.SubCategoryID ? (subCatMap.get(p.SubCategoryID) ?? null) : null,
     typeName: p.TypeID ? (typeMap.get(p.TypeID) ?? null) : null,
     wasAiCategorized: aiCategorized.has(p.ProductID),
   }));
 
+  const categories = (categoriesRes.recordset ?? [])
+    .filter((r): r is LookupRow & { ID: number } => r.ID != null)
+    .map(r => ({ id: r.ID, name: r.Name ?? '' }));
+  const subCategories = (subCategoriesRes.recordset ?? [])
+    .filter((r): r is SubCategoryRow & { ID: number } => r.ID != null)
+    .map(r => ({ id: r.ID, name: r.Name ?? '', categoryId: r.CategoryID ?? null }));
+  const types = (typesRes.recordset ?? [])
+    .filter((r): r is LookupRow & { ID: number } => r.ID != null)
+    .map(r => ({ id: r.ID, name: r.Name ?? '' }));
+
   logger.info('wizard categorize-products done', { requestId, offerId, total: products.length, aiCategorized: aiCategorized.size });
 
-  return NextResponse.json({ ok: true, step: 'categorize-products', products: productList });
+  return NextResponse.json({ ok: true, step: 'categorize-products', products: productList, categories, subCategories, types });
+}
+
+async function handleUpdateProductCategory(
+  ctx: OfferContext,
+  body: CreateDraftOfferRequestBody,
+): Promise<NextResponse> {
+  const { pool, requestId } = ctx;
+  const update = body.categoryUpdate;
+  if (!update || !update.productId) {
+    return NextResponse.json({ ok: false, error: 'Missing categoryUpdate' }, { status: 400 });
+  }
+
+  const req = pool.request();
+  req.input('productId', sql.Int, update.productId);
+  const sets: string[] = [];
+
+  if (update.categoryId !== undefined) {
+    req.input('categoryId', sql.Int, update.categoryId);
+    sets.push('CategoryID = @categoryId');
+  }
+  if (update.subCategoryId !== undefined) {
+    req.input('subCategoryId', sql.Int, update.subCategoryId);
+    sets.push('SubCategoryID = @subCategoryId');
+  }
+  if (update.typeId !== undefined) {
+    req.input('typeId', sql.Int, update.typeId);
+    sets.push('TypeID = @typeId');
+  }
+
+  if (sets.length > 0) {
+    sets.push('ModifiedOn = SYSUTCDATETIME()');
+    await req.query(`UPDATE dbo.Products SET ${sets.join(', ')} WHERE ID = @productId`);
+  }
+
+  logger.info('wizard update-product-category done', { requestId, productId: update.productId });
+  return NextResponse.json({ ok: true, step: 'update-product-category' });
 }
 
 async function handleCheckBrands(
@@ -1302,6 +1360,8 @@ export async function POST(
           return await handleResolveCustomer(ctx, body);
         case 'categorize-products':
           return await handleCategorizeProducts(ctx);
+        case 'update-product-category':
+          return await handleUpdateProductCategory(ctx, body);
         case 'check-brands':
           return await handleCheckBrands(ctx);
         case 'match-products':

@@ -9,12 +9,18 @@ import styles from './DraftOrderWizard.module.css';
 
 type CustomerMatch = { TRDR: number; CODE: string | null; NAME: string | null };
 
+type LookupOption = { id: number; name: string };
+type SubCategoryOption = LookupOption & { categoryId: number | null };
+
 type CategorizedProduct = {
   productId: number;
   partNumber: string | null;
   modelNumber: string | null;
   description: string | null;
   brandName: string | null;
+  categoryId: number | null;
+  subCategoryId: number | null;
+  typeId: number | null;
   categoryName: string | null;
   subCategoryName: string | null;
   typeName: string | null;
@@ -133,6 +139,9 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   // Step 2: Product categorization
   const [categorizedProducts, setCategorizedProducts] = useState<CategorizedProduct[]>([]);
   const [categorizeComplete, setCategorizeComplete] = useState(false);
+  const [categoryLookups, setCategoryLookups] = useState<LookupOption[]>([]);
+  const [subCategoryLookups, setSubCategoryLookups] = useState<SubCategoryOption[]>([]);
+  const [typeLookups, setTypeLookups] = useState<LookupOption[]>([]);
 
   // Step 3: Brand check
   const [missingBrands, setMissingBrands] = useState<string[]>([]);
@@ -213,6 +222,9 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     const result = await callStep('categorize-products');
     if (!result) return;
     setCategorizedProducts(result.products ?? []);
+    setCategoryLookups(result.categories ?? []);
+    setSubCategoryLookups(result.subCategories ?? []);
+    setTypeLookups(result.types ?? []);
     setCategorizeComplete(true);
   }, [callStep]);
 
@@ -576,6 +588,60 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     return null;
   };
 
+  const handleCategoryChange = useCallback(async (
+    productId: number,
+    field: 'categoryId' | 'subCategoryId' | 'typeId',
+    value: number | null,
+  ) => {
+    // Build the update payload
+    const product = categorizedProducts.find(p => p.productId === productId);
+    if (!product) return;
+
+    const update: Record<string, number | null> = { productId, [field]: value };
+
+    // When category changes, clear subcategory if it no longer belongs
+    if (field === 'categoryId') {
+      const currentSub = product.subCategoryId;
+      if (currentSub) {
+        const subBelongs = subCategoryLookups.some(sc => sc.id === currentSub && sc.categoryId === value);
+        if (!subBelongs) {
+          update.subCategoryId = null;
+        }
+      }
+    }
+
+    // Optimistically update local state
+    setCategorizedProducts(prev => prev.map(p => {
+      if (p.productId !== productId) return p;
+      const updated = { ...p, [field]: value };
+      if (field === 'categoryId') {
+        updated.categoryName = value ? (categoryLookups.find(c => c.id === value)?.name ?? null) : null;
+        if (update.subCategoryId === null) {
+          updated.subCategoryId = null;
+          updated.subCategoryName = null;
+        }
+      }
+      if (field === 'subCategoryId') {
+        updated.subCategoryName = value ? (subCategoryLookups.find(sc => sc.id === value)?.name ?? null) : null;
+      }
+      if (field === 'typeId') {
+        updated.typeName = value ? (typeLookups.find(t => t.id === value)?.name ?? null) : null;
+      }
+      return updated;
+    }));
+
+    // Persist to backend (fire-and-forget)
+    try {
+      await fetch(`/api/offers/${encodeURIComponent(offerId)}/create-draft-order-soft1`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ step: 'update-product-category', categoryUpdate: update }),
+      });
+    } catch {
+      // silent — optimistic update stays
+    }
+  }, [categorizedProducts, categoryLookups, subCategoryLookups, typeLookups, offerId]);
+
   const renderCategorizeStep = () => {
     if (isLoading) return renderLoading('Analyzing products and assigning categories...');
 
@@ -603,16 +669,58 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
             </tr>
           </thead>
           <tbody>
-            {categorizedProducts.map(p => (
-              <tr key={p.productId}>
-                <td>{productLabel(p.partNumber, p.modelNumber, p.productId)}</td>
-                <td>{p.brandName ?? '—'}</td>
-                <td>{[p.modelNumber, p.description].filter(Boolean).join(' - ') || '—'}</td>
-                <td>{p.categoryName ?? '—'}{p.wasAiCategorized && <span className={`${styles.badge} ${styles.badgeAi}`}>AI</span>}</td>
-                <td>{p.subCategoryName ?? '—'}{p.wasAiCategorized && <span className={`${styles.badge} ${styles.badgeAi}`}>AI</span>}</td>
-                <td>{p.typeName ?? '—'}{p.wasAiCategorized && <span className={`${styles.badge} ${styles.badgeAi}`}>AI</span>}</td>
-              </tr>
-            ))}
+            {categorizedProducts.map(p => {
+              const filteredSubCategories = p.categoryId
+                ? subCategoryLookups.filter(sc => sc.categoryId === p.categoryId)
+                : subCategoryLookups;
+
+              return (
+                <tr key={p.productId}>
+                  <td>{productLabel(p.partNumber, p.modelNumber, p.productId)}</td>
+                  <td>{p.brandName ?? '—'}</td>
+                  <td>{[p.modelNumber, p.description].filter(Boolean).join(' - ') || '—'}</td>
+                  <td>
+                    <select
+                      className={styles.select}
+                      value={p.categoryId ?? ''}
+                      onChange={e => handleCategoryChange(p.productId, 'categoryId', e.target.value ? Number(e.target.value) : null)}
+                    >
+                      <option value="">—</option>
+                      {categoryLookups.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                    {p.wasAiCategorized && <span className={`${styles.badge} ${styles.badgeAi}`}>AI</span>}
+                  </td>
+                  <td>
+                    <select
+                      className={styles.select}
+                      value={p.subCategoryId ?? ''}
+                      onChange={e => handleCategoryChange(p.productId, 'subCategoryId', e.target.value ? Number(e.target.value) : null)}
+                    >
+                      <option value="">—</option>
+                      {filteredSubCategories.map(sc => (
+                        <option key={sc.id} value={sc.id}>{sc.name}</option>
+                      ))}
+                    </select>
+                    {p.wasAiCategorized && <span className={`${styles.badge} ${styles.badgeAi}`}>AI</span>}
+                  </td>
+                  <td>
+                    <select
+                      className={styles.select}
+                      value={p.typeId ?? ''}
+                      onChange={e => handleCategoryChange(p.productId, 'typeId', e.target.value ? Number(e.target.value) : null)}
+                    >
+                      <option value="">—</option>
+                      {typeLookups.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                    {p.wasAiCategorized && <span className={`${styles.badge} ${styles.badgeAi}`}>AI</span>}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </>
@@ -1109,7 +1217,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
         ? `Confirm creation for the above (${needsSelection.filter(ns => !userSelections.has(ns.productId)).length}) products before continuing`
         : undefined}
       cardClassName={lookupStyles.cardWide}
-      cardStyle={{ width: 'min(1200px, calc(100% - 32px))', maxWidth: '95vw', maxHeight: '85vh' }}
+      cardStyle={{ width: 'min(1500px, calc(100% - 32px))', maxWidth: '95vw', maxHeight: '85vh' }}
     >
       {stepBar}
       <div className={styles.stepContent}>
