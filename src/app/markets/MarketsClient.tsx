@@ -29,6 +29,7 @@ import { useAddModal } from "../lib/useAddModal";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
 import { useAuditUser } from "../components/AuditUserProvider";
+import AccessDeniedPage from "../components/AccessDeniedPage";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
 
@@ -97,7 +98,8 @@ const MARKET_FIELD_LABELS: Record<string, string> = {
 };
 
 export default function MarketsClient({ salesDivisions }: Props) {
-  const { roles } = useAuditUser();
+  const { roles, loading } = useAuditUser();
+  const canAccess = roles.includes("Administrator") || roles.includes("Developer");
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const [salesDivisionOptions, setSalesDivisionOptions] = useState(() => {
@@ -375,6 +377,18 @@ export default function MarketsClient({ salesDivisions }: Props) {
 
     void submit();
   }, [pushUndo, performUndo]);
+
+  if (loading) {
+    return (
+      <main className={styles.page}>
+        <div className={styles.loading}>Loading access...</div>
+      </main>
+    );
+  }
+
+  if (!canAccess) {
+    return <AccessDeniedPage />;
+  }
 
   return (
     <>

@@ -36,13 +36,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { label: "Home", href: "/", icon: <HomeIcon /> },
-  {
-    label: "Offers", href: "/offers", icon: <OffersIcon />,
-    subItems: [
-      { label: "Markets", href: "/markets" },
-      { label: "Manufacturer's Pipeline", href: "/manufacturers-pipeline" },
-    ],
-  },
+  { label: "Offers", href: "/offers", icon: <OffersIcon /> },
   {
     label: "Price Lists", href: "/price-lists", icon: <PriceListsIcon />,
     subItems: [
@@ -57,16 +51,12 @@ const navItems: NavItem[] = [
     ],
   },
   { label: "Standard Packages", href: "/standard-packages", icon: <StandardPackagesIcon /> },
-  {
-    label: "Customers", href: "/customers", icon: <CustomersIcon />,
-    subItems: [
-      { label: "Groups", href: "/customer-groups" },
-    ],
-  },
+  { label: "Customers", href: "/customers", icon: <CustomersIcon /> },
   { label: "Contacts", href: "/contacts", icon: <ContactsIcon /> },
   {
     label: "Suppliers", href: "/suppliers", icon: <SuppliersIcon />,
     subItems: [
+      { label: "Manufacturer's Pipeline", href: "/manufacturers-pipeline" },
       { label: "Countries", href: "/countries" },
     ],
   },
@@ -80,6 +70,8 @@ const navItems: NavItem[] = [
   {
     label: "Admin", href: "/user-management", icon: <AdminIcon />, requiresRoles: ["Administrator", "Developer"],
     subItems: [
+      { label: "Markets", href: "/markets" },
+      { label: "Customer Groups", href: "/customer-groups" },
       { label: "Logs", href: "/logs" },
     ],
   },

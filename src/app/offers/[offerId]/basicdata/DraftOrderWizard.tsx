@@ -108,11 +108,9 @@ type Props = {
 
 // ── Helper ─────────────────────────────────────────────────────────────────────
 
-function productLabel(partNumber: string | null, modelNumber: string | null, productId?: number): string {
+function productLabel(partNumber: string | null, _modelNumber: string | null, productId?: number): string {
   const pn = partNumber?.trim();
-  const mn = modelNumber?.trim();
-  if (pn && mn) return `${pn} / ${mn}`;
-  return pn || mn || `Product #${productId ?? '?'}`;
+  return pn || `Product #${productId ?? '?'}`;
 }
 
 function formatCurrency(value: number): string {
@@ -146,8 +144,8 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   // Step 3: Brand check
   const [missingBrands, setMissingBrands] = useState<string[]>([]);
   const [existingBrands, setExistingBrands] = useState<string[]>([]);
-  const [nearMatchBrands, setNearMatchBrands] = useState<Array<{ fastquoteName: string; erpName: string; MTRMANFCTR: number }>>([]);
-  const [brandDecisions, setBrandDecisions] = useState<Map<string, 'accept' | 'create'>>(new Map());
+  const [nearMatchBrands, setNearMatchBrands] = useState<Array<{ fastquoteName: string; matches: Array<{ erpName: string; MTRMANFCTR: number }> }>>([]);
+  const [brandDecisions, setBrandDecisions] = useState<Map<string, 'create' | number>>(new Map());
   const [brandsCheckComplete, setBrandsCheckComplete] = useState(false);
 
   // Step 4: Product matching
@@ -352,7 +350,8 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       const newMissing = [...missingBrands];
       for (const nm of nearMatchBrands) {
         const decision = brandDecisions.get(nm.fastquoteName);
-        if (decision === 'accept') {
+        if (typeof decision === 'number') {
+          // User picked a specific ERP match
           newExisting.push(nm.fastquoteName);
         } else {
           newMissing.push(nm.fastquoteName);
@@ -767,24 +766,28 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                   <div key={nm.fastquoteName} style={{ borderBottom: '1px solid #fde68a', paddingBottom: '10px' }}>
                     <div style={{ fontSize: '0.85rem', marginBottom: '6px' }}>
                       <span style={{ fontWeight: 700, color: '#0f172a' }}>{nm.fastquoteName}</span>
-                      <span style={{ color: '#64748b' }}>{' → '}</span>
-                      <span style={{ fontWeight: 700, color: '#166534' }}>{nm.erpName}</span>
-                      <span style={{ color: '#64748b', fontSize: '0.75rem' }}> in Soft1</span>
+                      <span style={{ color: '#64748b', fontSize: '0.75rem' }}> — select a match from Soft1</span>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button
-                        type="button"
-                        style={{
-                          padding: '6px 16px', fontSize: '0.85rem', borderRadius: '4px', cursor: 'pointer',
-                          border: decision === 'accept' ? '2px solid #166534' : '1px solid #d1d5db',
-                          background: decision === 'accept' ? '#dcfce7' : '#fff',
-                          color: decision === 'accept' ? '#166534' : '#374151',
-                          fontWeight: decision === 'accept' ? 700 : 400,
-                        }}
-                        onClick={() => setBrandDecisions(prev => { const next = new Map(prev); next.set(nm.fastquoteName, 'accept'); return next; })}
-                      >
-                        Use &quot;{nm.erpName}&quot;
-                      </button>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      {nm.matches.map(m => {
+                        const isSelected = decision === m.MTRMANFCTR;
+                        return (
+                          <button
+                            key={m.MTRMANFCTR}
+                            type="button"
+                            style={{
+                              padding: '6px 16px', fontSize: '0.85rem', borderRadius: '4px', cursor: 'pointer',
+                              border: isSelected ? '2px solid #166534' : '1px solid #d1d5db',
+                              background: isSelected ? '#dcfce7' : '#fff',
+                              color: isSelected ? '#166534' : '#374151',
+                              fontWeight: isSelected ? 700 : 400,
+                            }}
+                            onClick={() => setBrandDecisions(prev => { const next = new Map(prev); next.set(nm.fastquoteName, m.MTRMANFCTR); return next; })}
+                          >
+                            {m.erpName}
+                          </button>
+                        );
+                      })}
                       <button
                         type="button"
                         style={{

@@ -12,6 +12,7 @@ import type {
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
 import { useAuditUser } from "../components/AuditUserProvider";
+import AccessDeniedPage from "../components/AccessDeniedPage";
 import styles from "./CustomerGroupsClient.module.css";
 import LookupModal from "../components/LookupModal";
 import PageHeader from "../components/PageHeader";
@@ -71,7 +72,8 @@ const GROUP_FIELD_LABELS: Record<string, string> = {
 
 export default function CustomerGroupsClient() {
   useRouter();
-  const { roles } = useAuditUser();
+  const { roles, loading } = useAuditUser();
+  const canAccess = roles.includes("Administrator") || roles.includes("Developer");
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
@@ -248,6 +250,18 @@ export default function CustomerGroupsClient() {
     setRefreshToken((prev) => prev + 1);
     showToastMessage("Customer group added", "success");
   }, [groupForm, closeAddGroup, setGroupError, setGroupSaving, setRefreshToken]);
+
+  if (loading) {
+    return (
+      <main className={styles.page}>
+        <div className={styles.loading}>Loading access...</div>
+      </main>
+    );
+  }
+
+  if (!canAccess) {
+    return <AccessDeniedPage />;
+  }
 
   return (
     <main className={styles.page}>

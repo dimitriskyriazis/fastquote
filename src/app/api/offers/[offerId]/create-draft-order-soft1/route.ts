@@ -806,7 +806,7 @@ async function handleCheckBrands(
 
   const missingBrands: string[] = [];
   const existingBrands: string[] = [];
-  const nearMatchBrands: Array<{ fastquoteName: string; erpName: string; MTRMANFCTR: number }> = [];
+  const nearMatchBrands: Array<{ fastquoteName: string; matches: Array<{ erpName: string; MTRMANFCTR: number }> }> = [];
 
   for (const brandName of uniqueBrandNames) {
     // 1. Try exact match (trimmed, case-insensitive)
@@ -822,24 +822,30 @@ async function handleCheckBrands(
       continue;
     }
 
-    // 2. Try fuzzy match — strip spaces and special chars, compare
-    const cleanedBrand = brandName.replace(/[-_\s./,()"'&+]+/g, '').toUpperCase();
+    // 2. Try fuzzy match — strip spaces/special chars, check both directions, accent-insensitive
+    const cleanedBrand = brandName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[-_\s./,()"'&+]+/g, '').toUpperCase();
     if (cleanedBrand) {
       const fuzzyReq = erpPool.request();
-      fuzzyReq.input('cleanedBrand', sql.NVarChar(128), cleanedBrand);
+      fuzzyReq.input('cleanedBrand', sql.NVarChar(130), '%' + cleanedBrand + '%');
+      fuzzyReq.input('cleanedBrandRaw', sql.NVarChar(128), cleanedBrand);
       const fuzzyRes = await fuzzyReq.query<{ MTRMANFCTR: number; NAME: string }>(`
         SELECT TOP (5) MTRMANFCTR, NAME FROM dbo.MTRMANFCTR
-        WHERE UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+        WHERE (
+          UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 NAME,
                 '-', ''), ' ', ''), '_', ''), '.', ''), '/', ''), ',', ''), '(', ''), ')', ''))
-              = @cleanedBrand
+              COLLATE Latin1_General_CI_AI LIKE @cleanedBrand
+          OR @cleanedBrandRaw COLLATE Latin1_General_CI_AI LIKE
+              '%' + UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                NAME,
+                '-', ''), ' ', ''), '_', ''), '.', ''), '/', ''), ',', ''), '(', ''), ')', '')) + '%'
+        )
         ORDER BY MTRMANFCTR
       `);
       if (fuzzyRes.recordset?.length) {
         nearMatchBrands.push({
           fastquoteName: brandName,
-          erpName: fuzzyRes.recordset[0].NAME.trim(),
-          MTRMANFCTR: fuzzyRes.recordset[0].MTRMANFCTR,
+          matches: fuzzyRes.recordset.map(r => ({ erpName: r.NAME.trim(), MTRMANFCTR: r.MTRMANFCTR })),
         });
         continue;
       }

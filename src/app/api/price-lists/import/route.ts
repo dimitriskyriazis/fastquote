@@ -1309,7 +1309,7 @@ export async function POST(req: NextRequest) {
           // Detect model number mismatches
           const importModel = row.modelNumber?.trim() || "";
           const existingModel = existingProduct?.ModelNumber?.trim() || "";
-          if (importModel && existingModel && importModel.toLowerCase() !== existingModel.toLowerCase()) {
+          if (importModel && importModel.toLowerCase() !== existingModel.toLowerCase()) {
             modelNumberMismatches.push({ productId: productId!, partNumber: existingProduct?.PartNumber || row.partNumber || "", oldModelNumber: existingModel, newModelNumber: row.modelNumber! });
           }
 
