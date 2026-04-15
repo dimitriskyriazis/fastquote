@@ -1336,6 +1336,8 @@ export default function AgGridAll({
   const pendingFilterWidthRestoreRef = useRef<Array<{ colId: string; width: number }> | null>(null);
   const firstDataRenderedRef = useRef(false);
   const [isGridReady, setIsGridReady] = useState(false);
+  const [gridEmpty, setGridEmpty] = useState(true);
+  const gridEmptyRef = useRef(true);
   const { userId } = useAuditUser();
   const pathname = usePathname();
 
@@ -2837,7 +2839,7 @@ export default function AgGridAll({
       resizable: true,
       suppressAutoSize: false,
       filter: true,
-      floatingFilter,
+      floatingFilter: floatingFilter && !gridEmpty,
       // Hide header menu icon (right-click still shows menu)
       suppressHeaderMenuButton: true,
       width: 100,
@@ -2851,7 +2853,7 @@ export default function AgGridAll({
         : null),
       filterParams: mergedFilterParams,
     };
-  }, [defaultColDef, enablePivotMode, floatingFilter]);
+  }, [defaultColDef, enablePivotMode, floatingFilter, gridEmpty]);
 
   const autoGroupColumnDef = useMemo<ColDef>(() => ({
     width: 210,
@@ -3047,6 +3049,11 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           onResponse({ ...data, request: serverRequest });
         }
         params.success({ rowData: filteredRows, rowCount: resolvedRowCount });
+        if (startRow === 0) {
+          const empty = filteredRows.length === 0;
+          gridEmptyRef.current = empty;
+          setGridEmpty(empty);
+        }
       } catch (e) {
         console.error('Datasource fetch exception', e);
         params.fail();
@@ -4222,6 +4229,9 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
         data-suppress-sidebar={suppressSideBar}
         ref={shellRef}
       >
+        {gridEmpty && isGridReady && (
+          <div className={styles.noRowsOverlay}>No data to display</div>
+        )}
         <AgGridReact
           gridOptions={sharedGridOptions}
           ref={gridRef}

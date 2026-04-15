@@ -1,42 +1,56 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import sql from 'mssql';
 import { getPool } from '../../../../lib/sql';
 
 type StatusCount = { Name: string; count: number };
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const pool = await getPool();
+    const userId = request.nextUrl.searchParams.get('userId')?.trim() || null;
+
+    const userFilter = userId ? ' AND o.SalesPersonId = @userId' : '';
+    const userFilterShort = userId ? ' AND SalesPersonId = @userId' : '';
+
+    const addUserParam = (req: ReturnType<typeof pool.request>) => {
+      if (userId) req.input('userId', sql.NVarChar(450), userId);
+      return req;
+    };
 
     const [openResult, statusResult, monthResult, yearResult, winRateResult] = await Promise.all([
-      pool.request().query<{ openOffers: number }>(`
+      addUserParam(pool.request()).query<{ openOffers: number }>(`
         SELECT COUNT(*) AS openOffers
         FROM dbo.Offer AS o
         JOIN dbo.OfferStatus AS os ON os.ID = o.StatusID
         WHERE o.Enabled = 1
           AND os.Name NOT IN ('Order Signed', 'Rejection', 'Cancelled')
+          ${userFilter}
       `),
-      pool.request().query<StatusCount>(`
+      addUserParam(pool.request()).query<StatusCount>(`
         SELECT os.Name, COUNT(*) AS count
         FROM dbo.Offer AS o
         JOIN dbo.OfferStatus AS os ON os.ID = o.StatusID
         WHERE o.Enabled = 1
+          ${userFilter}
         GROUP BY os.Name
         ORDER BY COUNT(*) DESC
       `),
-      pool.request().query<{ createdThisMonth: number }>(`
+      addUserParam(pool.request()).query<{ createdThisMonth: number }>(`
         SELECT COUNT(*) AS createdThisMonth
         FROM dbo.Offer
         WHERE Enabled = 1
           AND MONTH(CreatedOn) = MONTH(GETDATE())
           AND YEAR(CreatedOn) = YEAR(GETDATE())
+          ${userFilterShort}
       `),
-      pool.request().query<{ createdThisYear: number }>(`
+      addUserParam(pool.request()).query<{ createdThisYear: number }>(`
         SELECT COUNT(*) AS createdThisYear
         FROM dbo.Offer
         WHERE Enabled = 1
           AND YEAR(CreatedOn) = YEAR(GETDATE())
+          ${userFilterShort}
       `),
-      pool.request().query<{ winRate: number | null }>(`
+      addUserParam(pool.request()).query<{ winRate: number | null }>(`
         SELECT
           CAST(
             SUM(CASE WHEN os.Name IN ('Order Signed') THEN 1 ELSE 0 END) AS FLOAT
@@ -46,6 +60,7 @@ export async function GET() {
         FROM dbo.Offer AS o
         JOIN dbo.OfferStatus AS os ON os.ID = o.StatusID
         WHERE o.Enabled = 1
+          ${userFilter}
       `),
     ]);
 

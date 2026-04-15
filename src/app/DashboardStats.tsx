@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Skeleton from './components/Skeleton';
+import { useAuditUser } from './components/AuditUserProvider';
 import styles from './DashboardStats.module.css';
 
 type DashboardStatsData = {
@@ -31,12 +32,15 @@ const getStatusColor = (status: string) =>
   STATUS_COLORS[status] ?? '#cbd5e1';
 
 export default function DashboardStats() {
+  const { userId } = useAuditUser();
   const [stats, setStats] = useState<DashboardStatsData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!userId) return;
     let cancelled = false;
-    fetch('/api/dashboard/stats')
+    const url = `/api/dashboard/stats?userId=${encodeURIComponent(userId)}`;
+    fetch(url)
       .then((res) => res.json())
       .then((data) => {
         if (!cancelled && data.ok) setStats(data.stats);
@@ -46,7 +50,7 @@ export default function DashboardStats() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [userId]);
 
   if (loading) {
     return (

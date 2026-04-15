@@ -484,6 +484,7 @@ type ProductGridRow = {
   __totalCount: number | bigint | null;
   ProductID: number;
   PartNumber: string | null;
+  WebLink: string | null;
   Description: string | null;
   ModelNumber: string | null;
   BrandName: string | null;
@@ -578,6 +579,7 @@ async function handleProductGrid(
         p.ModelNumber,
         p.ModelNumberCleared,
         p.LegacyPartNoCleaned,
+        p.WebLink,
         b.Name AS BrandName
       FROM dbo.Products p
         LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
@@ -586,6 +588,7 @@ async function handleProductGrid(
       COUNT_BIG(1) OVER () AS __totalCount,
       bp.ProductID,
       bp.PartNumber,
+      bp.WebLink,
       bp.Description,
       bp.ModelNumber,
       bp.BrandName,

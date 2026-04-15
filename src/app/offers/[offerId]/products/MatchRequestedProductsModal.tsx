@@ -94,6 +94,19 @@ const normalizeProductId = (value: unknown): number | null => {
   return null;
 };
 
+const PartNumberCellRenderer = ({ value, data }: { value?: unknown; data?: Record<string, unknown> }) => {
+  const text = value == null ? '' : String(value);
+  const webLink = data?.WebLink;
+  if (webLink && typeof webLink === 'string' && webLink.trim()) {
+    return (
+      <a href={webLink} target="_blank" rel="noopener noreferrer" title={webLink}>
+        {text}
+      </a>
+    );
+  }
+  return <>{text}</>;
+};
+
 const DescriptionCellRenderer = ({ value }: { value?: unknown }) => {
   const text = value == null ? '' : String(value);
   return (
@@ -217,6 +230,7 @@ export default function MatchRequestedProductsModal({
         field: 'PartNumber',
         headerName: 'Part Number',
         filter: 'agTextColumnFilter',
+        cellRenderer: PartNumberCellRenderer,
         width: 225,
       },
       {
