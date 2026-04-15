@@ -53,6 +53,7 @@ type OfferRow = {
   Title: string | null;
   Comments: string | null;
   CustomerName: string | null;
+  CustomerGroup: string | null;
   PricingPolicyName: string | null;
   SalesMarket: string | null;
   SalesDivision: string | null;
@@ -115,6 +116,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Title: 'dbo.Offer.Title',
   Comments: 'dbo.Offer.Comments',
   CustomerName: 'dbo.Customers.Name',
+  CustomerGroup: 'offerCustomerGroup.Name',
   PricingPolicyName: 'dbo.PricingPolicies.Name',
   SalesMarket: 'dbo.Markets.Name',
   SalesDivision: 'dbo.SalesDivision.Name',
@@ -158,6 +160,7 @@ const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, exp
 
 const ALLOWED_ROW_GROUP_FIELDS = new Set([
   'CustomerName',
+  'CustomerGroup',
   'PricingPolicyName',
   'SalesMarket',
   'SalesDivision',
@@ -344,6 +347,7 @@ export async function POST(req: NextRequest) {
 	        dbo.Offer.Comments,
 	        dbo.Offer.CustomerID,
 	        dbo.Customers.Name AS CustomerName,
+	        offerCustomerGroup.Name AS CustomerGroup,
 	        dbo.PricingPolicies.Name AS PricingPolicyName,
 	        dbo.Markets.Name AS SalesMarket,
 	        dbo.SalesDivision.Name AS SalesDivision,
@@ -402,6 +406,7 @@ export async function POST(req: NextRequest) {
           GROUP BY RootOfferID
         ) AS versionStats ON versionStats.RootOfferID = versionTree.RootOfferID
 	        INNER JOIN dbo.Customers ON dbo.Offer.CustomerID = dbo.Customers.ID
+	        LEFT JOIN dbo.CustomerGroups AS offerCustomerGroup ON dbo.Customers.CustomerGroupID = offerCustomerGroup.ID
 	        INNER JOIN dbo.PricingPolicies ON dbo.Offer.PricingPolicyID = dbo.PricingPolicies.ID
 	        INNER JOIN dbo.Markets ON dbo.Offer.MarketID = dbo.Markets.ID
 	        INNER JOIN dbo.SalesDivision ON dbo.Offer.SalesDivisionID = dbo.SalesDivision.ID

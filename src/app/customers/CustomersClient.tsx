@@ -278,6 +278,12 @@ export default function CustomersClient() {
         enableRowGroup: true,
       },
       {
+        field: "CustomerGroup",
+        headerName: "Customer Group",
+        filter: "agTextColumnFilter",
+        enableRowGroup: true,
+      },
+      {
         field: "Importance",
         headerName: "Importance",
         filter: "agTextColumnFilter",

@@ -134,6 +134,7 @@ export const GLOBAL_COLUMN_WIDTH_ASSIGNMENTS: Record<string, ColumnWidthAssignme
   OfferDeadlineDate: 'date',
   OrderSignedDate: 'date',
   DeliveryDueDate: 'date',
+  CustomerGroup: 3,
 };
 
 export const resolveColumnWidthAssignments = (

@@ -33,6 +33,7 @@ type CustomerRow = {
   IsParent: boolean | number | null;
   ParentCustomer: string | null;
   PricingPolicy: string | null;
+  CustomerGroup: string | null;
   Importance: string | null;
   Country: string | null;
   City: string | null;
@@ -59,13 +60,14 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   IsParent: "dbo.Customers.IsParent",
   ParentCustomer: "parentCustomer.Name",
   PricingPolicy: "dbo.PricingPolicies.Name",
+  CustomerGroup: "customerGroup.Name",
   Importance: "dbo.Customers.Importance",
   Country: "country.Name",
   City: "dbo.Customers.City",
   Enabled: "dbo.Customers.Enabled",
 };
 
-const ALLOWED_ROW_GROUP_FIELDS = new Set(["IsParent", "PricingPolicy", "ParentCustomer", "Importance"]);
+const ALLOWED_ROW_GROUP_FIELDS = new Set(["IsParent", "PricingPolicy", "ParentCustomer", "CustomerGroup", "Importance"]);
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
   colId,
   expression,
@@ -224,6 +226,7 @@ export async function POST(req: NextRequest) {
         dbo.Customers.IsParent,
         parentCustomer.Name AS ParentCustomer,
         dbo.PricingPolicies.Name AS PricingPolicy,
+        customerGroup.Name AS CustomerGroup,
         dbo.Customers.Importance,
         country.Name AS Country,
         dbo.Customers.City,
@@ -234,6 +237,7 @@ export async function POST(req: NextRequest) {
       FROM dbo.Customers
       LEFT OUTER JOIN dbo.PricingPolicies ON dbo.Customers.PricingPolicyID = dbo.PricingPolicies.ID
       LEFT OUTER JOIN dbo.Customers AS parentCustomer ON dbo.Customers.ParentCustomerID = parentCustomer.ID
+      LEFT OUTER JOIN dbo.CustomerGroups AS customerGroup ON dbo.Customers.CustomerGroupID = customerGroup.ID
       LEFT OUTER JOIN dbo.Countries AS country ON dbo.Customers.CountryID = country.ID
     `;
 

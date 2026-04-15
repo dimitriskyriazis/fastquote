@@ -689,6 +689,7 @@ export default function OffersClient() {
       },
     },
     { field: 'OfferStatus', headerName: 'Status', filter: 'agTextColumnFilter', enableRowGroup: true },
+    { field: 'CustomerGroup', headerName: 'Customer Group', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'SalesPerson', headerName: 'Sales Person', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'SalesMarket', headerName: 'Market', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'SalesDivision', headerName: 'Sales Division', filter: 'agSetColumnFilter', filterParams: { values: ['AVS', 'TVS'] }, enableRowGroup: true },
