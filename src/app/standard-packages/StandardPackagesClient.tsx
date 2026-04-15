@@ -737,6 +737,7 @@ export default function StandardPackagesClient() {
               rowSelection="multiple"
               rowMultiSelectWithClick
               rowDeselection
+              allowMultiCellDeletion
             />
           </div>
         </GridQuickSearchProvider>

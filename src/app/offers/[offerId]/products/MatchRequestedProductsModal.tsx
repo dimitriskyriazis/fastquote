@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { CellClickedEvent, ColDef, GridApi, RowClassParams, RowDoubleClickedEvent, RowNode, RowStyle } from 'ag-grid-community';
 import { PageHeaderContext } from '../../../components/PageHeader';
@@ -542,6 +542,7 @@ export default function MatchRequestedProductsModal({
   const applyProducts = useCallback((products: MatcherRowData[]) => {
     suggestedProductsRef.current = products;
     setSuggestedProducts(products);
+    setSuggesting(false);
     setSuggestionsVisible(true);
     setNoSuggestionsFound(products.length === 0);
     if (products.length > 0) {
@@ -693,14 +694,11 @@ export default function MatchRequestedProductsModal({
       /* noop */
     }
     hasAppliedRequestedFiltersRef.current = true;
-    setSelectedProduct(null);
     setAssigning(false);
     setComment('');
-    setSuggestedProducts([]);
-    setNoSuggestionsFound(false);
-    // Immediately update refs so autoSelectTopProduct (which runs in a later effect
-    // during the same commit phase) sees the cleared values.
-    suggestedProductsRef.current = [];
+    // selectedProduct and suggestion state (suggestedProducts, noSuggestionsFound,
+    // suggesting) are managed by the useLayoutEffect below so it can apply
+    // prefetched data before paint without being overwritten by this regular useEffect.
     userManuallySelectedRef.current = false;
     setSuggestionsVisible(true);
     // Reset Farnell state for the new entry
@@ -715,23 +713,25 @@ export default function MatchRequestedProductsModal({
   // On the first product userWantsSuggestionsRef is false, so the user must
   // click "Suggest Products (AI)" to opt in.  After that, subsequent products
   // will auto-show suggestions until the user clicks "Hide suggestions".
-  useEffect(() => {
-    if (!userWantsSuggestionsRef.current) return;
-    if (suggestedProductsRef.current.length > 0) return;
-    if (!prefetchedSuggestions || prefetchedSuggestions.length === 0) return;
-    applyProducts(prefetchedSuggestions);
-  }, [prefetchedSuggestions, entry.offerDetailId, applyProducts]);
+  // Uses useLayoutEffect to apply before paint — avoids a flash of empty state.
+  useLayoutEffect(() => {
+    // Clear stale state from the previous entry
+    setSelectedProduct(null);
+    suggestedProductsRef.current = [];
+    setSuggestedProducts([]);
+    setNoSuggestionsFound(false);
+    setSuggesting(false);
 
-  // Fallback: if user opted in but prefetched data hasn't arrived after 2s, fetch manually
-  useEffect(() => {
     if (!userWantsSuggestionsRef.current) return;
-    const timer = setTimeout(() => {
-      if (suggestedProductsRef.current.length === 0 && handleSuggestProductsRef.current) {
-        handleSuggestProductsRef.current();
-      }
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [entry.offerDetailId]);
+    if (prefetchedSuggestions != null) {
+      // Prefetch completed — apply results (may be empty = no matching products)
+      applyProducts(prefetchedSuggestions);
+      return;
+    }
+    // Prefetch hasn't arrived yet — show spinner while we wait.
+    // The effect will re-run when prefetchedSuggestions changes from null/undefined to an array.
+    setSuggesting(true);
+  }, [prefetchedSuggestions, entry.offerDetailId, applyProducts]);
 
   useEffect(() => {
     applyRequestedFilterModel(productsApiRef.current);

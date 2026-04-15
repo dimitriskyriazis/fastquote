@@ -3,7 +3,7 @@ import { getPool } from '../../../lib/sql';
 import { toDropdownOptions, type RawDropdownRow } from '../../../lib/dropdownOptions';
 import styles from './OfferBasicDataPanel.module.css';
 import OfferBasicDataClient from './OfferBasicDataClient';
-import type { OfferBasicRecord, OfferContactInfo, OfferDropdownOption } from './OfferBasicDataTypes';
+import type { OfferBasicRecord, OfferContactInfo, OfferDropdownOption, MarketOption } from './OfferBasicDataTypes';
 
 type Props = {
   offerId: string;
@@ -127,16 +127,24 @@ async function fetchPricingPolicies() {
   }
 }
 
-async function fetchMarkets() {
+type MarketLookupRow = LookupRow & { SalesDivisionID?: number | null };
+
+async function fetchMarkets(): Promise<MarketOption[]> {
   try {
     const pool = await getPool();
     const request = pool.request();
-    const result = await request.query<LookupRow>(`
-      SELECT ID, Name
+    const result = await request.query<MarketLookupRow>(`
+      SELECT ID, Name, SalesDivisionID
       FROM dbo.Markets
       ORDER BY Name
     `);
-    return mapLookupRows(result.recordset);
+    return (result.recordset ?? [])
+      .filter((row): row is MarketLookupRow & { ID: number } => row?.ID != null)
+      .map((row) => ({
+        value: String(row.ID),
+        label: row.Name?.trim() || `Option ${String(row.ID)}`,
+        salesDivisionId: row.SalesDivisionID != null ? String(row.SalesDivisionID) : '',
+      }));
   } catch (err) {
     console.error('Failed to load markets', err);
     return [];

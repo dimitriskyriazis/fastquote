@@ -61,6 +61,8 @@ export type OfferContactInfo = {
 
 export type OfferDropdownOption = DropdownOption;
 
+export type MarketOption = OfferDropdownOption & { salesDivisionId: string };
+
 export type OfferBasicUpdateField =
   | 'CustomerID'
   | 'SalesDivisionID'

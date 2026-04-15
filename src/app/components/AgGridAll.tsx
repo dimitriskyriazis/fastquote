@@ -585,6 +585,7 @@ type Props = {
   onRequestPayloadConsumed?: () => void;
   allowCellSelectionInPerformanceMode?: boolean;
   suppressCellSelection?: boolean;
+  allowMultiCellDeletion?: boolean;
   useAgGridRowDrag?: boolean;
   suppressSideBar?: boolean;
   serverSideHeaderSelectMode?: 'loaded' | 'all';
@@ -1210,6 +1211,7 @@ export default function AgGridAll({
   onRequestPayloadConsumed,
   allowCellSelectionInPerformanceMode = performanceMode === true,
   suppressCellSelection = false,
+  allowMultiCellDeletion = false,
   useAgGridRowDrag = false,
   suppressSideBar = false,
   serverSideHeaderSelectMode = 'all',
@@ -1321,8 +1323,9 @@ export default function AgGridAll({
       node.setDataValue(colKey, nextValue, 'delete');
       return;
     }
+    if (!allowMultiCellDeletion) return;
     clearSelectedCellValues(api);
-  }, [clearSelectedCellValues, gridRef]);
+  }, [allowMultiCellDeletion, clearSelectedCellValues, gridRef]);
 
   const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const pendingScrollRestoreTopRef = useRef<number | null>(null);
@@ -3251,7 +3254,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       return defaultItems;
     };
 
-    const menuItems = resolveMenuItems();
+    const menuItems = resolveMenuItems().filter((item) => item !== 'cut');
     const deleteMenuItem: MenuItemDef<RowData> = {
       name: 'Delete',
       action: (actionParams) => {

@@ -7,6 +7,7 @@ import type {
   OfferContactInfo,
   OfferBasicUpdateField,
   OfferDropdownOption,
+  MarketOption,
 } from './OfferBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
@@ -27,7 +28,7 @@ type Props = {
   customers: OfferDropdownOption[];
   statuses: OfferDropdownOption[];
   pricingPolicies: OfferDropdownOption[];
-  markets: OfferDropdownOption[];
+  markets: MarketOption[];
   salesDivisions: OfferDropdownOption[];
   users: UserOption[];
   fwcProjects: OfferDropdownOption[];
@@ -497,6 +498,25 @@ export default function OfferBasicDataClient({
   const customerListCloseTimerRef = useRef<NodeJS.Timeout | null>(null);
   const savedValuesRef = useRef(savedValues);
   savedValuesRef.current = savedValues;
+  const filteredMarkets = useMemo(() => {
+    const divisionValue = values.division ?? '';
+    if (!divisionValue) return localMarkets as OfferDropdownOption[];
+    return localMarkets.filter(
+      (market) => market.salesDivisionId === divisionValue,
+    ) as OfferDropdownOption[];
+  }, [localMarkets, values.division]);
+
+  // Clear market when selected division changes and current market doesn't belong to it
+  useEffect(() => {
+    const divisionValue = values.division ?? '';
+    const marketValue = values.market ?? '';
+    if (!divisionValue || !marketValue) return;
+    const currentMarket = localMarkets.find((m) => m.value === marketValue);
+    if (currentMarket && currentMarket.salesDivisionId !== divisionValue) {
+      setValues((prev) => ({ ...prev, market: '' }));
+    }
+  }, [localMarkets, values.division, values.market]);
+
   const [contextMenuState, setContextMenuState] = useState<{
     x: number;
     y: number;
@@ -971,6 +991,7 @@ export default function OfferBasicDataClient({
       );
     }
 
+    const selectOptions = def.id === 'market' ? filteredMarkets : def.options;
     return (
       <select
         id={controlId}
@@ -983,7 +1004,7 @@ export default function OfferBasicDataClient({
         onBlur={() => handleBlur(def)}
       >
         <option value="">Select...</option>
-        {def.options.map((option) => (
+        {selectOptions.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
           </option>

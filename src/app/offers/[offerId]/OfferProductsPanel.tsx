@@ -351,64 +351,57 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [requestedMatchQueue, setRequestedMatchQueue] = useState<RequestedProductMatchEntry[]>([]);
   const [processedRequestedMatches, setProcessedRequestedMatches] = useState(0);
 
-  // --- AI suggestion prefetch cache (batch) ---
+  // --- AI suggestion prefetch cache ---
+  // Prefetches ALL entries upfront with bounded concurrency.
+  // Each result lands independently so the first ones are ready fast.
   const suggestionCacheRef = useRef<Map<number, Record<string, unknown>[]>>(new Map());
-  const batchPrefetchedRef = useRef(false);
+  const prefetchingRef = useRef<Set<number>>(new Set());
+  const prefetchStartedRef = useRef(false);
   const [suggestionCacheVersion, setSuggestionCacheVersion] = useState(0);
 
-  const prefetchAllSuggestions = useCallback((entries: RequestedProductMatchEntry[]) => {
-    if (batchPrefetchedRef.current) return;
-    const uncached = entries.filter((e) => !suggestionCacheRef.current.has(e.offerDetailId));
-    if (uncached.length === 0) return;
-    batchPrefetchedRef.current = true;
-
-    const fetchOne = async (entry: RequestedProductMatchEntry) => {
-      if (suggestionCacheRef.current.has(entry.offerDetailId)) return;
-      try {
-        const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/suggest`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            requestedBrand: entry.requestedBrand,
-            requestedModelNumber: entry.requestedModelNumber,
-            requestedPartNumber: entry.requestedPartNumber,
-            requestedDescription: entry.requestedDescription,
-            requestedDescription2: entry.requestedDescription2,
-            requestedDescription3: entry.requestedDescription3,
-          }),
-        });
-        if (res.ok) {
-          const data = (await res.json()) as { ok: boolean; products?: Record<string, unknown>[] };
-          suggestionCacheRef.current.set(entry.offerDetailId, data.products ?? []);
-          setSuggestionCacheVersion((v) => v + 1);
-        }
-      } catch { /* noop */ }
-    };
-
-    // Fetch the first few entries on their own so the user sees results quickly.
-    const priority = uncached.slice(0, 3);
-    void Promise.all(priority.map(fetchOne));
-
-    // Batch-fetch the remaining entries with bounded concurrency
-    const rest = uncached.slice(3);
-    if (rest.length > 0) {
-      const MAX_CONCURRENT = 6;
-      let idx = 0;
-      const batchWorker = async () => {
-        while (idx < rest.length) {
-          await fetchOne(rest[idx++]);
-        }
-      };
-      const workers = Array.from({ length: Math.min(MAX_CONCURRENT, rest.length) }, () => batchWorker());
-      void Promise.all(workers);
-    }
+  const prefetchEntry = useCallback(async (entry: RequestedProductMatchEntry) => {
+    const id = entry.offerDetailId;
+    if (suggestionCacheRef.current.has(id) || prefetchingRef.current.has(id)) return;
+    prefetchingRef.current.add(id);
+    console.log(`[suggest-prefetch] START #${prefetchingRef.current.size} offerDetailId=${id}`);
+    try {
+      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/suggest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestedBrand: entry.requestedBrand,
+          requestedModelNumber: entry.requestedModelNumber,
+          requestedPartNumber: entry.requestedPartNumber,
+          requestedDescription: entry.requestedDescription,
+          requestedDescription2: entry.requestedDescription2,
+          requestedDescription3: entry.requestedDescription3,
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { ok: boolean; products?: Record<string, unknown>[] };
+        suggestionCacheRef.current.set(id, data.products ?? []);
+        console.log(`[suggest-prefetch] DONE offerDetailId=${id} products=${(data.products ?? []).length} cached=${suggestionCacheRef.current.size}`);
+        setSuggestionCacheVersion((v) => v + 1);
+      }
+    } catch { /* noop */ }
   }, [offerId]);
 
-  // Prefetch suggestions for ALL entries in one batch request
+  // Prefetch all entries with bounded concurrency (max 4 in-flight at a time)
   useEffect(() => {
-    if (requestedMatchQueue.length === 0) return;
-    prefetchAllSuggestions(requestedMatchQueue);
-  }, [requestedMatchQueue, prefetchAllSuggestions]);
+    if (requestedMatchQueue.length === 0 || prefetchStartedRef.current) return;
+    prefetchStartedRef.current = true;
+    const entries = [...requestedMatchQueue];
+    const MAX_CONCURRENT = 4;
+    let idx = 0;
+    const worker = async () => {
+      while (idx < entries.length) {
+        const entry = entries[idx++];
+        await prefetchEntry(entry);
+      }
+    };
+    const workers = Array.from({ length: Math.min(MAX_CONCURRENT, entries.length) }, () => worker());
+    void Promise.all(workers);
+  }, [requestedMatchQueue, prefetchEntry]);
   const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() =>
     readCollapsedCategoryPathsFromCookie(offerId),
   );
@@ -2901,7 +2894,8 @@ const requestedColumnDefsMap = useMemo(
     showToastMessage('Skipped all requested items.', 'info');
     setRequestedMatchQueue([]);
     setProcessedRequestedMatches(0);
-    batchPrefetchedRef.current = false;
+    prefetchStartedRef.current = false;
+    prefetchingRef.current.clear();
     suggestionCacheRef.current.clear();
     // Force re-show requested columns that may have been hidden during the
     // populate/match flow.
@@ -3769,7 +3763,6 @@ const requestedColumnDefsMap = useMemo(
       ],
     };
     const clipboardItems: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> = [
-      'cut' as unknown as MenuItemDef,
       copySubmenu,
       'paste' as unknown as MenuItemDef,
     ];
@@ -5683,6 +5676,7 @@ const requestedColumnDefsMap = useMemo(
             rowBuffer={5}
             maxBlocksInCache={5}
             filterServerRow={filterServerRow}
+            allowMultiCellDeletion
           />
           <div
             ref={insertLineRef}

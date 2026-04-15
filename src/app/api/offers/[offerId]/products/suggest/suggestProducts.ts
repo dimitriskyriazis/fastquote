@@ -122,6 +122,33 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
     }
   }
 
+  // Match model-like tokens from part/model number against product Description.
+  // Handles cases where a product's marketing name (e.g. "M4350-40X4C") differs
+  // from its DB ModelNumber (e.g. "XSM4344C") but appears in the Description field.
+  const modelLikeRegex = /[A-Za-z]+[-.]?\d[\w.-]*|\d[\w.-]*[-.]?[A-Za-z]+/;
+  const addDescriptionLikeCondition = (value: string, prefix: string, weight: number) => {
+    const t = value.trim();
+    if (t.length < 3 || !modelLikeRegex.test(t)) return;
+    const p = `${prefix}_${paramIdx++}`;
+    request.input(p, sql.NVarChar(255), `%${t}%`);
+    conditions.push(`p.Description LIKE @${p}`);
+    weights.push(weight);
+  };
+
+  if (partNumber) {
+    const tokens = partNumber.split(/\s+/).filter((t) => t.length >= 3);
+    for (const token of tokens) {
+      addDescriptionLikeCondition(token, 'pnd', 6);
+    }
+  }
+
+  if (modelNumber) {
+    const tokens = modelNumber.split(/\s+/).filter((t) => t.length >= 3);
+    for (const token of tokens) {
+      addDescriptionLikeCondition(token, 'mnd', 6);
+    }
+  }
+
   // Extract model-like tokens from descriptions (e.g. "CX-30", "TDC-7100", "C-10")
   // These are alphanumeric+dash/dot patterns that look like model identifiers
   const allDescText = [desc1, desc2, desc3].filter(Boolean).join(' ');

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { OfferDropdownOption } from './OfferBasicDataTypes';
+import type { OfferDropdownOption, MarketOption } from './OfferBasicDataTypes';
 
 type UserOption = OfferDropdownOption & { salesSeniorityName?: string | null };
 
@@ -16,7 +16,7 @@ export type LookupState = {
   customers: OfferDropdownOption[];
   statuses: OfferDropdownOption[];
   pricingPolicies: OfferDropdownOption[];
-  markets: OfferDropdownOption[];
+  markets: MarketOption[];
   salesDivisions: OfferDropdownOption[];
   users: UserOption[];
   fwcProjects: OfferDropdownOption[];
@@ -77,7 +77,7 @@ export function useOfferLookups(props: LookupState) {
         if (payload.lookups!.customers) next.customers = payload.lookups!.customers;
         if (payload.lookups!.statuses) next.statuses = payload.lookups!.statuses;
         if (payload.lookups!.pricingPolicies) next.pricingPolicies = payload.lookups!.pricingPolicies;
-        if (payload.lookups!.markets) next.markets = payload.lookups!.markets;
+        if (payload.lookups!.markets) next.markets = payload.lookups!.markets as MarketOption[];
         if (payload.lookups!.salesDivisions) next.salesDivisions = payload.lookups!.salesDivisions;
         if (payload.lookups!.users) next.users = payload.lookups!.users as UserOption[];
         if (payload.lookups!.fwcProjects) next.fwcProjects = payload.lookups!.fwcProjects;

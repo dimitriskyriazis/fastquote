@@ -112,7 +112,7 @@ const hasCellValue = (value: unknown) => {
 const detectHeaderRowIndex = (rows: unknown[][]) => {
   let bestIdx = 0;
   let bestScore = -1;
-  const limit = Math.min(rows.length, 25);
+  const limit = Math.min(rows.length, 50);
   for (let idx = 0; idx < limit; idx += 1) {
     const row = rows[idx];
     if (!Array.isArray(row)) continue;
