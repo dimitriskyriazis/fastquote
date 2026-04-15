@@ -177,3 +177,53 @@
 .contactToggleControl input[type="checkbox"] {
   accent-color: #000000;
 }
+
+.comboWrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.comboInput {
+  width: 100%;
+}
+
+.comboList {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  max-height: 220px;
+  min-height: 140px;
+  overflow: auto;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+  display: flex;
+  flex-direction: column;
+}
+
+.comboOption {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  color: #0f172a;
+  cursor: default;
+}
+
+.comboOption:hover,
+.comboOption:focus {
+  background: #e5efff;
+}
+
+.comboListEmpty {
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  color: #64748b;
+}

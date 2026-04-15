@@ -213,3 +213,15 @@ export function LogsIcon({ size = 22 }: IconProps): ReactNode {
     </svg>
   );
 }
+
+export function OfferDetailsIcon({ size = 22 }: IconProps): ReactNode {
+  return (
+    <svg {...s(size)}>
+      <path d="M9 5H6.5A1.5 1.5 0 005 6.5v11A1.5 1.5 0 006.5 19h5" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" fill="none" />
+      <path d="M15 5h2.5A1.5 1.5 0 0119 6.5v4" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" fill="none" />
+      <path d="M8 9h8M8 12.5h4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="16.5" cy="16.5" r="3.5" stroke="currentColor" strokeWidth="1.6" fill="none" />
+      <path d="M19.2 19.2L21 21" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}

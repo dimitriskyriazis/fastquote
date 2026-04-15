@@ -131,6 +131,29 @@ async function readGridRequest(req: NextRequest): Promise<GridRequest> {
   return { startRow: 0, endRow: 100 };
 }
 
+export async function GET(req: NextRequest) {
+  logRequest(req, '/api/marketing/contact-groups');
+  try {
+    const auth = await requirePermission(req, "manageCustomersContacts");
+    if (!auth.ok) return auth.response;
+
+    const pool = await getPool();
+    const result = await pool.request().query(`
+      SELECT ID, Description
+      FROM dbo.ContactGroups
+      WHERE Enabled = 1
+      ORDER BY Description
+    `);
+    const rows = (result.recordset ?? []) as Array<{ ID: number; Description: string | null }>;
+    const options = rows.map((r) => ({ value: String(r.ID), label: (r.Description ?? '').trim() || String(r.ID) }));
+    return NextResponse.json({ ok: true, options });
+  } catch (err) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/marketing/contact-groups');
   try {

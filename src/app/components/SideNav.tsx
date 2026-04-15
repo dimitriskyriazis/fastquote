@@ -36,7 +36,12 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { label: "Home", href: "/", icon: <HomeIcon /> },
-  { label: "Offers", href: "/offers", icon: <OffersIcon /> },
+  {
+    label: "Offers", href: "/offers", icon: <OffersIcon />,
+    subItems: [
+      { label: "Offered Products", href: "/offered-products" },
+    ],
+  },
   {
     label: "Price Lists", href: "/price-lists", icon: <PriceListsIcon />,
     subItems: [

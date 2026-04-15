@@ -1229,6 +1229,7 @@ export default function ContactsClient({
         confirmLabel="Save"
         saving={changeCustomerSaving}
         error={changeCustomerError}
+        cardClassName={lookupStyles.cardWide}
       >
         <div className={styles.contactModalBody} style={{ minHeight: 320 }}>
           <div className={`${styles.contactModalField} ${styles.comboWrapper}`}>

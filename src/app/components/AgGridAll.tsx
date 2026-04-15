@@ -117,11 +117,14 @@ import { GridQuickSearchContext } from './GridQuickSearchProvider';
 import { restoreCaretSelection } from '../hooks/useCaretKeeper';
 import { isOfferProductCategory } from '../../lib/offerProductRows';
 import { resolveColumnWidthAssignments, ColumnWidthAssignment } from '../../lib/columnWidthPresets';
+import { useGridUrlState } from '../hooks/useGridUrlState';
+import { parseGridSearchParams } from '../../lib/gridUrlState';
 
 // CONSTANTS
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
 const GRID_ROW_HEIGHT = 32;
+const IGNORED_FILTER_COLS = new Set(['Enabled', 'IsParent']);
 const FILTER_INPUT_SELECTOR = [
   '.ag-floating-filter input:not([type="checkbox"]):not([type="radio"])',
   '.ag-floating-filter textarea',
@@ -595,6 +598,8 @@ type Props = {
    *  Return false to exclude the row. Uses a ref internally so the callback
    *  identity does not need to be stable. */
   filterServerRow?: (row: RowData) => boolean;
+  /** Sync grid filter/sort/quick-search state to URL query parameters. Default true. */
+  syncStateToUrl?: boolean;
 };
 
 type RowData = Record<string, unknown>;
@@ -1218,6 +1223,7 @@ export default function AgGridAll({
   suppressColumnMoveAnimation = false,
   onColumnStateRestored,
   filterServerRow,
+  syncStateToUrl = true,
 }: Props) {
   // Initialize editor focus management hooks
   useMutationCaret();
@@ -1341,8 +1347,15 @@ export default function AgGridAll({
   const [isGridReady, setIsGridReady] = useState(false);
   const [gridEmpty, setGridEmpty] = useState(true);
   const gridEmptyRef = useRef(true);
+  const [hasUserFilters, setHasUserFilters] = useState(false);
   const { userId } = useAuditUser();
   const pathname = usePathname();
+
+  // URL STATE SYNC
+  const gridUrlState = useGridUrlState({
+    enabled: syncStateToUrl !== false && enableColumnStatePersistence !== false,
+    namespace: columnStateNamespace || undefined,
+  });
 
   // COLUMN STATE PERSISTENCE - Storage Keys & Configuration
   const shouldPersistColumnState = enableColumnStatePersistence !== false;
@@ -2222,10 +2235,27 @@ export default function AgGridAll({
     };
   }, [captureSelectionSnapshot]);
 
+  // Seed quick search from URL on mount
+  const urlQuickSearchSeededRef = useRef(false);
+  useEffect(() => {
+    if (urlQuickSearchSeededRef.current) return;
+    if (!gridUrlState.hasUrlState) return;
+    const urlQuickSearch = gridUrlState.readInitialQuickSearch();
+    if (urlQuickSearch && quickSearchContext) {
+      urlQuickSearchSeededRef.current = true;
+      quickSearchContext.onChange(urlQuickSearch);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (!quickSearchEnabled) return;
     const trimmedQuickSearch = resolvedQuickSearchValue.trim();
     quickSearchFilterRef.current = trimmedQuickSearch;
+    // Sync quick search to URL (skip initial empty value)
+    if (quickSearchEffectInitializedRef.current) {
+      gridUrlState.writeQuickSearchToUrl(trimmedQuickSearch);
+    }
     if (!isGridReady) return;
     const api = gridApiRef.current ?? gridRef.current?.api ?? null;
     if (!api || api.isDestroyed?.()) return;
@@ -2267,9 +2297,52 @@ export default function AgGridAll({
         quickSearchRefreshTimerRef.current = null;
       }
     };
-  }, [isGridReady, quickSearchEnabled, resolvedQuickSearchValue, requestRefresh, startQuickSearchFocusRetries]);
+  }, [isGridReady, quickSearchEnabled, resolvedQuickSearchValue, requestRefresh, startQuickSearchFocusRetries, gridUrlState]);
 
   useEffect(() => stopQuickSearchFocusRetries, [stopQuickSearchFocusRetries]);
+
+  // URL STATE - Handle browser back/forward
+  useEffect(() => {
+    return gridUrlState.onPopState(() => {
+      const api = gridApiRef.current ?? gridRef.current?.api ?? null;
+      if (!api || api.isDestroyed?.()) return;
+
+      const urlState = parseGridSearchParams(
+        window.location.search,
+        columnStateNamespace || undefined,
+      );
+
+      // Restore filter
+      filterStateRestoringRef.current = true;
+      if (urlState.filterModel && Object.keys(urlState.filterModel).length > 0) {
+        api.setFilterModel(urlState.filterModel as Record<string, FilterDescriptor>);
+      } else {
+        api.setFilterModel(null);
+      }
+      setTimeout(() => { filterStateRestoringRef.current = false; }, 0);
+
+      // Restore sort
+      if (urlState.sortModel && urlState.sortModel.length > 0) {
+        sortStateRestoringRef.current = true;
+        api.applyColumnState({
+          state: urlState.sortModel.map((e, i) => ({
+            colId: e.colId,
+            sort: e.sort,
+            sortIndex: i,
+          })),
+          defaultState: { sort: null },
+        });
+        setTimeout(() => { sortStateRestoringRef.current = false; }, 0);
+      }
+
+      // Restore quick search
+      if (urlState.quickSearch !== null && quickSearchContext) {
+        quickSearchContext.onChange(urlState.quickSearch);
+      }
+
+      refreshServerSideData(api, { purge: true });
+    });
+  }, [gridUrlState, columnStateNamespace, quickSearchContext]);
 
   // COLUMN STATE PERSISTENCE - Apply Saved State
   const applySavedColumnState = useCallback((api: GridApi<RowData>) => {
@@ -2473,31 +2546,29 @@ export default function AgGridAll({
   const applySavedFilterModel = useCallback((api: GridApi<RowData>) => {
     if (!shouldPersistColumnState || !filterStateStorageKey) return;
     if (filterStateLoadedRef.current) return;
-    const persisted = readPersistedFilterModel(filterStateStorageKey);
-    // Mark as loaded first so persistence can work after restoration
+
+    // URL params take priority over localStorage
+    const persisted = gridUrlState.hasUrlState
+      ? gridUrlState.readInitialFilterModel() as Record<string, FilterDescriptor> | null
+      : readPersistedFilterModel(filterStateStorageKey);
+
     filterStateLoadedRef.current = true;
     if (!persisted || Object.keys(persisted).length === 0) {
       return;
     }
     try {
       filterStateRestoringRef.current = true;
-      // Use setTimeout with a longer delay to ensure server-side datasource is ready
       setTimeout(() => {
         if (api.isDestroyed?.()) {
           filterStateRestoringRef.current = false;
           return;
         }
         api.setFilterModel(persisted);
-        // Refresh server-side data to ensure filtered results are loaded
-        // Note: The onFilterChanged event will also be triggered by setFilterModel,
-        // which should handle the refresh, but we'll do it here too to be safe
         setTimeout(() => {
           if (api.isDestroyed?.()) {
             filterStateRestoringRef.current = false;
             return;
           }
-          // Ensure server-side data is refreshed with the filter
-          // Use purge: true to clear cache and reload with filters
           refreshServerSideData(api, { purge: true });
           filterStateRestoringRef.current = false;
         }, 100);
@@ -2506,11 +2577,45 @@ export default function AgGridAll({
       filterStateRestoringRef.current = false;
       console.warn('Failed to apply saved filter model', err);
     }
-  }, [filterStateStorageKey, shouldPersistColumnState]);
+  }, [filterStateStorageKey, shouldPersistColumnState, gridUrlState]);
 
   const applySavedSortModel = useCallback((api: GridApi<RowData>) => {
     if (!shouldPersistColumnState || !sortStateStorageKey) return;
     if (sortStateLoadedRef.current) return;
+
+    // URL params take priority over localStorage
+    if (gridUrlState.hasUrlState) {
+      const urlSort = gridUrlState.readInitialSortModel();
+      sortStateLoadedRef.current = true;
+      if (urlSort && urlSort.length > 0) {
+        try {
+          sortStateRestoringRef.current = true;
+          pendingSortRefreshAfterRestoreRef.current = true;
+          api.applyColumnState({
+            state: urlSort.map((entry, index) => ({
+              colId: entry.colId,
+              sort: entry.sort,
+              sortIndex: index,
+            })),
+            defaultState: { sort: null },
+          });
+          setTimeout(() => {
+            sortStateRestoringRef.current = false;
+            if (pendingSortRefreshAfterRestoreRef.current) {
+              pendingSortRefreshAfterRestoreRef.current = false;
+              refreshServerSideData(api, { purge: false });
+            }
+          }, 0);
+        } catch (err) {
+          sortStateRestoringRef.current = false;
+          pendingSortRefreshAfterRestoreRef.current = false;
+          console.warn('Failed to apply URL sort model', err);
+        }
+        return;
+      }
+      // URL had state but no sort — fall through to localStorage
+    }
+
     const persisted = readPersistedSortModel(sortStateStorageKey);
     // Mark as loaded first so persistence can work after restoration
     sortStateLoadedRef.current = true;
@@ -2520,7 +2625,6 @@ export default function AgGridAll({
     try {
       sortStateRestoringRef.current = true;
       pendingSortRefreshAfterRestoreRef.current = true;
-      // Use applyColumnState to set sort since setSortModel may not work with server-side row model
       api.applyColumnState({
         state: persisted.map((entry, index) => ({
           colId: entry.colId,
@@ -2529,7 +2633,6 @@ export default function AgGridAll({
         })),
         defaultState: { sort: null },
       });
-      // Defer clearing the restoring flag to ensure event handlers have completed
       setTimeout(() => {
         sortStateRestoringRef.current = false;
         if (pendingSortRefreshAfterRestoreRef.current) {
@@ -2542,7 +2645,7 @@ export default function AgGridAll({
       pendingSortRefreshAfterRestoreRef.current = false;
       console.warn('Failed to apply saved sort model', err);
     }
-  }, [sortStateStorageKey, shouldPersistColumnState]);
+  }, [sortStateStorageKey, shouldPersistColumnState, gridUrlState]);
 
   useEffect(() => {
     if (!shouldPersistColumnState) return;
@@ -2842,7 +2945,7 @@ export default function AgGridAll({
       resizable: true,
       suppressAutoSize: false,
       filter: true,
-      floatingFilter: floatingFilter && !gridEmpty,
+      floatingFilter: floatingFilter && (!gridEmpty || hasUserFilters),
       // Hide header menu icon (right-click still shows menu)
       suppressHeaderMenuButton: true,
       width: 100,
@@ -2856,7 +2959,7 @@ export default function AgGridAll({
         : null),
       filterParams: mergedFilterParams,
     };
-  }, [defaultColDef, enablePivotMode, floatingFilter, gridEmpty]);
+  }, [defaultColDef, enablePivotMode, floatingFilter, gridEmpty, hasUserFilters]);
 
   const autoGroupColumnDef = useMemo<ColDef>(() => ({
     width: 210,
@@ -3159,10 +3262,14 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     
     // Apply saved filters and sort before external grid-ready handlers run.
     // This prevents page-level default filters from overwriting persisted filters.
+    // URL params take priority over localStorage when present.
     if (shouldPersistColumnState) {
       if (!e.api.isDestroyed?.()) {
         if (!filterStateLoadedRef.current && filterStateStorageKey) {
-          const persisted = readPersistedFilterModel(filterStateStorageKey);
+          // URL params take priority over localStorage (both are synchronous)
+          const persisted = gridUrlState.hasUrlState
+            ? gridUrlState.readInitialFilterModel() as Record<string, FilterDescriptor> | null
+            : readPersistedFilterModel(filterStateStorageKey);
           filterStateLoadedRef.current = true;
           if (persisted && Object.keys(persisted).length > 0) {
             filterStateRestoringRef.current = true;
@@ -3173,7 +3280,28 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
           }
         }
         if (!sortStateLoadedRef.current && sortStateStorageKey) {
-          applySavedSortModel(e.api);
+          if (gridUrlState.hasUrlState) {
+            const urlSort = gridUrlState.readInitialSortModel();
+            if (urlSort && urlSort.length > 0) {
+              sortStateLoadedRef.current = true;
+              sortStateRestoringRef.current = true;
+              e.api.applyColumnState({
+                state: urlSort.map((entry, index) => ({
+                  colId: entry.colId,
+                  sort: entry.sort,
+                  sortIndex: index,
+                })),
+                defaultState: { sort: null },
+              });
+              setTimeout(() => {
+                sortStateRestoringRef.current = false;
+              }, 0);
+            } else {
+              applySavedSortModel(e.api);
+            }
+          } else {
+            applySavedSortModel(e.api);
+          }
         }
       }
     }
@@ -3197,7 +3325,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     if (typeof externalGridReadyHandler === 'function') {
       externalGridReadyHandler(e.api);
     }
-  }, [datasource, externalGridReadyHandler, handleContextMenuVisibleChanged, wrapGridApiRefreshers, shouldPersistColumnState, filterStateStorageKey, sortStateStorageKey, applySavedSortModel]);
+  }, [datasource, externalGridReadyHandler, handleContextMenuVisibleChanged, wrapGridApiRefreshers, shouldPersistColumnState, filterStateStorageKey, sortStateStorageKey, applySavedSortModel, gridUrlState]);
 
   const handleColumnPivotModeChanged = useCallback((event: ColumnPivotModeChangedEvent<RowData>) => {
     const api = event.api ?? gridApiRef.current ?? gridRef.current?.api ?? null;
@@ -3485,10 +3613,16 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     }
 
     const model = event.api.getFilterModel() as Record<string, FilterDescriptor> | null;
+
+    // Track whether any user-meaningful filters are active (ignore Enabled/IsParent)
+    const meaningfulKeys = model ? Object.keys(model).filter(k => !IGNORED_FILTER_COLS.has(k)) : [];
+    setHasUserFilters(meaningfulKeys.length > 0);
+
     if (!model) {
       // Persist empty filter model when filters are cleared (skip during restoration)
       if (!filterStateRestoringRef.current && filterStateStorageKey) {
         writePersistedFilterModel(filterStateStorageKey, null);
+        gridUrlState.writeFilterModelToUrl(null);
       }
       if (!filterStateRestoringRef.current) {
         refreshServerSideData(event.api, { purge: true });
@@ -3500,6 +3634,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       event.api.setFilterModel(null);
       if (!filterStateRestoringRef.current && filterStateStorageKey) {
         writePersistedFilterModel(filterStateStorageKey, null);
+        gridUrlState.writeFilterModelToUrl(null);
       }
       if (!filterStateRestoringRef.current) {
         refreshServerSideData(event.api, { purge: true });
@@ -3532,11 +3667,12 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       const finalModel = mutated ? nextModel : model;
       const modelToSave = Object.keys(finalModel).length > 0 ? finalModel : null;
       writePersistedFilterModel(filterStateStorageKey, modelToSave);
+      gridUrlState.writeFilterModelToUrl(modelToSave);
     }
     if (!filterStateRestoringRef.current) {
       refreshServerSideData(event.api, { purge: true });
     }
-  }, [captureColumnWidths, filterStateStorageKey]);
+  }, [captureColumnWidths, filterStateStorageKey, gridUrlState]);
 
   const getViewportElement = useCallback(() => {
     const shell = shellRef.current;
@@ -3579,9 +3715,10 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
         }
         const modelToSave = sortModel.length > 0 ? sortModel : null;
         writePersistedSortModel(sortStateStorageKey, modelToSave);
+        gridUrlState.writeSortModelToUrl(modelToSave);
       }, 0);
     }
-  }, [sortStateStorageKey]);
+  }, [sortStateStorageKey, gridUrlState]);
 
   const handleModelUpdated = useCallback((event: ModelUpdatedEvent<RowData>) => {
     if (quickSearchRefreshRequestedRef.current) {

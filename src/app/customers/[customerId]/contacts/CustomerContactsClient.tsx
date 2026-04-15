@@ -21,12 +21,14 @@ import { useUndoStack } from "../../../hooks/useUndoStack";
 import { pushCellEditUndo, makePatternAUndoFn } from "../../../../lib/undoHelpers";
 import { useAddModal } from "../../../lib/useAddModal";
 import type { DropdownOption } from "../../../../lib/dropdownOptions";
+import type { CustomerDropdownOption } from "../CustomerBasicDataTypes";
 import {
   createContact,
   ContactFormValues,
   EMPTY_CONTACT_FORM,
   validateContactForm,
 } from "../../../customer-contacts/contactModalHelpers";
+import ContactGroupsMailsModal from "../../../customer-contacts/ContactGroupsMailsModal";
 
 const AgGridAll = dynamic(() => import("../../../components/AgGridAll"), {
   ssr: false,
@@ -96,6 +98,28 @@ const createOfferMenuIcon = `
       <path d="M17 7h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-2" />
       <path d="M12 11v6" />
       <path d="M9 14h6" />
+    </svg>
+  </span>
+`;
+
+const changeCustomerMenuIcon = `
+  <span class="fastquote-menu-icon" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="17 1 21 5 17 9"/>
+      <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+      <polyline points="7 23 3 19 7 15"/>
+      <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+    </svg>
+  </span>
+`;
+
+const viewGroupsMailsMenuIcon = `
+  <span class="fastquote-menu-icon" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="7" height="7" rx="1"/>
+      <rect x="14" y="3" width="7" height="7" rx="1"/>
+      <rect x="3" y="14" width="7" height="7" rx="1"/>
+      <rect x="14" y="14" width="7" height="7" rx="1"/>
     </svg>
   </span>
 `;
@@ -175,6 +199,104 @@ export default function CustomerContactsClient({ customerId, customerName, statu
     rawOpenAddContact();
     setContactField("customerId", customerId);
   }, [rawOpenAddContact, setContactField, customerId]);
+
+  const [customerOptions, setCustomerOptions] = useState<CustomerDropdownOption[]>([]);
+  useEffect(() => {
+    let active = true;
+    const loadCustomers = async () => {
+      try {
+        const response = await fetch("/api/customer-contacts?mode=lookups", { cache: "no-store" });
+        const payload = (await response.json().catch(() => null)) as {
+          ok?: boolean;
+          lookups?: { customers?: CustomerDropdownOption[] };
+        } | null;
+        if (!active || !payload?.ok) return;
+        setCustomerOptions(Array.isArray(payload.lookups?.customers) ? payload.lookups!.customers : []);
+      } catch { /* ignore */ }
+    };
+    void loadCustomers();
+    return () => { active = false; };
+  }, []);
+
+  const [changeCustomerContactId, setChangeCustomerContactId] = useState<number | null>(null);
+  const [changeCustomerText, setChangeCustomerText] = useState("");
+  const [changeCustomerSelected, setChangeCustomerSelected] = useState<CustomerDropdownOption | null>(null);
+  const [isChangeCustomerListOpen, setIsChangeCustomerListOpen] = useState(false);
+  const [changeCustomerSaving, setChangeCustomerSaving] = useState(false);
+  const [changeCustomerError, setChangeCustomerError] = useState<string | null>(null);
+  const changeCustomerListTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const isChangeCustomerOpen = changeCustomerContactId != null;
+
+  const [groupsMailsContactId, setGroupsMailsContactId] = useState<number | null>(null);
+  const [groupsMailsContactName, setGroupsMailsContactName] = useState("");
+
+  const closeChangeCustomer = useCallback(() => {
+    setChangeCustomerContactId(null);
+    setChangeCustomerText("");
+    setChangeCustomerSelected(null);
+    setIsChangeCustomerListOpen(false);
+    setChangeCustomerError(null);
+  }, []);
+
+  const cancelChangeCustomerListClose = useCallback(() => {
+    if (changeCustomerListTimerRef.current) {
+      clearTimeout(changeCustomerListTimerRef.current);
+      changeCustomerListTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleChangeCustomerListClose = useCallback(() => {
+    cancelChangeCustomerListClose();
+    changeCustomerListTimerRef.current = setTimeout(() => {
+      setIsChangeCustomerListOpen(false);
+      changeCustomerListTimerRef.current = null;
+    }, 120);
+  }, [cancelChangeCustomerListClose]);
+
+  const filteredChangeCustomerOptions = useMemo(() => {
+    const query = changeCustomerText.trim().toLowerCase();
+    if (!query) return customerOptions;
+    return customerOptions.filter((option) => {
+      const label = option.label.toLowerCase();
+      const value = option.value.toLowerCase();
+      return label.includes(query) || value.includes(query);
+    });
+  }, [customerOptions, changeCustomerText]);
+
+  useEffect(() => () => cancelChangeCustomerListClose(), [cancelChangeCustomerListClose]);
+
+  const handleChangeCustomerSave = useCallback(async () => {
+    if (!changeCustomerSelected || changeCustomerContactId == null) return;
+    setChangeCustomerSaving(true);
+    setChangeCustomerError(null);
+    try {
+      const res = await fetch("/api/customer-contacts", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          updates: [{
+            ContactID: changeCustomerContactId,
+            field: "CustomerName",
+            value: changeCustomerSelected.label,
+          }],
+        }),
+      });
+      const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? "Failed to update customer");
+      }
+      showToastMessage("Customer updated", "success");
+      closeChangeCustomer();
+      setRefreshToken((prev) => prev + 1);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to update customer";
+      setChangeCustomerError(message);
+      showToastMessage(message, "error");
+    } finally {
+      setChangeCustomerSaving(false);
+    }
+  }, [changeCustomerContactId, changeCustomerSelected, closeChangeCustomer]);
 
   const [localTitleOptions, setLocalTitleOptions] = useState(() => sortTitleOptions(titles));
   useEffect(() => {
@@ -471,6 +593,20 @@ export default function CustomerContactsClient({ customerId, customerName, statu
       const contactId = normalizeContactId(
         (params.node?.data as { ContactID?: unknown } | undefined)?.ContactID ?? null,
       );
+      const changeCustomerItem = contactId != null
+        ? [
+            {
+              name: "Change Customer",
+              icon: changeCustomerMenuIcon,
+              action: () => {
+                setChangeCustomerContactId(contactId);
+                setChangeCustomerText("");
+                setChangeCustomerSelected(null);
+                setChangeCustomerError(null);
+              },
+            },
+          ]
+        : [];
       const createOfferItem = contactId != null
         ? [
             {
@@ -486,7 +622,22 @@ export default function CustomerContactsClient({ customerId, customerName, statu
             },
           ]
         : [];
-      return [...(createOfferItem.length > 0 ? [...createOfferItem, "separator" as const] : []), ...deleteItems];
+      const viewGroupsMailsItem = contactId != null
+        ? [
+            {
+              name: "View Contact Group Lists data",
+              icon: viewGroupsMailsMenuIcon,
+              action: () => {
+                const data = params.node?.data as { LastName?: string; FirstName?: string } | undefined;
+                const name = [data?.FirstName, data?.LastName].filter(Boolean).join(' ') || `Contact ${contactId}`;
+                setGroupsMailsContactId(contactId);
+                setGroupsMailsContactName(name);
+              },
+            },
+          ]
+        : [];
+      const customerItems = [...createOfferItem, ...changeCustomerItem, ...viewGroupsMailsItem];
+      return [...(customerItems.length > 0 ? [...customerItems, "separator" as const] : []), ...deleteItems];
     },
     [contactRowDeletion, customerId, router, userId],
   );
@@ -801,6 +952,84 @@ export default function CustomerContactsClient({ customerId, customerName, statu
         </select>
       </div>
     </LookupModal>
+    <LookupModal
+      open={isChangeCustomerOpen}
+      title="Change Customer"
+      onClose={closeChangeCustomer}
+      onConfirm={handleChangeCustomerSave}
+      confirmLabel="Save"
+      saving={changeCustomerSaving}
+      error={changeCustomerError}
+      cardClassName={lookupStyles.cardWide}
+    >
+      <div className={styles.contactModalBody} style={{ minHeight: 320 }}>
+        <div className={`${styles.contactModalField} ${styles.comboWrapper}`}>
+          <label className={styles.fieldLabel} htmlFor="change-customer-input">
+            Customer <span className={styles.requiredMark}>*</span>
+          </label>
+          <input
+            id="change-customer-input"
+            autoComplete="off"
+            className={`${styles.fieldControl} ${styles.comboInput}`}
+            value={changeCustomerText}
+            placeholder="Type to search customers"
+            onFocus={() => {
+              cancelChangeCustomerListClose();
+              setIsChangeCustomerListOpen(true);
+            }}
+            onBlur={() => scheduleChangeCustomerListClose()}
+            onChange={(event) => {
+              setChangeCustomerText(event.target.value);
+              setChangeCustomerSelected(null);
+              setIsChangeCustomerListOpen(true);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && isChangeCustomerListOpen && filteredChangeCustomerOptions.length > 0) {
+                event.preventDefault();
+                cancelChangeCustomerListClose();
+                setChangeCustomerSelected(filteredChangeCustomerOptions[0]);
+                setChangeCustomerText(filteredChangeCustomerOptions[0].label);
+                setIsChangeCustomerListOpen(false);
+              }
+            }}
+          />
+          {isChangeCustomerListOpen ? (
+            <div className={styles.comboList}>
+              {filteredChangeCustomerOptions.length > 0 ? (
+                filteredChangeCustomerOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={styles.comboOption}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      cancelChangeCustomerListClose();
+                      setChangeCustomerSelected(option);
+                      setChangeCustomerText(option.label);
+                      setIsChangeCustomerListOpen(false);
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                ))
+              ) : (
+                <div className={styles.comboListEmpty}>No customers match</div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </LookupModal>
+    {groupsMailsContactId != null && (
+      <ContactGroupsMailsModal
+        contactId={groupsMailsContactId}
+        contactName={groupsMailsContactName}
+        onClose={() => {
+          setGroupsMailsContactId(null);
+          setGroupsMailsContactName("");
+        }}
+      />
+    )}
     </>
   );
 }
