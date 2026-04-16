@@ -41,6 +41,8 @@ const menuHeaderStyle: React.CSSProperties = {
   letterSpacing: '0.05em',
 };
 
+const PRICE_COLUMN_SET = new Set<PdfProductColumn>(['listPrice', 'totalList', 'discount', 'unitPrice', 'total']);
+
 const columnLabels: Record<PdfProductColumn, string> = {
   no: 'No',
   qty: 'Qty',
@@ -74,6 +76,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
   const [printSubCategories, setPrintSubCategories] = useState(false);
   const [printSubSubCategories, setPrintSubSubCategories] = useState(false);
   const [smallOffer, setSmallOffer] = useState(false);
+  const [equipmentList, setEquipmentList] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -189,7 +192,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
       setIsExporting(true);
       try {
         const columnsParam = encodeURIComponent(selectedColumns.join(','));
-        const printParams = `&printProducts=${printProducts ? '1' : '0'}&printCategories=${printCategories ? '1' : '0'}&printSubCategories=${printSubCategories ? '1' : '0'}&printSubSubCategories=${printSubSubCategories ? '1' : '0'}&smallOffer=${smallOffer ? '1' : '0'}`;
+        const printParams = `&printProducts=${printProducts ? '1' : '0'}&printCategories=${printCategories ? '1' : '0'}&printSubCategories=${printSubCategories ? '1' : '0'}&printSubSubCategories=${printSubSubCategories ? '1' : '0'}&smallOffer=${smallOffer ? '1' : '0'}&equipmentList=${equipmentList ? '1' : '0'}`;
         const res = await fetch(
           `/api/offers/${encodeURIComponent(offerId)}/pdf?lang=${selectedLang}&orientation=${orientation}&columns=${columnsParam}${printParams}`,
         );
@@ -213,7 +216,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
         setIsExporting(false);
       }
     },
-    [offerId, selectedColumns, selectedLang, printProducts, printCategories, printSubCategories, printSubSubCategories, smallOffer],
+    [offerId, selectedColumns, selectedLang, printProducts, printCategories, printSubCategories, printSubSubCategories, smallOffer, equipmentList],
   );
 
   const handlePreviewClose = useCallback(() => {
@@ -284,11 +287,28 @@ export default function ExportPdfButton({ offerId, className }: Props) {
           {menuStep === 'columns' && (
             <>
               <div style={menuHeaderStyle}>Columns</div>
+              <div style={{ padding: '4px 16px 8px', borderBottom: '1px solid #e5e7eb' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={equipmentList}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setEquipmentList(checked);
+                      if (checked) {
+                        setSelectedColumns(prev => prev.filter(c => !PRICE_COLUMN_SET.has(c)));
+                      }
+                    }}
+                  />
+                  <span>Equipment List <span style={{ fontSize: 11, color: '#64748b' }}>(no prices/totals)</span></span>
+                </label>
+              </div>
               <div
                 style={{
                   padding: '0 16px 6px',
                   fontSize: 11,
                   color: '#64748b',
+                  marginTop: 6,
                 }}
               >
                 Drag selected columns to change print order.
@@ -296,6 +316,8 @@ export default function ExportPdfButton({ offerId, className }: Props) {
               <div style={{ maxHeight: 260, overflowY: 'auto', padding: '2px 0 6px' }}>
                 {orderedColumns.map((column) => {
                   const isSelected = selectedColumns.includes(column);
+                  const isPriceCol = PRICE_COLUMN_SET.has(column);
+                  const isDisabled = equipmentList && isPriceCol;
                   const orderIndex = isSelected ? selectedColumns.indexOf(column) : -1;
                   const isDropBefore =
                     isSelected &&
@@ -329,10 +351,11 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                             : undefined,
                       }}
                     >
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, cursor: 'pointer' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, cursor: isDisabled ? 'not-allowed' : 'pointer', opacity: isDisabled ? 0.4 : 1 }}>
                         <input
                           type="checkbox"
                           checked={isSelected}
+                          disabled={isDisabled}
                           onChange={() => toggleColumn(column)}
                         />
                         <span>{columnLabels[column]}</span>
@@ -421,7 +444,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                   }}
                   disabled={loadingSettings}
                   onClick={async () => {
-                    const hasTotalColumns = selectedColumns.includes('unitPrice') || selectedColumns.includes('total');
+                    const hasTotalColumns = !equipmentList && (selectedColumns.includes('unitPrice') || selectedColumns.includes('total'));
                     if (!hasTotalColumns) {
                       setMenuStep('language');
                       return;

@@ -127,6 +127,7 @@ import {
   refreshCategoryAggregates,
   PRICING_FIELD_LABELS,
   PRICING_EDITABLE_FIELDS,
+  DESCRIPTION_PASTE_BLOCKLIST,
   COST_ANALYSIS_COLUMNS,
   STANDARD_PACKAGE_PRODUCTS_FIELDS,
   isOfferProductCommentOrProduct,
@@ -4814,6 +4815,11 @@ const requestedColumnDefsMap = useMemo(
     const normalizedOldValue = normalizeDescriptionValue(event.oldValue);
     const normalizedNewValue = normalizeDescriptionValue(event.newValue);
     if (normalizedOldValue === normalizedNewValue) {
+      return;
+    }
+    // Reject values that match toolbar button labels (accidental clipboard paste).
+    if (normalizedNewValue != null && DESCRIPTION_PASTE_BLOCKLIST.has(normalizedNewValue)) {
+      try { event.node?.setDataValue?.(editedField, normalizedOldValue ?? '', 'api'); } catch { /* noop */ }
       return;
     }
     // All edits here target the offer-specific ProductDescription so shared product rows stay untouched.

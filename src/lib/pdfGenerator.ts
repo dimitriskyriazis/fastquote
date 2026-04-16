@@ -107,6 +107,7 @@ const LABELS = {
     regards: 'Με εκτίμηση,',
     companySign: 'Τελμάκο Α.Ε.',
     pageLabel: 'Σελίδα',
+    equipmentListTitle: 'ΛΙΣΤΑ ΕΞΟΠΛΙΣΜΟΥ',
   },
   en: {
     title: 'QUOTATION',
@@ -147,10 +148,13 @@ const LABELS = {
     regards: 'Best regards,',
     companySign: 'Telmaco S.A.',
     pageLabel: 'Page',
+    equipmentListTitle: 'EQUIPMENT LIST',
   },
 } as const;
 
 type Labels = (typeof LABELS)[PdfLang];
+
+const PRICE_COLUMNS = new Set<PdfProductColumn>(['listPrice', 'totalList', 'discount', 'unitPrice', 'total']);
 
 const COLORS = {
 primaryText: '#222222',
@@ -503,10 +507,10 @@ function buildCompactHeader(data: OfferPdfData, L: Labels, lang: PdfLang, orient
   ];
 }
 
-function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientation: PdfOrientation, logo: string) {
+function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientation: PdfOrientation, logo: string, equipmentList: boolean = false) {
   const meta = getOfferMeta(data, lang);
   const isLandscape = orientation === 'landscape';
-  const coverTitle = str(data.title) || L.title;
+  const coverTitle = equipmentList ? L.equipmentListTitle : (str(data.title) || L.title);
 
   // De-duplicate cover: do NOT include L.to here since the client identity is already centered.
   const leftInfo = [
@@ -1051,16 +1055,22 @@ function buildTotalsAndTerms(
   orientation: PdfOrientation,
   selectedColumns: PdfProductColumn[],
   smallOffer: boolean = false,
+  equipmentList: boolean = false,
 ) {
+  const hasPriceColumns = selectedColumns.some(c => PRICE_COLUMNS.has(c));
   const showDiscountSummary = selectedColumns.includes('discount');
   const discountSummary = calculateDiscountSummary(data);
 
-  const terms = [
+  let terms = [
     { label: L.offerValidity, value: fixObviousTypos(str(data.terms.offerValidity)) },
     { label: L.paymentTerms, value: fixObviousTypos(str(data.terms.paymentTerms)) },
     { label: L.deliveryTime, value: fixObviousTypos(str(data.terms.deliveryTime)) },
     { label: L.installationSchedule, value: fixObviousTypos(str(data.terms.installationSchedule)) },
   ];
+
+  if (equipmentList) {
+    terms = terms.filter(t => t.label !== L.paymentTerms);
+  }
 
   const cell = (t?: { label: string; value: string }) => ({
     stack: [
@@ -1105,37 +1115,39 @@ function buildTotalsAndTerms(
         ],
       ];
 
-  blocks.push({
-    columns: [
-      { width: '*', text: '' },
-      {
-        width: orientation === 'portrait' ? 220 : 250,
-        columns: [
-          {
-            width: 4,
-            canvas: [{ type: 'rect', x: 0, y: 0, w: 4, h: showDiscountSummary ? 96 : 44, color: COLORS.accentRed }],
-          },
-          {
-            width: '*',
-            table: {
-              widths: ['*', 'auto'],
-              body: summaryRows,
+  if (hasPriceColumns) {
+    blocks.push({
+      columns: [
+        { width: '*', text: '' },
+        {
+          width: orientation === 'portrait' ? 220 : 250,
+          columns: [
+            {
+              width: 4,
+              canvas: [{ type: 'rect', x: 0, y: 0, w: 4, h: showDiscountSummary ? 96 : 44, color: COLORS.accentRed }],
             },
-            layout: {
-              fillColor: () => null,
-              hLineWidth: () => 0,
-              vLineWidth: () => 0,
-              paddingLeft: () => 10,
-              paddingRight: () => 10,
-              paddingTop: () => 10,
-              paddingBottom: () => 10,
+            {
+              width: '*',
+              table: {
+                widths: ['*', 'auto'],
+                body: summaryRows,
+              },
+              layout: {
+                fillColor: () => null,
+                hLineWidth: () => 0,
+                vLineWidth: () => 0,
+                paddingLeft: () => 10,
+                paddingRight: () => 10,
+                paddingTop: () => 10,
+                paddingBottom: () => 10,
+              },
             },
-          },
-        ],
-      },
-    ],
-    margin: [0, 18, 0, 18],
-  });
+          ],
+        },
+      ],
+      margin: [0, 18, 0, 18],
+    });
+  }
 
   blocks.push({
       text: L.termsTitle,
@@ -1232,6 +1244,7 @@ export async function generateOfferPdf(
   selectedColumns: PdfProductColumn[] = DEFAULT_PDF_PRODUCT_COLUMNS,
   printSettings: PdfPrintSettings | null = null,
   smallOffer: boolean = false,
+  equipmentList: boolean = false,
 ): Promise<Buffer> {
   ensurePdfmake();
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -1239,10 +1252,14 @@ export async function generateOfferPdf(
 
   const logo = getLogoBase64();
   const L = LABELS[lang];
-  const cols = selectedColumns.length > 0 ? selectedColumns : DEFAULT_PDF_PRODUCT_COLUMNS;
+  let cols = selectedColumns.length > 0 ? selectedColumns : DEFAULT_PDF_PRODUCT_COLUMNS;
+  if (equipmentList) {
+    cols = cols.filter(c => !PRICE_COLUMNS.has(c));
+    if (cols.length === 0) cols = DEFAULT_PDF_PRODUCT_COLUMNS.filter(c => !PRICE_COLUMNS.has(c));
+  }
 
   const itemsTable = buildItemsTable(data, L, orientation, cols, printSettings);
-  const totalsAndTerms = buildTotalsAndTerms(data, L, orientation, cols, smallOffer);
+  const totalsAndTerms = buildTotalsAndTerms(data, L, orientation, cols, smallOffer, equipmentList);
   const openingNote = str(data.notesIntroduction)
     ? [
         { text: fixObviousTypos(str(data.notesIntroduction)), style: 'body', margin: [0, 0, 0, 8] },
@@ -1281,7 +1298,7 @@ export async function generateOfferPdf(
     },
     { text: L.notesTitle, style: 'h2', margin: [0, 0, 0, 8] },
     ...(str(data.notesClosing) ? [{ text: fixObviousTypos(str(data.notesClosing)), style: 'body', margin: [0, 0, 0, 6] }] : []),
-    { text: L.vatNote, style: 'body' },
+    ...(cols.some(c => PRICE_COLUMNS.has(c)) ? [{ text: L.vatNote, style: 'body' }] : []),
   ];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1309,7 +1326,7 @@ export async function generateOfferPdf(
     content: [
       ...(smallOffer
         ? buildCompactHeader(data, L, lang, orientation, logo)
-        : buildCoverPage(data, L, lang, orientation, logo)),
+        : buildCoverPage(data, L, lang, orientation, logo, equipmentList)),
       ...openingNote,
       itemsTable,
       ...totalsAndTerms,

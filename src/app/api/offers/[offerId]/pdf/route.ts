@@ -87,6 +87,7 @@ export async function GET(
     const printSubCategories = req.nextUrl.searchParams.get('printSubCategories') === '1' ? 1 : 0;
     const printSubSubCategories = req.nextUrl.searchParams.get('printSubSubCategories') === '1' ? 1 : 0;
     const smallOffer = req.nextUrl.searchParams.get('smallOffer') === '1';
+    const equipmentList = req.nextUrl.searchParams.get('equipmentList') === '1';
 
     const pool = await getPool();
 
@@ -281,14 +282,15 @@ export async function GET(
     };
 
     const { generateOfferPdf } = await import('../../../../../lib/pdfGenerator');
-    const buffer = await generateOfferPdf(pdfData, lang, orientation, productColumns, pdfPrintSettings, smallOffer);
+    const buffer = await generateOfferPdf(pdfData, lang, orientation, productColumns, pdfPrintSettings, smallOffer, equipmentList);
 
     const customerSlug = (header.CustomerName ?? 'Offer')
       .replace(/[^a-zA-Z0-9\u0370-\u03FF\u0400-\u04FF _-]/g, '')
       .replace(/\s+/g, '_')
       .substring(0, 40);
     const langSuffix = lang === 'el' ? '_GR' : '_EN';
-    const filename = `Offer_${numericId}_${customerSlug}${langSuffix}.pdf`;
+    const prefix = equipmentList ? 'EquipmentList' : 'Offer';
+    const filename = `${prefix}_${numericId}_${customerSlug}${langSuffix}.pdf`;
 
     return new NextResponse(new Uint8Array(buffer), {
       headers: {

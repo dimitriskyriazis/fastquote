@@ -36,6 +36,7 @@ import {
   productPriceListClassRules,
   totalPriceCellClassRules,
   REQUESTED_DISPLAY_FIELD_KEYS,
+  DESCRIPTION_PASTE_BLOCKLIST,
   type RequestedDisplayFieldKey,
 } from './offerProductsUtils';
 import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
@@ -44,28 +45,6 @@ import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment } 
 
 const ACTUAL_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--actual';
 const TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--truncate';
-
-// UI labels that should never appear as product descriptions.
-// Guards against accidental clipboard paste from the toolbar area.
-const DESCRIPTION_PASTE_BLOCKLIST = new Set([
-  'Populate Offer',
-  'Populating...',
-  'Update Prices',
-  'Updating prices...',
-  'Fill AVC4 Offer',
-  'Filling...',
-  'View Basic Data',
-  'Add Products',
-  'Add Category',
-  'Add Printable Comment',
-  'Add Non Printable Comment',
-  'Add Requested Products',
-  'New Category',
-  'New Printable Comment',
-  'New Non Printable Comment',
-  'Printable',
-  'Non Printable',
-]);
 
 /* ── Requested column definitions ────────────────────────────────────── */
 

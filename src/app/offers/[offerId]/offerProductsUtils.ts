@@ -871,6 +871,29 @@ export const PRICING_FIELD_LABELS: Record<string, string> = {
 };
 
 export const PRICING_EDITABLE_FIELDS = new Set(Object.keys(PRICING_FIELD_LABELS));
+
+// UI labels that should never be persisted as product descriptions.
+// Guards against accidental clipboard paste from the toolbar area.
+export const DESCRIPTION_PASTE_BLOCKLIST = new Set([
+  'Populate Offer',
+  'Populating...',
+  'Update Prices',
+  'Updating prices...',
+  'Fill AVC4 Offer',
+  'Filling...',
+  'View Basic Data',
+  'Add Products',
+  'Add Category',
+  'Add Printable Comment',
+  'Add Non Printable Comment',
+  'Add Requested Products',
+  'New Category',
+  'New Printable Comment',
+  'New Non Printable Comment',
+  'Printable',
+  'Non Printable',
+]);
+
 export const COST_ANALYSIS_COLUMNS = [
   'TelmacoDiscount',
   'NetCostOtherCurrency',
