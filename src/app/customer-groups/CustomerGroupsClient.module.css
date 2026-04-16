@@ -123,6 +123,11 @@
   font-weight: 600;
 }
 
+.fieldRequired {
+  color: #ef4444;
+  font-weight: 700;
+}
+
 .fieldControl {
   border: 1px solid #dbeafe;
   border-radius: 8px;

@@ -2,11 +2,13 @@
 
 export type GroupFormValues = {
   name: string;
+  code: string;
   enabled: boolean;
 };
 
 export const EMPTY_GROUP_FORM: GroupFormValues = {
   name: "",
+  code: "",
   enabled: true,
 };
 
@@ -24,6 +26,7 @@ export const validateGroupForm = (form: GroupFormValues): string | null => {
 
 export const buildGroupPayload = (form: GroupFormValues) => ({
   name: normalizeTextValue(form.name),
+  code: normalizeTextValue(form.code) || null,
   enabled: Boolean(form.enabled),
 });
 
@@ -32,6 +35,7 @@ export type GroupCreationResult = {
   group?: {
     CustomerGroupID: number;
     Name: string | null;
+    Code: string | null;
     Enabled: boolean | number | null;
   };
   error?: string;

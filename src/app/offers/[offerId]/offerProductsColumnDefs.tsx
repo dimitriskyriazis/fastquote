@@ -45,6 +45,28 @@ import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment } 
 const ACTUAL_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--actual';
 const TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--truncate';
 
+// UI labels that should never appear as product descriptions.
+// Guards against accidental clipboard paste from the toolbar area.
+const DESCRIPTION_PASTE_BLOCKLIST = new Set([
+  'Populate Offer',
+  'Populating...',
+  'Update Prices',
+  'Updating prices...',
+  'Fill AVC4 Offer',
+  'Filling...',
+  'View Basic Data',
+  'Add Products',
+  'Add Category',
+  'Add Printable Comment',
+  'Add Non Printable Comment',
+  'Add Requested Products',
+  'New Category',
+  'New Printable Comment',
+  'New Non Printable Comment',
+  'Printable',
+  'Non Printable',
+]);
+
 /* ── Requested column definitions ────────────────────────────────────── */
 
 export type RequestedColumnDefsDeps = {
@@ -317,6 +339,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
         valueSetter: ({ data, newValue }) => {
           if (!data) return false;
           const normalized = normalizeDescriptionValue(newValue);
+          if (normalized != null && DESCRIPTION_PASTE_BLOCKLIST.has(normalized)) return false;
           (data as Record<string, unknown>).ProductDescription = normalized;
           (data as Record<string, unknown>).Description = normalized;
           return true;

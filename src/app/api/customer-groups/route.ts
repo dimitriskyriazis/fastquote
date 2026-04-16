@@ -33,6 +33,7 @@ type GridRequest = {
 type CustomerGroupRow = {
   CustomerGroupID: number | null;
   Name: string | null;
+  Code: string | null;
   Enabled: boolean | number | null;
 };
 
@@ -41,6 +42,7 @@ type CustomerGroupRowWithCount = CustomerGroupRow & { __totalCount: number | big
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   CustomerGroupID: "dbo.CustomerGroups.ID",
   Name: "dbo.CustomerGroups.Name",
+  Code: "dbo.CustomerGroups.Code",
   Enabled: "dbo.CustomerGroups.Enabled",
 };
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
@@ -132,7 +134,7 @@ type GroupUpdateInput = {
 
 type NormalizedGroupUpdate = {
   groupId: number;
-  field: "Name" | "Enabled";
+  field: "Name" | "Code" | "Enabled";
   value: unknown;
 };
 
@@ -170,6 +172,7 @@ export async function POST(req: NextRequest) {
         COUNT_BIG(1) OVER () AS __totalCount,
         dbo.CustomerGroups.ID AS CustomerGroupID,
         dbo.CustomerGroups.Name,
+        dbo.CustomerGroups.Code,
         dbo.CustomerGroups.Enabled
       FROM dbo.CustomerGroups
       ${combinedWhere}
@@ -214,7 +217,7 @@ export async function PATCH(req: NextRequest) {
         if (
           groupId == null ||
           !field ||
-          (field !== "Name" && field !== "Enabled")
+          (field !== "Name" && field !== "Code" && field !== "Enabled")
         ) {
           return null;
         }
@@ -238,6 +241,14 @@ export async function PATCH(req: NextRequest) {
         await request.query(`
           UPDATE dbo.CustomerGroups
           SET Name = @value
+          WHERE ID = @groupId
+        `);
+      } else if (entry.field === "Code") {
+        const codeVal = normalizeGroupText(entry.value);
+        request.input("value", sql.NVarChar, codeVal || null);
+        await request.query(`
+          UPDATE dbo.CustomerGroups
+          SET Code = @value
           WHERE ID = @groupId
         `);
       } else {

@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     if (!auth.ok) return auth.response;
 
     const payload = (await req.json().catch(() => null)) as
-      | { name?: unknown; enabled?: unknown }
+      | { name?: unknown; code?: unknown; enabled?: unknown }
       | null;
     if (!payload) {
       return NextResponse.json({ ok: false, error: "Missing payload" }, { status: 400 });
@@ -45,16 +45,18 @@ export async function POST(req: NextRequest) {
     if (!name) {
       return NextResponse.json({ ok: false, error: "Group name is required." }, { status: 400 });
     }
+    const code = normalizeTextValue(payload.code, 255);
     const enabled = normalizeBoolean(payload.enabled ?? true);
 
     const pool = await getPool();
     const insertRequest = pool.request();
     insertRequest.input("name", sql.NVarChar(255), name);
+    insertRequest.input("code", sql.NVarChar(255), code);
     insertRequest.input("enabled", sql.Bit, enabled ? 1 : 0);
     const insertResult = await insertRequest.query<{ ID: number }>(`
-      INSERT INTO dbo.CustomerGroups (Name, Enabled)
+      INSERT INTO dbo.CustomerGroups (Name, Code, Enabled)
       OUTPUT inserted.ID
-      VALUES (@name, @enabled)
+      VALUES (@name, @code, @enabled)
     `);
     const groupId = insertResult.recordset?.[0]?.ID ?? null;
     if (groupId == null) {
@@ -66,11 +68,13 @@ export async function POST(req: NextRequest) {
     const selectResult = await selectRequest.query<{
       CustomerGroupID: number;
       Name: string | null;
+      Code: string | null;
       Enabled: boolean | number | null;
     }>(`
       SELECT
         ID AS CustomerGroupID,
         Name,
+        Code,
         Enabled
       FROM dbo.CustomerGroups
       WHERE ID = @groupId

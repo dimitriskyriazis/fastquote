@@ -4122,7 +4122,7 @@ const requestedColumnDefsMap = useMemo(
                 /* noop */
               }
               try {
-                rowNode.setDataValue('Description', previousDescription ?? null);
+                rowNode.setDataValue('Description', previousDescription ?? null, 'api');
               } catch {
                 /* noop */
               }
@@ -4849,8 +4849,8 @@ const requestedColumnDefsMap = useMemo(
           throw new Error(payload?.error ?? `Failed to update description (status ${res.status})`);
         }
         try {
-          event.node?.setDataValue?.('Description', normalizedNewValue ?? '');
-          event.node?.setDataValue?.('ProductDescription', normalizedNewValue ?? '');
+          event.node?.setDataValue?.('Description', normalizedNewValue ?? '', 'api');
+          event.node?.setDataValue?.('ProductDescription', normalizedNewValue ?? '', 'api');
         } catch {
           /* noop */
         }
@@ -4867,8 +4867,8 @@ const requestedColumnDefsMap = useMemo(
             const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
             if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
             try {
-              event.node?.setDataValue?.('Description', capturedOldDesc ?? '');
-              event.node?.setDataValue?.('ProductDescription', capturedOldDesc ?? '');
+              event.node?.setDataValue?.('Description', capturedOldDesc ?? '', 'api');
+              event.node?.setDataValue?.('ProductDescription', capturedOldDesc ?? '', 'api');
             } catch { /* noop */ }
             event.api?.refreshServerSide?.({ purge: false });
           },

@@ -67,6 +67,7 @@ const resolveGroupLabel = (
 
 const GROUP_FIELD_LABELS: Record<string, string> = {
   Name: "Group name",
+  Code: "Code",
   Enabled: "Enabled",
 };
 
@@ -110,6 +111,12 @@ export default function CustomerGroupsClient() {
       {
         field: "Name",
         headerName: "Group Name",
+        filter: "agTextColumnFilter",
+        editable: true,
+      },
+      {
+        field: "Code",
+        headerName: "Code",
         filter: "agTextColumnFilter",
         editable: true,
       },
@@ -299,9 +306,6 @@ export default function CustomerGroupsClient() {
               getContextMenuItems={groupContextMenuItems}
               onCellValueChanged={handleCellEdit}
               refreshToken={refreshToken}
-              rowSelection="multiple"
-              rowMultiSelectWithClick
-              rowDeselection
             />
           </div>
         </GridQuickSearchProvider>
@@ -318,7 +322,7 @@ export default function CustomerGroupsClient() {
         <div className={styles.groupModalGrid}>
           <div className={`${styles.groupModalField} ${styles.groupModalFieldFull}`}>
             <label className={styles.fieldLabel} htmlFor="group-name">
-              Group name
+              Group name <span className={styles.fieldRequired}>*</span>
             </label>
             <input
               id="group-name"
@@ -326,6 +330,17 @@ export default function CustomerGroupsClient() {
               value={groupForm.name}
               required
               onChange={(event) => setGroupField("name", event.target.value)}
+            />
+          </div>
+          <div className={`${styles.groupModalField} ${styles.groupModalFieldFull}`}>
+            <label className={styles.fieldLabel} htmlFor="group-code">
+              Code
+            </label>
+            <input
+              id="group-code"
+              className={styles.fieldControl}
+              value={groupForm.code}
+              onChange={(event) => setGroupField("code", event.target.value)}
             />
           </div>
           <div className={`${styles.groupModalField} ${styles.groupModalToggle}`}>
