@@ -25,7 +25,16 @@ export const showToastMessage = (
     container.setAttribute('aria-live', 'polite');
     document.body.appendChild(container);
   }
+
+  // Suppress duplicate toasts with the same message and tone that are already visible.
+  const existingToasts = Array.from(container.children) as HTMLElement[];
+  if (existingToasts.some(el => el.dataset.message === message && el.dataset.tone === tone)) {
+    return () => {};
+  }
+
   const toast = document.createElement('div');
+  toast.dataset.message = message;
+  toast.dataset.tone = tone;
   toast.className = `drop-toast drop-toast--${tone}`;
   toast.textContent = message;
 

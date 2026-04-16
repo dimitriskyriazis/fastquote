@@ -406,12 +406,13 @@ export async function DELETE(req: NextRequest) {
     });
     const deleteResult = await request3.query(`
       DELETE FROM dbo.Mails
-      OUTPUT DELETED.ID AS MailID, DELETED.Description
+      OUTPUT DELETED.ID AS MailID, DELETED.[Date], DELETED.Description, DELETED.Note, DELETED.UsedForFax, DELETED.IsPresent, DELETED.Locked
       WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
     `);
 
-    type DeletedRow = { MailID: number; Description: string | null };
-    const deletedRows = ((deleteResult.recordset ?? []) as DeletedRow[]).map((row) => ({
+    type DeletedRow = { MailID: number; Date: Date | string | null; Description: string | null; Note: string | null; UsedForFax: boolean | null; IsPresent: boolean | null; Locked: boolean | null };
+    const rawDeletedRows = (deleteResult.recordset ?? []) as DeletedRow[];
+    const auditRows = rawDeletedRows.map((row) => ({
       id: row.MailID,
       name: trimNullableText(row.Description),
     }));
@@ -422,11 +423,11 @@ export async function DELETE(req: NextRequest) {
       userId: auditUserId,
       targetEntity: "mails",
       requestedIds: ids,
-      deletedRows,
+      deletedRows: auditRows,
       message: "Mails deleted",
     });
 
-    return NextResponse.json({ ok: true, deleted: deletedRows.length });
+    return NextResponse.json({ ok: true, deleted: rawDeletedRows.length, deletedRows: rawDeletedRows });
   } catch (err) {
     console.error("Failed to delete mails", err);
     const message = err instanceof Error ? err.message : "Unable to delete mails.";

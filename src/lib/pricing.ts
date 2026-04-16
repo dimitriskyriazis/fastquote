@@ -134,6 +134,69 @@ export const computeScenario = (
   }
 };
 
+/* ── List-price derivation ───────────────────────────────────────────── */
+
+/**
+ * Derives ListPrice from a known price + its corresponding discount.
+ * Priority: NetUnitPrice + CustomerDiscount, then NetCost + TelmacoDiscount.
+ */
+export const deriveListPrice = (
+  np: number | null,
+  tc: number | null,
+  cd: number | null,
+  td: number | null,
+): number | null => {
+  if (np != null && cd != null) {
+    const factor = 1 - percentageToFactor(cd);
+    if (factor > 0) return roundTo(np / factor);
+  }
+  if (tc != null && td != null) {
+    const factor = 1 - percentageToFactor(td);
+    if (factor > 0) return roundTo(tc / factor);
+  }
+  return null;
+};
+
+/* ── List-price-free derivations ─────────────────────────────────────── */
+
+/**
+ * Derives NetUnitPrice, NetCost, and Margin from each other when at least
+ * two of the three are known, without needing a list price.
+ * Discount fields (CustomerDiscount, TelmacoDiscount) require a list price
+ * and are left untouched here.
+ */
+export const deriveWithoutListPrice = (
+  np: number | null,
+  tc: number | null,
+  m: number | null,
+  provided: Pick<PricingInput['provided'], 'netUnitPrice' | 'netCost' | 'margin'>,
+): { netUnitPrice: number | null; netCost: number | null; margin: number | null } => {
+  let resolvedNp = np;
+  let resolvedTc = tc;
+  let resolvedM = m;
+
+  const hasUserInput = provided.netUnitPrice || provided.netCost || provided.margin;
+  if (!hasUserInput) return { netUnitPrice: np, netCost: tc, margin: m };
+
+  // netCost + margin → netUnitPrice
+  if (resolvedNp == null && resolvedTc != null && resolvedM != null) {
+    const factor = 1 - percentageToFactor(resolvedM);
+    if (factor > 0 && factor < 1) {
+      resolvedNp = roundTo(resolvedTc / factor);
+    }
+  }
+  // netUnitPrice + margin → netCost
+  if (resolvedTc == null && resolvedNp != null && resolvedM != null) {
+    resolvedTc = roundTo(resolvedNp * (1 - percentageToFactor(resolvedM)));
+  }
+  // netUnitPrice + netCost → margin
+  if (resolvedM == null && resolvedNp != null && resolvedTc != null) {
+    resolvedM = deriveMarginPercent(resolvedNp, resolvedTc);
+  }
+
+  return { netUnitPrice: resolvedNp, netCost: resolvedTc, margin: resolvedM };
+};
+
 /* ── Main resolver ───────────────────────────────────────────────────── */
 
 export const resolvePricing = (input: PricingInput): ResolvedPricing | null => {

@@ -233,8 +233,26 @@ export default function MailsClient() {
           }
         },
         canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageCustomersContacts'),
+        restoreEndpoint: "/api/marketing/mails/restore",
+        onDeleteSuccess: (deletedRows, api) => {
+          if (deletedRows.length > 0) {
+            pushUndo({
+              label: "Mail deleted",
+              undo: async () => {
+                const res = await fetch("/api/marketing/mails/restore", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ rows: deletedRows }),
+                });
+                const result = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+                if (!res.ok || !result?.ok) throw new Error("Failed to restore");
+                try { api?.refreshServerSide?.({ purge: true }); } catch { /* noop */ }
+              },
+            });
+          }
+        },
       }),
-    [roles],
+    [roles, pushUndo],
   );
 
   const getContextMenuItems = useCallback(
@@ -514,8 +532,17 @@ export default function MailsClient() {
     closeAddMail();
     setMailSaving(false);
     setRefreshToken((prev) => prev + 1);
-    showToastMessage("Mail created", "success");
-  }, [mailForm, closeAddMail, setMailError, setMailSaving]);
+    const mailId = result.mailId;
+    pushCellEditUndo(pushUndo, performUndo, `Mail "${mailForm.description}"`, async () => {
+      const res = await fetch('/api/marketing/mails', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ MailIDs: [mailId] }),
+      });
+      const del = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+      if (!res.ok || !del?.ok) throw new Error('Failed to delete mail');
+    });
+  }, [mailForm, closeAddMail, setMailError, setMailSaving, pushUndo, performUndo]);
 
   return (
     <>

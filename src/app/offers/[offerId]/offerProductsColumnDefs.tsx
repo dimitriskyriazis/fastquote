@@ -552,9 +552,12 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      valueFormatter: percentageFormatter,
-      cellClass: actualNumericCellClass,
+      valueFormatter: (params) => {
+        if (!isOfferProductCommentOrProduct(params.data ?? null)) return '';
+        return percentageFormatter(params);
+      },
       cellStyle: actualNumericCellStyle,
+      cellClass: actualNumericCellClass,
     },
     {
       field: 'NetUnitPrice',

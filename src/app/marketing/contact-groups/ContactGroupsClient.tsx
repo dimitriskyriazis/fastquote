@@ -148,8 +148,26 @@ export default function ContactGroupsClient() {
           try { api.refreshServerSide({ purge: true }); } catch { /* noop */ }
         },
         canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageMarketing'),
+        restoreEndpoint: "/api/marketing/contact-groups/restore",
+        onDeleteSuccess: (deletedRows, api) => {
+          if (deletedRows.length > 0) {
+            pushUndo({
+              label: "Contact group deleted",
+              undo: async () => {
+                const res = await fetch("/api/marketing/contact-groups/restore", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ rows: deletedRows }),
+                });
+                const result = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+                if (!res.ok || !result?.ok) throw new Error("Failed to restore");
+                try { api?.refreshServerSide?.({ purge: true }); } catch { /* noop */ }
+              },
+            });
+          }
+        },
       }),
-    [roles],
+    [roles, pushUndo],
   );
 
   const getContextMenuItems = useCallback(
@@ -305,8 +323,17 @@ export default function ContactGroupsClient() {
     closeAddGroup();
     setGroupSaving(false);
     setRefreshToken((prev) => prev + 1);
-    showToastMessage("Contact group created", "success");
-  }, [groupForm, closeAddGroup, setGroupError, setGroupSaving]);
+    const groupId = result.contactGroupId;
+    pushCellEditUndo(pushUndo, performUndo, `Contact group "${groupForm.description}"`, async () => {
+      const res = await fetch('/api/marketing/contact-groups', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ContactGroupIDs: [groupId] }),
+      });
+      const del = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+      if (!res.ok || !del?.ok) throw new Error('Failed to delete contact group');
+    });
+  }, [groupForm, closeAddGroup, setGroupError, setGroupSaving, pushUndo, performUndo]);
 
   return (
     <>

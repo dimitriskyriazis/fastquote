@@ -188,10 +188,19 @@ export default function BrandsClient() {
     defaultEnabledFilterAppliedRef.current = true;
   }, []);
 
-  const handleBrandCreated = useCallback(() => {
+  const handleBrandCreated = useCallback((brand: { id: number; name: string }) => {
     setIsAddBrandOpen(false);
     setRefreshToken((prev) => prev + 1);
-  }, []);
+    pushCellEditUndo(pushUndo, performUndo, `Brand "${brand.name}"`, async () => {
+      const res = await fetch('/api/brands', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ BrandIDs: [brand.id] }),
+      });
+      const result = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+      if (!res.ok || !result?.ok) throw new Error('Failed to delete brand');
+    });
+  }, [pushUndo, performUndo]);
 
   const columnDefs = useMemo<ColDef[]>(
     () => [

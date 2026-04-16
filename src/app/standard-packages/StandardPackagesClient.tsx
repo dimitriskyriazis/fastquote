@@ -208,7 +208,7 @@ export default function StandardPackagesClient() {
         throw new Error(payload?.error ?? 'Unable to create standard package.');
       }
 
-      showToastMessage('Standard package created', 'success');
+      const capturedOfferId = payload.offerId;
       setCreateModalOpen(false);
       resetCreateForm();
       try {
@@ -216,13 +216,23 @@ export default function StandardPackagesClient() {
       } catch {
         /* noop */
       }
+      pushCellEditUndo(pushUndo, performUndo, `Standard package "${description}"`, async () => {
+        const res = await fetch('/api/standard-packages', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ OfferIDs: [capturedOfferId] }),
+        });
+        const del = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+        if (!res.ok || !del?.ok) throw new Error('Failed to delete standard package');
+        try { gridApiRef.current?.refreshServerSide?.({ purge: true }); } catch { /* noop */ }
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to create standard package.';
       setCreateError(message);
     } finally {
       setCreateSaving(false);
     }
-  }, [createComments, createDescription, createEnabled, resetCreateForm]);
+  }, [createComments, createDescription, createEnabled, resetCreateForm, pushUndo, performUndo]);
 
   const handleCreateNewVersion = useCallback(async (offerId: number | null) => {
     if (offerId == null) return;

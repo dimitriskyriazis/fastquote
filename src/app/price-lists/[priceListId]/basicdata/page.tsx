@@ -25,7 +25,7 @@ export default async function Page({
   return (
     <main className={layoutStyles.page}>
       <div className={layoutStyles.headerRow}>
-        <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideStart}`}>
+        <div id="undo-portal" className={`${layoutStyles.headerSide} ${layoutStyles.headerSideStart}`}>
           <Link href="/price-lists" className={`${layoutStyles.backLink} page-header-button`}>
             <span aria-hidden="true">←</span>
             Back to price lists

@@ -227,10 +227,19 @@ export default function SuppliersClient({ countries }: Props) {
     defaultEnabledFilterAppliedRef.current = true;
   }, []);
 
-  const handleSupplierCreated = useCallback(() => {
+  const handleSupplierCreated = useCallback((supplier: { id: number; name: string }) => {
     setIsAddSupplierOpen(false);
     setRefreshToken((prev) => prev + 1);
-  }, []);
+    pushCellEditUndo(pushUndo, performUndo, `Supplier "${supplier.name}"`, async () => {
+      const res = await fetch('/api/suppliers', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ SupplierIDs: [supplier.id] }),
+      });
+      const result = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+      if (!res.ok || !result?.ok) throw new Error('Failed to delete supplier');
+    });
+  }, [pushUndo, performUndo]);
 
   const columnDefs = useMemo<ColDef[]>(
     () => [

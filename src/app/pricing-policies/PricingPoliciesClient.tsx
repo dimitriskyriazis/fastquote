@@ -29,6 +29,7 @@ import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from "../com
 import { useActionMenuPosition } from "../components/useActionMenuPosition";
 import { useAuditUser } from "../components/AuditUserProvider";
 import { useUndoStack } from "../hooks/useUndoStack";
+import { pushCellEditUndo } from "../../lib/undoHelpers";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -650,11 +651,21 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
         if (prev.some((policy) => policy.id === id)) return prev;
         return [...prev, { id, name: option.label }];
       });
-      showToastMessage("Pricing policy added", "success");
       setIsAddPricingPolicyOpen(false);
 
       // Refresh rows so any downstream totals update.
       gridApiRef.current?.refreshServerSide?.({ purge: true });
+
+      const capturedId = id;
+      pushCellEditUndo(pushUndo, performUndo, `Pricing policy "${option.label}"`, async () => {
+        const res = await fetch('/api/pricing-policies', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pricingPolicyId: capturedId }),
+        });
+        const del = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+        if (!res.ok || !del?.ok) throw new Error('Failed to delete pricing policy');
+      });
     } catch (err) {
       console.error("Failed to create pricing policy", err);
       const message = err instanceof Error ? err.message : "Unable to add pricing policy";
@@ -663,7 +674,7 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
     } finally {
       setPricingPolicySaving(false);
     }
-  }, [newPricingPolicyEnabled, newPricingPolicyName]);
+  }, [newPricingPolicyEnabled, newPricingPolicyName, pushUndo, performUndo]);
 
 
   const columnDefs = useMemo<ColDef[]>(() => {

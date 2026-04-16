@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, useCallback, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react';
+import { createPortal } from 'react-dom';
 import styles from './OfferBasicDataPanel.module.css';
 import type {
   OfferBasicRecord,
@@ -11,6 +12,9 @@ import type {
 } from './OfferBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
+import { useUndoStack } from '../../hooks/useUndoStack';
+import { useAutoSaveTimer } from '../../hooks/useAutoSaveTimer';
+import { pushCellEditUndo } from '../../../lib/undoHelpers';
 import { addRecentOffer, buildRecentOfferLabel } from '../../lib/recentOffers';
 import UKDatePicker from '../../components/DatePicker';
 import { formatDisplayValue } from '../../lib/formatDisplayValue';
@@ -493,6 +497,11 @@ export default function OfferBasicDataClient({
   const [savedValues, setSavedValues] = useState(initialValues);
   const isDirty = useMemo(() => JSON.stringify(values) !== JSON.stringify(savedValues), [values, savedValues]);
   useUnsavedChanges(isDirty);
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
+  const [undoPortal, setUndoPortal] = useState<Element | null>(null);
+  useEffect(() => {
+    setUndoPortal(document.getElementById('undo-portal'));
+  }, []);
   const [customerText, setCustomerText] = useState('');
   const [showCustomerList, setShowCustomerList] = useState(false);
   const customerListCloseTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -626,8 +635,12 @@ export default function OfferBasicDataClient({
     };
   }, [closeContextMenu, contextMenuState]);
 
+  const scheduleAutoSaveRef = useRef<(fieldId: string) => void>(() => {});
+  const cancelAutoSaveRef = useRef<(fieldId: string) => void>(() => {});
+
   const handleValueChange = useCallback((fieldId: string, value: string) => {
     setValues((prev) => ({ ...prev, [fieldId]: value }));
+    scheduleAutoSaveRef.current(fieldId);
   }, []);
 
   const fetchContactsByCustomer = useCallback(async (customerId: number | null): Promise<OfferContactInfo[]> => {
@@ -684,6 +697,20 @@ export default function OfferBasicDataClient({
     } else {
       payloadValue = normalizeValueForApi(rawValue, def.valueType);
     }
+    // Capture current saved state for undo before sending the update
+    const oldDisplayValue = savedValuesRef.current[def.id] ?? '';
+    let oldPayloadValue: string | number | null | undefined;
+    if (def.id === 'probability') {
+      oldPayloadValue = normalizeProbability(oldDisplayValue) ?? null;
+    } else if (def.datalistOptions && def.datalistOptions.length > 0) {
+      const trimmedOld = oldDisplayValue.trim().toLowerCase();
+      const oldMatch = def.datalistOptions.find(
+        (option) => option.label.trim().toLowerCase() === trimmedOld,
+      );
+      oldPayloadValue = oldMatch != null ? normalizeValueForApi(oldMatch.value, def.valueType) : null;
+    } else {
+      oldPayloadValue = normalizeValueForApi(oldDisplayValue, def.valueType);
+    }
     setPendingFields((prev) => ({ ...prev, [def.id]: true }));
     try {
       const response = await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
@@ -734,7 +761,23 @@ export default function OfferBasicDataClient({
         }
       }
 
-      showToastMessage(`${def.label} updated`, 'success');
+      const capturedOldDisplayValue = oldDisplayValue;
+      const capturedOldPayloadValue = oldPayloadValue;
+      pushCellEditUndo(pushUndo, performUndo, def.label, async () => {
+        const undoRes = await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates: [{ field: def.updateField, value: capturedOldPayloadValue }] }),
+        });
+        const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+        if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+        setValues((prev) => ({ ...prev, [def.id]: capturedOldDisplayValue }));
+        setSavedValues((prev) => {
+          const next = { ...prev, [def.id]: capturedOldDisplayValue };
+          savedValuesRef.current = next;
+          return next;
+        });
+      });
     } catch (err) {
       setValues((prev) => ({ ...prev, [def.id]: savedValuesRef.current[def.id] ?? '' }));
       console.error(err);
@@ -742,16 +785,27 @@ export default function OfferBasicDataClient({
     } finally {
       setPendingFields((prev) => ({ ...prev, [def.id]: false }));
     }
-  }, [fetchContactsByCustomer, offerId]);
+  }, [fetchContactsByCustomer, offerId, pushUndo, performUndo]);
 
   const handleBlur = useCallback((def: FieldDefinition) => {
+    cancelAutoSaveRef.current(def.id);
     if (!def.updateField) return;
     const latestValue = values[def.id] ?? '';
     if (latestValue === savedValuesRef.current[def.id]) return;
     void saveField(def, latestValue);
   }, [saveField, values]);
 
+  const { scheduleAutoSave, cancelAutoSave } = useAutoSaveTimer({
+    values,
+    savedValuesRef,
+    fieldDefinitions: editableFields,
+    saveField,
+  });
+  scheduleAutoSaveRef.current = scheduleAutoSave;
+  cancelAutoSaveRef.current = cancelAutoSave;
+
   const handleDateChange = useCallback((def: FieldDefinition, newValue: string) => {
+    cancelAutoSaveRef.current(def.id);
     handleValueChange(def.id, newValue);
     if (!def.updateField) return;
     if (newValue === savedValuesRef.current[def.id]) return;
@@ -1150,6 +1204,12 @@ export default function OfferBasicDataClient({
 
   return (
     <>
+      {canUndo && undoPortal && createPortal(
+        <button type="button" className="page-header-button" onClick={performUndo}>
+          ↩ Undo{lastLabel ? `: ${lastLabel}` : ''}
+        </button>,
+        undoPortal,
+      )}
       <section className={styles.panel}>
         <div className={`${styles.section} ${styles.sectionCard} ${styles.generalSection}`}>
           <div className={styles.sectionHeading}>{SECTION_METADATA.general.title}</div>

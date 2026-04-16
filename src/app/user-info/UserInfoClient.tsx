@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { showToastMessage } from '../../lib/toast';
+import { useUndoStack } from '../hooks/useUndoStack';
+import { pushCellEditUndo } from '../../lib/undoHelpers';
 import styles from './UserInfo.module.css';
 
 type UserData = {
@@ -45,6 +47,7 @@ export default function UserInfoClient() {
   const [values, setValues] = useState<Record<string, string>>({});
   const savedValuesRef = useRef<Record<string, string>>({});
   const [pendingFields, setPendingFields] = useState<Record<string, boolean>>({});
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -83,6 +86,7 @@ export default function UserInfoClient() {
 
   const saveField = useCallback(async (def: FieldDef, rawValue: string) => {
     if (!def.apiField) return;
+    const oldValue = savedValuesRef.current[def.key] ?? '';
     setPendingFields((prev) => ({ ...prev, [def.key]: true }));
     try {
       const res = await fetch('/api/user-info', {
@@ -95,7 +99,18 @@ export default function UserInfoClient() {
         throw new Error(payload?.error ?? `Failed to update ${def.label}`);
       }
       savedValuesRef.current = { ...savedValuesRef.current, [def.key]: rawValue };
-      showToastMessage(`${def.label} updated`, 'success');
+      const capturedOldValue = oldValue;
+      pushCellEditUndo(pushUndo, performUndo, def.label, async () => {
+        const undoRes = await fetch('/api/user-info', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates: [{ field: def.apiField, value: capturedOldValue }] }),
+        });
+        const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+        if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+        setValues((prev) => ({ ...prev, [def.key]: capturedOldValue }));
+        savedValuesRef.current = { ...savedValuesRef.current, [def.key]: capturedOldValue };
+      });
     } catch (err) {
       setValues((prev) => ({ ...prev, [def.key]: savedValuesRef.current[def.key] }));
       showToastMessage(
@@ -105,7 +120,7 @@ export default function UserInfoClient() {
     } finally {
       setPendingFields((prev) => ({ ...prev, [def.key]: false }));
     }
-  }, []);
+  }, [pushUndo, performUndo]);
 
   const handleBlur = useCallback(
     (def: FieldDef) => {
@@ -186,6 +201,11 @@ export default function UserInfoClient() {
   return (
     <main className={styles.page}>
       <div className={styles.headerRow}>
+        {canUndo && (
+          <button type="button" className="page-header-button" onClick={performUndo}>
+            ↩ Undo{lastLabel ? `: ${lastLabel}` : ''}
+          </button>
+        )}
         <h1 className={styles.heading}>User Info</h1>
       </div>
       <div className={styles.pageBody}>

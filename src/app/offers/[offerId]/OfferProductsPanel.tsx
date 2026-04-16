@@ -51,6 +51,7 @@ const AgGridAll = dynamic<AgGridAllProps>(() => import('../../components/AgGridA
 });
 import { showToastMessage } from '../../../lib/toast';
 import { useUndoStack } from '../../hooks/useUndoStack';
+import { pushCellEditUndo } from '../../../lib/undoHelpers';
 import { showConfirmDialog, showMultiChoiceDialog } from '../../../lib/confirm';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
@@ -1825,25 +1826,29 @@ const PartNumberCell = useCallback((params: ICellRendererParams<Record<string, u
     const normalizedLink = typeof rawLink === 'string' ? rawLink.trim() : '';
     if (!normalizedLink) return partNumber;
 
-    const stop = (event: React.SyntheticEvent) => {
+    const stopLink = (event: React.SyntheticEvent) => {
       event.stopPropagation();
     };
 
     return (
-      <a
-        href={normalizedLink}
-        target="_blank"
-        rel="noreferrer noopener"
-        className={styles.partNumberLink}
-        onClick={stop}
-        onMouseDown={stop}
-        onDoubleClick={stop}
-        onContextMenu={stop}
-        title="Open product link"
-      >
-        {partNumber}
-    </a>
-  );
+      <span className={styles.partNumberCell}>
+        <span>{partNumber}</span>
+        <a
+          href={normalizedLink}
+          target="_blank"
+          rel="noreferrer noopener"
+          className={styles.partNumberLinkIcon}
+          onClick={stopLink}
+          onMouseDown={stopLink}
+          onDoubleClick={stopLink}
+          onContextMenu={stopLink}
+          title="Open product link"
+          tabIndex={-1}
+        >
+          ↗
+        </a>
+      </span>
+    );
 }, []);
 
 const ModelNumberCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
@@ -1861,25 +1866,29 @@ const ModelNumberCell = useCallback((params: ICellRendererParams<Record<string, 
     const normalizedLink = typeof rawLink === 'string' ? rawLink.trim() : '';
     if (!normalizedLink) return modelNumber;
 
-    const stop = (event: React.SyntheticEvent) => {
+    const stopLink = (event: React.SyntheticEvent) => {
       event.stopPropagation();
     };
 
     return (
-      <a
-        href={normalizedLink}
-        target="_blank"
-        rel="noreferrer noopener"
-        className={styles.partNumberLink}
-        onClick={stop}
-        onMouseDown={stop}
-        onDoubleClick={stop}
-        onContextMenu={stop}
-        title="Open product link"
-      >
-        {modelNumber}
-    </a>
-  );
+      <span className={styles.partNumberCell}>
+        <span>{modelNumber}</span>
+        <a
+          href={normalizedLink}
+          target="_blank"
+          rel="noreferrer noopener"
+          className={styles.partNumberLinkIcon}
+          onClick={stopLink}
+          onMouseDown={stopLink}
+          onDoubleClick={stopLink}
+          onContextMenu={stopLink}
+          title="Open product link"
+          tabIndex={-1}
+        >
+          ↗
+        </a>
+      </span>
+    );
 }, []);
 
   const REQUESTED_COLUMN_GLOBAL_CLASS = 'offer-products-grid__cell--requested';
@@ -2230,8 +2239,18 @@ const requestedColumnDefsMap = useMemo(
     [resolvedEndpoint, refreshOfferProductGrid, roles, isOfferCreator, pushUndo],
   );
 
-  const populateRequestedRowsToOffer = useCallback(async (nodes: RowNode<Record<string, unknown>>[]) => {
-    const requestedNodes = nodes.filter((node) => isRequestedRow(node?.data ?? null) || hasRequestedPseudoFields(node?.data ?? null));
+  const populateRequestedRowsToOffer = useCallback(async (nodes: RowNode<Record<string, unknown>>[], options?: { skipInternalUndoPush?: boolean }) => {
+    const requestedNodes = nodes.filter((node) => {
+      const data = node?.data ?? null;
+      if (!data) return false;
+      if (isRequestedRow(data)) return true;
+      // Include hasRequestedPseudoFields rows only if they don't already have a product assigned
+      if (hasRequestedPseudoFields(data)) {
+        const productId = (data as { ProductID?: unknown }).ProductID;
+        return productId == null || productId === 0;
+      }
+      return false;
+    });
     if (requestedNodes.length === 0) return;
 
     try {
@@ -2259,15 +2278,42 @@ const requestedColumnDefsMap = useMemo(
       }
     };
 
-    // Clear actual product data from already-populated rows so they can be re-populated
+    // Check which genuine requested rows (__isRequestedRow=1) already have products assigned
     const alreadyPopulatedNodes = requestedNodes.filter((node) => {
       const data = node?.data ?? null;
       if (!data) return false;
+      if (!isRequestedRow(data)) return false;
       const productId = (data as { ProductID?: unknown }).ProductID;
       return productId != null && productId !== 0;
     });
+
+    // If some rows are already populated, ask the user whether to re-populate or keep them
+    let nodesToProcess = requestedNodes;
     if (alreadyPopulatedNodes.length > 0) {
-      const idsToUnassign = alreadyPopulatedNodes
+      const choice = await showMultiChoiceDialog({
+        title: 'Some rows already have products',
+        message: `${alreadyPopulatedNodes.length} row(s) already have products assigned. What would you like to do with them?`,
+        choices: [
+          { label: 'Re-populate from scratch', value: 'repopulate' },
+          { label: 'Keep existing', value: 'keep' },
+          { label: 'Cancel', value: 'cancel' },
+        ],
+      });
+      if (!choice || choice === 'cancel') return;
+      if (choice === 'keep') {
+        const alreadyPopulatedSet = new Set(alreadyPopulatedNodes);
+        nodesToProcess = requestedNodes.filter((n) => !alreadyPopulatedSet.has(n));
+        if (nodesToProcess.length === 0) {
+          showToastMessage('No new rows to populate.', 'info');
+          return;
+        }
+      }
+    }
+
+    // Clear actual product data from already-populated rows so they can be re-populated
+    const nodesToUnassign = alreadyPopulatedNodes.filter((n) => nodesToProcess.includes(n));
+    if (nodesToUnassign.length > 0) {
+      const idsToUnassign = nodesToUnassign
         .map((node) => normalizeOfferDetailId((node?.data as { OfferDetailID?: unknown })?.OfferDetailID ?? null))
         .filter((id): id is number => id != null);
       if (idsToUnassign.length > 0) {
@@ -2284,7 +2330,7 @@ const requestedColumnDefsMap = useMemo(
           }
           // Push undo so the user can restore the previously-assigned product data
           const previousRows = Array.isArray(payload?.previousRows) ? payload.previousRows : [];
-          if (previousRows.length > 0) {
+          if (previousRows.length > 0 && !options?.skipInternalUndoPush) {
             const capturedEndpoint = resolvedEndpoint;
             pushUndo({
               label: `Unassign ${previousRows.length} requested product(s)`,
@@ -2307,7 +2353,7 @@ const requestedColumnDefsMap = useMemo(
           // Reset local node data directly (without setDataValue) to avoid
           // triggering cell-changed handlers that spam validation toasts.
           // The grid will be purge-refreshed at the end of populate anyway.
-          for (const node of alreadyPopulatedNodes) {
+          for (const node of nodesToUnassign) {
             const d = node.data;
             if (!d) continue;
             d.__isRequestedRow = 1;
@@ -2345,7 +2391,7 @@ const requestedColumnDefsMap = useMemo(
     const unmatchedRequestedRows: RequestedProductMatchEntry[] = [];
     const unfoundFarnellPartNumbers: string[] = [];
     const brandMismatchPending: Array<{
-      node: (typeof requestedNodes)[0];
+      node: (typeof nodesToProcess)[0];
       data: Record<string, unknown>;
       offerDetailId: number;
       productId: number;
@@ -2379,7 +2425,7 @@ const requestedColumnDefsMap = useMemo(
     const productChildCounters = new Map<string, number>();
 
     try {
-      for (const node of requestedNodes) {
+      for (const node of nodesToProcess) {
         const data = node?.data ?? null;
         if (!data || typeof data !== 'object') continue;
         const offerDetailId = normalizeOfferDetailId((data as { OfferDetailID?: unknown }).OfferDetailID ?? null);
@@ -3036,11 +3082,58 @@ const requestedColumnDefsMap = useMemo(
         if (!confirmed) return;
       }
 
-      await populateRequestedRowsToOffer(requestedNodes);
+      // 1. Collect IDs to snapshot before populate
+      const idsToSnapshot = requestedNodes
+        .map((node) =>
+          normalizeOfferDetailId(
+            (node?.data as { OfferDetailID?: unknown })?.OfferDetailID ?? null,
+          ),
+        )
+        .filter((id): id is number => id != null);
+
+      // 2. Fetch pre-populate row state so we can fully restore on undo
+      let snapshotRows: Record<string, unknown>[] = [];
+      if (idsToSnapshot.length > 0) {
+        try {
+          const snapRes = await fetch(addProductsEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'snapshot-rows', offerDetailIds: idsToSnapshot }),
+          });
+          const snapPayload = (await snapRes.json().catch(() => null)) as
+            | { ok?: boolean; rows?: Record<string, unknown>[] }
+            | null;
+          if (snapRes.ok && snapPayload?.ok && Array.isArray(snapPayload.rows)) {
+            snapshotRows = snapPayload.rows;
+          }
+        } catch (snapErr) {
+          console.error('Failed to snapshot rows before populate', snapErr);
+          // Non-fatal — proceed without undo for this run
+        }
+      }
+
+      // 3. Run populate, suppressing the per-unassign internal undo entry
+      await populateRequestedRowsToOffer(requestedNodes, { skipInternalUndoPush: true });
+
+      // 4. Push ONE atomic undo entry covering the entire populate
+      if (snapshotRows.length > 0) {
+        const capturedSnapshot = snapshotRows;
+        const capturedAddEndpoint = addProductsEndpoint;
+        pushCellEditUndo(pushUndo, performUndo, 'Populate offer', async () => {
+          const undoRes = await fetch(capturedAddEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'restore-rows', rows: capturedSnapshot }),
+          });
+          const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+          if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert populate');
+          refreshOfferProductGrid(null, { purge: true });
+        });
+      }
     } finally {
       populateOfferBusyRef.current = false;
     }
-  }, [populateRequestedRowsToOffer, fetchAllFilteredRows]);
+  }, [populateRequestedRowsToOffer, fetchAllFilteredRows, addProductsEndpoint, pushUndo, performUndo, refreshOfferProductGrid]);
 
   const fetchExportRows = useCallback(async (): Promise<OfferExportRow[]> => {
     const api = gridApiRef.current;
@@ -4701,8 +4794,10 @@ const requestedColumnDefsMap = useMemo(
         });
       } catch (err) {
         console.error(`Failed to update ${friendlyLabel}`, err);
-        showToastMessage(`Unable to update ${friendlyLabel}. Please try again.`, 'error');
+        showToastMessage(`Unable to update ${friendlyLabel}: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
         revertValue();
+        event.api?.stopEditing?.();
+        event.api?.clearFocusedCell?.();
       }
     };
 
@@ -4799,8 +4894,10 @@ const requestedColumnDefsMap = useMemo(
         refreshCategoryAggregates(event.api);
       } catch (err) {
         console.error('Failed to update quantity', err);
-        showToastMessage('Unable to update quantity. Please try again.', 'error');
+        showToastMessage(`Unable to update quantity: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
         revertValue();
+        event.api?.stopEditing?.();
+        event.api?.clearFocusedCell?.();
       }
     };
     void runUpdate();
@@ -4885,8 +4982,10 @@ const requestedColumnDefsMap = useMemo(
         });
       } catch (err) {
         console.error('Failed to update description', err);
-        showToastMessage('Unable to update description. Please try again.', 'error');
+        showToastMessage(`Unable to update description: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
         revertValue();
+        event.api?.stopEditing?.();
+        event.api?.clearFocusedCell?.();
       }
     };
     void runUpdate();
@@ -4968,8 +5067,10 @@ const requestedColumnDefsMap = useMemo(
         });
       } catch (err) {
         console.error('Failed to update comment', err);
-        showToastMessage('Unable to update comment. Please try again.', 'error');
+        showToastMessage(`Unable to update comment: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
         revertValue();
+        event.api?.stopEditing?.();
+        event.api?.clearFocusedCell?.();
       }
     };
 
@@ -5042,8 +5143,78 @@ const requestedColumnDefsMap = useMemo(
         });
       } catch (err) {
         console.error('Failed to update delivery', err);
-        showToastMessage('Unable to update delivery. Please try again.', 'error');
+        showToastMessage(`Unable to update delivery: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
         revertValue();
+        event.api?.stopEditing?.();
+        event.api?.clearFocusedCell?.();
+      }
+    };
+
+    void runUpdate();
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
+
+  const handlePartModelNumberEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    const field = event.colDef.field;
+    if (field !== 'PartNumber' && field !== 'ModelNumber') return;
+    const source = (event as { source?: string }).source;
+    if (source === 'api') return;
+    if (shouldSkipRealtimeCellEdit(event)) return;
+
+    const normalizedOldValue = typeof event.oldValue === 'string' ? event.oldValue.trim() || null : null;
+    const rawNew = typeof event.newValue === 'string' ? event.newValue.trim() || null : null;
+    const normalizedNewValue = rawNew;
+    if (normalizedOldValue === normalizedNewValue) return;
+
+    const offerDetailId = normalizeOfferDetailId((event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null);
+    if (offerDetailId == null) {
+      showToastMessage(`Unable to update ${field}. Missing record identifier.`, 'error');
+      try { event.node?.setDataValue?.(field, normalizedOldValue ?? ''); } catch { /* noop */ }
+      return;
+    }
+
+    const revertValue = () => {
+      try { event.node?.setDataValue?.(field, normalizedOldValue ?? ''); } catch { /* noop */ }
+    };
+
+    const runUpdate = async () => {
+      try {
+        const res = await fetch(resolvedEndpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: [{ OfferDetailID: offerDetailId, [field]: normalizedNewValue }],
+          }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update ${field} (status ${res.status})`);
+        }
+        const capturedOldValue = normalizedOldValue;
+        const capturedDetailId = offerDetailId;
+        pushUndo({
+          label: `${field} updated`,
+          undo: async () => {
+            const undoRes = await fetch(resolvedEndpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, [field]: capturedOldValue }] }),
+            });
+            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+            try { event.node?.setDataValue?.(field, capturedOldValue ?? ''); } catch { /* noop */ }
+            event.api?.refreshServerSide?.({ purge: false });
+          },
+        });
+        showToastMessage(`${field} updated`, 'success', 5500, {
+          label: 'Undo',
+          onClick: () => performUndo(),
+        });
+      } catch (err) {
+        console.error(`Failed to update ${field}`, err);
+        showToastMessage(`Unable to update ${field}: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
+        revertValue();
+        event.api?.stopEditing?.();
+        event.api?.clearFocusedCell?.();
       }
     };
 
@@ -5090,19 +5261,23 @@ const requestedColumnDefsMap = useMemo(
     if (normalizedNewValue == null || !Number.isFinite(normalizedNewValue)) {
       showToastMessage(`Please enter a valid ${label.toLowerCase()}.`, 'error');
       try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
+      event.api?.stopEditing?.();
+      event.api?.clearFocusedCell?.();
       return;
     }
     if (field === 'Margin' && Math.abs(normalizedNewValue) >= 100) {
       showToastMessage('Margin must be between -100 and 100.', 'error');
       try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
+      event.api?.stopEditing?.();
+      event.api?.clearFocusedCell?.();
       return;
     }
-    if (field === 'CurrencyCostModifier') {
-      if (!Number.isFinite(normalizedNewValue) || !(normalizedNewValue > 0)) {
-        showToastMessage('Cost modifier must be greater than 0.', 'error');
-        try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
-        return;
-      }
+    if (field === 'CurrencyCostModifier' && !(normalizedNewValue > 0)) {
+      showToastMessage('Cost modifier must be greater than 0.', 'error');
+      try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
+      event.api?.stopEditing?.();
+      event.api?.clearFocusedCell?.();
+      return;
     }
 
     const normalizedOldValue = coerceNumber(event.oldValue);
@@ -5161,8 +5336,10 @@ const requestedColumnDefsMap = useMemo(
         }
       } catch (err) {
         console.error(`Failed to update ${label}`, err);
-        showToastMessage(`Unable to update ${label}. Please try again.`, 'error');
+        showToastMessage(`Unable to update ${label}: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
         revertValue();
+        event.api?.stopEditing?.();
+        event.api?.clearFocusedCell?.();
       }
     };
 
@@ -5176,7 +5353,8 @@ const requestedColumnDefsMap = useMemo(
     handleRequestedFieldEdit(event);
     handleQuantityEdit(event);
     handlePricingEdit(event);
-  }, [handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit]);
+    handlePartModelNumberEdit(event);
+  }, [handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit]);
 
   const formatEuroTotal = (value: number | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return '—';

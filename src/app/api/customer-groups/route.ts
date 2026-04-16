@@ -293,6 +293,7 @@ export async function DELETE(req: NextRequest) {
 
     const pool = await getPool();
     let deleted = 0;
+    const deletedRows: Array<{ CustomerGroupID: number; Name: string | null; Code: string | null; Enabled: boolean | null }> = [];
 
     for (let idx = 0; idx < ids.length; idx += BATCH_DELETE_SIZE) {
       const chunk = ids.slice(idx, idx + BATCH_DELETE_SIZE);
@@ -307,20 +308,21 @@ export async function DELETE(req: NextRequest) {
           request.input(paramName, sql.Int, value);
           placeholders.push(`@${paramName}`);
         });
-        const deleteSql = `
+        const result = await request.query<{ CustomerGroupID: number; Name: string | null; Code: string | null; Enabled: boolean | null }>(`
           DELETE FROM dbo.CustomerGroups
+          OUTPUT DELETED.ID AS CustomerGroupID, DELETED.Name, DELETED.Code, DELETED.Enabled
           WHERE ID IN (${placeholders.join(", ")});
-        `;
-        const result = await request.query(deleteSql);
+        `);
         await transaction.commit();
-        deleted += result.rowsAffected?.[0] ?? 0;
+        deleted += result.recordset?.length ?? 0;
+        deletedRows.push(...(result.recordset ?? []));
       } catch (chunkErr) {
         await transaction.rollback().catch(() => {});
         throw chunkErr;
       }
     }
 
-    return NextResponse.json({ ok: true, deleted });
+    return NextResponse.json({ ok: true, deleted, deletedRows });
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : "Server error";

@@ -718,8 +718,26 @@ export default function ContactsClient({
         successToastMessage: "Contact deleted",
         failureToastMessage: "Unable to delete contact. Please try again.",
         canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageCustomersContacts'),
+        restoreEndpoint: "/api/customer-contacts/restore",
+        onDeleteSuccess: (deletedRows, api) => {
+          if (deletedRows.length > 0) {
+            pushUndo({
+              label: "Contact deleted",
+              undo: async () => {
+                const res = await fetch("/api/customer-contacts/restore", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ rows: deletedRows }),
+                });
+                const result = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+                if (!res.ok || !result?.ok) throw new Error("Failed to restore");
+                try { api?.refreshServerSide?.({ purge: true }); } catch { /* noop */ }
+              },
+            });
+          }
+        },
       }),
-    [roles],
+    [roles, pushUndo],
   );
 
   const contactContextMenuItems = useCallback(
@@ -871,8 +889,18 @@ export default function ContactsClient({
     closeAddContact();
     setContactSaving(false);
     setRefreshToken((prev) => prev + 1);
-    showToastMessage("Contact added", "success");
-  }, [contactForm, closeAddContact, setContactError, setContactSaving, setRefreshToken]);
+    const contactId = result.contactId;
+    const contactName = `${contactForm.firstName} ${contactForm.lastName}`.trim();
+    pushCellEditUndo(pushUndo, performUndo, `Contact "${contactName}"`, async () => {
+      const res = await fetch('/api/customer-contacts', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ContactIDs: [contactId] }),
+      });
+      const del = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+      if (!res.ok || !del?.ok) throw new Error('Failed to delete contact');
+    });
+  }, [contactForm, closeAddContact, setContactError, setContactSaving, setRefreshToken, pushUndo, performUndo]);
 
   return (
     <>

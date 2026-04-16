@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import styles from './CustomerBasicDataPanel.module.css';
 import offerFormStyles from '../../offers/create/OfferCreateClient.module.css';
 import offerPanelStyles from '../../offers/[offerId]/OfferBasicDataPanel.module.css';
@@ -16,6 +17,9 @@ import type {
 import { showToastMessage } from '../../../lib/toast';
 import { formatDisplayValue } from '../../lib/formatDisplayValue';
 import { normalizeValueForApi } from '../../lib/normalizeValueForApi';
+import { useUndoStack } from '../../hooks/useUndoStack';
+import { useAutoSaveTimer } from '../../hooks/useAutoSaveTimer';
+import { pushCellEditUndo } from '../../../lib/undoHelpers';
 import { formatDateInputValue } from '../../lib/formatDateInputValue';
 
 type Props = {
@@ -419,11 +423,20 @@ export default function CustomerBasicDataClient({
   const [savedValues, setSavedValues] = useState(initialValues);
   const savedValuesRef = useRef(savedValues);
   savedValuesRef.current = savedValues;
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
+  const [undoPortal, setUndoPortal] = useState<Element | null>(null);
+  useEffect(() => {
+    setUndoPortal(document.getElementById('undo-portal'));
+  }, []);
   const valuesRef = useRef(values);
   valuesRef.current = values;
 
+  const scheduleAutoSaveRef = useRef<(fieldId: string) => void>(() => {});
+  const cancelAutoSaveRef = useRef<(fieldId: string) => void>(() => {});
+
   const handleValueChange = useCallback((fieldId: string, value: string) => {
     setValues((prev) => ({ ...prev, [fieldId]: value }));
+    scheduleAutoSaveRef.current(fieldId);
   }, []);
 
   const saveField = useCallback(
@@ -458,6 +471,23 @@ export default function CustomerBasicDataClient({
         payloadValue = normalizeValueForApi(rawValue, def.valueType);
       }
 
+      // Capture current saved state for undo before sending the update
+      const oldDisplayValue = savedValuesRef.current[def.id] ?? '';
+      let oldPayloadValue: string | number | null | undefined = null;
+      if (def.datalistOptions && def.datalistOptions.length > 0) {
+        const trimmedOld = oldDisplayValue.trim();
+        const oldOption = trimmedOld
+          ? def.datalistOptions.find(
+              (candidate) => candidate.label.trim().toLowerCase() === trimmedOld.toLowerCase(),
+            ) ?? null
+          : null;
+        oldPayloadValue = oldOption != null
+          ? (def.valueType === 'number' ? Number(oldOption.value) : oldOption.value)
+          : null;
+      } else {
+        oldPayloadValue = normalizeValueForApi(oldDisplayValue, def.valueType);
+      }
+
       setPendingFields((prev) => ({ ...prev, [def.id]: true }));
 
       try {
@@ -476,7 +506,23 @@ export default function CustomerBasicDataClient({
           return next;
         });
         setValues((prev) => ({ ...prev, [def.id]: resolvedDisplayValue }));
-        showToastMessage(`${def.label} updated`, 'success');
+        const capturedOldDisplayValue = oldDisplayValue;
+        const capturedOldPayloadValue = oldPayloadValue;
+        pushCellEditUndo(pushUndo, performUndo, def.label, async () => {
+          const undoRes = await fetch(`/api/customers/${encodeURIComponent(customerId)}/basicdata`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates: [{ field: def.updateField, value: capturedOldPayloadValue }] }),
+          });
+          const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+          if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+          setValues((prev) => ({ ...prev, [def.id]: capturedOldDisplayValue }));
+          setSavedValues((prev) => {
+            const next = { ...prev, [def.id]: capturedOldDisplayValue };
+            savedValuesRef.current = next;
+            return next;
+          });
+        });
         return true;
       } catch (err) {
         console.error(err);
@@ -487,11 +533,12 @@ export default function CustomerBasicDataClient({
         setPendingFields((prev) => ({ ...prev, [def.id]: false }));
       }
     },
-    [customerId],
+    [customerId, pushUndo, performUndo],
   );
 
   const handleBlur = useCallback(
     (def: FieldDefinition) => {
+      cancelAutoSaveRef.current(def.id);
       if (!def.updateField) return;
       const latestValue = values[def.id] ?? '';
       if (latestValue === savedValuesRef.current[def.id]) return;
@@ -499,6 +546,15 @@ export default function CustomerBasicDataClient({
     },
     [saveField, values],
   );
+
+  const { scheduleAutoSave, cancelAutoSave } = useAutoSaveTimer({
+    values,
+    savedValuesRef,
+    fieldDefinitions: editableFields,
+    saveField,
+  });
+  scheduleAutoSaveRef.current = scheduleAutoSave;
+  cancelAutoSaveRef.current = cancelAutoSave;
 
   const openCountryModal = useCallback(() => {
     setNewCountryName('');
@@ -806,6 +862,12 @@ export default function CustomerBasicDataClient({
 
   return (
     <>
+      {canUndo && undoPortal && createPortal(
+        <button type="button" className="page-header-button" onClick={performUndo}>
+          ↩ Undo{lastLabel ? `: ${lastLabel}` : ''}
+        </button>,
+        undoPortal,
+      )}
       <div className={styles.panel}>
         {renderSectionCard('general')}
         <div className={styles.sectionsGrid}>

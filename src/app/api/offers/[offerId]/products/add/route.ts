@@ -1203,6 +1203,142 @@ async function handleUnassignRequestedRows(
   }
 }
 
+async function handleSnapshotRows(offerId: number, body: Record<string, unknown>) {
+  const rawIds = body?.offerDetailIds;
+  if (!Array.isArray(rawIds) || rawIds.length === 0) {
+    return NextResponse.json({ ok: true, rows: [] });
+  }
+  const ids = rawIds
+    .map((v) => normalizeOfferDetailId(v))
+    .filter((v): v is number => v != null);
+  if (ids.length === 0) {
+    return NextResponse.json({ ok: true, rows: [] });
+  }
+
+  try {
+    const pool = await getPool();
+    const idParamEntries = ids.map((id, i) => ({ name: `__sid${i}`, value: id }));
+    const idParamNames = idParamEntries.map((e) => `@${e.name}`).join(', ');
+
+    const req = pool.request();
+    req.input('__offerId', sql.Int, offerId);
+    for (const entry of idParamEntries) {
+      req.input(entry.name, sql.Int, entry.value);
+    }
+    const result = await req.query<Record<string, unknown>>(`
+      SELECT od.ID AS OfferDetailID,
+             od.ProductID, od.BrandID, od.PartNumber, od.ModelNumber,
+             od.ProductDescription, od.ListPrice, od.NetUnitPrice, od.TotalPrice, od.TotalNet,
+             od.TelmacoDiscount, od.CustomerDiscount, od.NetCost, od.NetCostOtherCurrency,
+             od.OtherCurrencyID, od.CurrencyCostModifier,
+             od.Margin, od.GrossProfit, od.TotalCost,
+             od.PriceListID, od.PriceListItemID,
+             od.Quantity, od.TelmacoWarranty, od.Warranty,
+             od.IsCategory, od.IsComment, od.IsPrintable, od.Comment
+      FROM dbo.OfferDetails od
+      WHERE od.OfferID = @__offerId
+        AND od.ID IN (${idParamNames})
+    `);
+    return NextResponse.json({ ok: true, rows: result.recordset ?? [] });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Server error';
+    logger.error(
+      `[snapshot-rows] offerId=${offerId}: ${message}`,
+      { endpoint: `/api/offers/${offerId}/products/add`, method: 'POST', category: 'mutation' },
+      err instanceof Error ? err : undefined,
+    );
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+async function handleRestoreRows(offerId: number, body: Record<string, unknown>) {
+  const rawRows = body?.rows;
+  if (!Array.isArray(rawRows) || rawRows.length === 0) {
+    return NextResponse.json({ ok: true, restored: 0 });
+  }
+
+  try {
+    const pool = await getPool();
+    let restored = 0;
+
+    for (const rawRow of rawRows) {
+      const row = rawRow as Record<string, unknown>;
+      const id = normalizeOfferDetailId(row?.OfferDetailID ?? null);
+      if (id == null) continue;
+
+      const request = pool.request();
+      request.input('__offerId', sql.Int, offerId);
+      request.input('__id', sql.Int, id);
+      request.input('ProductID', sql.Int, row.ProductID != null ? Number(row.ProductID) : null);
+      request.input('BrandID', sql.Int, row.BrandID != null ? Number(row.BrandID) : null);
+      request.input('PartNumber', sql.NVarChar(255), row.PartNumber != null ? String(row.PartNumber) : null);
+      request.input('ModelNumber', sql.NVarChar(255), row.ModelNumber != null ? String(row.ModelNumber) : null);
+      request.input('ProductDescription', sql.NVarChar(sql.MAX), row.ProductDescription != null ? String(row.ProductDescription) : null);
+      request.input('ListPrice', sql.Decimal(18, 4), row.ListPrice != null ? Number(row.ListPrice) : null);
+      request.input('NetUnitPrice', sql.Decimal(18, 4), row.NetUnitPrice != null ? Number(row.NetUnitPrice) : null);
+      request.input('TelmacoDiscount', sql.Decimal(18, 4), row.TelmacoDiscount != null ? Number(row.TelmacoDiscount) : null);
+      request.input('CustomerDiscount', sql.Decimal(18, 4), row.CustomerDiscount != null ? Number(row.CustomerDiscount) : null);
+      request.input('NetCost', sql.Decimal(18, 4), row.NetCost != null ? Number(row.NetCost) : null);
+      request.input('NetCostOtherCurrency', sql.Decimal(18, 4), row.NetCostOtherCurrency != null ? Number(row.NetCostOtherCurrency) : null);
+      request.input('OtherCurrencyID', sql.Int, row.OtherCurrencyID != null ? Number(row.OtherCurrencyID) : null);
+      request.input('CurrencyCostModifier', sql.Decimal(18, 4), row.CurrencyCostModifier != null ? Number(row.CurrencyCostModifier) : null);
+      request.input('Margin', sql.Decimal(18, 4), row.Margin != null ? Number(row.Margin) : null);
+      request.input('GrossProfit', sql.Decimal(18, 4), row.GrossProfit != null ? Number(row.GrossProfit) : null);
+      request.input('TotalCost', sql.Decimal(18, 4), row.TotalCost != null ? Number(row.TotalCost) : null);
+      request.input('PriceListID', sql.Int, row.PriceListID != null ? Number(row.PriceListID) : null);
+      request.input('PriceListItemID', sql.Int, row.PriceListItemID != null ? Number(row.PriceListItemID) : null);
+      request.input('Quantity', sql.Decimal(18, 4), row.Quantity != null ? Number(row.Quantity) : null);
+      request.input('TelmacoWarranty', sql.NVarChar(255), row.TelmacoWarranty != null ? String(row.TelmacoWarranty) : null);
+      request.input('Warranty', sql.NVarChar(255), row.Warranty != null ? String(row.Warranty) : null);
+      request.input('IsCategory', sql.Bit, row.IsCategory ? 1 : 0);
+      request.input('IsComment', sql.Bit, row.IsComment ? 1 : 0);
+      request.input('IsPrintable', sql.Bit, row.IsPrintable ? 1 : 0);
+      request.input('Comment', sql.NVarChar(sql.MAX), row.Comment != null ? String(row.Comment) : null);
+
+      await request.query(`
+        UPDATE dbo.OfferDetails SET
+          ProductID            = @ProductID,
+          BrandID              = @BrandID,
+          PartNumber           = @PartNumber,
+          ModelNumber          = @ModelNumber,
+          ProductDescription   = @ProductDescription,
+          ListPrice            = @ListPrice,
+          NetUnitPrice         = @NetUnitPrice,
+          TelmacoDiscount      = @TelmacoDiscount,
+          CustomerDiscount     = @CustomerDiscount,
+          NetCost              = @NetCost,
+          NetCostOtherCurrency = @NetCostOtherCurrency,
+          OtherCurrencyID      = @OtherCurrencyID,
+          CurrencyCostModifier = @CurrencyCostModifier,
+          Margin               = @Margin,
+          GrossProfit          = @GrossProfit,
+          TotalCost            = @TotalCost,
+          PriceListID          = @PriceListID,
+          PriceListItemID      = @PriceListItemID,
+          Quantity             = @Quantity,
+          TelmacoWarranty      = @TelmacoWarranty,
+          Warranty             = @Warranty,
+          IsCategory           = @IsCategory,
+          IsComment            = @IsComment,
+          IsPrintable          = @IsPrintable,
+          Comment              = @Comment
+        WHERE ID = @__id AND OfferID = @__offerId
+      `);
+      restored++;
+    }
+
+    return NextResponse.json({ ok: true, restored });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Server error';
+    logger.error(
+      `[restore-rows] offerId=${offerId}: ${message}`,
+      { endpoint: `/api/offers/${offerId}/products/add`, method: 'POST', category: 'mutation' },
+      err instanceof Error ? err : undefined,
+    );
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
 async function handleAssignProductToRequestedRow(
   offerId: number,
   body: Record<string, unknown>,
@@ -1619,6 +1755,16 @@ export async function POST(
       const auth = await requirePermission(req, "editOffers");
       if (!auth.ok) return auth.response;
       return handleAddProducts(offerId, body, audit.userId);
+    }
+    if (actionRaw === 'snapshot-rows') {
+      const auth = await requirePermission(req, 'editOffers');
+      if (!auth.ok) return auth.response;
+      return handleSnapshotRows(offerId, body);
+    }
+    if (actionRaw === 'restore-rows') {
+      const auth = await requirePermission(req, 'editOffers');
+      if (!auth.ok) return auth.response;
+      return handleRestoreRows(offerId, body);
     }
 
     return handleProductGrid(offerId, body);

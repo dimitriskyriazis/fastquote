@@ -16,7 +16,7 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
   return (
     <main className={styles.page}>
       <div className={styles.headerRow}>
-        <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
+        <div id="undo-portal" className={`${styles.headerSide} ${styles.headerSideStart}`}>
           <Link href="/offers" className={`${styles.backLink} page-header-button`}>
             <span aria-hidden="true">←</span>
             Back to offers

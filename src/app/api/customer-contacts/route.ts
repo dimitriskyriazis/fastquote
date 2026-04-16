@@ -612,6 +612,24 @@ export async function DELETE(req: NextRequest) {
 
     const pool = await getPool();
     let deleted = 0;
+    type DeletedContactRow = {
+      ContactID: number;
+      CustomerID: number | null;
+      TitleID: number | null;
+      FirstName: string | null;
+      LastName: string | null;
+      Position: string | null;
+      Importance: string | null;
+      Enabled: boolean | null;
+      Phone: string | null;
+      Mobile: string | null;
+      Email: string | null;
+      EmailStatusID: number | null;
+      SecondEmail: string | null;
+      SecondEmailStatusID: number | null;
+      Notes: string | null;
+    };
+    const deletedRows: DeletedContactRow[] = [];
 
     for (let idx = 0; idx < ids.length; idx += BATCH_DELETE_SIZE) {
       const chunk = ids.slice(idx, idx + BATCH_DELETE_SIZE);
@@ -626,20 +644,36 @@ export async function DELETE(req: NextRequest) {
           request.input(paramName, sql.Int, value);
           placeholders.push(`@${paramName}`);
         });
-        const deleteSql = `
+        const result = await request.query<DeletedContactRow>(`
           DELETE FROM dbo.Contacts
+          OUTPUT
+            DELETED.ID AS ContactID,
+            DELETED.CustomerID,
+            DELETED.TitleID,
+            DELETED.FirstName,
+            DELETED.LastName,
+            DELETED.Position,
+            DELETED.Importance,
+            DELETED.Enabled,
+            DELETED.Phone,
+            DELETED.Mobile,
+            DELETED.Email,
+            DELETED.EmailStatusID,
+            DELETED.SecondEmail,
+            DELETED.SecondEmailStatusID,
+            DELETED.Notes
           WHERE ID IN (${placeholders.join(", ")});
-        `;
-        const result = await request.query(deleteSql);
+        `);
         await transaction.commit();
-        deleted += result.rowsAffected?.[0] ?? 0;
+        deleted += result.recordset?.length ?? 0;
+        deletedRows.push(...(result.recordset ?? []));
       } catch (chunkErr) {
         await transaction.rollback().catch(() => {});
         throw chunkErr;
       }
     }
 
-    return NextResponse.json({ ok: true, deleted });
+    return NextResponse.json({ ok: true, deleted, deletedRows });
   } catch (err: unknown) {
     console.error(err);
     const message = err instanceof Error ? err.message : "Server error";

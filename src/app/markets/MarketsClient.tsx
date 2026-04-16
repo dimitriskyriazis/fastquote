@@ -260,8 +260,18 @@ export default function MarketsClient({ salesDivisions }: Props) {
     closeAddMarket();
     setMarketSaving(false);
     setRefreshToken((prev) => prev + 1);
-    showToastMessage("Market added", "success");
-  }, [marketForm, closeAddMarket, setMarketError, setMarketSaving]);
+    const marketId = result.market?.MarketID;
+    const marketName = result.market?.Name ?? marketForm.name;
+    pushCellEditUndo(pushUndo, performUndo, `Market "${marketName}"`, async () => {
+      const res = await fetch('/api/markets', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ MarketIDs: [marketId] }),
+      });
+      const del = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+      if (!res.ok || !del?.ok) throw new Error('Failed to delete market');
+    });
+  }, [marketForm, closeAddMarket, setMarketError, setMarketSaving, pushUndo, performUndo]);
 
   const columnDefs = useMemo<ColDef[]>(
     () => [

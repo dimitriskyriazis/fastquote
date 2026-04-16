@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import styles from './PriceListBasicDataPanel.module.css';
 import type {
   PriceListBasicRecord,
@@ -19,6 +20,9 @@ import comboStyles from '../../offers/create/OfferCreateClient.module.css';
 import { matchesCountrySearch } from '../../../lib/countryAliases';
 import { formatDisplayValue } from '../../lib/formatDisplayValue';
 import { normalizeValueForApi } from '../../lib/normalizeValueForApi';
+import { useUndoStack } from '../../hooks/useUndoStack';
+import { useAutoSaveTimer } from '../../hooks/useAutoSaveTimer';
+import { pushCellEditUndo } from '../../../lib/undoHelpers';
 import { formatDateInputValue } from '../../lib/formatDateInputValue';
 import { getUserNumberLocale, parseLocaleNumber } from '../../../lib/localeNumber';
 
@@ -312,6 +316,11 @@ export default function PriceListBasicDataClient({
   const [savedValues, setSavedValues] = useState(initialValues);
   const savedValuesRef = useRef(savedValues);
   savedValuesRef.current = savedValues;
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
+  const [undoPortal, setUndoPortal] = useState<Element | null>(null);
+  useEffect(() => {
+    setUndoPortal(document.getElementById('undo-portal'));
+  }, []);
 
   const [priceListPricingPolicies, setPriceListPricingPolicies] = useState<PriceListPricingPolicyEntry[]>(
     initialPriceListPricingPolicies,
@@ -404,8 +413,12 @@ export default function PriceListBasicDataClient({
     }
   }, []);
 
+  const scheduleAutoSaveRef = useRef<(fieldId: string) => void>(() => {});
+  const cancelAutoSaveRef = useRef<(fieldId: string) => void>(() => {});
+
   const handleValueChange = useCallback((fieldId: string, value: string) => {
     setValues((prev) => ({ ...prev, [fieldId]: value }));
+    scheduleAutoSaveRef.current(fieldId);
   }, []);
 
   const handleBrandCreated = useCallback(
@@ -454,6 +467,19 @@ export default function PriceListBasicDataClient({
         payloadValue = normalizeValueForApi(rawValue, def.valueType);
       }
 
+      // Capture current saved state for undo before sending the update
+      const oldDisplayValue = savedValuesRef.current[def.id] ?? '';
+      let oldPayloadValue: string | number | null | undefined;
+      if (def.datalistOptions && def.datalistOptions.length > 0) {
+        const trimmedOld = oldDisplayValue.trim().toLowerCase();
+        const oldMatch = def.datalistOptions.find(
+          (option) => option.label.trim().toLowerCase() === trimmedOld,
+        );
+        oldPayloadValue = oldMatch?.value ?? null;
+      } else {
+        oldPayloadValue = normalizeValueForApi(oldDisplayValue, def.valueType);
+      }
+
       setPendingFields((prev) => ({ ...prev, [def.id]: true }));
       try {
         const response = await fetch(`/api/price-lists/${encodeURIComponent(priceListId)}/basicdata`, {
@@ -471,7 +497,23 @@ export default function PriceListBasicDataClient({
           return next;
         });
         setValues((prev) => ({ ...prev, [def.id]: resolvedDisplayValue }));
-        showToastMessage(`${def.label} updated`, 'success');
+        const capturedOldDisplayValue = oldDisplayValue;
+        const capturedOldPayloadValue = oldPayloadValue;
+        pushCellEditUndo(pushUndo, performUndo, def.label, async () => {
+          const undoRes = await fetch(`/api/price-lists/${encodeURIComponent(priceListId)}/basicdata`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates: [{ field: def.updateField, value: capturedOldPayloadValue }] }),
+          });
+          const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+          if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+          setValues((prev) => ({ ...prev, [def.id]: capturedOldDisplayValue }));
+          setSavedValues((prev) => {
+            const next = { ...prev, [def.id]: capturedOldDisplayValue };
+            savedValuesRef.current = next;
+            return next;
+          });
+        });
       } catch (err) {
         console.error(err);
         setValues((prev) => ({ ...prev, [def.id]: savedValuesRef.current[def.id] ?? '' }));
@@ -480,11 +522,12 @@ export default function PriceListBasicDataClient({
         setPendingFields((prev) => ({ ...prev, [def.id]: false }));
       }
     },
-    [priceListId],
+    [priceListId, pushUndo, performUndo],
   );
 
   const handleBlur = useCallback(
     (def: FieldDefinition) => {
+      cancelAutoSaveRef.current(def.id);
       if (!def.updateField) return;
       const latestValue = values[def.id] ?? '';
       if (latestValue === savedValuesRef.current[def.id]) return;
@@ -492,6 +535,15 @@ export default function PriceListBasicDataClient({
     },
     [saveField, values],
   );
+
+  const { scheduleAutoSave, cancelAutoSave } = useAutoSaveTimer({
+    values,
+    savedValuesRef,
+    fieldDefinitions: editableFields,
+    saveField,
+  });
+  scheduleAutoSaveRef.current = scheduleAutoSave;
+  cancelAutoSaveRef.current = cancelAutoSave;
 
   const pricingPolicyNameById = useMemo(() => {
     const map = new Map<number, string>();
@@ -1162,6 +1214,12 @@ export default function PriceListBasicDataClient({
 
   return (
     <>
+      {canUndo && undoPortal && createPortal(
+        <button type="button" className="page-header-button" onClick={performUndo}>
+          ↩ Undo{lastLabel ? `: ${lastLabel}` : ''}
+        </button>,
+        undoPortal,
+      )}
       <div className={styles.panel}>
         {renderSectionCard('general')}
         <div className={styles.sectionsGrid}>

@@ -16,6 +16,7 @@ export function useUndoStack(maxSize = 20) {
 
   const pushUndo = useCallback(
     (entry: Omit<UndoEntry, 'timestamp'>) => {
+      if (undoingRef.current) return; // suppress entries triggered by undo side-effects
       const next = [
         ...stackRef.current.slice(-(maxSize - 1)),
         { ...entry, timestamp: Date.now() },

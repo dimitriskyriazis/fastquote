@@ -68,12 +68,21 @@ export default function CountriesClient() {
       setIsAddCountryOpen(false);
       if (!country.enabled) {
         showToastMessage("Country added (disabled)", "success");
-        return;
+      } else {
+        showToastMessage("Country added", "success");
+        setRefreshToken((prev) => prev + 1);
       }
-      showToastMessage("Country added", "success");
-      setRefreshToken((prev) => prev + 1);
+      pushCellEditUndo(pushUndo, performUndo, `Country "${country.name}"`, async () => {
+        const res = await fetch('/api/countries-cities', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ CountryIDs: [country.id] }),
+        });
+        const result = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+        if (!res.ok || !result?.ok) throw new Error('Failed to delete country');
+      });
     },
-    [],
+    [pushUndo, performUndo],
   );
 
   const revertCell = (event: CellValueChangedEvent<Record<string, unknown>>) => {

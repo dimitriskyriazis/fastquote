@@ -209,6 +209,8 @@ type DetailUpdateInput = {
   RequestedDescription2?: string | null;
   RequestedDescription3?: string | null;
   RequestedQuantity?: number | string | null;
+  PartNumber?: string | null;
+  ModelNumber?: string | null;
 };
 
 type DetailUpdateRequest = {
@@ -387,6 +389,8 @@ const normalizeBoolean = (value: unknown): boolean | null => {
 import {
   roundTo,
   resolvePricing,
+  deriveWithoutListPrice,
+  deriveListPrice,
   type PricingInput,
   type ResolvedPricing,
 } from '../../../../../lib/pricing';
@@ -1565,6 +1569,8 @@ export async function PATCH(
         const hasRequestedQuantity = entry
           ? Object.prototype.hasOwnProperty.call(entry, 'RequestedQuantity')
           : false;
+        const hasPartNumber = entry ? Object.prototype.hasOwnProperty.call(entry, 'PartNumber') : false;
+        const hasModelNumber = entry ? Object.prototype.hasOwnProperty.call(entry, 'ModelNumber') : false;
         const hasPricingFields = hasCustomerDiscount || hasTelmacoDiscount || hasNetUnitPrice || hasNetCost || hasMargin
           || hasNetCostOtherCurrency || hasOtherCurrencyID || hasCurrencyCostModifier;
         if (
@@ -1584,6 +1590,8 @@ export async function PATCH(
           && !hasRequestedPartNo
           && !hasRequestedWebLink
           && !hasRequestedDescription
+          && !hasPartNumber
+          && !hasModelNumber
           && !hasRequestedDescription2
           && !hasRequestedDescription3
           && !hasRequestedQuantity
@@ -1655,6 +1663,8 @@ export async function PATCH(
         const isCategoryValue = hasIsCategory ? normalizeBoolean(entry?.IsCategory ?? null) : null;
         const isPrintableValue = hasIsPrintable ? normalizeBoolean(entry?.IsPrintable ?? null) : null;
         const isCommentValue = hasIsComment ? normalizeBoolean(entry?.IsComment ?? null) : null;
+        const partNumber = hasPartNumber ? normalizeRequestedTextValue(entry?.PartNumber ?? null) : null;
+        const modelNumber = hasModelNumber ? normalizeRequestedTextValue(entry?.ModelNumber ?? null) : null;
 
         if (hasPricingFields) {
           const invalidPricing = (hasCustomerDiscount && customerDiscount == null)
@@ -1726,6 +1736,10 @@ export async function PATCH(
           RequestedDescription2: requestedDescription2,
           RequestedDescription3: requestedDescription3,
           RequestedQuantity: requestedQuantity,
+          hasPartNumber,
+          PartNumber: partNumber,
+          hasModelNumber,
+          ModelNumber: modelNumber,
         };
       })
       .filter((entry): entry is {
@@ -1780,6 +1794,10 @@ export async function PATCH(
         RequestedDescription2: string | null;
         RequestedDescription3: string | null;
         RequestedQuantity: number | null;
+        hasPartNumber: boolean;
+        PartNumber: string | null;
+        hasModelNumber: boolean;
+        ModelNumber: string | null;
       } => Boolean(entry));
 
     if (normalizedUpdates.length === 0) {
@@ -1928,6 +1946,10 @@ export async function PATCH(
         HasIsPrintable: boolean;
         IsComment: boolean | null;
         HasIsComment: boolean;
+        PartNumber: string | null;
+        HasPartNumber: boolean;
+        ModelNumber: string | null;
+        HasModelNumber: boolean;
       }> = [];
       const errors: string[] = [];
 
@@ -1956,7 +1978,7 @@ export async function PATCH(
         const listPriceCandidate = entry.hasListPrice
           ? entry.listPrice
           : normalizeMoneyValue(current.ListPrice);
-        const fallbackListPrice = listPriceCandidate ?? entry.netUnitPrice ?? entry.netCost ?? computedNetCostFromOther ?? null;
+        const fallbackListPrice = listPriceCandidate ?? computedNetCostFromOther ?? null;
         const quantity = entry.hasQuantity
           ? entry.Quantity
           : normalizeQuantityValue(current.Quantity ?? null);
@@ -1975,10 +1997,7 @@ export async function PATCH(
             errors.push('Pricing can only be updated for product or comment rows.');
             return;
           }
-          if (fallbackListPrice == null || Object.is(fallbackListPrice, 0)) {
-            errors.push('Missing list price for pricing update.');
-            return;
-          }
+          // No list price → resolvePricing returns null → fallback saves raw provided values.
 
           if (isCommentRow) {
             const nextNetCost = entry.hasNetCost
@@ -2013,12 +2032,18 @@ export async function PATCH(
 
             resolvedPricing = resolvePricing(commentInput);
             if (!resolvedPricing) {
+              const derived = deriveWithoutListPrice(
+                commentInput.netUnitPrice,
+                commentInput.netCost,
+                commentInput.margin,
+                commentInput.provided,
+              );
               resolvedPricing = {
                 customerDiscount: commentInput.customerDiscount,
                 telmacoDiscount: commentInput.telmacoDiscount,
-                netUnitPrice: commentInput.netUnitPrice,
-                netCost: commentInput.netCost,
-                margin: commentInput.margin,
+                netUnitPrice: derived.netUnitPrice,
+                netCost: derived.netCost,
+                margin: derived.margin,
               };
             }
           } else {
@@ -2054,12 +2079,18 @@ export async function PATCH(
 
             resolvedPricing = resolvePricing(input);
             if (!resolvedPricing) {
+              const derived = deriveWithoutListPrice(
+                input.netUnitPrice,
+                input.netCost,
+                input.margin,
+                input.provided,
+              );
               resolvedPricing = {
                 customerDiscount: input.customerDiscount,
                 telmacoDiscount: input.telmacoDiscount,
-                netUnitPrice: input.netUnitPrice,
-                netCost: input.netCost,
-                margin: input.margin,
+                netUnitPrice: derived.netUnitPrice,
+                netCost: derived.netCost,
+                margin: derived.margin,
               };
             }
           }
@@ -2075,7 +2106,16 @@ export async function PATCH(
 
         const netPrice = resolvedPricing.netUnitPrice;
         const telmacoCost = resolvedPricing.netCost;
-        const listPriceForTotals = listPriceCandidate ?? fallbackListPrice;
+        // If there is still no list price, try to derive it from the resolved price + its discount.
+        const derivedListPrice = (listPriceCandidate == null && fallbackListPrice == null)
+          ? deriveListPrice(
+              resolvedPricing.netUnitPrice,
+              resolvedPricing.netCost,
+              resolvedPricing.customerDiscount,
+              resolvedPricing.telmacoDiscount,
+            )
+          : null;
+        const listPriceForTotals = listPriceCandidate ?? derivedListPrice ?? fallbackListPrice;
         const totalPrice = listPriceForTotals != null ? roundTo(listPriceForTotals * safeQuantity) : null;
         const totalNet = netPrice != null ? roundTo(netPrice * safeQuantity) : null;
         const totalCost = telmacoCost != null ? roundTo(telmacoCost * safeQuantity) : null;
@@ -2110,8 +2150,8 @@ export async function PATCH(
           TotalNet: totalNet,
           TotalCost: totalCost,
           GrossProfit: grossProfit,
-          ListPrice: entry.hasListPrice ? entry.listPrice ?? null : null,
-          HasListPrice: entry.hasListPrice,
+          ListPrice: entry.hasListPrice ? entry.listPrice ?? null : (derivedListPrice ?? null),
+          HasListPrice: entry.hasListPrice || derivedListPrice != null,
           RequestedItemNo: entry.requestedItemNo,
           HasRequestedItemNo: entry.hasRequestedItemNo,
           RequestedBrand: entry.RequestedBrand,
@@ -2136,6 +2176,10 @@ export async function PATCH(
           HasIsPrintable: entry.hasIsPrintable,
           IsComment: entry.hasIsComment ? entry.IsComment : null,
           HasIsComment: entry.hasIsComment,
+          PartNumber: entry.hasPartNumber ? entry.PartNumber : null,
+          HasPartNumber: entry.hasPartNumber,
+          ModelNumber: entry.hasModelNumber ? entry.ModelNumber : null,
+          HasModelNumber: entry.hasModelNumber,
         });
       });
 
@@ -2146,7 +2190,7 @@ export async function PATCH(
       if (pendingRows.length === 0) continue;
 
       const decimalType = getDecimalType();
-      const UPDATE_PARAMS_PER_ROW = 50;
+      const UPDATE_PARAMS_PER_ROW = 54;
       const UPDATE_BASE_PARAMS = 2;
       const updateChunkSize = Math.max(1, Math.floor((2100 - UPDATE_BASE_PARAMS) / UPDATE_PARAMS_PER_ROW));
 
@@ -2280,7 +2324,15 @@ export async function PATCH(
           row.HasIsComment ? (row.IsComment == null ? null : (row.IsComment ? 1 : 0)) : null,
         );
         request.input(hasIsCommentParam, sql.Bit, row.HasIsComment ? 1 : 0);
-        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam})`);
+        const partNumberParam = `partNumber_${rowIdx}`;
+        const hasPartNumberParam = `hasPartNumber_${rowIdx}`;
+        const modelNumberParam = `modelNumber_${rowIdx}`;
+        const hasModelNumberParam = `hasModelNumber_${rowIdx}`;
+        request.input(partNumberParam, sql.NVarChar(400), row.HasPartNumber ? row.PartNumber : null);
+        request.input(hasPartNumberParam, sql.Bit, row.HasPartNumber ? 1 : 0);
+        request.input(modelNumberParam, sql.NVarChar(400), row.HasModelNumber ? row.ModelNumber : null);
+        request.input(hasModelNumberParam, sql.Bit, row.HasModelNumber ? 1 : 0);
+        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam}, @${partNumberParam}, @${hasPartNumberParam}, @${modelNumberParam}, @${hasModelNumberParam})`);
       });
 
       const query = `
@@ -2334,7 +2386,11 @@ export async function PATCH(
           IsPrintable,
           HasIsPrintable,
           IsComment,
-          HasIsComment
+          HasIsComment,
+          PartNumber,
+          HasPartNumber,
+          ModelNumber,
+          HasModelNumber
         ) AS (
           SELECT *
           FROM (VALUES ${valueClauses.join(', ')}) AS v (
@@ -2387,7 +2443,11 @@ export async function PATCH(
             IsPrintable,
             HasIsPrintable,
             IsComment,
-            HasIsComment
+            HasIsComment,
+            PartNumber,
+            HasPartNumber,
+            ModelNumber,
+            HasModelNumber
           )
         )
         UPDATE od
@@ -2420,6 +2480,8 @@ export async function PATCH(
             od.IsCategory = CASE WHEN PendingUpdates.HasIsCategory = 1 THEN PendingUpdates.IsCategory ELSE od.IsCategory END,
             od.IsPrintable = CASE WHEN PendingUpdates.HasIsPrintable = 1 THEN PendingUpdates.IsPrintable ELSE od.IsPrintable END,
             od.IsComment = CASE WHEN PendingUpdates.HasIsComment = 1 THEN PendingUpdates.IsComment ELSE od.IsComment END,
+            od.PartNumber = CASE WHEN PendingUpdates.HasPartNumber = 1 THEN PendingUpdates.PartNumber ELSE od.PartNumber END,
+            od.ModelNumber = CASE WHEN PendingUpdates.HasModelNumber = 1 THEN PendingUpdates.ModelNumber ELSE od.ModelNumber END,
             od.ModifiedOn = SYSUTCDATETIME(),
             od.ModifiedBy = @__modifiedBy
         FROM dbo.OfferDetails od
@@ -2465,6 +2527,10 @@ export async function PATCH(
           NetCost: 'NetCost',
           hasMargin: 'Margin',
           Margin: 'Margin',
+          hasPartNumber: 'PartNumber',
+          PartNumber: 'PartNumber',
+          hasModelNumber: 'ModelNumber',
+          ModelNumber: 'ModelNumber',
         };
         
         // Find all updated fields

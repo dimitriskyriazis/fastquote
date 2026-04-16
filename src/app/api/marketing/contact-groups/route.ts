@@ -333,13 +333,15 @@ export async function DELETE(req: NextRequest) {
     ids.forEach((id, idx) => req3.input(`id${idx}`, sql.Int, id));
     const deleteResult = await req3.query(`
       DELETE FROM dbo.ContactGroups
-      OUTPUT DELETED.ID AS ContactGroupID, DELETED.Description
+      OUTPUT DELETED.ID AS ContactGroupID, DELETED.Description, DELETED.SalesDivisionID, DELETED.SalespersonID, DELETED.GroupImportance, DELETED.Note, DELETED.Enabled
       WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
     `);
 
-    const deletedRows = ((deleteResult.recordset ?? []) as Record<string, unknown>[]).map((row) => ({
-      id: row.ContactGroupID as number,
-      name: trimNullableText(row.Description as string | null),
+    type DeletedContactGroupRow = { ContactGroupID: number; Description: string | null; SalesDivisionID: number | null; SalespersonID: number | null; GroupImportance: string | null; Note: string | null; Enabled: boolean | null };
+    const rawDeletedRows = (deleteResult.recordset ?? []) as DeletedContactGroupRow[];
+    const auditRows = rawDeletedRows.map((row) => ({
+      id: row.ContactGroupID,
+      name: trimNullableText(row.Description),
     }));
 
     const auditUserId = resolveAuditUserId(req);
@@ -348,11 +350,11 @@ export async function DELETE(req: NextRequest) {
       userId: auditUserId,
       targetEntity: "contactGroups",
       requestedIds: ids,
-      deletedRows,
+      deletedRows: auditRows,
       message: "Contact groups deleted",
     });
 
-    return NextResponse.json({ ok: true, deleted: deletedRows.length });
+    return NextResponse.json({ ok: true, deleted: rawDeletedRows.length, deletedRows: rawDeletedRows });
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : "Server error";
