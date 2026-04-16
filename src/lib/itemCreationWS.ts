@@ -139,6 +139,23 @@ async function shortenDescriptionWithAI(
 }
 
 /**
+ * Resolves the Soft1 Code for a category, subcategory, or type from the
+ * FastQuote database.  Returns the Code string, or undefined if not found.
+ */
+async function resolveLookupCode(
+  pool: Awaited<ReturnType<typeof getPool>>,
+  table: 'ProductCategories' | 'ProductSubCategories' | 'ProductTypes',
+  id: number,
+): Promise<string | undefined> {
+  const request = pool.request();
+  request.input('id', sql.Int, id);
+  const result = await request.query<{ Code: string | null }>(
+    `SELECT Code FROM dbo.${table} WHERE ID = @id`,
+  );
+  return result.recordset?.[0]?.Code ?? undefined;
+}
+
+/**
  * Creates an item in SoftOne ERP via the setItem web service.
  *
  * Field mapping (V5 doc):
@@ -152,6 +169,9 @@ async function shortenDescriptionWithAI(
  *   mtrcategory = 1  (Εμπόρευμα/Merchandise)
  *   mtrmanfctr  = ERP manufacturer ID (from MTRMANFCTR table)
  *   busunits    = Business Unit code (10=AVS, 20=TVS)
+ *   category    = Soft1 code (from ProductCategories.Code)
+ *   subcateg    = Soft1 code (from ProductSubCategories.Code)
+ *   type        = Soft1 code (from ProductTypes.Code)
  */
 export async function createItemViaWebService(
   pool: Awaited<ReturnType<typeof getPool>>,
@@ -168,6 +188,23 @@ export async function createItemViaWebService(
 
   // Resolve ERP manufacturer ID from brand name
   const mtrmanfctr = await resolveErpManufacturerId(erpPool, params.brandName);
+
+  // Resolve Soft1 codes for category, subcategory, and type (in parallel)
+  const [categoryCode, subCategoryCode, typeCode] = await Promise.all([
+    resolveLookupCode(pool, 'ProductCategories', params.categoryId),
+    resolveLookupCode(pool, 'ProductSubCategories', params.subCategoryId),
+    resolveLookupCode(pool, 'ProductTypes', params.typeId),
+  ]);
+
+  if (!categoryCode) {
+    throw new Error(`Soft1 Code not found in ProductCategories for ID=${params.categoryId}`);
+  }
+  if (!subCategoryCode) {
+    throw new Error(`Soft1 Code not found in ProductSubCategories for ID=${params.subCategoryId}`);
+  }
+  if (!typeCode) {
+    throw new Error(`Soft1 Code not found in ProductTypes for ID=${params.typeId}`);
+  }
 
   const client = getSoftOneClient();
 
@@ -198,9 +235,9 @@ export async function createItemViaWebService(
     mtrcategory: 1,
     mtrmanfctr,
     busunits: mapBusinessUnit(params.businessUnit),
-    category: String(params.categoryId),
-    subcateg: String(params.subCategoryId),
-    type: String(params.typeId),
+    category: categoryCode,
+    subcateg: subCategoryCode,
+    type: typeCode,
   };
 
   logger.info('SoftOne WS: calling setItem', {
@@ -210,9 +247,9 @@ export async function createItemViaWebService(
     name: itemName,
     businessUnit: params.businessUnit,
     mtrmanfctr: mtrmanfctr ?? null,
-    categoryId: String(params.categoryId),
-    subCategoryId: String(params.subCategoryId),
-    typeId: String(params.typeId),
+    categoryCode: categoryCode ?? null,
+    subCategoryCode: subCategoryCode ?? null,
+    typeCode: typeCode ?? null,
   });
 
   const result = await client.setItem({ items: [item] });

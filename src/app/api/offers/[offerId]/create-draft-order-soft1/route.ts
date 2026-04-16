@@ -33,6 +33,7 @@ type ProductMatch = {
     CODE1: string | null;
     CODE2: string | null;
     NAME1: string | null;
+    BRANDNAME?: string | null;
   }>;
 };
 
@@ -443,6 +444,7 @@ type ErpProductMatch = {
   CODE1: string | null;
   CODE2: string | null;
   NAME1: string | null;
+  BRANDNAME?: string | null;
 };
 
 function findExactCode2Match(
@@ -657,6 +659,7 @@ async function handleResolveCustomer(
 
 async function handleCategorizeProducts(
   ctx: OfferContext,
+  body: CreateDraftOfferRequestBody,
 ): Promise<NextResponse> {
   const { pool, offerId, requestId } = ctx;
   const products = await fetchOfferProducts(pool, offerId);
@@ -665,7 +668,87 @@ async function handleCategorizeProducts(
     return NextResponse.json({ ok: true, step: 'categorize-products', products: [] });
   }
 
-  // Run AI categorization for products missing categories
+  // ── Phase 1: Sync categories from matched Soft1 items ──────────────────
+  const matchResults = body.matchResults;
+  const erpSynced = new Set<number>();
+
+  if (matchResults) {
+    const matchedProducts: Array<{ productId: number; CODE: string | null }> = [
+      ...matchResults.autoMatched,
+      ...matchResults.userSelected,
+    ];
+
+    if (matchedProducts.length > 0) {
+      // Load subcategories and types with Code columns for matching
+      const [subCatCodeRes, typeCodeRes] = await Promise.all([
+        pool.request().query<{ ID: number; Code: string | null; CategoryID: number | null }>(
+          "SELECT ID, Code, CategoryID FROM dbo.ProductSubCategories",
+        ),
+        pool.request().query<{ ID: number; Code: string | null }>(
+          "SELECT ID, Code FROM dbo.ProductTypes",
+        ),
+      ]);
+      const subCatsWithCode = (subCatCodeRes.recordset ?? []).filter(r => r.Code);
+      const typesWithCode = (typeCodeRes.recordset ?? []).filter(r => r.Code);
+
+      for (const match of matchedProducts) {
+        const product = products.find(p => p.ProductID === match.productId);
+        if (!product || !match.CODE) continue;
+
+        // Parse ERP CODE: [SubCatCode3][TypeCode].[BrandCode].[Sequence]
+        const parts = match.CODE.split('.');
+        if (parts.length < 2 || parts[0].length < 4) continue;
+
+        const prefix = parts[0];
+        const subCatCode3 = prefix.substring(0, 3).toUpperCase();
+        const typeCode = prefix.substring(3).toUpperCase();
+
+        const matchedSubCat = subCatsWithCode.find(
+          sc => sc.Code!.substring(0, 3).toUpperCase() === subCatCode3,
+        );
+        const matchedType = typesWithCode.find(
+          t => t.Code!.toUpperCase() === typeCode,
+        );
+
+        const resolvedCategoryId = matchedSubCat?.CategoryID ?? null;
+        const resolvedSubCategoryId = matchedSubCat?.ID ?? null;
+        const resolvedTypeId = matchedType?.ID ?? null;
+
+        if (!resolvedCategoryId && !resolvedSubCategoryId && !resolvedTypeId) continue;
+
+        // Soft1 takes priority — overwrite even if FastQuote already has values
+        const updateReq = pool.request();
+        updateReq.input('productId', sql.Int, product.ProductID);
+        const sets: string[] = [];
+
+        if (resolvedCategoryId && product.CategoryID !== resolvedCategoryId) {
+          updateReq.input('categoryId', sql.Int, resolvedCategoryId);
+          sets.push('CategoryID = @categoryId');
+          product.CategoryID = resolvedCategoryId;
+        }
+        if (resolvedSubCategoryId && product.SubCategoryID !== resolvedSubCategoryId) {
+          updateReq.input('subCategoryId', sql.Int, resolvedSubCategoryId);
+          sets.push('SubCategoryID = @subCategoryId');
+          product.SubCategoryID = resolvedSubCategoryId;
+        }
+        if (resolvedTypeId && product.TypeID !== resolvedTypeId) {
+          updateReq.input('typeId', sql.Int, resolvedTypeId);
+          sets.push('TypeID = @typeId');
+          product.TypeID = resolvedTypeId;
+        }
+
+        if (sets.length > 0) {
+          sets.push('ModifiedOn = SYSUTCDATETIME()');
+          await updateReq.query(`UPDATE dbo.Products SET ${sets.join(', ')} WHERE ID = @productId`);
+          erpSynced.add(product.ProductID);
+        }
+      }
+
+      logger.info('wizard categorize-products ERP sync', { requestId, offerId, synced: erpSynced.size });
+    }
+  }
+
+  // ── Phase 2: AI categorization for remaining products missing categories ─
   const aiCategorized = new Set<number>();
   const categoryUpdatePromises: Promise<void>[] = [];
 
@@ -741,6 +824,7 @@ async function handleCategorizeProducts(
     subCategoryName: p.SubCategoryID ? (subCatMap.get(p.SubCategoryID) ?? null) : null,
     typeName: p.TypeID ? (typeMap.get(p.TypeID) ?? null) : null,
     wasAiCategorized: aiCategorized.has(p.ProductID),
+    wasErpSynced: erpSynced.has(p.ProductID),
   }));
 
   const categories = (categoriesRes.recordset ?? [])
@@ -753,7 +837,7 @@ async function handleCategorizeProducts(
     .filter((r): r is LookupRow & { ID: number } => r.ID != null)
     .map(r => ({ id: r.ID, name: r.Name ?? '' }));
 
-  logger.info('wizard categorize-products done', { requestId, offerId, total: products.length, aiCategorized: aiCategorized.size });
+  logger.info('wizard categorize-products done', { requestId, offerId, total: products.length, erpSynced: erpSynced.size, aiCategorized: aiCategorized.size });
 
   return NextResponse.json({ ok: true, step: 'categorize-products', products: productList, categories, subCategories, types });
 }
@@ -882,8 +966,7 @@ async function handleMatchProducts(
     const missing: string[] = [];
     if (!product.Description) missing.push('description');
     if (!product.BrandID) missing.push('brand');
-    if (!product.SubCategoryID) missing.push('subcategory');
-    if (!product.TypeID) missing.push('type');
+    // subcategory/type are resolved in the Categories step (runs after Products)
     return missing;
   };
 
@@ -987,6 +1070,31 @@ async function handleMatchProducts(
         modelNumber: product.ModelNumber,
         reason: 'ERP search failed',
       });
+    }
+  }
+
+  // Enrich needsSelection matches with brand names from ERP
+  const allMatchMtrls = new Set<number>();
+  for (const ns of needsSelection) {
+    for (const m of ns.matches) allMatchMtrls.add(m.MTRL);
+  }
+  if (allMatchMtrls.size > 0) {
+    try {
+      const ids = [...allMatchMtrls];
+      const ph = ids.map((_, i) => `@m${i}`).join(', ');
+      const brandReq = erpPool.request();
+      ids.forEach((id, i) => brandReq.input(`m${i}`, sql.Int, id));
+      const brandRes = await brandReq.query<{ MTRL: number; BRANDNAME: string | null }>(
+        `SELECT mt.MTRL, mf.NAME AS BRANDNAME FROM dbo.MTRL mt LEFT JOIN dbo.MTRMANFCTR mf ON mt.MTRMANFCTR = mf.MTRMANFCTR WHERE mt.MTRL IN (${ph})`,
+      );
+      const brandMap = new Map((brandRes.recordset ?? []).map(r => [r.MTRL, r.BRANDNAME]));
+      for (const ns of needsSelection) {
+        for (const m of ns.matches) {
+          m.BRANDNAME = brandMap.get(m.MTRL) ?? null;
+        }
+      }
+    } catch (err) {
+      logger.warn('wizard match-products brand enrichment failed', { requestId }, err instanceof Error ? err : undefined);
     }
   }
 
@@ -1365,7 +1473,7 @@ export async function POST(
         case 'resolve-customer':
           return await handleResolveCustomer(ctx, body);
         case 'categorize-products':
-          return await handleCategorizeProducts(ctx);
+          return await handleCategorizeProducts(ctx, body);
         case 'update-product-category':
           return await handleUpdateProductCategory(ctx, body);
         case 'check-brands':

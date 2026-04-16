@@ -25,6 +25,7 @@ type CategorizedProduct = {
   subCategoryName: string | null;
   typeName: string | null;
   wasAiCategorized: boolean;
+  wasErpSynced?: boolean;
 };
 
 type AutoMatchedProduct = {
@@ -58,7 +59,7 @@ type ProductNeedsSelection = {
   typeName: string | null;
   canCreate: boolean;
   missingFields: string[];
-  matches: Array<{ MTRL: number; CODE: string | null; CODE1: string | null; CODE2: string | null; NAME1: string | null }>;
+  matches: Array<{ MTRL: number; CODE: string | null; CODE1: string | null; CODE2: string | null; NAME1: string | null; BRANDNAME?: string | null }>;
 };
 
 type OrderLine = {
@@ -87,13 +88,13 @@ type ExecutionResult = {
   order: { findocId: number; finCode: string } | null;
 };
 
-type WizardStepId = 'resolve-customer' | 'categorize-products' | 'check-brands' | 'match-products' | 'prepare-summary' | 'execute';
+type WizardStepId = 'resolve-customer' | 'check-brands' | 'match-products' | 'categorize-products' | 'prepare-summary' | 'execute';
 
 const STEPS: { id: WizardStepId; label: string }[] = [
   { id: 'resolve-customer', label: 'Customer' },
-  { id: 'categorize-products', label: 'Categories' },
   { id: 'check-brands', label: 'Brands' },
   { id: 'match-products', label: 'Products' },
+  { id: 'categorize-products', label: 'Categories' },
   { id: 'prepare-summary', label: 'Summary' },
   { id: 'execute', label: 'Execute' },
 ];
@@ -157,7 +158,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   const [matchComplete, setMatchComplete] = useState(false);
   const [showMatchHint, setShowMatchHint] = useState(false);
 
-  // Step 5: Summary
+  // Step 4: Summary
   const [summary, setSummary] = useState<SummaryData | null>(null);
 
   // Step 6: Execution
@@ -217,14 +218,24 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   }, [callStep]);
 
   const runCategorizeProducts = useCallback(async () => {
-    const result = await callStep('categorize-products');
+    const matchResults = {
+      autoMatched: autoMatched.map(m => ({ productId: m.productId, MTRL: m.MTRL, CODE: m.CODE })),
+      userConfirmedCreate: confirmedCreates.map(productId => ({ productId })),
+      userSelected: Array.from(userSelections.entries())
+        .filter(([, match]) => match.MTRL !== CREATE_NEW_SENTINEL)
+        .map(([productId, match]) => ({
+          productId, MTRL: match.MTRL, CODE: match.CODE,
+        })),
+      skipped: skipped.map(s => ({ productId: s.productId })),
+    };
+    const result = await callStep('categorize-products', { matchResults });
     if (!result) return;
     setCategorizedProducts(result.products ?? []);
     setCategoryLookups(result.categories ?? []);
     setSubCategoryLookups(result.subCategories ?? []);
     setTypeLookups(result.types ?? []);
     setCategorizeComplete(true);
-  }, [callStep]);
+  }, [callStep, autoMatched, confirmedCreates, userSelections, skipped]);
 
   const runCheckBrands = useCallback(async () => {
     const result = await callStep('check-brands');
@@ -298,12 +309,12 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     // Auto-run the step when we land on it (unless it already completed or needs user input)
     if (currentStep.id === 'resolve-customer' && !resolvedCustomer && !customerNeedsSelection.length && !customerNeedsConfirmation && !customerNeedsCode) {
       runResolveCustomer();
-    } else if (currentStep.id === 'categorize-products' && !categorizeComplete) {
-      runCategorizeProducts();
     } else if (currentStep.id === 'check-brands' && !brandsCheckComplete) {
       runCheckBrands();
     } else if (currentStep.id === 'match-products' && !matchComplete) {
       runMatchProducts();
+    } else if (currentStep.id === 'categorize-products' && !categorizeComplete) {
+      runCategorizeProducts();
     } else if (currentStep.id === 'prepare-summary' && !summary) {
       runPrepareSummary();
     } else if (currentStep.id === 'execute' && !executionResult) {
@@ -641,6 +652,72 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     }
   }, [categorizedProducts, categoryLookups, subCategoryLookups, typeLookups, offerId]);
 
+  const renderCategoryTable = (products: CategorizedProduct[]) => (
+    <table className={styles.table} style={{ marginTop: '6px' }}>
+      <thead>
+        <tr>
+          <th>Part No</th>
+          <th>Brand</th>
+          <th>Description</th>
+          <th>Category</th>
+          <th>SubCategory</th>
+          <th>Type</th>
+        </tr>
+      </thead>
+      <tbody>
+        {products.map(p => {
+          const filteredSubCategories = p.categoryId
+            ? subCategoryLookups.filter(sc => sc.categoryId === p.categoryId)
+            : subCategoryLookups;
+
+          return (
+            <tr key={p.productId}>
+              <td>{productLabel(p.partNumber, p.modelNumber, p.productId)}</td>
+              <td>{p.brandName ?? '—'}</td>
+              <td>{[p.modelNumber, p.description].filter(Boolean).join(' - ') || '—'}</td>
+              <td>
+                <select
+                  className={styles.select}
+                  value={p.categoryId ?? ''}
+                  onChange={e => handleCategoryChange(p.productId, 'categoryId', e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">—</option>
+                  {categoryLookups.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </td>
+              <td>
+                <select
+                  className={styles.select}
+                  value={p.subCategoryId ?? ''}
+                  onChange={e => handleCategoryChange(p.productId, 'subCategoryId', e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">—</option>
+                  {filteredSubCategories.map(sc => (
+                    <option key={sc.id} value={sc.id}>{sc.name}</option>
+                  ))}
+                </select>
+              </td>
+              <td>
+                <select
+                  className={styles.select}
+                  value={p.typeId ?? ''}
+                  onChange={e => handleCategoryChange(p.productId, 'typeId', e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">—</option>
+                  {typeLookups.map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+
   const renderCategorizeStep = () => {
     if (isLoading) return renderLoading('Analyzing products and assigning categories...');
 
@@ -648,80 +725,38 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       return <div className={styles.noProducts}>No products found in this offer.</div>;
     }
 
-    const aiCount = categorizedProducts.filter(p => p.wasAiCategorized).length;
+    const erpProducts = categorizedProducts.filter(p => p.wasErpSynced);
+    const aiProducts = categorizedProducts.filter(p => p.wasAiCategorized && !p.wasErpSynced);
+    const otherProducts = categorizedProducts.filter(p => !p.wasErpSynced && !p.wasAiCategorized);
 
     return (
       <>
-        <p className={styles.sectionTitle}>
-          Product Categories
-          {aiCount > 0 && <span className={styles.sectionCount}>({aiCount} auto-categorized by AI)</span>}
-        </p>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Part No</th>
-              <th>Brand</th>
-              <th>Description</th>
-              <th>Category</th>
-              <th>SubCategory</th>
-              <th>Type</th>
-            </tr>
-          </thead>
-          <tbody>
-            {categorizedProducts.map(p => {
-              const filteredSubCategories = p.categoryId
-                ? subCategoryLookups.filter(sc => sc.categoryId === p.categoryId)
-                : subCategoryLookups;
+        {erpProducts.length > 0 && (
+          <div className={`${styles.card} ${styles.cardGreen}`}>
+            <p className={styles.sectionTitle} style={{ color: '#166534' }}>
+              Categories from Soft1 ({erpProducts.length})
+            </p>
+            {renderCategoryTable(erpProducts)}
+          </div>
+        )}
 
-              return (
-                <tr key={p.productId}>
-                  <td>{productLabel(p.partNumber, p.modelNumber, p.productId)}</td>
-                  <td>{p.brandName ?? '—'}</td>
-                  <td>{[p.modelNumber, p.description].filter(Boolean).join(' - ') || '—'}</td>
-                  <td>
-                    <select
-                      className={styles.select}
-                      value={p.categoryId ?? ''}
-                      onChange={e => handleCategoryChange(p.productId, 'categoryId', e.target.value ? Number(e.target.value) : null)}
-                    >
-                      <option value="">—</option>
-                      {categoryLookups.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
-                    {p.wasAiCategorized && <span className={`${styles.badge} ${styles.badgeAi}`}>AI</span>}
-                  </td>
-                  <td>
-                    <select
-                      className={styles.select}
-                      value={p.subCategoryId ?? ''}
-                      onChange={e => handleCategoryChange(p.productId, 'subCategoryId', e.target.value ? Number(e.target.value) : null)}
-                    >
-                      <option value="">—</option>
-                      {filteredSubCategories.map(sc => (
-                        <option key={sc.id} value={sc.id}>{sc.name}</option>
-                      ))}
-                    </select>
-                    {p.wasAiCategorized && <span className={`${styles.badge} ${styles.badgeAi}`}>AI</span>}
-                  </td>
-                  <td>
-                    <select
-                      className={styles.select}
-                      value={p.typeId ?? ''}
-                      onChange={e => handleCategoryChange(p.productId, 'typeId', e.target.value ? Number(e.target.value) : null)}
-                    >
-                      <option value="">—</option>
-                      {typeLookups.map(t => (
-                        <option key={t.id} value={t.id}>{t.name}</option>
-                      ))}
-                    </select>
-                    {p.wasAiCategorized && <span className={`${styles.badge} ${styles.badgeAi}`}>AI</span>}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        {aiProducts.length > 0 && (
+          <div className={`${styles.card}`} style={{ borderLeft: '3px solid #3b82f6' }}>
+            <p className={styles.sectionTitle} style={{ color: '#1d4ed8' }}>
+              Auto-categorized by AI ({aiProducts.length})
+            </p>
+            {renderCategoryTable(aiProducts)}
+          </div>
+        )}
+
+        {otherProducts.length > 0 && (
+          <div className={`${styles.card} ${styles.cardGray}`}>
+            <p className={styles.sectionTitle} style={{ color: '#64748b' }}>
+              {erpProducts.length > 0 || aiProducts.length > 0 ? 'Already categorized in FastQuote' : 'Product Categories'} ({otherProducts.length})
+            </p>
+            {renderCategoryTable(otherProducts)}
+          </div>
+        )}
       </>
     );
   };
@@ -933,8 +968,9 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                         <option value="">Select a product...</option>
                         {ns.matches.map(match => {
                           const parts: string[] = [];
-                          if (match.CODE) parts.push(match.CODE);
+                          if (match.BRANDNAME) parts.push(match.BRANDNAME);
                           if (match.CODE2) parts.push(match.CODE2);
+                          if (match.CODE) parts.push(match.CODE);
                           if (match.NAME1) parts.push(match.NAME1);
                           const displayText = parts.length > 0 ? parts.join(', ') : `MTRL: ${match.MTRL}`;
                           return <option key={match.MTRL} value={match.MTRL} title={displayText}>{displayText}</option>;
@@ -955,66 +991,62 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
 
         {needsSelection.filter(ns => ns.matches.length === 0).length > 0 && (() => {
           const noMatches = needsSelection.filter(ns => ns.matches.length === 0);
+          const creatableNoMatches = noMatches.filter(ns => ns.canCreate);
+          const allConfirmed = creatableNoMatches.length > 0 && creatableNoMatches.every(ns => userSelections.get(ns.productId)?.MTRL === CREATE_NEW_SENTINEL);
           return (
             <div className={`${styles.card} ${styles.cardRed}`}>
-              <p className={styles.sectionTitle} style={{ color: '#991b1b' }}>
-                No matches found ({noMatches.length})
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
-                {noMatches.map(ns => {
-                  const label = productLabel(ns.partNumberActual, ns.modelNumberActual, ns.productId);
-                  const desc = [ns.modelNumberActual, ns.description].filter(Boolean).join(' - ');
-                  const categoryPath = [ns.categoryName, ns.subCategoryName, ns.typeName].filter(Boolean).join(' > ');
-                  const isConfirmed = userSelections.get(ns.productId)?.MTRL === CREATE_NEW_SENTINEL;
-                  return (
-                    <div key={ns.productId} style={{ borderBottom: '1px solid #fecaca', paddingBottom: '10px' }}>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '2px' }}>
-                        <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0f172a' }}>{label}</span>
-                        {ns.brandName && <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0f172a' }}>{ns.brandName}</span>}
-                      </div>
-                      {desc && (
-                        <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }} title={desc}>
-                          {desc}
-                        </div>
-                      )}
-                      {categoryPath && (
-                        <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '4px' }}>
-                          {categoryPath}
-                        </div>
-                      )}
-                      {ns.canCreate ? (
-                        <button
-                          type="button"
-                          style={{
-                            marginTop: '4px', padding: '5px 14px', fontSize: '0.8rem', borderRadius: '4px', cursor: 'pointer',
-                            border: isConfirmed ? '2px solid #166534' : '1px solid #fca5a5',
-                            background: isConfirmed ? '#dcfce7' : '#fff',
-                            color: isConfirmed ? '#166534' : '#991b1b',
-                            fontWeight: isConfirmed ? 700 : 500,
-                          }}
-                          onClick={() => {
-                            setUserSelections(prev => {
-                              const next = new Map(prev);
-                              if (isConfirmed) {
-                                next.delete(ns.productId);
-                              } else {
-                                next.set(ns.productId, { MTRL: CREATE_NEW_SENTINEL, CODE: null });
-                              }
-                              return next;
-                            });
-                          }}
-                        >
-                          {isConfirmed ? 'Will be created in Soft1' : 'Confirm creation in Soft1'}
-                        </button>
-                      ) : (
-                        <div style={{ fontSize: '0.8rem', color: '#dc2626', marginTop: '4px' }}>
-                          Cannot create — missing: {ns.missingFields?.join(', ')}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <p className={styles.sectionTitle} style={{ color: '#991b1b', margin: 0 }}>
+                  No matches found ({noMatches.length})
+                </p>
+                {creatableNoMatches.length > 0 && (
+                  <button
+                    type="button"
+                    style={{
+                      padding: '5px 16px', fontSize: '0.8rem', borderRadius: '4px', cursor: 'pointer',
+                      border: allConfirmed ? '2px solid #166534' : '1px solid #fca5a5',
+                      background: allConfirmed ? '#dcfce7' : '#fff',
+                      color: allConfirmed ? '#166534' : '#991b1b',
+                      fontWeight: 700,
+                    }}
+                    onClick={() => {
+                      setUserSelections(prev => {
+                        const next = new Map(prev);
+                        if (allConfirmed) {
+                          for (const ns of creatableNoMatches) next.delete(ns.productId);
+                        } else {
+                          for (const ns of creatableNoMatches) next.set(ns.productId, { MTRL: CREATE_NEW_SENTINEL, CODE: null });
+                        }
+                        return next;
+                      });
+                    }}
+                  >
+                    {allConfirmed ? `All ${creatableNoMatches.length} confirmed` : `Confirm all ${creatableNoMatches.length} for creation`}
+                  </button>
+                )}
               </div>
+              <table className={styles.table} style={{ marginTop: '8px' }}>
+                <thead>
+                  <tr>
+                    <th>Part No</th>
+                    <th>Brand</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {noMatches.map(ns => {
+                    const label = productLabel(ns.partNumberActual, ns.modelNumberActual, ns.productId);
+                    const desc = [ns.modelNumberActual, ns.description].filter(Boolean).join(' - ') || '—';
+                    return (
+                      <tr key={ns.productId}>
+                        <td>{label}</td>
+                        <td>{ns.brandName ?? '—'}</td>
+                        <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '500px' }} title={desc}>{desc}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           );
         })()}
