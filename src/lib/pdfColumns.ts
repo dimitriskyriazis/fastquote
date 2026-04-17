@@ -2,16 +2,23 @@ export const PDF_PRODUCT_COLUMNS = [
   'no',
   'brand',
   'type',
+  'modelNumber',
   'description',
+  'qty',
   'listPrice',
+  'totalList',
   'discount',
   'unitPrice',
-  'qty',
-  'totalList',
   'total',
   'warranty',
+  'origin',
   'comment',
   'delivery',
+  'requestedBrand',
+  'requestedPartNo',
+  'requestedModelNo',
+  'requestedDescription',
+  'requestedQuantity',
 ] as const;
 
 export type PdfProductColumn = (typeof PDF_PRODUCT_COLUMNS)[number];
@@ -21,8 +28,8 @@ export const DEFAULT_PDF_PRODUCT_COLUMNS: PdfProductColumn[] = [
   'brand',
   'type',
   'description',
-  'unitPrice',
   'qty',
+  'unitPrice',
   'total',
 ];
 
@@ -31,9 +38,9 @@ export const PORTRAIT_EXTENDED_COLUMNS_DISCOUNT: PdfProductColumn[] = [
   'brand',
   'type',
   'description',
+  'qty',
   'discount',
   'unitPrice',
-  'qty',
   'total',
 ];
 
@@ -42,10 +49,10 @@ export const PORTRAIT_EXTENDED_COLUMNS_LISTPRICE: PdfProductColumn[] = [
   'brand',
   'type',
   'description',
-  'listPrice',
-  'unitPrice',
   'qty',
+  'listPrice',
   'totalList',
+  'unitPrice',
   'total',
 ];
 
@@ -54,11 +61,11 @@ export const LANDSCAPE_EXTENDED_COLUMNS: PdfProductColumn[] = [
   'brand',
   'type',
   'description',
+  'qty',
   'listPrice',
+  'totalList',
   'discount',
   'unitPrice',
-  'qty',
-  'totalList',
   'total',
 ];
 

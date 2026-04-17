@@ -46,12 +46,31 @@ const hasServerSideSelectAll = <RowData>(api: GridApi<RowData> | null) => {
   return Boolean(state && 'selectAll' in state && Boolean((state as ServerSideRowSelectionState).selectAll));
 };
 
+/**
+ * When server-side selectAll is active, returns the set of row IDs (as strings)
+ * the user has toggled OFF. When selectAll is not active, returns an empty set.
+ * IDs match whatever the grid's getRowId callback emits, so callers must compare
+ * using the same key.
+ */
+export const getServerSideDeselectedRowIds = <RowData>(
+  api: GridApi<RowData> | null,
+): Set<string> => {
+  if (!api || typeof api.getServerSideSelectionState !== 'function') return new Set();
+  const state = api.getServerSideSelectionState() as
+    | { selectAll?: boolean; toggledNodes?: unknown[] }
+    | null;
+  if (!state || !('selectAll' in state) || !state.selectAll) return new Set();
+  if (!Array.isArray(state.toggledNodes)) return new Set();
+  return new Set(state.toggledNodes.map((id) => String(id)));
+};
+
 async function fetchAllFilteredIds(
   api: GridApi<unknown>,
   dataEndpoint: string,
   idField: string,
   requestPayload?: Record<string, unknown>,
 ): Promise<number[]> {
+  const deselectedIds = getServerSideDeselectedRowIds(api);
   const filterModel = api.getFilterModel?.() ?? {};
   const sortModel = api.getColumnState?.()
     ?.filter(col => col.sort != null)
@@ -104,6 +123,7 @@ async function fetchAllFilteredIds(
       const raw = row[idField];
       const id = typeof raw === 'number' ? raw : (typeof raw === 'string' ? Number(raw) : NaN);
       if (!Number.isNaN(id) && Number.isFinite(id)) {
+        if (deselectedIds.size > 0 && deselectedIds.has(String(id))) continue;
         allIds.push(id);
       }
     }
@@ -414,8 +434,13 @@ export class GridRowDeletion<RowData> {
       if (snapshotNodes) {
         selectedNodes = snapshotNodes;
       } else if (isSelectAll && params.api && typeof params.api.forEachNode === 'function') {
+        const deselectedIds = getServerSideDeselectedRowIds(params.api);
         const allNodes: Array<RowNode<RowData>> = [];
-        params.api.forEachNode((node) => { if (node?.data) allNodes.push(node as RowNode<RowData>); });
+        params.api.forEachNode((node) => {
+          if (!node?.data) return;
+          if (deselectedIds.size > 0 && node.id != null && deselectedIds.has(String(node.id))) return;
+          allNodes.push(node as RowNode<RowData>);
+        });
         selectedNodes = allNodes;
       } else if (!isSelectAll && typeof params.api?.getSelectedNodes === 'function') {
         selectedNodes = params.api.getSelectedNodes() as Array<RowNode<RowData>>;

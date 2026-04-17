@@ -23,6 +23,8 @@ type FieldConfig = {
   column: string;
   type: FieldType;
   length?: number;
+  precision?: number;
+  scale?: number;
   sqlType: ISqlTypeFactory;
 };
 
@@ -44,6 +46,7 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   OfferValidity: { column: 'OfferValidity', type: 'string', sqlType: sql.NVarChar, length: 500 },
   DeliveryTime: { column: 'DeliveryTime', type: 'string', sqlType: sql.NVarChar, length: 500 },
   OfferNotesIntroduction: { column: 'OfferNotesIntroduction', type: 'string', sqlType: sql.NVarChar, length: 2000 },
+  DiscountNote: { column: 'DiscountNote', type: 'string', sqlType: sql.NVarChar, length: 2000 },
   Comments: { column: 'Comments', type: 'string', sqlType: sql.NVarChar, length: 2000 },
   OfferContact: { column: 'OfferContact', type: 'string', sqlType: sql.NVarChar, length: 500 },
   ContactID: { column: 'ContactID', type: 'number', sqlType: sql.Int },
@@ -243,6 +246,8 @@ export async function PATCH(
       const { config, value } = update;
       if (config.sqlType === sql.NVarChar) {
         request.input(paramName, sql.NVarChar(config.length ?? sql.MAX), value);
+      } else if (config.sqlType === sql.Decimal) {
+        request.input(paramName, sql.Decimal(config.precision ?? 18, config.scale ?? 2), value);
       } else {
         request.input(paramName, config.sqlType, value);
       }

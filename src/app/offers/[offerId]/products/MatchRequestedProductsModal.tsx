@@ -278,9 +278,28 @@ export default function MatchRequestedProductsModal({
     applyFilter('BrandName', entry.requestedBrand);
     applyFilter('ModelNumber', entry.requestedModelNumber);
     applyFilter('PartNumber', entry.requestedPartNumber);
-    applyFilter('Description', entry.requestedDescription);
+    // Pick a description value to drop into the Description "contains" filter.
+    // Among desc1/desc2/desc3 prefer the shortest non-empty one — long marketing
+    // strings (e.g. "Cat 7 SFTP RJ45 patch cord, colour-coded – Blue Book CE v2
+    // compliant") would otherwise produce zero "contains" matches.
+    const descriptionForFilter = [
+      entry.requestedDescription,
+      entry.requestedDescription2,
+      entry.requestedDescription3,
+    ]
+      .map((v) => (typeof v === 'string' ? v.trim() : ''))
+      .filter((v) => v.length > 0)
+      .sort((a, b) => a.length - b.length)[0] ?? null;
+    applyFilter('Description', descriptionForFilter);
     return Object.keys(filters).length > 0 ? filters : null;
-  }, [entry.requestedBrand, entry.requestedModelNumber, entry.requestedPartNumber, entry.requestedDescription]);
+  }, [
+    entry.requestedBrand,
+    entry.requestedModelNumber,
+    entry.requestedPartNumber,
+    entry.requestedDescription,
+    entry.requestedDescription2,
+    entry.requestedDescription3,
+  ]);
 
   const requestPayload = useMemo(() => {
     const payload: Record<string, unknown> = { action: 'products' };
@@ -334,11 +353,29 @@ export default function MatchRequestedProductsModal({
   }, [selectedProduct]);
 
   useEffect(() => {
-    // Run immediately for clicks on already-rendered rows
+    // Run immediately for clicks on already-rendered rows.
     updateSuggestionHighlight();
-    // Also run after a frame so ag-grid has time to render new pinned rows
-    const raf = requestAnimationFrame(updateSuggestionHighlight);
-    return () => cancelAnimationFrame(raf);
+    // After a fresh entry/suggestion swap AG Grid can take more than one frame
+    // to render the pinned-top rows, so a single requestAnimationFrame would
+    // sometimes paint before the rows appear and the .suggestion-selected class
+    // never gets attached. Poll for the rows up to ~10 frames, stop once we
+    // either see them or run out of attempts.
+    let cancelled = false;
+    let attemptsLeft = 10;
+    const shell = gridShellRef.current;
+    let raf = 0;
+    const tick = () => {
+      if (cancelled) return;
+      updateSuggestionHighlight();
+      const rendered = shell?.querySelectorAll('.ag-floating-top .ag-row').length ?? 0;
+      if (rendered > 0 || --attemptsLeft <= 0) return;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelled = true;
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, [updateSuggestionHighlight, suggestedProducts, farnellResults]);
 
   const handleSlotRef = useCallback((node: HTMLDivElement | null) => {
@@ -903,18 +940,40 @@ export default function MatchRequestedProductsModal({
                 maintainColumnOrder={true}
                 disableAutoSize={true}
                 suppressCellSelection
+                suppressNoRowsOverlay={
+                  (suggestedProducts.length > 0 && suggestionsVisible) ||
+                  (farnellResults.length > 0 && farnellVisible)
+                }
                 getRowStyle={getRowStyle}
               />
             </div>
             <div className={styles.actions}>
               <label className={styles.commentLabel}>Comment:</label>
-              <input
-                type="text"
+              <textarea
                 className={styles.commentInput}
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (e.altKey) {
+                      e.preventDefault();
+                      const target = e.currentTarget;
+                      const start = target.selectionStart;
+                      const end = target.selectionEnd;
+                      const next = comment.substring(0, start) + '\n' + comment.substring(end);
+                      setComment(next);
+                      requestAnimationFrame(() => {
+                        target.selectionStart = target.selectionEnd = start + 1;
+                      });
+                    } else {
+                      e.preventDefault();
+                      void handleAssign();
+                    }
+                  }
+                }}
                 disabled={assigning || farnellResolving || (selectedProductId == null && !selectedProductIsFarnell)}
                 placeholder=""
+                rows={1}
                 data-fastquote-keep-selection="true"
               />
               <button

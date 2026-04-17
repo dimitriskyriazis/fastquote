@@ -37,6 +37,8 @@ export type OfferPdfData = {
   };
   notesIntroduction: string | null;
   notesClosing: string | null;
+  discountNote: string | null;
+  finalPriceLabel: string | null;
 };
 
 export type OfferProductRow = {
@@ -49,6 +51,7 @@ export type OfferProductRow = {
   partNumber: string | null;
   description: string | null;
   warranty: string | number | null;
+  origin: string | null;
   comment: string | null;
   delivery: string | null;
   unitPrice: number | null;
@@ -57,6 +60,11 @@ export type OfferProductRow = {
   webLink: string | null;
   listPrice: number | null;
   customerDiscount: number | null;
+  requestedBrand: string | null;
+  requestedPartNo: string | null;
+  requestedModelNo: string | null;
+  requestedDescription: string | null;
+  requestedQuantity: number | null;
 };
 
 export type PdfPrintSettings = {
@@ -83,19 +91,27 @@ const LABELS = {
     colNo: 'Α/Α',
     colQty: 'Τεμ',
     colBrand: 'Οίκος',
-    colType: 'Τύπος',
+    colType: 'Κωδικός',
+    colModelNumber: 'Μοντέλο',
     colDescription: 'Περιγραφή',
     colWarranty: 'Εγγύηση',
+    colOrigin: 'Προέλευση',
     colComment: 'Σχόλιο',
     colDelivery: 'Παράδοση',
     colListPrice: 'Τιμή Καταλόγου',
     colTotalList: 'Σύνολο Καταλόγου',
     colDiscount: 'Έκπτωση %',
-    colUnitPrice: 'Τιμή Μονάδας',
-    colTotal: 'Σύνολο',
-    subtotal: 'Υποσύνολο',
+    colUnitPrice: 'Καθαρή Τιμή',
+    colTotal: 'Καθαρό Σύνολο',
+    colRequestedBrand: 'Ζητ. Οίκος',
+    colRequestedPartNo: 'Ζητ. Κωδικός',
+    colRequestedModelNo: 'Ζητ. Μοντέλο',
+    colRequestedDescription: 'Ζητ. Περιγραφή',
+    colRequestedQuantity: 'Ζητ. Τεμ',
+    subtotal: 'Σύνολο Καταλόγου',
     discountAmount: 'Έκπτωση',
-    total: 'ΣΥΝΟΛΟ',
+    total: 'Τελική Τιμή',
+    discountNoteTitle: 'Σημείωση Έκπτωσης',
     termsTitle: 'Όροι Προσφοράς',
     offerValidity: 'Ισχύς Προσφοράς',
     paymentTerms: 'Τρόπος Πληρωμής',
@@ -124,19 +140,27 @@ const LABELS = {
     colNo: 'No',
     colQty: 'Qty',
     colBrand: 'Brand',
-    colType: 'Type',
+    colType: 'Part Number',
+    colModelNumber: 'Model Number',
     colDescription: 'Description',
     colWarranty: 'Warranty',
+    colOrigin: 'Origin',
     colComment: 'Comment',
     colDelivery: 'Delivery',
-    colListPrice: 'List Price',
+    colListPrice: 'Unit List',
     colTotalList: 'Total List',
     colDiscount: 'Discount %',
-    colUnitPrice: 'Unit Price',
+    colUnitPrice: 'Unit Net',
     colTotal: 'Total Net',
-    subtotal: 'Subtotal',
+    colRequestedBrand: 'Req. Brand',
+    colRequestedPartNo: 'Req. Part Number',
+    colRequestedModelNo: 'Req. Model Number',
+    colRequestedDescription: 'Req. Description',
+    colRequestedQuantity: 'Req. Qty',
+    subtotal: 'Total List',
     discountAmount: 'Discount',
-    total: 'TOTAL NET',
+    total: 'Final Price',
+    discountNoteTitle: 'Discount Note',
     termsTitle: 'Commercial Terms',
     offerValidity: 'Offer Validity',
     paymentTerms: 'Payment Terms',
@@ -216,34 +240,48 @@ function innerContentWidth(orientation: PdfOrientation) {
  */
 const BASE_WIDTHS: Record<PdfOrientation, Record<PdfProductColumn, number | '*'>> = {
   portrait: {
-    no: 36,
-    qty: 32,
-    brand: 46, // was 54
-    type: 56, // was 62
+    no: 28,
+    qty: 26,
+    brand: 42,
+    type: 52,
+    modelNumber: 52,
     description: '*',
-    unitPrice: 64,
-    total: 64,
-    listPrice: 64,
-    totalList: 64,
-    discount: 50,
-    warranty: 52,
-    comment: 62,
-    delivery: 56,
+    unitPrice: 52,
+    total: 52,
+    listPrice: 52,
+    totalList: 52,
+    discount: 38,
+    warranty: 44,
+    origin: 62,
+    comment: 58,
+    delivery: 50,
+    requestedBrand: 44,
+    requestedPartNo: 52,
+    requestedModelNo: 52,
+    requestedDescription: 72,
+    requestedQuantity: 28,
   },
   landscape: {
-    no: 38,
-    qty: 34,
-    brand: 56, // was 64
-    type: 68,  // was 76
+    no: 30,
+    qty: 28,
+    brand: 48,
+    type: 60,
+    modelNumber: 60,
     description: '*',
-    unitPrice: 72,
-    total: 72,
-    listPrice: 72,
-    totalList: 72,
-    discount: 54,
-    warranty: 58,
-    comment: 72,
-    delivery: 64,
+    unitPrice: 58,
+    total: 58,
+    listPrice: 58,
+    totalList: 58,
+    discount: 44,
+    warranty: 50,
+    origin: 70,
+    comment: 64,
+    delivery: 56,
+    requestedBrand: 48,
+    requestedPartNo: 60,
+    requestedModelNo: 60,
+    requestedDescription: 88,
+    requestedQuantity: 30,
   },
 };
 
@@ -394,7 +432,7 @@ function buildDescriptionCell(
       { text: baseText },
       {
         text: extraLines.join('\n'),
-        fontSize: 7.3,
+        fontSize: 6.6,
         color: COLORS.secondaryText,
         margin: [0, 1, 0, 0],
       },
@@ -682,8 +720,10 @@ function tableHeaderLabel(column: PdfProductColumn, L: Labels): string {
     case 'qty': return L.colQty;
     case 'brand': return L.colBrand;
     case 'type': return L.colType;
+    case 'modelNumber': return L.colModelNumber;
     case 'description': return L.colDescription;
     case 'warranty': return L.colWarranty;
+    case 'origin': return L.colOrigin;
     case 'comment': return L.colComment;
     case 'delivery': return L.colDelivery;
     case 'listPrice': return L.colListPrice;
@@ -691,6 +731,11 @@ function tableHeaderLabel(column: PdfProductColumn, L: Labels): string {
     case 'discount': return L.colDiscount;
     case 'unitPrice': return L.colUnitPrice;
     case 'total': return L.colTotal;
+    case 'requestedBrand': return L.colRequestedBrand;
+    case 'requestedPartNo': return L.colRequestedPartNo;
+    case 'requestedModelNo': return L.colRequestedModelNo;
+    case 'requestedDescription': return L.colRequestedDescription;
+    case 'requestedQuantity': return L.colRequestedQuantity;
   }
 }
 
@@ -722,12 +767,14 @@ function columnValue(row: OfferProductRow, column: PdfProductColumn): string {
     case 'no': return str(row.treeOrdering);
     case 'qty': return row.quantity != null ? String(row.quantity) : '';
     case 'brand': return str(row.brandName);
-    case 'type': return str(row.modelNumber) || str(row.partNumber);
+    case 'type': return str(row.partNumber);
+    case 'modelNumber': return str(row.modelNumber);
     case 'description': {
       if (!row.isComment) return str(row.description);
       return str(row.description) || str(row.comment);
     }
     case 'warranty': return scalar(row.warranty);
+    case 'origin': return str(row.origin);
     case 'comment': return str(row.comment);
     case 'delivery': return str(row.delivery);
     case 'listPrice': return row.listPrice != null ? formatCurrency(row.listPrice) : '';
@@ -752,6 +799,11 @@ function columnValue(row: OfferProductRow, column: PdfProductColumn): string {
       );
       return hasAmount ? formatCurrency(lineNetAmount(row)) : '';
     }
+    case 'requestedBrand': return str(row.requestedBrand);
+    case 'requestedPartNo': return str(row.requestedPartNo);
+    case 'requestedModelNo': return str(row.requestedModelNo);
+    case 'requestedDescription': return str(row.requestedDescription);
+    case 'requestedQuantity': return row.requestedQuantity != null ? String(row.requestedQuantity) : '';
   }
 }
 
@@ -759,18 +811,18 @@ function dynamicCellFont(
   column: PdfProductColumn,
   value: string,
 ): { style: 'cell' | 'cellTight'; fontSize?: number; lineHeight?: number } {
-  if (column !== 'type' && column !== 'description') return { style: 'cell' };
+  if (column !== 'type' && column !== 'modelNumber' && column !== 'description') return { style: 'cell' };
   const len = value.length;
 
   if (column === 'description') {
-    if (len > 90) return { style: 'cellTight', fontSize: 7.3, lineHeight: 1.26 };
-    if (len > 55) return { style: 'cellTight', lineHeight: 1.28 };
-    return { style: 'cell', lineHeight: 1.32 };
+    if (len > 90) return { style: 'cellTight', fontSize: 6.6, lineHeight: 1.22 };
+    if (len > 55) return { style: 'cellTight', lineHeight: 1.24 };
+    return { style: 'cell', lineHeight: 1.28 };
   }
 
-  if (len > 90) return { style: 'cellTight', fontSize: 7.3, lineHeight: 1.12 };
-  if (len > 55) return { style: 'cellTight', lineHeight: 1.14 };
-  return { style: 'cell', lineHeight: 1.17 };
+  if (len > 90) return { style: 'cellTight', fontSize: 6.6, lineHeight: 1.1 };
+  if (len > 55) return { style: 'cellTight', lineHeight: 1.12 };
+  return { style: 'cell', lineHeight: 1.15 };
 }
 
 function computeColumnWidths(selectedColumns: PdfProductColumn[], orientation: PdfOrientation): Array<number | '*'> {
@@ -839,7 +891,7 @@ function buildItemsTable(
   const categoryListTotalsMap = showCategoryTotalList
     ? buildCategoryTotalsMap(data.products, lineListAmount)
     : new Map<string, number>();
-  const numericCols = new Set<PdfProductColumn>(['qty', 'listPrice', 'totalList', 'discount', 'unitPrice', 'total']);
+  const numericCols = new Set<PdfProductColumn>(['qty', 'listPrice', 'totalList', 'discount', 'unitPrice', 'total', 'requestedQuantity']);
   const priceColumns = new Set<PdfProductColumn>(['listPrice', 'totalList', 'discount', 'unitPrice', 'total']);
 
   const headerRow = selectedColumns.map((col) => ({
@@ -868,42 +920,75 @@ function buildItemsTable(
           : (fallbackListAmount != null && Number.isFinite(fallbackListAmount) ? fallbackListAmount : null);
 
       const showCategoryPrices = shouldShowPrices(row, printSettings);
-      const amountLines: string[] = [];
-      if (showCategoryPrices && showCategoryTotalList && categoryListAmountValue != null) {
-        const formatted = formatCurrency(categoryListAmountValue);
-        amountLines.push(showCategoryTotalNet ? `${L.colTotalList}: ${formatted}` : formatted);
+      const totalListIdx = selectedColumns.indexOf('totalList');
+      const totalNetIdx = selectedColumns.indexOf('total');
+
+      const amountByIdx = new Map<number, number>();
+      if (showCategoryPrices && showCategoryTotalList && totalListIdx !== -1 && categoryListAmountValue != null) {
+        amountByIdx.set(totalListIdx, categoryListAmountValue);
       }
-      if (showCategoryPrices && showCategoryTotalNet && categoryNetAmountValue != null) {
-        const formatted = formatCurrency(categoryNetAmountValue);
-        amountLines.push(showCategoryTotalList ? `${L.colTotal}: ${formatted}` : formatted);
+      if (showCategoryPrices && showCategoryTotalNet && totalNetIdx !== -1 && categoryNetAmountValue != null) {
+        amountByIdx.set(totalNetIdx, categoryNetAmountValue);
       }
 
-      const categoryColumns = amountLines.length > 0
-        ? [
-            { width: '*', text: categoryText, bold: true, fontSize: 9.3, color: COLORS.primaryText },
-            {
-              width: 'auto',
-              text: amountLines.join('\n'),
-              bold: true,
-              fontSize: 9.3,
-              color: COLORS.primaryText,
-              alignment: 'right',
-              lineHeight: 1.18,
-            },
-          ]
-        : [
-            { width: '*', text: categoryText, bold: true, fontSize: 9.3, color: COLORS.primaryText },
-          ];
-
-      const categoryFirst = {
-        colSpan: selectedColumns.length,
+      const catBase = {
         fillColor: COLORS.categoryBg,
         border: [false, false, false, false],
-        rowKind: 'category',
-        columns: categoryColumns,
+        bold: true,
+        fontSize: 8.2,
+        color: COLORS.primaryText,
       };
+      const n = selectedColumns.length;
+      const cells: PdfCell[] = [];
 
-      body.push([categoryFirst, ...Array.from({ length: Math.max(0, selectedColumns.length - 1) }, () => ({ text: '' }))]);
+      if (amountByIdx.size === 0) {
+        // No per-column amounts: full-width category text
+        cells.push({
+          ...catBase,
+          colSpan: n,
+          rowKind: 'category',
+          text: categoryText,
+        });
+        for (let k = 1; k < n; k++) cells.push({ text: '', ...catBase });
+      } else {
+        const sortedBreaks = Array.from(amountByIdx.keys()).sort((a, b) => a - b);
+        let cursor = 0;
+        let firstSegment = true;
+        for (const breakIdx of sortedBreaks) {
+          const span = breakIdx - cursor;
+          if (span > 0) {
+            cells.push({
+              ...catBase,
+              colSpan: span,
+              rowKind: firstSegment ? 'category' : undefined,
+              text: firstSegment ? categoryText : '',
+            });
+            for (let k = 1; k < span; k++) cells.push({ text: '', ...catBase });
+            firstSegment = false;
+          }
+          cells.push({
+            ...catBase,
+            rowKind: firstSegment ? 'category' : undefined,
+            text: formatCurrency(amountByIdx.get(breakIdx)!),
+            alignment: 'right',
+          });
+          firstSegment = false;
+          cursor = breakIdx + 1;
+        }
+        const tailSpan = n - cursor;
+        if (tailSpan > 0) {
+          cells.push({
+            ...catBase,
+            colSpan: tailSpan,
+            text: '',
+          });
+          for (let k = 1; k < tailSpan; k++) cells.push({ text: '', ...catBase });
+        }
+        // Ensure first cell carries rowKind so layout callbacks see it
+        if (cells[0] && !cells[0].rowKind) cells[0].rowKind = 'category';
+      }
+
+      body.push(cells);
       continue;
     }
 
@@ -942,7 +1027,7 @@ function buildItemsTable(
           baseCell.fontFeatures = ['tnum'];
         }
 
-        if (col === 'type' && str(row.webLink)) {
+        if ((col === 'type' || col === 'modelNumber') && str(row.webLink) && value) {
           baseCell.color = '#1D4ED8';
           baseCell.decoration = 'underline';
           baseCell.link = str(row.webLink);
@@ -992,20 +1077,20 @@ function buildItemsTable(
       },
       vLineColor: () => COLORS.border,
 
-      paddingLeft: () => 4,
-      paddingRight: () => 4,
+      paddingLeft: () => 3,
+      paddingRight: () => 3,
 
       paddingTop: (i: number, node: PdfTableNode) => {
         const kind = node.table.body[i]?.[0]?.rowKind;
-        if (kind === 'category') return 5;
-        if (kind === 'item') return 5;
-        return 7;
+        if (kind === 'category') return 4;
+        if (kind === 'item') return 3;
+        return 5;
       },
       paddingBottom: (i: number, node: PdfTableNode) => {
         const kind = node.table.body[i]?.[0]?.rowKind;
-        if (kind === 'category') return 10;
-        if (kind === 'item') return 5;
-        return 7;
+        if (kind === 'category') return 7;
+        if (kind === 'item') return 3;
+        return 5;
       },
 
       fillColor: (i: number, node: PdfTableNode) => {
@@ -1017,7 +1102,11 @@ function buildItemsTable(
   };
 }
 
-function calculateDiscountSummary(data: OfferPdfData): { listSubtotal: number; discountEur: number; totalNet: number } {
+function calculateDiscountSummary(data: OfferPdfData): {
+  listSubtotal: number;
+  discountEur: number;
+  totalNet: number;
+} {
   const detailRows = data.products.filter((p) => !p.isCategory);
 
   let listSubtotal = 0;
@@ -1046,6 +1135,7 @@ function calculateDiscountSummary(data: OfferPdfData): { listSubtotal: number; d
   if (listSubtotal <= 0) listSubtotal = totalNet;
 
   const discountEur = Math.max(0, listSubtotal - totalNet);
+
   return { listSubtotal, discountEur, totalNet };
 }
 
@@ -1054,7 +1144,6 @@ function buildTotalsAndTerms(
   L: Labels,
   orientation: PdfOrientation,
   selectedColumns: PdfProductColumn[],
-  smallOffer: boolean = false,
   equipmentList: boolean = false,
 ) {
   const hasPriceColumns = selectedColumns.some(c => PRICE_COLUMNS.has(c));
@@ -1066,25 +1155,22 @@ function buildTotalsAndTerms(
     { label: L.paymentTerms, value: fixObviousTypos(str(data.terms.paymentTerms)) },
     { label: L.deliveryTime, value: fixObviousTypos(str(data.terms.deliveryTime)) },
     { label: L.installationSchedule, value: fixObviousTypos(str(data.terms.installationSchedule)) },
-  ];
+  ].filter((t) => t.value);
 
   if (equipmentList) {
     terms = terms.filter(t => t.label !== L.paymentTerms);
   }
 
-  const cell = (t?: { label: string; value: string }) => ({
-    stack: [
-      { text: t?.label ?? '', style: 'metaLabel' },
-      {
-        text: t?.value ?? '',
-        fontSize: 10,
-        bold: true,
-        color: COLORS.primaryText,
-        margin: [0, 6, 0, 0],
-      },
-    ],
-    margin: [0, 7, 0, 7],
-  });
+  const cell = (t?: { label: string; value: string }) => {
+    if (!t) return { text: '', margin: [0, 3, 0, 3] };
+    return {
+      text: [
+        { text: `${t.label}: `, fontSize: 8.5, color: COLORS.secondaryText },
+        { text: t.value, fontSize: 8.5, bold: true, color: COLORS.primaryText },
+      ],
+      margin: [0, 3, 0, 3],
+    };
+  };
 
   const termRows: unknown[][] = [];
   for (let i = 0; i < terms.length; i += 2) {
@@ -1093,67 +1179,106 @@ function buildTotalsAndTerms(
 
   const blocks: unknown[] = [];
 
-  const summaryRows = showDiscountSummary
+  const summaryRowStyle = { fontSize: 8.5, color: COLORS.primaryText };
+  const finalPriceStyle = { fontSize: 9.5, bold: true, color: COLORS.primaryText };
+  const baseRows: PdfCell[][] = showDiscountSummary
     ? [
         [
-          { text: L.subtotal, style: 'body', color: COLORS.secondaryText },
-          { text: formatCurrency(discountSummary.listSubtotal), style: 'body', alignment: 'right', color: COLORS.secondaryText },
+          { text: L.subtotal, ...summaryRowStyle },
+          { text: formatCurrency(discountSummary.listSubtotal), ...summaryRowStyle, alignment: 'right' },
         ],
         [
-          { text: L.discountAmount, style: 'body', color: COLORS.secondaryText },
-          { text: formatCurrency(discountSummary.discountEur), style: 'body', alignment: 'right', color: COLORS.secondaryText },
-        ],
-        [
-          { text: L.total, bold: true, fontSize: 11.8, color: COLORS.primaryText },
-          { text: formatCurrency(discountSummary.totalNet), bold: true, fontSize: 11.8, color: COLORS.primaryText, alignment: 'right' },
+          { text: L.discountAmount, ...summaryRowStyle },
+          { text: formatCurrency(discountSummary.discountEur), ...summaryRowStyle, alignment: 'right' },
         ],
       ]
-    : [
-        [
-          { text: L.total, bold: true, fontSize: 11.8, color: COLORS.primaryText },
-          { text: formatCurrency(discountSummary.totalNet), bold: true, fontSize: 11.8, color: COLORS.primaryText, alignment: 'right' },
-        ],
-      ];
+    : [];
+
+  const finalPriceLabel = str(data.finalPriceLabel) || L.total;
+  const totalRow: PdfCell[] = [
+    { text: finalPriceLabel, ...finalPriceStyle },
+    { text: formatCurrency(discountSummary.totalNet), ...finalPriceStyle, alignment: 'right' },
+  ];
+
+  const summaryRows: PdfCell[][] = [...baseRows, totalRow];
+
+  const discountNote = str(data.discountNote);
+  const totalsBoxWidth = orientation === 'portrait' ? 220 : 250;
 
   if (hasPriceColumns) {
-    blocks.push({
-      columns: [
-        { width: '*', text: '' },
-        {
-          width: orientation === 'portrait' ? 220 : 250,
-          columns: [
-            {
-              width: 4,
-              canvas: [{ type: 'rect', x: 0, y: 0, w: 4, h: showDiscountSummary ? 96 : 44, color: COLORS.accentRed }],
+    const totalsBox = {
+      width: totalsBoxWidth,
+      table: {
+        widths: ['*', 'auto'],
+        body: summaryRows,
+      },
+      layout: {
+        fillColor: () => COLORS.termsBoxBg,
+        hLineWidth: (i: number, node: { table: { body: unknown[][] } }) =>
+          i === 0 || i === node.table.body.length ? 0.8 : 0.45,
+        vLineWidth: (i: number, node: { table: { widths: unknown[] } }) =>
+          i === 0 || i === node.table.widths.length ? 0.8 : 0,
+        hLineColor: () => COLORS.border,
+        vLineColor: () => COLORS.border,
+        paddingLeft: () => 8,
+        paddingRight: () => 8,
+        paddingTop: () => 5,
+        paddingBottom: () => 5,
+      },
+    };
+
+    if (discountNote) {
+      blocks.push({
+        columns: [
+          {
+            width: '*',
+            table: {
+              widths: ['*'],
+              body: [
+                [
+                  {
+                    stack: [
+                      { text: L.discountNoteTitle, fontSize: 7.5, color: COLORS.secondaryText },
+                      { text: discountNote, fontSize: 8.5, color: COLORS.primaryText, margin: [0, 4, 0, 0] },
+                    ],
+                  },
+                ],
+              ],
             },
-            {
-              width: '*',
-              table: {
-                widths: ['*', 'auto'],
-                body: summaryRows,
-              },
-              layout: {
-                fillColor: () => null,
-                hLineWidth: () => 0,
-                vLineWidth: () => 0,
-                paddingLeft: () => 10,
-                paddingRight: () => 10,
-                paddingTop: () => 10,
-                paddingBottom: () => 10,
-              },
+            layout: {
+              fillColor: () => COLORS.termsBoxBg,
+              hLineWidth: (i: number, node: { table: { body: unknown[][] } }) =>
+                i === 0 || i === node.table.body.length ? 0.8 : 0.45,
+              vLineWidth: (i: number, node: { table: { widths: unknown[] } }) =>
+                i === 0 || i === node.table.widths.length ? 0.8 : 0,
+              hLineColor: () => COLORS.border,
+              vLineColor: () => COLORS.border,
+              paddingLeft: () => 8,
+              paddingRight: () => 8,
+              paddingTop: () => 5,
+              paddingBottom: () => 5,
             },
-          ],
-        },
-      ],
-      margin: [0, 18, 0, 18],
-    });
+            margin: [0, 0, 12, 0],
+          },
+          totalsBox,
+        ],
+        margin: [0, 18, 0, 18],
+      });
+    } else {
+      blocks.push({
+        columns: [
+          { width: '*', text: '' },
+          totalsBox,
+        ],
+        margin: [0, 18, 0, 18],
+      });
+    }
   }
 
   blocks.push({
       text: L.termsTitle,
       style: 'h2',
-      ...(smallOffer ? {} : { pageBreak: 'before' as const }),
-      margin: [0, 10, 0, 10],
+      margin: [0, 10, 0, 6],
     });
 
   blocks.push({
@@ -1171,10 +1296,10 @@ function buildTotalsAndTerms(
         vLineColor: () => COLORS.border,
         paddingLeft: () => 6,
         paddingRight: () => 6,
-        paddingTop: () => 10,
-        paddingBottom: () => 10,
+        paddingTop: () => 6,
+        paddingBottom: () => 6,
       },
-      margin: [0, 0, 0, 14],
+      margin: [0, 0, 0, 10],
     });
 
   return blocks;
@@ -1259,7 +1384,7 @@ export async function generateOfferPdf(
   }
 
   const itemsTable = buildItemsTable(data, L, orientation, cols, printSettings);
-  const totalsAndTerms = buildTotalsAndTerms(data, L, orientation, cols, smallOffer, equipmentList);
+  const totalsAndTerms = buildTotalsAndTerms(data, L, orientation, cols, equipmentList);
   const openingNote = str(data.notesIntroduction)
     ? [
         { text: fixObviousTypos(str(data.notesIntroduction)), style: 'body', margin: [0, 0, 0, 8] },
@@ -1336,13 +1461,13 @@ export async function generateOfferPdf(
 
     styles: {
       titleCover: { fontSize: orientation === 'portrait' ? 28 : 32, bold: true, color: COLORS.primaryText },
-      h2: { fontSize: 13, bold: true, color: COLORS.primaryText },
+      h2: { fontSize: 10, bold: true, color: COLORS.primaryText },
       metaLabel: { fontSize: 9, color: COLORS.secondaryText },
       metaValue: { fontSize: 10, color: COLORS.primaryText, bold: true },
-      body: { fontSize: 10, color: COLORS.primaryText },
-      tableHeader: { fontSize: 9, bold: true, color: COLORS.primaryText },
-      cell: { fontSize: 8, color: COLORS.primaryText },
-      cellTight: { fontSize: 7.5, color: COLORS.primaryText },
+      body: { fontSize: 8.5, color: COLORS.primaryText },
+      tableHeader: { fontSize: 8, bold: true, color: COLORS.primaryText },
+      cell: { fontSize: 7.2, color: COLORS.primaryText },
+      cellTight: { fontSize: 6.8, color: COLORS.primaryText },
       secondary: { fontSize: 9, color: COLORS.secondaryText },
       foot: { fontSize: 8, color: COLORS.secondaryText },
     },

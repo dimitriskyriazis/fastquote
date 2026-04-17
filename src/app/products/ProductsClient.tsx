@@ -15,7 +15,7 @@ import type {
   RowNode,
 } from "ag-grid-community";
 import type { ServerRequestWithQuickFilter } from "../components/AgGridAll";
-import { GridRowDeletion, getContextMenuSelectionSnapshot } from "../../lib/gridRowDeletion";
+import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselectedRowIds } from "../../lib/gridRowDeletion";
 import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
 import { useAuditUser } from "../components/AuditUserProvider";
 import { openLinkInNewTab } from "../../lib/navigation";
@@ -219,10 +219,12 @@ export default function ProductsClient() {
     if (Number.isFinite(rowCount) && rowCount > ADD_WEBLINK_MAX_PRODUCTS) {
       throw new Error(`Cannot process more than ${ADD_WEBLINK_MAX_PRODUCTS} products at once. Please filter first.`);
     }
+    const deselectedIds = getServerSideDeselectedRowIds(api);
     return Array.from(new Set(
       payload.rows
         .map((row) => normalizeProductId((row as { ProductID?: unknown }).ProductID ?? null))
-        .filter((id): id is number => id != null),
+        .filter((id): id is number => id != null)
+        .filter((id) => deselectedIds.size === 0 || !deselectedIds.has(String(id))),
     ));
   }, []);
 
@@ -360,6 +362,14 @@ export default function ProductsClient() {
       field: "WebLink",
       headerName: "Web link",
       filter: "agTextColumnFilter",
+      editable: true,
+      valueParser: (params) => normalizeEditableValue(params.newValue),
+    },
+    {
+      field: "Origin",
+      headerName: "Origin",
+      filter: "agTextColumnFilter",
+      width: 130,
       editable: true,
       valueParser: (params) => normalizeEditableValue(params.newValue),
     },
@@ -796,12 +806,13 @@ export default function ProductsClient() {
     (event: CellValueChangedEvent<Record<string, unknown>>) => {
       const field = typeof event.colDef?.field === "string" ? event.colDef.field : null;
       if (!field) return;
-      const editableFields: Record<string, { label: string; payloadKey: "partNumber" | "modelNumber" | "description" | "erpCode" | "webLink" }> = {
+      const editableFields: Record<string, { label: string; payloadKey: "partNumber" | "modelNumber" | "description" | "erpCode" | "webLink" | "origin" }> = {
         PartNumber: { label: "Part number", payloadKey: "partNumber" },
         ModelNumber: { label: "Model number", payloadKey: "modelNumber" },
         Description: { label: "Description", payloadKey: "description" },
         ERPCode: { label: "ERP code", payloadKey: "erpCode" },
         WebLink: { label: "Web link", payloadKey: "webLink" },
+        Origin: { label: "Origin", payloadKey: "origin" },
       };
       const config = editableFields[field];
       const source = (event as { source?: string }).source;

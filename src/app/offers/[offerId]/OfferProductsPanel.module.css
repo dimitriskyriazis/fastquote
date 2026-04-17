@@ -218,6 +218,38 @@
   color: #0f172a;
 }
 
+.totalNetEditable {
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px dashed transparent;
+}
+
+.totalNetEditable:hover,
+.totalNetEditable:focus-visible {
+  border-color: #94a3b8;
+  background: #ffffff;
+  outline: none;
+}
+
+.totalNetInput {
+  font-size: 1rem;
+  line-height: 1;
+  color: #0f172a;
+  font-weight: 600;
+  padding: 4px 6px;
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  background: #ffffff;
+  width: 140px;
+  text-align: right;
+}
+
+.totalNetInput:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
 .undoButton {
   margin-left: auto;
   padding: 4px 12px;

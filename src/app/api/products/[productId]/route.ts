@@ -44,6 +44,7 @@ const updateProductSchema = z.object({
   erpCode: partModelNumberSchema(255),
   description: stringSchema(2000).optional(),
   webLink: urlSchema,
+  origin: stringSchema(100).optional(),
   categoryId: positiveIntSchema,
   subCategoryId: positiveIntSchema,
   typeId: positiveIntSchema,
@@ -54,6 +55,7 @@ const updateProductSchema = z.object({
   || data.erpCode !== undefined
   || data.description !== undefined
   || data.webLink !== undefined
+  || data.origin !== undefined
   || data.categoryId !== undefined
   || data.subCategoryId !== undefined
   || data.typeId !== undefined
@@ -206,6 +208,9 @@ export async function PATCH(
     }
     if (body.webLink !== undefined) {
       updates.push({ column: 'WebLink', param: 'WebLink', value: body.webLink, type: sql.NVarChar(2000) });
+    }
+    if (body.origin !== undefined) {
+      updates.push({ column: 'Origin', param: 'Origin', value: body.origin, type: sql.NVarChar(100) });
     }
     if (body.categoryId !== undefined) {
       updates.push({ column: 'CategoryID', param: 'CategoryID', value: body.categoryId, type: sql.Int });

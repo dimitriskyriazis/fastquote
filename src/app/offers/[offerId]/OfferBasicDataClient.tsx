@@ -167,6 +167,7 @@ const buildFieldDefinitions = (
   { id: 'offerValidity', label: 'Offer Validity', section: 'general', recordKey: 'OfferValidity', updateField: 'OfferValidity' },
   { id: 'deliveryTime', label: 'Delivery Time', section: 'general', recordKey: 'DeliveryTime', updateField: 'DeliveryTime' },
   { id: 'introNote', label: 'Introduction Note', section: 'general', recordKey: 'OfferNotesIntroduction', updateField: 'OfferNotesIntroduction', multiline: true },
+  { id: 'discountNote', label: 'Discount Note', section: 'general', recordKey: 'DiscountNote', updateField: 'DiscountNote', multiline: true },
   {
     id: 'customer',
     label: 'Customer',
@@ -1188,8 +1189,8 @@ export default function OfferBasicDataClient({
   }, {});
 
   const generalRowLayout: string[][] = [
-    ['title', 'description', 'customer', 'offerValidity', 'status'],
-    ['deliveryTime', 'paymentTerms', 'install', 'introNote', 'closingNote'],
+    ['title', 'description', 'customer', 'deliveryTime', 'offerValidity', 'status'],
+    ['paymentTerms', 'install', 'introNote', 'closingNote', 'discountNote'],
   ];
 
   const generalRows = generalRowLayout
@@ -1215,7 +1216,11 @@ export default function OfferBasicDataClient({
           <div className={styles.sectionHeading}>{SECTION_METADATA.general.title}</div>
           <div className={styles.generalRows}>
             {generalRows.map((row, rowIdx) => (
-              <div key={rowIdx} className={styles.generalRow}>
+              <div
+                key={rowIdx}
+                className={styles.generalRow}
+                style={{ gridTemplateColumns: `repeat(${row.length}, minmax(140px, 1fr))` }}
+              >
                 {row.map((field) => (
                   <div key={field.id} className={styles.field}>
                     <label className={styles.fieldLabel} htmlFor={`offer-field-${field.id}`}>

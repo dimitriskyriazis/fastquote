@@ -3,6 +3,7 @@ import { logRequest } from '../../../../../../lib/apiHelpers';
 import sql, { type ConnectionPool } from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
+import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../../lib/authz';
 
 const getDecimalType = () => {
@@ -395,8 +396,8 @@ const fetchExistingTreeOrderings = async (
   pool: ConnectionPool,
   offerId: number,
   treeOrderings: string[],
-): Promise<Set<string>> => {
-  const existing = new Set<string>();
+): Promise<Map<string, string | null>> => {
+  const existing = new Map<string, string | null>();
   const unique = Array.from(new Set(treeOrderings.filter(Boolean)));
   if (unique.length === 0) return existing;
   const chunkSize = computeChunkSize(1, 1);
@@ -411,14 +412,15 @@ const fetchExistingTreeOrderings = async (
         return `@${key}`;
       })
       .join(', ');
-    const result = await request.query<{ TreeOrdering: string | null }>(`
-      SELECT NULLIF(LTRIM(RTRIM(od.TreeOrdering)), '') AS TreeOrdering
+    const result = await request.query<{ TreeOrdering: string | null; RequestedItemNo: string | null }>(`
+      SELECT NULLIF(LTRIM(RTRIM(od.TreeOrdering)), '') AS TreeOrdering,
+             NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') AS RequestedItemNo
       FROM dbo.OfferDetails od
       WHERE od.OfferID = @__offerId
         AND od.TreeOrdering IN (${params});
     `);
     result.recordset?.forEach((row) => {
-      if (row.TreeOrdering) existing.add(row.TreeOrdering);
+      if (row.TreeOrdering) existing.set(row.TreeOrdering, row.RequestedItemNo ?? null);
     });
   }
   return existing;
@@ -454,6 +456,84 @@ const readRequestedColumnLengths = async (pool: ConnectionPool): Promise<ColumnL
   return defaults;
 };
 
+const shiftAndInsertRow = async (
+  pool: ConnectionPool,
+  offerId: number,
+  userId: string | number | null,
+  targetRoot: number,
+  row: ClassifiedRow,
+): Promise<void> => {
+  if (!row.treeOrdering) return;
+  const request = pool.request();
+  request.input('__offerId', sql.Int, offerId);
+  request.input('__userId', sql.Int, userId);
+  request.input('__modifiedBy', sql.Int, userId);
+  request.input('__targetRoot', sql.Int, targetRoot);
+  request.input('__treeOrdering', sql.NVarChar(255), row.treeOrdering);
+  request.input('__itemNo', sql.NVarChar(255), row.itemNo);
+  request.input('__brand', sql.NVarChar(255), row.brand);
+  request.input('__modelNo', sql.NVarChar(255), row.modelNumber);
+  request.input('__partNo', sql.NVarChar(255), row.partNumber);
+  request.input('__webLink', sql.NVarChar(sql.MAX), row.webLink);
+  request.input('__desc', sql.NVarChar(sql.MAX), row.description);
+  request.input('__desc2', sql.NVarChar(sql.MAX), row.description2);
+  request.input('__desc3', sql.NVarChar(sql.MAX), row.description3);
+  request.input('__rqty', getDecimalType(), row.quantity);
+  request.input('__isCategory', sql.Bit, row.isCategory ? 1 : 0);
+  request.input('__isComment', sql.Bit, row.isComment ? 1 : 0);
+  request.input('__productDesc', sql.NVarChar(sql.MAX), row.productDescription);
+
+  await request.query(`
+    UPDATE dbo.OfferDetails
+    SET TreeOrdering =
+          CONCAT(
+            CAST(
+              TRY_CONVERT(INT,
+                CASE WHEN CHARINDEX('.', LTRIM(RTRIM(TreeOrdering))) > 0
+                     THEN LEFT(LTRIM(RTRIM(TreeOrdering)), CHARINDEX('.', LTRIM(RTRIM(TreeOrdering))) - 1)
+                     ELSE LTRIM(RTRIM(TreeOrdering)) END
+              ) + 1
+            AS NVARCHAR(255)),
+            CASE WHEN CHARINDEX('.', LTRIM(RTRIM(TreeOrdering))) > 0
+                 THEN SUBSTRING(LTRIM(RTRIM(TreeOrdering)), CHARINDEX('.', LTRIM(RTRIM(TreeOrdering))), 255)
+                 ELSE '' END
+          ),
+        ModifiedOn = SYSUTCDATETIME(),
+        ModifiedBy = @__modifiedBy
+    WHERE OfferID = @__offerId
+      AND NULLIF(LTRIM(RTRIM(TreeOrdering)), '') IS NOT NULL
+      AND TRY_CONVERT(INT,
+            CASE WHEN CHARINDEX('.', LTRIM(RTRIM(TreeOrdering))) > 0
+                 THEN LEFT(LTRIM(RTRIM(TreeOrdering)), CHARINDEX('.', LTRIM(RTRIM(TreeOrdering))) - 1)
+                 ELSE LTRIM(RTRIM(TreeOrdering)) END
+          ) >= @__targetRoot;
+
+    DECLARE @nextOrdering INT = (
+      SELECT ISNULL(MAX(ISNULL(Ordering, 0)), 0) + 1
+      FROM dbo.OfferDetails
+      WHERE OfferID = @__offerId
+    );
+
+    INSERT INTO dbo.OfferDetails (
+      OfferID, ParentOfferDetailID, TreeOrdering, Ordering,
+      IsPrintable, IsComment, IsCategory, ProductDescription, Quantity,
+      RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo,
+      RequestedWebLink, RequestedDescription, RequestedDescription2,
+      RequestedDescription3, RequestedQuantity,
+      CreatedOn, CreatedBy, ModifiedOn, ModifiedBy
+    )
+    VALUES (
+      @__offerId, NULL, @__treeOrdering, @nextOrdering,
+      1, @__isComment, @__isCategory,
+      CASE WHEN @__isCategory = 1 OR @__isComment = 1 THEN @__productDesc ELSE NULL END,
+      0,
+      @__itemNo, @__brand, @__modelNo, @__partNo,
+      @__webLink, @__desc, @__desc2, @__desc3, @__rqty,
+      SYSUTCDATETIME(), @__userId, SYSUTCDATETIME(), @__userId
+    );
+  `);
+};
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
@@ -472,20 +552,14 @@ export async function GET(
     const pool = await getPool();
     const request = pool.request();
     request.input('__offerId', sql.Int, offerId);
-    const result = await request.query<{ TreeOrdering: string | null; RequestedItemNo: string | null }>(`
-      SELECT
-        NULLIF(LTRIM(RTRIM(od.TreeOrdering)), '') AS TreeOrdering,
-        NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') AS RequestedItemNo
+    const result = await request.query<{ RequestedItemNo: string | null }>(`
+      SELECT NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') AS RequestedItemNo
       FROM dbo.OfferDetails od
       WHERE od.OfferID = @__offerId
-        AND (
-          NULLIF(LTRIM(RTRIM(od.TreeOrdering)), '') IS NOT NULL
-          OR NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') IS NOT NULL
-        )
+        AND NULLIF(LTRIM(RTRIM(od.RequestedItemNo)), '') IS NOT NULL
     `);
     const itemNos = new Set<string>();
     (result.recordset ?? []).forEach((r) => {
-      if (r.TreeOrdering) itemNos.add(r.TreeOrdering);
       if (r.RequestedItemNo) itemNos.add(r.RequestedItemNo);
     });
     return NextResponse.json({ ok: true, itemNos: Array.from(itemNos) });
@@ -538,6 +612,7 @@ export async function POST(
     let updatedCount = 0;
     let insertedCount = 0;
     const rowsNeedingInsert: ClassifiedRow[] = [...rowsWithoutTree];
+    const rowsNeedingShiftInsert: ClassifiedRow[] = [];
     const rowsWithTreeByOrdering = new Map(
       rowsWithTreeRaw
         .filter((row) => row.treeOrdering)
@@ -555,10 +630,22 @@ export async function POST(
         const available: ClassifiedRow[] = [];
         rowsWithTree.forEach((row) => {
           const treeOrdering = row.treeOrdering ?? null;
-          if (treeOrdering && existingTreeOrderings.has(treeOrdering)) {
-            available.push(row);
-          } else {
+          if (!treeOrdering || !existingTreeOrderings.has(treeOrdering)) {
             rowsNeedingInsert.push(row);
+            return;
+          }
+          const existingItemNo = existingTreeOrderings.get(treeOrdering) ?? null;
+          if (existingItemNo === row.itemNo) {
+            available.push(row);
+          } else if (/^\d+$/.test(treeOrdering)) {
+            // Collision at a plain root integer (typical manual add after a
+            // delete-driven resequence). Keep the requested position and shift
+            // the existing rows at that root (and above) up by one.
+            rowsNeedingShiftInsert.push(row);
+          } else {
+            // Hierarchical or non-numeric collision — shifting isn't well
+            // defined, so fall back to appending at the end.
+            rowsNeedingInsert.push({ ...row, treeOrdering: null });
           }
         });
         rowsWithTree = available;
@@ -662,8 +749,30 @@ export async function POST(
       }
     }
 
+    if (rowsNeedingShiftInsert.length) {
+      rowsNeedingShiftInsert.sort((a, b) => {
+        const ra = parseRootSegment(a.treeOrdering) ?? 0;
+        const rb = parseRootSegment(b.treeOrdering) ?? 0;
+        if (ra !== rb) return ra - rb;
+        return a.originalIndex - b.originalIndex;
+      });
+      for (const row of rowsNeedingShiftInsert) {
+        const targetRoot = parseRootSegment(row.treeOrdering);
+        if (targetRoot == null) continue;
+        await shiftAndInsertRow(pool, offerId, audit.userId ?? null, targetRoot, row);
+        insertedCount += 1;
+      }
+    }
+
     if (!rowsNeedingInsert.length) {
-      return NextResponse.json({ ok: true, updated: updatedCount, inserted: 0, total: normalizedRows.length });
+      if (updatedCount > 0 || insertedCount > 0) {
+        realtimeEvents.emit(
+          `offer:${offerId}:products`,
+          'rows-refresh',
+          { reason: 'requested-import', updated: updatedCount, inserted: insertedCount, updatedBy: audit.userId ?? null },
+        );
+      }
+      return NextResponse.json({ ok: true, updated: updatedCount, inserted: insertedCount, total: normalizedRows.length });
     }
 
     const metaRequest = pool.request();
@@ -811,6 +920,14 @@ export async function POST(
       await request.query(query);
       insertedCount += chunk.length;
       nextOrderingValue += chunk.length;
+    }
+
+    if (updatedCount > 0 || insertedCount > 0) {
+      realtimeEvents.emit(
+        `offer:${offerId}:products`,
+        'rows-refresh',
+        { reason: 'requested-import', updated: updatedCount, inserted: insertedCount, updatedBy: audit.userId ?? null },
+      );
     }
 
     return NextResponse.json({ ok: true, updated: updatedCount, inserted: insertedCount, total: normalizedRows.length });

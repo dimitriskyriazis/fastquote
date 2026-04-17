@@ -1,12 +1,28 @@
 "use client";
 
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
-import type { ColDef } from 'ag-grid-community';
+import type { CellValueChangedEvent, ColDef, IRowNode } from 'ag-grid-community';
 import PageHeader from '../components/PageHeader';
 import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
 import { formatDateTime } from '../lib/formatDateTime';
+import { showToastMessage } from '../../lib/toast';
 import styles from './OfferDetailsClient.module.css';
+
+const normalizeOriginValue = (value: unknown): string | null => {
+  if (value == null) return null;
+  const trimmed = String(value).trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const normalizeProductId = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
 
 const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
   ssr: false,
@@ -187,6 +203,15 @@ export default function OfferDetailsClient() {
       width: 100,
     },
     {
+      field: 'Origin',
+      headerName: 'Origin',
+      filter: 'agTextColumnFilter',
+      enableRowGroup: true,
+      width: 130,
+      editable: (params) => normalizeProductId((params.data as { ProductID?: unknown } | null | undefined)?.ProductID ?? null) != null,
+      valueParser: (params) => normalizeOriginValue(params.newValue),
+    },
+    {
       field: 'Delivery',
       headerName: 'Delivery',
       filter: 'agTextColumnFilter',
@@ -303,6 +328,58 @@ export default function OfferDetailsClient() {
     },
   ], []);
 
+  const handleCellValueChanged = useCallback(
+    (event: CellValueChangedEvent<Record<string, unknown>>) => {
+      const field = typeof event.colDef?.field === 'string' ? event.colDef.field : null;
+      if (field !== 'Origin') return;
+      const source = (event as { source?: string }).source;
+      if (source === 'api') return;
+
+      const oldValue = normalizeOriginValue(event.oldValue ?? null);
+      const newValue = normalizeOriginValue(event.newValue ?? null);
+      if (oldValue === newValue) return;
+
+      const revertValue = () => {
+        try {
+          (event.node as IRowNode<Record<string, unknown>> | null | undefined)?.setDataValue?.(field, oldValue);
+        } catch {
+          /* noop */
+        }
+      };
+
+      const productId = normalizeProductId((event.data as { ProductID?: unknown } | null | undefined)?.ProductID ?? null);
+      if (productId == null) {
+        showToastMessage('Unable to update origin. Missing product id.', 'error');
+        revertValue();
+        return;
+      }
+
+      void (async () => {
+        try {
+          const res = await fetch(`/api/products/${encodeURIComponent(String(productId))}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ origin: newValue }),
+          });
+          const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+          if (!res.ok || !payload?.ok) {
+            throw new Error(payload?.error ?? `Failed to update origin (status ${res.status})`);
+          }
+          showToastMessage('Origin updated', 'success');
+          event.api?.refreshServerSide?.({ purge: false });
+        } catch (err) {
+          console.error('Failed to update origin', err);
+          showToastMessage(
+            err instanceof Error ? err.message : 'Unable to update origin. Please try again.',
+            'error',
+          );
+          revertValue();
+        }
+      })();
+    },
+    [],
+  );
+
   return (
     <main className={styles.page}>
       <PageHeader title="Offered Products">
@@ -312,6 +389,7 @@ export default function OfferDetailsClient() {
               endpoint="/api/offered-products"
               columnDefs={columnDefs}
               rowGroupPanelShow="always"
+              onCellValueChanged={handleCellValueChanged}
             />
           </div>
         </GridQuickSearchProvider>

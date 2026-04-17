@@ -8,7 +8,15 @@ type RowData = Record<string, unknown>;
 
 type RealtimeEvent = {
   resource: string;
-  type: 'row-added' | 'row-updated' | 'row-deleted' | 'rows-reordered' | 'cell-updated' | 'connected';
+  type:
+    | 'row-added'
+    | 'row-updated'
+    | 'row-deleted'
+    | 'rows-reordered'
+    | 'rows-refresh'
+    | 'rows-restored'
+    | 'cell-updated'
+    | 'connected';
   data: {
     row?: RowData;
     rowId?: number;
@@ -17,6 +25,8 @@ type RealtimeEvent = {
     value?: unknown;
     updates?: Array<{ OfferDetailID: number; TreeOrdering: string }>;
     updatedBy?: string;
+    reason?: string;
+    restoredCount?: number;
   };
   timestamp: number;
 };
@@ -210,11 +220,22 @@ export function useRealtimeGridUpdates({
 
               // Refresh to apply new order
               api.refreshServerSide({ purge: false });
-              
+
               if (showNotifications) {
                 showToastMessage('Row order updated by another user', 'info');
               }
               onRowsReordered?.(updates);
+            }
+            break;
+          }
+
+          case 'rows-refresh':
+          case 'rows-restored': {
+            // Bulk mutations (add products, import requested rows, assign/unassign requested rows, restore)
+            // can change many fields and/or row counts, so just refresh from the server.
+            api.refreshServerSide({ purge: false });
+            if (showNotifications) {
+              showToastMessage('Rows updated by another user', 'info');
             }
             break;
           }

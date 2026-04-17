@@ -28,6 +28,7 @@ async function fetchOfferBasicRecord(offerId: number) {
         o.OfferValidity,
         o.DeliveryTime,
         o.OfferNotesIntroduction,
+        o.DiscountNote,
         o.Comments AS TelmacoNote,
         o.OfferContact,
         o.ContactID,

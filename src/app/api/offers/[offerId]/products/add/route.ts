@@ -12,6 +12,7 @@ import {
   QueryParam,
 } from '../../../../../../lib/gridFilters';
 import { clearPartModelNumberUpper } from '../../../../../../lib/partModelNumber';
+import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../../lib/authz';
 import {
   buildTreeFromRows,
@@ -1064,6 +1065,12 @@ async function handleAddProducts(
         reseqErr instanceof Error ? reseqErr : undefined,
       );
     }
+
+    realtimeEvents.emit(
+      `offer:${offerId}:products`,
+      'rows-refresh',
+      { reason: 'add-products', inserted, updatedBy: auditUserId ?? null },
+    );
   }
 
   return NextResponse.json({ ok: true, inserted, insertedOfferDetailIds });
@@ -1190,6 +1197,14 @@ async function handleUnassignRequestedRows(
 
     const result = await request.query(query);
     const rowsAffected = result.rowsAffected?.[0] ?? 0;
+
+    if (rowsAffected > 0) {
+      realtimeEvents.emit(
+        `offer:${offerId}:products`,
+        'rows-refresh',
+        { reason: 'unassign-requested', cleared: rowsAffected, offerDetailIds: ids, updatedBy: auditUserId ?? null },
+      );
+    }
 
     return NextResponse.json({ ok: true, cleared: rowsAffected, previousRows });
   } catch (err) {
@@ -1394,6 +1409,26 @@ async function handleAssignProductToRequestedRow(
     SELECT @pricingPolicyId = o.PricingPolicyID
     FROM dbo.Offer o
     WHERE o.ID = @__offerId;
+
+    -- Capture the requested fields from the original row so we can also assign
+    -- the same product to any other unassigned rows in this offer with identical
+    -- requested data.
+    DECLARE @reqBrand NVARCHAR(MAX);
+    DECLARE @reqModel NVARCHAR(MAX);
+    DECLARE @reqPart NVARCHAR(MAX);
+    DECLARE @reqDesc1 NVARCHAR(MAX);
+    DECLARE @reqDesc2 NVARCHAR(MAX);
+    DECLARE @reqDesc3 NVARCHAR(MAX);
+    SELECT
+      @reqBrand = od.RequestedBrand,
+      @reqModel = od.RequestedModelNo,
+      @reqPart  = od.RequestedPartNo,
+      @reqDesc1 = od.RequestedDescription,
+      @reqDesc2 = od.RequestedDescription2,
+      @reqDesc3 = od.RequestedDescription3
+    FROM dbo.OfferDetails od
+    WHERE od.OfferID = @__offerId
+      AND od.ID = @__rowId;
 
     DECLARE @euroCurrencyId INT;
     SELECT TOP 1 @euroCurrencyId = ID
@@ -1673,13 +1708,27 @@ async function handleAssignProductToRequestedRow(
           END AS ComputedNetCost
       ) AS computed
     WHERE od.OfferID = @__offerId
-      AND od.ID = @__rowId;
+      AND (
+        od.ID = @__rowId
+        OR (
+          od.ProductID IS NULL
+          AND ISNULL(od.IsCategory, 0) = 0
+          AND ISNULL(od.IsComment, 0) = 0
+          AND ISNULL(LTRIM(RTRIM(od.RequestedBrand)),       N'') = ISNULL(LTRIM(RTRIM(@reqBrand)), N'')
+          AND ISNULL(LTRIM(RTRIM(od.RequestedModelNo)),     N'') = ISNULL(LTRIM(RTRIM(@reqModel)), N'')
+          AND ISNULL(LTRIM(RTRIM(od.RequestedPartNo)),      N'') = ISNULL(LTRIM(RTRIM(@reqPart)),  N'')
+          AND ISNULL(LTRIM(RTRIM(od.RequestedDescription)), N'') = ISNULL(LTRIM(RTRIM(@reqDesc1)), N'')
+          AND ISNULL(LTRIM(RTRIM(od.RequestedDescription2)),N'') = ISNULL(LTRIM(RTRIM(@reqDesc2)), N'')
+          AND ISNULL(LTRIM(RTRIM(od.RequestedDescription3)),N'') = ISNULL(LTRIM(RTRIM(@reqDesc3)), N'')
+        )
+      );
     SELECT TOP (1)
       urp.OfferDetailID,
       urp.Quantity,
       urp.CustomerDiscount,
       urp.TelmacoDiscount
-    FROM @UpdatedRowPricing urp;
+    FROM @UpdatedRowPricing urp
+    ORDER BY CASE WHEN urp.OfferDetailID = @__rowId THEN 0 ELSE 1 END;
   `;
 
   const result = await request.query(query);
@@ -1697,6 +1746,12 @@ async function handleAssignProductToRequestedRow(
     CustomerDiscount?: number | null;
     TelmacoDiscount?: number | null;
   } | null;
+
+  realtimeEvents.emit(
+    `offer:${offerId}:products`,
+    'rows-refresh',
+    { reason: 'assign-requested', requestedRowId, productId, updatedBy: auditUserId ?? null },
+  );
 
   return NextResponse.json({
     ok: true,

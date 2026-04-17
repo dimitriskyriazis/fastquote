@@ -97,6 +97,7 @@ type ProductRow = {
   PartNumber: string | null;
   ModelNumber: string | null;
   WebLink: string | null;
+  Origin: string | null;
   Quantity: number | null;
   Description: string | null;
   Comment: string | null;
@@ -249,6 +250,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   AVC4BrandName: 'b.AVC4Name',
   PartNumber: 'od.PartNumber',
   WebLink: 'p.WebLink',
+  Origin: 'p.Origin',
   ModelNumber: 'od.ModelNumber',
   Quantity: 'od.Quantity',
   Description: 'od.ProductDescription',
@@ -1205,6 +1207,7 @@ export async function POST(
       'PartNumber',
       'ModelNumber',
       'WebLink',
+      'Origin',
       'RequestedItemNo',
       'RequestedBrand',
       'RequestedModelNo',

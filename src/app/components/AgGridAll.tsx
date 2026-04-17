@@ -111,7 +111,7 @@ import {
 } from '../../lib/gridExport';
 import styles from './AgGridAll.module.css';
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from './actionMenuMarkers';
-import { setGridRowDeletionContextMenuSelectionSnapshot, setGridQuickFilterText } from '../../lib/gridRowDeletion';
+import { getServerSideDeselectedRowIds, setGridRowDeletionContextMenuSelectionSnapshot, setGridQuickFilterText } from '../../lib/gridRowDeletion';
 import { useAuditUser } from './AuditUserProvider';
 import { GridQuickSearchContext } from './GridQuickSearchProvider';
 import { restoreCaretSelection } from '../hooks/useCaretKeeper';
@@ -591,6 +591,7 @@ type Props = {
   allowMultiCellDeletion?: boolean;
   useAgGridRowDrag?: boolean;
   suppressSideBar?: boolean;
+  suppressNoRowsOverlay?: boolean;
   serverSideHeaderSelectMode?: 'loaded' | 'all';
   suppressColumnMoveAnimation?: boolean;
   onColumnStateRestored?: () => void;
@@ -1219,6 +1220,7 @@ export default function AgGridAll({
   allowMultiCellDeletion = false,
   useAgGridRowDrag = false,
   suppressSideBar = false,
+  suppressNoRowsOverlay = false,
   serverSideHeaderSelectMode = 'all',
   suppressColumnMoveAnimation = false,
   onColumnStateRestored,
@@ -1678,10 +1680,16 @@ export default function AgGridAll({
 
   const captureSelectionSnapshot = useCallback((api: GridApi<RowData> | null) => {
     if (hasServerSideSelectAll(api)) {
-      // Collect all loaded nodes so the delete context menu can use them
+      // Collect all loaded nodes so the delete context menu can use them,
+      // excluding any rows the user has toggled off.
+      const deselectedIds = getServerSideDeselectedRowIds(api);
       const allNodes: Array<RowNode<RowData>> = [];
       if (api && typeof api.forEachNode === 'function') {
-        api.forEachNode((node) => { if (node?.data) allNodes.push(node as RowNode<RowData>); });
+        api.forEachNode((node) => {
+          if (!node?.data) return;
+          if (deselectedIds.size > 0 && node.id != null && deselectedIds.has(String(node.id))) return;
+          allNodes.push(node as RowNode<RowData>);
+        });
       }
       setGridRowDeletionContextMenuSelectionSnapshot(api ?? null, allNodes);
       return;
@@ -4369,7 +4377,7 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
         data-suppress-sidebar={suppressSideBar}
         ref={shellRef}
       >
-        {gridEmpty && isGridReady && (
+        {gridEmpty && isGridReady && !suppressNoRowsOverlay && (
           <div className={styles.noRowsOverlay}>No data to display</div>
         )}
         <AgGridReact

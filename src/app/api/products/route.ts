@@ -43,6 +43,7 @@ type ProductRow = {
   SubCategory: string | null;
   Type: string | null;
   WebLink: string | null;
+  Origin: string | null;
   Enabled: boolean | number | null;
 };
 
@@ -60,6 +61,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   SubCategory: "dbo.ProductSubCategories.Name",
   Type: "dbo.ProductTypes.Name",
   WebLink: "dbo.Products.WebLink",
+  Origin: "dbo.Products.Origin",
   Enabled: "dbo.Products.Enabled",
 };
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
@@ -379,6 +381,7 @@ export async function POST(req: NextRequest) {
         dbo.ProductSubCategories.Name AS SubCategory,
         dbo.ProductTypes.Name AS Type,
         dbo.Products.WebLink,
+        dbo.Products.Origin,
         dbo.Products.Enabled
     `;
 

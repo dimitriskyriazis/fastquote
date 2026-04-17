@@ -53,7 +53,7 @@ import { showToastMessage } from '../../../lib/toast';
 import { useUndoStack } from '../../hooks/useUndoStack';
 import { pushCellEditUndo } from '../../../lib/undoHelpers';
 import { showConfirmDialog, showMultiChoiceDialog } from '../../../lib/confirm';
-import { GridRowDeletion, getContextMenuSelectionSnapshot, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
+import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselectedRowIds, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
 import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
@@ -126,6 +126,7 @@ import {
   normalizeNoForExport,
   recalcProductTotals,
   refreshCategoryAggregates,
+  roundMoney,
   PRICING_FIELD_LABELS,
   PRICING_EDITABLE_FIELDS,
   DESCRIPTION_PASTE_BLOCKLIST,
@@ -330,6 +331,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     [addProductsEndpoint],
   );
   const [totals, setTotals] = useState<{ totalListPrice: number; totalNetPrice: number; totalCost: number; totalMargin: number } | null>(null);
+  const [totalNetEditing, setTotalNetEditing] = useState(false);
+  const [totalNetInputValue, setTotalNetInputValue] = useState('');
+  const [totalNetApplying, setTotalNetApplying] = useState(false);
+  const totalNetSubmitPendingRef = useRef(false);
   const [requestedColumnVisibility, setRequestedColumnVisibility] = useState<Record<RequestedDisplayFieldKey, boolean>>({
     RequestedBrand: false,
     RequestedModelNo: false,
@@ -1831,23 +1836,19 @@ const PartNumberCell = useCallback((params: ICellRendererParams<Record<string, u
     };
 
     return (
-      <span className={styles.partNumberCell}>
-        <span>{partNumber}</span>
-        <a
-          href={normalizedLink}
-          target="_blank"
-          rel="noreferrer noopener"
-          className={styles.partNumberLinkIcon}
-          onClick={stopLink}
-          onMouseDown={stopLink}
-          onDoubleClick={stopLink}
-          onContextMenu={stopLink}
-          title="Open product link"
-          tabIndex={-1}
-        >
-          ↗
-        </a>
-      </span>
+      <a
+        href={normalizedLink}
+        target="_blank"
+        rel="noreferrer noopener"
+        className={styles.partNumberLink}
+        onClick={stopLink}
+        onMouseDown={stopLink}
+        onDoubleClick={stopLink}
+        onContextMenu={stopLink}
+        title="Open product link"
+      >
+        {partNumber}
+      </a>
     );
 }, []);
 
@@ -1871,23 +1872,19 @@ const ModelNumberCell = useCallback((params: ICellRendererParams<Record<string, 
     };
 
     return (
-      <span className={styles.partNumberCell}>
-        <span>{modelNumber}</span>
-        <a
-          href={normalizedLink}
-          target="_blank"
-          rel="noreferrer noopener"
-          className={styles.partNumberLinkIcon}
-          onClick={stopLink}
-          onMouseDown={stopLink}
-          onDoubleClick={stopLink}
-          onContextMenu={stopLink}
-          title="Open product link"
-          tabIndex={-1}
-        >
-          ↗
-        </a>
-      </span>
+      <a
+        href={normalizedLink}
+        target="_blank"
+        rel="noreferrer noopener"
+        className={styles.partNumberLink}
+        onClick={stopLink}
+        onMouseDown={stopLink}
+        onDoubleClick={stopLink}
+        onContextMenu={stopLink}
+        title="Open product link"
+      >
+        {modelNumber}
+      </a>
     );
 }, []);
 
@@ -2892,23 +2889,50 @@ const requestedColumnDefsMap = useMemo(
     closeMatchAddProduct();
   }, [closeMatchAddProduct, refreshOfferProductGrid]);
 
-  const advanceMatchQueue = useCallback(() => {
-    setRequestedMatchQueue((prev) => (prev.length > 0 ? prev.slice(1) : prev));
-    setProcessedRequestedMatches((prev) => prev + 1);
-  }, []);
+  // Drop the head of the queue plus every subsequent entry whose requested
+  // fields are identical (case- and whitespace-insensitive) to the head, and
+  // bump processed count by everything we removed. Used by both assign and
+  // skip so a single user action also clears the duplicate rows.
+  const consumeQueueHeadWithDuplicates = useCallback((head: RequestedProductMatchEntry) => {
+    const norm = (v: string | null | undefined) =>
+      (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const isDuplicate = (other: RequestedProductMatchEntry) =>
+      other.offerDetailId !== head.offerDetailId
+      && norm(other.requestedBrand) === norm(head.requestedBrand)
+      && norm(other.requestedModelNumber) === norm(head.requestedModelNumber)
+      && norm(other.requestedPartNumber) === norm(head.requestedPartNumber)
+      && norm(other.requestedDescription) === norm(head.requestedDescription)
+      && norm(other.requestedDescription2) === norm(head.requestedDescription2)
+      && norm(other.requestedDescription3) === norm(head.requestedDescription3);
+
+    let removed = 0;
+    setRequestedMatchQueue((prev) => {
+      if (prev.length === 0) return prev;
+      const tail = prev.slice(1);
+      const remaining = tail.filter((entry) => !isDuplicate(entry));
+      removed = tail.length - remaining.length;
+      return remaining;
+    });
+    setProcessedRequestedMatches((prev) => prev + 1 + removed);
+    // removed isn't reliable until React commits the queue update; callers that
+    // need the count should read it via the queue diff instead.
+    const dupCount = requestedMatchQueue.slice(1).filter(isDuplicate).length;
+    return dupCount;
+  }, [requestedMatchQueue]);
 
   const handleManualAssign = useCallback(async (productId: number, comment: string) => {
     if (!currentRequestedMatch) return false;
     const match = currentRequestedMatch;
 
-    // Optimistic: advance to the next product immediately so the user doesn't
-    // wait for the server round-trip.  The actual DB write happens in the background.
-    advanceMatchQueue();
+    const duplicateCount = consumeQueueHeadWithDuplicates(match);
 
     assignRequestedRowToProduct(match.offerDetailId, productId, match.parentCategoryId, comment)
       .then((assignment) => {
         if (assignment) {
-          showToastMessage('Requested item filled', 'success');
+          const msg = duplicateCount > 0
+            ? `Requested item filled (+${duplicateCount} identical row${duplicateCount === 1 ? '' : 's'})`
+            : 'Requested item filled';
+          showToastMessage(msg, 'success');
           try {
             refreshOfferProductGrid(null, { purge: true });
           } catch { /* noop */ }
@@ -2921,12 +2945,18 @@ const requestedColumnDefsMap = useMemo(
       });
 
     return true;
-  }, [advanceMatchQueue, assignRequestedRowToProduct, currentRequestedMatch, refreshOfferProductGrid]);
+  }, [assignRequestedRowToProduct, consumeQueueHeadWithDuplicates, currentRequestedMatch, refreshOfferProductGrid]);
 
   const handleManualSkip = useCallback(() => {
     if (!currentRequestedMatch) return;
-    showToastMessage('Skipped requested item.', 'info');
-    advanceMatchQueue();
+    const match = currentRequestedMatch;
+
+    const duplicateCount = consumeQueueHeadWithDuplicates(match);
+
+    const msg = duplicateCount > 0
+      ? `Skipped requested item (+${duplicateCount} identical row${duplicateCount === 1 ? '' : 's'}).`
+      : 'Skipped requested item.';
+    showToastMessage(msg, 'info');
     // Force re-show requested columns that may have been hidden during the
     // populate/match flow.  A deferred RAF handles AG Grid internal timing.
     if (typeof window !== 'undefined') {
@@ -2934,7 +2964,7 @@ const requestedColumnDefsMap = useMemo(
         forceReapplyRequestedColumnsVisibility();
       });
     }
-  }, [advanceMatchQueue, currentRequestedMatch, forceReapplyRequestedColumnsVisibility]);
+  }, [consumeQueueHeadWithDuplicates, currentRequestedMatch, forceReapplyRequestedColumnsVisibility]);
 
   const handleManualSkipAll = useCallback(() => {
     if (requestedMatchQueue.length === 0) return;
@@ -2987,7 +3017,12 @@ const requestedColumnDefsMap = useMemo(
     if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
       throw new Error(payload?.error ?? `Failed to load all rows (status ${response.status})`);
     }
-    return payload.rows;
+    const deselectedIds = getServerSideDeselectedRowIds(api);
+    if (deselectedIds.size === 0) return payload.rows;
+    return payload.rows.filter((row) => {
+      const id = (row as { OfferDetailID?: unknown }).OfferDetailID;
+      return id == null || !deselectedIds.has(String(id));
+    });
   }, [dataEndpoint]);
 
   const populateOfferBusyRef = useRef(false);
@@ -3014,7 +3049,8 @@ const requestedColumnDefsMap = useMemo(
 
       if (isSelectAllActive) {
         // When select-all is active, fetch ALL rows from server since
-        // getSelectedNodes/forEachNode only return loaded rows
+        // getSelectedNodes/forEachNode only return loaded rows.
+        // fetchAllFilteredRows already excludes toggledNodes (deselected rows).
         try {
           const allRows = await fetchAllFilteredRows();
           const wrapAsNode = (data: Record<string, unknown>) => ({ data, setSelected: () => {} } as unknown as RowNode<Record<string, unknown>>);
@@ -3212,10 +3248,12 @@ const requestedColumnDefsMap = useMemo(
     if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
       throw new Error(payload?.error ?? `Failed to load selected rows (status ${response.status})`);
     }
+    const deselectedIds = getServerSideDeselectedRowIds(api);
     return Array.from(new Set(
       payload.rows
         .map((row) => normalizeOfferDetailId((row as { OfferDetailID?: unknown })?.OfferDetailID ?? null))
-        .filter((id): id is number => id != null),
+        .filter((id): id is number => id != null)
+        .filter((id) => deselectedIds.size === 0 || !deselectedIds.has(String(id))),
     ));
   }, [dataEndpoint]);
 
@@ -3247,7 +3285,7 @@ const requestedColumnDefsMap = useMemo(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         request,
-        fields: ['ProductID'],
+        fields: ['ProductID', 'OfferDetailID'],
       }),
     });
     const payload = (await response.json().catch(() => null)) as
@@ -3256,8 +3294,15 @@ const requestedColumnDefsMap = useMemo(
     if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
       throw new Error(payload?.error ?? `Failed to load selected rows (status ${response.status})`);
     }
+    const deselectedIds = getServerSideDeselectedRowIds(api);
+    const filteredRows = deselectedIds.size === 0
+      ? payload.rows
+      : payload.rows.filter((row) => {
+          const id = (row as { OfferDetailID?: unknown })?.OfferDetailID;
+          return id == null || !deselectedIds.has(String(id));
+        });
     return Array.from(new Set(
-      payload.rows
+      filteredRows
         .map((row) => normalizeProductId((row as { ProductID?: unknown })?.ProductID ?? null))
         .filter((id): id is number => id != null),
     ));
@@ -3816,7 +3861,7 @@ const requestedColumnDefsMap = useMemo(
       return [pasteOnlyItem];
     }
 
-    // Copy submenu (Copy cells + Copy with Headers + Copy with Group Headers + Copy Rows)
+    // Copy (plain) + Copy with… submenu (Headers + Group Headers) + Copy Rows
     const selectedNodesForCopy = api && typeof api.getSelectedNodes === 'function'
       ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
       : [];
@@ -3847,17 +3892,17 @@ const requestedColumnDefsMap = useMemo(
         showToastMessage(`Copied ${clipboardRows.length} row(s) to clipboard.`, 'success');
       },
     };
-    const copySubmenu: MenuItemDef = {
-      name: 'Copy',
+    const copyWithSubmenu: MenuItemDef = {
+      name: 'Copy with',
       icon: '<span class="ag-icon ag-icon-copy"></span>',
       subMenu: [
-        'copy' as unknown as MenuItemDef,
         'copyWithHeaders' as unknown as MenuItemDef,
         'copyWithGroupHeaders' as unknown as MenuItemDef,
       ],
     };
     const clipboardItems: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> = [
-      copySubmenu,
+      'copy' as unknown as MenuItemDef,
+      copyWithSubmenu,
       'paste' as unknown as MenuItemDef,
     ];
     clipboardItems.push(copyRowsItem);
@@ -4350,6 +4395,123 @@ const requestedColumnDefsMap = useMemo(
         items.splice(deleteIndexAfterHistory, 0, makeCommentItem);
       } else {
         items.push(makeCommentItem);
+      }
+    }
+
+    // --- "Set as Requested product" for category rows carrying RequestedDescription ---
+    // Reverses the auto-promotion step where a requested row with only a
+    // description (no identifiers, no quantity) was turned into a category.
+    // With IsCategory=0 and existing RequestedDescription*, the server's
+    // __isRequestedRow expression evaluates to 1, so the row re-enters the
+    // match flow as an unmatched requested product.
+    const requestedDemoteCandidate = relevantNodes.length === 1 ? relevantNodes[0] : null;
+    const requestedDemoteRowData = requestedDemoteCandidate?.data as Record<string, unknown> | null | undefined;
+    const requestedDemoteEligible = (() => {
+      if (!requestedDemoteRowData) return false;
+      if (!isOfferProductCategory(requestedDemoteRowData)) return false;
+      const id = normalizeOfferDetailId(
+        (requestedDemoteRowData as { OfferDetailID?: unknown }).OfferDetailID ?? null,
+      );
+      if (id == null) return false;
+      const d1 = normalizeDescriptionValue(
+        (requestedDemoteRowData as { RequestedDescription?: unknown }).RequestedDescription ?? null,
+      );
+      const d2 = normalizeDescriptionValue(
+        (requestedDemoteRowData as { RequestedDescription2?: unknown }).RequestedDescription2 ?? null,
+      );
+      const d3 = normalizeDescriptionValue(
+        (requestedDemoteRowData as { RequestedDescription3?: unknown }).RequestedDescription3 ?? null,
+      );
+      return Boolean(d1 || d2 || d3);
+    })();
+    if (requestedDemoteEligible && requestedDemoteCandidate) {
+      const demoteNode = requestedDemoteCandidate;
+      const demoteRow = requestedDemoteRowData as Record<string, unknown>;
+      const demoteDetailId = normalizeOfferDetailId(
+        (demoteRow as { OfferDetailID?: unknown }).OfferDetailID ?? null,
+      );
+      const makeRequestedItem: MenuItemDef = {
+        name: 'Set as Requested product',
+        icon: categoryMenuIcon,
+        action: async () => {
+          if (demoteDetailId == null) return;
+
+          const previous = {
+            IsCategory: (demoteRow as { IsCategory?: unknown }).IsCategory ?? null,
+            IsComment: (demoteRow as { IsComment?: unknown }).IsComment ?? null,
+            IsPrintable: (demoteRow as { IsPrintable?: unknown }).IsPrintable ?? null,
+            Description: (demoteRow as { Description?: unknown }).Description ?? null,
+          };
+
+          try { demoteNode.setDataValue('IsCategory', 0); } catch { /* noop */ }
+          try { demoteNode.setDataValue('IsComment', false); } catch { /* noop */ }
+          try { demoteNode.setDataValue('IsPrintable', null); } catch { /* noop */ }
+          try { demoteNode.setDataValue('Description', null, 'api'); } catch { /* noop */ }
+          try { demoteNode.setDataValue('__isRequestedRow', 1); } catch { /* noop */ }
+          try {
+            gridApiRef.current?.refreshCells?.({ rowNodes: [demoteNode as GridRowNode], force: true });
+          } catch { /* noop */ }
+
+          try {
+            const payloadEntry: Record<string, unknown> = {
+              OfferDetailID: demoteDetailId,
+              IsCategory: 0,
+              IsComment: false,
+              IsPrintable: null,
+              Description: null,
+            };
+            const res = await fetch(resolvedEndpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ updates: [payloadEntry] }),
+            });
+            const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+            if (!res.ok || !payload?.ok) {
+              throw new Error(payload?.error ?? `Unable to set as requested (status ${res.status})`);
+            }
+            const capturedUndo: Record<string, unknown> = {
+              OfferDetailID: demoteDetailId,
+              IsCategory: previous.IsCategory,
+              IsComment: previous.IsComment,
+              IsPrintable: previous.IsPrintable,
+              Description: previous.Description,
+            };
+            pushUndo({
+              label: 'Set as Requested product',
+              undo: async () => {
+                const undoRes = await fetch(resolvedEndpoint, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ updates: [capturedUndo] }),
+                });
+                const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+                if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+                refreshOfferProductGrid(null, { purge: true });
+              },
+            });
+            showToastMessage('Marked as requested product', 'success', 5500, {
+              label: 'Undo',
+              onClick: () => performUndo(),
+            });
+            refreshOfferProductGrid(null, { purge: true });
+          } catch (err) {
+            try { demoteNode.setDataValue('IsCategory', previous.IsCategory ?? null); } catch { /* noop */ }
+            try { demoteNode.setDataValue('IsComment', previous.IsComment ?? null); } catch { /* noop */ }
+            try { demoteNode.setDataValue('IsPrintable', previous.IsPrintable ?? null); } catch { /* noop */ }
+            try { demoteNode.setDataValue('Description', previous.Description ?? null, 'api'); } catch { /* noop */ }
+            try { demoteNode.setDataValue('__isRequestedRow', 0); } catch { /* noop */ }
+            try {
+              gridApiRef.current?.refreshCells?.({ rowNodes: [demoteNode as GridRowNode], force: true });
+            } catch { /* noop */ }
+            console.error('Failed to set as requested product', err);
+            showToastMessage('Unable to set row as requested product. Please try again.', 'error');
+          }
+        },
+      };
+      if (deleteIndexAfterHistory >= 0) {
+        items.splice(deleteIndexAfterHistory, 0, makeRequestedItem);
+      } else {
+        items.push(makeRequestedItem);
       }
     }
 
@@ -5329,11 +5491,6 @@ const requestedColumnDefsMap = useMemo(
         }
         recalcProductTotals(event);
         refreshCategoryAggregates(event.api);
-        try {
-          refreshOfferProductGrid(event.api ?? null, { purge: false });
-        } catch {
-          /* noop */
-        }
       } catch (err) {
         console.error(`Failed to update ${label}`, err);
         showToastMessage(`Unable to update ${label}: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
@@ -5344,7 +5501,86 @@ const requestedColumnDefsMap = useMemo(
     };
 
     void runUpdate();
-  }, [refreshOfferProductGrid, resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
+
+  const handleOriginEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    if (event.colDef.field !== 'Origin') return;
+    const source = (event as { source?: string }).source;
+    if (source === 'api') return;
+    if (shouldSkipRealtimeCellEdit(event)) return;
+
+    const normalizeOrigin = (value: unknown): string | null => {
+      if (value == null) return null;
+      const trimmed = String(value).trim();
+      return trimmed.length > 0 ? trimmed : null;
+    };
+
+    const oldValue = normalizeOrigin(event.oldValue ?? null);
+    const newValue = normalizeOrigin(event.newValue ?? null);
+    if (oldValue === newValue) return;
+
+    const revertValue = () => {
+      try {
+        event.node?.setDataValue?.('Origin', oldValue);
+      } catch {
+        /* noop */
+      }
+    };
+
+    const rawProductId = (event.data as { ProductID?: unknown } | undefined)?.ProductID ?? null;
+    const productId = typeof rawProductId === 'number' && Number.isFinite(rawProductId)
+      ? Math.trunc(rawProductId)
+      : typeof rawProductId === 'string'
+        ? Number.parseInt(rawProductId.trim(), 10)
+        : NaN;
+    if (!Number.isFinite(productId) || !Number.isInteger(productId) || productId <= 0) {
+      showToastMessage('Unable to update origin. Missing product id.', 'error');
+      revertValue();
+      return;
+    }
+
+    const runUpdate = async () => {
+      try {
+        const res = await fetch(`/api/products/${encodeURIComponent(String(productId))}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ origin: newValue }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update origin (status ${res.status})`);
+        }
+        const capturedOldValue = oldValue;
+        const capturedProductId = productId;
+        pushUndo({
+          label: 'Origin updated',
+          undo: async () => {
+            const undoRes = await fetch(`/api/products/${encodeURIComponent(String(capturedProductId))}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ origin: capturedOldValue }),
+            });
+            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+            try { event.node?.setDataValue?.('Origin', capturedOldValue); } catch { /* noop */ }
+            event.api?.refreshServerSide?.({ purge: false });
+          },
+        });
+        showToastMessage('Origin updated', 'success', 5500, {
+          label: 'Undo',
+          onClick: () => performUndo(),
+        });
+      } catch (err) {
+        console.error('Failed to update origin', err);
+        showToastMessage(`Unable to update origin: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
+        revertValue();
+        event.api?.stopEditing?.();
+        event.api?.clearFocusedCell?.();
+      }
+    };
+
+    void runUpdate();
+  }, [shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     handleDescriptionEdit(event);
@@ -5354,7 +5590,8 @@ const requestedColumnDefsMap = useMemo(
     handleQuantityEdit(event);
     handlePricingEdit(event);
     handlePartModelNumberEdit(event);
-  }, [handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit]);
+    handleOriginEdit(event);
+  }, [handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit, handleOriginEdit]);
 
   const formatEuroTotal = (value: number | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return '—';
@@ -5364,6 +5601,168 @@ const requestedColumnDefsMap = useMemo(
     if (value == null || !Number.isFinite(value)) return '—';
     return `${decimalFormatter.format(value)} %`;
   };
+  const formatDiscountTotal = (listPrice: number | null | undefined, netPrice: number | null | undefined) => {
+    if (
+      listPrice == null
+      || netPrice == null
+      || !Number.isFinite(listPrice)
+      || !Number.isFinite(netPrice)
+    ) {
+      return '—';
+    }
+    const discount = listPrice - netPrice;
+    const percent = Math.abs(listPrice) < 1e-9 ? 0 : (discount / listPrice) * 100;
+    return `${decimalFormatter.format(discount)} € (${decimalFormatter.format(percent)} %)`;
+  };
+
+  const beginEditTotalNet = useCallback(() => {
+    if (totalNetApplying) return;
+    const current = totals?.totalNetPrice;
+    const initial = current != null && Number.isFinite(current) ? String(roundMoney(current, 2)) : '';
+    setTotalNetInputValue(initial);
+    setTotalNetEditing(true);
+  }, [totalNetApplying, totals]);
+
+  const cancelEditTotalNet = useCallback(() => {
+    totalNetSubmitPendingRef.current = false;
+    setTotalNetEditing(false);
+    setTotalNetInputValue('');
+  }, []);
+
+  const applyTotalNetPriceScale = useCallback(async (targetTotal: number) => {
+    if (totalNetApplying) return;
+    const currentTotal = totals?.totalNetPrice ?? 0;
+    if (!Number.isFinite(currentTotal) || Math.abs(currentTotal) < 1e-9) {
+      showToastMessage('Cannot scale from a zero total. Set at least one product net price first.', 'error');
+      return;
+    }
+    if (!Number.isFinite(targetTotal)) {
+      showToastMessage('Please enter a valid total net price.', 'error');
+      return;
+    }
+    if (Math.abs(targetTotal - currentTotal) < 1e-4) {
+      cancelEditTotalNet();
+      return;
+    }
+
+    const confirmed = await showConfirmDialog({
+      title: 'Adjust all Net Unit Prices?',
+      message: `This will proportionally rescale the Net Unit Price of every product row so the offer total matches ${decimalFormatter.format(targetTotal)} € (currently ${decimalFormatter.format(currentTotal)} €). This change affects all priced product rows and cannot be undone in a single step.`,
+      confirmLabel: 'Rescale prices',
+      cancelLabel: 'Keep as-is',
+      tone: 'danger',
+    });
+    if (!confirmed) {
+      cancelEditTotalNet();
+      return;
+    }
+
+    setTotalNetApplying(true);
+    try {
+      const fetchRes = await fetch(resolvedEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request: { allRows: true, view: 'pivot' },
+          fields: ['OfferDetailID', 'NetUnitPrice', 'Quantity', 'RowType'],
+        }),
+      });
+      const fetchPayload = (await fetchRes.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; rows?: Array<Record<string, unknown>> }
+        | null;
+      if (!fetchRes.ok || !fetchPayload?.ok) {
+        throw new Error(fetchPayload?.error ?? `Unable to load rows (status ${fetchRes.status})`);
+      }
+      const rows = Array.isArray(fetchPayload?.rows) ? fetchPayload.rows : [];
+
+      type Entry = { OfferDetailID: number; oldNet: number; quantity: number; newNet: number };
+      const entries: Entry[] = [];
+      let recomputedTotal = 0;
+      for (const row of rows) {
+        if (!isOfferProductProduct(row)) continue;
+        const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+        if (id == null) continue;
+        const net = coerceNumber((row as { NetUnitPrice?: unknown }).NetUnitPrice);
+        const qty = coerceNumber((row as { Quantity?: unknown }).Quantity);
+        if (net == null || qty == null) continue;
+        entries.push({ OfferDetailID: id, oldNet: net, quantity: qty, newNet: net });
+        recomputedTotal += net * qty;
+      }
+
+      if (entries.length === 0 || Math.abs(recomputedTotal) < 1e-9) {
+        showToastMessage('No product rows with a priced quantity to rescale.', 'error');
+        return;
+      }
+
+      const scale = targetTotal / recomputedTotal;
+      for (const entry of entries) {
+        entry.newNet = roundMoney(entry.oldNet * scale, 4);
+      }
+
+      const chunkSize = 200;
+      for (let idx = 0; idx < entries.length; idx += chunkSize) {
+        const chunk = entries.slice(idx, idx + chunkSize);
+        const updates = chunk.map((e) => ({ OfferDetailID: e.OfferDetailID, NetUnitPrice: e.newNet }));
+        const updateRes = await fetch(resolvedEndpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates }),
+        });
+        const updatePayload = (await updateRes.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!updateRes.ok || !updatePayload?.ok) {
+          throw new Error(updatePayload?.error ?? `Rescale failed (status ${updateRes.status})`);
+        }
+      }
+
+      const capturedEntries = entries.map((e) => ({ OfferDetailID: e.OfferDetailID, oldNet: e.oldNet }));
+      const capturedEndpoint = resolvedEndpoint;
+      pushUndo({
+        label: `Total Net Price rescaled (${entries.length} items)`,
+        undo: async () => {
+          for (let idx = 0; idx < capturedEntries.length; idx += chunkSize) {
+            const chunk = capturedEntries.slice(idx, idx + chunkSize);
+            const updates = chunk.map((e) => ({ OfferDetailID: e.OfferDetailID, NetUnitPrice: e.oldNet }));
+            const undoRes = await fetch(capturedEndpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ updates }),
+            });
+            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert rescale');
+          }
+          refreshOfferProductGrid(null, { purge: false });
+        },
+      });
+
+      showToastMessage(`Total Net Price set to ${decimalFormatter.format(targetTotal)} € (${entries.length} items updated)`, 'success', 5500, {
+        label: 'Undo',
+        onClick: () => performUndo(),
+      });
+      setTotalNetEditing(false);
+      setTotalNetInputValue('');
+      refreshOfferProductGrid(null, { purge: false });
+    } catch (err) {
+      console.error('Total Net Price rescale failed', err);
+      showToastMessage(`Unable to rescale: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
+    } finally {
+      setTotalNetApplying(false);
+    }
+  }, [cancelEditTotalNet, performUndo, pushUndo, refreshOfferProductGrid, resolvedEndpoint, totalNetApplying, totals]);
+
+  const submitTotalNetEdit = useCallback(() => {
+    if (totalNetSubmitPendingRef.current) return;
+    const parsed = coerceNumber(totalNetInputValue);
+    if (parsed == null) {
+      showToastMessage('Please enter a valid total net price.', 'error');
+      setTotalNetEditing(false);
+      setTotalNetInputValue('');
+      return;
+    }
+    totalNetSubmitPendingRef.current = true;
+    void applyTotalNetPriceScale(parsed).finally(() => {
+      totalNetSubmitPendingRef.current = false;
+    });
+  }, [applyTotalNetPriceScale, totalNetInputValue]);
 
   // Real-time updates for collaborative editing
   // showNotifications: false - only the person making the edit sees toasts from their own actions
@@ -5919,12 +6318,51 @@ const requestedColumnDefsMap = useMemo(
         {hideTotals ? null : (
           <div className={styles.totalsBar}>
             <div className={styles.totalItem}>
-              <span className={styles.totalLabel}>Total Net Price:</span>
-              <span className={styles.totalValue}>{formatEuroTotal(totals?.totalNetPrice)}</span>
+              <span className={styles.totalLabel}>Total List:</span>
+              <span className={styles.totalValue}>{formatEuroTotal(totals?.totalListPrice)}</span>
             </div>
             <div className={styles.totalItem}>
-              <span className={styles.totalLabel}>Total List Price:</span>
-              <span className={styles.totalValue}>{formatEuroTotal(totals?.totalListPrice)}</span>
+              <span className={styles.totalLabel}>Total Net:</span>
+              {totalNetEditing ? (
+                <input
+                  className={styles.totalNetInput}
+                  autoFocus
+                  inputMode="decimal"
+                  value={totalNetInputValue}
+                  disabled={totalNetApplying}
+                  onChange={(e) => setTotalNetInputValue(e.target.value)}
+                  onBlur={submitTotalNetEdit}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      submitTotalNetEdit();
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      cancelEditTotalNet();
+                    }
+                  }}
+                />
+              ) : (
+                <span
+                  className={`${styles.totalValue} ${styles.totalNetEditable}`}
+                  role="button"
+                  tabIndex={0}
+                  title="Click to rescale all Net Unit Prices to match a target total"
+                  onClick={beginEditTotalNet}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      beginEditTotalNet();
+                    }
+                  }}
+                >
+                  {formatEuroTotal(totals?.totalNetPrice)}
+                </span>
+              )}
+            </div>
+            <div className={styles.totalItem}>
+              <span className={styles.totalLabel}>Total Discount:</span>
+              <span className={styles.totalValue}>{formatDiscountTotal(totals?.totalListPrice, totals?.totalNetPrice)}</span>
             </div>
             <div className={styles.totalItem}>
               <span className={styles.totalLabel}>Total Cost:</span>

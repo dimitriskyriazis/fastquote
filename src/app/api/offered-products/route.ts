@@ -23,6 +23,7 @@ type GridRequest = {
 
 type OfferDetailRow = {
   OfferDetailID: number | null;
+  ProductID: number | null;
   OfferID: number | null;
   OfferTitle: string | null;
   OfferDescription: string | null;
@@ -33,6 +34,7 @@ type OfferDetailRow = {
   PartNumber: string | null;
   ModelNumber: string | null;
   BrandName: string | null;
+  Origin: string | null;
   ProductDescription: string | null;
   Quantity: number | null;
   ListPrice: number | null;
@@ -60,6 +62,7 @@ type OfferDetailRowWithCount = OfferDetailRow & { __totalCount: number | bigint 
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferDetailID: 'od.ID',
+  ProductID: 'od.ProductID',
   OfferID: 'od.OfferID',
   OfferTitle: 'o.Title',
   OfferDescription: 'o.Description',
@@ -70,6 +73,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   PartNumber: 'od.PartNumber',
   ModelNumber: 'od.ModelNumber',
   BrandName: 'b.Name',
+  Origin: 'p.Origin',
   ProductDescription: 'od.ProductDescription',
   Quantity: 'od.Quantity',
   ListPrice: 'od.ListPrice',
@@ -215,6 +219,7 @@ const selectClause = `
   SELECT
     COUNT_BIG(1) OVER () AS __totalCount,
     od.ID AS OfferDetailID,
+    od.ProductID,
     od.OfferID,
     o.Title AS OfferTitle,
     o.Description AS OfferDescription,
@@ -225,6 +230,7 @@ const selectClause = `
     od.PartNumber,
     od.ModelNumber,
     b.Name AS BrandName,
+    p.Origin AS Origin,
     od.ProductDescription,
     od.Quantity,
     od.ListPrice,
@@ -256,6 +262,7 @@ const fromClause = `
     LEFT JOIN dbo.Brands b ON od.BrandID = b.ID
     LEFT JOIN dbo.OfferStatus os ON o.StatusID = os.ID
     LEFT JOIN dbo.Currencies oc ON od.OtherCurrencyID = oc.ID
+    LEFT JOIN dbo.Products p ON od.ProductID = p.ID
 `;
 
 const baseFilter = `

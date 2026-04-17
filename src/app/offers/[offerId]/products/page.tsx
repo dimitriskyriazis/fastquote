@@ -46,7 +46,13 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
     };
   } catch (err) {
     console.error('Failed to load offer title for products page', err);
-    return { title: null, description: null, customerName: null, isStandardPackage: false, createdByUserId: null };
+    return {
+      title: null,
+      description: null,
+      customerName: null,
+      isStandardPackage: false,
+      createdByUserId: null,
+    };
   }
 }
 
@@ -57,7 +63,13 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
   const normalizedId = Number.parseInt(decodedId, 10);
   const offerHeader = hasNumericOfferId
     ? await fetchOfferHeaderInfo(normalizedId)
-    : { title: null, description: null, customerName: null, isStandardPackage: false, createdByUserId: null };
+    : {
+        title: null,
+        description: null,
+        customerName: null,
+        isStandardPackage: false,
+        createdByUserId: null,
+      };
   const offerTitle = offerHeader.title;
   const offerDescription = offerHeader.description;
   const customerName = offerHeader.customerName;

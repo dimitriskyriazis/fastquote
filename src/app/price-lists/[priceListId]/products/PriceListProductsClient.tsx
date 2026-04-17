@@ -15,7 +15,7 @@ import type {
 import type { ServerRequestWithQuickFilter } from "../../../components/AgGridAll";
 import layoutStyles from "../../priceListDetail.module.css";
 import pageStyles from "./PriceListProductsPage.module.css";
-import { GridRowDeletion, getContextMenuSelectionSnapshot } from "../../../../lib/gridRowDeletion";
+import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselectedRowIds } from "../../../../lib/gridRowDeletion";
 import { showConfirmDialog, showMultiChoiceDialog } from "../../../../lib/confirm";
 import { checkDeletePermissionForClient } from "../../../../lib/deletePermissions";
 import { useAuditUser } from "../../../components/AuditUserProvider";
@@ -193,10 +193,12 @@ export default function PriceListProductsClient({
     if (Number.isFinite(rowCount) && rowCount > ADD_WEBLINK_MAX_PRODUCTS) {
       throw new Error(`Cannot process more than ${ADD_WEBLINK_MAX_PRODUCTS} products at once. Please filter first.`);
     }
+    const deselectedIds = getServerSideDeselectedRowIds(api);
     return Array.from(new Set(
       payload.rows
         .map((row) => normalizeProductId((row as { ProductID?: unknown }).ProductID ?? null))
-        .filter((id): id is number => id != null),
+        .filter((id): id is number => id != null)
+        .filter((id) => deselectedIds.size === 0 || !deselectedIds.has(String(id))),
     ));
   }, [endpoint]);
 

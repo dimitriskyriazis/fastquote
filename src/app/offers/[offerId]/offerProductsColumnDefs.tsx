@@ -621,6 +621,21 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       cellStyle: actualNumericCellStyle,
     },
     {
+      field: 'Origin',
+      headerName: 'Origin',
+      filter: 'agTextColumnFilter',
+      width: 130,
+      editable: (params) => isOfferProductProduct(params?.data ?? null),
+      valueSetter: ({ data, newValue }) => {
+        if (!data) return false;
+        const trimmed = typeof newValue === 'string' ? newValue.trim() : newValue == null ? null : String(newValue).trim();
+        (data as Record<string, unknown>).Origin = trimmed && trimmed.length > 0 ? trimmed : null;
+        return true;
+      },
+      cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS, TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS],
+      cellStyle: truncateCellStyle,
+    },
+    {
       field: 'Comment',
       headerName: 'Comment',
       filter: 'agTextColumnFilter',

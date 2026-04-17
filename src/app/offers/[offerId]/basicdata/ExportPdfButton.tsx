@@ -47,16 +47,23 @@ const columnLabels: Record<PdfProductColumn, string> = {
   no: 'No',
   qty: 'Qty',
   brand: 'Brand',
-  type: 'Type',
+  type: 'Part Number',
+  modelNumber: 'Model Number',
   description: 'Description',
   warranty: 'Warranty',
+  origin: 'Origin',
   comment: 'Comment',
   delivery: 'Delivery',
-  listPrice: 'List Price',
+  listPrice: 'Unit List',
   totalList: 'Total List',
   discount: 'Discount %',
-  unitPrice: 'Unit Price',
+  unitPrice: 'Unit Net',
   total: 'Total Net',
+  requestedBrand: 'Req. Brand',
+  requestedPartNo: 'Req. Part Number',
+  requestedModelNo: 'Req. Model Number',
+  requestedDescription: 'Req. Description',
+  requestedQuantity: 'Req. Qty',
 };
 
 export default function ExportPdfButton({ offerId, className }: Props) {
@@ -78,6 +85,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
   const [smallOffer, setSmallOffer] = useState(false);
   const [equipmentList, setEquipmentList] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(false);
+  const [finalPriceLabel, setFinalPriceLabel] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -193,8 +201,11 @@ export default function ExportPdfButton({ offerId, className }: Props) {
       try {
         const columnsParam = encodeURIComponent(selectedColumns.join(','));
         const printParams = `&printProducts=${printProducts ? '1' : '0'}&printCategories=${printCategories ? '1' : '0'}&printSubCategories=${printSubCategories ? '1' : '0'}&printSubSubCategories=${printSubSubCategories ? '1' : '0'}&smallOffer=${smallOffer ? '1' : '0'}&equipmentList=${equipmentList ? '1' : '0'}`;
+        const finalPriceParam = finalPriceLabel.trim()
+          ? `&finalPriceLabel=${encodeURIComponent(finalPriceLabel.trim())}`
+          : '';
         const res = await fetch(
-          `/api/offers/${encodeURIComponent(offerId)}/pdf?lang=${selectedLang}&orientation=${orientation}&columns=${columnsParam}${printParams}`,
+          `/api/offers/${encodeURIComponent(offerId)}/pdf?lang=${selectedLang}&orientation=${orientation}&columns=${columnsParam}${printParams}${finalPriceParam}`,
         );
         if (!res.ok) {
           const body = await res.json().catch(() => null);
@@ -216,7 +227,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
         setIsExporting(false);
       }
     },
-    [offerId, selectedColumns, selectedLang, printProducts, printCategories, printSubCategories, printSubSubCategories, smallOffer, equipmentList],
+    [offerId, selectedColumns, selectedLang, printProducts, printCategories, printSubCategories, printSubSubCategories, smallOffer, equipmentList, finalPriceLabel],
   );
 
   const handlePreviewClose = useCallback(() => {
@@ -517,11 +528,11 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                     letterSpacing: '0.05em',
                   }}
                 >
-                  &larr; Totals
+                  &larr; Prices
                 </button>
               </div>
               <div style={{ padding: '4px 16px 2px', fontSize: 11, color: '#64748b' }}>
-                Show totals for:
+                Show prices for:
               </div>
               <div style={{ padding: '6px 16px 10px' }}>
                 {noOfLevels >= 2 && (
@@ -640,6 +651,25 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                   <span>Small Offer <span style={{ fontSize: 11, color: '#64748b' }}>(no cover page)</span></span>
                 </label>
               </div>
+              {!equipmentList && selectedColumns.some((c) => PRICE_COLUMN_SET.has(c)) && (
+                <div style={{ padding: '0 16px 10px' }}>
+                  <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>Final Price Label</div>
+                  <input
+                    type="text"
+                    value={finalPriceLabel}
+                    onChange={(e) => setFinalPriceLabel(e.target.value)}
+                    placeholder={selectedLang === 'el' ? 'Τελική Τιμή' : 'Final Price'}
+                    style={{
+                      width: '100%',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: 6,
+                      padding: '6px 8px',
+                      fontSize: 12,
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+              )}
               <div style={{ borderTop: '1px solid #e5e7eb' }} />
               <button
                 type="button"

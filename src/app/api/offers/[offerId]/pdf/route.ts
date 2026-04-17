@@ -17,6 +17,7 @@ type OfferHeaderRow = {
   InstallationSchedule: string | null;
   OfferNotesIntroduction: string | null;
   OfferNotesClosing: string | null;
+  DiscountNote: string | null;
   OfferContact: string | null;
   CustomerName: string | null;
   CustomerBrandName: string | null;
@@ -45,6 +46,7 @@ type ProductRow = {
   Quantity: number | null;
   ProductDescription: string | null;
   Warranty: string | number | null;
+  Origin: string | null;
   Comment: string | null;
   Delivery: string | null;
   NetUnitPrice: number | null;
@@ -56,6 +58,11 @@ type ProductRow = {
   WebLink: string | null;
   ListPrice: number | null;
   CustomerDiscount: number | null;
+  RequestedBrand: string | null;
+  RequestedPartNo: string | null;
+  RequestedModelNo: string | null;
+  RequestedDescription: string | null;
+  RequestedQuantity: number | null;
 };
 
 export async function GET(
@@ -88,6 +95,8 @@ export async function GET(
     const printSubSubCategories = req.nextUrl.searchParams.get('printSubSubCategories') === '1' ? 1 : 0;
     const smallOffer = req.nextUrl.searchParams.get('smallOffer') === '1';
     const equipmentList = req.nextUrl.searchParams.get('equipmentList') === '1';
+    const finalPriceLabelParam = req.nextUrl.searchParams.get('finalPriceLabel');
+    const finalPriceLabel = finalPriceLabelParam?.trim() || null;
 
     const pool = await getPool();
 
@@ -107,6 +116,7 @@ export async function GET(
           o.InstallationSchedule,
           o.OfferNotesIntroduction,
           o.OfferNotesClosing,
+          o.DiscountNote,
           o.OfferContact,
           c.Name AS CustomerName,
           c.BrandName AS CustomerBrandName,
@@ -157,6 +167,7 @@ export async function GET(
           od.Quantity,
           od.ProductDescription,
           od.Warranty,
+          p.Origin,
           od.[Comment],
           od.Delivery,
           od.NetUnitPrice,
@@ -164,6 +175,11 @@ export async function GET(
           od.TotalNet,
           od.ListPrice,
           od.CustomerDiscount,
+          od.RequestedBrand,
+          od.RequestedPartNo,
+          od.RequestedModelNo,
+          od.RequestedDescription,
+          od.RequestedQuantity,
           b.Name AS BrandName,
           p.ModelNumber,
           p.PartNumber,
@@ -215,6 +231,7 @@ export async function GET(
       partNumber: r.PartNumber,
       description: r.ProductDescription,
       warranty: r.Warranty,
+      origin: r.Origin,
       comment: r.Comment,
       delivery: r.Delivery,
       unitPrice: r.NetUnitPrice,
@@ -223,6 +240,11 @@ export async function GET(
       webLink: r.WebLink,
       listPrice: r.ListPrice,
       customerDiscount: r.CustomerDiscount,
+      requestedBrand: r.RequestedBrand,
+      requestedPartNo: r.RequestedPartNo,
+      requestedModelNo: r.RequestedModelNo,
+      requestedDescription: r.RequestedDescription,
+      requestedQuantity: r.RequestedQuantity,
     }));
 
     const offerDateStr =
@@ -270,6 +292,8 @@ export async function GET(
       },
       notesIntroduction: header.OfferNotesIntroduction,
       notesClosing: header.OfferNotesClosing,
+      discountNote: header.DiscountNote,
+      finalPriceLabel,
     };
 
     // ── Generate PDF ───────────────────────────────────────────────────

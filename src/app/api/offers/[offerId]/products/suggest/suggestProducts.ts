@@ -63,14 +63,39 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
   const weights: number[] = [];
   let paramIdx = 0;
 
-  const brandKey = normalizeBrandKey(brand);
-  if (brandKey) {
-    const p = `brand_${paramIdx++}`;
-    request.input(p, sql.NVarChar(255), brandKey);
+  // A requested brand (or list like "Barco / Legrand") is a HARD filter — we must
+  // never suggest products from a different brand. Split on "/", "," or " or "
+  // so multi-brand requests match any listed brand. "&" is preserved because
+  // brand names use it (e.g. "d&b audiotechnik").
+  //
+  // Placeholders like "unknown", "n/a", "not set", "idk", "tbd", "any", "-"
+  // mean the user doesn't know the brand — fall back to searching all brands.
+  const brandPlaceholders = new Set([
+    'unknown', 'n/a', 'na', 'notset', 'nonset', 'none', 'nil', 'null',
+    'idk', 'tbd', 'tba', 'any', 'all', 'various', 'unspecified', '?', '-', '--',
+  ]);
+  const isBrandPlaceholder = (s: string) =>
+    brandPlaceholders.has(s.trim().toLowerCase().replace(/\s+/g, ''));
+  const brandParts = brand && !isBrandPlaceholder(brand)
+    ? brand
+        .split(/\s*\/\s*|\s*,\s*|\s+or\s+/i)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0 && !isBrandPlaceholder(s))
+    : [];
+  const brandKeys = brandParts
+    .map((b) => normalizeBrandKey(b))
+    .filter((k): k is string => !!k);
+  let brandRequiredClause: string | null = null;
+  if (brandKeys.length > 0) {
     const bk = brandKeySql('b.Name');
-    // Bi-directional starts-with: "d&b" matches "d&b audiotechnik" and vice versa
-    conditions.push(`(CHARINDEX(@${p}, ${bk}) = 1 OR (LEN(${bk}) > 0 AND CHARINDEX(${bk}, @${p}) = 1))`);
-    weights.push(3);
+    const brandOrs: string[] = [];
+    for (const key of brandKeys) {
+      const p = `brand_${paramIdx++}`;
+      request.input(p, sql.NVarChar(255), key);
+      // Bi-directional starts-with: "d&b" matches "d&b audiotechnik" and vice versa
+      brandOrs.push(`(CHARINDEX(@${p}, ${bk}) = 1 OR (LEN(${bk}) > 0 AND CHARINDEX(${bk}, @${p}) = 1))`);
+    }
+    brandRequiredClause = `(${brandOrs.join(' OR ')})`;
   }
 
   const addPartModelCondition = (value: string, prefix: string, weight: number) => {
@@ -84,14 +109,24 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
     weights.push(weight);
   };
 
-  // Prefix match: e.g. requested "Z5803" matches DB "Z5803000" (from "Z5803.000")
+  // Bi-directional prefix match:
+  //  - Forward:  requested "Z5803" finds DB "Z5803.000" (DB value extends request)
+  //  - Reverse:  requested "AW-RP150GJ" finds DB "AW-RP150" (request extends DB value)
+  // Reverse direction requires DB value length >= 4 to avoid short-prefix noise.
   const addPartModelPrefixCondition = (value: string, prefix: string, weight: number) => {
     const cleared = clearPartModelNumberUpper(value);
     if (!cleared) return;
     const p = `${prefix}_${paramIdx++}`;
     request.input(p, sql.NVarChar(255), cleared);
     conditions.push(
-      `(UPPER(ISNULL(p.PartNumberCleared, '')) LIKE @${p} + N'%' OR UPPER(ISNULL(p.ModelNumberCleared, '')) LIKE @${p} + N'%' OR UPPER(ISNULL(p.LegacyPartNoCleaned, '')) LIKE @${p} + N'%')`,
+      `(
+        UPPER(ISNULL(p.PartNumberCleared, '')) LIKE @${p} + N'%'
+        OR UPPER(ISNULL(p.ModelNumberCleared, '')) LIKE @${p} + N'%'
+        OR UPPER(ISNULL(p.LegacyPartNoCleaned, '')) LIKE @${p} + N'%'
+        OR (LEN(p.PartNumberCleared) >= 4 AND @${p} LIKE UPPER(p.PartNumberCleared) + N'%')
+        OR (LEN(p.ModelNumberCleared) >= 4 AND @${p} LIKE UPPER(p.ModelNumberCleared) + N'%')
+        OR (LEN(p.LegacyPartNoCleaned) >= 4 AND @${p} LIKE UPPER(p.LegacyPartNoCleaned) + N'%')
+      )`,
     );
     weights.push(weight);
   };
@@ -156,16 +191,20 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
     .match(/\b[A-Za-z]+[-.]?\d[\w.-]*\b|\b\d[\w.-]*[-.]?[A-Za-z]+\b/g)
     ?.filter((t) => t.length >= 3) ?? [];
   // Also consider the brand name might appear in description - skip it as a model token
-  const brandUpper = brand?.toUpperCase();
+  const brandUpperSet = new Set(brandParts.map((b) => b.toUpperCase()));
   const uniqueModelTokens = [...new Set(modelLikeTokens.map((t) => t.toUpperCase()))]
-    .filter((t) => t !== brandUpper)
+    .filter((t) => !brandUpperSet.has(t))
     .slice(0, 4);
 
   for (const token of uniqueModelTokens) {
-    if (!partNumber && !modelNumber) {
-      // No explicit part/model number provided, so try matching these tokens as part/model
-      addPartModelCondition(token, 'dmt', 8);
-    }
+    // Always try description-extracted tokens as part/model candidates. When no
+    // explicit pn/mn is provided they carry the search (weight 8); when pn/mn
+    // are present they act as a supplementary signal (weight 4) — this helps
+    // cases like pn "AW-RP150GJ" with a description mentioning "RP150" that
+    // matches a shorter DB entry.
+    const weight = !partNumber && !modelNumber ? 8 : 4;
+    addPartModelCondition(token, 'dmt', weight);
+    addPartModelPrefixCondition(token, 'dmtpfx', Math.max(weight - 2, 2));
   }
 
   const fullDesc = [desc1, desc2, desc3, partNumber, modelNumber].filter(Boolean).join(' ');
@@ -186,6 +225,9 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
 
   const scoreParts = conditions.map((cond, i) => `CASE WHEN ${cond} THEN ${weights[i]} ELSE 0 END`);
   const scoreExpr = scoreParts.join(' + ');
+  const whereClause = brandRequiredClause
+    ? `${brandRequiredClause} AND (${conditions.join(' OR ')})`
+    : `(${conditions.join(' OR ')})`;
 
   const query = `
     SELECT TOP (50)
@@ -216,7 +258,7 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
           pl.ValidFromDate DESC,
           pli.ID DESC
       ) price
-    WHERE (${conditions.join(' OR ')})
+    WHERE ${whereClause}
     ORDER BY (${scoreExpr}) DESC, CASE WHEN price.ListPrice IS NOT NULL THEN 0 ELSE 1 END, p.ID DESC
   `;
 
@@ -308,6 +350,16 @@ Matching rules:
       orderedProducts.push(rest);
       usedIds.add(id);
     }
+  }
+
+  // If the AI over-filtered and returned nothing, fall back to the top SQL
+  // candidates so the user at least sees the closest matches by score rather
+  // than an empty "no matching products found" state.
+  if (orderedProducts.length === 0) {
+    return candidates.slice(0, 8).map(({ MatchScore, ...rest }) => {
+      void MatchScore;
+      return rest;
+    });
   }
 
   return orderedProducts.slice(0, 8);
