@@ -67,6 +67,23 @@ export async function POST(req: NextRequest) {
     const request = pool.request();
     request.input("mailId", sql.Int, mailId);
     const result = await request.query<ContactRow>(`
+      WITH ContactPool AS (
+        SELECT mc.ContactID
+        FROM dbo.MailContacts mc
+        WHERE mc.MailID = @mailId
+        UNION
+        SELECT cgl.ContactID
+        FROM dbo.MailContactGroups mcg
+        INNER JOIN dbo.ContactsGroupLists cgl ON cgl.ContactGroupID = mcg.ContactGroupID
+        WHERE mcg.MailID = @mailId
+          AND (
+            mcg.MinimumImportance IS NULL
+            OR LTRIM(RTRIM(mcg.MinimumImportance)) = ''
+            OR CASE cgl.Importance WHEN 'High' THEN 1 WHEN 'Med' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END
+               <=
+               CASE mcg.MinimumImportance WHEN 'High' THEN 1 WHEN 'Med' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END
+          )
+      )
       SELECT
         cust.Name AS CustomerName,
         t.Name AS Title,
@@ -74,11 +91,10 @@ export async function POST(req: NextRequest) {
         c.FirstName,
         c.Email,
         c.Fax
-      FROM dbo.MailContacts mc
-      INNER JOIN dbo.Contacts c ON c.ID = mc.ContactID
+      FROM ContactPool cp
+      INNER JOIN dbo.Contacts c ON c.ID = cp.ContactID
       LEFT JOIN dbo.Titles t ON t.ID = c.TitleID
       LEFT JOIN dbo.Customers cust ON cust.ID = c.CustomerID
-      WHERE mc.MailID = @mailId
       ORDER BY c.LastName, c.FirstName
     `);
 
