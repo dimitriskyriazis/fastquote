@@ -9,6 +9,7 @@ import { handleApiError } from '../../../../lib/errorHandler';
 import { validateRequest, stringSchema, positiveIntSchema, emailSchema, urlSchema } from '../../../../lib/validation';
 import { sanitizeJsonUnsafeChars } from '../../../../lib/normalize';
 import { requirePermission } from '../../../../lib/authz';
+import { logAddAuditDetails } from '../../../../lib/mutationAudit';
 
 // Strict schema-based validation with rejection of unknown fields
 const createCustomerSchema = z.object({
@@ -192,6 +193,16 @@ export async function POST(req: NextRequest) {
     if (!createdId) {
       return NextResponse.json({ ok: false, error: 'Unable to create customer.' }, { status: 500 });
     }
+
+    logAddAuditDetails({
+      endpoint: '/api/customers/create',
+      method: 'POST',
+      requestId,
+      userId,
+      targetEntity: 'customers',
+      createdRows: [{ id: createdId, name }],
+      message: 'Customer created',
+    });
 
     return NextResponse.json({ ok: true, customerId: createdId });
   } catch (err) {

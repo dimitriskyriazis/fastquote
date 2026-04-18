@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { requirePermission } from "../../../../../lib/authz";
+import { resolveAuditUserId } from "../../../../../lib/auditTrail";
+import { getRequestId } from "../../../../../lib/requestId";
+import { logEditAuditDetails } from "../../../../../lib/mutationAudit";
 
 type RestoreRow = {
   MailID?: number | null;
@@ -14,6 +17,8 @@ type RestoreRow = {
 };
 
 export async function POST(req: NextRequest) {
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;
@@ -26,6 +31,7 @@ export async function POST(req: NextRequest) {
 
     const pool = await getPool();
     let restored = 0;
+    const restoredRows: Array<{ id: number; name: string | null }> = [];
 
     for (const row of rows) {
       const request = pool.request();
@@ -37,11 +43,35 @@ export async function POST(req: NextRequest) {
       request.input("IsPresent", sql.Bit, row.IsPresent ? 1 : 0);
       request.input("Locked", sql.Bit, row.Locked ? 1 : 0);
 
-      await request.query(`
+      const result = await request.query<{ ID: number }>(`
         INSERT INTO dbo.Mails ([Date], Description, Note, UsedForFax, IsPresent, Locked)
+        OUTPUT INSERTED.ID
         VALUES (@Date, @Description, @Note, @UsedForFax, @IsPresent, @Locked)
       `);
+      const insertedId = result.recordset?.[0]?.ID;
+      if (insertedId != null) {
+        restoredRows.push({ id: insertedId, name: row.Description?.trim() || null });
+      }
       restored++;
+    }
+
+    if (restoredRows.length > 0) {
+      logEditAuditDetails({
+        endpoint: '/api/marketing/mails/restore',
+        method: 'POST',
+        requestId,
+        userId,
+        targetEntity: 'mails',
+        targetIds: restoredRows.map((r) => r.id),
+        changes: restoredRows.map((r) => ({
+          targetId: r.id,
+          targetName: r.name,
+          field: 'Deleted',
+          before: true,
+          after: false,
+        })),
+        message: 'Mails restored',
+      });
     }
 
     return NextResponse.json({ ok: true, restored });

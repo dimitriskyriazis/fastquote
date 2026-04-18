@@ -7,6 +7,7 @@ import { getRequestId } from '../../../../lib/requestId';
 import { handleApiError, createErrorResponse } from '../../../../lib/errorHandler';
 import { logger } from '../../../../lib/logger';
 import { resolveAuditUserId } from '../../../../lib/auditTrail';
+import { logEditAuditDetails, type FieldChange } from '../../../../lib/mutationAudit';
 import { clearPartModelNumberUpper } from '../../../../lib/partModelNumber';
 import {
   validateParams,
@@ -272,6 +273,25 @@ export async function PATCH(
       productId: normalized,
       updatedFields: updates.map((entry) => entry.column),
     });
+
+    const changes: FieldChange[] = updates.map((entry) => ({
+      targetId: normalized,
+      field: entry.column,
+      before: null,
+      after: entry.value,
+    }));
+    if (changes.length > 0) {
+      logEditAuditDetails({
+        endpoint: `/api/products/${normalized}`,
+        method: 'PATCH',
+        requestId,
+        userId,
+        targetEntity: 'products',
+        targetIds: [normalized],
+        changes,
+        message: 'Product updated',
+      });
+    }
 
     return NextResponse.json({ ok: true });
   } catch (err) {

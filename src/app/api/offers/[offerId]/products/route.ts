@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { logRequest } from '../../../../../lib/apiHelpers';
 import sql, { ConnectionPool } from 'mssql';
 import { buildAuditContext, type AuditContext } from '../../../../../lib/auditTrail';
+import { getRequestId } from '../../../../../lib/requestId';
+import {
+  logAddAuditDetails,
+  logDeleteAuditDetails,
+  logEditAuditDetails,
+  type FieldChange,
+} from '../../../../../lib/mutationAudit';
 import { getPool } from '../../../../../lib/sql';
 import {
   buildQuickFilterClause,
@@ -506,6 +513,7 @@ async function handleReorderRow(
   offerId: number,
   payload: ReorderRequest,
   audit: AuditContext,
+  requestId?: string,
 ): Promise<NextResponse> {
   const rawSourceIds = Array.isArray(payload.sourceIds) ? payload.sourceIds : [];
   const normalizedSourceIds: number[] = [];
@@ -652,7 +660,7 @@ async function handleReorderRow(
 
   const updates = collectResequencedUpdates(roots);
   const rowsAffected = await persistTreeOrderingUpdates(pool, offerId, audit, updates);
-  
+
   // Emit realtime event for row reordering
   if (updates.length > 0) {
     realtimeEvents.emit(
@@ -666,8 +674,25 @@ async function handleReorderRow(
         updatedBy: audit.userId,
       }
     );
+    const changes: FieldChange[] = updates.map((u) => ({
+      targetId: u.OfferDetailID,
+      field: 'TreeOrdering',
+      before: null,
+      after: u.TreeOrdering ?? null,
+    }));
+    logEditAuditDetails({
+      endpoint: `/api/offers/${offerId}/products`,
+      method: 'POST',
+      requestId,
+      userId: audit.userId,
+      targetEntity: 'offerProducts',
+      targetIds: Array.from(new Set(changes.map((c) => c.targetId))),
+      changes,
+      message: `Offer rows reordered for offer ${offerId}`,
+      extra: { offerId, action: 'reorder' },
+    });
   }
-  
+
   return NextResponse.json({ ok: true, updated: updates.length, rowsAffected });
 }
 
@@ -700,6 +725,7 @@ async function handleCreateRow(
   offerId: number,
   payload: CreateRowRequest | null,
   audit: AuditContext,
+  requestId?: string,
 ) {
   const type = normalizeCreateRowType(payload?.type ?? null);
   if (!type) {
@@ -815,8 +841,23 @@ async function handleCreateRow(
         updatedBy: createdBy,
       }
     );
+    logAddAuditDetails({
+      endpoint: `/api/offers/${offerId}/products`,
+      method: 'POST',
+      requestId,
+      userId: audit.userId,
+      targetEntity: 'offerProducts',
+      createdRows: [
+        {
+          id: inserted.OfferDetailID,
+          name: inserted.ProductDescription?.trim() || description,
+        },
+      ],
+      message: `Offer row created (type: ${type})`,
+      extra: { offerId, rowType: type },
+    });
   }
-  
+
   return NextResponse.json({
     ok: true,
     created: inserted ?? null,
@@ -1161,6 +1202,7 @@ export async function POST(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   logRequest(req, '/api/offers/[offerId]/products');
+  const requestId = await getRequestId(req);
   try {
     let body: (GridRequestEnvelope & (CreateRowRequest | ReorderRequest)) | null = null;
     try {
@@ -1232,13 +1274,13 @@ export async function POST(
     if ((body as ReorderRequest | null)?.action === 'reorder') {
       const auth = await requirePermission(req, "editOffers");
       if (!auth.ok) return auth.response;
-      return handleReorderRow(idValue, body as ReorderRequest, audit);
+      return handleReorderRow(idValue, body as ReorderRequest, audit, requestId);
     }
 
     if ((body as CreateRowRequest | null)?.action === 'create') {
       const auth = await requirePermission(req, "editOffers");
       if (!auth.ok) return auth.response;
-      return handleCreateRow(idValue, body as CreateRowRequest, audit);
+      return handleCreateRow(idValue, body as CreateRowRequest, audit, requestId);
     }
 
     const pool = await getPool();
@@ -1451,6 +1493,7 @@ export async function PUT(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   logRequest(req, '/api/offers/[offerId]/products');
+  const requestId = await getRequestId(req);
   try {
     const auth = await requirePermission(req, "editOffers");
     if (!auth.ok) return auth.response;
@@ -1501,6 +1544,23 @@ export async function PUT(
           updatedBy: audit.userId,
         },
       );
+      const changes: FieldChange[] = normalizedUpdates.map((u) => ({
+        targetId: u.OfferDetailID,
+        field: 'TreeOrdering',
+        before: null,
+        after: u.TreeOrdering ?? null,
+      }));
+      logEditAuditDetails({
+        endpoint: `/api/offers/${offerId}/products`,
+        method: 'PUT',
+        requestId,
+        userId: audit.userId,
+        targetEntity: 'offerProducts',
+        targetIds: Array.from(new Set(changes.map((c) => c.targetId))),
+        changes,
+        message: `Offer row tree ordering updated for offer ${offerId}`,
+        extra: { offerId },
+      });
     }
 
     return NextResponse.json({
@@ -1520,6 +1580,7 @@ export async function PATCH(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   logRequest(req, '/api/offers/[offerId]/products');
+  const requestId = await getRequestId(req);
   try {
     const auth = await requirePermission(req, "editOffers");
     if (!auth.ok) return auth.response;
@@ -2593,6 +2654,55 @@ export async function PATCH(
       }
     }
 
+    if (affected > 0) {
+      const changes: FieldChange[] = [];
+      normalizedUpdates.forEach((entry) => {
+        const addChange = (field: string, after: unknown) => {
+          changes.push({ targetId: entry.OfferDetailID, field, before: null, after });
+        };
+        if (entry.hasProductDescription) addChange('ProductDescription', entry.ProductDescription);
+        if (entry.hasComment) addChange('Comment', entry.Comment);
+        if (entry.hasDelivery) addChange('Delivery', entry.Delivery);
+        if (entry.hasQuantity) addChange('Quantity', entry.Quantity);
+        if (entry.hasCustomerDiscount) addChange('CustomerDiscount', entry.customerDiscount);
+        if (entry.hasTelmacoDiscount) addChange('TelmacoDiscount', entry.telmacoDiscount);
+        if (entry.hasNetUnitPrice) addChange('NetUnitPrice', entry.netUnitPrice);
+        if (entry.hasNetCostOtherCurrency) addChange('NetCostOtherCurrency', entry.netCostOtherCurrency);
+        if (entry.hasOtherCurrencyID) addChange('OtherCurrencyID', entry.otherCurrencyId);
+        if (entry.hasCurrencyCostModifier) addChange('CurrencyCostModifier', entry.currencyCostModifier);
+        if (entry.hasNetCost) addChange('NetCost', entry.netCost);
+        if (entry.hasMargin) addChange('Margin', entry.margin);
+        if (entry.hasListPrice) addChange('ListPrice', entry.listPrice);
+        if (entry.hasIsCategory) addChange('IsCategory', entry.IsCategory);
+        if (entry.hasIsPrintable) addChange('IsPrintable', entry.IsPrintable);
+        if (entry.hasIsComment) addChange('IsComment', entry.IsComment);
+        if (entry.hasRequestedItemNo) addChange('RequestedItemNo', entry.requestedItemNo);
+        if (entry.hasRequestedBrand) addChange('RequestedBrand', entry.RequestedBrand);
+        if (entry.hasRequestedModelNo) addChange('RequestedModelNo', entry.RequestedModelNo);
+        if (entry.hasRequestedPartNo) addChange('RequestedPartNo', entry.RequestedPartNo);
+        if (entry.hasRequestedWebLink) addChange('RequestedWebLink', entry.RequestedWebLink);
+        if (entry.hasRequestedDescription) addChange('RequestedDescription', entry.RequestedDescription);
+        if (entry.hasRequestedDescription2) addChange('RequestedDescription2', entry.RequestedDescription2);
+        if (entry.hasRequestedDescription3) addChange('RequestedDescription3', entry.RequestedDescription3);
+        if (entry.hasRequestedQuantity) addChange('RequestedQuantity', entry.RequestedQuantity);
+        if (entry.hasPartNumber) addChange('PartNumber', entry.PartNumber);
+        if (entry.hasModelNumber) addChange('ModelNumber', entry.ModelNumber);
+      });
+      if (changes.length > 0) {
+        logEditAuditDetails({
+          endpoint: `/api/offers/${offerId}/products`,
+          method: 'PATCH',
+          requestId,
+          userId: audit.userId,
+          targetEntity: 'offerProducts',
+          targetIds: Array.from(new Set(changes.map((c) => c.targetId))),
+          changes,
+          message: `Offer products updated for offer ${offerId}`,
+          extra: { offerId },
+        });
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       updated: normalizedUpdates.length,
@@ -2611,6 +2721,7 @@ export async function DELETE(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   logRequest(req, '/api/offers/[offerId]/products');
+  const requestId = await getRequestId(req);
   try {
     const auth = await requirePermission(req, "editOffers");
     if (!auth.ok) return auth.response;
@@ -2818,6 +2929,29 @@ export async function DELETE(
       const { ID, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, ...rest } = row;
       void ID; void CreatedOn; void CreatedBy; void ModifiedOn; void ModifiedBy;
       return rest;
+    });
+
+    const deletedRowsForAudit = allDeletedRows.map((row) => {
+      const id = Number((row as Record<string, unknown>).ID);
+      const name =
+        (row as Record<string, unknown>).PartNumber
+        ?? (row as Record<string, unknown>).ModelNumber
+        ?? (row as Record<string, unknown>).ProductDescription
+        ?? null;
+      return {
+        id: Number.isFinite(id) ? id : 0,
+        name: typeof name === 'string' ? name.trim() || null : null,
+      };
+    });
+    logDeleteAuditDetails({
+      endpoint: `/api/offers/${offerId}/products`,
+      requestId,
+      userId: audit.userId,
+      targetEntity: 'offerProducts',
+      requestedIds: normalizedIds,
+      deletedRows: deletedRowsForAudit,
+      message: `Offer products deleted from offer ${offerId}`,
+      extra: { offerId },
     });
 
     return NextResponse.json({

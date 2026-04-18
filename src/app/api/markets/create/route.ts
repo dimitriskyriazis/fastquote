@@ -3,6 +3,8 @@ import { logRequest } from '../../../../lib/apiHelpers';
 import sql, { ConnectionPool } from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
+import { getRequestId } from "../../../../lib/requestId";
+import { logAddAuditDetails } from "../../../../lib/mutationAudit";
 
 const normalizeTextValue = (value: unknown): string | null => {
   if (value == null) return null;
@@ -41,6 +43,7 @@ const findSalesDivisionId = async (pool: ConnectionPool, divisionName: string): 
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/markets/create');
+  const requestId = await getRequestId(req);
   try {
     const payload = (await req.json().catch(() => null)) as
       | {
@@ -102,6 +105,15 @@ export async function POST(req: NextRequest) {
     if (!market) {
       throw new Error("Unable to load created market.");
     }
+    logAddAuditDetails({
+      endpoint: '/api/markets/create',
+      method: 'POST',
+      requestId,
+      userId: auditUserId,
+      targetEntity: 'markets',
+      createdRows: [{ id: market.MarketID, name: market.Name?.trim() || name }],
+      message: 'Market created',
+    });
     return NextResponse.json({ ok: true, market });
   } catch (err) {
     console.error("Failed to create market", err);

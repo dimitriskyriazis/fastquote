@@ -169,7 +169,7 @@ async function resolveLookupCode(
  *   mtrcategory = 1  (Εμπόρευμα/Merchandise)
  *   mtrmanfctr  = ERP manufacturer ID (from MTRMANFCTR table)
  *   busunits    = Business Unit code (10=AVS, 20=TVS)
- *   category    = Soft1 code (from ProductCategories.Code)
+ *   category    = Soft1 CCCCLCATEG numeric ID (same as ProductCategories.ID)
  *   subcateg    = Soft1 code (from ProductSubCategories.Code)
  *   type        = Soft1 code (from ProductTypes.Code)
  */
@@ -189,16 +189,16 @@ export async function createItemViaWebService(
   // Resolve ERP manufacturer ID from brand name
   const mtrmanfctr = await resolveErpManufacturerId(erpPool, params.brandName);
 
-  // Resolve Soft1 codes for category, subcategory, and type (in parallel)
-  const [categoryCode, subCategoryCode, typeCode] = await Promise.all([
-    resolveLookupCode(pool, 'ProductCategories', params.categoryId),
+  // SoftOne's CCCCLCATEG field expects the numeric ID, not the CODE string.
+  // FastQuote ProductCategories.ID is aligned with SoftOne's CCCCLCATEG IDs.
+  const categoryValue = String(params.categoryId);
+
+  // Resolve Soft1 codes for subcategory and type (in parallel)
+  const [subCategoryCode, typeCode] = await Promise.all([
     resolveLookupCode(pool, 'ProductSubCategories', params.subCategoryId),
     resolveLookupCode(pool, 'ProductTypes', params.typeId),
   ]);
 
-  if (!categoryCode) {
-    throw new Error(`Soft1 Code not found in ProductCategories for ID=${params.categoryId}`);
-  }
   if (!subCategoryCode) {
     throw new Error(`Soft1 Code not found in ProductSubCategories for ID=${params.subCategoryId}`);
   }
@@ -235,7 +235,7 @@ export async function createItemViaWebService(
     mtrcategory: 1,
     mtrmanfctr,
     busunits: mapBusinessUnit(params.businessUnit),
-    category: categoryCode,
+    category: categoryValue,
     subcateg: subCategoryCode,
     type: typeCode,
   };
@@ -247,7 +247,7 @@ export async function createItemViaWebService(
     name: itemName,
     businessUnit: params.businessUnit,
     mtrmanfctr: mtrmanfctr ?? null,
-    categoryCode: categoryCode ?? null,
+    categoryValue,
     subCategoryCode: subCategoryCode ?? null,
     typeCode: typeCode ?? null,
   });

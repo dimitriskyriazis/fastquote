@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { requirePermission } from "../../../../lib/authz";
+import { resolveAuditUserId } from "../../../../lib/auditTrail";
+import { getRequestId } from "../../../../lib/requestId";
+import { logEditAuditDetails, type FieldChange } from "../../../../lib/mutationAudit";
 
 type RestoreRow = {
   ContactID?: number | null;
@@ -22,6 +25,8 @@ type RestoreRow = {
 };
 
 export async function POST(req: NextRequest) {
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;
@@ -34,6 +39,7 @@ export async function POST(req: NextRequest) {
 
     const pool = await getPool();
     let restored = 0;
+    const restoredRows: Array<{ id: number; name: string | null }> = [];
 
     for (const row of rows) {
       const request = pool.request();
@@ -52,20 +58,50 @@ export async function POST(req: NextRequest) {
       request.input("SecondEmailStatusID", sql.Int, row.SecondEmailStatusID ?? null);
       request.input("Notes", sql.NVarChar(2000), row.Notes ?? null);
 
-      await request.query(`
+      const result = await request.query<{ ID: number; FirstName: string | null; LastName: string | null }>(`
         INSERT INTO dbo.Contacts (
           CustomerID, TitleID, FirstName, LastName, Position,
           Importance, Enabled, Phone, Mobile, Email, EmailStatusID,
           SecondEmail, SecondEmailStatusID, Notes,
           CreatedOn, ModifiedOn
-        ) VALUES (
+        )
+        OUTPUT inserted.ID, inserted.FirstName, inserted.LastName
+        VALUES (
           @CustomerID, @TitleID, @FirstName, @LastName, @Position,
           @Importance, @Enabled, @Phone, @Mobile, @Email, @EmailStatusID,
           @SecondEmail, @SecondEmailStatusID, @Notes,
           SYSUTCDATETIME(), SYSUTCDATETIME()
         )
       `);
+      const inserted = result.recordset?.[0];
+      if (inserted?.ID != null) {
+        const fullName = [inserted.FirstName, inserted.LastName]
+          .map((value) => value?.trim())
+          .filter(Boolean)
+          .join(' ');
+        restoredRows.push({ id: inserted.ID, name: fullName || null });
+      }
       restored++;
+    }
+
+    if (restoredRows.length > 0) {
+      const changes: FieldChange[] = restoredRows.map((row) => ({
+        targetId: row.id,
+        targetName: row.name,
+        field: 'Deleted',
+        before: true,
+        after: false,
+      }));
+      logEditAuditDetails({
+        endpoint: '/api/customer-contacts/restore',
+        method: 'POST',
+        requestId,
+        userId,
+        targetEntity: 'contacts',
+        targetIds: restoredRows.map((row) => row.id),
+        changes,
+        message: 'Contact restored',
+      });
     }
 
     return NextResponse.json({ ok: true, restored });

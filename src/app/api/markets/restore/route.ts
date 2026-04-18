@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
+import { getRequestId } from "../../../../lib/requestId";
+import { logEditAuditDetails } from "../../../../lib/mutationAudit";
 import { requirePermission } from "../../../../lib/authz";
 
 type RestoreRow = {
@@ -11,6 +13,7 @@ type RestoreRow = {
 };
 
 export async function POST(req: NextRequest) {
+  const requestId = await getRequestId(req);
   try {
     const auth = await requirePermission(req, "manageMarkets");
     if (!auth.ok) return auth.response;
@@ -24,6 +27,7 @@ export async function POST(req: NextRequest) {
     const pool = await getPool();
     const userId = resolveAuditUserId(req);
     let restored = 0;
+    const restoredRows: Array<{ id: number; name: string | null }> = [];
 
     for (const row of rows) {
       const request = pool.request();
@@ -32,16 +36,41 @@ export async function POST(req: NextRequest) {
       request.input("Enabled", sql.Bit, row.Enabled ? 1 : 0);
       request.input("UserId", sql.NVarChar(450), userId ?? null);
 
-      await request.query(`
+      const result = await request.query<{ ID: number }>(`
         INSERT INTO dbo.Markets (
           [Name], [SalesDivisionID], [Enabled],
           [CreatedOn], [CreatedBy], [ModifiedOn], [ModifiedBy]
-        ) VALUES (
+        )
+        OUTPUT INSERTED.ID
+        VALUES (
           @Name, @SalesDivisionID, @Enabled,
           SYSUTCDATETIME(), @UserId, SYSUTCDATETIME(), @UserId
         )
       `);
+      const insertedId = result.recordset?.[0]?.ID;
+      if (insertedId != null) {
+        restoredRows.push({ id: insertedId, name: row.Name?.trim() || null });
+      }
       restored++;
+    }
+
+    if (restoredRows.length > 0) {
+      logEditAuditDetails({
+        endpoint: '/api/markets/restore',
+        method: 'POST',
+        requestId,
+        userId,
+        targetEntity: 'markets',
+        targetIds: restoredRows.map((r) => r.id),
+        changes: restoredRows.map((r) => ({
+          targetId: r.id,
+          targetName: r.name,
+          field: 'Deleted',
+          before: true,
+          after: false,
+        })),
+        message: 'Markets restored',
+      });
     }
 
     return NextResponse.json({ ok: true, restored });

@@ -3,6 +3,8 @@ import { logRequest } from '../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../lib/sql";
 import { resolveAuditUserId } from "../../../lib/auditTrail";
+import { getRequestId } from "../../../lib/requestId";
+import { logDeleteAuditDetails, logEditAuditDetails } from "../../../lib/mutationAudit";
 import { requirePermission } from "../../../lib/authz";
 import { checkDeletePermission } from "../../../lib/deletePermissions";
 
@@ -31,6 +33,7 @@ const normalizeText = (value: unknown): string => {
 
 export async function PATCH(req: NextRequest) {
   logRequest(req, '/api/countries-cities');
+  const requestId = await getRequestId(req);
   try {
     const auth = await requirePermission(req, "manageCitiesCountries");
     if (!auth.ok) return auth.response;
@@ -71,6 +74,24 @@ export async function PATCH(req: NextRequest) {
       `);
     }
 
+    const targetIds = Array.from(new Set(normalized.map((u) => u.countryId)));
+    logEditAuditDetails({
+      endpoint: '/api/countries-cities',
+      method: 'PATCH',
+      requestId,
+      userId,
+      targetEntity: 'countries',
+      targetIds,
+      changes: normalized.map((u) => ({
+        targetId: u.countryId,
+        targetName: u.value,
+        field: 'Name',
+        before: null,
+        after: u.value,
+      })),
+      message: 'Country updated',
+    });
+
     return NextResponse.json({ ok: true, updated: normalized.length });
   } catch (err) {
     console.error(err);
@@ -81,6 +102,8 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   logRequest(req, '/api/countries-cities');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   let ids: number[] = [];
   try {
     const auth = await requirePermission(req, "manageCitiesCountries");
@@ -149,6 +172,18 @@ export async function DELETE(req: NextRequest) {
 
       const rawDeletedRows = deleteCountries.recordset ?? [];
       await transaction.commit();
+      logDeleteAuditDetails({
+        endpoint: '/api/countries-cities',
+        requestId,
+        userId,
+        targetEntity: 'countries',
+        requestedIds: ids,
+        deletedRows: rawDeletedRows.map((row) => ({
+          id: row.CountryID,
+          name: row.Name?.trim() || null,
+        })),
+        message: 'Countries deleted',
+      });
       return NextResponse.json({
         ok: true,
         deletedCountries: rawDeletedRows.length,

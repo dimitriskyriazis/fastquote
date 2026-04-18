@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { logRequest } from '../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../lib/sql";
-import { buildAuditContext } from "../../../lib/auditTrail";
+import { buildAuditContext, resolveAuditUserId } from "../../../lib/auditTrail";
 import { fetchUserRoles } from "../../../lib/authz";
 import { checkDeletePermission } from "../../../lib/deletePermissions";
+import { getRequestId } from "../../../lib/requestId";
+import { logDeleteAuditDetails } from "../../../lib/mutationAudit";
 import {
   buildQuickFilterClause,
   mergeWhereClauses,
@@ -271,6 +273,8 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   logRequest(req, '/api/customer-groups');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const audit = buildAuditContext(req);
     const roles = await fetchUserRoles(audit.userId);
@@ -321,6 +325,16 @@ export async function DELETE(req: NextRequest) {
         throw chunkErr;
       }
     }
+
+    logDeleteAuditDetails({
+      endpoint: '/api/customer-groups',
+      requestId,
+      userId,
+      targetEntity: 'customerGroups',
+      requestedIds: ids,
+      deletedRows: deletedRows.map((row) => ({ id: row.CustomerGroupID, name: row.Name ?? null })),
+      message: 'Customer groups deleted',
+    });
 
     return NextResponse.json({ ok: true, deleted, deletedRows });
   } catch (err) {

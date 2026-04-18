@@ -4,6 +4,8 @@ import sql from 'mssql';
 import type { Request as SqlRequest } from 'mssql';
 import { getPool } from '../../../lib/sql';
 import { resolveAuditUserId } from '../../../lib/auditTrail';
+import { getRequestId } from '../../../lib/requestId';
+import { logDeleteAuditDetails } from '../../../lib/mutationAudit';
 import { normalizeId } from '../../../lib/normalize';
 import { BATCH_DELETE_SIZE } from '../../../lib/constants';
 import {
@@ -402,6 +404,8 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   logRequest(req, '/api/standard-packages');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, 'editOffers');
     if (!auth.ok) return auth.response;
@@ -453,6 +457,7 @@ export async function DELETE(req: NextRequest) {
     }
     const chunkSize = BATCH_DELETE_SIZE;
     let deleted = 0;
+    const deletedRows: Array<{ id: number; name: string | null }> = [];
 
     for (let idx = 0; idx < normalizedIds.length; idx += chunkSize) {
       const chunk = normalizedIds.slice(idx, idx + chunkSize);
@@ -495,19 +500,36 @@ export async function DELETE(req: NextRequest) {
           );
         `);
 
-        const deleteOffersResult = await bindParams(new sql.Request(transaction)).query(`
+        const deleteOffersResult = await bindParams(new sql.Request(transaction)).query<{
+          OfferID: number;
+          Description: string | null;
+        }>(`
           DELETE FROM dbo.Offer
+          OUTPUT DELETED.ID AS OfferID, DELETED.Description
           WHERE ID IN (${idsSql})
             AND ISNULL(IsStandardPackage, 0) = 1;
         `);
 
         await transaction.commit();
         deleted += deleteOffersResult.rowsAffected?.[0] ?? 0;
+        (deleteOffersResult.recordset ?? []).forEach((row) => {
+          deletedRows.push({ id: row.OfferID, name: row.Description?.trim() || null });
+        });
       } catch (chunkErr) {
         await transaction.rollback().catch(() => {});
         throw chunkErr;
       }
     }
+
+    logDeleteAuditDetails({
+      endpoint: '/api/standard-packages',
+      requestId,
+      userId,
+      targetEntity: 'standardPackages',
+      requestedIds: normalizedIds,
+      deletedRows,
+      message: 'Standard packages deleted',
+    });
 
     return NextResponse.json({ ok: true, deleted });
   } catch (err: unknown) {

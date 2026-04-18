@@ -14,6 +14,9 @@ import { requirePermission } from "../../../lib/authz";
 import { checkDeletePermission } from "../../../lib/deletePermissions";
 import { toDropdownOptions, type DropdownOption } from "../../../lib/dropdownOptions";
 import { IMPORTANCE_VALUES, fetchCustomers } from "../../customers/[customerId]/customerBasicDataLookups";
+import { resolveAuditUserId } from "../../../lib/auditTrail";
+import { getRequestId } from "../../../lib/requestId";
+import { logDeleteAuditDetails, logEditAuditDetails } from "../../../lib/mutationAudit";
 
 
 type GridRequest = {
@@ -547,6 +550,8 @@ export async function GET(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   logRequest(req, '/api/customer-contacts');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;
@@ -579,6 +584,22 @@ export async function PATCH(req: NextRequest) {
       await applyContactUpdate(pool, entry.contactId, def, entry.value);
     }
 
+    logEditAuditDetails({
+      endpoint: '/api/customer-contacts',
+      method: 'PATCH',
+      requestId,
+      userId,
+      targetEntity: 'customerContacts',
+      targetIds: Array.from(new Set(normalized.map((e) => e.contactId))),
+      changes: normalized.map((entry) => ({
+        targetId: entry.contactId,
+        field: entry.field,
+        before: null,
+        after: entry.value ?? null,
+      })),
+      message: 'Contact fields updated',
+    });
+
     return NextResponse.json({ ok: true, updated: normalized.length });
   } catch (err) {
     console.error(err);
@@ -592,6 +613,8 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   logRequest(req, '/api/customer-contacts');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;
@@ -672,6 +695,19 @@ export async function DELETE(req: NextRequest) {
         throw chunkErr;
       }
     }
+
+    logDeleteAuditDetails({
+      endpoint: '/api/customer-contacts',
+      requestId,
+      userId,
+      targetEntity: 'customerContacts',
+      requestedIds: ids,
+      deletedRows: deletedRows.map((row) => ({
+        id: row.ContactID,
+        name: [row.FirstName, row.LastName].filter((v) => v && v.trim()).join(' ') || null,
+      })),
+      message: 'Contacts deleted',
+    });
 
     return NextResponse.json({ ok: true, deleted, deletedRows });
   } catch (err: unknown) {

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
+import { getRequestId } from "../../../../lib/requestId";
+import { logEditAuditDetails } from "../../../../lib/mutationAudit";
 import { requirePermission } from "../../../../lib/authz";
 
 type RestoreRow = {
@@ -9,6 +11,7 @@ type RestoreRow = {
 };
 
 export async function POST(req: NextRequest) {
+  const requestId = await getRequestId(req);
   try {
     const auth = await requirePermission(req, "manageCitiesCountries");
     if (!auth.ok) return auth.response;
@@ -22,18 +25,44 @@ export async function POST(req: NextRequest) {
     const pool = await getPool();
     const userId = resolveAuditUserId(req);
     let restored = 0;
+    const restoredRows: Array<{ id: number; name: string }> = [];
 
     for (const row of rows) {
       if (!row.Name?.trim()) continue;
       const request = pool.request();
-      request.input("Name", sql.NVarChar(512), row.Name.trim());
+      const name = row.Name.trim();
+      request.input("Name", sql.NVarChar(512), name);
       request.input("UserId", sql.NVarChar(450), userId ?? null);
 
-      await request.query(`
+      const result = await request.query<{ ID: number }>(`
         INSERT INTO dbo.Countries ([Name], [CreatedOn], [CreatedBy], [ModifiedOn], [ModifiedBy], [Enabled])
+        OUTPUT INSERTED.ID
         VALUES (@Name, SYSUTCDATETIME(), @UserId, SYSUTCDATETIME(), @UserId, 1)
       `);
+      const insertedId = result.recordset?.[0]?.ID;
+      if (insertedId != null) {
+        restoredRows.push({ id: insertedId, name });
+      }
       restored++;
+    }
+
+    if (restoredRows.length > 0) {
+      logEditAuditDetails({
+        endpoint: '/api/countries-cities/restore',
+        method: 'POST',
+        requestId,
+        userId,
+        targetEntity: 'countries',
+        targetIds: restoredRows.map((r) => r.id),
+        changes: restoredRows.map((r) => ({
+          targetId: r.id,
+          targetName: r.name,
+          field: 'Deleted',
+          before: true,
+          after: false,
+        })),
+        message: 'Countries restored',
+      });
     }
 
     return NextResponse.json({ ok: true, restored });

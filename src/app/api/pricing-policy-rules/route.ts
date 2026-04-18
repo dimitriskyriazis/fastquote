@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { logRequest } from '../../../lib/apiHelpers';
 import { getPool, sql } from '../../../lib/sql';
 import { resolveAuditUserId } from '../../../lib/auditTrail';
+import { getRequestId } from '../../../lib/requestId';
+import { logAddAuditDetails } from '../../../lib/mutationAudit';
 import { requirePermission } from '../../../lib/authz';
 
 type CreatePricingPolicyRuleBody = {
@@ -57,6 +59,8 @@ const normalizeDecimal = (value: unknown): number | null => {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/pricing-policy-rules');
+  const requestId = await getRequestId(req);
+  const userIdForLog = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "managePricingPolicies");
     if (!auth.ok) return auth.response;
@@ -194,6 +198,20 @@ export async function POST(req: NextRequest) {
       telmacoWarrantyYears: telmacoWarrantyYears ?? null,
       customerWarrantyYears: customerWarrantyYears ?? null,
     };
+
+    logAddAuditDetails({
+      endpoint: '/api/pricing-policy-rules',
+      method: 'POST',
+      requestId,
+      userId: userIdForLog,
+      targetEntity: 'pricingPolicyRules',
+      createdRows: [{ id: inserted.ID, name: inserted.Name?.trim() || name }],
+      message: 'Pricing policy rule created',
+      extra: {
+        brandId: inserted.BrandID ?? null,
+        pricingPolicyId: inserted.PricingPolicyID ?? null,
+      },
+    });
 
     return NextResponse.json({ ok: true, option });
   } catch (err) {

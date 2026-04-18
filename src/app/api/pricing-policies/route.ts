@@ -4,6 +4,9 @@ import sql from 'mssql';
 import { getPool } from '../../../lib/sql';
 import { requirePermission } from '../../../lib/authz';
 import { checkDeletePermission } from '../../../lib/deletePermissions';
+import { resolveAuditUserId } from '../../../lib/auditTrail';
+import { getRequestId } from '../../../lib/requestId';
+import { logAddAuditDetails, logDeleteAuditDetails } from '../../../lib/mutationAudit';
 
 type CreatePricingPolicyBody = {
   name?: unknown;
@@ -59,6 +62,8 @@ const normalizeIntArray = (value: unknown): number[] => {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/pricing-policies');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "managePricingPolicies");
     if (!auth.ok) return auth.response;
@@ -99,6 +104,16 @@ export async function POST(req: NextRequest) {
       label: inserted.Name?.trim() || name,
     };
 
+    logAddAuditDetails({
+      endpoint: '/api/pricing-policies',
+      method: 'POST',
+      requestId,
+      userId,
+      targetEntity: 'pricingPolicies',
+      createdRows: [{ id: inserted.ID, name: inserted.Name?.trim() || name }],
+      message: 'Pricing policy created',
+    });
+
     return NextResponse.json({ ok: true, option });
   } catch (err) {
     console.error(err);
@@ -109,6 +124,8 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   logRequest(req, '/api/pricing-policies');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "managePricingPolicies");
     if (!auth.ok) return auth.response;
@@ -131,7 +148,12 @@ export async function DELETE(req: NextRequest) {
     const valuesSql = ids.map((_, idx) => `(@__id_${idx})`).join(', ');
     ids.forEach((id, idx) => request.input(`__id_${idx}`, sql.Int, id));
 
-    const result = await request.query<{ deletedPolicies: number | null; deletedRules: number | null }>(`
+    const result = await request.query<{
+      deletedPolicies: number | null;
+      deletedRules: number | null;
+      DeletedID: number | null;
+      DeletedName: string | null;
+    }>(`
       BEGIN TRY
         BEGIN TRAN;
 
@@ -144,14 +166,21 @@ export async function DELETE(req: NextRequest) {
         INNER JOIN @Ids AS i ON i.ID = r.PricingPolicyID;
         SET @DeletedRules = @@ROWCOUNT;
 
-        DECLARE @DeletedPolicies INT = 0;
+        DECLARE @DeletedPoliciesTable TABLE (ID INT, Name NVARCHAR(512));
         DELETE p
+        OUTPUT DELETED.ID, DELETED.Name INTO @DeletedPoliciesTable
         FROM dbo.PricingPolicies AS p
         INNER JOIN @Ids AS i ON i.ID = p.ID;
-        SET @DeletedPolicies = @@ROWCOUNT;
+
+        DECLARE @DeletedPolicies INT = (SELECT COUNT(1) FROM @DeletedPoliciesTable);
 
         COMMIT;
-        SELECT @DeletedPolicies AS deletedPolicies, @DeletedRules AS deletedRules;
+        SELECT
+          @DeletedPolicies AS deletedPolicies,
+          @DeletedRules AS deletedRules,
+          d.ID AS DeletedID,
+          d.Name AS DeletedName
+        FROM @DeletedPoliciesTable d;
       END TRY
       BEGIN CATCH
         IF @@TRANCOUNT > 0 ROLLBACK;
@@ -159,14 +188,33 @@ export async function DELETE(req: NextRequest) {
       END CATCH
     `);
 
-    const deletedPolicies = Number(result.recordset?.[0]?.deletedPolicies ?? 0);
-    const deletedRules = Number(result.recordset?.[0]?.deletedRules ?? 0);
+    const rows = result.recordset ?? [];
+    const deletedPolicies = Number(rows[0]?.deletedPolicies ?? 0);
+    const deletedRules = Number(rows[0]?.deletedRules ?? 0);
     if (!Number.isFinite(deletedPolicies) || deletedPolicies <= 0) {
       return NextResponse.json(
         { ok: false, error: 'Pricing policy not found or could not be deleted' },
         { status: 404 },
       );
     }
+
+    const deletedRows = rows
+      .filter((row) => row.DeletedID != null)
+      .map((row) => ({
+        id: row.DeletedID as number,
+        name: row.DeletedName?.trim() || null,
+      }));
+
+    logDeleteAuditDetails({
+      endpoint: '/api/pricing-policies',
+      requestId,
+      userId,
+      targetEntity: 'pricingPolicies',
+      requestedIds: ids,
+      deletedRows,
+      message: 'Pricing policies deleted',
+      extra: { deletedRules },
+    });
 
     return NextResponse.json({ ok: true, deletedPolicies, deletedRules });
   } catch (err) {

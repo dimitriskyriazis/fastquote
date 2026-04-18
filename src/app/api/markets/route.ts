@@ -4,6 +4,8 @@ import sql from "mssql";
 import type { ConnectionPool, Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
 import { buildAuditContext, resolveAuditUserId } from "../../../lib/auditTrail";
+import { getRequestId } from "../../../lib/requestId";
+import { logDeleteAuditDetails } from "../../../lib/mutationAudit";
 import { fetchUserRoles } from "../../../lib/authz";
 import { checkDeletePermission } from "../../../lib/deletePermissions";
 import {
@@ -422,6 +424,7 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   logRequest(req, '/api/markets');
+  const requestId = await getRequestId(req);
   try {
     const audit = buildAuditContext(req);
     const roles = await fetchUserRoles(audit.userId);
@@ -473,6 +476,18 @@ export async function DELETE(req: NextRequest) {
       WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
     `);
     const rawDeletedRows = deleteResult.recordset ?? [];
+    logDeleteAuditDetails({
+      endpoint: '/api/markets',
+      requestId,
+      userId: audit.userId,
+      targetEntity: 'markets',
+      requestedIds: ids,
+      deletedRows: rawDeletedRows.map((row) => ({
+        id: row.MarketID,
+        name: row.Name?.trim() || null,
+      })),
+      message: 'Markets deleted',
+    });
     return NextResponse.json({
       ok: true,
       deleted: rawDeletedRows.length,

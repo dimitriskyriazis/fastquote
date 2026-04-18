@@ -3,6 +3,9 @@ import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { requirePermission } from "../../../../../lib/authz";
+import { resolveAuditUserId } from "../../../../../lib/auditTrail";
+import { getRequestId } from "../../../../../lib/requestId";
+import { logEditAuditDetails } from "../../../../../lib/mutationAudit";
 
 export async function GET(
   req: NextRequest,
@@ -54,6 +57,8 @@ export async function PATCH(
   { params }: { params: Promise<{ groupId: string }> },
 ) {
   logRequest(req, '/api/marketing/contact-groups/[groupId]');
+  const requestId = await getRequestId(req);
+  const auditUserId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageMarketing");
     if (!auth.ok) return auth.response;
@@ -78,18 +83,41 @@ export async function PATCH(
     const request = pool.request();
     request.input("groupId", sql.Int, groupId);
 
+    let appliedAfter: unknown = null;
     if (field === "Description" || field === "Note") {
-      request.input("value", sql.NVarChar(sql.MAX), value != null ? String(value).trim() : null);
+      const val = value != null ? String(value).trim() : null;
+      request.input("value", sql.NVarChar(sql.MAX), val);
       await request.query(`UPDATE dbo.ContactGroups SET [${field}] = @value WHERE ID = @groupId`);
+      appliedAfter = val;
     } else if (field === "GroupImportance") {
       const imp = value != null ? String(value).trim() : "";
-      request.input("value", sql.NVarChar(255), imp || null);
+      const val = imp || null;
+      request.input("value", sql.NVarChar(255), val);
       await request.query(`UPDATE dbo.ContactGroups SET GroupImportance = @value WHERE ID = @groupId`);
+      appliedAfter = val;
     } else if (field === "Enabled") {
       const boolVal = value === true || value === 1 || value === "true" || value === "Yes";
       request.input("value", sql.Bit, boolVal ? 1 : 0);
       await request.query(`UPDATE dbo.ContactGroups SET Enabled = @value WHERE ID = @groupId`);
+      appliedAfter = boolVal;
     }
+
+    logEditAuditDetails({
+      endpoint: '/api/marketing/contact-groups/[groupId]',
+      method: 'PATCH',
+      requestId,
+      userId: auditUserId,
+      targetEntity: 'contactGroups',
+      targetIds: [groupId],
+      changes: [{
+        targetId: groupId,
+        targetName: null,
+        field,
+        before: null,
+        after: appliedAfter,
+      }],
+      message: 'Contact group updated',
+    });
 
     return NextResponse.json({ ok: true });
   } catch (err) {

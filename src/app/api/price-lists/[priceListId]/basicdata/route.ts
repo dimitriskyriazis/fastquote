@@ -3,6 +3,8 @@ import { logRequest } from '../../../../../lib/apiHelpers';
 import sql, { type ISqlTypeFactory } from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../../lib/auditTrail";
+import { getRequestId } from "../../../../../lib/requestId";
+import { logEditAuditDetails } from "../../../../../lib/mutationAudit";
 import { requirePermission } from "../../../../../lib/authz";
 import type { PriceListBasicUpdateField } from "../../../../price-lists/[priceListId]/PriceListBasicDataTypes";
 
@@ -84,6 +86,8 @@ export async function PATCH(
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
   logRequest(req, '/api/price-lists/[priceListId]/basicdata');
+  const requestId = await getRequestId(req);
+  const auditUserIdForLog = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "managePriceLists");
     if (!auth.ok) return auth.response;
@@ -195,6 +199,26 @@ export async function PATCH(
     `;
     const result = await request.query(query);
     const rowsAffected = result.rowsAffected?.[0] ?? 0;
+
+    const changes = filteredUpdates.map((update) => ({
+      targetId: parsedId,
+      targetName: null,
+      field: update.field,
+      before: null,
+      after: update.value,
+    }));
+    if (changes.length > 0) {
+      logEditAuditDetails({
+        endpoint: "/api/price-lists/[priceListId]/basicdata",
+        method: "PATCH",
+        requestId,
+        userId: auditUserIdForLog,
+        targetEntity: "priceLists",
+        targetIds: [parsedId],
+        changes,
+        message: "Price list fields updated",
+      });
+    }
 
     return NextResponse.json({ ok: true, updated: filteredUpdates.length, rowsAffected });
   } catch (err) {

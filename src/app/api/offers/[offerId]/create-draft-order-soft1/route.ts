@@ -752,11 +752,13 @@ async function handleCategorizeProducts(
         const updateReq = pool.request();
         updateReq.input('productId', sql.Int, product.ProductID);
         const sets: string[] = [];
+        let categorySetFromSoft1 = false;
 
         if (resolvedCategoryId && product.CategoryID !== resolvedCategoryId) {
           updateReq.input('categoryId', sql.Int, resolvedCategoryId);
           sets.push('CategoryID = @categoryId');
           product.CategoryID = resolvedCategoryId;
+          categorySetFromSoft1 = true;
         }
         if (resolvedSubCategoryId && product.SubCategoryID !== resolvedSubCategoryId) {
           updateReq.input('subCategoryId', sql.Int, resolvedSubCategoryId);
@@ -772,6 +774,12 @@ async function handleCategorizeProducts(
         if (sets.length > 0) {
           sets.push('ModifiedOn = SYSUTCDATETIME()');
           await updateReq.query(`UPDATE dbo.Products SET ${sets.join(', ')} WHERE ID = @productId`);
+        }
+
+        // Only count as Soft1-synced when Soft1 actually provided/overrode a category.
+        // Matches with only type/subcategory fall through to AI; unchanged categories
+        // stay in the FastQuote section.
+        if (categorySetFromSoft1) {
           erpSynced.add(product.ProductID);
         }
       }

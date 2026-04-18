@@ -3,6 +3,8 @@ import { logRequest } from '../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../lib/sql";
 import { resolveAuditUserId } from "../../../lib/auditTrail";
+import { getRequestId } from "../../../lib/requestId";
+import { logAddAuditDetails } from "../../../lib/mutationAudit";
 import type { DropdownOption } from "../../../lib/dropdownOptions";
 import { requirePermission } from "../../../lib/authz";
 
@@ -19,6 +21,7 @@ const normalizeBoolean = (value: unknown): boolean | null => {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/countries');
+  const requestId = await getRequestId(req);
   try {
     const auth = await requirePermission(req, "manageCitiesCountries");
     if (!auth.ok) return auth.response;
@@ -63,6 +66,16 @@ export async function POST(req: NextRequest) {
       value: String(inserted.ID),
       label: inserted.Name?.trim() || name,
     };
+
+    logAddAuditDetails({
+      endpoint: '/api/countries',
+      method: 'POST',
+      requestId,
+      userId: auditUserId,
+      targetEntity: 'countries',
+      createdRows: [{ id: inserted.ID, name: inserted.Name?.trim() || name }],
+      message: 'Country created',
+    });
 
     return NextResponse.json({ ok: true, option });
   } catch (err) {

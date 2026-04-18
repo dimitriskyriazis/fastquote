@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { logRequest } from '../../../../../lib/apiHelpers';
 import { getPool, sql } from "../../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../../lib/auditTrail";
+import { getRequestId } from "../../../../../lib/requestId";
+import { logAddAuditDetails } from "../../../../../lib/mutationAudit";
 import { requirePermission } from "../../../../../lib/authz";
 
 type AddBrandBody = {
@@ -35,6 +37,8 @@ const normalizeString = (value: unknown, maxLength: number): string | null => {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/pricing-policies/matrix/add-brand');
+  const requestId = await getRequestId(req);
+  const userIdForLog = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "managePricingPolicies");
     if (!auth.ok) return auth.response;
@@ -121,10 +125,33 @@ export async function POST(req: NextRequest) {
     request.input("__responsibleUserId", sql.NVarChar(450), responsibleUserId ?? null);
     request.input("__userId", sql.NVarChar(450), auditUserId ?? null);
 
-    await request.query(`
+    const insertRes = await request.query<{ InsertedID: number; BrandName: string | null }>(`
+      DECLARE @Inserted TABLE (ID INT, BrandID INT);
       INSERT INTO dbo.PricingPolicyRules (${columns.join(", ")})
-      VALUES (${values.join(", ")})
+      OUTPUT INSERTED.ID, INSERTED.BrandID INTO @Inserted
+      VALUES (${values.join(", ")});
+
+      SELECT TOP 1 i.ID AS InsertedID, b.Name AS BrandName
+      FROM @Inserted i
+      LEFT JOIN dbo.Brands b ON b.ID = i.BrandID;
     `);
+
+    const inserted = insertRes.recordset?.[0];
+    const insertedId = inserted?.InsertedID ?? null;
+    const brandName = inserted?.BrandName?.trim() || `Brand ${brandId}`;
+
+    if (insertedId != null) {
+      logAddAuditDetails({
+        endpoint: '/api/pricing-policies/matrix/add-brand',
+        method: 'POST',
+        requestId,
+        userId: userIdForLog,
+        targetEntity: 'pricingPolicyRules',
+        createdRows: [{ id: insertedId, name: brandName }],
+        message: 'Brand added to pricing policy matrix',
+        extra: { brandId },
+      });
+    }
 
     return NextResponse.json({ ok: true, createdCount: 1 });
   } catch (err) {

@@ -3,6 +3,8 @@ import { logRequest } from '../../../../../lib/apiHelpers';
 import sql, { type ISqlTypeFactory } from 'mssql';
 import { getPool } from '../../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../../lib/auditTrail';
+import { getRequestId } from '../../../../../lib/requestId';
+import { logEditAuditDetails, type FieldChange } from '../../../../../lib/mutationAudit';
 import type { OfferBasicUpdateField } from '../../../../offers/[offerId]/OfferBasicDataTypes';
 import { requirePermission } from '../../../../../lib/authz';
 import { PROBABILITY_MIN, PROBABILITY_MAX } from '../../../../../lib/constants';
@@ -104,6 +106,8 @@ export async function PATCH(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   logRequest(req, '/api/offers/[offerId]/basicdata');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "editOffers");
     if (!auth.ok) return auth.response;
@@ -298,6 +302,29 @@ export async function PATCH(
 
         await historyRequest.query(historyQuery);
       }
+    }
+
+    if (rowsAffected > 0 && normalizedUpdates.length > 0) {
+      const changes: FieldChange[] = normalizedUpdates.map((update) => {
+        const rawValue = update.value;
+        const afterValue = rawValue instanceof Date ? rawValue.toISOString() : rawValue;
+        return {
+          targetId: offerId,
+          field: update.field,
+          before: null,
+          after: afterValue,
+        };
+      });
+      logEditAuditDetails({
+        endpoint: '/api/offers/[offerId]/basicdata',
+        method: 'PATCH',
+        requestId,
+        userId,
+        targetEntity: 'offers',
+        targetIds: [offerId],
+        changes,
+        message: 'Offer basic data updated',
+      });
     }
 
     return NextResponse.json({ ok: true, updated: normalizedUpdates.length, rowsAffected });

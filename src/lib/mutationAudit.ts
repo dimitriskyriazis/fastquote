@@ -70,6 +70,34 @@ export function buildFieldChanges<Row, Field extends string, Id extends AuditId>
   return changes;
 }
 
+const MAX_SUMMARY_ITEMS = 10;
+
+function formatRowLabel(row: { id: AuditId; name?: string | null }): string {
+  const name = row.name?.toString().trim();
+  return name ? `'${name}' (ID: ${row.id})` : `ID: ${row.id}`;
+}
+
+function summarizeRows(rows: Array<{ id: AuditId; name?: string | null }>): string {
+  if (rows.length === 0) return '';
+  const shown = rows.slice(0, MAX_SUMMARY_ITEMS).map(formatRowLabel);
+  const extra = rows.length - shown.length;
+  return extra > 0 ? `${shown.join(', ')} (+${extra} more)` : shown.join(', ');
+}
+
+function summarizeIds(ids: Array<AuditId>): string {
+  if (ids.length === 0) return '';
+  const shown = ids.slice(0, MAX_SUMMARY_ITEMS).map((id) => String(id));
+  const extra = ids.length - shown.length;
+  return extra > 0 ? `${shown.join(', ')} (+${extra} more)` : shown.join(', ');
+}
+
+function summarizeFieldChange(change: FieldChange): string {
+  const label = change.targetName ? `'${change.targetName}' (ID: ${change.targetId})` : `ID: ${change.targetId}`;
+  const before = JSON.stringify(change.before);
+  const after = JSON.stringify(change.after);
+  return `${label} ${change.field}: ${before} → ${after}`;
+}
+
 export function logEditAuditDetails(params: {
   endpoint: string;
   method?: string;
@@ -95,7 +123,17 @@ export function logEditAuditDetails(params: {
     changes: params.changes,
     ...params.extra,
   };
-  logger.info(params.message ?? 'Entity fields updated', context);
+
+  const base = params.message ?? `Updated ${params.targetEntity}`;
+  let message = base;
+  if (params.changes.length === 1) {
+    message = `${base}: ${summarizeFieldChange(params.changes[0])}`;
+  } else if (params.changes.length > 1) {
+    const fields = Array.from(new Set(params.changes.map((c) => c.field)));
+    const idSummary = summarizeIds(targetIds);
+    message = `${base} (${targetIds.length} ${params.targetEntity}, IDs: ${idSummary}; fields: ${fields.join(', ')})`;
+  }
+  logger.info(message, context);
 }
 
 export function logDeleteAuditDetails(params: {
@@ -128,7 +166,18 @@ export function logDeleteAuditDetails(params: {
     notFoundIds,
     ...params.extra,
   };
-  logger.info(params.message ?? 'Entities deleted', context);
+
+  const base = params.message ?? `Deleted ${params.targetEntity}`;
+  let message = base;
+  if (params.deletedRows.length === 1) {
+    message = `${base}: ${formatRowLabel(params.deletedRows[0])}`;
+  } else if (params.deletedRows.length > 1) {
+    message = `${base} (${params.deletedRows.length}): ${summarizeRows(params.deletedRows)}`;
+  }
+  if (notFoundIds.length > 0) {
+    message += ` [not found: ${summarizeIds(notFoundIds)}]`;
+  }
+  logger.info(message, context);
 }
 
 export function logAddAuditDetails(params: {
@@ -155,5 +204,13 @@ export function logAddAuditDetails(params: {
     createdRows: params.createdRows,
     ...params.extra,
   };
-  logger.info(params.message ?? 'Entities created', context);
+
+  const base = params.message ?? `Created ${params.targetEntity}`;
+  let message = base;
+  if (params.createdRows.length === 1) {
+    message = `${base}: ${formatRowLabel(params.createdRows[0])}`;
+  } else if (params.createdRows.length > 1) {
+    message = `${base} (${params.createdRows.length}): ${summarizeRows(params.createdRows)}`;
+  }
+  logger.info(message, context);
 }

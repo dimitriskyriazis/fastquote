@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import { getPool } from "../../../../lib/sql";
-import { buildAuditContext } from "../../../../lib/auditTrail";
+import { buildAuditContext, resolveAuditUserId } from "../../../../lib/auditTrail";
 import { fetchUserRoles } from "../../../../lib/authz";
 import { checkDeletePermission } from "../../../../lib/deletePermissions";
+import { getRequestId } from "../../../../lib/requestId";
+import { logEditAuditDetails, type FieldChange } from "../../../../lib/mutationAudit";
 
 type RestoreRow = {
   CustomerGroupID?: number | null;
@@ -13,6 +15,8 @@ type RestoreRow = {
 };
 
 export async function POST(req: NextRequest) {
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const audit = buildAuditContext(req);
     const roles = await fetchUserRoles(audit.userId);
@@ -30,6 +34,7 @@ export async function POST(req: NextRequest) {
 
     const pool = await getPool();
     let restored = 0;
+    const restoredRows: Array<{ id: number; name: string | null }> = [];
 
     for (const row of rows) {
       const request = pool.request();
@@ -37,11 +42,36 @@ export async function POST(req: NextRequest) {
       request.input("Code", sql.NVarChar(255), row.Code ?? null);
       request.input("Enabled", sql.Bit, row.Enabled ? 1 : 0);
 
-      await request.query(`
+      const result = await request.query<{ ID: number; Name: string | null }>(`
         INSERT INTO dbo.CustomerGroups (Name, Code, Enabled)
+        OUTPUT inserted.ID, inserted.Name
         VALUES (@Name, @Code, @Enabled)
       `);
+      const inserted = result.recordset?.[0];
+      if (inserted?.ID != null) {
+        restoredRows.push({ id: inserted.ID, name: inserted.Name ?? row.Name ?? null });
+      }
       restored++;
+    }
+
+    if (restoredRows.length > 0) {
+      const changes: FieldChange[] = restoredRows.map((row) => ({
+        targetId: row.id,
+        targetName: row.name,
+        field: 'Deleted',
+        before: true,
+        after: false,
+      }));
+      logEditAuditDetails({
+        endpoint: '/api/customer-groups/restore',
+        method: 'POST',
+        requestId,
+        userId,
+        targetEntity: 'customerGroups',
+        targetIds: restoredRows.map((row) => row.id),
+        changes,
+        message: 'Customer group restored',
+      });
     }
 
     return NextResponse.json({ ok: true, restored });

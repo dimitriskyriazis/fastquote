@@ -3,6 +3,13 @@ import { logRequest } from '../../../../../../lib/apiHelpers';
 import sql, { type ConnectionPool } from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
+import { getRequestId } from '../../../../../../lib/requestId';
+import {
+  logAddAuditDetails,
+  logEditAuditDetails,
+  type CreatedRow,
+  type FieldChange,
+} from '../../../../../../lib/mutationAudit';
 import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../../lib/authz';
 
@@ -462,8 +469,8 @@ const shiftAndInsertRow = async (
   userId: string | number | null,
   targetRoot: number,
   row: ClassifiedRow,
-): Promise<void> => {
-  if (!row.treeOrdering) return;
+): Promise<{ OfferDetailID: number; ProductDescription: string | null } | null> => {
+  if (!row.treeOrdering) return null;
   const request = pool.request();
   request.input('__offerId', sql.Int, offerId);
   request.input('__userId', sql.Int, userId);
@@ -483,7 +490,7 @@ const shiftAndInsertRow = async (
   request.input('__isComment', sql.Bit, row.isComment ? 1 : 0);
   request.input('__productDesc', sql.NVarChar(sql.MAX), row.productDescription);
 
-  await request.query(`
+  const result = await request.query<{ OfferDetailID: number; ProductDescription: string | null }>(`
     UPDATE dbo.OfferDetails
     SET TreeOrdering =
           CONCAT(
@@ -522,6 +529,7 @@ const shiftAndInsertRow = async (
       RequestedDescription3, RequestedQuantity,
       CreatedOn, CreatedBy, ModifiedOn, ModifiedBy
     )
+    OUTPUT INSERTED.ID AS OfferDetailID, INSERTED.ProductDescription AS ProductDescription
     VALUES (
       @__offerId, NULL, @__treeOrdering, @nextOrdering,
       1, @__isComment, @__isCategory,
@@ -532,6 +540,8 @@ const shiftAndInsertRow = async (
       SYSUTCDATETIME(), @__userId, SYSUTCDATETIME(), @__userId
     );
   `);
+  const insertedRow = result.recordset?.[0] ?? null;
+  return insertedRow ?? null;
 };
 
 export async function GET(
@@ -575,6 +585,7 @@ export async function POST(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   logRequest(req, '/api/offers/[offerId]/products/requested');
+  const requestId = await getRequestId(req);
   try {
     const auth = await requirePermission(req, "editOffers");
     if (!auth.ok) return auth.response;
@@ -601,6 +612,9 @@ export async function POST(
     if (!normalizedRowsRaw.length) {
       return NextResponse.json({ ok: false, error: 'No valid rows provided' }, { status: 400 });
     }
+
+    const auditUpdateChanges: FieldChange[] = [];
+    const auditCreatedRows: CreatedRow[] = [];
 
     const pool = await getPool();
     const columnLengths = await readRequestedColumnLengths(pool);
@@ -746,6 +760,30 @@ export async function POST(
               .filter((row): row is ClassifiedRow => row !== null),
           );
         }
+        const unmatchedTreeSet = new Set(unmatched.map((row) => row.TreeOrdering).filter((t): t is string => Boolean(t)));
+        chunk.forEach((row) => {
+          if (!row.treeOrdering || unmatchedTreeSet.has(row.treeOrdering)) return;
+          const pushChange = (field: string, after: unknown) => {
+            auditUpdateChanges.push({
+              targetId: row.treeOrdering as string,
+              targetName: row.productDescription ?? row.description ?? null,
+              field,
+              before: null,
+              after,
+            });
+          };
+          pushChange('RequestedItemNo', row.itemNo);
+          pushChange('RequestedBrand', row.brand);
+          pushChange('RequestedModelNo', row.modelNumber);
+          pushChange('RequestedPartNo', row.partNumber);
+          pushChange('RequestedWebLink', row.webLink);
+          pushChange('RequestedDescription', row.description);
+          pushChange('RequestedDescription2', row.description2);
+          pushChange('RequestedDescription3', row.description3);
+          pushChange('RequestedQuantity', row.quantity);
+          pushChange('IsCategory', row.isCategory);
+          pushChange('IsComment', row.isComment);
+        });
       }
     }
 
@@ -759,8 +797,14 @@ export async function POST(
       for (const row of rowsNeedingShiftInsert) {
         const targetRoot = parseRootSegment(row.treeOrdering);
         if (targetRoot == null) continue;
-        await shiftAndInsertRow(pool, offerId, audit.userId ?? null, targetRoot, row);
+        const inserted = await shiftAndInsertRow(pool, offerId, audit.userId ?? null, targetRoot, row);
         insertedCount += 1;
+        if (inserted?.OfferDetailID) {
+          auditCreatedRows.push({
+            id: inserted.OfferDetailID,
+            name: inserted.ProductDescription?.trim() || row.productDescription || row.description || null,
+          });
+        }
       }
     }
 
@@ -771,6 +815,31 @@ export async function POST(
           'rows-refresh',
           { reason: 'requested-import', updated: updatedCount, inserted: insertedCount, updatedBy: audit.userId ?? null },
         );
+      }
+      if (auditUpdateChanges.length > 0) {
+        logEditAuditDetails({
+          endpoint: `/api/offers/${offerId}/products/requested`,
+          method: 'POST',
+          requestId,
+          userId: audit.userId,
+          targetEntity: 'offerProducts',
+          targetIds: Array.from(new Set(auditUpdateChanges.map((c) => c.targetId))),
+          changes: auditUpdateChanges,
+          message: `Requested rows updated for offer ${offerId}`,
+          extra: { offerId },
+        });
+      }
+      if (auditCreatedRows.length > 0) {
+        logAddAuditDetails({
+          endpoint: `/api/offers/${offerId}/products/requested`,
+          method: 'POST',
+          requestId,
+          userId: audit.userId,
+          targetEntity: 'offerProducts',
+          createdRows: auditCreatedRows,
+          message: `Requested rows imported for offer ${offerId}`,
+          extra: { offerId },
+        });
       }
       return NextResponse.json({ ok: true, updated: updatedCount, inserted: insertedCount, total: normalizedRows.length });
     }
@@ -890,6 +959,7 @@ export async function POST(
           ModifiedOn,
           ModifiedBy
         )
+        OUTPUT INSERTED.ID AS OfferDetailID, INSERTED.ProductDescription AS ProductDescription
         SELECT
           @__offerId,
           parent.ID,
@@ -917,7 +987,15 @@ export async function POST(
           LEFT JOIN dbo.OfferDetails parent
             ON parent.OfferID = @__offerId AND payload.ParentTreeOrdering IS NOT NULL AND parent.TreeOrdering = payload.ParentTreeOrdering;
       `;
-      await request.query(query);
+      const insertResult = await request.query<{ OfferDetailID: number; ProductDescription: string | null }>(query);
+      (insertResult.recordset ?? []).forEach((insertedRow) => {
+        if (insertedRow?.OfferDetailID) {
+          auditCreatedRows.push({
+            id: insertedRow.OfferDetailID,
+            name: insertedRow.ProductDescription?.trim() || null,
+          });
+        }
+      });
       insertedCount += chunk.length;
       nextOrderingValue += chunk.length;
     }
@@ -928,6 +1006,32 @@ export async function POST(
         'rows-refresh',
         { reason: 'requested-import', updated: updatedCount, inserted: insertedCount, updatedBy: audit.userId ?? null },
       );
+    }
+
+    if (auditUpdateChanges.length > 0) {
+      logEditAuditDetails({
+        endpoint: `/api/offers/${offerId}/products/requested`,
+        method: 'POST',
+        requestId,
+        userId: audit.userId,
+        targetEntity: 'offerProducts',
+        targetIds: Array.from(new Set(auditUpdateChanges.map((c) => c.targetId))),
+        changes: auditUpdateChanges,
+        message: `Requested rows updated for offer ${offerId}`,
+        extra: { offerId },
+      });
+    }
+    if (auditCreatedRows.length > 0) {
+      logAddAuditDetails({
+        endpoint: `/api/offers/${offerId}/products/requested`,
+        method: 'POST',
+        requestId,
+        userId: audit.userId,
+        targetEntity: 'offerProducts',
+        createdRows: auditCreatedRows,
+        message: `Requested rows imported for offer ${offerId}`,
+        extra: { offerId },
+      });
     }
 
     return NextResponse.json({ ok: true, updated: updatedCount, inserted: insertedCount, total: normalizedRows.length });

@@ -3,6 +3,8 @@ import { logRequest } from '../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../lib/auditTrail';
+import { getRequestId } from '../../../../lib/requestId';
+import { logAddAuditDetails } from '../../../../lib/mutationAudit';
 import { requirePermission } from '../../../../lib/authz';
 
 type CreateStandardPackageRequest = {
@@ -37,6 +39,7 @@ const normalizeEnabled = (value: unknown): boolean | null => {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/standard-packages/create');
+  const requestId = await getRequestId(req);
   try {
     const auth = await requirePermission(req, 'createOffers');
     if (!auth.ok) return auth.response;
@@ -173,6 +176,16 @@ export async function POST(req: NextRequest) {
         { status: 500 },
       );
     }
+
+    logAddAuditDetails({
+      endpoint: '/api/standard-packages/create',
+      method: 'POST',
+      requestId,
+      userId: auditUserId,
+      targetEntity: 'standardPackages',
+      createdRows: [{ id: offerId, name: description }],
+      message: 'Standard package created',
+    });
 
     return NextResponse.json({ ok: true, offerId });
   } catch (err) {

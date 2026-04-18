@@ -5,6 +5,9 @@ import type { Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
 import { requirePermission } from "../../../lib/authz";
 import { checkDeletePermission } from "../../../lib/deletePermissions";
+import { resolveAuditUserId } from "../../../lib/auditTrail";
+import { getRequestId } from "../../../lib/requestId";
+import { logDeleteAuditDetails } from "../../../lib/mutationAudit";
 import {
   buildQuickFilterClause,
   mergeWhereClauses,
@@ -306,6 +309,8 @@ async function readGridRequest(req: NextRequest): Promise<GridRequestResult> {
 
 export async function DELETE(req: NextRequest) {
   logRequest(req, '/api/products');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageBrandsSuppliers");
     if (!auth.ok) return auth.response;
@@ -323,6 +328,7 @@ export async function DELETE(req: NextRequest) {
 
     const pool = await getPool();
     let deleted = 0;
+    const deletedRows: Array<{ id: number; name: string | null }> = [];
 
     for (let idx = 0; idx < ids.length; idx += BATCH_DELETE_SIZE) {
       const chunk = ids.slice(idx, idx + BATCH_DELETE_SIZE);
@@ -339,16 +345,31 @@ export async function DELETE(req: NextRequest) {
         });
         const deleteSql = `
           DELETE FROM dbo.Products
+          OUTPUT DELETED.ID AS ProductID, DELETED.PartNumber AS PartNumber
           WHERE ID IN (${placeholders.join(", ")});
         `;
-        const result = await request.query(deleteSql);
+        const result = await request.query<{ ProductID: number; PartNumber: string | null }>(deleteSql);
         await transaction.commit();
-        deleted += result.rowsAffected?.[0] ?? 0;
+        const rows = result.recordset ?? [];
+        deleted += rows.length;
+        rows.forEach((row) => {
+          deletedRows.push({ id: row.ProductID, name: row.PartNumber?.trim() || null });
+        });
       } catch (chunkErr) {
         await transaction.rollback().catch(() => {});
         throw chunkErr;
       }
     }
+
+    logDeleteAuditDetails({
+      endpoint: '/api/products',
+      requestId,
+      userId,
+      targetEntity: 'products',
+      requestedIds: ids,
+      deletedRows,
+      message: 'Products deleted',
+    });
 
     return NextResponse.json({ ok: true, deleted });
   } catch (err: unknown) {

@@ -9,6 +9,8 @@ import {
 import { KnownFilterModel } from "../../../../lib/filterTypes";
 import { processFilter } from "../../../../lib/filterProcessing";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
+import { getRequestId } from "../../../../lib/requestId";
+import { logDeleteAuditDetails, logEditAuditDetails } from "../../../../lib/mutationAudit";
 import { requirePermission } from "../../../../lib/authz";
 import { checkDeletePermission } from "../../../../lib/deletePermissions";
 
@@ -148,6 +150,8 @@ const normalizeUpdateField = (value: unknown): UpdateField | null => {
 
 export async function PATCH(req: NextRequest) {
   logRequest(req, '/api/pricing-policies/matrix');
+  const requestId = await getRequestId(req);
+  const userIdForLog = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "managePricingPolicies");
     if (!auth.ok) return auth.response;
@@ -262,6 +266,17 @@ export async function PATCH(req: NextRequest) {
 
         const updateRes = await updateReq.query<{ UpdatedCount: number | null }>(updateSql);
         const updatedCount = updateRes.recordset?.[0]?.UpdatedCount ?? 0;
+        logEditAuditDetails({
+          endpoint: '/api/pricing-policies/matrix',
+          method: 'PATCH',
+          requestId,
+          userId: userIdForLog,
+          targetEntity: 'pricingPolicyRules',
+          targetIds: [brandId],
+          changes: [{ targetId: brandId, targetName: ruleName, field, before: null, after: value }],
+          message: 'Pricing policy matrix cell updated',
+          extra: { brandId, pricingPolicyId, pricingPolicyName },
+        });
         return NextResponse.json({ ok: true, updatedCount });
       } else if (!hasAnyRule) {
         // Create new rule with warranty value
@@ -298,6 +313,17 @@ export async function PATCH(req: NextRequest) {
           VALUES (${values.join(", ")})
         `);
 
+        logEditAuditDetails({
+          endpoint: '/api/pricing-policies/matrix',
+          method: 'PATCH',
+          requestId,
+          userId: userIdForLog,
+          targetEntity: 'pricingPolicyRules',
+          targetIds: [brandId],
+          changes: [{ targetId: brandId, targetName: ruleName, field, before: null, after: value }],
+          message: 'Pricing policy matrix rule created',
+          extra: { brandId, pricingPolicyId, pricingPolicyName },
+        });
         return NextResponse.json({ ok: true, updatedCount: 1 });
       } else {
         // Direct update of warranty years on existing rule(s)
@@ -320,6 +346,17 @@ export async function PATCH(req: NextRequest) {
 
         const updateRes = await updateReq.query<{ UpdatedCount: number | null }>(updateSql);
         const updatedCount = updateRes.recordset?.[0]?.UpdatedCount ?? 0;
+        logEditAuditDetails({
+          endpoint: '/api/pricing-policies/matrix',
+          method: 'PATCH',
+          requestId,
+          userId: userIdForLog,
+          targetEntity: 'pricingPolicyRules',
+          targetIds: [brandId],
+          changes: [{ targetId: brandId, targetName: ruleName, field, before: null, after: value }],
+          message: 'Pricing policy matrix cell updated',
+          extra: { brandId, pricingPolicyId, pricingPolicyName },
+        });
         return NextResponse.json({ ok: true, updatedCount });
       }
     }
@@ -380,6 +417,17 @@ export async function PATCH(req: NextRequest) {
 
       const updateRes = await updateReq.query<{ UpdatedCount: number | null }>(updateSql);
       const updatedCount = updateRes.recordset?.[0]?.UpdatedCount ?? 0;
+      logEditAuditDetails({
+        endpoint: '/api/pricing-policies/matrix',
+        method: 'PATCH',
+        requestId,
+        userId: userIdForLog,
+        targetEntity: 'pricingPolicyRules',
+        targetIds: [brandId],
+        changes: [{ targetId: brandId, targetName: ruleName, field, before: null, after: value }],
+        message: 'Pricing policy matrix cell updated',
+        extra: { brandId, pricingPolicyId, pricingPolicyName },
+      });
       return NextResponse.json({ ok: true, updatedCount });
     } else if (!hasAnyRule) {
       // Create new rule with name, PricingPolicyID, and discounts
@@ -426,6 +474,17 @@ export async function PATCH(req: NextRequest) {
         VALUES (${values.join(", ")})
       `);
 
+      logEditAuditDetails({
+        endpoint: '/api/pricing-policies/matrix',
+        method: 'PATCH',
+        requestId,
+        userId: userIdForLog,
+        targetEntity: 'pricingPolicyRules',
+        targetIds: [brandId],
+        changes: [{ targetId: brandId, targetName: ruleName, field, before: null, after: value }],
+        message: 'Pricing policy matrix rule created',
+        extra: { brandId, pricingPolicyId, pricingPolicyName },
+      });
       return NextResponse.json({ ok: true, updatedCount: 1 });
     } else {
       // Update existing rule (with PricingPolicyID) - check if discount is NULL
@@ -463,6 +522,17 @@ export async function PATCH(req: NextRequest) {
 
         const updateRes = await updateReq.query<{ UpdatedCount: number | null }>(updateSql);
         const updatedCount = updateRes.recordset?.[0]?.UpdatedCount ?? 0;
+        logEditAuditDetails({
+          endpoint: '/api/pricing-policies/matrix',
+          method: 'PATCH',
+          requestId,
+          userId: userIdForLog,
+          targetEntity: 'pricingPolicyRules',
+          targetIds: [brandId],
+          changes: [{ targetId: brandId, targetName: ruleName, field, before: null, after: value }],
+          message: 'Pricing policy matrix cell updated',
+          extra: { brandId, pricingPolicyId, pricingPolicyName },
+        });
         return NextResponse.json({ ok: true, updatedCount });
       } else {
         // Use the existing logic for non-NULL discounts
@@ -497,6 +567,17 @@ export async function PATCH(req: NextRequest) {
 
         const updateRes = await updateReq.query<{ UpdatedCount: number | null }>(updateSql);
         const updatedCount = updateRes.recordset?.[0]?.UpdatedCount ?? 0;
+        logEditAuditDetails({
+          endpoint: '/api/pricing-policies/matrix',
+          method: 'PATCH',
+          requestId,
+          userId: userIdForLog,
+          targetEntity: 'pricingPolicyRules',
+          targetIds: [brandId],
+          changes: [{ targetId: brandId, targetName: ruleName, field, before: null, after: value }],
+          message: 'Pricing policy matrix cell updated',
+          extra: { brandId, pricingPolicyId, pricingPolicyName },
+        });
         return NextResponse.json({ ok: true, updatedCount });
       }
     }
@@ -509,6 +590,8 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   logRequest(req, '/api/pricing-policies/matrix');
+  const requestId = await getRequestId(req);
+  const userIdForLog = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "managePricingPolicies");
     if (!auth.ok) return auth.response;
@@ -527,14 +610,31 @@ export async function DELETE(req: NextRequest) {
     const pool = await getPool();
     const delReq = pool.request();
     delReq.input("__brandId", sql.Int, brandId);
-    const delRes = await delReq.query<{ DeletedCount: number }>(`
-      DECLARE @DeletedCount INT;
+    const delRes = await delReq.query<{ DeletedID: number | null; DeletedName: string | null }>(`
+      DECLARE @DeletedRules TABLE (ID INT, Name NVARCHAR(512));
       DELETE FROM dbo.PricingPolicyRules
+      OUTPUT DELETED.ID, DELETED.Name INTO @DeletedRules
       WHERE BrandID = @__brandId;
-      SET @DeletedCount = @@ROWCOUNT;
-      SELECT @DeletedCount AS DeletedCount;
+      SELECT ID AS DeletedID, Name AS DeletedName FROM @DeletedRules;
     `);
-    const deletedCount = delRes.recordset?.[0]?.DeletedCount ?? 0;
+    const deletedRows = (delRes.recordset ?? [])
+      .filter((row) => row.DeletedID != null)
+      .map((row) => ({
+        id: row.DeletedID as number,
+        name: row.DeletedName?.trim() || null,
+      }));
+    const deletedCount = deletedRows.length;
+
+    logDeleteAuditDetails({
+      endpoint: '/api/pricing-policies/matrix',
+      requestId,
+      userId: userIdForLog,
+      targetEntity: 'pricingPolicyRules',
+      requestedIds: deletedRows.map((row) => row.id),
+      deletedRows,
+      message: 'Pricing policy matrix brand removed',
+      extra: { brandId },
+    });
 
     return NextResponse.json({ ok: true, deletedCount });
   } catch (err) {

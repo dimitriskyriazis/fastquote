@@ -7,6 +7,7 @@ import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { getRequestId } from "../../../../lib/requestId";
 import { handleApiError } from "../../../../lib/errorHandler";
 import { logger } from "../../../../lib/logger";
+import { logAddAuditDetails } from "../../../../lib/mutationAudit";
 import { validateRequest, positiveIntSchema, stringSchema, urlSchema, partModelNumberSchema } from "../../../../lib/validation";
 import { clearPartModelNumberUpper } from "../../../../lib/partModelNumber";
 
@@ -86,7 +87,7 @@ export async function POST(req: NextRequest) {
     request.input("CreatedBy", sql.NVarChar(450), auditUserId);
     request.input("ModifiedBy", sql.NVarChar(450), auditUserId);
 
-    const result = await request.query<{ ProductID: number }>(`
+    const result = await request.query<{ ProductID: number; PartNumber: string | null }>(`
       INSERT INTO dbo.Products (
         BrandID,
         ModelNumber,
@@ -108,7 +109,7 @@ export async function POST(req: NextRequest) {
         ModifiedOn,
         ModifiedBy
       )
-      OUTPUT INSERTED.ID AS ProductID
+      OUTPUT INSERTED.ID AS ProductID, INSERTED.PartNumber AS PartNumber
       VALUES (
         @BrandID,
         @ModelNumber,
@@ -136,6 +137,7 @@ export async function POST(req: NextRequest) {
     if (!productId) {
       throw new Error("Failed to create product");
     }
+    const insertedPartNumber = result.recordset?.[0]?.PartNumber ?? null;
 
     logger.info("Product created successfully", {
       requestId,
@@ -143,6 +145,20 @@ export async function POST(req: NextRequest) {
       method: "POST",
       userId,
       productId,
+    });
+    logAddAuditDetails({
+      endpoint: "/api/products/create",
+      method: "POST",
+      requestId,
+      userId,
+      targetEntity: "products",
+      createdRows: [
+        {
+          id: productId,
+          name: insertedPartNumber?.trim() || partNumber || null,
+        },
+      ],
+      message: "Product created",
     });
 
     return NextResponse.json({ ok: true, productId });

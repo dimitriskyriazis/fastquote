@@ -7,6 +7,8 @@ import sql from "mssql";
 import type { ConnectionPool } from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
+import { getRequestId } from "../../../../lib/requestId";
+import { logAddAuditDetails } from "../../../../lib/mutationAudit";
 import { requirePermission } from "../../../../lib/authz";
 import { clearPartModelNumberUpper } from "../../../../lib/partModelNumber";
 import {
@@ -858,6 +860,8 @@ const insertPriceListItem = async (
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/price-lists/import');
+  const requestId = await getRequestId(req);
+  const userIdForLog = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "managePriceLists");
     if (!auth.ok) return auth.response;
@@ -1351,6 +1355,25 @@ export async function POST(req: NextRequest) {
       }
 
       await transaction.commit();
+
+      logAddAuditDetails({
+        endpoint: '/api/price-lists/import',
+        method: 'POST',
+        requestId,
+        userId: userIdForLog,
+        targetEntity: 'priceListRows',
+        createdRows: [{ id: priceListId, name: name ?? null }],
+        message: 'Price list imported',
+        extra: {
+          priceListId,
+          totalRows: parsedRows.length,
+          createdProductCount,
+          matchedProductCount,
+          legacyUpdatedCount,
+          skippedRows,
+        },
+      });
+
       return NextResponse.json({
         ok: true,
         priceListId,

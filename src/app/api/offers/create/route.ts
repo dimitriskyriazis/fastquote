@@ -3,6 +3,8 @@ import { logRequest } from '../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../lib/auditTrail';
+import { getRequestId } from '../../../../lib/requestId';
+import { logAddAuditDetails } from '../../../../lib/mutationAudit';
 import { requirePermission } from '../../../../lib/authz';
 import { normalizeString, normalizeInt, normalizeUserId, normalizeDate, normalizeProbability, normalizeDecimal } from '../../../../lib/normalize';
 import { normalizeOfferLanguage, OFFER_LANGUAGE_DEFAULTS } from '../../../../lib/offerLanguage';
@@ -55,6 +57,8 @@ type ContactLookupRow = {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/offers/create');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "createOffers");
     if (!auth.ok) return auth.response;
@@ -278,7 +282,7 @@ export async function POST(req: NextRequest) {
     request.input('CurrencyID', sql.Int, resolvedCurrencyId);
     request.input('CurrencyModifier', sql.Decimal(18, 8), persistedCurrencyModifier);
 
-    const insertResult = await request.query<{ OfferID: number }>(`
+    const insertResult = await request.query<{ OfferID: number; Title: string | null }>(`
       INSERT INTO dbo.Offer (
         CustomerID,
         StatusID,
@@ -324,7 +328,7 @@ export async function POST(req: NextRequest) {
         CreatedOn,
         ModifiedOn
       )
-      OUTPUT INSERTED.ID AS OfferID
+      OUTPUT INSERTED.ID AS OfferID, INSERTED.Title
       VALUES (
         @CustomerID,
         @StatusID,
@@ -372,7 +376,8 @@ export async function POST(req: NextRequest) {
       );
     `);
 
-    const created = insertResult.recordset?.[0]?.OfferID;
+    const createdRow = insertResult.recordset?.[0];
+    const created = createdRow?.OfferID;
     if (!created) {
       return NextResponse.json({ ok: false, error: 'Unable to create offer.' }, { status: 500 });
     }
@@ -398,6 +403,21 @@ export async function POST(req: NextRequest) {
         )
       `);
     }
+
+    logAddAuditDetails({
+      endpoint: '/api/offers/create',
+      method: 'POST',
+      requestId,
+      userId,
+      targetEntity: 'offers',
+      createdRows: [
+        {
+          id: created,
+          name: createdRow?.Title?.trim() || title,
+        },
+      ],
+      message: 'Offer created',
+    });
 
     return NextResponse.json({ ok: true, offerId: created });
   } catch (err) {

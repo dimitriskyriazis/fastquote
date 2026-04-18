@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logRequest } from '../../../../../../lib/apiHelpers';
 import { logger } from '../../../../../../lib/logger';
+import { logAddAuditDetails } from '../../../../../../lib/mutationAudit';
 import sql from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
@@ -1080,6 +1081,21 @@ async function handleAddProducts(
       'rows-refresh',
       { reason: 'add-products', inserted, updatedBy: auditUserId ?? null },
     );
+
+    const createdRows = selections.map((entry, idx) => ({
+      id: insertedOfferDetailIds[idx] ?? `seq-${entry.sequence}`,
+      productId: entry.productId,
+      offerDetailId: insertedOfferDetailIds[idx] ?? null,
+    }));
+    logAddAuditDetails({
+      endpoint: `/api/offers/${offerId}/products/add`,
+      method: 'POST',
+      userId: auditUserId != null ? String(auditUserId) : null,
+      targetEntity: 'offerProducts',
+      createdRows,
+      message: `Added ${inserted} product${inserted === 1 ? '' : 's'} to offer ${offerId} (productIds: ${selections.map((s) => s.productId).join(', ')})`,
+      extra: { offerId, categoryId, productIds: selections.map((s) => s.productId) },
+    });
   }
 
   return NextResponse.json({ ok: true, inserted, insertedOfferDetailIds });

@@ -3,12 +3,17 @@ import { logRequest } from '../../../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../../../lib/sql";
 import { requirePermission } from "../../../../../../lib/authz";
+import { resolveAuditUserId } from "../../../../../../lib/auditTrail";
+import { getRequestId } from "../../../../../../lib/requestId";
+import { logAddAuditDetails } from "../../../../../../lib/mutationAudit";
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ groupId: string }> },
 ) {
   logRequest(req, '/api/marketing/contact-groups/[groupId]/copy');
+  const requestId = await getRequestId(req);
+  const auditUserId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageMarketing");
     if (!auth.ok) return auth.response;
@@ -64,6 +69,17 @@ export async function POST(
       FROM dbo.ContactsGroupLists
       WHERE ContactGroupID = @origGroupId
     `);
+
+    const newDescription = `${(orig.Description as string) ?? ''} (Copy)`;
+    logAddAuditDetails({
+      endpoint: '/api/marketing/contact-groups/[groupId]/copy',
+      method: 'POST',
+      requestId,
+      userId: auditUserId,
+      targetEntity: 'contactGroups',
+      createdRows: [{ id: newGroupId, name: newDescription, sourceGroupId: groupId }],
+      message: `Contact group copied from ID ${groupId}`,
+    });
 
     return NextResponse.json({ ok: true, newGroupId });
   } catch (err) {

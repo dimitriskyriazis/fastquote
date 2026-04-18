@@ -9,6 +9,8 @@ import type {
 } from "../../../../customers/[customerId]/CustomerBasicDataTypes";
 import { sanitizeJsonUnsafeChars } from "../../../../../lib/normalize";
 import { requirePermission } from "../../../../../lib/authz";
+import { getRequestId } from "../../../../../lib/requestId";
+import { logEditAuditDetails } from "../../../../../lib/mutationAudit";
 
 type UpdateInput = {
   field?: CustomerBasicUpdateField;
@@ -170,6 +172,8 @@ export async function PATCH(
   { params }: { params: Promise<{ customerId: string }> },
 ) {
   logRequest(req, '/api/customers/[customerId]/basicdata');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;
@@ -236,6 +240,23 @@ export async function PATCH(
     `;
     const result = await request.query(query);
     const rowsAffected = result.rowsAffected?.[0] ?? 0;
+
+    const changes = normalizedUpdates.map((u) => ({
+      targetId: parsedId,
+      field: u.field,
+      before: null,
+      after: u.value,
+    }));
+    logEditAuditDetails({
+      endpoint: '/api/customers/[customerId]/basicdata',
+      method: 'PATCH',
+      requestId,
+      userId,
+      targetEntity: 'customers',
+      targetIds: [parsedId],
+      changes,
+      message: 'Customer fields updated',
+    });
 
     return NextResponse.json({ ok: true, updated: normalizedUpdates.length, rowsAffected });
   } catch (err) {

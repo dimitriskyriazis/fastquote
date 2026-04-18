@@ -3,6 +3,9 @@ import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { requirePermission } from "../../../../../lib/authz";
+import { resolveAuditUserId } from "../../../../../lib/auditTrail";
+import { getRequestId } from "../../../../../lib/requestId";
+import { logAddAuditDetails } from "../../../../../lib/mutationAudit";
 
 type ToMailBody = {
   contactGroupId?: number | string;
@@ -11,6 +14,8 @@ type ToMailBody = {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/marketing/contact-groups/to-mail');
+  const requestId = await getRequestId(req);
+  const auditUserId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageMarketing");
     if (!auth.ok) return auth.response;
@@ -58,6 +63,21 @@ export async function POST(req: NextRequest) {
         VALUES (@groupId, @mailId)
       `);
     }
+
+    logAddAuditDetails({
+      endpoint: '/api/marketing/contact-groups/to-mail',
+      method: 'POST',
+      requestId,
+      userId: auditUserId,
+      targetEntity: 'mailContacts',
+      createdRows: [{
+        id: contactGroupId,
+        name: null,
+        mailId,
+        contactsAdded: added,
+      }],
+      message: `Contact group ID ${contactGroupId} added to mail ID ${mailId}`,
+    });
 
     return NextResponse.json({ ok: true, added });
   } catch (err) {

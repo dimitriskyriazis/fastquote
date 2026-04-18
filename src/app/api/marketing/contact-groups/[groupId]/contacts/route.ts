@@ -10,6 +10,9 @@ import {
 import { requirePermission } from "../../../../../../lib/authz";
 import { KnownFilterModel } from "../../../../../../lib/filterTypes";
 import { processFilter } from "../../../../../../lib/filterProcessing";
+import { resolveAuditUserId } from "../../../../../../lib/auditTrail";
+import { getRequestId } from "../../../../../../lib/requestId";
+import { logDeleteAuditDetails, logEditAuditDetails } from "../../../../../../lib/mutationAudit";
 
 type GridRequest = {
   startRow?: number;
@@ -170,6 +173,8 @@ export async function PATCH(
   { params }: { params: Promise<{ groupId: string }> },
 ) {
   logRequest(req, '/api/marketing/contact-groups/[groupId]/contacts');
+  const requestId = await getRequestId(req);
+  const auditUserId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageMarketing");
     if (!auth.ok) return auth.response;
@@ -186,6 +191,13 @@ export async function PATCH(
     }
 
     const pool = await getPool();
+    const changes: Array<{
+      targetId: number;
+      targetName: string | null;
+      field: string;
+      before: unknown;
+      after: unknown;
+    }> = [];
     for (const update of updates) {
       const cglId = Number(update.ContactGroupListID);
       if (!Number.isFinite(cglId)) continue;
@@ -196,12 +208,29 @@ export async function PATCH(
       request.input("cglId", sql.Int, cglId);
 
       if (field === "Importance") {
-        request.input("value", sql.NVarChar(50), value != null ? String(value).trim() : null);
+        const val = value != null ? String(value).trim() : null;
+        request.input("value", sql.NVarChar(50), val);
         await request.query(`UPDATE dbo.ContactsGroupLists SET Importance = @value WHERE ID = @cglId`);
+        changes.push({ targetId: cglId, targetName: null, field, before: null, after: val });
       } else if (field === "Note") {
-        request.input("value", sql.NVarChar(sql.MAX), value != null ? String(value).trim() : null);
+        const val = value != null ? String(value).trim() : null;
+        request.input("value", sql.NVarChar(sql.MAX), val);
         await request.query(`UPDATE dbo.ContactsGroupLists SET Note = @value WHERE ID = @cglId`);
+        changes.push({ targetId: cglId, targetName: null, field, before: null, after: val });
       }
+    }
+
+    if (changes.length > 0) {
+      logEditAuditDetails({
+        endpoint: '/api/marketing/contact-groups/[groupId]/contacts',
+        method: 'PATCH',
+        requestId,
+        userId: auditUserId,
+        targetEntity: 'contactGroupMembers',
+        targetIds: Array.from(new Set(changes.map((c) => c.targetId))),
+        changes,
+        message: 'Contact group member fields updated',
+      });
     }
 
     return NextResponse.json({ ok: true, updated: updates.length });
@@ -217,6 +246,8 @@ export async function DELETE(
   { params }: { params: Promise<{ groupId: string }> },
 ) {
   logRequest(req, '/api/marketing/contact-groups/[groupId]/contacts');
+  const requestId = await getRequestId(req);
+  const auditUserId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageMarketing");
     if (!auth.ok) return auth.response;
@@ -240,10 +271,25 @@ export async function DELETE(
     const pool = await getPool();
     const request = pool.request();
     ids.forEach((id, idx) => request.input(`id${idx}`, sql.Int, id));
-    await request.query(`
+    const deleteResult = await request.query<{ ID: number }>(`
       DELETE FROM dbo.ContactsGroupLists
+      OUTPUT DELETED.ID
       WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
     `);
+
+    const deletedRows = (deleteResult.recordset ?? []).map((row) => ({
+      id: row.ID,
+      name: null,
+    }));
+    logDeleteAuditDetails({
+      endpoint: '/api/marketing/contact-groups/[groupId]/contacts',
+      requestId,
+      userId: auditUserId,
+      targetEntity: 'contactGroupMembers',
+      requestedIds: ids,
+      deletedRows,
+      message: `Contacts removed from contact group ID ${groupId}`,
+    });
 
     return NextResponse.json({ ok: true, deleted: ids.length });
   } catch (err) {

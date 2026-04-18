@@ -3,6 +3,8 @@ import { logRequest } from '../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../lib/sql';
 import { resolveAuditUserId } from '../../../lib/auditTrail';
+import { getRequestId } from '../../../lib/requestId';
+import { logAddAuditDetails } from '../../../lib/mutationAudit';
 
 type CreateTitleBody = {
   name?: unknown;
@@ -32,6 +34,7 @@ const normalizeBoolean = (value: unknown): boolean | null => {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/titles');
+  const requestId = await getRequestId(req);
   try {
     const payload = (await req.json().catch(() => null)) as CreateTitleBody | null;
     const name = normalizeString(payload?.name, 512);
@@ -92,6 +95,16 @@ export async function POST(req: NextRequest) {
       value: String(inserted.ID),
       label: inserted.Name?.trim() || name,
     };
+
+    logAddAuditDetails({
+      endpoint: '/api/titles',
+      method: 'POST',
+      requestId,
+      userId: auditUserId,
+      targetEntity: 'titles',
+      createdRows: [{ id: inserted.ID, name: inserted.Name?.trim() || name }],
+      message: 'Title created',
+    });
 
     return NextResponse.json({ ok: true, option });
   } catch (err) {

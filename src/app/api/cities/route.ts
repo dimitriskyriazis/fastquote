@@ -3,6 +3,8 @@ import { logRequest } from '../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../lib/sql";
 import { resolveAuditUserId } from "../../../lib/auditTrail";
+import { getRequestId } from "../../../lib/requestId";
+import { logAddAuditDetails, logDeleteAuditDetails } from "../../../lib/mutationAudit";
 import type { DropdownOption } from "../../../lib/dropdownOptions";
 import { requirePermission } from "../../../lib/authz";
 import { checkDeletePermission } from "../../../lib/deletePermissions";
@@ -35,6 +37,7 @@ const normalizeBoolean = (value: unknown): boolean | null => {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/cities');
+  const requestId = await getRequestId(req);
   try {
     const auth = await requirePermission(req, "manageCitiesCountries");
     if (!auth.ok) return auth.response;
@@ -83,6 +86,16 @@ export async function POST(req: NextRequest) {
       countryId,
     };
 
+    logAddAuditDetails({
+      endpoint: '/api/cities',
+      method: 'POST',
+      requestId,
+      userId: auditUserId,
+      targetEntity: 'cities',
+      createdRows: [{ id: inserted.ID, name: inserted.Name?.trim() || name }],
+      message: 'City created',
+    });
+
     return NextResponse.json({ ok: true, option });
   } catch (err) {
     console.error(err);
@@ -93,6 +106,8 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   logRequest(req, '/api/cities');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageCitiesCountries");
     if (!auth.ok) return auth.response;
@@ -135,10 +150,25 @@ export async function DELETE(req: NextRequest) {
     });
     const placeholders = paramNames.map((name) => `@${name}`).join(", ");
 
-    const result = await request.query(`
+    const result = await request.query<{ CityID: number; Name: string | null }>(`
       DELETE FROM dbo.Cities
+      OUTPUT DELETED.ID AS CityID, DELETED.Name
       WHERE ID IN (${placeholders});
     `);
+
+    const deletedRows = (result.recordset ?? []).map((row) => ({
+      id: row.CityID,
+      name: row.Name?.trim() || null,
+    }));
+    logDeleteAuditDetails({
+      endpoint: '/api/cities',
+      requestId,
+      userId,
+      targetEntity: 'cities',
+      requestedIds: ids,
+      deletedRows,
+      message: 'Cities deleted',
+    });
 
     return NextResponse.json({ ok: true, deletedCities: result.rowsAffected?.[0] ?? 0 });
   } catch (err) {

@@ -3,6 +3,9 @@ import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { requirePermission } from "../../../../../lib/authz";
+import { resolveAuditUserId } from "../../../../../lib/auditTrail";
+import { getRequestId } from "../../../../../lib/requestId";
+import { logEditAuditDetails } from "../../../../../lib/mutationAudit";
 
 type MailHeader = {
   MailID: number;
@@ -63,6 +66,8 @@ export async function PATCH(
   { params }: { params: Promise<{ mailId: string }> },
 ) {
   logRequest(req, '/api/marketing/mails/[mailId]');
+  const requestId = await getRequestId(req);
+  const auditUserId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;
@@ -82,24 +87,37 @@ export async function PATCH(
     const sets: string[] = [];
     const request = pool.request();
     request.input("mailId", sql.Int, mailId);
+    const changes: Array<{
+      targetId: number;
+      targetName: string | null;
+      field: string;
+      before: unknown;
+      after: unknown;
+    }> = [];
 
     if ("description" in body) {
-      request.input("description", sql.NVarChar(255), String(body.description ?? "").trim());
+      const val = String(body.description ?? "").trim();
+      request.input("description", sql.NVarChar(255), val);
       sets.push("Description = @description");
+      changes.push({ targetId: mailId, targetName: null, field: 'Description', before: null, after: val });
     }
     if ("note" in body) {
-      request.input("note", sql.NVarChar(sql.MAX), String(body.note ?? "").trim() || null);
+      const val = String(body.note ?? "").trim() || null;
+      request.input("note", sql.NVarChar(sql.MAX), val);
       sets.push("Note = @note");
+      changes.push({ targetId: mailId, targetName: null, field: 'Note', before: null, after: val });
     }
     if ("date" in body) {
       const dateValue = body.date ? new Date(String(body.date)) : null;
       request.input("date", sql.DateTime2, dateValue);
       sets.push("[Date] = @date");
+      changes.push({ targetId: mailId, targetName: null, field: 'Date', before: null, after: dateValue });
     }
     if ("isPresent" in body) {
       const v = body.isPresent === true || body.isPresent === 1 || body.isPresent === "true";
       request.input("isPresent", sql.Bit, v ? 1 : 0);
       sets.push("IsPresent = @isPresent");
+      changes.push({ targetId: mailId, targetName: null, field: 'IsPresent', before: null, after: v });
     }
 
     if (sets.length === 0) {
@@ -107,6 +125,17 @@ export async function PATCH(
     }
 
     await request.query(`UPDATE dbo.Mails SET ${sets.join(", ")} WHERE ID = @mailId`);
+
+    logEditAuditDetails({
+      endpoint: '/api/marketing/mails/[mailId]',
+      method: 'PATCH',
+      requestId,
+      userId: auditUserId,
+      targetEntity: 'mails',
+      targetIds: [mailId],
+      changes,
+      message: 'Mail updated',
+    });
 
     return NextResponse.json({ ok: true });
   } catch (err) {

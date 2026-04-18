@@ -12,6 +12,9 @@ import { requirePermission } from "../../../lib/authz";
 import { checkDeletePermission } from "../../../lib/deletePermissions";
 import { KnownFilterModel } from "../../../lib/filterTypes";
 import { processFilter } from "../../../lib/filterProcessing";
+import { resolveAuditUserId } from "../../../lib/auditTrail";
+import { getRequestId } from "../../../lib/requestId";
+import { logDeleteAuditDetails } from "../../../lib/mutationAudit";
 
 type GridRequest = {
   startRow?: number;
@@ -285,6 +288,8 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   logRequest(req, '/api/price-lists');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "managePriceLists");
     if (!auth.ok) return auth.response;
@@ -317,6 +322,7 @@ export async function DELETE(req: NextRequest) {
     const pool = await getPool();
     const chunkSize = 200;
     let deleted = 0;
+    const deletedRows: Array<{ id: number; name: string | null }> = [];
 
     const transaction = new sql.Transaction(pool);
     await transaction.begin();
@@ -345,12 +351,16 @@ export async function DELETE(req: NextRequest) {
 
         const deletePriceListsReq = new sql.Request(transaction);
         params.forEach((p) => deletePriceListsReq.input(p.name, sql.Int, p.value));
-        const result = await deletePriceListsReq.query(`
+        const result = await deletePriceListsReq.query<{ PriceListID: number; Name: string | null }>(`
           DELETE dbo.PriceLists
+          OUTPUT DELETED.ID AS PriceListID, DELETED.Name
           WHERE ID IN (${paramNames.join(", ")})
         `);
 
         deleted += result.rowsAffected?.[0] ?? 0;
+        (result.recordset ?? []).forEach((row) => {
+          deletedRows.push({ id: row.PriceListID, name: row.Name?.trim() || null });
+        });
       }
 
       await transaction.commit();
@@ -358,6 +368,16 @@ export async function DELETE(req: NextRequest) {
       await transaction.rollback();
       throw txErr;
     }
+
+    logDeleteAuditDetails({
+      endpoint: "/api/price-lists",
+      requestId,
+      userId,
+      targetEntity: "priceLists",
+      requestedIds: normalizedIds,
+      deletedRows,
+      message: "Price lists deleted",
+    });
 
     return NextResponse.json({ ok: true, deleted });
   } catch (err: unknown) {

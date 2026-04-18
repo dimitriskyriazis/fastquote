@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from 'mssql';
-import { buildAuditContext } from '../../../../../lib/auditTrail';
+import { buildAuditContext, resolveAuditUserId } from '../../../../../lib/auditTrail';
 import { getPool } from '../../../../../lib/sql';
+import { getRequestId } from '../../../../../lib/requestId';
+import { logAddAuditDetails } from '../../../../../lib/mutationAudit';
 import { requirePermission } from '../../../../../lib/authz';
 
 const normalizeOfferIdParam = (value: string | null | undefined): number | null => {
@@ -282,6 +284,8 @@ export async function POST(
   { params }: { params: Promise<{ offerId: string }> },
 ) {
   logRequest(req, '/api/offers/[offerId]/duplicate');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "createOffers");
     if (!auth.ok) return auth.response;
@@ -510,7 +514,7 @@ export async function POST(
           CreatedOn,
           ModifiedOn
         )
-        OUTPUT INSERTED.ID AS OfferID
+        OUTPUT INSERTED.ID AS OfferID, INSERTED.Title
         VALUES (
           @CustomerID,
           @StatusID,
@@ -559,8 +563,9 @@ export async function POST(
         );
       `;
 
-      const insertResult = await insertRequest.query<{ OfferID: number }>(insertSql);
-      const newOfferId = insertResult.recordset?.[0]?.OfferID;
+      const insertResult = await insertRequest.query<{ OfferID: number; Title: string | null }>(insertSql);
+      const insertedOfferRow = insertResult.recordset?.[0];
+      const newOfferId = insertedOfferRow?.OfferID;
       if (!newOfferId) {
         throw new Error('Unable to create offer version');
       }
@@ -572,6 +577,23 @@ export async function POST(
       await duplicateRequest.query(duplicateOfferDetailsSql);
 
       await transaction.commit();
+
+      logAddAuditDetails({
+        endpoint: '/api/offers/[offerId]/duplicate',
+        method: 'POST',
+        requestId,
+        userId,
+        targetEntity: 'offers',
+        createdRows: [
+          {
+            id: newOfferId,
+            name: insertedOfferRow?.Title?.trim() || existingOffer.Title?.trim() || null,
+          },
+        ],
+        message: `Offer duplicated (${duplicateMode})`,
+        extra: { sourceOfferId: normalizedId },
+      });
+
       return NextResponse.json({ ok: true, offerId: newOfferId });
     } catch (err) {
       await transaction.rollback().catch(() => {});

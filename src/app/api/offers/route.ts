@@ -6,6 +6,12 @@ import sql from 'mssql';
 import type { Request as SqlRequest } from 'mssql';
 import { getPool } from '../../../lib/sql';
 import { resolveAuditUserId } from '../../../lib/auditTrail';
+import { getRequestId } from '../../../lib/requestId';
+import {
+  logDeleteAuditDetails,
+  logEditAuditDetails,
+  type FieldChange,
+} from '../../../lib/mutationAudit';
 import {
   buildQuickFilterClause,
   mergeWhereClauses,
@@ -580,6 +586,7 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   logRequest(req, '/api/offers');
+  const requestId = await getRequestId(req);
   try {
     const auth = await requirePermission(req, "editOffers");
     if (!auth.ok) return auth.response;
@@ -599,6 +606,7 @@ export async function PATCH(req: NextRequest) {
     const pool = await getPool();
     const auditUserId = resolveAuditUserId(req);
     let updated = 0;
+    const auditChanges: FieldChange[] = [];
 
     for (const update of rawUpdates) {
       if (!update || update.field !== 'Probability') continue;
@@ -629,11 +637,33 @@ export async function PATCH(req: NextRequest) {
           AND ISNULL(IsStandardPackage, 0) = 0;
       `);
 
-      updated += result.rowsAffected?.[0] ?? 0;
+      const affected = result.rowsAffected?.[0] ?? 0;
+      if (affected > 0) {
+        auditChanges.push({
+          targetId: offerId,
+          field: 'Probability',
+          before: null,
+          after: probability,
+        });
+      }
+      updated += affected;
     }
 
     if (updated <= 0) {
       return NextResponse.json({ ok: false, error: 'No valid updates were applied' }, { status: 400 });
+    }
+
+    if (auditChanges.length > 0) {
+      logEditAuditDetails({
+        endpoint: '/api/offers',
+        method: 'PATCH',
+        requestId,
+        userId: auditUserId,
+        targetEntity: 'offers',
+        targetIds: Array.from(new Set(auditChanges.map((change) => change.targetId))),
+        changes: auditChanges,
+        message: 'Offer fields updated',
+      });
     }
 
     return NextResponse.json({ ok: true, updated });
@@ -646,6 +676,8 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   logRequest(req, '/api/offers');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "editOffers");
     if (!auth.ok) return auth.response;
@@ -697,6 +729,7 @@ export async function DELETE(req: NextRequest) {
     }
     const chunkSize = BATCH_DELETE_SIZE;
     let deleted = 0;
+    const deletedRows: Array<{ id: number; name: string | null }> = [];
 
     for (let idx = 0; idx < normalizedIds.length; idx += chunkSize) {
       const chunk = normalizedIds.slice(idx, idx + chunkSize);
@@ -790,19 +823,33 @@ export async function DELETE(req: NextRequest) {
           );
         `);
 
-        const deleteOffersResult = await bindParams(new sql.Request(transaction)).query(`
+        const deleteOffersResult = await bindParams(new sql.Request(transaction)).query<{ OfferID: number; Title: string | null }>(`
           DELETE FROM dbo.Offer
+          OUTPUT DELETED.ID AS OfferID, DELETED.Title
           WHERE ID IN (${idsSql})
             AND ISNULL(IsStandardPackage, 0) = 0;
         `);
 
         await transaction.commit();
         deleted += deleteOffersResult.rowsAffected?.[0] ?? 0;
+        (deleteOffersResult.recordset ?? []).forEach((row) => {
+          deletedRows.push({ id: row.OfferID, name: row.Title?.trim() || null });
+        });
       } catch (chunkErr) {
         await transaction.rollback().catch(() => {});
         throw chunkErr;
       }
     }
+
+    logDeleteAuditDetails({
+      endpoint: '/api/offers',
+      requestId,
+      userId,
+      targetEntity: 'offers',
+      requestedIds: normalizedIds,
+      deletedRows,
+      message: 'Offers deleted',
+    });
 
     return NextResponse.json({ ok: true, deleted });
   } catch (err: unknown) {

@@ -3,6 +3,8 @@ import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { buildAuditContext, resolveAuditUserId } from "../../../../../lib/auditTrail";
+import { getRequestId } from "../../../../../lib/requestId";
+import { logDeleteAuditDetails, logEditAuditDetails } from "../../../../../lib/mutationAudit";
 import { fetchUserRoles } from "../../../../../lib/authz";
 import { checkDeletePermission } from "../../../../../lib/deletePermissions";
 import { KnownFilterModel, TextCondition, isCompoundFilter } from "../../../../../lib/filterTypes";
@@ -365,6 +367,8 @@ export async function PATCH(
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
   logRequest(req, '/api/price-lists/[priceListId]/products');
+  const requestId = await getRequestId(req);
+  const userIdForLog = resolveAuditUserId(req);
   try {
     const { priceListId } = await params;
     const normalizedId = decodeURIComponent(String(priceListId ?? "")).trim();
@@ -439,6 +443,26 @@ export async function PATCH(
       `);
     }
 
+    const changes = normalized.map((update) => ({
+      targetId: update.priceListItemId,
+      targetName: null,
+      field: update.field,
+      before: null,
+      after: update.field === "Enabled" ? normalizeBooleanInput(update.value) : update.value,
+    }));
+    const targetIds = Array.from(new Set(normalized.map((u) => u.priceListItemId)));
+    logEditAuditDetails({
+      endpoint: "/api/price-lists/[priceListId]/products",
+      method: "PATCH",
+      requestId,
+      userId: userIdForLog,
+      targetEntity: "priceListItems",
+      targetIds,
+      changes,
+      message: "Price list items updated",
+      extra: { priceListId: idValue },
+    });
+
     return NextResponse.json({ ok: true, updated: normalized.length });
   } catch (err) {
     console.error(err);
@@ -452,6 +476,8 @@ export async function DELETE(
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
   logRequest(req, '/api/price-lists/[priceListId]/products');
+  const requestId = await getRequestId(req);
+  const userIdForLog = resolveAuditUserId(req);
   try {
     const { priceListId } = await params;
     const normalizedId = decodeURIComponent(String(priceListId ?? "")).trim();
@@ -493,6 +519,7 @@ export async function DELETE(
     const pool = await getPool();
     const chunkSize = 200;
     let deleted = 0;
+    const deletedRows: Array<{ id: number; name: string | null }> = [];
 
     for (let idx = 0; idx < normalizedIds.length; idx += chunkSize) {
       const chunk = normalizedIds.slice(idx, idx + chunkSize);
@@ -507,12 +534,30 @@ export async function DELETE(
       });
       const query = `
         DELETE FROM dbo.PriceListItems
+        OUTPUT DELETED.ID AS PriceListItemID, DELETED.ProductID
         WHERE PriceListID = @__priceListId
           AND ID IN (${paramNames.join(", ")})
       `;
-      const result = await request.query(query);
+      const result = await request.query<{ PriceListItemID: number; ProductID: number | null }>(query);
       deleted += result.rowsAffected?.[0] ?? 0;
+      (result.recordset ?? []).forEach((row) => {
+        deletedRows.push({
+          id: row.PriceListItemID,
+          name: row.ProductID != null ? `Product ${row.ProductID}` : null,
+        });
+      });
     }
+
+    logDeleteAuditDetails({
+      endpoint: "/api/price-lists/[priceListId]/products",
+      requestId,
+      userId: userIdForLog,
+      targetEntity: "priceListItems",
+      requestedIds: normalizedIds,
+      deletedRows,
+      message: "Price list items deleted",
+      extra: { priceListId: idValue },
+    });
 
     return NextResponse.json({ ok: true, deleted });
   } catch (err) {

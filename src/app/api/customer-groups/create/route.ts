@@ -3,6 +3,9 @@ import { logRequest } from '../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { requirePermission } from "../../../../lib/authz";
+import { resolveAuditUserId } from "../../../../lib/auditTrail";
+import { getRequestId } from "../../../../lib/requestId";
+import { logAddAuditDetails } from "../../../../lib/mutationAudit";
 
 const normalizeTextValue = (value: unknown, maxLength = 255): string | null => {
   if (value == null) return null;
@@ -31,6 +34,8 @@ const normalizeBoolean = (value: unknown): boolean => {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/customer-groups/create');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;
@@ -53,12 +58,13 @@ export async function POST(req: NextRequest) {
     insertRequest.input("name", sql.NVarChar(255), name);
     insertRequest.input("code", sql.NVarChar(255), code);
     insertRequest.input("enabled", sql.Bit, enabled ? 1 : 0);
-    const insertResult = await insertRequest.query<{ ID: number }>(`
+    const insertResult = await insertRequest.query<{ ID: number; Name: string | null }>(`
       INSERT INTO dbo.CustomerGroups (Name, Code, Enabled)
-      OUTPUT inserted.ID
+      OUTPUT inserted.ID, inserted.Name
       VALUES (@name, @code, @enabled)
     `);
-    const groupId = insertResult.recordset?.[0]?.ID ?? null;
+    const insertedRow = insertResult.recordset?.[0] ?? null;
+    const groupId = insertedRow?.ID ?? null;
     if (groupId == null) {
       throw new Error("Unable to create customer group.");
     }
@@ -83,6 +89,21 @@ export async function POST(req: NextRequest) {
     if (!group) {
       throw new Error("Unable to load created customer group.");
     }
+
+    logAddAuditDetails({
+      endpoint: "/api/customer-groups/create",
+      method: "POST",
+      requestId,
+      userId,
+      targetEntity: "customerGroups",
+      createdRows: [
+        {
+          id: groupId,
+          name: insertedRow?.Name?.trim() || group.Name || name,
+        },
+      ],
+      message: "Customer group created",
+    });
 
     return NextResponse.json({ ok: true, group });
   } catch (err) {

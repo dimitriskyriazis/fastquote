@@ -3,6 +3,13 @@ import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../../../lib/sql';
 import { requirePermission } from '../../../../../lib/authz';
+import { resolveAuditUserId } from '../../../../../lib/auditTrail';
+import { getRequestId } from '../../../../../lib/requestId';
+import {
+  logAddAuditDetails,
+  logDeleteAuditDetails,
+  logEditAuditDetails,
+} from '../../../../../lib/mutationAudit';
 
 const normalizeInt = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isInteger(value)) return value;
@@ -74,6 +81,8 @@ export async function POST(
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
   logRequest(req, '/api/price-lists/[priceListId]/pricing-policies');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "managePriceLists");
     if (!auth.ok) return auth.response;
@@ -98,19 +107,40 @@ export async function POST(
     request.input('priceListId', sql.Int, parsedId);
     request.input('pricingPolicyId', sql.Int, pricingPolicyId);
 
-    const result = await request.query<{ ID: number }>(`
+    const result = await request.query<{ ID: number; PricingPolicyName: string | null }>(`
+      DECLARE @Inserted TABLE (ID INT, PricingPolicyID INT);
       INSERT INTO dbo.PriceListPricingPolicy (
         PriceListID,
         PricingPolicyID
       )
-      OUTPUT INSERTED.ID
+      OUTPUT INSERTED.ID, INSERTED.PricingPolicyID INTO @Inserted
       VALUES (@priceListId, @pricingPolicyId);
+
+      SELECT TOP 1 i.ID, pp.Name AS PricingPolicyName
+      FROM @Inserted i
+      LEFT JOIN dbo.PricingPolicies pp ON pp.ID = i.PricingPolicyID;
     `);
 
     const inserted = result.recordset?.[0];
     if (!inserted || inserted.ID == null) {
       throw new Error('Unable to create price list pricing policy');
     }
+
+    logAddAuditDetails({
+      endpoint: '/api/price-lists/[priceListId]/pricing-policies',
+      method: 'POST',
+      requestId,
+      userId,
+      targetEntity: 'priceListPricingPolicies',
+      createdRows: [
+        {
+          id: inserted.ID,
+          name: inserted.PricingPolicyName?.trim() || `Policy ${pricingPolicyId}`,
+        },
+      ],
+      message: 'Price list pricing policy added',
+      extra: { priceListId: parsedId, pricingPolicyId },
+    });
 
     return NextResponse.json({ ok: true, id: inserted.ID });
   } catch (err) {
@@ -129,6 +159,8 @@ export async function PUT(
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
   logRequest(req, '/api/price-lists/[priceListId]/pricing-policies');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "managePriceLists");
     if (!auth.ok) return auth.response;
@@ -168,6 +200,26 @@ export async function PUT(
         AND ID = @policyId;
     `);
 
+    logEditAuditDetails({
+      endpoint: '/api/price-lists/[priceListId]/pricing-policies',
+      method: 'PUT',
+      requestId,
+      userId,
+      targetEntity: 'priceListPricingPolicies',
+      targetIds: [policyId],
+      changes: [
+        {
+          targetId: policyId,
+          targetName: null,
+          field: 'PricingPolicyID',
+          before: null,
+          after: pricingPolicyId,
+        },
+      ],
+      message: 'Price list pricing policy updated',
+      extra: { priceListId: parsedId },
+    });
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error('Failed to update price list pricing policy', err);
@@ -181,6 +233,8 @@ export async function DELETE(
   { params }: { params: Promise<{ priceListId: string }> },
 ) {
   logRequest(req, '/api/price-lists/[priceListId]/pricing-policies');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "managePriceLists");
     if (!auth.ok) return auth.response;
@@ -206,11 +260,33 @@ export async function DELETE(
     request.input('priceListId', sql.Int, parsedId);
     request.input('policyId', sql.Int, policyId);
 
-    await request.query(`
+    const result = await request.query<{ ID: number; PricingPolicyName: string | null }>(`
+      DECLARE @Deleted TABLE (ID INT, PricingPolicyID INT);
       DELETE FROM dbo.PriceListPricingPolicy
+      OUTPUT DELETED.ID, DELETED.PricingPolicyID INTO @Deleted
       WHERE PriceListID = @priceListId
         AND ID = @policyId;
+
+      SELECT d.ID, pp.Name AS PricingPolicyName
+      FROM @Deleted d
+      LEFT JOIN dbo.PricingPolicies pp ON pp.ID = d.PricingPolicyID;
     `);
+
+    const deletedRows = (result.recordset ?? []).map((row) => ({
+      id: row.ID,
+      name: row.PricingPolicyName?.trim() || null,
+    }));
+
+    logDeleteAuditDetails({
+      endpoint: '/api/price-lists/[priceListId]/pricing-policies',
+      requestId,
+      userId,
+      targetEntity: 'priceListPricingPolicies',
+      requestedIds: [policyId],
+      deletedRows,
+      message: 'Price list pricing policy removed',
+      extra: { priceListId: parsedId },
+    });
 
     return NextResponse.json({ ok: true });
   } catch (err) {

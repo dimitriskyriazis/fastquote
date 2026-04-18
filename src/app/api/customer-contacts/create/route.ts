@@ -5,6 +5,8 @@ import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { requirePermission } from "../../../../lib/authz";
 import { normalizeString, normalizeId } from '../../../../lib/normalize';
+import { getRequestId } from "../../../../lib/requestId";
+import { logAddAuditDetails } from "../../../../lib/mutationAudit";
 
 const normalizeBoolean = (value: unknown): boolean => {
   if (value === true || value === "true" || value === "1") return true;
@@ -58,6 +60,8 @@ const ensureTitleExists = async (pool: ConnectionPool, titleId: number): Promise
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/customer-contacts/create');
+  const requestId = await getRequestId(req);
+  const userId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;
@@ -215,6 +219,17 @@ export async function POST(req: NextRequest) {
     if (createdId == null) {
       throw new Error("Unable to create contact.");
     }
+
+    const contactName = [firstName, lastName].filter(Boolean).join(' ').trim() || `Contact ${createdId}`;
+    logAddAuditDetails({
+      endpoint: '/api/customer-contacts/create',
+      method: 'POST',
+      requestId,
+      userId,
+      targetEntity: 'customer-contacts',
+      createdRows: [{ id: createdId, name: contactName }],
+      message: 'Customer contact created',
+    });
 
     return NextResponse.json({ ok: true, contactId: createdId });
   } catch (err) {

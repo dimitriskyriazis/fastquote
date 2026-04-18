@@ -4,6 +4,8 @@ import sql from "mssql";
 import type { ConnectionPool } from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
+import { getRequestId } from "../../../../lib/requestId";
+import { logEditAuditDetails, type FieldChange } from "../../../../lib/mutationAudit";
 import { requirePermission } from "../../../../lib/authz";
 import { clearPartModelNumberUpper } from "../../../../lib/partModelNumber";
 
@@ -22,6 +24,7 @@ type TransactionLike = {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/products/update-model-numbers');
+  const requestId = await getRequestId(req);
   try {
     const auth = await requirePermission(req, "managePriceLists");
     if (!auth.ok) return auth.response;
@@ -43,14 +46,16 @@ export async function POST(req: NextRequest) {
 
     try {
       let updatedCount = 0;
+      const changes: FieldChange[] = [];
       for (const item of mismatches) {
         if (!item.productId || !item.newModelNumber) continue;
 
         const modelNumberCleared = clearPartModelNumberUpper(item.newModelNumber);
+        const modelNumberValue = item.newModelNumber.slice(0, 255);
         const RequestCtor = sql.Request as unknown as new (o: TransactionLike) => InstanceType<typeof sql.Request>;
         const request = new RequestCtor(transaction);
         request.input("ProductID", sql.Int, item.productId);
-        request.input("ModelNumber", sql.NVarChar(255), item.newModelNumber.slice(0, 255));
+        request.input("ModelNumber", sql.NVarChar(255), modelNumberValue);
         request.input("ModelNumberCleared", sql.NVarChar(255), modelNumberCleared.slice(0, 255));
         request.input("ModifiedBy", sql.NVarChar(450), auditUserId);
         await request.query(`
@@ -62,9 +67,27 @@ export async function POST(req: NextRequest) {
           WHERE ID = @ProductID
         `);
         updatedCount += 1;
+        changes.push({
+          targetId: item.productId,
+          field: 'ModelNumber',
+          before: null,
+          after: modelNumberValue,
+        });
       }
 
       await transaction.commit();
+      if (changes.length > 0) {
+        logEditAuditDetails({
+          endpoint: '/api/products/update-model-numbers',
+          method: 'POST',
+          requestId,
+          userId: auditUserId,
+          targetEntity: 'products',
+          targetIds: Array.from(new Set(changes.map((c) => c.targetId))),
+          changes,
+          message: 'Product model numbers updated',
+        });
+      }
       return NextResponse.json({ ok: true, updatedCount });
     } catch (err) {
       await transaction.rollback();

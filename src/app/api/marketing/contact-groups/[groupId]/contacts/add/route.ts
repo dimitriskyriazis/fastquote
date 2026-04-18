@@ -3,6 +3,9 @@ import { logRequest } from '../../../../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../../../../lib/sql";
 import { requirePermission } from "../../../../../../../lib/authz";
+import { resolveAuditUserId } from "../../../../../../../lib/auditTrail";
+import { getRequestId } from "../../../../../../../lib/requestId";
+import { logAddAuditDetails } from "../../../../../../../lib/mutationAudit";
 
 type AddContactsBody = {
   contactIds?: Array<number | string>;
@@ -13,6 +16,8 @@ export async function POST(
   { params }: { params: Promise<{ groupId: string }> },
 ) {
   logRequest(req, '/api/marketing/contact-groups/[groupId]/contacts/add');
+  const requestId = await getRequestId(req);
+  const auditUserId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageMarketing");
     if (!auth.ok) return auth.response;
@@ -35,6 +40,7 @@ export async function POST(
 
     const pool = await getPool();
     let added = 0;
+    const addedContactIds: number[] = [];
 
     for (const contactId of contactIds) {
       const checkReq = pool.request();
@@ -54,6 +60,23 @@ export async function POST(
         VALUES (@contactId, @groupId)
       `);
       added++;
+      addedContactIds.push(contactId);
+    }
+
+    if (addedContactIds.length > 0) {
+      logAddAuditDetails({
+        endpoint: '/api/marketing/contact-groups/[groupId]/contacts/add',
+        method: 'POST',
+        requestId,
+        userId: auditUserId,
+        targetEntity: 'contactGroupMembers',
+        createdRows: addedContactIds.map((contactId) => ({
+          id: contactId,
+          name: null,
+          groupId,
+        })),
+        message: `Contacts added to contact group ID ${groupId}`,
+      });
     }
 
     return NextResponse.json({ ok: true, added });

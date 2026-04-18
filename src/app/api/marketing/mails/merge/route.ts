@@ -3,6 +3,9 @@ import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { requirePermission } from "../../../../../lib/authz";
+import { resolveAuditUserId } from "../../../../../lib/auditTrail";
+import { getRequestId } from "../../../../../lib/requestId";
+import { logDeleteAuditDetails } from "../../../../../lib/mutationAudit";
 
 type MergeBody = {
   sourceMailId?: number | string;
@@ -11,6 +14,8 @@ type MergeBody = {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/marketing/mails/merge');
+  const requestId = await getRequestId(req);
+  const auditUserId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;
@@ -69,7 +74,25 @@ export async function POST(req: NextRequest) {
     // Delete source mail
     const delMail = pool.request();
     delMail.input("sourceId", sql.Int, sourceMailId);
-    await delMail.query(`DELETE FROM dbo.Mails WHERE ID = @sourceId`);
+    const delMailResult = await delMail.query<{ MailID: number; Description: string | null }>(`
+      DELETE FROM dbo.Mails
+      OUTPUT DELETED.ID AS MailID, DELETED.Description
+      WHERE ID = @sourceId
+    `);
+
+    const deletedMailRows = (delMailResult.recordset ?? []).map((row) => ({
+      id: row.MailID,
+      name: row.Description?.trim() || null,
+    }));
+    logDeleteAuditDetails({
+      endpoint: '/api/marketing/mails/merge',
+      requestId,
+      userId: auditUserId,
+      targetEntity: 'mails',
+      requestedIds: [sourceMailId],
+      deletedRows: deletedMailRows,
+      message: `Mail merged into target ID ${targetMailId}`,
+    });
 
     return NextResponse.json({ ok: true });
   } catch (err) {

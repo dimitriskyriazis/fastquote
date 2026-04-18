@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
+import { getRequestId } from '../../../../../../lib/requestId';
+import { logEditAuditDetails, type FieldChange } from '../../../../../../lib/mutationAudit';
 import { getPool } from '../../../../../../lib/sql';
 import { requirePermission } from '../../../../../../lib/authz';
 import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
@@ -31,6 +33,7 @@ export async function POST(
       return NextResponse.json({ ok: false, error: 'Invalid id' }, { status: 400 });
     }
 
+    const requestId = await getRequestId(req);
     const body = (await req.json().catch(() => null)) as { rows?: RestoreRow[] } | null;
     const rows = Array.isArray(body?.rows) ? body.rows : [];
     if (rows.length === 0) {
@@ -40,6 +43,7 @@ export async function POST(
     const pool = await getPool();
     const Decimal = getDecimalType();
     let restored = 0;
+    const restoredChanges: FieldChange[] = [];
 
     // Get the next ordering values
     const orderingReq = pool.request();
@@ -106,7 +110,7 @@ export async function POST(
       request.input('__requestedQuantity', Decimal, row.RequestedQuantity ?? null);
       request.input('__userId', sql.NVarChar(450), audit.userId ?? null);
 
-      await request.query(`
+      const insertResult = await request.query<{ OfferDetailID: number; ProductDescription: string | null }>(`
         INSERT INTO dbo.OfferDetails (
           OfferID, ParentOfferDetailID, TreeOrdering, Ordering,
           IsPrintable, IsComment, IsCategory, Enabled,
@@ -120,7 +124,9 @@ export async function POST(
           RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3,
           RequestedQuantity,
           CreatedOn, CreatedBy, ModifiedOn, ModifiedBy
-        ) VALUES (
+        )
+        OUTPUT INSERTED.ID AS OfferDetailID, INSERTED.ProductDescription AS ProductDescription
+        VALUES (
           @__offerId, @__parentId, @__treeOrdering, @__ordering,
           @__isPrintable, @__isComment, @__isCategory, @__enabled,
           @__description, @__quantity,
@@ -136,6 +142,17 @@ export async function POST(
         )
       `);
 
+      const insertedRow = insertResult.recordset?.[0];
+      if (insertedRow?.OfferDetailID) {
+        restoredChanges.push({
+          targetId: insertedRow.OfferDetailID,
+          targetName: insertedRow.ProductDescription?.trim() || null,
+          field: 'Deleted',
+          before: true,
+          after: false,
+        });
+      }
+
       restored++;
       nextOrdering++;
       nextRoot++;
@@ -147,6 +164,20 @@ export async function POST(
       'rows-restored',
       { restoredCount: restored, updatedBy: audit.userId },
     );
+
+    if (restoredChanges.length > 0) {
+      logEditAuditDetails({
+        endpoint: `/api/offers/${offerId}/products/restore`,
+        method: 'POST',
+        requestId,
+        userId: audit.userId,
+        targetEntity: 'offerProducts',
+        targetIds: restoredChanges.map((c) => c.targetId),
+        changes: restoredChanges,
+        message: `Offer products restored for offer ${offerId}`,
+        extra: { offerId },
+      });
+    }
 
     return NextResponse.json({ ok: true, restored });
   } catch (err) {

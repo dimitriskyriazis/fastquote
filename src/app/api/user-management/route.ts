@@ -3,6 +3,9 @@ import { logRequest } from '../../../lib/apiHelpers';
 import sql, { type ConnectionPool } from "mssql";
 import { getPool } from "../../../lib/sql";
 import { requirePermission } from "../../../lib/authz";
+import { resolveAuditUserId } from "../../../lib/auditTrail";
+import { getRequestId } from "../../../lib/requestId";
+import { logAddAuditDetails, logEditAuditDetails } from "../../../lib/mutationAudit";
 
 type CreateBody = {
   userName?: unknown;
@@ -260,6 +263,8 @@ const FIELD_COLUMN_MAP: Record<string, string> = {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/user-management');
+  const requestId = await getRequestId(req);
+  const auditUserId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageUsers");
     if (!auth.ok) return auth.response;
@@ -395,6 +400,16 @@ export async function POST(req: NextRequest) {
       VALUES (@userId, @roleId)
     `);
 
+    logAddAuditDetails({
+      endpoint: '/api/user-management',
+      method: 'POST',
+      requestId,
+      userId: auditUserId,
+      targetEntity: 'users',
+      createdRows: [{ id: newUserId, name: fullName || userName, userName, email }],
+      message: 'User created',
+    });
+
     return NextResponse.json({ ok: true, user: { id: newUserId } });
   } catch (err) {
     console.error("Failed to create user", err);
@@ -405,6 +420,8 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   logRequest(req, '/api/user-management');
+  const requestId = await getRequestId(req);
+  const auditUserId = resolveAuditUserId(req);
   try {
     const auth = await requirePermission(req, "manageUsers");
     if (!auth.ok) return auth.response;
@@ -536,6 +553,54 @@ export async function PATCH(req: NextRequest) {
         WHERE Id = @userId
       `);
     }
+
+    const targetIds = Array.from(new Set(normalized.map((u) => u.userId)));
+    const changes = normalized.map((u) => {
+      if (u.kind === 'roles') {
+        return {
+          targetId: u.userId,
+          targetName: null,
+          field: 'Roles',
+          before: null,
+          after: u.roles.join(', '),
+        };
+      }
+      if (u.kind === 'enabled') {
+        return {
+          targetId: u.userId,
+          targetName: null,
+          field: 'Enabled',
+          before: null,
+          after: u.value,
+        };
+      }
+      if (u.kind === 'lookup') {
+        return {
+          targetId: u.userId,
+          targetName: null,
+          field: u.field,
+          before: null,
+          after: u.value,
+        };
+      }
+      return {
+        targetId: u.userId,
+        targetName: null,
+        field: u.field,
+        before: null,
+        after: u.value,
+      };
+    });
+    logEditAuditDetails({
+      endpoint: '/api/user-management',
+      method: 'PATCH',
+      requestId,
+      userId: auditUserId,
+      targetEntity: 'users',
+      targetIds,
+      changes,
+      message: 'User fields updated',
+    });
 
     return NextResponse.json({ ok: true, updated: normalized.length });
   } catch (err) {

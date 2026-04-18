@@ -4,6 +4,8 @@ import sql from "mssql";
 import type { ConnectionPool } from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
+import { getRequestId } from "../../../../lib/requestId";
+import { logEditAuditDetails, type FieldChange } from "../../../../lib/mutationAudit";
 import { requirePermission } from "../../../../lib/authz";
 
 export const runtime = "nodejs";
@@ -21,6 +23,7 @@ type TransactionLike = {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/products/update-descriptions');
+  const requestId = await getRequestId(req);
   try {
     const auth = await requirePermission(req, "managePriceLists");
     if (!auth.ok) return auth.response;
@@ -42,13 +45,15 @@ export async function POST(req: NextRequest) {
 
     try {
       let updatedCount = 0;
+      const changes: FieldChange[] = [];
       for (const item of mismatches) {
         if (!item.productId || !item.newDescription) continue;
 
         const RequestCtor = sql.Request as unknown as new (o: TransactionLike) => InstanceType<typeof sql.Request>;
         const request = new RequestCtor(transaction);
+        const descriptionValue = item.newDescription.slice(0, 2000);
         request.input("ProductID", sql.Int, item.productId);
-        request.input("Description", sql.NVarChar(2000), item.newDescription.slice(0, 2000));
+        request.input("Description", sql.NVarChar(2000), descriptionValue);
         request.input("ModifiedBy", sql.NVarChar(450), auditUserId);
         await request.query(`
           UPDATE dbo.Products
@@ -58,9 +63,27 @@ export async function POST(req: NextRequest) {
           WHERE ID = @ProductID
         `);
         updatedCount += 1;
+        changes.push({
+          targetId: item.productId,
+          field: 'Description',
+          before: null,
+          after: descriptionValue,
+        });
       }
 
       await transaction.commit();
+      if (changes.length > 0) {
+        logEditAuditDetails({
+          endpoint: '/api/products/update-descriptions',
+          method: 'POST',
+          requestId,
+          userId: auditUserId,
+          targetEntity: 'products',
+          targetIds: Array.from(new Set(changes.map((c) => c.targetId))),
+          changes,
+          message: 'Product descriptions updated',
+        });
+      }
       return NextResponse.json({ ok: true, updatedCount });
     } catch (err) {
       await transaction.rollback();

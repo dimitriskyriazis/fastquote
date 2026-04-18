@@ -3,6 +3,8 @@ import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { buildAuditContext } from "../../../../../lib/auditTrail";
+import { getRequestId } from "../../../../../lib/requestId";
+import { logDeleteAuditDetails } from "../../../../../lib/mutationAudit";
 import { fetchUserRoles } from "../../../../../lib/authz";
 import { checkDeletePermission } from "../../../../../lib/deletePermissions";
 import {
@@ -299,6 +301,7 @@ export async function DELETE(
   { params }: { params: Promise<{ customerId: string }> },
 ) {
   logRequest(req, '/api/customers/[customerId]/contacts');
+  const requestId = await getRequestId(req);
   try {
     const { customerId } = await params;
     const normalizedCustomerId = normalizeCustomerId(decodeURIComponent(customerId ?? ""));
@@ -324,6 +327,7 @@ export async function DELETE(
 
     const pool = await getPool();
     let deleted = 0;
+    const deletedRows: Array<{ id: number; name: string | null }> = [];
 
     for (let idx = 0; idx < ids.length; idx += BATCH_DELETE_SIZE) {
       const chunk = ids.slice(idx, idx + BATCH_DELETE_SIZE);
@@ -341,17 +345,39 @@ export async function DELETE(
         });
         const deleteSql = `
           DELETE FROM dbo.Contacts
+          OUTPUT DELETED.ID AS ContactID, DELETED.FirstName, DELETED.LastName
           WHERE ID IN (${placeholders.join(", ")})
             AND CustomerID = @__customerId;
         `;
-        const result = await request.query(deleteSql);
+        const result = await request.query<{
+          ContactID: number;
+          FirstName: string | null;
+          LastName: string | null;
+        }>(deleteSql);
         await transaction.commit();
         deleted += result.rowsAffected?.[0] ?? 0;
+        (result.recordset ?? []).forEach((row) => {
+          const fullName = [row.FirstName, row.LastName]
+            .map((v) => v?.trim())
+            .filter(Boolean)
+            .join(" ");
+          deletedRows.push({ id: row.ContactID, name: fullName || null });
+        });
       } catch (chunkErr) {
         await transaction.rollback().catch(() => {});
         throw chunkErr;
       }
     }
+
+    logDeleteAuditDetails({
+      endpoint: '/api/customers/[customerId]/contacts',
+      requestId,
+      userId: audit.userId,
+      targetEntity: 'contacts',
+      requestedIds: ids,
+      deletedRows,
+      message: `Contacts deleted from customer ID ${normalizedCustomerId}`,
+    });
 
     return NextResponse.json({ ok: true, deleted });
   } catch (err: unknown) {
