@@ -315,7 +315,9 @@ let currentCurrencySymbol = '€';
 function formatCurrency(n: number | null | undefined): string {
   const v = formatEuropeanNumber(n);
   if (!v) return '';
-  return `${currentCurrencySymbol} ${v}`;
+  return currentCurrencySymbol === '$'
+    ? `${currentCurrencySymbol} ${v}`
+    : `${v} ${currentCurrencySymbol}`;
 }
 
 function formatPercent(n: number | null | undefined): string {

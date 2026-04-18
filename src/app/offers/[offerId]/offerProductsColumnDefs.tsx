@@ -656,7 +656,8 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
           ? String((params.data as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
           : '';
         if (!currencyName) return '';
-        return `${currencyName} ${otherCurrencyAmountFormatter.format(num)}`;
+        const formatted = otherCurrencyAmountFormatter.format(num);
+        return currencyName === '$' ? `${currencyName} ${formatted}` : `${formatted} ${currencyName}`;
       },
       cellClass: [...actualNumericCellClass, styles.redDataCell],
       cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },

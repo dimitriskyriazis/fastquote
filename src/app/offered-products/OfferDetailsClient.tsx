@@ -240,7 +240,8 @@ export default function OfferDetailsClient() {
           ? String((params.data as Record<string, unknown>).OtherCurrencyName).trim()
           : '';
         if (!currencyName) return '';
-        return `${currencyName} ${num.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+        const formatted = num.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+        return currencyName === '$' ? `${currencyName} ${formatted}` : `${formatted} ${currencyName}`;
       },
       cellStyle: redCellStyle,
       width: 180,

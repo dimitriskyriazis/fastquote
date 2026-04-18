@@ -76,7 +76,7 @@ const formatEuro = (value: unknown) => {
   if (value == null) return '';
   const num = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(num)) return String(value);
-  return `€ ${currencyFormatter.format(num)}`;
+  return `${currencyFormatter.format(num)} €`;
 };
 
 const priceListClassRules = priceListStatusClassRules();

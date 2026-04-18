@@ -115,7 +115,8 @@ export const formatPercentageValue = (value: unknown) => {
 export const formatCurrencyValue = (value: unknown, symbol = '€') => {
   const num = coerceNumber(value);
   if (num == null || Object.is(num, 0)) return '';
-  return `${symbol} ${decimalFormatter.format(num)}`;
+  const formatted = decimalFormatter.format(num);
+  return symbol === '$' ? `${symbol} ${formatted}` : `${formatted} ${symbol}`;
 };
 
 export const formatEuroValue = (value: unknown) => formatCurrencyValue(value, '€');

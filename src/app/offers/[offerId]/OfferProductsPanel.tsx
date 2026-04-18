@@ -5784,9 +5784,11 @@ const requestedColumnDefsMap = useMemo(
   }, [handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit, handleOriginEdit]);
 
   const offerCurrencySymbol = offerCurrencyName ?? '€';
+  const withCurrency = (formatted: string) =>
+    offerCurrencySymbol === '$' ? `${offerCurrencySymbol} ${formatted}` : `${formatted} ${offerCurrencySymbol}`;
   const formatEuroTotal = (value: number | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return '—';
-    return `${offerCurrencySymbol} ${decimalFormatter.format(value)}`;
+    return withCurrency(decimalFormatter.format(value));
   };
   const formatPercentTotal = (value: number | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return '—';
@@ -5803,7 +5805,7 @@ const requestedColumnDefsMap = useMemo(
     }
     const discount = listPrice - netPrice;
     const percent = Math.abs(listPrice) < 1e-9 ? 0 : (discount / listPrice) * 100;
-    return `${offerCurrencySymbol} ${decimalFormatter.format(discount)} (${decimalFormatter.format(percent)} %)`;
+    return `${withCurrency(decimalFormatter.format(discount))} (${decimalFormatter.format(percent)} %)`;
   };
 
   const beginEditTotalNet = useCallback(() => {
@@ -5838,7 +5840,7 @@ const requestedColumnDefsMap = useMemo(
 
     const confirmed = await showConfirmDialog({
       title: 'Adjust all Net Unit Prices?',
-      message: `This will proportionally rescale the Net Unit Price of every product row so the offer total matches ${offerCurrencySymbol} ${decimalFormatter.format(targetTotal)} (currently ${offerCurrencySymbol} ${decimalFormatter.format(currentTotal)}). This change affects all priced product rows and cannot be undone in a single step.`,
+      message: `This will proportionally rescale the Net Unit Price of every product row so the offer total matches ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}). This change affects all priced product rows and cannot be undone in a single step.`,
       confirmLabel: 'Rescale prices',
       cancelLabel: 'Keep as-is',
       tone: 'danger',
@@ -5925,7 +5927,7 @@ const requestedColumnDefsMap = useMemo(
         },
       });
 
-      showToastMessage(`Total Net Price set to ${offerCurrencySymbol} ${decimalFormatter.format(targetTotal)} (${entries.length} items updated)`, 'success', 5500, {
+      showToastMessage(`Total Net Price set to ${formatEuroTotal(targetTotal)} (${entries.length} items updated)`, 'success', 5500, {
         label: 'Undo',
         onClick: () => performUndo(),
       });

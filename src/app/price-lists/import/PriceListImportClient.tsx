@@ -54,7 +54,7 @@ const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
 
 const formatPrice = (value: number | null | undefined): string => {
   if (value == null || !Number.isFinite(value)) return "";
-  return `€ ${currencyFormatter.format(value)}`;
+  return `${currencyFormatter.format(value)} €`;
 };
 
 export type PreviousPriceListOption = DropdownOption & {

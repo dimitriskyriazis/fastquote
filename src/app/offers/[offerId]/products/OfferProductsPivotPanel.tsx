@@ -74,7 +74,7 @@ const percentFormatter = new Intl.NumberFormat(getUserNumberLocale(), { minimumF
 const euroValueFormatter = ({ value }: ValueFormatterParams<RowData, unknown>) => {
   const num = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(num) || Object.is(num, 0)) return '';
-  return `€ ${currencyFormatter.format(num)}`;
+  return `${currencyFormatter.format(num)} €`;
 };
 
 const percentValueFormatter = ({ value }: ValueFormatterParams<RowData, unknown>) => {
@@ -90,7 +90,7 @@ const numberValueFormatter = ({ value }: ValueFormatterParams<RowData, unknown>)
 };
 const formatEuroTotal = (value: number | null | undefined) => {
   if (value == null || !Number.isFinite(value)) return '—';
-  return `€ ${currencyFormatter.format(value)}`;
+  return `${currencyFormatter.format(value)} €`;
 };
 const formatPercentTotal = (value: number | null | undefined) => {
   if (value == null || !Number.isFinite(value)) return '—';
