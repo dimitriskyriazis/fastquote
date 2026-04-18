@@ -10,6 +10,12 @@ import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import panelStyles from '../[offerId]/OfferBasicDataPanel.module.css';
 import styles from './OfferCreateClient.module.css';
 import UKDatePicker from '../../components/DatePicker';
+import {
+  DEFAULT_OFFER_LANGUAGE,
+  OFFER_LANGUAGES,
+  OFFER_LANGUAGE_DEFAULTS,
+  type OfferLanguage,
+} from '../../../lib/offerLanguage';
 
 type SectionKey = 'general' | 'info' | 'commercial' | 'code' | 'dates';
 
@@ -45,6 +51,8 @@ type FormValues = {
   possibleOrderDate: string;
   offerDate: string;
   protocolNo: string;
+  offerLanguage: OfferLanguage;
+  finalPriceLabel: string;
 };
 
 type FieldConfig = {
@@ -59,12 +67,10 @@ type FieldConfig = {
   readOnly?: boolean;
   span?: number;
   dependsOnCustomer?: boolean;
+  hideEmptyOption?: boolean;
 };
 
 type OfferCreateDefaults = {
-  deliveryTime: string;
-  paymentTerms: string;
-  offerValidity: string;
   suggestedUserId?: string;
 };
 
@@ -252,45 +258,47 @@ export default function OfferCreateClient({
     return approvalUsers.some((user) => user.value === suggestedUserId) ? suggestedUserId : '';
   }, [defaultValues.suggestedUserId, approvalUsers]);
 
-  const initialValues = useMemo<FormValues>(() => ({
-    title: 'Financial Proposal',
-    description: '',
-    paymentTerms: defaultValues.paymentTerms ?? '',
-    deliveryTime: defaultValues.deliveryTime ?? '',
-    offerValidity: defaultValues.offerValidity ?? '',
-    installationSchedule: '',
-    closingNote: '',
-    introNote: '',
-    telmacoNote: '',
-    customerId: '',
-    contactId: '',
-    statusId: defaultStatusId,
-    pricingPolicyId: defaultPricingPolicyId,
-    marketId: '',
-    salesDivisionId: '',
-    salesCreationPersonId: defaultSuggestedUserId,
-    salesPersonId: defaultSuggestedUserId,
-    approvalUserId: defaultApprovalUserId,
-    projectCode: '',
-    erpFwcProjectId: '',
-    customerRef: '',
-    probability: '',
-    initialRequest: '',
-    draftOffer: '',
-    officialRequest: '',
-    offerDeadline: '',
-    orderSigned: '',
-    deliveryDue: '',
-    possibleOrderDate: '',
-    offerDate: '',
-    protocolNo: '',
-  }), [
+  const initialValues = useMemo<FormValues>(() => {
+    const langDefaults = OFFER_LANGUAGE_DEFAULTS[DEFAULT_OFFER_LANGUAGE];
+    return {
+      title: langDefaults.title,
+      description: '',
+      paymentTerms: langDefaults.paymentTerms,
+      deliveryTime: langDefaults.deliveryTime,
+      offerValidity: langDefaults.offerValidity,
+      installationSchedule: '',
+      closingNote: langDefaults.closingNote,
+      introNote: '',
+      telmacoNote: '',
+      customerId: '',
+      contactId: '',
+      statusId: defaultStatusId,
+      pricingPolicyId: defaultPricingPolicyId,
+      marketId: '',
+      salesDivisionId: '',
+      salesCreationPersonId: defaultSuggestedUserId,
+      salesPersonId: defaultSuggestedUserId,
+      approvalUserId: defaultApprovalUserId,
+      projectCode: '',
+      erpFwcProjectId: '',
+      customerRef: '',
+      probability: '',
+      initialRequest: '',
+      draftOffer: '',
+      officialRequest: '',
+      offerDeadline: '',
+      orderSigned: '',
+      deliveryDue: '',
+      possibleOrderDate: '',
+      offerDate: '',
+      protocolNo: '',
+      offerLanguage: DEFAULT_OFFER_LANGUAGE,
+      finalPriceLabel: langDefaults.finalPriceLabel,
+    };
+  }, [
     defaultPricingPolicyId,
     defaultStatusId,
     defaultSuggestedUserId,
-    defaultValues.deliveryTime,
-    defaultValues.offerValidity,
-    defaultValues.paymentTerms,
     defaultApprovalUserId,
   ]);
 
@@ -602,7 +610,25 @@ export default function OfferCreateClient({
   }, [contactOptions, initialContactIdParam]);
 
   const handleChange = useCallback((field: keyof FormValues, value: string) => {
-    setValues((prev) => ({ ...prev, [field]: value }));
+    setValues((prev) => {
+      if (field === 'offerLanguage' && (value === 'Greek' || value === 'English') && prev.offerLanguage !== value) {
+        const prevDefaults = OFFER_LANGUAGE_DEFAULTS[prev.offerLanguage];
+        const nextDefaults = OFFER_LANGUAGE_DEFAULTS[value];
+        const swap = (current: string, was: string, next: string) =>
+          current.trim() === '' || current === was ? next : current;
+        return {
+          ...prev,
+          offerLanguage: value,
+          title: swap(prev.title, prevDefaults.title, nextDefaults.title),
+          paymentTerms: swap(prev.paymentTerms, prevDefaults.paymentTerms, nextDefaults.paymentTerms),
+          deliveryTime: swap(prev.deliveryTime, prevDefaults.deliveryTime, nextDefaults.deliveryTime),
+          offerValidity: swap(prev.offerValidity, prevDefaults.offerValidity, nextDefaults.offerValidity),
+          closingNote: swap(prev.closingNote, prevDefaults.closingNote, nextDefaults.closingNote),
+          finalPriceLabel: swap(prev.finalPriceLabel, prevDefaults.finalPriceLabel, nextDefaults.finalPriceLabel),
+        };
+      }
+      return { ...prev, [field]: value } as FormValues;
+    });
     setFieldErrors((prev) => {
       if (!prev[field]) return prev;
       const next = { ...prev };
@@ -663,6 +689,8 @@ export default function OfferCreateClient({
       possibleOrderDate: toNullableString(values.possibleOrderDate),
       offerDate: toNullableString(values.offerDate),
       protocolNo: toNumberOrNull(values.protocolNo),
+      offerLanguage: values.offerLanguage,
+      finalPriceLabel: toNullableString(values.finalPriceLabel),
     };
 
     setSubmitting(true);
@@ -699,6 +727,7 @@ export default function OfferCreateClient({
       { id: 'introNote', label: 'Introduction Note', section: 'general', type: 'textarea' },
       { id: 'customerId', label: 'Customer', section: 'general', required: true, type: 'select', options: localCustomers },
       { id: 'statusId', label: 'Status', section: 'general', required: true, type: 'select', options: localStatuses },
+      { id: 'offerLanguage', label: 'Offer Language', section: 'general', required: true, type: 'select', options: OFFER_LANGUAGES.map((l) => ({ value: l, label: l })), hideEmptyOption: true },
 
       { id: 'contactId', label: 'Contact', section: 'info', required: true, type: 'select', options: contactOptions, fullWidth: true, dependsOnCustomer: true },
       { id: 'telmacoNote', label: 'Telmaco Note', section: 'info', type: 'textarea' },
@@ -739,7 +768,7 @@ export default function OfferCreateClient({
   );
 
   const generalLayout: Array<Array<keyof FormValues>> = [
-    ['title', 'description', 'customerId', 'offerValidity', 'statusId'],
+    ['title', 'description', 'customerId', 'offerValidity', 'statusId', 'offerLanguage'],
     ['deliveryTime', 'paymentTerms', 'installationSchedule', 'introNote', 'closingNote'],
   ];
 
@@ -893,7 +922,7 @@ export default function OfferCreateClient({
                 handleChange(field.id as keyof FormValues, newValue);
               }}
             >
-              <option value="">{placeholder}</option>
+              {!field.hideEmptyOption && <option value="">{placeholder}</option>}
               {options.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}

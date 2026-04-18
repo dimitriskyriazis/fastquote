@@ -31,6 +31,8 @@ async function fetchOfferBasicRecord(offerId: number) {
         o.DiscountNote,
         o.Comments AS TelmacoNote,
         o.OfferContact,
+        o.FinalPriceLabel,
+        o.OfferLanguage,
         o.ContactID,
         LTRIM(RTRIM(CONCAT(
           ISNULL(oc.FirstName, ''),

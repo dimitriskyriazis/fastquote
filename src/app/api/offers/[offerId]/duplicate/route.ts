@@ -63,6 +63,8 @@ type ExistingOfferRecord = {
   OfferDate: Date | null;
   ApprovalUserId: string | null;
   ProtocolNo: number | null;
+  OfferLanguage: string | null;
+  FinalPriceLabel: string | null;
   ParentOfferID: number | null;
   OfferVersion: number | null;
   Enabled: number | boolean | null;
@@ -337,6 +339,8 @@ export async function POST(
         ApprovalUserId,
         ParentOfferID,
         ProtocolNo,
+        OfferLanguage,
+        FinalPriceLabel,
         OfferVersion,
         Enabled,
         IsStandardPackage,
@@ -447,6 +451,8 @@ export async function POST(
       insertRequest.input('ApprovalUserId', sql.NVarChar(450), normalizedApprovalUserId);
       insertRequest.input('ParentOfferID', sql.Int, targetParentOfferId);
       insertRequest.input('ProtocolNo', sql.Int, existingOffer.ProtocolNo);
+      insertRequest.input('OfferLanguage', sql.NVarChar(16), existingOffer.OfferLanguage);
+      insertRequest.input('FinalPriceLabel', sql.NVarChar(500), existingOffer.FinalPriceLabel);
       insertRequest.input('OfferVersion', sql.Int, targetVersion);
       insertRequest.input('Enabled', sql.Bit, enabledValue);
       insertRequest.input('IsStandardPackage', sql.Bit, isStandardPackageValue);
@@ -488,6 +494,8 @@ export async function POST(
           ApprovalUserId,
           ParentOfferID,
           ProtocolNo,
+          OfferLanguage,
+          FinalPriceLabel,
           OfferVersion,
           Enabled,
           IsStandardPackage,
@@ -531,6 +539,8 @@ export async function POST(
           @ApprovalUserId,
           @ParentOfferID,
           @ProtocolNo,
+          @OfferLanguage,
+          @FinalPriceLabel,
           @OfferVersion,
           @Enabled,
           @IsStandardPackage,

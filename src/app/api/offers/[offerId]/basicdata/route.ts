@@ -49,6 +49,8 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   DiscountNote: { column: 'DiscountNote', type: 'string', sqlType: sql.NVarChar, length: 2000 },
   Comments: { column: 'Comments', type: 'string', sqlType: sql.NVarChar, length: 2000 },
   OfferContact: { column: 'OfferContact', type: 'string', sqlType: sql.NVarChar, length: 500 },
+  FinalPriceLabel: { column: 'FinalPriceLabel', type: 'string', sqlType: sql.NVarChar, length: 500 },
+  OfferLanguage: { column: 'OfferLanguage', type: 'string', sqlType: sql.NVarChar, length: 16 },
   ContactID: { column: 'ContactID', type: 'number', sqlType: sql.Int },
   StatusID: { column: 'StatusID', type: 'number', sqlType: sql.Int },
   PricingPolicyID: { column: 'PricingPolicyID', type: 'number', sqlType: sql.Int },

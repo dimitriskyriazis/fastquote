@@ -5,6 +5,7 @@ import { getPool } from '../../../../../lib/sql';
 import { requirePermission } from '../../../../../lib/authz';
 import type { OfferPdfData, OfferProductRow, PdfLang, PdfOrientation, PdfPrintSettings } from '../../../../../lib/pdfGenerator';
 import { parsePdfProductColumnsParam } from '../../../../../lib/pdfColumns';
+import { normalizeOfferLanguage, offerLanguageToPdfLang } from '../../../../../lib/offerLanguage';
 
 type OfferHeaderRow = {
   ID: number;
@@ -19,6 +20,8 @@ type OfferHeaderRow = {
   OfferNotesClosing: string | null;
   DiscountNote: string | null;
   OfferContact: string | null;
+  FinalPriceLabel: string | null;
+  OfferLanguage: string | null;
   CustomerName: string | null;
   CustomerBrandName: string | null;
   CustomerAddress: string | null;
@@ -81,7 +84,6 @@ export async function GET(
     }
 
     const langParam = req.nextUrl.searchParams.get('lang');
-    const lang: PdfLang = langParam === 'en' ? 'en' : 'el';
 
     const columnsParam = req.nextUrl.searchParams.get('columns');
     const productColumns = parsePdfProductColumnsParam(columnsParam);
@@ -95,8 +97,6 @@ export async function GET(
     const printSubSubCategories = req.nextUrl.searchParams.get('printSubSubCategories') === '1' ? 1 : 0;
     const smallOffer = req.nextUrl.searchParams.get('smallOffer') === '1';
     const equipmentList = req.nextUrl.searchParams.get('equipmentList') === '1';
-    const finalPriceLabelParam = req.nextUrl.searchParams.get('finalPriceLabel');
-    const finalPriceLabel = finalPriceLabelParam?.trim() || null;
 
     const pool = await getPool();
 
@@ -118,6 +118,8 @@ export async function GET(
           o.OfferNotesClosing,
           o.DiscountNote,
           o.OfferContact,
+          o.FinalPriceLabel,
+          o.OfferLanguage,
           c.Name AS CustomerName,
           c.BrandName AS CustomerBrandName,
           c.Address AS CustomerAddress,
@@ -152,6 +154,11 @@ export async function GET(
     if (!header) {
       return NextResponse.json({ ok: false, error: 'Offer not found' }, { status: 404 });
     }
+
+    const offerLanguage = normalizeOfferLanguage(header.OfferLanguage);
+    const lang: PdfLang = langParam === 'en' || langParam === 'el'
+      ? (langParam as PdfLang)
+      : offerLanguageToPdfLang(offerLanguage);
 
     // ── Fetch offer products ──────────────────────────────────────────
     // Include everything EXCEPT non-printable comments
@@ -293,7 +300,7 @@ export async function GET(
       notesIntroduction: header.OfferNotesIntroduction,
       notesClosing: header.OfferNotesClosing,
       discountNote: header.DiscountNote,
-      finalPriceLabel,
+      finalPriceLabel: header.FinalPriceLabel?.trim() || null,
     };
 
     // ── Generate PDF ───────────────────────────────────────────────────

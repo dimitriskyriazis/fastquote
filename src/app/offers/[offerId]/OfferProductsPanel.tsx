@@ -426,6 +426,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const serverRowsRef = useRef<Array<Record<string, unknown>>>([]);
   const appliedRequestedColumnVisibilityRef = useRef<Record<RequestedDisplayFieldKey, boolean> | null>(null);
   const appliedRequestedItemNoVisibleRef = useRef<boolean | null>(null);
+  const forceFreshRequestedVisibilityRef = useRef(false);
   const appliedShowRequestedColumnsRef = useRef<boolean | null>(null);
   const appliedTableLayoutRef = useRef<'cust' | 'wCost' | 'wReq' | null>(null);
   const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
@@ -446,6 +447,11 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [brandBulkEditSaving, setBrandBulkEditSaving] = useState(false);
   const [brandBulkEditError, setBrandBulkEditError] = useState<string | null>(null);
   const [brandBulkEditScope, setBrandBulkEditScope] = useState<'brand' | 'offer'>('brand');
+  const [demotePromptOpen, setDemotePromptOpen] = useState(false);
+  const [demotePromptQuantity, setDemotePromptQuantity] = useState('');
+  const [demotePromptError, setDemotePromptError] = useState<string | null>(null);
+  const [demotePromptSaving, setDemotePromptSaving] = useState(false);
+  const demotePromptPayloadRef = useRef<{ node: GridRowNode; row: Record<string, unknown>; detailId: number } | null>(null);
   const hasNonEuroCostCurrencyRef = useRef(false);
   const refreshScheduledRef = useRef(false);
   const pendingRefreshPurgeRef = useRef<boolean | null>(null);
@@ -642,6 +648,34 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       alignItems: 'center',
     },
   }), []);
+
+  const applyRowTotalsDelta = useCallback((
+    oldRow: { TotalPrice: number; TotalNet: number; TotalCost: number },
+    newRow: { TotalPrice: number; TotalNet: number; TotalCost: number },
+  ) => {
+    const dTP = newRow.TotalPrice - oldRow.TotalPrice;
+    const dTN = newRow.TotalNet - oldRow.TotalNet;
+    const dTC = newRow.TotalCost - oldRow.TotalCost;
+    if (dTP === 0 && dTN === 0 && dTC === 0) return;
+    setTotals((prev) => {
+      if (!prev) return prev;
+      const totalListPrice = prev.totalListPrice + dTP;
+      const totalNetPrice = prev.totalNetPrice + dTN;
+      const totalCost = prev.totalCost + dTC;
+      const marginBasis = Object.is(totalNetPrice, 0) ? 0 : totalNetPrice;
+      const totalMargin = marginBasis === 0 ? 0 : ((totalNetPrice - totalCost) / marginBasis) * 100;
+      return { totalListPrice, totalNetPrice, totalCost, totalMargin };
+    });
+  }, []);
+
+  const snapshotRowTotals = useCallback((data: Record<string, unknown> | null | undefined) => {
+    if (!data) return { TotalPrice: 0, TotalNet: 0, TotalCost: 0 };
+    return {
+      TotalPrice: coerceNumber((data as { TotalPrice?: unknown }).TotalPrice) ?? 0,
+      TotalNet: coerceNumber((data as { TotalNet?: unknown }).TotalNet) ?? 0,
+      TotalCost: coerceNumber((data as { TotalCost?: unknown }).TotalCost) ?? 0,
+    };
+  }, []);
 
   const handleTotalsChange = useCallback((payload: GridTotals | null) => {
     if (!payload) {
@@ -1006,21 +1040,27 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           },
           {} as Record<RequestedDisplayFieldKey, boolean>,
         );
+        const useFresh = forceFreshRequestedVisibilityRef.current;
         const previousVisibility = appliedRequestedColumnVisibilityRef.current ?? requestedColumnVisibility;
-        const mergedVisibility = REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
-          (acc, key) => {
-            acc[key] = Boolean(previousVisibility?.[key]) || freshVisibility[key];
-            return acc;
-          },
-          {} as Record<RequestedDisplayFieldKey, boolean>,
-        );
+        const mergedVisibility = useFresh
+          ? freshVisibility
+          : REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
+              (acc, key) => {
+                acc[key] = Boolean(previousVisibility?.[key]) || freshVisibility[key];
+                return acc;
+              },
+              {} as Record<RequestedDisplayFieldKey, boolean>,
+            );
         setRequestedColumnVisibility((prev) => {
           const hasChanged = REQUESTED_DISPLAY_FIELD_KEYS.some((key) => prev[key] !== mergedVisibility[key]);
           return hasChanged ? mergedVisibility : prev;
         });
-        const mergedItemNoVisible = (appliedRequestedItemNoVisibleRef.current ?? requestedItemNoVisible) || responseRequestedItemNo;
+        const mergedItemNoVisible = useFresh
+          ? responseRequestedItemNo
+          : (appliedRequestedItemNoVisibleRef.current ?? requestedItemNoVisible) || responseRequestedItemNo;
         setRequestedItemNoVisible(mergedItemNoVisible);
         applyRequestedVisibilityToGrid(mergedVisibility, mergedItemNoVisible, { force: true, defer: true });
+        if (useFresh) forceFreshRequestedVisibilityRef.current = false;
       } else {
         // Subsequent pages: OR-merge so columns don't disappear while scrolling through pages.
         const previousVisibility = appliedRequestedColumnVisibilityRef.current ?? requestedColumnVisibility;
@@ -1055,21 +1095,27 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         // visible stay visible across grid refreshes (e.g. after a cell edit triggers
         // refreshServerSide).  On the very first load the previous state is all-false,
         // so this is equivalent to a full reset — empty columns are still hidden on launch.
+        const useFresh = forceFreshRequestedVisibilityRef.current;
         const previousVisibility = appliedRequestedColumnVisibilityRef.current ?? requestedColumnVisibility;
-        const mergedVisibility = REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
-          (acc, key) => {
-            acc[key] = Boolean(previousVisibility?.[key]) || freshVisibility[key];
-            return acc;
-          },
-          {} as Record<RequestedDisplayFieldKey, boolean>,
-        );
+        const mergedVisibility = useFresh
+          ? freshVisibility
+          : REQUESTED_DISPLAY_FIELD_KEYS.reduce<Record<RequestedDisplayFieldKey, boolean>>(
+              (acc, key) => {
+                acc[key] = Boolean(previousVisibility?.[key]) || freshVisibility[key];
+                return acc;
+              },
+              {} as Record<RequestedDisplayFieldKey, boolean>,
+            );
         setRequestedColumnVisibility((prev) => {
           const hasChanged = REQUESTED_DISPLAY_FIELD_KEYS.some((key) => prev[key] !== mergedVisibility[key]);
           return hasChanged ? mergedVisibility : prev;
         });
-        const mergedItemNoVisible = (appliedRequestedItemNoVisibleRef.current ?? requestedItemNoVisible) || responseRequestedItemNo;
+        const mergedItemNoVisible = useFresh
+          ? responseRequestedItemNo
+          : (appliedRequestedItemNoVisibleRef.current ?? requestedItemNoVisible) || responseRequestedItemNo;
         setRequestedItemNoVisible(mergedItemNoVisible);
         applyRequestedVisibilityToGrid(mergedVisibility, mergedItemNoVisible, { force: true, defer: true });
+        if (useFresh) forceFreshRequestedVisibilityRef.current = false;
       } else {
         // Subsequent pages: OR-merge so columns don't disappear while scrolling.
         const previousVisibility = appliedRequestedColumnVisibilityRef.current ?? requestedColumnVisibility;
@@ -2216,6 +2262,14 @@ const requestedColumnDefsMap = useMemo(
         },
         restoreEndpoint: `${resolvedEndpoint}/restore`,
         onDeleteSuccess: (deletedRows) => {
+          const anyRequested = deletedRows.some((row) => {
+            const r = row as Record<string, unknown> | null;
+            if (!r) return false;
+            return isRequestedRow(r) || hasRequestedPseudoFields(r);
+          });
+          if (anyRequested) {
+            forceFreshRequestedVisibilityRef.current = true;
+          }
           if (deletedRows.length > 0) {
             pushUndo({
               label: 'Row deleted',
@@ -3753,6 +3807,110 @@ const requestedColumnDefsMap = useMemo(
     resolvedEndpoint,
   ]);
 
+  const closeDemoteToRequestedPrompt = useCallback(() => {
+    if (demotePromptSaving) return;
+    setDemotePromptOpen(false);
+    setDemotePromptError(null);
+    demotePromptPayloadRef.current = null;
+  }, [demotePromptSaving]);
+
+  const confirmDemoteToRequested = useCallback(async () => {
+    const payload = demotePromptPayloadRef.current;
+    if (!payload) {
+      setDemotePromptOpen(false);
+      return;
+    }
+    const requestedQuantity = normalizeRequestedQuantityValue(demotePromptQuantity);
+    if (requestedQuantity == null || requestedQuantity <= 0) {
+      setDemotePromptError('Please enter a valid quantity greater than zero.');
+      return;
+    }
+
+    const { node: demoteNode, row: demoteRow, detailId: demoteDetailId } = payload;
+    const previous = {
+      IsCategory: (demoteRow as { IsCategory?: unknown }).IsCategory ?? null,
+      IsComment: (demoteRow as { IsComment?: unknown }).IsComment ?? null,
+      IsPrintable: (demoteRow as { IsPrintable?: unknown }).IsPrintable ?? null,
+      Description: (demoteRow as { Description?: unknown }).Description ?? null,
+      RequestedQuantity: (demoteRow as { RequestedQuantity?: unknown }).RequestedQuantity ?? null,
+    };
+
+    setDemotePromptSaving(true);
+    setDemotePromptError(null);
+
+    try { demoteNode.setDataValue('IsCategory', 0); } catch { /* noop */ }
+    try { demoteNode.setDataValue('IsComment', false); } catch { /* noop */ }
+    try { demoteNode.setDataValue('IsPrintable', null); } catch { /* noop */ }
+    try { demoteNode.setDataValue('Description', null, 'api'); } catch { /* noop */ }
+    try { demoteNode.setDataValue('RequestedQuantity', requestedQuantity); } catch { /* noop */ }
+    try { demoteNode.setDataValue('__isRequestedRow', 1); } catch { /* noop */ }
+    try {
+      gridApiRef.current?.refreshCells?.({ rowNodes: [demoteNode], force: true });
+    } catch { /* noop */ }
+
+    try {
+      const payloadEntry: Record<string, unknown> = {
+        OfferDetailID: demoteDetailId,
+        IsCategory: 0,
+        IsComment: false,
+        IsPrintable: null,
+        Description: null,
+        RequestedQuantity: requestedQuantity,
+      };
+      const res = await fetch(resolvedEndpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates: [payloadEntry] }),
+      });
+      const result = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !result?.ok) {
+        throw new Error(result?.error ?? `Unable to set as requested (status ${res.status})`);
+      }
+      const capturedUndo: Record<string, unknown> = {
+        OfferDetailID: demoteDetailId,
+        IsCategory: previous.IsCategory,
+        IsComment: previous.IsComment,
+        IsPrintable: previous.IsPrintable,
+        Description: previous.Description,
+        RequestedQuantity: previous.RequestedQuantity,
+      };
+      pushUndo({
+        label: 'Set as Requested product',
+        undo: async () => {
+          const undoRes = await fetch(resolvedEndpoint, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates: [capturedUndo] }),
+          });
+          const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+          if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+          refreshOfferProductGrid(null, { purge: true });
+        },
+      });
+      showToastMessage('Marked as requested product', 'success', 5500, {
+        label: 'Undo',
+        onClick: () => performUndo(),
+      });
+      refreshOfferProductGrid(null, { purge: true });
+      demotePromptPayloadRef.current = null;
+      setDemotePromptOpen(false);
+    } catch (err) {
+      try { demoteNode.setDataValue('IsCategory', previous.IsCategory ?? null); } catch { /* noop */ }
+      try { demoteNode.setDataValue('IsComment', previous.IsComment ?? null); } catch { /* noop */ }
+      try { demoteNode.setDataValue('IsPrintable', previous.IsPrintable ?? null); } catch { /* noop */ }
+      try { demoteNode.setDataValue('Description', previous.Description ?? null, 'api'); } catch { /* noop */ }
+      try { demoteNode.setDataValue('RequestedQuantity', previous.RequestedQuantity ?? null); } catch { /* noop */ }
+      try { demoteNode.setDataValue('__isRequestedRow', 0); } catch { /* noop */ }
+      try {
+        gridApiRef.current?.refreshCells?.({ rowNodes: [demoteNode], force: true });
+      } catch { /* noop */ }
+      console.error('Failed to set as requested product', err);
+      setDemotePromptError(err instanceof Error ? err.message : 'Unable to set row as requested product. Please try again.');
+    } finally {
+      setDemotePromptSaving(false);
+    }
+  }, [demotePromptQuantity, resolvedEndpoint, pushUndo, performUndo, refreshOfferProductGrid]);
+
   const productContextMenuItems = useCallback((
     params: GetContextMenuItemsParams<Record<string, unknown>>,
   ) => {
@@ -4433,79 +4591,23 @@ const requestedColumnDefsMap = useMemo(
       const makeRequestedItem: MenuItemDef = {
         name: 'Set as Requested product',
         icon: categoryMenuIcon,
-        action: async () => {
+        action: () => {
           if (demoteDetailId == null) return;
-
-          const previous = {
-            IsCategory: (demoteRow as { IsCategory?: unknown }).IsCategory ?? null,
-            IsComment: (demoteRow as { IsComment?: unknown }).IsComment ?? null,
-            IsPrintable: (demoteRow as { IsPrintable?: unknown }).IsPrintable ?? null,
-            Description: (demoteRow as { Description?: unknown }).Description ?? null,
+          const existingRequestedQuantity = normalizeRequestedQuantityValue(
+            (demoteRow as { RequestedQuantity?: unknown }).RequestedQuantity ?? null,
+          );
+          demotePromptPayloadRef.current = {
+            node: demoteNode as GridRowNode,
+            row: demoteRow,
+            detailId: demoteDetailId,
           };
-
-          try { demoteNode.setDataValue('IsCategory', 0); } catch { /* noop */ }
-          try { demoteNode.setDataValue('IsComment', false); } catch { /* noop */ }
-          try { demoteNode.setDataValue('IsPrintable', null); } catch { /* noop */ }
-          try { demoteNode.setDataValue('Description', null, 'api'); } catch { /* noop */ }
-          try { demoteNode.setDataValue('__isRequestedRow', 1); } catch { /* noop */ }
-          try {
-            gridApiRef.current?.refreshCells?.({ rowNodes: [demoteNode as GridRowNode], force: true });
-          } catch { /* noop */ }
-
-          try {
-            const payloadEntry: Record<string, unknown> = {
-              OfferDetailID: demoteDetailId,
-              IsCategory: 0,
-              IsComment: false,
-              IsPrintable: null,
-              Description: null,
-            };
-            const res = await fetch(resolvedEndpoint, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ updates: [payloadEntry] }),
-            });
-            const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-            if (!res.ok || !payload?.ok) {
-              throw new Error(payload?.error ?? `Unable to set as requested (status ${res.status})`);
-            }
-            const capturedUndo: Record<string, unknown> = {
-              OfferDetailID: demoteDetailId,
-              IsCategory: previous.IsCategory,
-              IsComment: previous.IsComment,
-              IsPrintable: previous.IsPrintable,
-              Description: previous.Description,
-            };
-            pushUndo({
-              label: 'Set as Requested product',
-              undo: async () => {
-                const undoRes = await fetch(resolvedEndpoint, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ updates: [capturedUndo] }),
-                });
-                const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
-                if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
-                refreshOfferProductGrid(null, { purge: true });
-              },
-            });
-            showToastMessage('Marked as requested product', 'success', 5500, {
-              label: 'Undo',
-              onClick: () => performUndo(),
-            });
-            refreshOfferProductGrid(null, { purge: true });
-          } catch (err) {
-            try { demoteNode.setDataValue('IsCategory', previous.IsCategory ?? null); } catch { /* noop */ }
-            try { demoteNode.setDataValue('IsComment', previous.IsComment ?? null); } catch { /* noop */ }
-            try { demoteNode.setDataValue('IsPrintable', previous.IsPrintable ?? null); } catch { /* noop */ }
-            try { demoteNode.setDataValue('Description', previous.Description ?? null, 'api'); } catch { /* noop */ }
-            try { demoteNode.setDataValue('__isRequestedRow', 0); } catch { /* noop */ }
-            try {
-              gridApiRef.current?.refreshCells?.({ rowNodes: [demoteNode as GridRowNode], force: true });
-            } catch { /* noop */ }
-            console.error('Failed to set as requested product', err);
-            showToastMessage('Unable to set row as requested product. Please try again.', 'error');
-          }
+          setDemotePromptQuantity(
+            existingRequestedQuantity != null && existingRequestedQuantity > 0
+              ? String(existingRequestedQuantity)
+              : '',
+          );
+          setDemotePromptError(null);
+          setDemotePromptOpen(true);
         },
       };
       if (deleteIndexAfterHistory >= 0) {
@@ -5014,6 +5116,8 @@ const requestedColumnDefsMap = useMemo(
       }
     };
 
+    const oldRowTotalsSnapshot = snapshotRowTotals(event.data as Record<string, unknown>);
+
     const runUpdate = async () => {
       try {
         const res = await fetch(resolvedEndpoint, {
@@ -5054,6 +5158,10 @@ const requestedColumnDefsMap = useMemo(
         });
         recalcProductTotals(event, normalizedNewValue);
         refreshCategoryAggregates(event.api);
+        if (event.data) {
+          const newRowTotals = snapshotRowTotals(event.data as Record<string, unknown>);
+          applyRowTotalsDelta(oldRowTotalsSnapshot, newRowTotals);
+        }
       } catch (err) {
         console.error('Failed to update quantity', err);
         showToastMessage(`Unable to update quantity: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
@@ -5063,7 +5171,7 @@ const requestedColumnDefsMap = useMemo(
       }
     };
     void runUpdate();
-  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo, snapshotRowTotals, applyRowTotalsDelta]);
 
   const handleDescriptionEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const editedField = event.colDef.field;
@@ -5451,6 +5559,10 @@ const requestedColumnDefsMap = useMemo(
       try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
     };
 
+    const oldRowTotalsSnapshot = isOfferProductCommentOrProduct(event.data)
+      ? snapshotRowTotals(event.data as Record<string, unknown>)
+      : null;
+
     const runUpdate = async () => {
       try {
         const res = await fetch(resolvedEndpoint, {
@@ -5458,9 +5570,44 @@ const requestedColumnDefsMap = useMemo(
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ updates: [{ OfferDetailID: offerDetailId, [field]: normalizedNewValue }] }),
         });
-        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        const payload = (await res.json().catch(() => null)) as {
+          ok?: boolean;
+          error?: string;
+          resolvedRows?: Array<Record<string, unknown> & { OfferDetailID?: number }>;
+        } | null;
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update ${label} (status ${res.status})`);
+        }
+        const resolved = payload.resolvedRows?.find(
+          (row) => normalizeOfferDetailId(row?.OfferDetailID ?? null) === offerDetailId,
+        );
+        if (resolved && event.node && event.data) {
+          const derivedFields: Array<keyof typeof resolved> = [
+            'CustomerDiscount',
+            'TelmacoDiscount',
+            'NetUnitPrice',
+            'NetCost',
+            'Margin',
+            'ListPrice',
+            'NetCostOtherCurrency',
+            'OtherCurrencyID',
+            'CurrencyCostModifier',
+            'TotalPrice',
+            'TotalNet',
+            'TotalCost',
+            'GrossProfit',
+          ];
+          derivedFields.forEach((derivedField) => {
+            if (derivedField === field) return;
+            const newDerived = (resolved as Record<string, unknown>)[derivedField as string] ?? null;
+            const currentDerived = (event.data as Record<string, unknown>)[derivedField as string] ?? null;
+            const a = coerceNumber(newDerived);
+            const b = coerceNumber(currentDerived);
+            if (a == null && b == null) return;
+            if (a != null && b != null && Object.is(a, b)) return;
+            registerRealtimeCellUpdate(offerDetailId, derivedField as string, newDerived);
+            try { event.node?.setDataValue(derivedField as string, newDerived); } catch { /* noop */ }
+          });
         }
         const toastKey = `${offerDetailId}:${field}:${String(normalizedNewValue)}`;
         const now = Date.now();
@@ -5491,6 +5638,10 @@ const requestedColumnDefsMap = useMemo(
         }
         recalcProductTotals(event);
         refreshCategoryAggregates(event.api);
+        if (oldRowTotalsSnapshot && event.data) {
+          const newRowTotals = snapshotRowTotals(event.data as Record<string, unknown>);
+          applyRowTotalsDelta(oldRowTotalsSnapshot, newRowTotals);
+        }
       } catch (err) {
         console.error(`Failed to update ${label}`, err);
         showToastMessage(`Unable to update ${label}: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
@@ -5501,7 +5652,7 @@ const requestedColumnDefsMap = useMemo(
     };
 
     void runUpdate();
-  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo, registerRealtimeCellUpdate, snapshotRowTotals, applyRowTotalsDelta]);
 
   const handleOriginEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Origin') return;
@@ -6442,6 +6593,35 @@ const requestedColumnDefsMap = useMemo(
             value={brandBulkEditValue}
             inputMode="decimal"
             onChange={(e) => setBrandBulkEditValue(e.target.value)}
+          />
+        </div>
+      </LookupModal>
+      <LookupModal
+        open={demotePromptOpen}
+        title="Set as Requested product"
+        onClose={closeDemoteToRequestedPrompt}
+        onConfirm={confirmDemoteToRequested}
+        confirmLabel="Set as Requested"
+        saving={demotePromptSaving}
+        error={demotePromptError}
+      >
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="demote-requested-quantity">
+            Requested quantity <span className={lookupStyles.requiredMark}>*</span>
+          </label>
+          <input
+            id="demote-requested-quantity"
+            className={lookupStyles.fieldControl}
+            value={demotePromptQuantity}
+            inputMode="decimal"
+            autoFocus
+            onChange={(e) => setDemotePromptQuantity(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void confirmDemoteToRequested();
+              }
+            }}
           />
         </div>
       </LookupModal>

@@ -85,7 +85,6 @@ export default function ExportPdfButton({ offerId, className }: Props) {
   const [smallOffer, setSmallOffer] = useState(false);
   const [equipmentList, setEquipmentList] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(false);
-  const [finalPriceLabel, setFinalPriceLabel] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -201,11 +200,8 @@ export default function ExportPdfButton({ offerId, className }: Props) {
       try {
         const columnsParam = encodeURIComponent(selectedColumns.join(','));
         const printParams = `&printProducts=${printProducts ? '1' : '0'}&printCategories=${printCategories ? '1' : '0'}&printSubCategories=${printSubCategories ? '1' : '0'}&printSubSubCategories=${printSubSubCategories ? '1' : '0'}&smallOffer=${smallOffer ? '1' : '0'}&equipmentList=${equipmentList ? '1' : '0'}`;
-        const finalPriceParam = finalPriceLabel.trim()
-          ? `&finalPriceLabel=${encodeURIComponent(finalPriceLabel.trim())}`
-          : '';
         const res = await fetch(
-          `/api/offers/${encodeURIComponent(offerId)}/pdf?lang=${selectedLang}&orientation=${orientation}&columns=${columnsParam}${printParams}${finalPriceParam}`,
+          `/api/offers/${encodeURIComponent(offerId)}/pdf?lang=${selectedLang}&orientation=${orientation}&columns=${columnsParam}${printParams}`,
         );
         if (!res.ok) {
           const body = await res.json().catch(() => null);
@@ -227,7 +223,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
         setIsExporting(false);
       }
     },
-    [offerId, selectedColumns, selectedLang, printProducts, printCategories, printSubCategories, printSubSubCategories, smallOffer, equipmentList, finalPriceLabel],
+    [offerId, selectedColumns, selectedLang, printProducts, printCategories, printSubCategories, printSubSubCategories, smallOffer, equipmentList],
   );
 
   const handlePreviewClose = useCallback(() => {
@@ -455,7 +451,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                   }}
                   disabled={loadingSettings}
                   onClick={async () => {
-                    const hasTotalColumns = !equipmentList && (selectedColumns.includes('unitPrice') || selectedColumns.includes('total'));
+                    const hasTotalColumns = !equipmentList && selectedColumns.some((c) => PRICE_COLUMN_SET.has(c));
                     if (!hasTotalColumns) {
                       setMenuStep('language');
                       return;
@@ -470,6 +466,8 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                         setPrintCategories(!!data.printCategories);
                         setPrintSubCategories(!!data.printSubCategories);
                         setPrintSubSubCategories(!!data.printSubSubCategories);
+                        if (data.offerLanguage === 'English') setSelectedLang('en');
+                        else if (data.offerLanguage === 'Greek') setSelectedLang('el');
                         if ((data.noOfLevels ?? 0) > 0) {
                           setMenuStep('totals');
                         } else {
@@ -585,7 +583,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                 <button
                   type="button"
                   onClick={() => {
-                    const hasTotalColumns = selectedColumns.includes('unitPrice') || selectedColumns.includes('total');
+                    const hasTotalColumns = selectedColumns.some((c) => PRICE_COLUMN_SET.has(c));
                     setMenuStep(hasTotalColumns && noOfLevels > 0 ? 'totals' : 'columns');
                   }}
                   style={{
@@ -651,25 +649,6 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                   <span>Small Offer <span style={{ fontSize: 11, color: '#64748b' }}>(no cover page)</span></span>
                 </label>
               </div>
-              {!equipmentList && selectedColumns.some((c) => PRICE_COLUMN_SET.has(c)) && (
-                <div style={{ padding: '0 16px 10px' }}>
-                  <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>Final Price Label</div>
-                  <input
-                    type="text"
-                    value={finalPriceLabel}
-                    onChange={(e) => setFinalPriceLabel(e.target.value)}
-                    placeholder={selectedLang === 'el' ? 'Τελική Τιμή' : 'Final Price'}
-                    style={{
-                      width: '100%',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: 6,
-                      padding: '6px 8px',
-                      fontSize: 12,
-                      boxSizing: 'border-box',
-                    }}
-                  />
-                </div>
-              )}
               <div style={{ borderTop: '1px solid #e5e7eb' }} />
               <button
                 type="button"

@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
-import type { CellClickedEvent, ColDef, GridApi, RowClassParams, RowDoubleClickedEvent, RowNode, RowStyle } from 'ag-grid-community';
+import type { CellClickedEvent, ColDef, GetContextMenuItemsParams, GridApi, MenuItemDef, RowClassParams, RowDoubleClickedEvent, RowNode, RowStyle } from 'ag-grid-community';
 import { PageHeaderContext } from '../../../components/PageHeader';
 import { GridQuickSearchProvider } from '../../../components/GridQuickSearchProvider';
 import { productDefaultColDef } from '../../../../lib/productColumns';
@@ -797,6 +797,43 @@ export default function MatchRequestedProductsModal({
     return () => { cancelled = true; };
   }, [autoSelectTopProduct, entry.offerDetailId]);
 
+  const handleContextMenuItems = useCallback(
+    (params: GetContextMenuItemsParams<MatcherRowData>) => {
+      const items: Array<MenuItemDef<MatcherRowData> | string> = [];
+      if (params.node?.data) {
+        items.push({
+          name: 'Copy row',
+          icon: '<span class="ag-icon ag-icon-copy" aria-hidden="true"></span>',
+          action: () => {
+            const data = params.node?.data as Record<string, unknown> | undefined;
+            if (!data) return;
+            const cols = params.api.getAllDisplayedColumns?.() ?? [];
+            const values = cols.map((col) => {
+              const def = col.getColDef();
+              const field = def.field ?? col.getColId();
+              const raw = data[field];
+              const fmt = def.valueFormatter;
+              if (typeof fmt === 'function') {
+                try {
+                  const out = (fmt as (p: { value: unknown }) => unknown)({ value: raw });
+                  if (out != null) return String(out);
+                } catch { /* fall through to raw */ }
+              }
+              return raw == null ? '' : String(raw);
+            });
+            const text = values.join(' | ');
+            navigator.clipboard?.writeText?.(text).catch(() => { /* noop */ });
+          },
+        });
+        items.push('separator');
+      }
+      const defaults = Array.isArray(params.defaultItems) ? params.defaultItems : [];
+      items.push(...defaults);
+      return items;
+    },
+    [],
+  );
+
   const remaining = Math.max(0, total - position);
 
   return (
@@ -940,6 +977,7 @@ export default function MatchRequestedProductsModal({
                 maintainColumnOrder={true}
                 disableAutoSize={true}
                 suppressCellSelection
+                getContextMenuItems={handleContextMenuItems}
                 suppressNoRowsOverlay={
                   (suggestedProducts.length > 0 && suggestionsVisible) ||
                   (farnellResults.length > 0 && farnellVisible)

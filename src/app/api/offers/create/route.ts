@@ -5,6 +5,7 @@ import { getPool } from '../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../lib/auditTrail';
 import { requirePermission } from '../../../../lib/authz';
 import { normalizeString, normalizeInt, normalizeUserId, normalizeDate, normalizeProbability } from '../../../../lib/normalize';
+import { normalizeOfferLanguage, OFFER_LANGUAGE_DEFAULTS } from '../../../../lib/offerLanguage';
 
 type CreateOfferRequestBody = {
   title?: string | null;
@@ -38,6 +39,8 @@ type CreateOfferRequestBody = {
   possibleOrderDate?: string | Date | null;
   offerDate?: string | Date | null;
   protocolNo?: number | string | null;
+  offerLanguage?: string | null;
+  finalPriceLabel?: string | null;
 };
 
 type ContactLookupRow = {
@@ -95,6 +98,9 @@ export async function POST(req: NextRequest) {
   const erpProjectCode = body?.projectCode?.trim() || null;
   const erpFwcProjectId = normalizeInt(body?.erpFwcProjectId);
   const protocolNo = normalizeInt(body?.protocolNo);
+  const offerLanguage = normalizeOfferLanguage(body?.offerLanguage);
+  const finalPriceLabel = normalizeString(body?.finalPriceLabel, 500)
+    ?? OFFER_LANGUAGE_DEFAULTS[offerLanguage].finalPriceLabel;
 
     const dateFields = {
       draftRequest: normalizeDate(body?.initialRequest),
@@ -245,6 +251,8 @@ export async function POST(req: NextRequest) {
     request.input('OfferDate', sql.DateTime2, dateFields.offerDate);
     request.input('ApprovalUserId', sql.NVarChar(450), approvalUserId);
     request.input('ProtocolNo', sql.Int, protocolNo);
+    request.input('OfferLanguage', sql.NVarChar(16), offerLanguage);
+    request.input('FinalPriceLabel', sql.NVarChar(500), finalPriceLabel);
 
     const insertResult = await request.query<{ OfferID: number }>(`
       INSERT INTO dbo.Offer (
@@ -283,6 +291,8 @@ export async function POST(req: NextRequest) {
         OfferDate,
         ApprovalUserId,
         ProtocolNo,
+        OfferLanguage,
+        FinalPriceLabel,
         OfferVersion,
         Enabled,
         CreatedOn,
@@ -325,6 +335,8 @@ export async function POST(req: NextRequest) {
         @OfferDate,
         @ApprovalUserId,
         @ProtocolNo,
+        @OfferLanguage,
+        @FinalPriceLabel,
         1,
         1,
         SYSUTCDATETIME(),

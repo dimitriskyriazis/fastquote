@@ -11,7 +11,7 @@ import { createManufacturerInErp } from '../../../../../lib/itemCreationWS';
 import { getRequestId } from '../../../../../lib/requestId';
 import { logger } from '../../../../../lib/logger';
 import { requirePermission } from '../../../../../lib/authz';
-import { fuzzyCustomerSearch } from '../../../../../lib/customerSearch';
+import { fuzzyCustomerSearch, searchCustomerByTaxId, filterActiveCustomers } from '../../../../../lib/customerSearch';
 import { clearPartModelNumberUpper } from '../../../../../lib/partModelNumber';
 
 type ProductMatch = {
@@ -108,6 +108,7 @@ type OfferContext = {
   businessUnit: 'AVS' | 'TVS';
   erpCustomerId: number | null;
   customerName: string | null;
+  customerTaxId: string | null;
   erpProjectId: number | null;
   erpProjectCode: string | null;
 };
@@ -406,6 +407,29 @@ async function fetchOfferProducts(
   return productsResult.recordset ?? [];
 }
 
+/**
+ * Drops products that shouldn't be presented to users:
+ *   - CODE starting with "XD" (legacy/internal items)
+ *   - MTRL.ISACTIVE = 0 (disabled in ERP)
+ */
+async function filterVisibleProducts<T extends { MTRL: number; CODE: string | null }>(
+  erpPool: Awaited<ReturnType<typeof getErpPool>>,
+  matches: T[],
+): Promise<T[]> {
+  const preFiltered = matches.filter(m => !(m.CODE ?? '').trim().toUpperCase().startsWith('XD'));
+  if (preFiltered.length === 0) return preFiltered;
+
+  const ids = Array.from(new Set(preFiltered.map(m => m.MTRL)));
+  const placeholders = ids.map((_, i) => `@m${i}`).join(', ');
+  const req = erpPool.request();
+  ids.forEach((id, i) => req.input(`m${i}`, sql.Int, id));
+  const res = await req.query<{ MTRL: number }>(`
+    SELECT MTRL FROM dbo.MTRL WHERE ISACTIVE = 1 AND MTRL IN (${placeholders})
+  `);
+  const active = new Set((res.recordset ?? []).map(r => r.MTRL));
+  return preFiltered.filter(m => active.has(m.MTRL));
+}
+
 async function searchProductInErp(
   erpPool: Awaited<ReturnType<typeof getErpPool>>,
   partNumberCleared: string | null,
@@ -425,9 +449,7 @@ async function searchProductInErp(
       @FoundCount = @FoundCount OUTPUT;
   `) as { recordset: Array<{ FoundCount: number }>; recordsets?: Array<Array<unknown>> };
 
-  const foundCountResult = (erpResult.recordsets?.[0] as Array<{ FoundCount: number }>) ?? erpResult.recordset;
-  const foundCount = foundCountResult[0]?.FoundCount ?? 0;
-  const matches = (erpResult.recordsets?.[1] ?? []) as Array<{
+  const rawMatches = (erpResult.recordsets?.[1] ?? []) as Array<{
     MTRL: number;
     CODE: string | null;
     NAME1: string | null;
@@ -435,7 +457,8 @@ async function searchProductInErp(
     CODE2: string | null;
   }>;
 
-  return { foundCount, matches };
+  const matches = await filterVisibleProducts(erpPool, rawMatches);
+  return { foundCount: matches.length, matches };
 }
 
 type ErpProductMatch = {
@@ -474,7 +497,7 @@ async function fuzzySearchByCode2(
       @TopN = @TopN;
   `);
 
-  return result.recordset ?? [];
+  return await filterVisibleProducts(erpPool, result.recordset ?? []);
 }
 
 async function loadCategoryNameMaps(pool: Awaited<ReturnType<typeof getPool>>) {
@@ -587,7 +610,7 @@ async function handleResolveCustomer(
       const searchRes = await searchReq.query<{ TRDR: number; CODE: string | null; NAME: string | null }>(`
         EXEC tlm.FindCustomer @SearchValue = @SearchValue
       `);
-      const matches = searchRes.recordset ?? [];
+      const matches = await filterActiveCustomers(erpPool, searchRes.recordset ?? []);
 
       if (matches.length === 0) {
         return NextResponse.json({ ok: true, step: 'resolve-customer', needsCode: true, message: `No customer found with code: ${customerCode}` });
@@ -596,20 +619,29 @@ async function handleResolveCustomer(
       } else {
         return NextResponse.json({ ok: true, step: 'resolve-customer', needsSelection: matches });
       }
-    } else if (ctx.customerName) {
-      const searchReq = erpPool.request();
-      searchReq.input('SearchValue', sql.NVarChar(200), ctx.customerName);
-      const searchRes = await searchReq.query<{ TRDR: number; CODE: string | null; NAME: string | null }>(`
-        EXEC tlm.FindCustomer @SearchValue = @SearchValue
-      `);
-      let matches = searchRes.recordset ?? [];
+    } else if (ctx.customerName || ctx.customerTaxId) {
+      let matches: Array<{ TRDR: number; CODE: string | null; NAME: string | null }> = [];
 
-      if (matches.length === 0) {
-        matches = await fuzzyCustomerSearch(erpPool, ctx.customerName);
+      if (ctx.customerTaxId) {
+        matches = await searchCustomerByTaxId(erpPool, ctx.customerTaxId);
+      }
+
+      if (matches.length === 0 && ctx.customerName) {
+        const searchReq = erpPool.request();
+        searchReq.input('SearchValue', sql.NVarChar(200), ctx.customerName);
+        const searchRes = await searchReq.query<{ TRDR: number; CODE: string | null; NAME: string | null }>(`
+          EXEC tlm.FindCustomer @SearchValue = @SearchValue
+        `);
+        matches = await filterActiveCustomers(erpPool, searchRes.recordset ?? []);
+
+        if (matches.length === 0) {
+          matches = await fuzzyCustomerSearch(erpPool, ctx.customerName);
+        }
       }
 
       if (matches.length === 0) {
-        return NextResponse.json({ ok: true, step: 'resolve-customer', needsCode: true, message: `No customer found matching: ${ctx.customerName}` });
+        const searched = ctx.customerName ?? `TaxID ${ctx.customerTaxId}`;
+        return NextResponse.json({ ok: true, step: 'resolve-customer', needsCode: true, message: `No customer found matching: ${searched}` });
       } else if (matches.length === 1) {
         return NextResponse.json({ ok: true, step: 'resolve-customer', needsConfirmation: matches[0] });
       } else {
@@ -1420,6 +1452,7 @@ export async function POST(
       SalesDivisionName: string | null;
       ERPCustomerID: number | null;
       CustomerName: string | null;
+      CustomerTaxID: string | null;
       ERPProjectID: number | null;
       ERPProjectCode: string | null;
     }>(`
@@ -1429,6 +1462,7 @@ export async function POST(
         sd.Name AS SalesDivisionName,
         c.ERPID AS ERPCustomerID,
         c.Name AS CustomerName,
+        c.TaxID AS CustomerTaxID,
         o.ERPProjectID,
         o.ERPProjectCode
       FROM dbo.Offer o
@@ -1443,6 +1477,7 @@ export async function POST(
     let erpCustomerId = offerRow?.ERPCustomerID ?? null;
     let erpCustomerCode: string | null = null; // alphanumeric CODE from dbo.TRDR.CODE (needed for WS setDocs)
     const customerName = offerRow?.CustomerName ?? null;
+    const customerTaxId = offerRow?.CustomerTaxID?.trim() || null;
     const erpProjectId = offerRow?.ERPProjectID ?? null;
     const erpProjectCode = offerRow?.ERPProjectCode ?? null;
     // Map SalesDivisionID to BusinessUnit: 4 -> AVS, 3 -> TVS, fallback based on name
@@ -1465,6 +1500,7 @@ export async function POST(
         businessUnit,
         erpCustomerId,
         customerName,
+        customerTaxId,
         erpProjectId,
         erpProjectCode,
       };
@@ -1526,7 +1562,7 @@ export async function POST(
         }>(`
           EXEC tlm.FindCustomer @SearchValue = @SearchValue
         `);
-        const customerMatches = customerSearchResult.recordset ?? [];
+        const customerMatches = await filterActiveCustomers(erpPool, customerSearchResult.recordset ?? []);
 
         if (customerMatches.length === 0) {
           return NextResponse.json({
@@ -1549,29 +1585,38 @@ export async function POST(
             message: `Multiple customers found with code: ${customerCode}. Please select one.`,
           });
         }
-      } else if (customerName) {
-        // Search by customer name — SP first, then fuzzy LIKE fallback
-        const customerSearchRequest = erpPool.request();
-        customerSearchRequest.input('SearchValue', sql.NVarChar(200), customerName);
-        const customerSearchResult = await customerSearchRequest.query<{
-          TRDR: number;
-          CODE: string | null;
-          NAME: string | null;
-        }>(`
-          EXEC tlm.FindCustomer @SearchValue = @SearchValue
-        `);
-        let customerMatches = customerSearchResult.recordset ?? [];
+      } else if (customerName || customerTaxId) {
+        // Prefer tax ID exact match on TRDR.AFM, then fall back to name (SP + fuzzy)
+        let customerMatches: Array<{ TRDR: number; CODE: string | null; NAME: string | null }> = [];
 
-        // If FindCustomer returned 0 matches, try fuzzy search (Latin + Greek)
-        if (customerMatches.length === 0) {
-          customerMatches = await fuzzyCustomerSearch(erpPool, customerName);
+        if (customerTaxId) {
+          customerMatches = await searchCustomerByTaxId(erpPool, customerTaxId);
+        }
+
+        if (customerMatches.length === 0 && customerName) {
+          const customerSearchRequest = erpPool.request();
+          customerSearchRequest.input('SearchValue', sql.NVarChar(200), customerName);
+          const customerSearchResult = await customerSearchRequest.query<{
+            TRDR: number;
+            CODE: string | null;
+            NAME: string | null;
+          }>(`
+            EXEC tlm.FindCustomer @SearchValue = @SearchValue
+          `);
+          customerMatches = await filterActiveCustomers(erpPool, customerSearchResult.recordset ?? []);
+
+          // If FindCustomer returned 0 matches, try fuzzy search (Latin + Greek)
+          if (customerMatches.length === 0) {
+            customerMatches = await fuzzyCustomerSearch(erpPool, customerName);
+          }
         }
 
         if (customerMatches.length === 0) {
           // No matches even with fuzzy search, ask for customer code
+          const searched = customerName ?? `TaxID ${customerTaxId}`;
           return NextResponse.json({
             ok: false,
-            error: `No customer found matching: ${customerName}. Please provide customer code.`,
+            error: `No customer found matching: ${searched}. Please provide customer code.`,
             needsCustomerCode: true,
           });
         } else if (customerMatches.length === 1) {
@@ -1586,7 +1631,7 @@ export async function POST(
           return NextResponse.json({
             ok: true,
             needsCustomerSelection: customerMatches,
-            message: `Multiple customers found matching: ${customerName}. Please select one.`,
+            message: `Multiple customers found matching: ${customerName ?? `TaxID ${customerTaxId}`}. Please select one.`,
           });
         }
       } else {
@@ -1929,16 +1974,15 @@ export async function POST(
           // The procedure returns two result sets:
           // 1. FoundCount (single row) - recordsets[0]
           // 2. Matches (multiple rows) - recordsets[1]
-          const foundCountResult = (erpResult.recordsets?.[0] as Array<{ FoundCount: number }>) ?? erpResult.recordset;
-          const foundCount = foundCountResult[0]?.FoundCount ?? 0;
-          
-            const matches = (erpResult.recordsets?.[1] ?? []) as Array<{
+            const rawMatches = (erpResult.recordsets?.[1] ?? []) as Array<{
               MTRL: number;
               CODE: string | null;
               NAME1: string | null;
               CODE1: string | null;
               CODE2: string | null;
             }>;
+            const matches = await filterVisibleProducts(erpPool, rawMatches);
+            const foundCount = matches.length;
 
             logger.info('create-draft-order-soft1 FindProduct result', {
               requestId,
@@ -2346,19 +2390,15 @@ export async function POST(
             @FoundCount = @FoundCount OUTPUT;
         `) as { recordset: Array<{ FoundCount: number }>; recordsets?: Array<Array<unknown>> };
       
-      // The procedure returns two result sets:
-      // 1. FoundCount (single row) - recordsets[0]
-      // 2. Matches (multiple rows) - recordsets[1]
-      const foundCountResult = (erpResult.recordsets?.[0] as Array<{ FoundCount: number }>) ?? erpResult.recordset;
-      const foundCount = foundCountResult[0]?.FoundCount ?? 0;
-      
-        const matches = (erpResult.recordsets?.[1] ?? []) as Array<{
+        const rawMatches = (erpResult.recordsets?.[1] ?? []) as Array<{
           MTRL: number;
           CODE: string | null;
           NAME1: string | null;
           CODE1: string | null;
           CODE2: string | null;
         }>;
+        const matches = await filterVisibleProducts(erpPool, rawMatches);
+        const foundCount = matches.length;
 
         logger.info('create-draft-order-soft1 FindProduct result', {
           requestId,

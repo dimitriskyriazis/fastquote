@@ -27,10 +27,11 @@ export const DEFAULT_PDF_PRODUCT_COLUMNS: PdfProductColumn[] = [
   'no',
   'brand',
   'type',
+  'modelNumber',
   'description',
   'qty',
-  'unitPrice',
-  'total',
+  'listPrice',
+  'totalList',
 ];
 
 export const PORTRAIT_EXTENDED_COLUMNS_DISCOUNT: PdfProductColumn[] = [

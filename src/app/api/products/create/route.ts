@@ -21,7 +21,9 @@ const createProductSchema = z.object({
     message: "Brand is required",
   }),
   modelNumber: partModelNumberSchema(255),
-  partNumber: partModelNumberSchema(255),
+  partNumber: partModelNumberSchema(255).refine((val) => val !== null && val !== undefined, {
+    message: "Part number is required",
+  }),
   erpCode: partModelNumberSchema(255),
   typeId: positiveIntSchema,
   categoryId: positiveIntSchema,

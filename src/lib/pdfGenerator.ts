@@ -100,7 +100,7 @@ const LABELS = {
     colDelivery: 'Παράδοση',
     colListPrice: 'Τιμή Καταλόγου',
     colTotalList: 'Σύνολο Καταλόγου',
-    colDiscount: 'Έκπτωση %',
+    colDiscount: 'Έκπτωση',
     colUnitPrice: 'Καθαρή Τιμή',
     colTotal: 'Καθαρό Σύνολο',
     colRequestedBrand: 'Ζητ. Οίκος',
@@ -119,7 +119,6 @@ const LABELS = {
     installationSchedule: 'Προβλεπόμενος Χρόνος Εγκατάστασης',
     notesTitle: 'Σημειώσεις',
     signaturesTitle: 'Υπογραφές',
-    vatNote: 'Οι παραπάνω τιμές είναι σε ευρώ για προϊόντα ελεύθερα χωρίς ΦΠΑ',
     regards: 'Με εκτίμηση,',
     companySign: 'Τελμάκο Α.Ε.',
     pageLabel: 'Σελίδα',
@@ -149,7 +148,7 @@ const LABELS = {
     colDelivery: 'Delivery',
     colListPrice: 'Unit List',
     colTotalList: 'Total List',
-    colDiscount: 'Discount %',
+    colDiscount: 'Discount',
     colUnitPrice: 'Unit Net',
     colTotal: 'Total Net',
     colRequestedBrand: 'Req. Brand',
@@ -168,7 +167,6 @@ const LABELS = {
     installationSchedule: 'Installation Schedule',
     notesTitle: 'Notes',
     signaturesTitle: 'Signatures',
-    vatNote: 'The above prices are in EUR for products free of VAT',
     regards: 'Best regards,',
     companySign: 'Telmaco S.A.',
     pageLabel: 'Page',
@@ -318,7 +316,7 @@ function formatCurrency(n: number | null | undefined): string {
 
 function formatPercent(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '';
-  return `${n.toFixed(1)}%`;
+  return n.toFixed(1);
 }
 
 function fixObviousTypos(text: string): string {
@@ -1423,7 +1421,6 @@ export async function generateOfferPdf(
     },
     { text: L.notesTitle, style: 'h2', margin: [0, 0, 0, 8] },
     ...(str(data.notesClosing) ? [{ text: fixObviousTypos(str(data.notesClosing)), style: 'body', margin: [0, 0, 0, 6] }] : []),
-    ...(cols.some(c => PRICE_COLUMNS.has(c)) ? [{ text: L.vatNote, style: 'body' }] : []),
   ];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

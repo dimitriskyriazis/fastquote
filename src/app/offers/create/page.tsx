@@ -213,9 +213,6 @@ export default async function Page() {
           users={users}
           fwcProjects={fwcProjects}
           defaultValues={{
-            deliveryTime: '8 weeks',
-            paymentTerms: 'Upon Agreement',
-            offerValidity: '4 weeks',
             suggestedUserId,
           }}
           formId={formId}

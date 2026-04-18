@@ -22,6 +22,7 @@ import { normalizeValueForApi } from '../../lib/normalizeValueForApi';
 import { formatDateInputValue } from '../../lib/formatDateInputValue';
 import { useOfferLookups, type LookupKey } from './useOfferLookups';
 import { useCustomerSearch } from './useCustomerSearch';
+import { OFFER_LANGUAGE_DEFAULTS, type OfferLanguage } from '../../../lib/offerLanguage';
 
 type UserOption = OfferDropdownOption & { salesSeniorityName?: string | null };
 
@@ -57,6 +58,8 @@ type FieldDefinition = {
   readOnlyDisplayValue?: (record: OfferBasicRecord) => string | null | undefined;
   options?: OfferDropdownOption[];
   datalistOptions?: OfferDropdownOption[];
+  placeholder?: string;
+  hideEmptyOption?: boolean;
 };
 
 const normalizeSortText = (value: string | null | undefined): string =>
@@ -197,7 +200,22 @@ const buildFieldDefinitions = (
     options: contacts,
     fullWidth: true,
   },
+  {
+    id: 'offerLanguage',
+    label: 'Offer Language',
+    section: 'info',
+    recordKey: 'OfferLanguage',
+    updateField: 'OfferLanguage',
+    valueType: 'string',
+    options: [
+      { value: 'Greek', label: 'Greek' },
+      { value: 'English', label: 'English' },
+    ],
+    fullWidth: true,
+    hideEmptyOption: true,
+  },
   { id: 'telmaco', label: 'Telmaco Note', section: 'info', recordKey: 'TelmacoNote', updateField: 'Comments', multiline: true },
+  { id: 'finalPriceLabel', label: 'Final Price Label', section: 'info', recordKey: 'FinalPriceLabel', updateField: 'FinalPriceLabel', fullWidth: true },
 
   {
     id: 'pricingPolicy',
@@ -730,6 +748,53 @@ export default function OfferBasicDataClient({
       });
       setValues((prev) => ({ ...prev, [def.id]: resolvedDisplayValue }));
 
+      if (def.id === 'offerLanguage' && (resolvedDisplayValue === 'Greek' || resolvedDisplayValue === 'English')) {
+        const prevLang: OfferLanguage = oldDisplayValue === 'English' ? 'English' : 'Greek';
+        const nextLang: OfferLanguage = resolvedDisplayValue as OfferLanguage;
+        if (prevLang !== nextLang) {
+          const prevDefaults = OFFER_LANGUAGE_DEFAULTS[prevLang];
+          const nextDefaults = OFFER_LANGUAGE_DEFAULTS[nextLang];
+          const langFieldMap: Array<{ id: string; updateField: OfferBasicUpdateField; prev: string; next: string }> = [
+            { id: 'title', updateField: 'Title', prev: prevDefaults.title, next: nextDefaults.title },
+            { id: 'paymentTerms', updateField: 'PaymentTerms', prev: prevDefaults.paymentTerms, next: nextDefaults.paymentTerms },
+            { id: 'deliveryTime', updateField: 'DeliveryTime', prev: prevDefaults.deliveryTime, next: nextDefaults.deliveryTime },
+            { id: 'offerValidity', updateField: 'OfferValidity', prev: prevDefaults.offerValidity, next: nextDefaults.offerValidity },
+            { id: 'closingNote', updateField: 'OfferNotesClosing', prev: prevDefaults.closingNote, next: nextDefaults.closingNote },
+            { id: 'finalPriceLabel', updateField: 'FinalPriceLabel', prev: prevDefaults.finalPriceLabel, next: nextDefaults.finalPriceLabel },
+          ];
+          const changes = langFieldMap.filter((f) => {
+            const current = (savedValuesRef.current[f.id] ?? '').trim();
+            return current === '' || current === f.prev;
+          });
+          if (changes.length > 0) {
+            try {
+              const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  updates: changes.map((c) => ({ field: c.updateField, value: c.next })),
+                }),
+              });
+              if (res.ok) {
+                setSavedValues((prev) => {
+                  const next = { ...prev };
+                  changes.forEach((c) => { next[c.id] = c.next; });
+                  savedValuesRef.current = next;
+                  return next;
+                });
+                setValues((prev) => {
+                  const next = { ...prev };
+                  changes.forEach((c) => { next[c.id] = c.next; });
+                  return next;
+                });
+              }
+            } catch (langErr) {
+              console.error('Failed to sync language defaults', langErr);
+            }
+          }
+        }
+      }
+
       if (def.id === 'customer') {
         setIncludeInitialContactOption(false);
         setSavedValues((prev) => {
@@ -813,14 +878,31 @@ export default function OfferBasicDataClient({
     void saveField(def, newValue);
   }, [handleValueChange, saveField]);
 
+  const handleSelectChange = useCallback((def: FieldDefinition, newValue: string) => {
+    cancelAutoSaveRef.current(def.id);
+    setValues((prev) => ({ ...prev, [def.id]: newValue }));
+    if (!def.updateField) return;
+    if (newValue === (savedValuesRef.current[def.id] ?? '')) return;
+    void saveField(def, newValue);
+  }, [saveField]);
+
+  const handleComboChange = useCallback((def: FieldDefinition, newValue: string) => {
+    cancelAutoSaveRef.current(def.id);
+    setValues((prev) => ({ ...prev, [def.id]: newValue }));
+  }, []);
+
   const customerFieldDefinition = useMemo(
     () => fieldDefinitions.find((def) => def.id === 'customer'),
     [fieldDefinitions],
   );
 
+  const lastSyncedCustomerRef = useRef<string | null>(null);
   useEffect(() => {
     const selectedValue = values.customer ?? '';
+    if (lastSyncedCustomerRef.current === selectedValue) return;
     const selectedOption = customerOptions.find((option) => option.value === selectedValue);
+    if (selectedValue !== '' && !selectedOption) return;
+    lastSyncedCustomerRef.current = selectedValue;
     setCustomerText(selectedOption?.label ?? '');
   }, [customerOptions, values.customer]);
 
@@ -973,7 +1055,7 @@ export default function OfferBasicDataClient({
   const readOnlyDisplayValue = typeof def.readOnlyDisplayValue === 'function'
     ? def.readOnlyDisplayValue(record)
     : null;
-  const placeholder = !isEditable ? undefined : (value == null || value === '' ? '—' : undefined);
+  const placeholder = !isEditable ? undefined : (value == null || value === '' ? (def.placeholder ?? '—') : undefined);
   const pending = pendingMap[def.id] || (def.id === 'contactId' && isRefreshingContacts);
 
   if (!isEditable) {
@@ -1055,10 +1137,10 @@ export default function OfferBasicDataClient({
         value={valueMap[def.id] ?? ''}
         onMouseDown={() => refreshFieldLookups(def.id)}
         onFocus={() => refreshFieldLookups(def.id)}
-        onChange={(event) => handleValueChange(def.id, event.target.value)}
+        onChange={(event) => handleSelectChange(def, event.target.value)}
         onBlur={() => handleBlur(def)}
       >
-        <option value="">Select...</option>
+        {!def.hideEmptyOption && <option value="">Select...</option>}
         {selectOptions.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -1080,7 +1162,7 @@ export default function OfferBasicDataClient({
           value={valueMap[def.id] ?? ''}
           list={listId}
           placeholder={placeholder}
-          onChange={(event) => handleValueChange(def.id, event.target.value)}
+          onChange={(event) => handleComboChange(def, event.target.value)}
           onBlur={() => handleBlur(def)}
         />
         <datalist id={listId}>

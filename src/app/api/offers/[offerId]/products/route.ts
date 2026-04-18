@@ -1815,6 +1815,23 @@ export async function PATCH(
     const pool = await getPool();
     const chunkSize = 400;
     let affected = 0;
+    const resolvedRows: Array<{
+      OfferDetailID: number;
+      CustomerDiscount: number | null;
+      TelmacoDiscount: number | null;
+      NetUnitPrice: number | null;
+      NetCost: number | null;
+      Margin: number | null;
+      ListPrice: number | null;
+      NetCostOtherCurrency: number | null;
+      OtherCurrencyID: number | null;
+      CurrencyCostModifier: number | null;
+      Quantity: number | null;
+      TotalPrice: number | null;
+      TotalNet: number | null;
+      TotalCost: number | null;
+      GrossProfit: number | null;
+    }> = [];
 
     for (let idx = 0; idx < normalizedUpdates.length; idx += chunkSize) {
       const chunk = normalizedUpdates.slice(idx, idx + chunkSize);
@@ -2191,6 +2208,26 @@ export async function PATCH(
       }
 
       if (pendingRows.length === 0) continue;
+
+      pendingRows.forEach((row) => {
+        resolvedRows.push({
+          OfferDetailID: row.OfferDetailID,
+          CustomerDiscount: row.CustomerDiscount,
+          TelmacoDiscount: row.TelmacoDiscount,
+          NetUnitPrice: row.NetUnitPrice,
+          NetCost: row.NetCost,
+          Margin: row.Margin,
+          ListPrice: row.HasListPrice ? row.ListPrice : null,
+          NetCostOtherCurrency: row.NetCostOtherCurrency,
+          OtherCurrencyID: row.OtherCurrencyID,
+          CurrencyCostModifier: row.CurrencyCostModifier,
+          Quantity: row.Quantity,
+          TotalPrice: row.TotalPrice,
+          TotalNet: row.TotalNet,
+          TotalCost: row.TotalCost,
+          GrossProfit: row.GrossProfit,
+        });
+      });
 
       const decimalType = getDecimalType();
       const UPDATE_PARAMS_PER_ROW = 54;
@@ -2571,6 +2608,7 @@ export async function PATCH(
       ok: true,
       updated: normalizedUpdates.length,
       rowsAffected: affected,
+      resolvedRows,
     });
   } catch (err) {
     console.error(err);

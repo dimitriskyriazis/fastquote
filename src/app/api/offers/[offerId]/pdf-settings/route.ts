@@ -57,12 +57,14 @@ export async function GET(
         PrintSubSubCategories: boolean | number | null;
         PrintSubCategories: boolean | number | null;
         PrintCategories: boolean | number | null;
+        OfferLanguage: string | null;
       }>(`
         SELECT
           PrintProducts,
           PrintSubSubCategories,
           PrintSubCategories,
-          PrintCategories
+          PrintCategories,
+          OfferLanguage
         FROM dbo.Offer
         WHERE ID = @offerId
       `);
@@ -76,6 +78,7 @@ export async function GET(
       printSubSubCategories: row ? (!!row.PrintSubSubCategories ? 1 : 0) : 0,
       printSubCategories: row ? (!!row.PrintSubCategories ? 1 : 0) : 0,
       printCategories: row ? (!!row.PrintCategories ? 1 : 0) : 0,
+      offerLanguage: row?.OfferLanguage ?? null,
     });
   } catch (err) {
     console.error('PDF settings fetch failed:', err);

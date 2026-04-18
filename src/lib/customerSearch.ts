@@ -63,6 +63,52 @@ export function buildFuzzyTerms(customerName: string): string[] {
 }
 
 /**
+ * Exact-match customer lookup on dbo.TRDR by tax ID (AFM).
+ * SoftOne stores the Greek tax registration number in TRDR.AFM.
+ * Inactive customers (ISACTIVE = 0) are excluded.
+ */
+export async function searchCustomerByTaxId(
+  erpPool: ConnectionPool,
+  taxId: string,
+): Promise<CustomerMatch[]> {
+  const trimmed = taxId.trim();
+  if (!trimmed) return [];
+
+  const result = await erpPool
+    .request()
+    .input('TaxID', sql.NVarChar(30), trimmed)
+    .query<CustomerMatch>(`
+      SELECT TOP (20) TRDR, CODE, NAME
+      FROM dbo.TRDR
+      WHERE AFM = @TaxID AND ISACTIVE = 1
+      ORDER BY NAME
+    `);
+
+  return result.recordset ?? [];
+}
+
+/**
+ * Drops inactive customers (TRDR.ISACTIVE = 0) from a set of matches.
+ * Used to post-filter results returned by stored procedures that don't
+ * expose ISACTIVE.
+ */
+export async function filterActiveCustomers(
+  erpPool: ConnectionPool,
+  matches: CustomerMatch[],
+): Promise<CustomerMatch[]> {
+  if (matches.length === 0) return matches;
+  const ids = Array.from(new Set(matches.map(m => m.TRDR)));
+  const placeholders = ids.map((_, i) => `@id${i}`).join(', ');
+  const req = erpPool.request();
+  ids.forEach((id, i) => req.input(`id${i}`, sql.Int, id));
+  const res = await req.query<{ TRDR: number }>(`
+    SELECT TRDR FROM dbo.TRDR WHERE ISACTIVE = 1 AND TRDR IN (${placeholders})
+  `);
+  const active = new Set((res.recordset ?? []).map(r => r.TRDR));
+  return matches.filter(m => active.has(m.TRDR));
+}
+
+/**
  * Fuzzy customer search on dbo.TRDR using LIKE with multiple terms.
  * Tries each term separately and deduplicates results by TRDR.
  */
@@ -82,7 +128,7 @@ export async function fuzzyCustomerSearch(
       .query<CustomerMatch>(`
         SELECT TOP (10) TRDR, CODE, NAME
         FROM dbo.TRDR
-        WHERE NAME LIKE @FuzzyTerm
+        WHERE NAME LIKE @FuzzyTerm AND ISACTIVE = 1
         ORDER BY NAME
       `);
     for (const row of result.recordset ?? []) {
