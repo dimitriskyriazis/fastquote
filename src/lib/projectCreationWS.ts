@@ -52,6 +52,15 @@ export async function createProjectViaWebService(
     wsParams.code = `${params.codePrefix}.*`;
   }
 
+  if (params.startNetValue != null) wsParams.startnetvalue = params.startNetValue;
+  if (params.netOrderValue != null) wsParams.netordvalue = params.netOrderValue;
+  if (params.costEstimate != null) wsParams.costestimate = params.costEstimate;
+  if (params.financialSituation) wsParams.finantialsituation = params.financialSituation;
+  if (params.salesman) wsParams.salesman = params.salesman;
+  if (params.salesRep) wsParams.salesrep = params.salesRep;
+  if (params.implementManager) wsParams.implementmanager = params.implementManager;
+  if (params.designEngineer) wsParams.designengineer = params.designEngineer;
+
   logger.info('SoftOne WS: calling setProject', {
     name: params.name,
     businessUnit: params.businessUnit,

@@ -158,6 +158,8 @@ export type SetDocsLineItem = {
   price: string;
   discount?: string;
   lineval?: string;
+  cost?: string;
+  warrantymonths?: string; // warranty in months
 };
 
 export type SetDocsParams = {
@@ -204,6 +206,15 @@ class SoftOneClient {
     this.config = config;
   }
 
+  // SoftOne (on-premise/oncloud.gr) returns JSON bodies encoded in Windows-1253
+  // regardless of Content-Type, so response.json() produces U+FFFD for Greek chars.
+  // Decode bytes as Windows-1253 before parsing to preserve Greek text.
+  private async readJson<T>(response: Response): Promise<T> {
+    const buffer = await response.arrayBuffer();
+    const text = new TextDecoder('windows-1253').decode(buffer);
+    return JSON.parse(text) as T;
+  }
+
   // ── Authentication ─────────────────────────────────────────────────────
 
   /**
@@ -227,7 +238,7 @@ class SoftOneClient {
       throw new Error(`SoftOne login HTTP error: ${response.status} ${response.statusText}`);
     }
 
-    const data = (await response.json()) as LoginResponse;
+    const data = await this.readJson<LoginResponse>(response);
 
     if (!data.success || !data.clientID || !data.objs || data.objs.length === 0) {
       throw new Error(`SoftOne login failed: ${data.error ?? 'Unknown error'}`);
@@ -260,7 +271,7 @@ class SoftOneClient {
       throw new Error(`SoftOne authenticate HTTP error: ${response.status} ${response.statusText}`);
     }
 
-    const data = (await response.json()) as AuthenticateResponse;
+    const data = await this.readJson<AuthenticateResponse>(response);
 
     if (!data.success || !data.clientID) {
       throw new Error(`SoftOne authenticate failed: ${data.error ?? 'Unknown error'}`);
@@ -339,7 +350,7 @@ class SoftOneClient {
       throw new Error(`SoftOne ${serviceName} HTTP error: ${response.status} ${response.statusText}`);
     }
 
-    const result = (await response.json()) as T | ServiceErrorResponse;
+    const result = await this.readJson<T | ServiceErrorResponse>(response);
 
     // Check for auth-related errors and retry once with fresh session
     if (isServiceError(result)) {
@@ -374,7 +385,7 @@ class SoftOneClient {
           throw new Error(`SoftOne ${serviceName} retry HTTP error: ${retryResponse.status} ${retryResponse.statusText}`);
         }
 
-        const retryResult = (await retryResponse.json()) as T | ServiceErrorResponse;
+        const retryResult = await this.readJson<T | ServiceErrorResponse>(retryResponse);
 
         if (isServiceError(retryResult)) {
           throw new Error(`SoftOne ${serviceName} failed after re-auth: ${retryResult.error}`);

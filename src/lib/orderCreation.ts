@@ -6,6 +6,7 @@ export type OrderLineForCreation = {
   qty: number;
   price: number;
   netCost: number | null;
+  warrantyMonths: number | null;
 };
 
 export type CreateOrderWithLinesParams = {

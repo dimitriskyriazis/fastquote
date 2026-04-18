@@ -26,12 +26,17 @@ export async function createOrderViaWebService(
 
   const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
-  const items: SetDocsLineItem[] = params.lines.map((line) => ({
-    productcode: line.erpCode,
-    qty1: String(line.qty),
-    price: String(line.price),
-    lineval: String(line.qty * line.price),
-  }));
+  const items: SetDocsLineItem[] = params.lines.map((line) => {
+    const item: SetDocsLineItem = {
+      productcode: line.erpCode,
+      qty1: String(line.qty),
+      price: String(line.price),
+      lineval: String(line.qty * line.price),
+    };
+    if (line.netCost != null) item.cost = String(line.netCost);
+    if (line.warrantyMonths != null) item.warrantymonths = String(line.warrantyMonths);
+    return item;
+  });
 
   logger.info('SoftOne WS: calling setDocs', {
     offerId: String(params.offerId),

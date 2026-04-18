@@ -548,6 +548,33 @@ async function resolveOrCreateProject(
     if (!ctx.erpCustomerId) {
       throw new Error('Cannot create project without a valid customer.');
     }
+
+    const totalsReq = ctx.pool.request();
+    totalsReq.input('offerId', sql.Int, ctx.offerId);
+    const totalsRes = await totalsReq.query<{ NetTotal: number | null; CostTotal: number | null; ApprovalNameCode: string | null; SalesNameCode: string | null }>(`
+      SELECT
+        (SELECT SUM(CAST(od.Quantity AS DECIMAL(18,4)) * CAST(od.NetUnitPrice AS DECIMAL(18,4)))
+           FROM dbo.OfferDetails od
+           WHERE od.OfferID = o.ID
+             AND od.ProductID IS NOT NULL
+             AND od.Quantity IS NOT NULL AND od.Quantity > 0) AS NetTotal,
+        (SELECT SUM(CAST(od.Quantity AS DECIMAL(18,4)) * CAST(od.NetCost AS DECIMAL(18,4)))
+           FROM dbo.OfferDetails od
+           WHERE od.OfferID = o.ID
+             AND od.ProductID IS NOT NULL
+             AND od.Quantity IS NOT NULL AND od.Quantity > 0) AS CostTotal,
+        approver.NameCode AS ApprovalNameCode,
+        sales.NameCode AS SalesNameCode
+      FROM dbo.Offer o
+      LEFT JOIN dbo.AspNetUsers approver ON o.ApprovalUserId = approver.Id
+      LEFT JOIN dbo.AspNetUsers sales ON o.SalesPersonId = sales.Id
+      WHERE o.ID = @offerId
+    `);
+    const netTotal = totalsRes.recordset?.[0]?.NetTotal != null ? Number(totalsRes.recordset[0].NetTotal) : null;
+    const costTotal = totalsRes.recordset?.[0]?.CostTotal != null ? Number(totalsRes.recordset[0].CostTotal) : null;
+    const salesman = totalsRes.recordset?.[0]?.ApprovalNameCode ?? null;
+    const salesRep = totalsRes.recordset?.[0]?.SalesNameCode ?? null;
+
     const createdProject = await createProjectFromIntegration({
       integrationKey: 'FASTQUOTE_CREATE_PRJC',
       codePrefix: 'COV',
@@ -560,6 +587,14 @@ async function resolveOrCreateProject(
       createdByUser: 1011,
       businessUnit: ctx.businessUnit,
       prjState: 90,
+      startNetValue: netTotal,
+      netOrderValue: netTotal,
+      costEstimate: costTotal,
+      financialSituation: '25',
+      salesman,
+      salesRep,
+      implementManager: salesRep,
+      designEngineer: salesRep,
     });
 
     // Persist ERP project back to FastQuote Offer
@@ -1187,7 +1222,7 @@ async function handlePrepareSummary(
     TreeOrdering: number | null;
     ProductID: number | null;
     Quantity: number | null;
-    ListPrice: number | null;
+    NetUnitPrice: number | null;
     NetCost: number | null;
     ERPID: number | null;
     ERPCode: string | null;
@@ -1199,7 +1234,7 @@ async function handlePrepareSummary(
       od.TreeOrdering,
       od.ProductID,
       od.Quantity,
-      od.ListPrice,
+      od.NetUnitPrice,
       od.NetCost,
       p.ERPID,
       p.ERPCode,
@@ -1223,14 +1258,14 @@ async function handlePrepareSummary(
   }
 
   const orderLines = allLines
-    .filter(line => line.ProductID != null && resolvedProductIds.has(line.ProductID!) && line.Quantity != null && line.Quantity > 0 && line.ListPrice != null && line.ListPrice >= 0)
+    .filter(line => line.ProductID != null && resolvedProductIds.has(line.ProductID!) && line.Quantity != null && line.Quantity > 0 && line.NetUnitPrice != null && line.NetUnitPrice >= 0)
     .map(line => ({
       productId: line.ProductID,
       productCode: line.ERPCode ?? '(new)',
       productName: [line.ModelNumber, line.ProductDescription].filter(Boolean).join(' - ') || 'Unknown',
       qty: Number(line.Quantity),
-      price: Number(line.ListPrice),
-      lineTotal: Number(line.Quantity!) * Number(line.ListPrice!),
+      price: Number(line.NetUnitPrice),
+      lineTotal: Number(line.Quantity!) * Number(line.NetUnitPrice!),
     }));
 
   const totalValue = orderLines.reduce((sum, l) => sum + l.lineTotal, 0);
@@ -1380,12 +1415,13 @@ async function handleExecute(
       TreeOrdering: number | null;
       ProductID: number | null;
       Quantity: number | null;
-      ListPrice: number | null;
+      NetUnitPrice: number | null;
       NetCost: number | null;
+      Warranty: number | null;
       ERPID: number | null;
       ERPCode: string | null;
     }>(`
-      SELECT od.TreeOrdering, od.ProductID, od.Quantity, od.ListPrice, od.NetCost, p.ERPID, p.ERPCode
+      SELECT od.TreeOrdering, od.ProductID, od.Quantity, od.NetUnitPrice, od.NetCost, od.Warranty, p.ERPID, p.ERPCode
       FROM dbo.OfferDetails od
       INNER JOIN dbo.Products p ON od.ProductID = p.ID
       WHERE od.OfferID = @offerId AND od.ProductID IS NOT NULL AND p.ERPID IS NOT NULL
@@ -1393,8 +1429,15 @@ async function handleExecute(
 
     const lines = (linesRes.recordset ?? []).sort((a, b) => (a.TreeOrdering ?? 0) - (b.TreeOrdering ?? 0));
     const orderLines: OrderLineForCreation[] = lines
-      .filter(l => l.ERPID != null && l.ERPCode != null && l.Quantity != null && l.Quantity > 0 && l.ListPrice != null && l.ListPrice >= 0)
-      .map(l => ({ erpId: l.ERPID!, erpCode: l.ERPCode!, qty: Number(l.Quantity), price: Number(l.ListPrice), netCost: l.NetCost != null ? Number(l.NetCost) : null }));
+      .filter(l => l.ERPID != null && l.ERPCode != null && l.Quantity != null && l.Quantity > 0 && l.NetUnitPrice != null && l.NetUnitPrice >= 0)
+      .map(l => ({
+        erpId: l.ERPID!,
+        erpCode: l.ERPCode!,
+        qty: Number(l.Quantity),
+        price: Number(l.NetUnitPrice),
+        netCost: l.NetCost != null ? Number(l.NetCost) : null,
+        warrantyMonths: l.Warranty != null ? Number(l.Warranty) * 12 : null,
+      }));
 
     const orderInfo = await createOrderWithLines({
       offerId,
@@ -2236,6 +2279,32 @@ export async function POST(
           );
         }
 
+        const totalsReq2 = pool.request();
+        totalsReq2.input('offerId', sql.Int, normalizedId);
+        const totalsRes2 = await totalsReq2.query<{ NetTotal: number | null; CostTotal: number | null; ApprovalNameCode: string | null; SalesNameCode: string | null }>(`
+          SELECT
+            (SELECT SUM(CAST(od.Quantity AS DECIMAL(18,4)) * CAST(od.NetUnitPrice AS DECIMAL(18,4)))
+               FROM dbo.OfferDetails od
+               WHERE od.OfferID = o.ID
+                 AND od.ProductID IS NOT NULL
+                 AND od.Quantity IS NOT NULL AND od.Quantity > 0) AS NetTotal,
+            (SELECT SUM(CAST(od.Quantity AS DECIMAL(18,4)) * CAST(od.NetCost AS DECIMAL(18,4)))
+               FROM dbo.OfferDetails od
+               WHERE od.OfferID = o.ID
+                 AND od.ProductID IS NOT NULL
+                 AND od.Quantity IS NOT NULL AND od.Quantity > 0) AS CostTotal,
+            approver.NameCode AS ApprovalNameCode,
+            sales.NameCode AS SalesNameCode
+          FROM dbo.Offer o
+          LEFT JOIN dbo.AspNetUsers approver ON o.ApprovalUserId = approver.Id
+          LEFT JOIN dbo.AspNetUsers sales ON o.SalesPersonId = sales.Id
+          WHERE o.ID = @offerId
+        `);
+        const netTotal2 = totalsRes2.recordset?.[0]?.NetTotal != null ? Number(totalsRes2.recordset[0].NetTotal) : null;
+        const costTotal2 = totalsRes2.recordset?.[0]?.CostTotal != null ? Number(totalsRes2.recordset[0].CostTotal) : null;
+        const salesman2 = totalsRes2.recordset?.[0]?.ApprovalNameCode ?? null;
+        const salesRep2 = totalsRes2.recordset?.[0]?.SalesNameCode ?? null;
+
         const createdProject = await createProjectFromIntegration({
           integrationKey: 'FASTQUOTE_CREATE_PRJC',
           codePrefix: 'COV',
@@ -2248,6 +2317,14 @@ export async function POST(
           createdByUser: 1011,
           businessUnit,
           prjState: 90,
+          startNetValue: netTotal2,
+          netOrderValue: netTotal2,
+          costEstimate: costTotal2,
+          financialSituation: '25',
+          salesman: salesman2,
+          salesRep: salesRep2,
+          implementManager: salesRep2,
+          designEngineer: salesRep2,
         });
 
         finalErpProjectId = createdProject.prjcId;
@@ -2284,8 +2361,9 @@ export async function POST(
             TreeOrdering: number | null;
             ProductID: number | null;
             Quantity: number | null;
-            ListPrice: number | null;
+            NetUnitPrice: number | null;
             NetCost: number | null;
+            Warranty: number | null;
             ERPID: number | null;
             ERPCode: string | null;
           }>(`
@@ -2293,8 +2371,9 @@ export async function POST(
               od.TreeOrdering,
               od.ProductID,
               od.Quantity,
-              od.ListPrice,
+              od.NetUnitPrice,
               od.NetCost,
+              od.Warranty,
               p.ERPID,
               p.ERPCode
             FROM dbo.OfferDetails od
@@ -2317,15 +2396,16 @@ export async function POST(
                 line.ERPCode != null &&
                 line.Quantity != null &&
                 line.Quantity > 0 &&
-                line.ListPrice != null &&
-                line.ListPrice >= 0,
+                line.NetUnitPrice != null &&
+                line.NetUnitPrice >= 0,
             )
             .map((line) => ({
               erpId: line.ERPID!,
               erpCode: line.ERPCode!,
               qty: Number(line.Quantity),
-              price: Number(line.ListPrice),
+              price: Number(line.NetUnitPrice),
               netCost: line.NetCost != null ? Number(line.NetCost) : null,
+              warrantyMonths: line.Warranty != null ? Number(line.Warranty) * 12 : null,
             }));
 
           const orderInfo = await createOrderWithLines({
@@ -2644,6 +2724,32 @@ export async function POST(
         );
       }
 
+      const totalsReq3 = pool.request();
+      totalsReq3.input('offerId', sql.Int, normalizedId);
+      const totalsRes3 = await totalsReq3.query<{ NetTotal: number | null; CostTotal: number | null; ApprovalNameCode: string | null; SalesNameCode: string | null }>(`
+        SELECT
+          (SELECT SUM(CAST(od.Quantity AS DECIMAL(18,4)) * CAST(od.NetUnitPrice AS DECIMAL(18,4)))
+             FROM dbo.OfferDetails od
+             WHERE od.OfferID = o.ID
+               AND od.ProductID IS NOT NULL
+               AND od.Quantity IS NOT NULL AND od.Quantity > 0) AS NetTotal,
+          (SELECT SUM(CAST(od.Quantity AS DECIMAL(18,4)) * CAST(od.NetCost AS DECIMAL(18,4)))
+             FROM dbo.OfferDetails od
+             WHERE od.OfferID = o.ID
+               AND od.ProductID IS NOT NULL
+               AND od.Quantity IS NOT NULL AND od.Quantity > 0) AS CostTotal,
+          approver.NameCode AS ApprovalNameCode,
+          sales.NameCode AS SalesNameCode
+        FROM dbo.Offer o
+        LEFT JOIN dbo.AspNetUsers approver ON o.ApprovalUserId = approver.Id
+        LEFT JOIN dbo.AspNetUsers sales ON o.SalesPersonId = sales.Id
+        WHERE o.ID = @offerId
+      `);
+      const netTotal3 = totalsRes3.recordset?.[0]?.NetTotal != null ? Number(totalsRes3.recordset[0].NetTotal) : null;
+      const costTotal3 = totalsRes3.recordset?.[0]?.CostTotal != null ? Number(totalsRes3.recordset[0].CostTotal) : null;
+      const salesman3 = totalsRes3.recordset?.[0]?.ApprovalNameCode ?? null;
+      const salesRep3 = totalsRes3.recordset?.[0]?.SalesNameCode ?? null;
+
       const createdProject = await createProjectFromIntegration({
         integrationKey: 'FASTQUOTE_CREATE_PRJC',
         codePrefix: 'COV',
@@ -2656,6 +2762,14 @@ export async function POST(
         createdByUser: 1011,
         businessUnit,
         prjState: 90,
+        startNetValue: netTotal3,
+        netOrderValue: netTotal3,
+        costEstimate: costTotal3,
+        financialSituation: '25',
+        salesman: salesman3,
+        salesRep: salesRep3,
+        implementManager: salesRep3,
+        designEngineer: salesRep3,
       });
 
       finalErpProjectId = createdProject.prjcId;
@@ -2692,8 +2806,9 @@ export async function POST(
           TreeOrdering: number | null;
           ProductID: number | null;
           Quantity: number | null;
-          ListPrice: number | null;
+          NetUnitPrice: number | null;
           NetCost: number | null;
+          Warranty: number | null;
           ERPID: number | null;
           ERPCode: string | null;
         }>(`
@@ -2701,8 +2816,9 @@ export async function POST(
             od.TreeOrdering,
             od.ProductID,
             od.Quantity,
-            od.ListPrice,
+            od.NetUnitPrice,
             od.NetCost,
+            od.Warranty,
             p.ERPID,
             p.ERPCode
           FROM dbo.OfferDetails od
@@ -2725,15 +2841,16 @@ export async function POST(
               line.ERPCode != null &&
               line.Quantity != null &&
               line.Quantity > 0 &&
-              line.ListPrice != null &&
-              line.ListPrice >= 0,
+              line.NetUnitPrice != null &&
+              line.NetUnitPrice >= 0,
           )
           .map((line) => ({
             erpId: line.ERPID!,
             erpCode: line.ERPCode!,
             qty: Number(line.Quantity),
-            price: Number(line.ListPrice),
+            price: Number(line.NetUnitPrice),
             netCost: line.NetCost != null ? Number(line.NetCost) : null,
+            warrantyMonths: line.Warranty != null ? Number(line.Warranty) * 12 : null,
           }));
 
         const orderInfo = await createOrderWithLines({
