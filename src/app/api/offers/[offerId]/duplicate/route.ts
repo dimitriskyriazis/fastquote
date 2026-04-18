@@ -65,6 +65,8 @@ type ExistingOfferRecord = {
   ProtocolNo: number | null;
   OfferLanguage: string | null;
   FinalPriceLabel: string | null;
+  CurrencyID: number | null;
+  CurrencyModifier: number | null;
   ParentOfferID: number | null;
   OfferVersion: number | null;
   Enabled: number | boolean | null;
@@ -341,6 +343,8 @@ export async function POST(
         ProtocolNo,
         OfferLanguage,
         FinalPriceLabel,
+        CurrencyID,
+        CurrencyModifier,
         OfferVersion,
         Enabled,
         IsStandardPackage,
@@ -453,6 +457,8 @@ export async function POST(
       insertRequest.input('ProtocolNo', sql.Int, existingOffer.ProtocolNo);
       insertRequest.input('OfferLanguage', sql.NVarChar(16), existingOffer.OfferLanguage);
       insertRequest.input('FinalPriceLabel', sql.NVarChar(500), existingOffer.FinalPriceLabel);
+      insertRequest.input('CurrencyID', sql.Int, existingOffer.CurrencyID);
+      insertRequest.input('CurrencyModifier', sql.Decimal(18, 8), existingOffer.CurrencyModifier);
       insertRequest.input('OfferVersion', sql.Int, targetVersion);
       insertRequest.input('Enabled', sql.Bit, enabledValue);
       insertRequest.input('IsStandardPackage', sql.Bit, isStandardPackageValue);
@@ -496,6 +502,8 @@ export async function POST(
           ProtocolNo,
           OfferLanguage,
           FinalPriceLabel,
+          CurrencyID,
+          CurrencyModifier,
           OfferVersion,
           Enabled,
           IsStandardPackage,
@@ -541,6 +549,8 @@ export async function POST(
           @ProtocolNo,
           @OfferLanguage,
           @FinalPriceLabel,
+          @CurrencyID,
+          @CurrencyModifier,
           @OfferVersion,
           @Enabled,
           @IsStandardPackage,

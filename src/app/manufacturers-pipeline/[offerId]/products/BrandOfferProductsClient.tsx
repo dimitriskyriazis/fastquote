@@ -25,7 +25,7 @@ const euroFormatter = (params: ValueFormatterParams) => {
   if (value == null || value === "") return "";
   const num = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(num) || Object.is(num, 0)) return "";
-  return `${decimalFormatter.format(num)} €`;
+  return `€ ${decimalFormatter.format(num)}`;
 };
 
 const percentageFormatter = (params: ValueFormatterParams) => {

@@ -239,10 +239,8 @@ export default function OfferDetailsClient() {
         const currencyName = typeof (params.data as Record<string, unknown> | null)?.OtherCurrencyName === 'string'
           ? String((params.data as Record<string, unknown>).OtherCurrencyName).trim()
           : '';
-        if (!currencyName || currencyName === '€' || currencyName.toLowerCase().includes('eur')) return '';
-        return currencyName === '$'
-          ? `$ ${num.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
-          : `${num.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ${currencyName}`;
+        if (!currencyName) return '';
+        return `${currencyName} ${num.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
       },
       cellStyle: redCellStyle,
       width: 180,
@@ -256,7 +254,7 @@ export default function OfferDetailsClient() {
         const currencyName = typeof (params.data as Record<string, unknown> | null)?.OtherCurrencyName === 'string'
           ? String((params.data as Record<string, unknown>).OtherCurrencyName).trim()
           : '';
-        if (!currencyName || currencyName === '€' || currencyName.toLowerCase().includes('eur')) return '';
+        if (!currencyName) return '';
         if (params.value == null || params.value === '') return '';
         return String(params.value);
       },

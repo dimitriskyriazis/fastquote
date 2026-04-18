@@ -39,6 +39,7 @@ export type OfferPdfData = {
   notesClosing: string | null;
   discountNote: string | null;
   finalPriceLabel: string | null;
+  currencySymbol?: string | null;
 };
 
 export type OfferProductRow = {
@@ -309,9 +310,12 @@ function formatEuropeanNumber(n: number | null | undefined): string {
   return `${intPart},${parts[1] ?? '00'}`;
 }
 
+let currentCurrencySymbol = '€';
+
 function formatCurrency(n: number | null | undefined): string {
   const v = formatEuropeanNumber(n);
-  return v ? `€ ${v}` : '';
+  if (!v) return '';
+  return `${currentCurrencySymbol} ${v}`;
 }
 
 function formatPercent(n: number | null | undefined): string {
@@ -1372,6 +1376,9 @@ export async function generateOfferPdf(
   ensurePdfmake();
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const pdfmake = require('pdfmake');
+
+  const trimmedSymbol = (data.currencySymbol ?? '').trim();
+  currentCurrencySymbol = trimmedSymbol.length > 0 ? trimmedSymbol : '€';
 
   const logo = getLogoBase64();
   const L = LABELS[lang];

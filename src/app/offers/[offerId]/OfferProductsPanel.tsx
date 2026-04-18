@@ -355,6 +355,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const gridWrapperRef = useRef<HTMLDivElement | null>(null);
   const [requestedColumnsReady, setRequestedColumnsReadyFlag] = useState(false);
+  const [offerCurrencyName, setOfferCurrencyName] = useState<string | null>(null);
   const [requestedMatchQueue, setRequestedMatchQueue] = useState<RequestedProductMatchEntry[]>([]);
   const [processedRequestedMatches, setProcessedRequestedMatches] = useState(0);
 
@@ -1018,6 +1019,16 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     lastRowCountRef.current = response?.rowCount ?? null;
     const hasRows = Boolean(response?.rowCount && response.rowCount > 0);
     serverRowsRef.current = response && Array.isArray(response.rows) ? response.rows : [];
+    {
+      const rawCurrencyName = (response as { offerCurrencyName?: unknown } | null | undefined)?.offerCurrencyName;
+      if (typeof rawCurrencyName === 'string') {
+        const trimmed = rawCurrencyName.trim();
+        const next = trimmed.length > 0 ? trimmed : null;
+        setOfferCurrencyName((prev) => (prev === next ? prev : next));
+      } else if (rawCurrencyName === null) {
+        setOfferCurrencyName((prev) => (prev === null ? prev : null));
+      }
+    }
     const shouldResetRoots = response?.request?.startRow === 0;
     rebuildTreeOrderingRootMap(response?.rows as Array<Record<string, unknown>> | undefined, shouldResetRoots);
     rebuildDisplayOrderingMap(response?.rows as Array<Record<string, unknown>> | undefined, shouldResetRoots);
@@ -1134,18 +1145,17 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         applyRequestedVisibilityToGrid(mergedVisibility, mergedItemNoVisible, { force: true, defer: true });
       }
     }
-    // Auto-hide NetCostOtherCurrency and CurrencyCostModifier when all rows have Euro cost currency
+    // Auto-hide NetCostOtherCurrency and CurrencyCostModifier when all rows have cost in offer currency
     {
       const rows = Array.isArray(response?.rows) ? response.rows as Array<Record<string, unknown>> : [];
-      const pageHasNonEuro = rows.some((row) => {
+      const pageHasOtherCurrency = rows.some((row) => {
         const name = typeof row?.OtherCurrencyName === 'string' ? row.OtherCurrencyName.trim() : '';
-        if (!name) return false;
-        return name !== '€' && !name.toLowerCase().includes('eur');
+        return name.length > 0;
       });
       if (isFirstPage) {
-        hasNonEuroCostCurrencyRef.current = pageHasNonEuro;
+        hasNonEuroCostCurrencyRef.current = pageHasOtherCurrency;
       } else {
-        hasNonEuroCostCurrencyRef.current = hasNonEuroCostCurrencyRef.current || pageHasNonEuro;
+        hasNonEuroCostCurrencyRef.current = hasNonEuroCostCurrencyRef.current || pageHasOtherCurrency;
       }
       const api = gridApiRef.current;
       if (api && isFirstPage) {
@@ -1684,6 +1694,27 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       if (showInsertLineOnHoverRef.current && !insertLinePinnedRef.current) {
         setInsertLineVisibleRef.current?.(true, true);
       }
+      // AgGridAll hides the floating filter row while the grid is empty; the
+      // resulting layout shift when rows arrive/disappear leaves the pinned
+      // line's cached top at a stale position (ending up on the first product
+      // instead of below it). After any row-count change while the add modal
+      // is open, recompute the at-end pin once the filter row DOM change has
+      // settled. A short timeout is more reliable than double-RAF because AG
+      // Grid + React need time to commit the filter-row visibility flip.
+      const api = gridApiRef.current;
+      const currentRowCount = api && !api.isDestroyed?.() ? api.getDisplayedRowCount() : 0;
+      const prevRowCount = prevDisplayedRowCountRef.current;
+      prevDisplayedRowCountRef.current = currentRowCount;
+      if (currentRowCount !== prevRowCount && showInsertLineOnHoverRef.current) {
+        const repin = () => {
+          if (!showInsertLineOnHoverRef.current) return;
+          // Never override a pin that's anchored to a specific row.
+          if (insertLinePinnedRef.current && !insertLinePinnedAtEndRef.current) return;
+          setInsertLineVisibleRef.current?.(true, true);
+        };
+        window.setTimeout(repin, 80);
+        window.setTimeout(repin, 220);
+      }
     });
   }, [getGridViewportElement, scheduleCategoryAncestorsUpdate, tryRestoreInitialViewportScroll]);
 
@@ -2078,6 +2109,7 @@ const requestedColumnDefsMap = useMemo(
       PartNumberCell,
       ModelNumberCell,
       RequestedItemNoCell,
+      offerCurrencySymbol: offerCurrencyName ?? '€',
     }), [
     actualNumericCellClass,
     actualNumericCellStyle,
@@ -2095,7 +2127,14 @@ const requestedColumnDefsMap = useMemo(
     standardPackageMode,
     savedColumnOrder,
     truncateCellStyle,
+    offerCurrencyName,
   ]);
+
+  useEffect(() => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    api.refreshCells({ force: true });
+  }, [offerCurrencyName]);
 
 
   const pendingGridScrollRestoreRef = useRef<number | null>(null);
@@ -3718,20 +3757,20 @@ const requestedColumnDefsMap = useMemo(
         throw new Error(payload?.error ?? `Unable to load rows (status ${res.status})`);
       }
       const rows = Array.isArray(payload?.rows) ? payload.rows : [];
-      // For offer-scope cost modifier, only update non-Euro rows
+      // For offer-scope cost modifier, only update rows with cost in a different currency than the offer
       const filteredRows = isOfferScope && brandBulkEditField === 'CurrencyCostModifier'
         ? rows.filter((row) => {
             const name = typeof (row as { OtherCurrencyName?: unknown }).OtherCurrencyName === 'string'
               ? String((row as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
               : '';
-            return name.length > 0 && name !== '€' && !name.toLowerCase().includes('eur');
+            return name.length > 0;
           })
         : rows;
       const ids = filteredRows
         .map((row) => normalizeOfferDetailId((row as { OfferDetailID?: unknown })?.OfferDetailID ?? null))
         .filter((id): id is number => id != null);
       if (ids.length === 0) {
-        throw new Error(isOfferScope ? 'No non-Euro product rows found in this offer.' : 'No product rows found for this brand.');
+        throw new Error(isOfferScope ? 'No cross-currency product rows found in this offer.' : 'No product rows found for this brand.');
       }
 
       // Capture old values for undo before overwriting
@@ -4160,8 +4199,8 @@ const requestedColumnDefsMap = useMemo(
       const rowCurrencyName = typeof (rowData as { OtherCurrencyName?: unknown } | null | undefined)?.OtherCurrencyName === 'string'
         ? String((rowData as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
         : '';
-      const rowIsEuroCurrency = !rowCurrencyName || rowCurrencyName === '€' || rowCurrencyName.toLowerCase().includes('eur');
-      const rowHasModifier = !rowIsEuroCurrency && currentModifier != null && currentModifier !== '' && currentModifier !== 0;
+      const rowIsOfferCurrency = rowCurrencyName.length === 0;
+      const rowHasModifier = !rowIsOfferCurrency && currentModifier != null && currentModifier !== '' && currentModifier !== 0;
       let anyRowHasModifier = rowHasModifier;
       if (!anyRowHasModifier && api && typeof api.forEachNode === 'function') {
         api.forEachNode((node) => {
@@ -4195,12 +4234,12 @@ const requestedColumnDefsMap = useMemo(
             action: () => openBrandBulkEdit('Margin', rowBrandName, currentMargin, 'brand'),
           },
           {
-            name: 'Customer discount',
+            name: 'Customer Discount',
             icon: brandBulkEditMenuIcon,
             action: () => openBrandBulkEdit('CustomerDiscount', rowBrandName, currentCustomerDiscount, 'brand'),
           },
           {
-            name: 'Telmaco discount',
+            name: 'Telmaco Discount',
             icon: brandBulkEditMenuIcon,
             action: () => openBrandBulkEdit('TelmacoDiscount', rowBrandName, currentTelmacoDiscount, 'brand'),
           },
@@ -5744,9 +5783,10 @@ const requestedColumnDefsMap = useMemo(
     handleOriginEdit(event);
   }, [handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit, handleOriginEdit]);
 
+  const offerCurrencySymbol = offerCurrencyName ?? '€';
   const formatEuroTotal = (value: number | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return '—';
-    return `${decimalFormatter.format(value)} €`;
+    return `${offerCurrencySymbol} ${decimalFormatter.format(value)}`;
   };
   const formatPercentTotal = (value: number | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return '—';
@@ -5763,7 +5803,7 @@ const requestedColumnDefsMap = useMemo(
     }
     const discount = listPrice - netPrice;
     const percent = Math.abs(listPrice) < 1e-9 ? 0 : (discount / listPrice) * 100;
-    return `${decimalFormatter.format(discount)} € (${decimalFormatter.format(percent)} %)`;
+    return `${offerCurrencySymbol} ${decimalFormatter.format(discount)} (${decimalFormatter.format(percent)} %)`;
   };
 
   const beginEditTotalNet = useCallback(() => {
@@ -5798,7 +5838,7 @@ const requestedColumnDefsMap = useMemo(
 
     const confirmed = await showConfirmDialog({
       title: 'Adjust all Net Unit Prices?',
-      message: `This will proportionally rescale the Net Unit Price of every product row so the offer total matches ${decimalFormatter.format(targetTotal)} € (currently ${decimalFormatter.format(currentTotal)} €). This change affects all priced product rows and cannot be undone in a single step.`,
+      message: `This will proportionally rescale the Net Unit Price of every product row so the offer total matches ${offerCurrencySymbol} ${decimalFormatter.format(targetTotal)} (currently ${offerCurrencySymbol} ${decimalFormatter.format(currentTotal)}). This change affects all priced product rows and cannot be undone in a single step.`,
       confirmLabel: 'Rescale prices',
       cancelLabel: 'Keep as-is',
       tone: 'danger',
@@ -5885,7 +5925,7 @@ const requestedColumnDefsMap = useMemo(
         },
       });
 
-      showToastMessage(`Total Net Price set to ${decimalFormatter.format(targetTotal)} € (${entries.length} items updated)`, 'success', 5500, {
+      showToastMessage(`Total Net Price set to ${offerCurrencySymbol} ${decimalFormatter.format(targetTotal)} (${entries.length} items updated)`, 'success', 5500, {
         label: 'Undo',
         onClick: () => performUndo(),
       });
@@ -5898,7 +5938,7 @@ const requestedColumnDefsMap = useMemo(
     } finally {
       setTotalNetApplying(false);
     }
-  }, [cancelEditTotalNet, performUndo, pushUndo, refreshOfferProductGrid, resolvedEndpoint, totalNetApplying, totals]);
+  }, [cancelEditTotalNet, offerCurrencySymbol, performUndo, pushUndo, refreshOfferProductGrid, resolvedEndpoint, totalNetApplying, totals]);
 
   const submitTotalNetEdit = useCallback(() => {
     if (totalNetSubmitPendingRef.current) return;
@@ -5936,6 +5976,8 @@ const requestedColumnDefsMap = useMemo(
   const insertLinePinTopRef = useRef(0);
   const insertLinePinScrollRef = useRef(0);
   const insertLineAtEndPendingRef = useRef(false);
+  const insertLinePinnedAtEndRef = useRef(false);
+  const prevDisplayedRowCountRef = useRef(0);
   const showInsertLineOnHoverRef = useRef(showInsertLineOnHover);
   showInsertLineOnHoverRef.current = showInsertLineOnHover;
   const onRequestInsertProductRef = useRef(onRequestInsertProduct);
@@ -6348,14 +6390,24 @@ const requestedColumnDefsMap = useMemo(
       // Only show the line if we actually have a valid position
       if (positioned) {
         insertLinePinnedRef.current = true;
+        insertLinePinnedAtEndRef.current = positionedAtEnd;
         insertLinePinnedAtRef.current = Date.now();
         pinLine.className = `${styles.insertLine} ${styles.insertLinePinned}`;
         pinLine.style.display = 'flex';
         pinLine.style.width = getLineWidth();
         if (!positionedAtEnd) startRowShift();
+      } else if (atEnd) {
+        // Asked to pin at end but the grid has no rows to anchor against —
+        // hide any prior pin so a stale line doesn't linger after the grid
+        // empties out.
+        insertLinePinnedRef.current = false;
+        insertLinePinnedAtEndRef.current = false;
+        pinLine.style.display = 'none';
+        stopRowShift();
       }
     } else {
       insertLinePinnedRef.current = false;
+      insertLinePinnedAtEndRef.current = false;
       insertLineAtEndPendingRef.current = false;
       pinLine.style.display = 'none';
       pinLine.className = `${styles.insertLine} ${styles.insertLinePinned}`;

@@ -53,6 +53,8 @@ type FormValues = {
   protocolNo: string;
   offerLanguage: OfferLanguage;
   finalPriceLabel: string;
+  currencyId: string;
+  currencyModifier: string;
 };
 
 type FieldConfig = {
@@ -83,7 +85,8 @@ type LookupKey =
   | 'markets'
   | 'salesDivisions'
   | 'users'
-  | 'fwcProjects';
+  | 'fwcProjects'
+  | 'currencies';
 type OfferLookupPayload = {
   customers?: DropdownOption[];
   statuses?: DropdownOption[];
@@ -92,6 +95,7 @@ type OfferLookupPayload = {
   salesDivisions?: DropdownOption[];
   users?: UserOption[];
   fwcProjects?: DropdownOption[];
+  currencies?: DropdownOption[];
 };
 
 type Props = {
@@ -102,8 +106,14 @@ type Props = {
   salesDivisions: DropdownOption[];
   users: UserOption[];
   fwcProjects: DropdownOption[];
+  currencies: DropdownOption[];
   defaultValues: OfferCreateDefaults;
   formId?: string;
+};
+
+const isEurOption = (option: DropdownOption): boolean => {
+  const label = (option.label ?? '').trim().toLowerCase();
+  return label === '€' || label === 'eur' || label.includes('eur');
 };
 
 const SALES_USER_SENIORITIES = new Set([
@@ -195,6 +205,7 @@ export default function OfferCreateClient({
   salesDivisions,
   users,
   fwcProjects,
+  currencies,
   defaultValues,
   formId = 'offer-create-form',
 }: Props) {
@@ -214,6 +225,7 @@ export default function OfferCreateClient({
   const [localSalesDivisions, setLocalSalesDivisions] = useState(salesDivisions);
   const [localUsers, setLocalUsers] = useState(users);
   const [localFwcProjects, setLocalFwcProjects] = useState(fwcProjects);
+  const [localCurrencies, setLocalCurrencies] = useState(currencies);
   const lastCustomerRef = useRef<string>('');
   const listCloseTimerRef = useRef<NodeJS.Timeout | null>(null);
   const appliedCustomerParamRef = useRef(false);
@@ -258,6 +270,11 @@ export default function OfferCreateClient({
     return approvalUsers.some((user) => user.value === suggestedUserId) ? suggestedUserId : '';
   }, [defaultValues.suggestedUserId, approvalUsers]);
 
+  const eurCurrencyId = useMemo(() => {
+    const match = localCurrencies.find(isEurOption);
+    return match?.value ?? '';
+  }, [localCurrencies]);
+
   const initialValues = useMemo<FormValues>(() => {
     const langDefaults = OFFER_LANGUAGE_DEFAULTS[DEFAULT_OFFER_LANGUAGE];
     return {
@@ -294,12 +311,15 @@ export default function OfferCreateClient({
       protocolNo: '',
       offerLanguage: DEFAULT_OFFER_LANGUAGE,
       finalPriceLabel: langDefaults.finalPriceLabel,
+      currencyId: eurCurrencyId,
+      currencyModifier: '',
     };
   }, [
     defaultPricingPolicyId,
     defaultStatusId,
     defaultSuggestedUserId,
     defaultApprovalUserId,
+    eurCurrencyId,
   ]);
 
   const [values, setValues] = useState<FormValues>(initialValues);
@@ -357,6 +377,15 @@ export default function OfferCreateClient({
     setLocalFwcProjects(fwcProjects);
   }, [fwcProjects]);
 
+  useEffect(() => {
+    setLocalCurrencies(currencies);
+  }, [currencies]);
+
+  useEffect(() => {
+    if (!eurCurrencyId) return;
+    setValues((prev) => (prev.currencyId ? prev : { ...prev, currencyId: eurCurrencyId }));
+  }, [eurCurrencyId]);
+
   const refreshLookups = useCallback(async (keys: LookupKey[]) => {
     const uniqueKeys = Array.from(new Set(keys));
     const pendingKeys = uniqueKeys.filter((key) => !lookupRefreshInFlightRef.current.has(key));
@@ -379,6 +408,7 @@ export default function OfferCreateClient({
       if (payload.lookups.salesDivisions) setLocalSalesDivisions(payload.lookups.salesDivisions);
       if (payload.lookups.users) setLocalUsers(payload.lookups.users);
       if (payload.lookups.fwcProjects) setLocalFwcProjects(payload.lookups.fwcProjects);
+      if (payload.lookups.currencies) setLocalCurrencies(payload.lookups.currencies);
     } catch (err) {
       console.error(err);
       showToastMessage('Unable to refresh latest dropdown values.', 'warning');
@@ -691,6 +721,11 @@ export default function OfferCreateClient({
       protocolNo: toNumberOrNull(values.protocolNo),
       offerLanguage: values.offerLanguage,
       finalPriceLabel: toNullableString(values.finalPriceLabel),
+      currencyId: toNumberOrNull(values.currencyId),
+      currencyModifier:
+        values.currencyId && values.currencyId !== eurCurrencyId
+          ? Number(values.currencyModifier.replace(',', '.')) || null
+          : null,
     };
 
     setSubmitting(true);
@@ -713,7 +748,7 @@ export default function OfferCreateClient({
     } finally {
       setSubmitting(false);
     }
-  }, [router, values, clearDraft]);
+  }, [router, values, clearDraft, eurCurrencyId]);
 
   const fieldDefinitions: FieldConfig[] = useMemo(
     () => [
@@ -727,12 +762,16 @@ export default function OfferCreateClient({
       { id: 'introNote', label: 'Introduction Note', section: 'general', type: 'textarea' },
       { id: 'customerId', label: 'Customer', section: 'general', required: true, type: 'select', options: localCustomers },
       { id: 'statusId', label: 'Status', section: 'general', required: true, type: 'select', options: localStatuses },
-      { id: 'offerLanguage', label: 'Offer Language', section: 'general', required: true, type: 'select', options: OFFER_LANGUAGES.map((l) => ({ value: l, label: l })), hideEmptyOption: true },
 
       { id: 'contactId', label: 'Contact', section: 'info', required: true, type: 'select', options: contactOptions, fullWidth: true, dependsOnCustomer: true },
       { id: 'telmacoNote', label: 'Telmaco Note', section: 'info', type: 'textarea' },
+      { id: 'offerLanguage', label: 'Offer Language', section: 'info', required: true, type: 'select', options: OFFER_LANGUAGES.map((l) => ({ value: l, label: l })), fullWidth: true, hideEmptyOption: true },
 
       { id: 'pricingPolicyId', label: 'Pricing Policy', section: 'commercial', required: true, type: 'select', options: localPricingPolicies },
+      { id: 'currencyId', label: 'Currency', section: 'commercial', type: 'select', options: localCurrencies, hideEmptyOption: true },
+      ...(values.currencyId && values.currencyId !== eurCurrencyId
+        ? [{ id: 'currencyModifier' as keyof FormValues, label: 'Currency Modifier', section: 'commercial' as SectionKey, inputType: 'number' }]
+        : []),
       { id: 'marketId', label: 'Market', section: 'commercial', required: true, type: 'select', options: localMarkets },
       { id: 'salesDivisionId', label: 'Sales Division', section: 'commercial', required: true, type: 'select', options: localSalesDivisions },
       { id: 'salesCreationPersonId', label: 'Sales Creation Person', section: 'commercial', required: true, type: 'select', options: salesUsers, readOnly: true },
@@ -764,11 +803,14 @@ export default function OfferCreateClient({
       salesUsers,
       approvalUsers,
       localFwcProjects,
+      localCurrencies,
+      values.currencyId,
+      eurCurrencyId,
     ],
   );
 
   const generalLayout: Array<Array<keyof FormValues>> = [
-    ['title', 'description', 'customerId', 'offerValidity', 'statusId', 'offerLanguage'],
+    ['title', 'description', 'customerId', 'offerValidity', 'statusId'],
     ['deliveryTime', 'paymentTerms', 'installationSchedule', 'introNote', 'closingNote'],
   ];
 
@@ -814,6 +856,10 @@ export default function OfferCreateClient({
     }
     if (fieldId === 'erpFwcProjectId') {
       void refreshLookups(['fwcProjects']);
+      return;
+    }
+    if (fieldId === 'currencyId') {
+      void refreshLookups(['currencies']);
       return;
     }
     if (fieldId === 'contactId') {

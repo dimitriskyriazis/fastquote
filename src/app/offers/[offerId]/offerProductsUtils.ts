@@ -112,15 +112,19 @@ export const formatPercentageValue = (value: unknown) => {
   return `${decimalFormatter.format(num)} %`;
 };
 
-export const formatEuroValue = (value: unknown) => {
+export const formatCurrencyValue = (value: unknown, symbol = '€') => {
   const num = coerceNumber(value);
   if (num == null || Object.is(num, 0)) return '';
-  return `${decimalFormatter.format(num)} €`;
+  return `${symbol} ${decimalFormatter.format(num)}`;
 };
+
+export const formatEuroValue = (value: unknown) => formatCurrencyValue(value, '€');
 
 type FormatterParams = ValueFormatterParams<Record<string, unknown>, unknown>;
 export const percentageFormatter = ({ value }: FormatterParams) => formatPercentageValue(value);
 export const euroFormatter = ({ value }: FormatterParams) => formatEuroValue(value);
+export const buildCurrencyFormatter = (symbol: string) =>
+  ({ value }: FormatterParams) => formatCurrencyValue(value, symbol);
 export const zeroBlankNumberFormatter = ({ value }: FormatterParams) => {
   const num = coerceNumber(value);
   if (num == null) {

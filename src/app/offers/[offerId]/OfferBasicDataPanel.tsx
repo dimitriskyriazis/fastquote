@@ -43,6 +43,9 @@ async function fetchOfferBasicRecord(offerId: number) {
         o.StatusID,
         o.PricingPolicyID,
         o.MarketID,
+        o.CurrencyID,
+        o.CurrencyModifier,
+        cur.Name AS CurrencyName,
         os.Name AS StatusName,
         pp.Name AS PricingPolicyName,
         m.Name AS MarketName,
@@ -77,6 +80,7 @@ async function fetchOfferBasicRecord(offerId: number) {
       LEFT JOIN dbo.OfferStatus AS os ON o.StatusID = os.ID
       LEFT JOIN dbo.PricingPolicies AS pp ON o.PricingPolicyID = pp.ID
       LEFT JOIN dbo.Markets AS m ON o.MarketID = m.ID
+      LEFT JOIN dbo.Currencies AS cur ON o.CurrencyID = cur.ID
       LEFT JOIN dbo.SalesDivision AS sd ON o.SalesDivisionID = sd.ID
       LEFT JOIN dbo.AspNetUsers AS created ON o.CreatedBy = created.Id
       LEFT JOIN dbo.AspNetUsers AS sales ON o.SalesPersonId = sales.Id
@@ -228,6 +232,28 @@ async function fetchFwcProjects() {
   }
 }
 
+async function fetchCurrencies() {
+  try {
+    const pool = await getPool();
+    const request = pool.request();
+    const result = await request.query<LookupRow>(`
+      SELECT ID, Name
+      FROM dbo.Currencies
+      ORDER BY
+        CASE
+          WHEN Name = N'€' THEN 0
+          WHEN LOWER(Name) LIKE '%eur%' THEN 1
+          ELSE 2
+        END,
+        Name
+    `);
+    return mapLookupRows(result.recordset);
+  } catch (err) {
+    console.error('Failed to load currencies', err);
+    return [];
+  }
+}
+
 async function fetchCustomerContacts(customerId: number | null) {
   if (!customerId) return [];
   try {
@@ -281,6 +307,7 @@ export default async function OfferBasicDataPanel({ offerId }: Props) {
     salesDivisions,
     users,
     fwcProjects,
+    currencies,
   ] = await Promise.all([
     fetchCustomerContacts(record.CustomerID ?? null),
     fetchCustomers(),
@@ -290,6 +317,7 @@ export default async function OfferBasicDataPanel({ offerId }: Props) {
     fetchSalesDivisions(),
     fetchAspNetUsers(),
     fetchFwcProjects(),
+    fetchCurrencies(),
   ]);
 
   return (
@@ -304,6 +332,7 @@ export default async function OfferBasicDataPanel({ offerId }: Props) {
       salesDivisions={salesDivisions}
       users={users}
       fwcProjects={fwcProjects}
+      currencies={currencies}
     />
   );
 }

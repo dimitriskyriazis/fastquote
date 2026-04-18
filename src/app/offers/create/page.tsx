@@ -149,6 +149,27 @@ async function fetchFwcProjects() {
   }
 }
 
+async function fetchCurrencies() {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<LookupRow>(`
+      SELECT ID, Name
+      FROM dbo.Currencies
+      ORDER BY
+        CASE
+          WHEN Name = N'€' THEN 0
+          WHEN LOWER(Name) LIKE '%eur%' THEN 1
+          ELSE 2
+        END,
+        Name
+    `);
+    return mapOptions(result.recordset);
+  } catch (err) {
+    console.error('Failed to load currencies', err);
+    return [];
+  }
+}
+
 export default async function Page() {
   const requestHeaders = await headers();
   const requestCookies = await cookies();
@@ -165,6 +186,7 @@ export default async function Page() {
     salesDivisions,
     users,
     fwcProjects,
+    currencies,
   ] = await Promise.all([
     fetchCustomers(),
     fetchOfferStatuses(),
@@ -173,6 +195,7 @@ export default async function Page() {
     fetchSalesDivisions(),
     fetchUsers(),
     fetchFwcProjects(),
+    fetchCurrencies(),
   ]);
 
   const fallbackUserId = getAuditFallbackUserId();
@@ -212,6 +235,7 @@ export default async function Page() {
           salesDivisions={salesDivisions}
           users={users}
           fwcProjects={fwcProjects}
+          currencies={currencies}
           defaultValues={{
             suggestedUserId,
           }}

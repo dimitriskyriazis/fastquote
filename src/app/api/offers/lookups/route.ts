@@ -16,7 +16,8 @@ type LookupKey =
   | 'markets'
   | 'salesDivisions'
   | 'users'
-  | 'fwcProjects';
+  | 'fwcProjects'
+  | 'currencies';
 
 type OfferLookupPayload = {
   customers?: DropdownOption[];
@@ -26,6 +27,7 @@ type OfferLookupPayload = {
   salesDivisions?: DropdownOption[];
   users?: Array<DropdownOption & { salesSeniorityName?: string | null }>;
   fwcProjects?: DropdownOption[];
+  currencies?: DropdownOption[];
 };
 
 const LOOKUP_KEYS: LookupKey[] = [
@@ -36,6 +38,7 @@ const LOOKUP_KEYS: LookupKey[] = [
   'salesDivisions',
   'users',
   'fwcProjects',
+  'currencies',
 ];
 
 const toLookupOptions = (rows: LookupRow[] | undefined | null): DropdownOption[] =>
@@ -163,6 +166,22 @@ async function fetchFwcProjects() {
   return toLookupOptions(result.recordset);
 }
 
+async function fetchCurrencies() {
+  const pool = await getPool();
+  const result = await pool.request().query<LookupRow>(`
+    SELECT ID, Name
+    FROM dbo.Currencies
+    ORDER BY
+      CASE
+        WHEN Name = N'€' THEN 0
+        WHEN LOWER(Name) LIKE '%eur%' THEN 1
+        ELSE 2
+      END,
+      Name
+  `);
+  return toLookupOptions(result.recordset);
+}
+
 export async function GET(req: NextRequest) {
   logRequest(req, '/api/offers/lookups');
   try {
@@ -199,7 +218,11 @@ export async function GET(req: NextRequest) {
           payload.users = await fetchUsers();
           return;
         }
-        payload.fwcProjects = await fetchFwcProjects();
+        if (key === 'fwcProjects') {
+          payload.fwcProjects = await fetchFwcProjects();
+          return;
+        }
+        payload.currencies = await fetchCurrencies();
       }),
     );
 

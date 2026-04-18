@@ -94,3 +94,46 @@ export function parsePdfProductColumnsParam(value: string | null | undefined): P
 
   return ordered;
 }
+
+const PDF_COLUMNS_STORAGE_PREFIX = 'fastquote-pdf-columns';
+
+const sanitizeKeySegment = (value: string): string =>
+  (value || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+
+export function buildPdfColumnsStorageKey(userId: string | null | undefined, offerId: string | number): string {
+  const user = sanitizeKeySegment(userId && String(userId).trim() ? String(userId).trim() : 'anon');
+  const offer = sanitizeKeySegment(String(offerId));
+  return `${PDF_COLUMNS_STORAGE_PREFIX}:${user}:${offer}`;
+}
+
+export function readSavedPdfColumns(key: string): PdfProductColumn[] | null {
+  if (typeof window === 'undefined' || !key) return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const source = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.columns) ? parsed.columns : null;
+    if (!source) return null;
+    const ordered: PdfProductColumn[] = [];
+    const seen = new Set<PdfProductColumn>();
+    for (const entry of source) {
+      if (typeof entry !== 'string' || !PDF_PRODUCT_COLUMN_SET.has(entry)) continue;
+      const column = entry as PdfProductColumn;
+      if (seen.has(column)) continue;
+      seen.add(column);
+      ordered.push(column);
+    }
+    return ordered.length > 0 ? ordered : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeSavedPdfColumns(key: string, columns: PdfProductColumn[]): void {
+  if (typeof window === 'undefined' || !key) return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ columns }));
+  } catch {
+    // ignore quota / serialization errors
+  }
+}

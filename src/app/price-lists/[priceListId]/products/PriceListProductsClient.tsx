@@ -62,7 +62,7 @@ const formatCurrency = (params: ValueFormatterParams) => {
   if (value == null || value === "") return "";
   const num = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(num)) return String(value);
-  return `${currencyFormatter.format(num)} €`;
+  return `€ ${currencyFormatter.format(num)}`;
 };
 
 const formatEnabledValue = (value: unknown) => {
@@ -296,7 +296,7 @@ export default function PriceListProductsClient({
           const num = typeof value === "number" ? value : Number(value);
           if (!Number.isFinite(num)) return String(value);
           const currencyName = (params.data as PriceListProductRowGrid | undefined)?.CostCurrencyName ?? "";
-          return currencyName === '$' ? `$ ${currencyFormatter.format(num)}` : `${currencyFormatter.format(num)} ${currencyName}`.trim();
+          return currencyName ? `${currencyName} ${currencyFormatter.format(num)}` : currencyFormatter.format(num);
         },
         type: "numericColumn",
         width: 200,

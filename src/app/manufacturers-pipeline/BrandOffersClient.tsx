@@ -26,7 +26,7 @@ const formatCurrency = (params: ValueFormatterParams) => {
   if (value == null || value === "") return "";
   const num = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(num)) return "";
-  return `${currencyFormatter.format(num)} €`;
+  return `€ ${currencyFormatter.format(num)}`;
 };
 
 const formatDateDMY = (value: unknown): string => {

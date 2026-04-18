@@ -1,13 +1,17 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback, type DragEvent } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, type DragEvent } from 'react';
 import { showToastMessage } from '../../../../lib/toast';
 import LookupModal from '../../../components/LookupModal';
 import {
   DEFAULT_PDF_PRODUCT_COLUMNS,
   PDF_PRODUCT_COLUMNS,
+  buildPdfColumnsStorageKey,
+  readSavedPdfColumns,
+  writeSavedPdfColumns,
   type PdfProductColumn,
 } from '../../../../lib/pdfColumns';
+import { useAuditUser } from '../../../components/AuditUserProvider';
 
 type Props = {
   offerId: string;
@@ -67,10 +71,24 @@ const columnLabels: Record<PdfProductColumn, string> = {
 };
 
 export default function ExportPdfButton({ offerId, className }: Props) {
+  const { userId } = useAuditUser();
+  const storageKey = useMemo(() => buildPdfColumnsStorageKey(userId, offerId), [userId, offerId]);
   const [isExporting, setIsExporting] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [menuStep, setMenuStep] = useState<MenuStep>('columns');
-  const [selectedColumns, setSelectedColumns] = useState<PdfProductColumn[]>([...DEFAULT_PDF_PRODUCT_COLUMNS]);
+  const [selectedColumns, setSelectedColumns] = useState<PdfProductColumn[]>(() => {
+    const saved = readSavedPdfColumns(buildPdfColumnsStorageKey(userId, offerId));
+    return saved ?? [...DEFAULT_PDF_PRODUCT_COLUMNS];
+  });
+
+  useEffect(() => {
+    const saved = readSavedPdfColumns(storageKey);
+    if (saved) setSelectedColumns(saved);
+  }, [storageKey]);
+
+  useEffect(() => {
+    writeSavedPdfColumns(storageKey, selectedColumns);
+  }, [storageKey, selectedColumns]);
   const [draggingColumn, setDraggingColumn] = useState<PdfProductColumn | null>(null);
   const draggingColumnRef = useRef<PdfProductColumn | null>(null);
   const [dropPreview, setDropPreview] = useState<DropPreview>(null);

@@ -1223,11 +1223,9 @@ export async function POST(
       'PriceListValidToDate',
       'CreatedBy',
     ];
-    // Always include OtherCurrencyName when OtherCurrencyID or NetCostOtherCurrency is requested
-    const extraFields: string[] = [];
-    if (requestedFields.includes('OtherCurrencyID') || requestedFields.includes('NetCostOtherCurrency')) {
-      extraFields.push('OtherCurrencyName');
-    }
+    // Always include OtherCurrencyName + OtherCurrencyID so the client can drive
+    // auto-show of the cost-other-currency columns even when the user has hidden them.
+    const extraFields: string[] = ['OtherCurrencyID', 'OtherCurrencyName'];
     const selectedFields = Array.from(new Set([...requiredFields, ...requestedFields, ...extraFields]))
       .filter((field) => Boolean(SELECT_FIELD_EXPRESSIONS[field]));
 
@@ -1396,6 +1394,17 @@ export async function POST(
       RequestedQuantity: normalizeAggregateFlag(requestedColumnsRow?.__hasRequestedQuantity ?? 0),
     };
 
+    const offerCurrencyResult = await pool
+      .request()
+      .input('__id', sql.Int, idValue)
+      .query<{ Name: string | null }>(`
+        SELECT cur.Name
+        FROM dbo.Offer o
+        LEFT JOIN dbo.Currencies cur ON o.CurrencyID = cur.ID
+        WHERE o.ID = @__id
+      `);
+    const offerCurrencyName = (offerCurrencyResult.recordset?.[0]?.Name ?? '').trim() || null;
+
     const rows: ProductRow[] = recordset.map(row => {
       const {
         __totalCount,
@@ -1429,7 +1438,7 @@ export async function POST(
       return rest;
     });
 
-    return NextResponse.json({ ok: true, rows, rowCount, totals, requestedColumns });
+    return NextResponse.json({ ok: true, rows, rowCount, totals, requestedColumns, offerCurrencyName });
   } catch (err: unknown) {
     console.error(err);
     const message = err instanceof Error ? err.message : 'Server error';
@@ -1479,6 +1488,20 @@ export async function PUT(
 
     const pool = await getPool();
     const affected = await persistTreeOrderingUpdates(pool, offerId, audit, normalizedUpdates);
+
+    if (affected > 0) {
+      realtimeEvents.emit(
+        `offer:${offerId}:products`,
+        'rows-reordered',
+        {
+          updates: normalizedUpdates.map((u) => ({
+            OfferDetailID: u.OfferDetailID,
+            TreeOrdering: u.TreeOrdering ?? '',
+          })),
+          updatedBy: audit.userId,
+        },
+      );
+    }
 
     return NextResponse.json({
       ok: true,
@@ -2536,74 +2559,38 @@ export async function PATCH(
       } // end updateChunk loop
     }
 
-    // Emit realtime events for updated rows
-    if (normalizedUpdates.length > 0 && affected > 0) {
-      // Group updates by row to emit one event per row with all field changes
-      const updatesByRow = new Map<number, Array<{ field: string; value: unknown }>>();
-      
-      for (const update of normalizedUpdates) {
-        const rowId = update.OfferDetailID;
-        if (!updatesByRow.has(rowId)) {
-          updatesByRow.set(rowId, []);
-        }
-        
-        // Extract field name and value from update
-        const fieldMap: Record<string, string> = {
-          hasProductDescription: 'Description',
-          ProductDescription: 'Description',
-          hasComment: 'Comment',
-          Comment: 'Comment',
-          hasDelivery: 'Delivery',
-          Delivery: 'Delivery',
-          hasQuantity: 'Quantity',
-          Quantity: 'Quantity',
-          hasCustomerDiscount: 'CustomerDiscount',
-          CustomerDiscount: 'CustomerDiscount',
-          hasTelmacoDiscount: 'TelmacoDiscount',
-          TelmacoDiscount: 'TelmacoDiscount',
-          hasNetUnitPrice: 'NetUnitPrice',
-          NetUnitPrice: 'NetUnitPrice',
-          hasListPrice: 'ListPrice',
-          ListPrice: 'ListPrice',
-          hasNetCost: 'NetCost',
-          NetCost: 'NetCost',
-          hasMargin: 'Margin',
-          Margin: 'Margin',
-          hasPartNumber: 'PartNumber',
-          PartNumber: 'PartNumber',
-          hasModelNumber: 'ModelNumber',
-          ModelNumber: 'ModelNumber',
-        };
-        
-        // Find all updated fields
-        Object.keys(update).forEach((key) => {
-          if (key !== 'OfferDetailID' && key.startsWith('has') === false) {
-            const fieldName = fieldMap[key] || key;
-            const value = update[key as keyof typeof update];
-            if (value !== undefined && value !== null) {
-              updatesByRow.get(rowId)!.push({ field: fieldName, value });
-            }
-          }
-        });
-      }
-      
-      // Emit events for each updated row
-      updatesByRow.forEach((fields, rowId) => {
-        // Emit one event per field change for granular updates
-        fields.forEach(({ field, value }) => {
+    // Emit realtime events for updated rows. Use resolvedRows so derived fields
+    // (NetUnitPrice, Margin, totals) recomputed server-side are broadcast too,
+    // not just the raw field(s) the user edited.
+    if (resolvedRows.length > 0 && affected > 0) {
+      const broadcastFields = [
+        'CustomerDiscount',
+        'TelmacoDiscount',
+        'NetUnitPrice',
+        'NetCost',
+        'Margin',
+        'ListPrice',
+        'Quantity',
+        'TotalPrice',
+        'TotalNet',
+        'TotalCost',
+        'GrossProfit',
+      ] as const;
+      for (const row of resolvedRows) {
+        for (const field of broadcastFields) {
           realtimeEvents.emit(
             `offer:${offerId}:products`,
             'cell-updated',
             {
-              rowId,
-              OfferDetailID: rowId,
+              rowId: row.OfferDetailID,
+              OfferDetailID: row.OfferDetailID,
               field,
-              value,
+              value: row[field as keyof typeof row] ?? null,
               updatedBy: audit.userId,
-            }
+            },
           );
-        });
-      });
+        }
+      }
     }
 
     return NextResponse.json({

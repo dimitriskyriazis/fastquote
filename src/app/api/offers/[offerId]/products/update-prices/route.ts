@@ -5,6 +5,7 @@ import { getPool } from '../../../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../../../lib/auditTrail';
 import { requirePermission } from '../../../../../../lib/authz';
 import { fetchFarnellProduct, matchPriceTier, type FarnellProduct } from '../../../../../../lib/farnell';
+import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 
 const normalizeOfferId = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isInteger(value)) return value;
@@ -352,6 +353,15 @@ export async function POST(
              ELSE 3
         END;
 
+      DECLARE @offerCurrencyId INT;
+      DECLARE @offerCurrencyModifier DECIMAL(18, 8);
+      SELECT
+        @offerCurrencyId = o.CurrencyID,
+        @offerCurrencyModifier = o.CurrencyModifier
+      FROM dbo.Offer o
+      WHERE o.ID = @offerId;
+      IF @offerCurrencyId IS NULL SET @offerCurrencyId = @euroCurrencyId;
+
       WITH OfferContext AS (
         SELECT
           o.ID AS OfferID,
@@ -457,12 +467,14 @@ export async function POST(
         SELECT TOP (1)
           pli.PriceListID,
           pli.ID AS PriceListItemID,
-          pli.ListPrice,
+          CASE WHEN pl.CurrencyId = @offerCurrencyId THEN pli.ListPrice
+               ELSE pli.ListPrice * COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1)
+          END AS ListPrice,
           pli.CostPrice,
-          CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @euroCurrencyId THEN NULL
+          CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @offerCurrencyId THEN NULL
                ELSE COALESCE(pl.CostCurrencyID, pl.CurrencyId) END AS OtherCurrencyID,
-          CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @euroCurrencyId THEN NULL
-               ELSE COALESCE(pl.CurrencyCostModifier, 1) END AS CurrencyCostModifier
+          CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @offerCurrencyId THEN NULL
+               ELSE COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1) END AS CurrencyCostModifier
         FROM dbo.PriceListItems pli
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = oc.PricingPolicyID
@@ -565,9 +577,17 @@ export async function POST(
     const standardUpdatedBrands = parseBrandList(result.recordset?.[0]?.updatedBrandsCsv);
     const failedBrands = parseBrandList(result.recordset?.[0]?.failedBrandsCsv);
     const updatedBrands = Array.from(new Set([...farnellUpdated.updatedBrands, ...standardUpdatedBrands]));
+    const totalUpdated = standardUpdated + farnellUpdated.updatedCount;
+    if (totalUpdated > 0) {
+      realtimeEvents.emit(
+        `offer:${normalizedId}:products`,
+        'rows-refresh',
+        { reason: 'update-prices', updated: totalUpdated, updatedBy: auditUserId },
+      );
+    }
     return NextResponse.json({
       ok: true,
-      updated: standardUpdated + farnellUpdated.updatedCount,
+      updated: totalUpdated,
       updatedBrands,
       failedBrands,
     });

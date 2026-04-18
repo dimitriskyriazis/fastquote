@@ -98,12 +98,25 @@ export function useRealtimeGridUpdates({
   onRowDeleted,
   onRowsReordered,
 }: UseRealtimeGridUpdatesOptions) {
+  // Stash latest callbacks + gridApi in refs so the subscription effect
+  // doesn't tear down on every parent render (inline callback props churn).
   const gridApiRef = useRef(gridApi);
+  const onBeforeCellUpdateRef = useRef(onBeforeCellUpdate);
+  const onRowAddedRef = useRef(onRowAdded);
+  const onRowUpdatedRef = useRef(onRowUpdated);
+  const onRowDeletedRef = useRef(onRowDeleted);
+  const onRowsReorderedRef = useRef(onRowsReordered);
+  const showNotificationsRef = useRef(showNotifications);
 
-  // Update ref in effect to avoid updating during render
   useEffect(() => {
     gridApiRef.current = gridApi;
-  }, [gridApi]);
+    onBeforeCellUpdateRef.current = onBeforeCellUpdate;
+    onRowAddedRef.current = onRowAdded;
+    onRowUpdatedRef.current = onRowUpdated;
+    onRowDeletedRef.current = onRowDeleted;
+    onRowsReorderedRef.current = onRowsReordered;
+    showNotificationsRef.current = showNotifications;
+  });
 
   useEffect(() => {
     if (!enabled || !resource) return;
@@ -118,6 +131,7 @@ export function useRealtimeGridUpdates({
 
         const api = gridApiRef.current;
         if (!api || api.isDestroyed?.()) return;
+        const showNotifications = showNotificationsRef.current;
 
         switch (event.type) {
           case 'row-added': {
@@ -125,7 +139,7 @@ export function useRealtimeGridUpdates({
             if (row) {
               // Find where to insert based on TreeOrdering
               const insertIndex = findInsertIndex(api, row.TreeOrdering as string | null | undefined);
-              
+
               // Add row to grid
               api.applyServerSideTransaction({
                 add: [row],
@@ -146,7 +160,7 @@ export function useRealtimeGridUpdates({
               if (showNotifications) {
                 showToastMessage('New row added by another user', 'info');
               }
-              onRowAdded?.(row);
+              onRowAddedRef.current?.(row);
             }
             break;
           }
@@ -162,7 +176,7 @@ export function useRealtimeGridUpdates({
                 update: [fullRow],
               });
             } else if (targetId && field !== undefined) {
-              onBeforeCellUpdate?.({
+              onBeforeCellUpdateRef.current?.({
                 rowId: targetId,
                 field,
                 value,
@@ -176,7 +190,7 @@ export function useRealtimeGridUpdates({
               });
             }
             if (targetId && field) {
-              onRowUpdated?.(targetId, field, value);
+              onRowUpdatedRef.current?.(targetId, field, value);
             }
             break;
           }
@@ -184,7 +198,7 @@ export function useRealtimeGridUpdates({
           case 'row-deleted': {
             const { OfferDetailID, rowId } = event.data;
             const targetId = OfferDetailID ?? rowId;
-            
+
             if (targetId) {
               let rowToRemove: RowData | null = null;
               api.forEachNode((node) => {
@@ -200,7 +214,7 @@ export function useRealtimeGridUpdates({
                 if (showNotifications) {
                   showToastMessage('Row deleted by another user', 'info');
                 }
-                onRowDeleted?.(targetId);
+                onRowDeletedRef.current?.(targetId);
               }
             }
             break;
@@ -224,7 +238,7 @@ export function useRealtimeGridUpdates({
               if (showNotifications) {
                 showToastMessage('Row order updated by another user', 'info');
               }
-              onRowsReordered?.(updates);
+              onRowsReorderedRef.current?.(updates);
             }
             break;
           }
@@ -255,14 +269,5 @@ export function useRealtimeGridUpdates({
     return () => {
       eventSource.close();
     };
-  }, [
-    resource,
-    enabled,
-    showNotifications,
-    onBeforeCellUpdate,
-    onRowAdded,
-    onRowUpdated,
-    onRowDeleted,
-    onRowsReordered,
-  ]);
+  }, [resource, enabled]);
 }

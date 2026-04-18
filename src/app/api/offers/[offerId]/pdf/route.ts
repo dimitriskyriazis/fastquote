@@ -22,6 +22,7 @@ type OfferHeaderRow = {
   OfferContact: string | null;
   FinalPriceLabel: string | null;
   OfferLanguage: string | null;
+  CurrencyName: string | null;
   CustomerName: string | null;
   CustomerBrandName: string | null;
   CustomerAddress: string | null;
@@ -140,13 +141,15 @@ export async function GET(
           approver.FullName AS ApprovalUserNameEN,
           approver.FullNameGR AS ApprovalUserNameGR,
           approver.SignTitle AS ApprovalUserSignTitle,
-          sd.Name AS SalesDivisionName
+          sd.Name AS SalesDivisionName,
+          cur.Name AS CurrencyName
         FROM dbo.[Offer] o
         LEFT JOIN dbo.Customers c ON o.CustomerID = c.ID
         LEFT JOIN dbo.Contacts cnt ON o.ContactID = cnt.ID
         LEFT JOIN dbo.AspNetUsers sales ON o.SalesPersonId = sales.Id
         LEFT JOIN dbo.AspNetUsers approver ON o.ApprovalUserId = approver.Id
         LEFT JOIN dbo.SalesDivision sd ON o.SalesDivisionID = sd.ID
+        LEFT JOIN dbo.Currencies cur ON o.CurrencyID = cur.ID
         WHERE o.ID = @offerId
       `);
 
@@ -301,6 +304,7 @@ export async function GET(
       notesClosing: header.OfferNotesClosing,
       discountNote: header.DiscountNote,
       finalPriceLabel: header.FinalPriceLabel?.trim() || null,
+      currencySymbol: header.CurrencyName?.trim() || null,
     };
 
     // ── Generate PDF ───────────────────────────────────────────────────

@@ -10,7 +10,8 @@ export type LookupKey =
   | 'markets'
   | 'salesDivisions'
   | 'users'
-  | 'fwcProjects';
+  | 'fwcProjects'
+  | 'currencies';
 
 export type LookupState = {
   customers: OfferDropdownOption[];
@@ -20,6 +21,7 @@ export type LookupState = {
   salesDivisions: OfferDropdownOption[];
   users: UserOption[];
   fwcProjects: OfferDropdownOption[];
+  currencies: OfferDropdownOption[];
 };
 
 type OfferLookupPayload = {
@@ -39,6 +41,7 @@ export function useOfferLookups(props: LookupState) {
       salesDivisions: props.salesDivisions,
       users: props.users,
       fwcProjects: props.fwcProjects,
+      currencies: props.currencies,
     });
   }, [
     props.customers,
@@ -48,6 +51,7 @@ export function useOfferLookups(props: LookupState) {
     props.salesDivisions,
     props.users,
     props.fwcProjects,
+    props.currencies,
   ]);
 
   const updateLookup = useCallback(<K extends LookupKey>(
@@ -81,6 +85,7 @@ export function useOfferLookups(props: LookupState) {
         if (payload.lookups!.salesDivisions) next.salesDivisions = payload.lookups!.salesDivisions;
         if (payload.lookups!.users) next.users = payload.lookups!.users as UserOption[];
         if (payload.lookups!.fwcProjects) next.fwcProjects = payload.lookups!.fwcProjects;
+        if (payload.lookups!.currencies) next.currencies = payload.lookups!.currencies;
         return next;
       });
     } catch (err) {

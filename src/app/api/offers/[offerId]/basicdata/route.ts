@@ -55,6 +55,7 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   StatusID: { column: 'StatusID', type: 'number', sqlType: sql.Int },
   PricingPolicyID: { column: 'PricingPolicyID', type: 'number', sqlType: sql.Int },
   MarketID: { column: 'MarketID', type: 'number', sqlType: sql.Int },
+  CurrencyModifier: { column: 'CurrencyModifier', type: 'number', sqlType: sql.Decimal, precision: 18, scale: 8 },
   SalesPersonId: { column: 'SalesPersonId', type: 'string', sqlType: sql.NVarChar, length: 450 },
   ApprovalUserId: { column: 'ApprovalUserId', type: 'string', sqlType: sql.NVarChar, length: 450 },
   ERPProjectCode: { column: 'ERPProjectCode', type: 'string', sqlType: sql.NVarChar, length: 500 },

@@ -5,6 +5,7 @@ import sql, { type ConnectionPool, type Transaction } from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
 import { requirePermission } from '../../../../../../lib/authz';
+import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 import { parseLocaleNumber } from '../../../../../../lib/localeNumber';
 import {
   comparePaths,
@@ -415,7 +416,12 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
     });
     const result = await request.query<{ OfferDetailID: number }>(`
       DECLARE @pricingPolicyId INT;
-      SELECT @pricingPolicyId = o.PricingPolicyID
+      DECLARE @offerCurrencyId INT;
+      DECLARE @offerCurrencyModifier DECIMAL(18, 8);
+      SELECT
+        @pricingPolicyId = o.PricingPolicyID,
+        @offerCurrencyId = o.CurrencyID,
+        @offerCurrencyModifier = o.CurrencyModifier
       FROM dbo.Offer o
       WHERE o.ID = @__offerId;
 
@@ -429,6 +435,8 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
              WHEN LOWER(Name) LIKE '%euro%' THEN 2
              ELSE 3
         END;
+
+      IF @offerCurrencyId IS NULL SET @offerCurrencyId = @euroCurrencyId;
 
       DECLARE @r TABLE (
         Seq INT,
@@ -534,12 +542,14 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
         SELECT TOP (1)
           pli.ID AS PriceListItemID,
           pli.PriceListID,
-          pli.ListPrice,
+          CASE WHEN pl.CurrencyId = @offerCurrencyId THEN pli.ListPrice
+               ELSE pli.ListPrice * COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1)
+          END AS ListPrice,
           pli.CostPrice,
-          CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @euroCurrencyId THEN NULL
+          CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @offerCurrencyId THEN NULL
                ELSE COALESCE(pl.CostCurrencyID, pl.CurrencyId) END AS OtherCurrencyID,
-          CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @euroCurrencyId THEN NULL
-               ELSE COALESCE(pl.CurrencyCostModifier, 1) END AS CurrencyCostModifier
+          CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @offerCurrencyId THEN NULL
+               ELSE COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1) END AS CurrencyCostModifier
         FROM dbo.PriceListItems pli
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         WHERE pli.ProductID = src.ProductID
@@ -796,6 +806,18 @@ export async function POST(
 
     await transaction.commit();
     transaction = null;
+
+    if (insertedOfferDetailIds.length > 0) {
+      realtimeEvents.emit(
+        `offer:${offerId}:products`,
+        'rows-refresh',
+        {
+          reason: 'paste-products',
+          inserted: insertedOfferDetailIds.length,
+          updatedBy: buildAuditContext(req).userId ?? null,
+        },
+      );
+    }
 
     return NextResponse.json({ ok: true, inserted: insertedOfferDetailIds.length, insertedOfferDetailIds });
   } catch (err) {

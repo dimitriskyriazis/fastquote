@@ -18,7 +18,7 @@ import MultilineTextCellEditor from './MultilineTextCellEditor';
 import {
   coerceNumber,
   percentageFormatter,
-  euroFormatter,
+  buildCurrencyFormatter,
   zeroBlankNumberFormatter,
   compareTreeOrderingValues,
   isRequestedDescriptionField,
@@ -201,6 +201,7 @@ export type ProductColumnDefsDeps = {
   PartNumberCell: (params: ICellRendererParams<Record<string, unknown>>) => React.ReactNode;
   ModelNumberCell: (params: ICellRendererParams<Record<string, unknown>>) => React.ReactNode;
   RequestedItemNoCell: (params: ICellRendererParams<Record<string, unknown>>) => React.ReactNode;
+  offerCurrencySymbol: string;
 };
 
 export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
@@ -221,7 +222,10 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
     PartNumberCell,
     ModelNumberCell,
     RequestedItemNoCell,
+    offerCurrencySymbol,
   } = deps;
+
+  const offerCurrencyFormatter = buildCurrencyFormatter(offerCurrencySymbol);
 
   if (standardPackageMode) {
     return [
@@ -538,7 +542,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       headerClass: 'ag-right-aligned-header',
       valueFormatter: (params) => {
         if (!isOfferProductCommentOrProduct(params.data ?? null)) return '';
-        return euroFormatter(params);
+        return offerCurrencyFormatter(params);
       },
       cellClassRules: productPriceListClassRules,
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
@@ -558,6 +562,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       },
       cellStyle: actualNumericCellStyle,
       cellClass: actualNumericCellClass,
+      width: 150
     },
     {
       field: 'NetUnitPrice',
@@ -566,7 +571,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      valueFormatter: euroFormatter,
+      valueFormatter: offerCurrencyFormatter,
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
     },
@@ -590,7 +595,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       valueGetter: categoryTotalPriceGetter,
       valueFormatter: (params) => {
         if (!isOfferProductCommentOrProduct(params.data ?? null) && !isOfferProductCategory(params.data ?? null)) return '';
-        return euroFormatter(params);
+        return offerCurrencyFormatter(params);
       },
       cellClassRules: totalPriceCellClassRules,
       editable: false,
@@ -604,7 +609,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       valueGetter: categoryTotalNetGetter,
-      valueFormatter: euroFormatter,
+      valueFormatter: offerCurrencyFormatter,
       cellClassRules: productAccentCellClassRules,
       editable: false,
       cellClass: actualNumericCellClass,
@@ -619,6 +624,122 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       valueFormatter: zeroBlankNumberFormatter,
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
+    },
+    {
+      field: 'TelmacoDiscount',
+      headerName: 'Telmaco Discount',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
+      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      valueFormatter: percentageFormatter,
+      cellClass: [...actualNumericCellClass, styles.redDataCell],
+      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
+    },
+    {
+      field: 'NetCostOtherCurrency',
+      headerName: 'Net Cost (Other Currency)',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
+      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      valueFormatter: (params) => {
+        const num = coerceNumber(params.value);
+        if (num == null || Object.is(num, 0)) return '';
+        const currencyName = typeof (params.data as { OtherCurrencyName?: unknown } | null | undefined)?.OtherCurrencyName === 'string'
+          ? String((params.data as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
+          : '';
+        if (!currencyName) return '';
+        return `${currencyName} ${new Intl.NumberFormat('en', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(num)}`;
+      },
+      cellClass: [...actualNumericCellClass, styles.redDataCell],
+      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
+    },
+    {
+      field: 'CurrencyCostModifier',
+      headerName: 'Cost Modifier',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
+      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      valueFormatter: (params) => {
+        const currencyName = typeof (params.data as { OtherCurrencyName?: unknown } | null | undefined)?.OtherCurrencyName === 'string'
+          ? String((params.data as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
+          : '';
+        if (!currencyName) return '';
+        const num = coerceNumber(params.value);
+        if (num == null) return '';
+        return String(num);
+      },
+      cellClass: [...actualNumericCellClass, styles.redDataCell],
+      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
+    },
+    {
+      field: 'NetCost',
+      headerName: 'Net Cost',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
+      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      valueFormatter: offerCurrencyFormatter,
+      cellClass: [...actualNumericCellClass, styles.redDataCell],
+      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
+    },
+    {
+      field: 'Margin',
+      headerName: 'Margin',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
+      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      valueFormatter: percentageFormatter,
+      cellClassRules: {
+        'offer-products-grid__cell--negative-margin': (params) => {
+          const value = coerceNumber(
+            params.value
+            ?? (params.data as { Margin?: unknown } | null | undefined)?.Margin
+            ?? null,
+          );
+          return value != null && value < 0;
+        },
+      },
+      cellClass: [...actualNumericCellClass, styles.redDataCell],
+      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
+    },
+    {
+      field: 'GrossProfit',
+      headerName: 'Gross Profit',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
+      valueFormatter: offerCurrencyFormatter,
+      cellClassRules: productAccentCellClassRules,
+      editable: false,
+      cellClass: [...actualNumericCellClass, styles.redDataCell],
+      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
+    },
+    {
+      field: 'TotalCost',
+      headerName: 'Total Cost',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
+      valueFormatter: offerCurrencyFormatter,
+      valueGetter: categoryTotalCostGetter,
+      cellClassRules: productAccentCellClassRules,
+      editable: false,
+      cellClass: [...actualNumericCellClass, styles.redDataCell],
+      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
+    },
+    {
+      field: 'TelmacoWarranty',
+      headerName: 'Telmaco Warranty',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
+      valueFormatter: zeroBlankNumberFormatter,
+      cellClass: [...actualNumericCellClass, styles.redDataCell],
+      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
     },
     {
       field: 'Origin',
@@ -687,122 +808,6 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       },
       cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS, TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS],
       cellStyle: truncateCellStyle,
-    },
-    {
-      field: 'TelmacoDiscount',
-      headerName: 'Telmaco Discount',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      headerClass: 'ag-right-aligned-header',
-      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      valueFormatter: percentageFormatter,
-      cellClass: [...actualNumericCellClass, styles.redDataCell],
-      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
-    },
-    {
-      field: 'NetCostOtherCurrency',
-      headerName: 'Net Cost (Other Currency)',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      headerClass: 'ag-right-aligned-header',
-      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      valueFormatter: (params) => {
-        const num = coerceNumber(params.value);
-        if (num == null || Object.is(num, 0)) return '';
-        const currencyName = typeof (params.data as { OtherCurrencyName?: unknown } | null | undefined)?.OtherCurrencyName === 'string'
-          ? String((params.data as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
-          : '';
-        if (!currencyName || currencyName === '€' || currencyName.toLowerCase().includes('eur')) return '';
-        return currencyName === '$' ? `$ ${new Intl.NumberFormat('en', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(num)}` : `${new Intl.NumberFormat('en', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(num)} ${currencyName}`;
-      },
-      cellClass: [...actualNumericCellClass, styles.redDataCell],
-      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
-    },
-    {
-      field: 'CurrencyCostModifier',
-      headerName: 'Cost Modifier',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      headerClass: 'ag-right-aligned-header',
-      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      valueFormatter: (params) => {
-        const currencyName = typeof (params.data as { OtherCurrencyName?: unknown } | null | undefined)?.OtherCurrencyName === 'string'
-          ? String((params.data as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
-          : '';
-        if (!currencyName || currencyName === '€' || currencyName.toLowerCase().includes('eur')) return '';
-        const num = coerceNumber(params.value);
-        if (num == null) return '';
-        return String(num);
-      },
-      cellClass: [...actualNumericCellClass, styles.redDataCell],
-      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
-    },
-    {
-      field: 'NetCost',
-      headerName: 'Net Cost',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      headerClass: 'ag-right-aligned-header',
-      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      valueFormatter: euroFormatter,
-      cellClass: [...actualNumericCellClass, styles.redDataCell],
-      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
-    },
-    {
-      field: 'Margin',
-      headerName: 'Margin',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      headerClass: 'ag-right-aligned-header',
-      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-      valueFormatter: percentageFormatter,
-      cellClassRules: {
-        'offer-products-grid__cell--negative-margin': (params) => {
-          const value = coerceNumber(
-            params.value
-            ?? (params.data as { Margin?: unknown } | null | undefined)?.Margin
-            ?? null,
-          );
-          return value != null && value < 0;
-        },
-      },
-      cellClass: [...actualNumericCellClass, styles.redDataCell],
-      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
-    },
-    {
-      field: 'GrossProfit',
-      headerName: 'Gross Profit',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      headerClass: 'ag-right-aligned-header',
-      valueFormatter: euroFormatter,
-      cellClassRules: productAccentCellClassRules,
-      editable: false,
-      cellClass: [...actualNumericCellClass, styles.redDataCell],
-      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
-    },
-    {
-      field: 'TotalCost',
-      headerName: 'Total Cost',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      headerClass: 'ag-right-aligned-header',
-      valueFormatter: euroFormatter,
-      valueGetter: categoryTotalCostGetter,
-      cellClassRules: productAccentCellClassRules,
-      editable: false,
-      cellClass: [...actualNumericCellClass, styles.redDataCell],
-      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
-    },
-    {
-      field: 'TelmacoWarranty',
-      headerName: 'Telmaco Warranty',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      headerClass: 'ag-right-aligned-header',
-      valueFormatter: zeroBlankNumberFormatter,
-      cellClass: [...actualNumericCellClass, styles.redDataCell],
-      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
     },
   ];
 

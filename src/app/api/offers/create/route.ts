@@ -4,7 +4,7 @@ import sql from 'mssql';
 import { getPool } from '../../../../lib/sql';
 import { resolveAuditUserId } from '../../../../lib/auditTrail';
 import { requirePermission } from '../../../../lib/authz';
-import { normalizeString, normalizeInt, normalizeUserId, normalizeDate, normalizeProbability } from '../../../../lib/normalize';
+import { normalizeString, normalizeInt, normalizeUserId, normalizeDate, normalizeProbability, normalizeDecimal } from '../../../../lib/normalize';
 import { normalizeOfferLanguage, OFFER_LANGUAGE_DEFAULTS } from '../../../../lib/offerLanguage';
 
 type CreateOfferRequestBody = {
@@ -19,6 +19,8 @@ type CreateOfferRequestBody = {
   pricingPolicyId?: number | string | null;
   marketId?: number | string | null;
   salesDivisionId?: number | string | null;
+  currencyId?: number | string | null;
+  currencyModifier?: number | string | null;
   salesCreationPersonId?: string | null;
   salesPersonId?: string | null;
   approvalUserId?: string | null;
@@ -75,6 +77,8 @@ export async function POST(req: NextRequest) {
     const pricingPolicyId = normalizeInt(body?.pricingPolicyId);
     const marketId = normalizeInt(body?.marketId);
     const salesDivisionId = normalizeInt(body?.salesDivisionId);
+    const requestedCurrencyId = normalizeInt(body?.currencyId);
+    const currencyModifier = normalizeDecimal(body?.currencyModifier);
     const customerRef = normalizeString(body?.customerRef, 500);
     const probabilityInput = body?.probability;
     const probabilityWasProvided = !(
@@ -140,6 +144,24 @@ export async function POST(req: NextRequest) {
     }
 
     const pool = await getPool();
+
+    let resolvedCurrencyId = requestedCurrencyId;
+    if (resolvedCurrencyId == null) {
+      const eurLookup = await pool.request().query<{ ID: number }>(`
+        SELECT TOP 1 ID
+        FROM dbo.Currencies
+        ORDER BY
+          CASE
+            WHEN Name = N'€' THEN 0
+            WHEN LOWER(Name) LIKE '%eur%' THEN 1
+            ELSE 2
+          END,
+          Name
+      `);
+      resolvedCurrencyId = eurLookup.recordset?.[0]?.ID ?? null;
+    }
+    const persistedCurrencyModifier =
+      resolvedCurrencyId == null ? null : currencyModifier;
 
     // Enforce that pricing policy exists and has at least one rule.
     // Brand-specific rules are allowed; a default (All brands) rule is recommended but not required
@@ -253,6 +275,8 @@ export async function POST(req: NextRequest) {
     request.input('ProtocolNo', sql.Int, protocolNo);
     request.input('OfferLanguage', sql.NVarChar(16), offerLanguage);
     request.input('FinalPriceLabel', sql.NVarChar(500), finalPriceLabel);
+    request.input('CurrencyID', sql.Int, resolvedCurrencyId);
+    request.input('CurrencyModifier', sql.Decimal(18, 8), persistedCurrencyModifier);
 
     const insertResult = await request.query<{ OfferID: number }>(`
       INSERT INTO dbo.Offer (
@@ -293,6 +317,8 @@ export async function POST(req: NextRequest) {
         ProtocolNo,
         OfferLanguage,
         FinalPriceLabel,
+        CurrencyID,
+        CurrencyModifier,
         OfferVersion,
         Enabled,
         CreatedOn,
@@ -337,6 +363,8 @@ export async function POST(req: NextRequest) {
         @ProtocolNo,
         @OfferLanguage,
         @FinalPriceLabel,
+        @CurrencyID,
+        @CurrencyModifier,
         1,
         1,
         SYSUTCDATETIME(),

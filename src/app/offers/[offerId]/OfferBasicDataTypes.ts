@@ -8,6 +8,9 @@ export type OfferBasicRecord = {
   StatusID: number | null;
   PricingPolicyID: number | null;
   MarketID: number | null;
+  CurrencyID: number | null;
+  CurrencyModifier: number | null;
+  CurrencyName: string | null;
   Title: string | null;
   Description: string | null;
   PaymentTerms: string | null;
@@ -87,6 +90,7 @@ export type OfferBasicUpdateField =
   | 'StatusID'
   | 'PricingPolicyID'
   | 'MarketID'
+  | 'CurrencyModifier'
   | 'SalesPersonId'
   | 'ApprovalUserId'
   | 'ERPProjectCode'

@@ -37,6 +37,12 @@ type Props = {
   salesDivisions: OfferDropdownOption[];
   users: UserOption[];
   fwcProjects: OfferDropdownOption[];
+  currencies: OfferDropdownOption[];
+};
+
+const isEurOption = (option: OfferDropdownOption): boolean => {
+  const label = (option.label ?? '').trim().toLowerCase();
+  return label === '€' || label === 'eur' || label.includes('eur');
 };
 
 type SectionKey = 'general' | 'info' | 'commercial' | 'code' | 'dates';
@@ -56,10 +62,12 @@ type FieldDefinition = {
   readOnly?: boolean;
   resolveValue?: (record: OfferBasicRecord) => string | null | undefined;
   readOnlyDisplayValue?: (record: OfferBasicRecord) => string | null | undefined;
+  step?: number;
   options?: OfferDropdownOption[];
   datalistOptions?: OfferDropdownOption[];
   placeholder?: string;
   hideEmptyOption?: boolean;
+  hidden?: boolean;
 };
 
 const normalizeSortText = (value: string | null | undefined): string =>
@@ -161,6 +169,8 @@ const buildFieldDefinitions = (
   approvalUsers: OfferDropdownOption[],
   contacts: OfferDropdownOption[],
   fwcProjects: OfferDropdownOption[],
+  currencies: OfferDropdownOption[],
+  showCurrencyModifier: boolean,
 ): FieldDefinition[] => [
   { id: 'title', label: 'Title', section: 'general', recordKey: 'Title', updateField: 'Title' },
   { id: 'description', label: 'Description', section: 'general', recordKey: 'Description', updateField: 'Description' },
@@ -226,6 +236,26 @@ const buildFieldDefinitions = (
     valueType: 'number',
     options: pricingPolicies,
     required: true,
+  },
+  {
+    id: 'currency',
+    label: 'Currency',
+    section: 'commercial',
+    recordKey: 'CurrencyID',
+    valueType: 'number',
+    options: currencies,
+    readOnly: true,
+  },
+  {
+    id: 'currencyModifier',
+    label: 'Currency Modifier',
+    section: 'commercial',
+    recordKey: 'CurrencyModifier',
+    updateField: 'CurrencyModifier',
+    valueType: 'number',
+    inputType: 'number',
+    step: 0.1,
+    hidden: !showCurrencyModifier,
   },
   {
     id: 'market',
@@ -338,13 +368,19 @@ export default function OfferBasicDataClient({
   salesDivisions,
   users,
   fwcProjects,
+  currencies,
 }: Props) {
   const { lookups, updateLookup, refreshLookups: refreshLookupsRaw } = useOfferLookups({
-    customers, statuses, pricingPolicies, markets, salesDivisions, users, fwcProjects,
+    customers, statuses, pricingPolicies, markets, salesDivisions, users, fwcProjects, currencies,
   });
   const { customers: localCustomers, statuses: localStatuses, pricingPolicies: localPricingPolicies,
     markets: localMarkets, salesDivisions: localSalesDivisions, users: localUsers,
-    fwcProjects: localFwcProjects } = lookups;
+    fwcProjects: localFwcProjects, currencies: localCurrencies } = lookups;
+
+  const eurCurrencyId = useMemo(() => {
+    const match = localCurrencies.find(isEurOption);
+    return match?.value ?? null;
+  }, [localCurrencies]);
 
   const refreshLookups = useCallback(async (keys: LookupKey[]) => {
     try {
@@ -473,7 +509,7 @@ export default function OfferBasicDataClient({
     });
   }, [offerId, record.CustomerName, record.Description, record.Title]);
 
-  const fieldDefinitions = useMemo(
+  const baseFieldDefinitions = useMemo(
     () =>
       buildFieldDefinitions(
         customerOptions,
@@ -485,6 +521,8 @@ export default function OfferBasicDataClient({
         approvalUsers,
         contactOptions,
         fwcProjectOptions,
+        localCurrencies,
+        true,
       ),
     [
       customerOptions,
@@ -496,11 +534,12 @@ export default function OfferBasicDataClient({
       approvalUsers,
       contactOptions,
       fwcProjectOptions,
+      localCurrencies,
     ],
   );
   const editableFields = useMemo(
-    () => fieldDefinitions.filter((def) => def.updateField && !def.readOnly),
-    [fieldDefinitions]
+    () => baseFieldDefinitions.filter((def) => def.updateField && !def.readOnly),
+    [baseFieldDefinitions]
   );
 
   const initialValues = useMemo(() => {
@@ -514,6 +553,21 @@ export default function OfferBasicDataClient({
   const [values, setValues] = useState(initialValues);
   const [pendingFields, setPendingFields] = useState<Record<string, boolean>>({});
   const [savedValues, setSavedValues] = useState(initialValues);
+
+  const showCurrencyModifier = useMemo(() => {
+    const selected = record.CurrencyID == null ? '' : String(record.CurrencyID);
+    if (!selected) return false;
+    if (eurCurrencyId == null) return true;
+    return selected !== eurCurrencyId;
+  }, [eurCurrencyId, record.CurrencyID]);
+
+  const fieldDefinitions = useMemo(
+    () =>
+      baseFieldDefinitions.map((def) =>
+        def.id === 'currencyModifier' ? { ...def, hidden: !showCurrencyModifier } : def,
+      ),
+    [baseFieldDefinitions, showCurrencyModifier],
+  );
   const isDirty = useMemo(() => JSON.stringify(values) !== JSON.stringify(savedValues), [values, savedValues]);
   useUnsavedChanges(isDirty);
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
@@ -1211,7 +1265,7 @@ export default function OfferBasicDataClient({
           type={def.inputType ?? 'text'}
           min={def.id === 'probability' ? PROBABILITY_MIN : undefined}
           max={def.id === 'probability' ? PROBABILITY_MAX : undefined}
-          step={def.id === 'probability' ? 1 : undefined}
+          step={def.step ?? (def.id === 'probability' ? 1 : undefined)}
           inputMode={def.id === 'probability' ? 'numeric' : undefined}
           value={values[def.id] ?? ''}
           placeholder={placeholder}
@@ -1223,7 +1277,9 @@ export default function OfferBasicDataClient({
 
   const renderSectionCard = (sectionKey: SectionKey) => {
     const metadata = SECTION_METADATA[sectionKey];
-    const sectionFields = fieldDefinitions.filter((field) => field.section === sectionKey);
+    const sectionFields = fieldDefinitions.filter(
+      (field) => field.section === sectionKey && !field.hidden,
+    );
     if (sectionFields.length === 0 || !metadata) return null;
 
     return (

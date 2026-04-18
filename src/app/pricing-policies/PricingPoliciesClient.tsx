@@ -813,7 +813,7 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
               cell.customerWarranty = Math.trunc(parsed);
               return true;
             },
-            width: 170,
+            width: 180,
           },
         ],
       };

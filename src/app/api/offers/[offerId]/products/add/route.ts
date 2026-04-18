@@ -745,8 +745,13 @@ async function handleAddProducts(
   DECLARE @targetSegments INT;
   DECLARE @maxChild INT;
   DECLARE @pricingPolicyId INT;
+  DECLARE @offerCurrencyId INT;
+  DECLARE @offerCurrencyModifier DECIMAL(18, 8);
 
-  SELECT @pricingPolicyId = o.PricingPolicyID
+  SELECT
+    @pricingPolicyId = o.PricingPolicyID,
+    @offerCurrencyId = o.CurrencyID,
+    @offerCurrencyModifier = o.CurrencyModifier
   FROM dbo.Offer o
   WHERE o.ID = @__offerId;
 
@@ -760,6 +765,8 @@ async function handleAddProducts(
          WHEN LOWER(Name) LIKE '%euro%' THEN 2
          ELSE 3
     END;
+
+  IF @offerCurrencyId IS NULL SET @offerCurrencyId = @euroCurrencyId;
 
   IF @parentTree IS NULL
   BEGIN
@@ -867,12 +874,14 @@ async function handleAddProducts(
       SELECT TOP (1)
         pli.ID AS PriceListItemID,
         pli.PriceListID,
-        pli.ListPrice,
+        CASE WHEN pl.CurrencyId = @offerCurrencyId THEN pli.ListPrice
+             ELSE pli.ListPrice * COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1)
+        END AS ListPrice,
         pli.CostPrice,
-        CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @euroCurrencyId THEN NULL
+        CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @offerCurrencyId THEN NULL
              ELSE COALESCE(pl.CostCurrencyID, pl.CurrencyId) END AS OtherCurrencyID,
-        CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @euroCurrencyId THEN NULL
-             ELSE COALESCE(pl.CurrencyCostModifier, 1) END AS CurrencyCostModifier
+        CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @offerCurrencyId THEN NULL
+             ELSE COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1) END AS CurrencyCostModifier
       FROM dbo.PriceListItems pli
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @pricingPolicyId
@@ -1405,8 +1414,13 @@ async function handleAssignProductToRequestedRow(
 
   const query = `
     DECLARE @pricingPolicyId INT;
+    DECLARE @offerCurrencyId INT;
+    DECLARE @offerCurrencyModifier DECIMAL(18, 8);
 
-    SELECT @pricingPolicyId = o.PricingPolicyID
+    SELECT
+      @pricingPolicyId = o.PricingPolicyID,
+      @offerCurrencyId = o.CurrencyID,
+      @offerCurrencyModifier = o.CurrencyModifier
     FROM dbo.Offer o
     WHERE o.ID = @__offerId;
 
@@ -1440,6 +1454,8 @@ async function handleAssignProductToRequestedRow(
            WHEN LOWER(Name) LIKE '%euro%' THEN 2
            ELSE 3
       END;
+
+    IF @offerCurrencyId IS NULL SET @offerCurrencyId = @euroCurrencyId;
 
     -- Resolve legacy product: if product has no enabled pricelist items
     -- but another product's legacy part number matches, use that product instead
@@ -1519,12 +1535,14 @@ async function handleAssignProductToRequestedRow(
       SELECT TOP (1)
         pli.ID AS PriceListItemID,
         pli.PriceListID,
-        pli.ListPrice,
+        CASE WHEN pl.CurrencyId = @offerCurrencyId THEN pli.ListPrice
+             ELSE pli.ListPrice * COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1)
+        END AS ListPrice,
         pli.CostPrice,
-        CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @euroCurrencyId THEN NULL
+        CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @offerCurrencyId THEN NULL
              ELSE COALESCE(pl.CostCurrencyID, pl.CurrencyId) END AS OtherCurrencyID,
-        CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @euroCurrencyId THEN NULL
-             ELSE COALESCE(pl.CurrencyCostModifier, 1) END AS CurrencyCostModifier
+        CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @offerCurrencyId THEN NULL
+             ELSE COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1) END AS CurrencyCostModifier
       FROM dbo.PriceListItems pli
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @pricingPolicyId

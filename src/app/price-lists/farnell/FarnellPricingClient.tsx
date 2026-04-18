@@ -76,10 +76,10 @@ export default function FarnellPricingClient() {
   );
 
   const formatPrice = (value: number) =>
-    `${new Intl.NumberFormat(getUserNumberLocale(), {
+    `€ ${new Intl.NumberFormat(getUserNumberLocale(), {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    }).format(value)} €`;
+    }).format(value)}`;
 
   return (
     <main className={styles.page}>
