@@ -19,7 +19,7 @@ export const OFFER_LANGUAGE_DEFAULTS: Record<OfferLanguage, OfferLanguageDefault
     paymentTerms: 'Κατόπιν συνεννόησης',
     deliveryTime: '8 εβδομάδες',
     offerValidity: '4 εβδομάδες',
-    closingNote: 'Οι παραπάνω τιμές είναι σε ευρώ για προϊόντα ελεύθερα χωρίς ΦΠΑ.',
+    closingNote: 'Οι παραπάνω τιμές είναι σε Ευρώ για προϊόντα ελεύθερα χωρίς ΦΠΑ.',
     finalPriceLabel: 'Τελική Τιμή',
   },
   English: {
@@ -27,7 +27,7 @@ export const OFFER_LANGUAGE_DEFAULTS: Record<OfferLanguage, OfferLanguageDefault
     paymentTerms: 'Upon Agreement',
     deliveryTime: '8 weeks',
     offerValidity: '4 weeks',
-    closingNote: 'The above prices are in Euros and do not include VAT.',
+    closingNote: 'The above prices are in Euro and do not include VAT.',
     finalPriceLabel: 'Final Price',
   },
 };

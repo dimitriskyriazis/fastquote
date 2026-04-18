@@ -40,6 +40,12 @@ import {
   type RequestedDisplayFieldKey,
 } from './offerProductsUtils';
 import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
+import { getUserNumberLocale } from '../../../lib/localeNumber';
+
+const otherCurrencyAmountFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+});
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 
@@ -650,7 +656,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
           ? String((params.data as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
           : '';
         if (!currencyName) return '';
-        return `${currencyName} ${new Intl.NumberFormat('en', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(num)}`;
+        return `${currencyName} ${otherCurrencyAmountFormatter.format(num)}`;
       },
       cellClass: [...actualNumericCellClass, styles.redDataCell],
       cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
