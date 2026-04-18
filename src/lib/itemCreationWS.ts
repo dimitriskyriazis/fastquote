@@ -139,23 +139,6 @@ async function shortenDescriptionWithAI(
 }
 
 /**
- * Resolves the Soft1 Code for a category, subcategory, or type from the
- * FastQuote database.  Returns the Code string, or undefined if not found.
- */
-async function resolveLookupCode(
-  pool: Awaited<ReturnType<typeof getPool>>,
-  table: 'ProductCategories' | 'ProductSubCategories' | 'ProductTypes',
-  id: number,
-): Promise<string | undefined> {
-  const request = pool.request();
-  request.input('id', sql.Int, id);
-  const result = await request.query<{ Code: string | null }>(
-    `SELECT Code FROM dbo.${table} WHERE ID = @id`,
-  );
-  return result.recordset?.[0]?.Code ?? undefined;
-}
-
-/**
  * Creates an item in SoftOne ERP via the setItem web service.
  *
  * Field mapping (V5 doc):
@@ -170,8 +153,8 @@ async function resolveLookupCode(
  *   mtrmanfctr  = ERP manufacturer ID (from MTRMANFCTR table)
  *   busunits    = Business Unit code (10=AVS, 20=TVS)
  *   category    = Soft1 CCCCLCATEG numeric ID (same as ProductCategories.ID)
- *   subcateg    = Soft1 code (from ProductSubCategories.Code)
- *   type        = Soft1 code (from ProductTypes.Code)
+ *   subcateg    = Soft1 CCCCLSUBCATEG numeric ID (same as ProductSubCategories.ID)
+ *   type        = Soft1 CCCCLTYPE numeric ID (same as ProductTypes.ID)
  */
 export async function createItemViaWebService(
   pool: Awaited<ReturnType<typeof getPool>>,
@@ -189,22 +172,12 @@ export async function createItemViaWebService(
   // Resolve ERP manufacturer ID from brand name
   const mtrmanfctr = await resolveErpManufacturerId(erpPool, params.brandName);
 
-  // SoftOne's CCCCLCATEG field expects the numeric ID, not the CODE string.
-  // FastQuote ProductCategories.ID is aligned with SoftOne's CCCCLCATEG IDs.
+  // SoftOne's CCCCLCATEG / CCCCLSUBCATEG / CCCCLTYPE fields expect numeric IDs,
+  // not CODE strings. FastQuote ProductCategories / ProductSubCategories /
+  // ProductTypes IDs are aligned with the SoftOne lookup IDs.
   const categoryValue = String(params.categoryId);
-
-  // Resolve Soft1 codes for subcategory and type (in parallel)
-  const [subCategoryCode, typeCode] = await Promise.all([
-    resolveLookupCode(pool, 'ProductSubCategories', params.subCategoryId),
-    resolveLookupCode(pool, 'ProductTypes', params.typeId),
-  ]);
-
-  if (!subCategoryCode) {
-    throw new Error(`Soft1 Code not found in ProductSubCategories for ID=${params.subCategoryId}`);
-  }
-  if (!typeCode) {
-    throw new Error(`Soft1 Code not found in ProductTypes for ID=${params.typeId}`);
-  }
+  const subCategoryValue = String(params.subCategoryId);
+  const typeValue = String(params.typeId);
 
   const client = getSoftOneClient();
 
@@ -236,8 +209,8 @@ export async function createItemViaWebService(
     mtrmanfctr,
     busunits: mapBusinessUnit(params.businessUnit),
     category: categoryValue,
-    subcateg: subCategoryCode,
-    type: typeCode,
+    subcateg: subCategoryValue,
+    type: typeValue,
   };
 
   logger.info('SoftOne WS: calling setItem', {
@@ -248,8 +221,8 @@ export async function createItemViaWebService(
     businessUnit: params.businessUnit,
     mtrmanfctr: mtrmanfctr ?? null,
     categoryValue,
-    subCategoryCode: subCategoryCode ?? null,
-    typeCode: typeCode ?? null,
+    subCategoryValue,
+    typeValue,
   });
 
   const result = await client.setItem({ items: [item] });

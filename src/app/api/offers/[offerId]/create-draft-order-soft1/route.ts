@@ -693,7 +693,7 @@ async function handleCategorizeProducts(
   ctx: OfferContext,
   body: CreateDraftOfferRequestBody,
 ): Promise<NextResponse> {
-  const { pool, offerId, requestId } = ctx;
+  const { pool, erpPool, offerId, requestId } = ctx;
   const products = await fetchOfferProducts(pool, offerId);
 
   if (products.length === 0) {
@@ -705,46 +705,46 @@ async function handleCategorizeProducts(
   const erpSynced = new Set<number>();
 
   if (matchResults) {
-    const matchedProducts: Array<{ productId: number; CODE: string | null }> = [
+    const matchedProducts: Array<{ productId: number; MTRL: number }> = [
       ...matchResults.autoMatched,
       ...matchResults.userSelected,
     ];
 
     if (matchedProducts.length > 0) {
-      // Load subcategories and types with Code columns for matching
-      const [subCatCodeRes, typeCodeRes] = await Promise.all([
-        pool.request().query<{ ID: number; Code: string | null; CategoryID: number | null }>(
-          "SELECT ID, Code, CategoryID FROM dbo.ProductSubCategories",
-        ),
-        pool.request().query<{ ID: number; Code: string | null }>(
-          "SELECT ID, Code FROM dbo.ProductTypes",
-        ),
-      ]);
-      const subCatsWithCode = (subCatCodeRes.recordset ?? []).filter(r => r.Code);
-      const typesWithCode = (typeCodeRes.recordset ?? []).filter(r => r.Code);
+      // Read Soft1's actual category columns for matched items. CCCCLCATEG /
+      // CCCCLSUBCATEG / CCCCLTYPE store the same numeric IDs used by FastQuote's
+      // ProductCategories, ProductSubCategories, and ProductTypes tables.
+      const uniqueMtrls = Array.from(new Set(matchedProducts.map(m => m.MTRL).filter((m): m is number => !!m)));
+      const erpCategoryByMtrl = new Map<number, { categoryId: number | null; subCategoryId: number | null; typeId: number | null }>();
+
+      if (uniqueMtrls.length > 0) {
+        const erpCatReq = erpPool.request();
+        const params = uniqueMtrls.map((m, i) => {
+          erpCatReq.input(`mtrl${i}`, sql.Int, m);
+          return `@mtrl${i}`;
+        });
+        const erpCatRes = await erpCatReq.query<{
+          MTRL: number;
+          CCCCLCATEG: number | null;
+          CCCCLSUBCATEG: number | null;
+          CCCCLTYPE: number | null;
+        }>(`SELECT MTRL, CCCCLCATEG, CCCCLSUBCATEG, CCCCLTYPE FROM dbo.MTRL WHERE MTRL IN (${params.join(',')})`);
+        for (const row of erpCatRes.recordset ?? []) {
+          erpCategoryByMtrl.set(row.MTRL, {
+            categoryId: row.CCCCLCATEG ?? null,
+            subCategoryId: row.CCCCLSUBCATEG ?? null,
+            typeId: row.CCCCLTYPE ?? null,
+          });
+        }
+      }
 
       for (const match of matchedProducts) {
         const product = products.find(p => p.ProductID === match.productId);
-        if (!product || !match.CODE) continue;
+        if (!product) continue;
+        const erpCats = erpCategoryByMtrl.get(match.MTRL);
+        if (!erpCats) continue;
 
-        // Parse ERP CODE: [SubCatCode3][TypeCode].[BrandCode].[Sequence]
-        const parts = match.CODE.split('.');
-        if (parts.length < 2 || parts[0].length < 4) continue;
-
-        const prefix = parts[0];
-        const subCatCode3 = prefix.substring(0, 3).toUpperCase();
-        const typeCode = prefix.substring(3).toUpperCase();
-
-        const matchedSubCat = subCatsWithCode.find(
-          sc => sc.Code!.substring(0, 3).toUpperCase() === subCatCode3,
-        );
-        const matchedType = typesWithCode.find(
-          t => t.Code!.toUpperCase() === typeCode,
-        );
-
-        const resolvedCategoryId = matchedSubCat?.CategoryID ?? null;
-        const resolvedSubCategoryId = matchedSubCat?.ID ?? null;
-        const resolvedTypeId = matchedType?.ID ?? null;
+        const { categoryId: resolvedCategoryId, subCategoryId: resolvedSubCategoryId, typeId: resolvedTypeId } = erpCats;
 
         if (!resolvedCategoryId && !resolvedSubCategoryId && !resolvedTypeId) continue;
 
@@ -752,13 +752,11 @@ async function handleCategorizeProducts(
         const updateReq = pool.request();
         updateReq.input('productId', sql.Int, product.ProductID);
         const sets: string[] = [];
-        let categorySetFromSoft1 = false;
 
         if (resolvedCategoryId && product.CategoryID !== resolvedCategoryId) {
           updateReq.input('categoryId', sql.Int, resolvedCategoryId);
           sets.push('CategoryID = @categoryId');
           product.CategoryID = resolvedCategoryId;
-          categorySetFromSoft1 = true;
         }
         if (resolvedSubCategoryId && product.SubCategoryID !== resolvedSubCategoryId) {
           updateReq.input('subCategoryId', sql.Int, resolvedSubCategoryId);
@@ -776,10 +774,8 @@ async function handleCategorizeProducts(
           await updateReq.query(`UPDATE dbo.Products SET ${sets.join(', ')} WHERE ID = @productId`);
         }
 
-        // Only count as Soft1-synced when Soft1 actually provided/overrode a category.
-        // Matches with only type/subcategory fall through to AI; unchanged categories
-        // stay in the FastQuote section.
-        if (categorySetFromSoft1) {
+        // "Categories from Soft1" = Soft1 actually has a category for this item.
+        if (resolvedCategoryId) {
           erpSynced.add(product.ProductID);
         }
       }
