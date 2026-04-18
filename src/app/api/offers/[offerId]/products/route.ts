@@ -1942,6 +1942,7 @@ export async function PATCH(
         GrossProfit: number | null;
         ListPrice: number | null;
         HasListPrice: boolean;
+        EffectiveListPrice: number | null;
         RequestedItemNo: string | null;
         HasRequestedItemNo: boolean;
         RequestedBrand: string | null;
@@ -2172,6 +2173,7 @@ export async function PATCH(
           GrossProfit: grossProfit,
           ListPrice: entry.hasListPrice ? entry.listPrice ?? null : (derivedListPrice ?? null),
           HasListPrice: entry.hasListPrice || derivedListPrice != null,
+          EffectiveListPrice: listPriceForTotals ?? null,
           RequestedItemNo: entry.requestedItemNo,
           HasRequestedItemNo: entry.hasRequestedItemNo,
           RequestedBrand: entry.RequestedBrand,
@@ -2217,7 +2219,7 @@ export async function PATCH(
           NetUnitPrice: row.NetUnitPrice,
           NetCost: row.NetCost,
           Margin: row.Margin,
-          ListPrice: row.HasListPrice ? row.ListPrice : null,
+          ListPrice: row.EffectiveListPrice,
           NetCostOtherCurrency: row.NetCostOtherCurrency,
           OtherCurrencyID: row.OtherCurrencyID,
           CurrencyCostModifier: row.CurrencyCostModifier,
