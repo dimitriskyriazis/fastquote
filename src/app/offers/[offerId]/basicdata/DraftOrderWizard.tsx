@@ -293,14 +293,21 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
         })),
       skipped: skipped.map(s => ({ productId: s.productId })),
     };
+    const touched = categorizedProducts.filter(p => p.wasErpSynced || p.wasAiCategorized);
+    const categorizationSummary = {
+      categoriesUpdated: touched.filter(p => p.categoryId != null).length,
+      subcategoriesUpdated: touched.filter(p => p.subCategoryId != null).length,
+      typesUpdated: touched.filter(p => p.typeId != null).length,
+    };
     const result = await callStep('execute', {
       resolvedCustomer,
       missingBrands,
       matchResults,
+      categorizationSummary,
     });
     if (!result) return;
     setExecutionResult(result);
-  }, [callStep, resolvedCustomer, missingBrands, autoMatched, confirmedCreates, userSelections, skipped]);
+  }, [callStep, resolvedCustomer, missingBrands, autoMatched, confirmedCreates, userSelections, skipped, categorizedProducts]);
 
   // ── Auto-run step on mount / step change ─────────────────────────────────
 
@@ -1083,6 +1090,15 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     if (isLoading) return renderLoading('Preparing order summary...');
     if (!summary) return null;
 
+    const categorizedFromSoft1 = categorizedProducts.filter(p => p.wasErpSynced);
+    const categorizedByAi = categorizedProducts.filter(p => p.wasAiCategorized && !p.wasErpSynced);
+
+    const formatAssignment = (p: CategorizedProduct) => {
+      const label = p.modelNumber || p.partNumber || p.description || `#${p.productId}`;
+      const parts = [p.categoryName, p.subCategoryName, p.typeName].filter(Boolean).join(' › ');
+      return { label, parts: parts || '—' };
+    };
+
     return (
       <>
         <p className={styles.sectionTitle}>Customer</p>
@@ -1116,8 +1132,46 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                 <li>Link {summary.actions.productsToMatch} matched product(s)</li>
               )}
               {summary.actions.projectToCreate && <li>Create 1 new project</li>}
+              {categorizedFromSoft1.length > 0 && (
+                <li>Category/subcategory/type synced from Soft1 for {categorizedFromSoft1.length} product(s)</li>
+              )}
+              {categorizedByAi.length > 0 && (
+                <li>Category/subcategory/type auto-assigned by AI for {categorizedByAi.length} product(s)</li>
+              )}
               <li>Create 1 order with {summary.totals.lineCount} line(s)</li>
             </ul>
+          </>
+        )}
+
+        {(categorizedFromSoft1.length > 0 || categorizedByAi.length > 0) && (
+          <>
+            <p className={styles.sectionTitle}>Category assignments</p>
+            {categorizedFromSoft1.length > 0 && (
+              <div className={`${styles.card} ${styles.cardGreen}`}>
+                <p className={styles.sectionTitle} style={{ color: '#166534' }}>
+                  From Soft1 ({categorizedFromSoft1.length})
+                </p>
+                <ul className={styles.actionsList}>
+                  {categorizedFromSoft1.map(p => {
+                    const { label, parts } = formatAssignment(p);
+                    return <li key={p.productId}><strong>{label}</strong>: {parts}</li>;
+                  })}
+                </ul>
+              </div>
+            )}
+            {categorizedByAi.length > 0 && (
+              <div className={styles.card} style={{ borderLeft: '3px solid #3b82f6' }}>
+                <p className={styles.sectionTitle} style={{ color: '#1d4ed8' }}>
+                  Auto-assigned by AI ({categorizedByAi.length})
+                </p>
+                <ul className={styles.actionsList}>
+                  {categorizedByAi.map(p => {
+                    const { label, parts } = formatAssignment(p);
+                    return <li key={p.productId}><strong>{label}</strong>: {parts}</li>;
+                  })}
+                </ul>
+              </div>
+            )}
           </>
         )}
 

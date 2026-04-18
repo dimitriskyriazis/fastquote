@@ -13,6 +13,7 @@ import { logger } from '../../../../../lib/logger';
 import { requirePermission } from '../../../../../lib/authz';
 import { fuzzyCustomerSearch, searchCustomerByTaxId, filterActiveCustomers } from '../../../../../lib/customerSearch';
 import { clearPartModelNumberUpper } from '../../../../../lib/partModelNumber';
+import { sendDraftOrderCompletionEmail } from '../../../../../lib/draftOrderCompletionEmail';
 
 type ProductMatch = {
   productId: number;
@@ -67,6 +68,11 @@ type CreateDraftOfferRequestBody = {
   resolvedCustomer?: { TRDR: number; CODE: string | null; NAME: string | null };
   missingBrands?: string[];
   matchResults?: MatchResultsState;
+  categorizationSummary?: {
+    categoriesUpdated: number;
+    subcategoriesUpdated: number;
+    typesUpdated: number;
+  };
 };
 
 type LookupRow = {
@@ -111,6 +117,7 @@ type OfferContext = {
   customerTaxId: string | null;
   erpProjectId: number | null;
   erpProjectCode: string | null;
+  userId: string;
 };
 
 type MatchResultsState = {
@@ -1457,6 +1464,21 @@ async function handleExecute(
     logger.info('wizard execute order created', { requestId, offerId, findocId: orderInfo.findocId, finCode: orderInfo.finCode });
   }
 
+  if (results.order) {
+    await sendDraftOrderCompletionEmail({
+      userId: ctx.userId,
+      offerId,
+      offerDescription: ctx.offerDescription,
+      results: {
+        ...results,
+        categoriesUpdated: body.categorizationSummary?.categoriesUpdated ?? 0,
+        subcategoriesUpdated: body.categorizationSummary?.subcategoriesUpdated ?? 0,
+        typesUpdated: body.categorizationSummary?.typesUpdated ?? 0,
+      },
+      requestId,
+    });
+  }
+
   return NextResponse.json({ ok: true, step: 'execute', ...results });
 }
 
@@ -1550,6 +1572,7 @@ export async function POST(
         customerTaxId,
         erpProjectId,
         erpProjectCode,
+        userId: auth.userId,
       };
 
       switch (body.step as WizardStep) {

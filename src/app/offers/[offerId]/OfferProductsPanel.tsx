@@ -5940,7 +5940,7 @@ const requestedColumnDefsMap = useMemo(
     } finally {
       setTotalNetApplying(false);
     }
-  }, [cancelEditTotalNet, offerCurrencySymbol, performUndo, pushUndo, refreshOfferProductGrid, resolvedEndpoint, totalNetApplying, totals]);
+  }, [cancelEditTotalNet, formatEuroTotal, offerCurrencySymbol, performUndo, pushUndo, refreshOfferProductGrid, resolvedEndpoint, totalNetApplying, totals]);
 
   const submitTotalNetEdit = useCallback(() => {
     if (totalNetSubmitPendingRef.current) return;
