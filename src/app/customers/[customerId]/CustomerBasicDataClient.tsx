@@ -97,7 +97,7 @@ const buildFieldDefinitions = (
   },
   {
     id: 'brandName',
-    label: 'Brand Name',
+    label: 'Official Name',
     section: 'general',
     recordKey: 'BrandName',
     updateField: 'BrandName',

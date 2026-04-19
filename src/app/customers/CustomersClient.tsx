@@ -242,7 +242,7 @@ export default function CustomersClient() {
       },
       {
         field: "BrandName",
-        headerName: "Brand",
+        headerName: "Official Name",
         filter: "agTextColumnFilter",
       },
       {

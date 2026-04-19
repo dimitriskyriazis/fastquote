@@ -1384,8 +1384,8 @@ async function handleExecute(
         const created = await createItemInErp(pool, erpPool, {
           productId: product.ProductID,
           description: product.Description,
-          modelNumber: product.ModelNumberCleared,
-          partNumber: product.PartNumberCleared,
+          modelNumber: product.ModelNumber,
+          partNumber: product.PartNumber,
           brandId: product.BrandID,
           brandName: product.BrandName!,
           categoryId: product.CategoryID!,
@@ -2120,8 +2120,8 @@ export async function POST(
                 const created = await createItemInErp(pool, erpPool, {
                   productId: product.ProductID,
                   description: product.Description,
-                  modelNumber: product.ModelNumberCleared,
-                  partNumber: product.PartNumberCleared,
+                  modelNumber: product.ModelNumber,
+                  partNumber: product.PartNumber,
                   brandId: product.BrandID,
                   brandName: product.BrandName!,
                   categoryId: product.CategoryID!,
@@ -2572,8 +2572,8 @@ export async function POST(
             const created = await createItemInErp(pool, erpPool, {
               productId: product.ProductID,
               description: product.Description,
-              modelNumber: product.ModelNumberCleared,
-              partNumber: product.PartNumberCleared,
+              modelNumber: product.ModelNumber,
+              partNumber: product.PartNumber,
               brandId: product.BrandID,
               brandName: product.BrandName!,
               categoryId: product.CategoryID!,

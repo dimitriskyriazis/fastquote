@@ -60,7 +60,7 @@ const buildFieldDefinitions = (
   },
   {
     id: 'brandName',
-    label: 'Brand Name',
+    label: 'Official Name',
     section: 'general',
     type: 'text',
     placeholder: 'Optional secondary name',
