@@ -414,6 +414,13 @@ export default function OfferBasicDataClient({
   const [isRefreshingContacts, setIsRefreshingContacts] = useState(false);
   const [includeInitialContactOption, setIncludeInitialContactOption] = useState(true);
   const contactRefreshTokenRef = useRef(0);
+  const [highlightOrderSignedMissing, setHighlightOrderSignedMissing] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setHighlightOrderSignedMissing(true);
+    window.addEventListener('fastquote:highlight-order-signed-missing', handler);
+    return () => window.removeEventListener('fastquote:highlight-order-signed-missing', handler);
+  }, []);
 
   const contactOptions = useMemo(() => {
     const sortedContacts = sortContacts(contactEntries);
@@ -1244,14 +1251,18 @@ export default function OfferBasicDataClient({
     }
 
     if (def.inputType === 'date' || def.valueType === 'date') {
+      const dateValue = values[def.id] ?? '';
+      const isMissingRequired =
+        def.id === 'orderSigned' && highlightOrderSignedMissing && !dateValue;
       return (
         <UKDatePicker
-          value={values[def.id] ?? ''}
+          value={dateValue}
           onChange={(newValue) => handleDateChange(def, newValue)}
           placeholder="DD/MM/YYYY"
-          className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
+          className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''} ${isMissingRequired ? styles.fieldControlError : ''}`}
           disabled={pending}
           required={def.required}
+          invalid={isMissingRequired}
         />
       );
     }

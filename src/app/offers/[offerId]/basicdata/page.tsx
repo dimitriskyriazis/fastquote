@@ -1,17 +1,36 @@
 import Link from 'next/link';
+import sql from 'mssql';
 import OfferBasicDataPanel from '../OfferBasicDataPanel';
 import CreateDraftOfferButton from './CreateDraftOfferButton';
 import ViewStatusHistoryButton from './ViewStatusHistoryButton';
 import ExportPdfButton from './ExportPdfButton';
+import { getPool } from '../../../../lib/sql';
 import styles from '../../offersDetail.module.css';
 
 const buildHeading = (offerId: string) =>
   /^[0-9]+$/.test(offerId) ? `Offer ${offerId}` : offerId;
 
+async function fetchOrderSignedDate(offerId: string): Promise<string | null> {
+  const numericId = Number.parseInt(offerId, 10);
+  if (!Number.isFinite(numericId)) return null;
+  const pool = await getPool();
+  const request = pool.request();
+  request.input('offerId', sql.Int, numericId);
+  const result = await request.query<{ OrderSignedDate: Date | string | null }>(
+    'SELECT OrderSignedDate FROM dbo.Offer WHERE ID = @offerId',
+  );
+  const raw = result.recordset?.[0]?.OrderSignedDate ?? null;
+  if (!raw) return null;
+  const d = raw instanceof Date ? raw : new Date(raw);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
 export default async function Page({ params }: { params: Promise<{ offerId: string }> }) {
   const { offerId } = await params;
   const decodedId = decodeURIComponent(offerId);
   const headingText = `${buildHeading(decodedId)} - Basic Data`;
+  const orderSignedDate = await fetchOrderSignedDate(decodedId);
 
   return (
     <main className={styles.page}>
@@ -26,6 +45,7 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
         <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
           <CreateDraftOfferButton
             offerId={decodedId}
+            orderSignedDate={orderSignedDate}
             className={`${styles.headerActionButton} page-header-button`}
           />
           <ViewStatusHistoryButton

@@ -1242,7 +1242,7 @@ function buildTotalsAndTerms(
                 [
                   {
                     stack: [
-                      { text: L.discountNoteTitle, fontSize: 7.5, color: COLORS.secondaryText },
+                      { text: L.discountNoteTitle, fontSize: 7.5, color: COLORS.secondaryText, bold: true },
                       { text: discountNote, fontSize: 8.5, color: COLORS.primaryText, margin: [0, 4, 0, 0] },
                     ],
                   },

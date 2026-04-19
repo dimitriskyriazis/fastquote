@@ -60,6 +60,7 @@ export async function createProjectViaWebService(
   if (params.salesRep) wsParams.salesrep = params.salesRep;
   if (params.implementManager) wsParams.implementmanager = params.implementManager;
   if (params.designEngineer) wsParams.designengineer = params.designEngineer;
+  if (params.assignDate) wsParams.assigndate = params.assignDate;
 
   logger.info('SoftOne WS: calling setProject', {
     name: params.name,

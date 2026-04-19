@@ -155,6 +155,11 @@
   outline: 2px solid rgba(59, 130, 246, 0.35);
 }
 
+.fieldControlError {
+  border-color: #dc2626;
+  background: #fef2f2;
+}
+
 .fieldControl[list]::-webkit-calendar-picker-indicator {
   display: none;
 }

@@ -117,6 +117,7 @@ type OfferContext = {
   customerTaxId: string | null;
   erpProjectId: number | null;
   erpProjectCode: string | null;
+  orderSignedDate: string | null;
   userId: string;
 };
 
@@ -602,6 +603,7 @@ async function resolveOrCreateProject(
       salesRep,
       implementManager: salesRep,
       designEngineer: salesRep,
+      assignDate: ctx.orderSignedDate,
     });
 
     // Persist ERP project back to FastQuote Offer
@@ -1524,6 +1526,7 @@ export async function POST(
       CustomerTaxID: string | null;
       ERPProjectID: number | null;
       ERPProjectCode: string | null;
+      OrderSignedDate: Date | string | null;
     }>(`
       SELECT
         o.Description,
@@ -1533,7 +1536,8 @@ export async function POST(
         c.Name AS CustomerName,
         c.TaxID AS CustomerTaxID,
         o.ERPProjectID,
-        o.ERPProjectCode
+        o.ERPProjectCode,
+        o.OrderSignedDate
       FROM dbo.Offer o
       INNER JOIN dbo.Customers c ON o.CustomerID = c.ID
       LEFT JOIN dbo.SalesDivision sd ON o.SalesDivisionID = sd.ID
@@ -1549,6 +1553,23 @@ export async function POST(
     const customerTaxId = offerRow?.CustomerTaxID?.trim() || null;
     const erpProjectId = offerRow?.ERPProjectID ?? null;
     const erpProjectCode = offerRow?.ERPProjectCode ?? null;
+    const orderSignedDateRaw = offerRow?.OrderSignedDate ?? null;
+    const orderSignedDate = (() => {
+      if (!orderSignedDateRaw) return null;
+      const d = orderSignedDateRaw instanceof Date ? orderSignedDateRaw : new Date(orderSignedDateRaw);
+      if (Number.isNaN(d.getTime())) return null;
+      return d.toISOString().slice(0, 10);
+    })();
+
+    if (!orderSignedDate) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'Order Signed date is required before creating a draft order in Soft1. Please set the Order Signed date on the offer and try again.',
+        },
+        { status: 400 },
+      );
+    }
     // Map SalesDivisionID to BusinessUnit: 4 -> AVS, 3 -> TVS, fallback based on name
     let businessUnit: 'AVS' | 'TVS';
     if (salesDivisionId === 3) {
@@ -1572,6 +1593,7 @@ export async function POST(
         customerTaxId,
         erpProjectId,
         erpProjectCode,
+        orderSignedDate,
         userId: auth.userId,
       };
 
@@ -2348,6 +2370,7 @@ export async function POST(
           salesRep: salesRep2,
           implementManager: salesRep2,
           designEngineer: salesRep2,
+          assignDate: orderSignedDate,
         });
 
         finalErpProjectId = createdProject.prjcId;
@@ -2793,6 +2816,7 @@ export async function POST(
         salesRep: salesRep3,
         implementManager: salesRep3,
         designEngineer: salesRep3,
+        assignDate: orderSignedDate,
       });
 
       finalErpProjectId = createdProject.prjcId;
