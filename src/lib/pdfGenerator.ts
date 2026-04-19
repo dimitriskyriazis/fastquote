@@ -1032,9 +1032,13 @@ function buildItemsTable(
         }
 
         if ((col === 'type' || col === 'modelNumber') && str(row.webLink) && value) {
-          baseCell.color = '#1D4ED8';
-          baseCell.decoration = 'underline';
-          baseCell.link = str(row.webLink);
+          const hasPartNumber = !!str(row.partNumber);
+          const linkOnThisCol = col === 'type' ? hasPartNumber : !hasPartNumber;
+          if (linkOnThisCol) {
+            baseCell.color = '#1D4ED8';
+            baseCell.decoration = 'underline';
+            baseCell.link = str(row.webLink);
+          }
         }
 
         // Tag first column so layout callbacks can detect normal item rows.
