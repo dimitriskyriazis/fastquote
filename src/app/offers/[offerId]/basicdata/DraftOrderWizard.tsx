@@ -294,10 +294,26 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       skipped: skipped.map(s => ({ productId: s.productId })),
     };
     const touched = categorizedProducts.filter(p => p.wasErpSynced || p.wasAiCategorized);
+    const newProductIds = new Set<number>([
+      ...confirmedCreates,
+      ...Array.from(userSelections.entries())
+        .filter(([, match]) => match.MTRL === CREATE_NEW_SENTINEL)
+        .map(([productId]) => productId),
+    ]);
+    const newProductsCategorization = categorizedProducts
+      .filter(p => newProductIds.has(p.productId))
+      .map(p => ({
+        productId: p.productId,
+        label: p.modelNumber || p.partNumber || p.description || `#${p.productId}`,
+        categoryName: p.categoryName,
+        subCategoryName: p.subCategoryName,
+        typeName: p.typeName,
+      }));
     const categorizationSummary = {
       categoriesUpdated: touched.filter(p => p.categoryId != null).length,
       subcategoriesUpdated: touched.filter(p => p.subCategoryId != null).length,
       typesUpdated: touched.filter(p => p.typeId != null).length,
+      newProducts: newProductsCategorization,
     };
     const result = await callStep('execute', {
       resolvedCustomer,
@@ -1093,6 +1109,14 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     const categorizedFromSoft1 = categorizedProducts.filter(p => p.wasErpSynced);
     const categorizedByAi = categorizedProducts.filter(p => p.wasAiCategorized && !p.wasErpSynced);
 
+    const newProductIds = new Set<number>([
+      ...confirmedCreates,
+      ...Array.from(userSelections.entries())
+        .filter(([, match]) => match.MTRL === CREATE_NEW_SENTINEL)
+        .map(([productId]) => productId),
+    ]);
+    const productsToCreateCategorized = categorizedProducts.filter(p => newProductIds.has(p.productId));
+
     const formatAssignment = (p: CategorizedProduct) => {
       const label = p.modelNumber || p.partNumber || p.description || `#${p.productId}`;
       const parts = [p.categoryName, p.subCategoryName, p.typeName].filter(Boolean).join(' › ');
@@ -1143,9 +1167,22 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
           </>
         )}
 
-        {(categorizedFromSoft1.length > 0 || categorizedByAi.length > 0) && (
+        {(categorizedFromSoft1.length > 0 || categorizedByAi.length > 0 || productsToCreateCategorized.length > 0) && (
           <>
             <p className={styles.sectionTitle}>Category assignments</p>
+            {productsToCreateCategorized.length > 0 && (
+              <div className={styles.card}>
+                <p className={styles.sectionTitle}>
+                  For new products ({productsToCreateCategorized.length})
+                </p>
+                <ul className={styles.actionsList}>
+                  {productsToCreateCategorized.map(p => {
+                    const { label, parts } = formatAssignment(p);
+                    return <li key={p.productId}><strong>{label}</strong>: {parts}</li>;
+                  })}
+                </ul>
+              </div>
+            )}
             {categorizedFromSoft1.length > 0 && (
               <div className={`${styles.card} ${styles.cardGreen}`}>
                 <p className={styles.sectionTitle} style={{ color: '#166534' }}>

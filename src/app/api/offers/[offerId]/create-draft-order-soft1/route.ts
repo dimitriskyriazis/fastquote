@@ -72,6 +72,13 @@ type CreateDraftOfferRequestBody = {
     categoriesUpdated: number;
     subcategoriesUpdated: number;
     typesUpdated: number;
+    newProducts?: Array<{
+      productId: number;
+      label: string;
+      categoryName: string | null;
+      subCategoryName: string | null;
+      typeName: string | null;
+    }>;
   };
 };
 
@@ -1476,6 +1483,7 @@ async function handleExecute(
         categoriesUpdated: body.categorizationSummary?.categoriesUpdated ?? 0,
         subcategoriesUpdated: body.categorizationSummary?.subcategoriesUpdated ?? 0,
         typesUpdated: body.categorizationSummary?.typesUpdated ?? 0,
+        newProductsCategorization: body.categorizationSummary?.newProducts ?? [],
       },
       requestId,
     });
