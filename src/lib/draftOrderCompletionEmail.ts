@@ -19,6 +19,13 @@ export type DraftOrderCompletionResults = {
     subCategoryName: string | null;
     typeName: string | null;
   }>;
+  existingProductsCategorization?: Array<{
+    productId: number;
+    label: string;
+    categoryName: string | null;
+    subCategoryName: string | null;
+    typeName: string | null;
+  }>;
 };
 
 type Recipient = {
@@ -107,20 +114,28 @@ function renderEmail(
     ? `<ul>${actions.map(a => `<li>${escapeHtml(a)}</li>`).join('')}</ul>`
     : '<p><em>Καμία ενέργεια δεν καταγράφηκε.</em></p>';
 
-  const newProductsCats = (results.newProductsCategorization ?? []).filter(
-    p => p.categoryName || p.subCategoryName || p.typeName,
-  );
   const formatCatLine = (p: { categoryName: string | null; subCategoryName: string | null; typeName: string | null }) =>
     [p.categoryName, p.subCategoryName, p.typeName].filter(Boolean).join(' › ') || '—';
 
-  const newProductsHtml = newProductsCats.length > 0
-    ? `
-      <p><strong>Κατηγοριοποίηση νέων ειδών:</strong></p>
-      <ul>${newProductsCats
-        .map(p => `<li><strong>${escapeHtml(p.label)}</strong>: ${escapeHtml(formatCatLine(p))}</li>`)
-        .join('')}</ul>
-    `
-    : '';
+  const newProductsCats = (results.newProductsCategorization ?? []).filter(
+    p => p.categoryName || p.subCategoryName || p.typeName,
+  );
+  const existingProductsCats = (results.existingProductsCategorization ?? []).filter(
+    p => p.categoryName || p.subCategoryName || p.typeName,
+  );
+
+  const renderCatList = (title: string, items: typeof newProductsCats) =>
+    items.length > 0
+      ? `
+        <p><strong>${title}</strong></p>
+        <ul>${items
+          .map(p => `<li><strong>${escapeHtml(p.label)}</strong>: ${escapeHtml(formatCatLine(p))}</li>`)
+          .join('')}</ul>
+      `
+      : '';
+
+  const newProductsHtml = renderCatList('Κατηγοριοποίηση νέων ειδών:', newProductsCats);
+  const existingProductsHtml = renderCatList('Ενημέρωση κατηγοριοποίησης υπαρχόντων ειδών:', existingProductsCats);
 
   const html = `
     <div style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.5;">
@@ -133,6 +148,7 @@ function renderEmail(
       <p><strong>Ενέργειες που εκτελέστηκαν:</strong></p>
       ${actionsHtml}
       ${newProductsHtml}
+      ${existingProductsHtml}
       <p style="color: #6b7280; font-size: 0.85rem; margin-top: 24px;">Αυτό το email στάλθηκε αυτόματα από το FastQuote.</p>
     </div>
   `;
@@ -149,6 +165,9 @@ function renderEmail(
     ...(actions.length > 0 ? actions.map(a => `- ${a}`) : ['- (καμία)']),
     ...(newProductsCats.length > 0
       ? ['', 'Κατηγοριοποίηση νέων ειδών:', ...newProductsCats.map(p => `- ${p.label}: ${formatCatLine(p)}`)]
+      : []),
+    ...(existingProductsCats.length > 0
+      ? ['', 'Ενημέρωση κατηγοριοποίησης υπαρχόντων ειδών:', ...existingProductsCats.map(p => `- ${p.label}: ${formatCatLine(p)}`)]
       : []),
     '',
     'Αυτό το email στάλθηκε αυτόματα από το FastQuote.',
