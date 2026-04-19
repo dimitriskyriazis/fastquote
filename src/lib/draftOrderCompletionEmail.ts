@@ -135,7 +135,7 @@ function renderEmail(
       : '';
 
   const newProductsHtml = renderCatList('Κατηγοριοποίηση νέων ειδών:', newProductsCats);
-  const existingProductsHtml = renderCatList('Ενημέρωση κατηγοριοποίησης υπαρχόντων ειδών:', existingProductsCats);
+  const existingProductsHtml = renderCatList('Κατηγοριοποίηση υπαρχόντων ειδών:', existingProductsCats);
 
   const html = `
     <div style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.5;">
@@ -167,7 +167,7 @@ function renderEmail(
       ? ['', 'Κατηγοριοποίηση νέων ειδών:', ...newProductsCats.map(p => `- ${p.label}: ${formatCatLine(p)}`)]
       : []),
     ...(existingProductsCats.length > 0
-      ? ['', 'Ενημέρωση κατηγοριοποίησης υπαρχόντων ειδών:', ...existingProductsCats.map(p => `- ${p.label}: ${formatCatLine(p)}`)]
+      ? ['', 'Κατηγοριοποίηση υπαρχόντων ειδών:', ...existingProductsCats.map(p => `- ${p.label}: ${formatCatLine(p)}`)]
       : []),
     '',
     'Αυτό το email στάλθηκε αυτόματα από το FastQuote.',

@@ -311,7 +311,8 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       .filter(p => newProductIds.has(p.productId))
       .map(toCatPayload);
     const existingProductsCategorization = categorizedProducts
-      .filter(p => !newProductIds.has(p.productId) && (p.wasErpSynced || p.wasAiCategorized))
+      .filter(p => !newProductIds.has(p.productId)
+        && (p.categoryName || p.subCategoryName || p.typeName))
       .map(toCatPayload);
     const categorizationSummary = {
       categoriesUpdated: touched.filter(p => p.categoryId != null).length,
@@ -1122,7 +1123,8 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     ]);
     const productsToCreateCategorized = categorizedProducts.filter(p => newProductIds.has(p.productId));
     const existingProductsCategorized = categorizedProducts.filter(
-      p => !newProductIds.has(p.productId) && (p.wasErpSynced || p.wasAiCategorized),
+      p => !newProductIds.has(p.productId)
+        && (p.categoryName || p.subCategoryName || p.typeName),
     );
 
     const formatAssignment = (p: CategorizedProduct) => {
@@ -1194,7 +1196,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
             {existingProductsCategorized.length > 0 && (
               <div className={styles.card}>
                 <p className={styles.sectionTitle}>
-                  Updated for existing products ({existingProductsCategorized.length})
+                  For existing products ({existingProductsCategorized.length})
                 </p>
                 <ul className={styles.actionsList}>
                   {existingProductsCategorized.map(p => {
