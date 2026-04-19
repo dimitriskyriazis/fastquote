@@ -275,6 +275,20 @@ export const resolveOfferProductTypeLabel = (row: Record<string, unknown> | null
 export const isRequestedRow = (row: Record<string, unknown> | null | undefined) =>
   Boolean((row as { __isRequestedRow?: number | null })?.__isRequestedRow === 1);
 
+export const hasAssignedProductId = (row: Record<string, unknown> | null | undefined): boolean => {
+  const raw = (row as { ProductID?: unknown } | null | undefined)?.ProductID;
+  if (raw == null) return false;
+  if (typeof raw === 'number') return Number.isFinite(raw) && raw > 0;
+  if (typeof raw === 'string') return raw.trim().length > 0;
+  return false;
+};
+
+// Requested-only row that hasn't been matched to a real product yet.
+// Editing actual product columns (Description, prices, qty, ...) on these
+// rows is misleading because there is no product behind the cell.
+export const isUnassignedRequestedRow = (row: Record<string, unknown> | null | undefined): boolean =>
+  isRequestedRow(row) && !hasAssignedProductId(row);
+
 export const isRequestedDescriptionField = (field: string | null | undefined): field is 'RequestedDescription' | 'RequestedDescription2' | 'RequestedDescription3' =>
   field === 'RequestedDescription' || field === 'RequestedDescription2' || field === 'RequestedDescription3';
 

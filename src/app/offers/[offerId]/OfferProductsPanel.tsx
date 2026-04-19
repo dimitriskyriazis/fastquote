@@ -5888,8 +5888,59 @@ const requestedColumnDefsMap = useMemo(
       }
 
       const scale = targetTotal / recomputedTotal;
+
+      // Group entries that currently share the same net price — identical products
+      // must keep identical prices after rescale, even when distributing residual.
+      type PriceGroup = { entries: Entry[]; newNet: number; totalQty: number };
+      const groupMap = new Map<number, PriceGroup>();
       for (const entry of entries) {
-        entry.newNet = roundMoney(entry.oldNet * scale, 4);
+        let group = groupMap.get(entry.oldNet);
+        if (!group) {
+          group = { entries: [], newNet: roundMoney(entry.oldNet * scale, 2), totalQty: 0 };
+          groupMap.set(entry.oldNet, group);
+        }
+        group.entries.push(entry);
+        group.totalQty += Math.round(entry.quantity);
+        entry.newNet = group.newNet;
+      }
+      const groups = [...groupMap.values()];
+
+      // Close the 0.01 residual by shifting whole groups (keeps identical prices in lockstep).
+      // Each 0.01 step on a group moves the achieved total by totalQty * 0.01.
+      const toUnits = (x: number) => Math.round(x * 100);
+      const fromUnits = (u: number) => u / 100;
+      const setGroupNet = (group: PriceGroup, unitValue: number) => {
+        group.newNet = fromUnits(unitValue);
+        for (const e of group.entries) e.newNet = group.newNet;
+      };
+      const targetUnits = toUnits(targetTotal);
+      const achievedUnits = groups.reduce((s, g) => s + toUnits(g.newNet) * g.totalQty, 0);
+      let diffUnits = targetUnits - achievedUnits;
+
+      if (diffUnits !== 0) {
+        // Pass 1: largest-quantity groups first, take whole steps.
+        const byQtyDesc = groups.filter((g) => g.totalQty > 0).sort((a, b) => b.totalQty - a.totalQty);
+        for (const g of byQtyDesc) {
+          if (diffUnits === 0) break;
+          const steps = diffUnits > 0 ? Math.floor(diffUnits / g.totalQty) : Math.ceil(diffUnits / g.totalQty);
+          if (steps === 0) continue;
+          setGroupNet(g, toUnits(g.newNet) + steps);
+          diffUnits -= steps * g.totalQty;
+        }
+        // Pass 2: one step on the smallest-qty group if it moves closer to target
+        // (may overshoot). Preserves equal-price rule; can't always hit exact target.
+        if (diffUnits !== 0) {
+          const byQtyAsc = groups.filter((g) => g.totalQty > 0).sort((a, b) => a.totalQty - b.totalQty);
+          for (const g of byQtyAsc) {
+            if (diffUnits === 0) break;
+            const dir = diffUnits > 0 ? 1 : -1;
+            const delta = dir * g.totalQty;
+            if (Math.abs(diffUnits - delta) < Math.abs(diffUnits)) {
+              setGroupNet(g, toUnits(g.newNet) + dir);
+              diffUnits -= delta;
+            }
+          }
+        }
       }
 
       const chunkSize = 200;
@@ -5940,6 +5991,7 @@ const requestedColumnDefsMap = useMemo(
     } finally {
       setTotalNetApplying(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cancelEditTotalNet, formatEuroTotal, offerCurrencySymbol, performUndo, pushUndo, refreshOfferProductGrid, resolvedEndpoint, totalNetApplying, totals]);
 
   const submitTotalNetEdit = useCallback(() => {

@@ -28,6 +28,7 @@ import {
   normalizeRequestedQuantityValue,
   normalizeRequestedItemNoValue,
   isRequestedRow,
+  isUnassignedRequestedRow,
   isOfferProductCommentOrProduct,
   categoryTotalPriceGetter,
   categoryTotalNetGetter,
@@ -517,6 +518,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       },
       editable: (params) => {
         const row = params?.data ?? null;
+        if (isUnassignedRequestedRow(row)) return false;
         return (
           isOfferProductCategory(row)
           || isOfferProductComment(row)
@@ -551,7 +553,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
         return offerCurrencyFormatter(params);
       },
       cellClassRules: productPriceListClassRules,
-      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
     },
@@ -561,7 +563,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: (params) => {
         if (!isOfferProductCommentOrProduct(params.data ?? null)) return '';
         return percentageFormatter(params);
@@ -576,7 +578,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: offerCurrencyFormatter,
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
@@ -587,7 +589,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: zeroBlankNumberFormatter,
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
@@ -637,7 +639,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: percentageFormatter,
       cellClass: [...actualNumericCellClass, styles.redDataCell],
       cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
@@ -648,7 +650,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: (params) => {
         const num = coerceNumber(params.value);
         if (num == null || Object.is(num, 0)) return '';
@@ -668,7 +670,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: (params) => {
         const currencyName = typeof (params.data as { OtherCurrencyName?: unknown } | null | undefined)?.OtherCurrencyName === 'string'
           ? String((params.data as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
@@ -687,7 +689,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: offerCurrencyFormatter,
       cellClass: [...actualNumericCellClass, styles.redDataCell],
       cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
@@ -698,7 +700,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: percentageFormatter,
       cellClassRules: {
         'offer-products-grid__cell--negative-margin': (params) => {
@@ -753,7 +755,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       headerName: 'Origin',
       filter: 'agTextColumnFilter',
       width: 130,
-      editable: (params) => isOfferProductProduct(params?.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params?.data ?? null) && isOfferProductProduct(params?.data ?? null),
       valueSetter: ({ data, newValue }) => {
         if (!data) return false;
         const trimmed = typeof newValue === 'string' ? newValue.trim() : newValue == null ? null : String(newValue).trim();
@@ -769,6 +771,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agTextColumnFilter',
       editable: (params) => {
         const row = params?.data ?? null;
+        if (isUnassignedRequestedRow(row)) return false;
         return (
           isOfferProductCategory(row)
           || isOfferProductComment(row)
@@ -798,6 +801,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agTextColumnFilter',
       editable: (params) => {
         const row = params?.data ?? null;
+        if (isUnassignedRequestedRow(row)) return false;
         return (
           isOfferProductCategory(row)
           || isOfferProductComment(row)
