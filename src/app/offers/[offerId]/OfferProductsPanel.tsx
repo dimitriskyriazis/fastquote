@@ -76,6 +76,7 @@ import {
   copyRowsMenuIcon,
   pasteRowsMenuIcon,
   addStandardPackageMenuIcon,
+  createNewProductMenuIcon,
 } from './offerProductsIcons';
 import type {
   GridRowNode,
@@ -441,6 +442,8 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [matchAddProductOpen, setMatchAddProductOpen] = useState(false);
   const [matchAddedProductId, setMatchAddedProductId] = useState<number | null>(null);
   const clearMatchAddedProductId = useCallback(() => setMatchAddedProductId(null), []);
+  const [rowAddProductOpen, setRowAddProductOpen] = useState(false);
+  const [rowAddProductInitialValues, setRowAddProductInitialValues] = useState<AddProductInitialValues | null>(null);
   const [brandBulkEditOpen, setBrandBulkEditOpen] = useState(false);
   const [brandBulkEditField, setBrandBulkEditField] = useState<'CurrencyCostModifier' | 'Margin' | 'CustomerDiscount' | 'TelmacoDiscount'>('CurrencyCostModifier');
   const [brandBulkEditBrandName, setBrandBulkEditBrandName] = useState('');
@@ -2982,6 +2985,19 @@ const requestedColumnDefsMap = useMemo(
     closeMatchAddProduct();
   }, [closeMatchAddProduct, refreshOfferProductGrid]);
 
+  const closeRowAddProduct = useCallback(() => {
+    setRowAddProductOpen(false);
+    setRowAddProductInitialValues(null);
+  }, []);
+  const handleRowAddProductAdded = useCallback(() => {
+    try {
+      refreshOfferProductGrid(null, { purge: true });
+    } catch {
+      /* noop */
+    }
+    closeRowAddProduct();
+  }, [closeRowAddProduct, refreshOfferProductGrid]);
+
   // Drop the head of the queue plus every subsequent entry whose requested
   // fields are identical (case- and whitespace-insensitive) to the head, and
   // bump processed count by everything we removed. Used by both assign and
@@ -4186,6 +4202,56 @@ const requestedColumnDefsMap = useMemo(
     }
 
     const rowHasRequestedFields = hasRequestedPseudoFields(rowData);
+
+    if (rowHasRequestedFields) {
+      const requestedBrand = normalizeRequestedLookupValue(
+        (rowData as { RequestedBrand?: unknown }).RequestedBrand ?? null,
+      );
+      const requestedPartNo = normalizeRequestedLookupValue(
+        (rowData as { RequestedPartNo?: unknown }).RequestedPartNo ?? null,
+      );
+      const requestedModelNo = normalizeRequestedLookupValue(
+        (rowData as { RequestedModelNo?: unknown }).RequestedModelNo ?? null,
+      );
+      const requestedWebLink = normalizeRequestedLookupValue(
+        (rowData as { RequestedWebLink?: unknown }).RequestedWebLink ?? null,
+      );
+      const requestedDescriptionParts = [
+        normalizeDescriptionValue((rowData as { RequestedDescription?: unknown }).RequestedDescription ?? null),
+        normalizeDescriptionValue((rowData as { RequestedDescription2?: unknown }).RequestedDescription2 ?? null),
+        normalizeDescriptionValue((rowData as { RequestedDescription3?: unknown }).RequestedDescription3 ?? null),
+      ].filter((value): value is string => typeof value === 'string' && value.length > 0);
+      const requestedDescription = requestedDescriptionParts.length > 0
+        ? requestedDescriptionParts.join('\n')
+        : null;
+      const createNewProductItem: MenuItemDef = {
+        name: 'Create New Product',
+        icon: createNewProductMenuIcon,
+        action: () => {
+          setRowAddProductInitialValues({
+            brandName: requestedBrand,
+            partNumber: requestedPartNo,
+            modelNumber: requestedModelNo,
+            description: requestedDescription,
+            weblink: requestedWebLink,
+          });
+          setRowAddProductOpen(true);
+        },
+      };
+      const historyIndex = items.findIndex(
+        (item) => typeof item === 'object' && item != null && (item as MenuItemDef).name === "View Product's History",
+      );
+      if (historyIndex >= 0) {
+        items.splice(historyIndex, 0, createNewProductItem);
+      } else {
+        const fallbackIndex = findDeleteMenuItemIndex(items);
+        if (fallbackIndex >= 0) {
+          items.splice(fallbackIndex, 0, createNewProductItem);
+        } else {
+          items.push(createNewProductItem);
+        }
+      }
+    }
 
     let deleteIndexAfterHistory = findDeleteMenuItemIndex(items);
 
@@ -6653,6 +6719,12 @@ const requestedColumnDefsMap = useMemo(
         onAdded={handleMatchProductAdded}
         onClose={closeMatchAddProduct}
         initialValues={matchAddProductInitialValues}
+      />
+      <AddProductModal
+        open={rowAddProductOpen}
+        onAdded={handleRowAddProductAdded}
+        onClose={closeRowAddProduct}
+        initialValues={rowAddProductInitialValues}
       />
       <LookupModal
         open={brandBulkEditOpen}

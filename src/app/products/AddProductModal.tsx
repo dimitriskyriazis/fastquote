@@ -107,6 +107,18 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
   const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
   const { warnings: duplicateWarnings, check: checkDuplicates, clear: clearDuplicates } = useDuplicateCheck('product');
   const wasOpenRef = useRef(false);
+  const descriptionRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const el = descriptionRef.current;
+    if (!el) return;
+    const maxHeight = 320;
+    el.style.height = 'auto';
+    const target = Math.min(el.scrollHeight, maxHeight);
+    el.style.height = `${target}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, [form.description, open]);
 
   useEffect(() => {
     if (open) {
@@ -553,10 +565,12 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
           </label>
           <textarea
             id="product-description"
+            ref={descriptionRef}
             className={lookupStyles.fieldControl}
             rows={3}
             value={form.description}
             required
+            style={{ resize: 'none', overflowY: 'hidden' }}
             onChange={(event) => updateFormField('description', event.target.value)}
           />
         </div>

@@ -1485,6 +1485,7 @@ async function handleExecute(
       userId: ctx.userId,
       offerId,
       offerDescription: ctx.offerDescription,
+      businessUnit: ctx.businessUnit,
       results: {
         ...results,
         categoriesUpdated: body.categorizationSummary?.categoriesUpdated ?? 0,

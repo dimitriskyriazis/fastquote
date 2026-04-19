@@ -55,6 +55,7 @@ function getTransporter(): { transporter: Transporter; from: string } | null {
 
 export async function sendEmail(params: {
   to: string;
+  cc?: string[];
   subject: string;
   html: string;
   text?: string;
@@ -68,6 +69,7 @@ export async function sendEmail(params: {
     await bundle.transporter.sendMail({
       from: bundle.from,
       to: params.to,
+      cc: params.cc && params.cc.length > 0 ? params.cc : undefined,
       subject: params.subject,
       html: params.html,
       text: params.text,

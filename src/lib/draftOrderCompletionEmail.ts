@@ -49,6 +49,31 @@ async function loadRecipient(userId: string): Promise<Recipient | null> {
   return { email, fullName: row.FullNameGR?.trim() || row.FullName?.trim() || null };
 }
 
+const STATIC_CC_EMAIL = 'neworder@telmaco.gr';
+const BUSINESS_UNIT_ADMIN_EMAILS: Record<'AVS' | 'TVS', string> = {
+  AVS: 'avsadmin@telmaco.gr',
+  TVS: 'tvsadmin@telmaco.gr',
+};
+
+async function loadOfferStakeholderEmails(offerId: number): Promise<string[]> {
+  const pool = await getPool();
+  const req = pool.request();
+  req.input('offerId', sql.Int, offerId);
+  const res = await req.query<{ SalesEmail: string | null; ApproverEmail: string | null }>(`
+    SELECT sales.Email AS SalesEmail, approver.Email AS ApproverEmail
+    FROM dbo.Offer o
+    LEFT JOIN dbo.AspNetUsers sales ON o.SalesPersonId = sales.Id
+    LEFT JOIN dbo.AspNetUsers approver ON o.ApprovalUserId = approver.Id
+    WHERE o.ID = @offerId
+  `);
+  const row = res.recordset?.[0];
+  if (!row) return [];
+  const emails: string[] = [];
+  if (row.SalesEmail?.trim()) emails.push(row.SalesEmail.trim());
+  if (row.ApproverEmail?.trim()) emails.push(row.ApproverEmail.trim());
+  return emails;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -183,6 +208,7 @@ export async function sendDraftOrderCompletionEmail(params: {
   results: DraftOrderCompletionResults;
   requestId?: string;
   overrideRecipientEmail?: string | null;
+  businessUnit?: 'AVS' | 'TVS' | null;
 }): Promise<void> {
   try {
     const recipient = await loadRecipient(params.userId);
@@ -194,12 +220,22 @@ export async function sendDraftOrderCompletionEmail(params: {
     const templateRecipient = recipient ?? { email: params.overrideRecipientEmail!, fullName: null };
     const toAddress = params.overrideRecipientEmail?.trim() || recipient!.email;
 
+    const stakeholderEmails = await loadOfferStakeholderEmails(params.offerId);
+    const ccSet = new Set<string>();
+    for (const e of stakeholderEmails) ccSet.add(e.toLowerCase());
+    ccSet.add(STATIC_CC_EMAIL.toLowerCase());
+    if (params.businessUnit) {
+      ccSet.add(BUSINESS_UNIT_ADMIN_EMAILS[params.businessUnit].toLowerCase());
+    }
+    ccSet.delete(toAddress.toLowerCase());
+    const cc = Array.from(ccSet);
+
     const { subject, html, text } = renderEmail(templateRecipient, params.offerId, params.offerDescription, params.results);
-    const result = await sendEmail({ to: toAddress, subject, html, text });
+    const result = await sendEmail({ to: toAddress, cc, subject, html, text });
     if (!result.sent) {
-      logger.warn('draft-order email: not sent', { to: toAddress, reason: result.skipped, requestId: params.requestId });
+      logger.warn('draft-order email: not sent', { to: toAddress, cc, reason: result.skipped, requestId: params.requestId });
     } else {
-      logger.info('draft-order email: sent', { to: toAddress, offerId: params.offerId, requestId: params.requestId });
+      logger.info('draft-order email: sent', { to: toAddress, cc, offerId: params.offerId, requestId: params.requestId });
     }
   } catch (err) {
     logger.error('draft-order email: unexpected failure', { userId: params.userId, requestId: params.requestId }, err instanceof Error ? err : undefined);

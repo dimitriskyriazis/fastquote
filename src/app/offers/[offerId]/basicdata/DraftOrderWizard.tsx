@@ -1177,7 +1177,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
           </>
         )}
 
-        {(categorizedFromSoft1.length > 0 || categorizedByAi.length > 0 || productsToCreateCategorized.length > 0 || existingProductsCategorized.length > 0) && (
+        {(productsToCreateCategorized.length > 0 || existingProductsCategorized.length > 0) && (
           <>
             <p className={styles.sectionTitle}>Category assignments</p>
             {productsToCreateCategorized.length > 0 && (
@@ -1200,32 +1200,6 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                 </p>
                 <ul className={styles.actionsList}>
                   {existingProductsCategorized.map(p => {
-                    const { label, parts } = formatAssignment(p);
-                    return <li key={p.productId}><strong>{label}</strong>: {parts}</li>;
-                  })}
-                </ul>
-              </div>
-            )}
-            {categorizedFromSoft1.length > 0 && (
-              <div className={`${styles.card} ${styles.cardGreen}`}>
-                <p className={styles.sectionTitle} style={{ color: '#166534' }}>
-                  From Soft1 ({categorizedFromSoft1.length})
-                </p>
-                <ul className={styles.actionsList}>
-                  {categorizedFromSoft1.map(p => {
-                    const { label, parts } = formatAssignment(p);
-                    return <li key={p.productId}><strong>{label}</strong>: {parts}</li>;
-                  })}
-                </ul>
-              </div>
-            )}
-            {categorizedByAi.length > 0 && (
-              <div className={styles.card} style={{ borderLeft: '3px solid #3b82f6' }}>
-                <p className={styles.sectionTitle} style={{ color: '#1d4ed8' }}>
-                  Auto-assigned by AI ({categorizedByAi.length})
-                </p>
-                <ul className={styles.actionsList}>
-                  {categorizedByAi.map(p => {
                     const { label, parts } = formatAssignment(p);
                     return <li key={p.productId}><strong>{label}</strong>: {parts}</li>;
                   })}
