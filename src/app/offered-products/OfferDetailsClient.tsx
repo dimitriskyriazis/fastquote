@@ -2,12 +2,37 @@
 
 import React, { useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
-import type { CellValueChangedEvent, ColDef, IRowNode } from 'ag-grid-community';
+import { useRouter } from 'next/navigation';
+import type {
+  CellValueChangedEvent,
+  ColDef,
+  GetContextMenuItemsParams,
+  IRowNode,
+  MenuItemDef,
+} from 'ag-grid-community';
 import PageHeader from '../components/PageHeader';
 import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
 import { formatDateTime } from '../lib/formatDateTime';
 import { showToastMessage } from '../../lib/toast';
 import styles from './OfferDetailsClient.module.css';
+
+const viewInOfferMenuIcon = `
+  <span class="fastquote-menu-icon" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  </span>
+`;
+
+const normalizeOfferId = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
 
 const normalizeOriginValue = (value: unknown): string | null => {
   if (value == null) return null;
@@ -65,6 +90,8 @@ const formatModifiedValue = (value: unknown): string => {
 const redCellStyle = { color: '#dc2626' } as const;
 
 export default function OfferDetailsClient() {
+  const router = useRouter();
+
   const columnDefs: ColDef[] = useMemo(() => [
     {
       field: 'OfferID',
@@ -379,6 +406,26 @@ export default function OfferDetailsClient() {
     [],
   );
 
+  const getContextMenuItems = useCallback(
+    (params: GetContextMenuItemsParams<Record<string, unknown>>) => {
+      const offerId = normalizeOfferId(
+        (params.node?.data as { OfferID?: unknown } | null | undefined)?.OfferID ?? null,
+      );
+      if (offerId == null) {
+        return [];
+      }
+      const viewItem: MenuItemDef<Record<string, unknown>> = {
+        name: 'View in Offer',
+        icon: viewInOfferMenuIcon,
+        action: () => {
+          router.push(`/offers/${encodeURIComponent(String(offerId))}/products`);
+        },
+      };
+      return [viewItem];
+    },
+    [router],
+  );
+
   return (
     <main className={styles.page}>
       <PageHeader title="Offered Products">
@@ -389,6 +436,7 @@ export default function OfferDetailsClient() {
               columnDefs={columnDefs}
               rowGroupPanelShow="always"
               onCellValueChanged={handleCellValueChanged}
+              getContextMenuItems={getContextMenuItems}
             />
           </div>
         </GridQuickSearchProvider>

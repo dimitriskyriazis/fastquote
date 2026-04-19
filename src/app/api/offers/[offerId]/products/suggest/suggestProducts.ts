@@ -331,7 +331,6 @@ Matching rules:
         .slice(0, 8);
     }
   } catch {
-    // Fallback: return top 8 by SQL score
     return candidates.slice(0, 8).map(({ MatchScore, ...rest }) => {
       void MatchScore;
       return rest;
