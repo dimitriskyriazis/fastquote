@@ -153,7 +153,6 @@ export function buildRequestedColumnDefsMap(
             );
           }
         : undefined,
-      autoHeight: isDescription ? true : undefined,
     };
     return column;
   };
@@ -357,7 +356,6 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
             textOverflow: hasLineBreaks ? 'clip' : 'ellipsis',
           };
         },
-        autoHeight: true,
       },
       {
         field: 'Quantity',
@@ -540,7 +538,6 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
           textOverflow: hasLineBreaks ? 'clip' : 'ellipsis',
         };
       },
-      autoHeight: true,
     },
     {
       field: 'ListPrice',
@@ -793,7 +790,6 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
           textOverflow: hasLineBreaks ? 'clip' : 'ellipsis',
         };
       },
-      autoHeight: true,
     },
     {
       field: 'Delivery',

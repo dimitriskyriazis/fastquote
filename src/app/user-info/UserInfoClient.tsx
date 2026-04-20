@@ -28,6 +28,9 @@ type FieldDef = {
 
 const READONLY_FIELDS: FieldDef[] = [
   { key: 'userName', label: 'User Name', editable: false },
+  { key: 'nameCode', label: 'Name Code', editable: false },
+  { key: 'email', label: 'Email', editable: false },
+  { key: 'salesDivision', label: 'Sales Division', editable: false },
   { key: 'salesSeniority', label: 'Sales Seniority', editable: false },
   { key: 'roles', label: 'Roles', editable: false },
 ];
@@ -35,10 +38,7 @@ const READONLY_FIELDS: FieldDef[] = [
 const EDITABLE_FIELDS: FieldDef[] = [
   { key: 'fullName', label: 'Full Name', editable: true, apiField: 'FullName' },
   { key: 'fullNameGR', label: 'Full Name GR', editable: true, apiField: 'FullNameGR' },
-  { key: 'email', label: 'Email', editable: true, apiField: 'Email' },
-  { key: 'salesDivision', label: 'Sales Division', editable: true, apiField: 'SalesDivision', type: 'select' },
   { key: 'signTitle', label: 'Sign Title', editable: true, apiField: 'SignTitle' },
-  { key: 'nameCode', label: 'Name Code', editable: true, apiField: 'NameCode' },
 ];
 
 export default function UserInfoClient() {
@@ -68,10 +68,7 @@ export default function UserInfoClient() {
         const initial: Record<string, string> = {
           fullName: user.fullName,
           fullNameGR: user.fullNameGR,
-          email: user.email,
           signTitle: user.signTitle,
-          nameCode: user.nameCode,
-          salesDivision: user.salesDivision,
         };
         setValues(initial);
         savedValuesRef.current = initial;
@@ -149,6 +146,9 @@ export default function UserInfoClient() {
     if (!userData) return '';
     if (def.key === 'roles') return userData.roles.join(', ');
     if (def.key === 'userName') return userData.userName;
+    if (def.key === 'nameCode') return userData.nameCode;
+    if (def.key === 'email') return userData.email;
+    if (def.key === 'salesDivision') return userData.salesDivision;
     if (def.key === 'salesSeniority') return userData.salesSeniority;
     return '';
   };

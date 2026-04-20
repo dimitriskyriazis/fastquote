@@ -147,22 +147,24 @@ export default function OffersClient() {
     if (!api) return;
     gridApiRef.current = api;
     if (defaultEnabledFilterAppliedRef.current) return;
-    const existingModel = api.getFilterModel() as Record<string, unknown> | null;
-    const nextModel = existingModel && typeof existingModel === 'object' ? { ...existingModel } : {};
     const salesPerson = initialSalesPersonRef.current;
-    const needsEnabledDefault = !('Enabled' in nextModel);
-    const needsSalesPersonFilter = Boolean(salesPerson);
-    if (!needsEnabledDefault && !needsSalesPersonFilter) {
+    const hasSalesPersonFilter = Boolean(salesPerson);
+    const existingModel = api.getFilterModel() as Record<string, unknown> | null;
+    const baseModel: Record<string, unknown> = hasSalesPersonFilter
+      ? {}
+      : (existingModel && typeof existingModel === 'object' ? { ...existingModel } : {});
+    const needsEnabledDefault = !('Enabled' in baseModel);
+    if (!needsEnabledDefault && !hasSalesPersonFilter) {
       defaultEnabledFilterAppliedRef.current = true;
       return;
     }
     if (needsEnabledDefault) {
-      nextModel.Enabled = { filterType: 'set', values: ['true'] };
+      baseModel.Enabled = { filterType: 'set', values: ['true'] };
     }
-    if (needsSalesPersonFilter) {
-      nextModel.SalesPerson = { filterType: 'text', type: 'equals', filter: salesPerson };
+    if (hasSalesPersonFilter) {
+      baseModel.SalesPerson = { filterType: 'text', type: 'equals', filter: salesPerson };
     }
-    api.setFilterModel(nextModel);
+    api.setFilterModel(baseModel);
     defaultEnabledFilterAppliedRef.current = true;
   }, []);
   const handleCreateOfferClick = useCallback(() => {

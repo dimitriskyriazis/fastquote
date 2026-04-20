@@ -1569,16 +1569,36 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const row = params.data;
     if (!row) return DEFAULT_ROW_HEIGHT;
 
-    // Check if Description or Comment fields contain line breaks
-    const description = (row.ProductDescription ?? row.Description ?? '') as string;
-    const comment = (row.Comment ?? '') as string;
+    // Cells use whiteSpace: 'pre' (no soft-wrapping), so line count == newlines + 1.
+    // Pre-computing height from the string is ~free; letting AG Grid auto-measure
+    // the DOM caused scroll lag on pages with multiline rows.
+    const MULTILINE_LINE_PX = 21; // 14px font * 1.5 line-height
+    const MULTILINE_PADDING_PX = 11;
 
-    // If either field contains newlines, return undefined to let AG Grid auto-calculate height
-    if (description.includes('\n') || comment.includes('\n')) {
-      return undefined;
+    const fields: Array<unknown> = [
+      row.ProductDescription,
+      row.Description,
+      row.Comment,
+      row.RequestedDescription,
+      row.RequestedDescription2,
+      row.RequestedDescription3,
+    ];
+
+    let maxLines = 1;
+    for (const value of fields) {
+      if (typeof value !== 'string' || value.length === 0) continue;
+      let lines = 1;
+      for (let i = 0; i < value.length; i++) {
+        if (value.charCodeAt(i) === 10) lines++;
+      }
+      if (lines > maxLines) maxLines = lines;
     }
 
-    return DEFAULT_ROW_HEIGHT;
+    if (maxLines === 1) return DEFAULT_ROW_HEIGHT;
+    return Math.max(
+      DEFAULT_ROW_HEIGHT,
+      maxLines * MULTILINE_LINE_PX + MULTILINE_PADDING_PX,
+    );
   }, []);
 
   const getRowHeight = useCallback(
