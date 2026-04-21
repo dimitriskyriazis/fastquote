@@ -3,7 +3,7 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type {
   CellValueChangedEvent,
   ColDef,
@@ -149,6 +149,9 @@ export default function PriceListProductsClient({
     [priceListId],
   );
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialPartNumberFilterRef = useRef((searchParams.get("partNumber") ?? "").trim());
+  const initialDescriptionFilterRef = useRef((searchParams.get("description") ?? "").trim());
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
 
   const handleServerRequest = useCallback((request: ServerRequestWithQuickFilter) => {
@@ -207,14 +210,24 @@ export default function PriceListProductsClient({
     if (!api || defaultEnabledFilterAppliedRef.current) return;
     const existingModel = api.getFilterModel() as Record<string, unknown> | null;
     const nextModel = existingModel && typeof existingModel === "object" ? { ...existingModel } : {};
-    if ("Enabled" in nextModel) {
-      defaultEnabledFilterAppliedRef.current = true;
-      return;
+    const initialPartNumber = initialPartNumberFilterRef.current;
+    const initialDescription = initialDescriptionFilterRef.current;
+    let changed = false;
+    if (!("Enabled" in nextModel)) {
+      nextModel.Enabled = { filterType: "set", values: ["true"] };
+      changed = true;
     }
-    api.setFilterModel({
-      ...nextModel,
-      Enabled: { filterType: "set", values: ["true"] },
-    });
+    if (initialPartNumber && !("PartNumber" in nextModel)) {
+      nextModel.PartNumber = { filterType: "text", type: "equals", filter: initialPartNumber };
+      changed = true;
+    }
+    if (initialDescription && !("Description" in nextModel)) {
+      nextModel.Description = { filterType: "text", type: "contains", filter: initialDescription };
+      changed = true;
+    }
+    if (changed) {
+      api.setFilterModel(nextModel);
+    }
     defaultEnabledFilterAppliedRef.current = true;
   }, []);
 

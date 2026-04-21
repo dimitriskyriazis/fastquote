@@ -11,10 +11,6 @@ import type {
   MenuItemDef,
   CellValueChangedEvent,
 } from 'ag-grid-community';
-import { createPortal } from 'react-dom';
-import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from '../components/actionMenuMarkers';
-import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from '../components/useActionMenuCoordinator';
-import { useActionMenuPosition } from '../components/useActionMenuPosition';
 import { GridRowDeletion } from '../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../lib/deletePermissions';
 import { useAuditUser } from '../components/AuditUserProvider';
@@ -347,6 +343,21 @@ export default function StandardPackagesClient() {
         return items;
       }
 
+      const encodedOfferId = encodeURIComponent(String(clickedOfferId));
+      const productsHref = `/offers/${encodedOfferId}/products`;
+      const productsMenuIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>';
+      const newTabIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>';
+      const viewProductsItem: MenuItemDef<Record<string, unknown>> = {
+        name: 'View Products',
+        icon: productsMenuIcon,
+        action: () => { routerRef.current.push(productsHref); },
+        subMenu: [
+          { name: 'Open', icon: productsMenuIcon, action: () => { routerRef.current.push(productsHref); } },
+          { name: 'Open in new tab', icon: newTabIcon, action: () => { window.open(productsHref, '_blank', 'noopener,noreferrer'); } },
+        ],
+      };
+      items.unshift(viewProductsItem, 'separator');
+
       const versionMenuItem: MenuItemDef<Record<string, unknown>> = {
         name: 'Create new version',
         icon: duplicateVersionMenuIcon,
@@ -396,113 +407,6 @@ export default function StandardPackagesClient() {
     if (value == null || value === '') return '-';
     return formatDateTime(value as string | Date);
   };
-
-  const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
-    const ActionMenu: React.FC = () => {
-      const [open, setOpen] = useState(false);
-      const closeMenu = useCallback(() => setOpen(false), []);
-      const instanceId = useActionMenuCloseListener(closeMenu);
-      const { buttonRef, menuRef, menuPos } = useActionMenuPosition(open);
-      const id = params?.data?.ID as string | number | undefined;
-      const encodedId = id != null ? encodeURIComponent(String(id)) : '';
-
-      const preventRangeSelection = (event: React.SyntheticEvent) => {
-        event.preventDefault();
-        event.stopPropagation();
-      };
-
-      const openProducts = () => {
-        if (!encodedId) return;
-        const url = `/offers/${encodedId}/products`;
-        setOpen(false);
-        if (typeof window !== 'undefined') {
-          window.open(url, '_blank', 'noopener,noreferrer');
-          return;
-        }
-        routerRef.current.push(url);
-      };
-
-      useEffect(() => {
-        if (!open) return;
-        const onDocClick = (e: MouseEvent) => {
-          if (!(e.target instanceof Node)) return setOpen(false);
-          if (buttonRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
-          setOpen(false);
-        };
-        window.addEventListener('click', onDocClick);
-        return () => window.removeEventListener('click', onDocClick);
-      }, [open, buttonRef, menuRef]);
-
-      const lines = (
-        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="3" y="4" width="10" height="1.5" rx="0.75" fill="currentColor"/>
-          <rect x="3" y="7.25" width="10" height="1.5" rx="0.75" fill="currentColor"/>
-          <rect x="3" y="10.5" width="10" height="1.5" rx="0.75" fill="currentColor"/>
-        </svg>
-      );
-
-      return (
-        <div
-          className={styles.actionCell}
-          {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-        >
-          <button
-            type="button"
-            aria-haspopup="menu"
-            aria-expanded={open}
-            className={styles.actionButton}
-            {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (!open) {
-                dispatchActionMenuCloseEvent(instanceId);
-              }
-              setOpen((v) => !v);
-            }}
-            onMouseDownCapture={preventRangeSelection}
-            onPointerDownCapture={preventRangeSelection}
-            onContextMenuCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
-            disabled={!encodedId}
-            title={encodedId ? 'Open menu' : 'Missing standard package ID'}
-            ref={buttonRef}
-          >
-            {lines}
-          </button>
-          {open && menuPos && createPortal(
-            <div
-              role="menu"
-              className={styles.actionMenu}
-              style={{ top: menuPos.top, left: menuPos.left }}
-              ref={menuRef}
-              {...{ [ACTION_MENU_PANEL_ATTRIBUTE]: 'true' }}
-              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
-            >
-              <button
-                type="button"
-                role="menuitem"
-                className={styles.actionMenuItem}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  openProducts();
-                }}
-              >
-                View Products
-              </button>
-            </div>,
-            document.body,
-          )}
-        </div>
-      );
-    };
-
-    return <ActionMenu />;
-  }, []);
 
   const OfferVersionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     const data = params.data as Record<string, unknown> | null | undefined;
@@ -616,23 +520,6 @@ export default function StandardPackagesClient() {
 
   const columnDefs: ColDef[] = useMemo(() => [
     {
-      headerName: '',
-      field: '__actions__',
-      pinned: 'left',
-      lockPinned: true,
-      lockPosition: true,
-      suppressNavigable: true,
-      resizable: false,
-      sortable: false,
-      filter: false,
-      suppressMovable: true,
-      suppressSizeToFit: true,
-      suppressColumnsToolPanel: true,
-      width: 48,
-      cellClass: styles.actionCellContainer,
-      cellRenderer: ActionCell,
-    },
-    {
       field: 'Description',
       headerName: 'Description',
       filter: 'agTextColumnFilter',
@@ -706,7 +593,7 @@ export default function StandardPackagesClient() {
         comparator: (valueA: string, valueB: string) => (valueA === valueB ? 0 : valueA === 'true' ? -1 : 1),
       },
     },
-  ], [ActionCell, OfferVersionCell]);
+  ], [OfferVersionCell]);
 
   return (
     <main className={styles.page}>

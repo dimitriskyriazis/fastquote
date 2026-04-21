@@ -50,6 +50,8 @@ async function fetchProductHistoryRows(productId: number) {
         od.OfferID,
         o.OfferDate,
         c.Name AS CustomerName,
+        sales.FullName AS SalesPerson,
+        pp.Name AS PricingPolicyName,
         od.ListPrice,
         od.CustomerDiscount,
         od.NetUnitPrice,
@@ -58,6 +60,8 @@ async function fetchProductHistoryRows(productId: number) {
       FROM dbo.OfferDetails AS od
       INNER JOIN dbo.Offer AS o ON od.OfferID = o.ID
       INNER JOIN dbo.Customers AS c ON o.CustomerID = c.ID
+      LEFT JOIN dbo.AspNetUsers AS sales ON o.SalesPersonId = sales.Id
+      LEFT JOIN dbo.PricingPolicies AS pp ON o.PricingPolicyID = pp.ID
       WHERE od.ProductID = @productId
       ORDER BY o.OfferDate DESC, od.OfferID DESC
     `);

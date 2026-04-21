@@ -20,7 +20,7 @@ type Props = {
 
 type Lang = 'el' | 'en';
 type Orientation = 'portrait' | 'landscape';
-type MenuStep = 'columns' | 'totals' | 'language' | 'orientation';
+type MenuStep = 'columns' | 'totals' | 'orientation';
 type DropPosition = 'before' | 'after';
 type DropPreview = { column: PdfProductColumn; position: DropPosition } | null;
 
@@ -203,11 +203,6 @@ export default function ExportPdfButton({ offerId, className }: Props) {
 
     reorderColumn(sourceColumn, targetColumn, position);
     clearDragState();
-  };
-
-  const handleLangSelect = (lang: Lang) => {
-    setSelectedLang(lang);
-    setMenuStep('orientation');
   };
 
   const handleExport = useCallback(
@@ -470,10 +465,6 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                   disabled={loadingSettings}
                   onClick={async () => {
                     const hasTotalColumns = !equipmentList && selectedColumns.some((c) => PRICE_COLUMN_SET.has(c));
-                    if (!hasTotalColumns) {
-                      setMenuStep('language');
-                      return;
-                    }
                     setLoadingSettings(true);
                     try {
                       const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/pdf-settings`);
@@ -486,16 +477,16 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                         setPrintSubSubCategories(!!data.printSubSubCategories);
                         if (data.offerLanguage === 'English') setSelectedLang('en');
                         else if (data.offerLanguage === 'Greek') setSelectedLang('el');
-                        if ((data.noOfLevels ?? 0) > 0) {
+                        if (hasTotalColumns && (data.noOfLevels ?? 0) > 0) {
                           setMenuStep('totals');
                         } else {
-                          setMenuStep('language');
+                          setMenuStep('orientation');
                         }
                       } else {
-                        setMenuStep('language');
+                        setMenuStep('orientation');
                       }
                     } catch {
-                      setMenuStep('language');
+                      setMenuStep('orientation');
                     } finally {
                       setLoadingSettings(false);
                     }
@@ -587,56 +578,11 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                     padding: '8px 10px',
                     cursor: 'pointer',
                   }}
-                  onClick={() => setMenuStep('language')}
+                  onClick={() => setMenuStep('orientation')}
                 >
                   Continue
                 </button>
               </div>
-            </>
-          )}
-
-          {menuStep === 'language' && (
-            <>
-              <div style={menuHeaderStyle}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const hasTotalColumns = selectedColumns.some((c) => PRICE_COLUMN_SET.has(c));
-                    setMenuStep(hasTotalColumns && noOfLevels > 0 ? 'totals' : 'columns');
-                  }}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: 10,
-                    fontWeight: 600,
-                    color: '#64748b',
-                    padding: 0,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                  }}
-                >
-                  &larr; Language
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleLangSelect('el')}
-                style={menuItemStyle}
-                onMouseEnter={(e) => handleHover(e, true)}
-                onMouseLeave={(e) => handleHover(e, false)}
-              >
-                Ελληνικά (Greek)
-              </button>
-              <button
-                type="button"
-                onClick={() => handleLangSelect('en')}
-                style={menuItemStyle}
-                onMouseEnter={(e) => handleHover(e, true)}
-                onMouseLeave={(e) => handleHover(e, false)}
-              >
-                English
-              </button>
             </>
           )}
 
@@ -645,7 +591,10 @@ export default function ExportPdfButton({ offerId, className }: Props) {
               <div style={menuHeaderStyle}>
                 <button
                   type="button"
-                  onClick={() => setMenuStep('language')}
+                  onClick={() => {
+                    const hasTotalColumns = !equipmentList && selectedColumns.some((c) => PRICE_COLUMN_SET.has(c));
+                    setMenuStep(hasTotalColumns && noOfLevels > 0 ? 'totals' : 'columns');
+                  }}
                   style={{
                     background: 'none',
                     border: 'none',

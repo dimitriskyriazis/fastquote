@@ -59,8 +59,6 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
           <Link
             href={`/offers/${encodeURIComponent(decodedId)}/products`}
             className={`${styles.headerActionButton} page-header-button`}
-            target="_blank"
-            rel="noopener noreferrer"
           >
             View Products
           </Link>

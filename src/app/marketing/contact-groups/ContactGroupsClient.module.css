@@ -49,29 +49,3 @@
   /* Inherits from page-header-button */
 }
 
-.detailsButton {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: #64748b;
-  padding: 0;
-  transition: color 120ms ease;
-}
-
-.detailsButton:hover {
-  color: #3b82f6;
-}
-
-.actionCellContainer {
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  user-select: none;
-  cursor: default;
-}

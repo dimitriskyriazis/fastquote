@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useCallback, useRef, useState, useEffect } from "react";
+import React, { useMemo, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import type {
@@ -8,18 +8,12 @@ import type {
   ColDef,
   GridApi,
   GetContextMenuItemsParams,
-  ICellRendererParams,
   MenuItemDef,
 } from "ag-grid-community";
-import { createPortal } from "react-dom";
-import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from "../components/actionMenuMarkers";
-import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from "../components/useActionMenuCoordinator";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
 import { useAuditUser } from "../components/AuditUserProvider";
-import Link from "next/link";
 import styles from "./CustomersClient.module.css";
-import { useActionMenuPosition } from "../components/useActionMenuPosition";
 import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
@@ -97,135 +91,8 @@ export default function CustomersClient() {
     defaultEnabledFilterAppliedRef.current = true;
   }, []);
 
-  const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
-    const ActionMenu: React.FC = () => {
-      const [open, setOpen] = useState(false);
-      const closeMenu = useCallback(() => setOpen(false), []);
-      const instanceId = useActionMenuCloseListener(closeMenu);
-      const { buttonRef, menuRef, menuPos } = useActionMenuPosition(open);
-      const id = params?.data?.CustomerID as string | number | undefined;
-      const encodedId = id != null ? encodeURIComponent(String(id)) : "";
-
-      const preventRangeSelection = (event: React.SyntheticEvent) => {
-        event.preventDefault();
-        event.stopPropagation();
-      };
-
-      useEffect(() => {
-        if (!open) return;
-        const onDocClick = (e: MouseEvent) => {
-          if (!(e.target instanceof Node)) return setOpen(false);
-          if (buttonRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
-          setOpen(false);
-        };
-        window.addEventListener("click", onDocClick);
-        return () => window.removeEventListener("click", onDocClick);
-      }, [open, buttonRef, menuRef]);
-
-      const lines = (
-        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="3" y="4" width="10" height="1.5" rx="0.75" fill="currentColor" />
-          <rect x="3" y="7.25" width="10" height="1.5" rx="0.75" fill="currentColor" />
-          <rect x="3" y="10.5" width="10" height="1.5" rx="0.75" fill="currentColor" />
-        </svg>
-      );
-
-      return (
-        <div
-          className={styles.actionCell}
-          {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-        >
-          <button
-            type="button"
-            aria-haspopup="menu"
-            aria-expanded={open}
-            className={styles.actionButton}
-            {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (!open) {
-                dispatchActionMenuCloseEvent(instanceId);
-              }
-              setOpen((v) => !v);
-            }}
-            onMouseDownCapture={preventRangeSelection}
-            onPointerDownCapture={preventRangeSelection}
-            onContextMenuCapture={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-            disabled={!encodedId}
-            title={encodedId ? "Open menu" : "Missing Customer ID"}
-            ref={buttonRef}
-          >
-            {lines}
-          </button>
-          {open &&
-            menuPos &&
-            createPortal(
-              <div
-                role="menu"
-                className={styles.actionMenu}
-                style={{ top: menuPos.top, left: menuPos.left }}
-                ref={menuRef}
-                {...{ [ACTION_MENU_PANEL_ATTRIBUTE]: 'true' }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-              >
-                <Link
-                  role="menuitem"
-                  className={styles.actionMenuItem}
-                  href={`/customers/${encodedId}/basicdata`}
-                  prefetch={false}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  View Basic Data
-                </Link>
-                <Link
-                  role="menuitem"
-                  className={styles.actionMenuItem}
-                  href={`/customers/${encodedId}/contacts`}
-                  prefetch={false}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  View Contacts
-                </Link>
-              </div>,
-              document.body,
-            )}
-        </div>
-      );
-    };
-
-    return <ActionMenu />;
-  }, []);
-
   const columnDefs = useMemo<ColDef[]>(
     () => [
-      {
-        headerName: "",
-        field: "__actions__",
-        pinned: "left",
-        lockPinned: true,
-        lockPosition: true,
-        suppressNavigable: true,
-        resizable: false,
-        sortable: false,
-        filter: false,
-        suppressMovable: true,
-        suppressSizeToFit: true,
-        suppressColumnsToolPanel: true,
-        width:48,
-        cellClass: styles.actionCellContainer,
-        cellRenderer: ActionCell,
-      },
       {
         field: "CustomerID",
         headerName: "ID",
@@ -322,7 +189,7 @@ export default function CustomersClient() {
         },
       },
     ],
-    [ActionCell, enabledOptions],
+    [enabledOptions],
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
@@ -432,7 +299,35 @@ export default function CustomersClient() {
       const selectedNodes = typeof params.api?.getSelectedNodes === "function"
         ? params.api.getSelectedNodes()
         : [];
-      if (selectedNodes.length > 1) {
+      const isMultiSelection = selectedNodes.length > 1;
+
+      const encodedCustomerId = encodeURIComponent(String(clickedCustomerId));
+      const basicDataHref = `/customers/${encodedCustomerId}/basicdata`;
+      const contactsHref = `/customers/${encodedCustomerId}/contacts`;
+      const basicDataIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>';
+      const contactsIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>';
+      const newTabIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>';
+      const viewBasicDataItem: MenuItemDef<Record<string, unknown>> = {
+        name: 'View Basic Data',
+        icon: basicDataIcon,
+        action: () => { router.push(basicDataHref); },
+        subMenu: [
+          { name: 'Open', icon: basicDataIcon, action: () => { router.push(basicDataHref); } },
+          { name: 'Open in new tab', icon: newTabIcon, action: () => { window.open(basicDataHref, '_blank', 'noopener,noreferrer'); } },
+        ],
+      };
+      const viewContactsItem: MenuItemDef<Record<string, unknown>> = {
+        name: 'View Contacts',
+        icon: contactsIcon,
+        action: () => { router.push(contactsHref); },
+        subMenu: [
+          { name: 'Open', icon: contactsIcon, action: () => { router.push(contactsHref); } },
+          { name: 'Open in new tab', icon: newTabIcon, action: () => { window.open(contactsHref, '_blank', 'noopener,noreferrer'); } },
+        ],
+      };
+      items.unshift(viewBasicDataItem, viewContactsItem, 'separator');
+
+      if (isMultiSelection) {
         return items;
       }
 

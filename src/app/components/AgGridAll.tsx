@@ -825,6 +825,11 @@ const readPersistedColumnState = (key: string, currentFingerprint?: string): Sav
     if (!parsed || !Array.isArray(parsed.columns)) return null;
     // If columns were added or removed, discard the saved state for this grid.
     if (currentFingerprint && typeof parsed.fingerprint === 'string' && parsed.fingerprint !== currentFingerprint) {
+      console.log('[AgGridAll] Column fingerprint mismatch — discarding saved state', {
+        key,
+        storedFingerprint: parsed.fingerprint,
+        currentFingerprint,
+      });
       window.localStorage.removeItem(key);
       return null;
     }
@@ -3033,6 +3038,8 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
     const options: GridOptions<RowData> = {
       cellSelection: true,
       maintainColumnOrder,
+      tooltipShowDelay: 300,
+      tooltipHideDelay: 10000,
     };
     if (useAgGridRowDrag) {
       options.rowDragMultiRow = true;
@@ -3509,10 +3516,13 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 
     const filterByItem = hasRowNode ? createFilterByMenuItem(params) : null;
 
-    if (!filterByItem) {
-      const itemsWithAutoSize = autoSizeItems.length > 0 ? [...autoSizeItems, ...menuItems] : menuItems;
-      return wrapActions(replaceExportItem(replaceDeleteItem(itemsWithAutoSize)));
-    }
+    // If the caller returned custom leading items (MenuItemDef objects before the first separator),
+    // place injected utilities (Filter By / Auto Size) after that separator instead of at position 0,
+    // so page-specific actions stay on top.
+    const firstSeparatorIdx = menuItems.findIndex((item) => item === 'separator');
+    const leadingBlock = firstSeparatorIdx >= 0 ? menuItems.slice(0, firstSeparatorIdx) : menuItems;
+    const hasLeadingCustomItems = leadingBlock.some((item) => typeof item === 'object' && item !== null);
+    const topInsertIdx = hasLeadingCustomItems && firstSeparatorIdx >= 0 ? firstSeparatorIdx + 1 : 0;
 
     const isExportMenuItem = (
       item: MenuItemDef<RowData> | DefaultMenuItem | string,
@@ -3524,16 +3534,22 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
       return false;
     };
 
-    const itemsWithFilter = [...menuItems];
-    const exportIndex = itemsWithFilter.findIndex((item) => isExportMenuItem(item));
-    if (exportIndex >= 0) {
-      itemsWithFilter.splice(exportIndex, 0, filterByItem);
-    } else {
-      itemsWithFilter.unshift(filterByItem);
+    if (!filterByItem) {
+      if (autoSizeItems.length === 0) {
+        return wrapActions(replaceExportItem(replaceDeleteItem(menuItems)));
+      }
+      const itemsWithAutoSize = [...menuItems];
+      itemsWithAutoSize.splice(topInsertIdx, 0, ...autoSizeItems);
+      return wrapActions(replaceExportItem(replaceDeleteItem(itemsWithAutoSize)));
     }
 
+    const itemsWithFilter = [...menuItems];
+    const exportIndex = itemsWithFilter.findIndex((item) => isExportMenuItem(item));
+    const filterInsertIdx = exportIndex >= 0 ? exportIndex : topInsertIdx;
+    itemsWithFilter.splice(filterInsertIdx, 0, filterByItem);
+
     if (autoSizeItems.length > 0) {
-      const insertionIndex = filterByItem ? itemsWithFilter.indexOf(filterByItem) + 1 : 0;
+      const insertionIndex = itemsWithFilter.indexOf(filterByItem) + 1;
       const safeIndex = Math.max(0, Math.min(itemsWithFilter.length, insertionIndex));
       itemsWithFilter.splice(safeIndex, 0, ...autoSizeItems);
     }

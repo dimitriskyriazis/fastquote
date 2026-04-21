@@ -1,11 +1,10 @@
 "use client";
 
-import React, { useMemo, useCallback, useState, useRef, useEffect } from 'react';
+import React, { useMemo, useCallback, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type {
   ColDef,
-  ICellRendererParams,
   CellValueChangedEvent,
   GetContextMenuItemsParams,
   GridApi,
@@ -13,10 +12,6 @@ import type {
   DefaultMenuItem,
   IMenuActionParams,
 } from 'ag-grid-community';
-import { createPortal } from 'react-dom';
-import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from '../components/actionMenuMarkers';
-import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from '../components/useActionMenuCoordinator';
-import { useActionMenuPosition } from '../components/useActionMenuPosition';
 import { GridRowDeletion } from '../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../lib/deletePermissions';
 import { useAuditUser } from '../components/AuditUserProvider';
@@ -258,149 +253,59 @@ export default function MailsClient() {
   const getContextMenuItems = useCallback(
     (params: GetContextMenuItemsParams<RowData>) => {
       const typedParams = params as unknown as GetContextMenuItemsParams<MailRow>;
-      const items = mailRowDeletion.getContextMenuItems(typedParams);
-      return normalizeMailContextMenuItems(items ?? []);
+      const baseItems = mailRowDeletion.getContextMenuItems(typedParams) ?? [];
+      const normalized = normalizeMailContextMenuItems(baseItems);
+      const mailId = normalizeMailId(
+        (params.node?.data as { MailID?: unknown } | undefined)?.MailID ?? null,
+      );
+      if (mailId == null) return normalized;
+      const encodedId = encodeURIComponent(String(mailId));
+      const groupsHref = `/marketing/mails/${encodedId}/contact-groups`;
+      const contactsHref = `/marketing/mails/${encodedId}/contacts`;
+      const groupsIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>';
+      const contactsIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>';
+      const newTabIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>';
+      const viewGroupsItem: MenuItemDef<RowData, unknown> = {
+        name: 'View Mail Contact Group List',
+        icon: groupsIcon,
+        action: () => { routerRef.current.push(groupsHref); },
+        subMenu: [
+          {
+            name: 'Open',
+            icon: groupsIcon,
+            action: () => { routerRef.current.push(groupsHref); },
+          },
+          {
+            name: 'Open in new tab',
+            icon: newTabIcon,
+            action: () => { window.open(groupsHref, '_blank', 'noopener,noreferrer'); },
+          },
+        ],
+      };
+      const viewContactsItem: MenuItemDef<RowData, unknown> = {
+        name: 'View Mail Contacts List',
+        icon: contactsIcon,
+        action: () => { routerRef.current.push(contactsHref); },
+        subMenu: [
+          {
+            name: 'Open',
+            icon: contactsIcon,
+            action: () => { routerRef.current.push(contactsHref); },
+          },
+          {
+            name: 'Open in new tab',
+            icon: newTabIcon,
+            action: () => { window.open(contactsHref, '_blank', 'noopener,noreferrer'); },
+          },
+        ],
+      };
+      return [viewGroupsItem, viewContactsItem, 'separator', ...normalized];
     },
     [mailRowDeletion],
   );
 
-  const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
-    const ActionMenu: React.FC = () => {
-      const [open, setOpen] = useState(false);
-      const closeMenu = useCallback(() => setOpen(false), []);
-      const instanceId = useActionMenuCloseListener(closeMenu);
-      const { buttonRef, menuRef, menuPos } = useActionMenuPosition(open);
-      const id = params?.data?.MailID as string | number | undefined;
-      const encodedId = id != null ? encodeURIComponent(String(id)) : '';
-
-      const preventRangeSelection = (event: React.SyntheticEvent) => {
-        event.preventDefault();
-        event.stopPropagation();
-      };
-      const openInNewWindow = (path: string) => {
-        if (!encodedId) return;
-        const url = `/marketing/mails/${encodedId}/${path}`;
-        setOpen(false);
-        if (typeof window !== 'undefined') {
-          window.open(url, '_blank', 'noopener,noreferrer');
-          return;
-        }
-        routerRef.current.push(url);
-      };
-
-      useEffect(() => {
-        if (!open) return;
-        const onDocClick = (e: MouseEvent) => {
-          if (!(e.target instanceof Node)) return setOpen(false);
-          if (buttonRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
-          setOpen(false);
-        };
-        window.addEventListener('click', onDocClick);
-        return () => window.removeEventListener('click', onDocClick);
-      }, [open, buttonRef, menuRef]);
-
-      const lines = (
-        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="3" y="4" width="10" height="1.5" rx="0.75" fill="currentColor"/>
-          <rect x="3" y="7.25" width="10" height="1.5" rx="0.75" fill="currentColor"/>
-          <rect x="3" y="10.5" width="10" height="1.5" rx="0.75" fill="currentColor"/>
-        </svg>
-      );
-
-      return (
-        <div
-          className={styles.actionCell}
-          {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-        >
-          <button
-            type="button"
-            aria-haspopup="menu"
-            aria-expanded={open}
-            className={styles.actionButton}
-            {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (!open) {
-                dispatchActionMenuCloseEvent(instanceId);
-              }
-              setOpen((v) => !v);
-            }}
-            onMouseDownCapture={preventRangeSelection}
-            onPointerDownCapture={preventRangeSelection}
-            onContextMenuCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
-            disabled={!encodedId}
-            title={encodedId ? 'Open menu' : 'Missing mail ID'}
-            ref={buttonRef}
-          >
-            {lines}
-          </button>
-          {open && menuPos && createPortal(
-            <div
-              role="menu"
-              className={styles.actionMenu}
-              style={{ top: menuPos.top, left: menuPos.left }}
-              ref={menuRef}
-              {...{ [ACTION_MENU_PANEL_ATTRIBUTE]: 'true' }}
-              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
-            >
-              <button
-                type="button"
-                role="menuitem"
-                className={styles.actionMenuItem}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  openInNewWindow('contact-groups');
-                }}
-              >
-                View Mail Contact Group List
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className={styles.actionMenuItem}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  openInNewWindow('contacts');
-                }}
-              >
-                View Mail Contacts List
-              </button>
-            </div>,
-            document.body
-          )}
-        </div>
-      );
-    };
-
-    return <ActionMenu />;
-  }, []);
-
   const columnDefs = useMemo<ColDef[]>(
     () => [
-      {
-        headerName: '',
-        field: '__actions__',
-        pinned: 'left',
-        lockPinned: true,
-        lockPosition: true,
-        suppressNavigable: true,
-        resizable: false,
-        sortable: false,
-        filter: false,
-        suppressMovable: true,
-        suppressSizeToFit: true,
-        suppressColumnsToolPanel: true,
-        width: 48,
-        cellClass: styles.actionCellContainer,
-        cellRenderer: ActionCell,
-      },
       {
         field: "Date",
         headerName: "Date",
@@ -451,7 +356,7 @@ export default function MailsClient() {
         },
       },
     ],
-    [enabledOptions, ActionCell],
+    [enabledOptions],
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {

@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type {
   ColDef,
-  ICellRendererParams,
   CellValueChangedEvent,
   GetContextMenuItemsParams,
   GridApi,
@@ -173,57 +172,39 @@ export default function ContactGroupsClient() {
   const getContextMenuItems = useCallback(
     (params: GetContextMenuItemsParams<RowData>) => {
       const typedParams = params as unknown as GetContextMenuItemsParams<GroupRow>;
-      const items = groupRowDeletion.getContextMenuItems(typedParams);
-      return normalizeGroupContextMenuItems(items ?? []);
+      const baseItems = groupRowDeletion.getContextMenuItems(typedParams) ?? [];
+      const normalized = normalizeGroupContextMenuItems(baseItems);
+      const rowId = normalizeGroupId(
+        (params.node?.data as { ContactGroupID?: unknown } | undefined)?.ContactGroupID ?? null,
+      );
+      if (rowId == null) return normalized;
+      const href = `/marketing/contact-groups/${encodeURIComponent(String(rowId))}`;
+      const eyeIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>';
+      const newTabIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>';
+      const viewMembersItem: MenuItemDef<RowData, unknown> = {
+        name: 'View Members',
+        icon: eyeIcon,
+        action: () => { routerRef.current.push(href); },
+        subMenu: [
+          {
+            name: 'Open',
+            icon: eyeIcon,
+            action: () => { routerRef.current.push(href); },
+          },
+          {
+            name: 'Open in new tab',
+            icon: newTabIcon,
+            action: () => { window.open(href, '_blank', 'noopener,noreferrer'); },
+          },
+        ],
+      };
+      return [viewMembersItem, 'separator', ...normalized];
     },
     [groupRowDeletion],
   );
 
-  const viewDetailsIcon = `
-    <span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-        <circle cx="12" cy="12" r="3"/>
-      </svg>
-    </span>
-  `;
-
-  const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
-    if (!params.data) return null;
-    const id = params.data.ContactGroupID as number | undefined;
-    if (!id) return null;
-    return (
-      <button
-        type="button"
-        className={styles.detailsButton}
-        title="View Contact Group Lists"
-        onClick={() => {
-          window.open(`/marketing/contact-groups/${encodeURIComponent(String(id))}`, '_blank', 'noopener,noreferrer');
-        }}
-        dangerouslySetInnerHTML={{ __html: viewDetailsIcon }}
-      />
-    );
-  }, [viewDetailsIcon]);
-
   const columnDefs = useMemo<ColDef[]>(
     () => [
-      {
-        headerName: '',
-        field: '__actions__',
-        pinned: 'left',
-        lockPinned: true,
-        lockPosition: true,
-        suppressNavigable: true,
-        resizable: false,
-        sortable: false,
-        filter: false,
-        suppressMovable: true,
-        suppressSizeToFit: true,
-        suppressColumnsToolPanel: true,
-        width: 48,
-        cellClass: styles.actionCellContainer,
-        cellRenderer: ActionCell,
-      },
       { field: "Description", headerName: "Description", filter: "agTextColumnFilter", editable: canManage, width: 400 },
       { field: "Division", headerName: "Division", filter: "agTextColumnFilter", editable: canManage },
       { field: "GroupImportance", headerName: "Group Importance", filter: "agTextColumnFilter", editable: canManage, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", "High", "Med", "Low"] } },
@@ -251,7 +232,7 @@ export default function ContactGroupsClient() {
         },
       },
     ],
-    [enabledOptions, ActionCell, canManage],
+    [enabledOptions, canManage],
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {

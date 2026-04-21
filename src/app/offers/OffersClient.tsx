@@ -12,10 +12,6 @@ import type {
   MenuItemDef,
   CellValueChangedEvent,
 } from 'ag-grid-community';
-import { createPortal } from 'react-dom';
-import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from '../components/actionMenuMarkers';
-import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from '../components/useActionMenuCoordinator';
-import { useActionMenuPosition } from '../components/useActionMenuPosition';
 import { GridRowDeletion } from '../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../lib/deletePermissions';
 import { useAuditUser } from '../components/AuditUserProvider';
@@ -162,7 +158,7 @@ export default function OffersClient() {
       baseModel.Enabled = { filterType: 'set', values: ['true'] };
     }
     if (hasSalesPersonFilter) {
-      baseModel.SalesPerson = { filterType: 'text', type: 'equals', filter: salesPerson };
+      baseModel.SalesPerson = { filterType: 'text', type: 'contains', filter: salesPerson };
     }
     api.setFilterModel(baseModel);
     defaultEnabledFilterAppliedRef.current = true;
@@ -342,6 +338,32 @@ export default function OffersClient() {
         return items;
       }
 
+      const encodedOfferId = encodeURIComponent(String(clickedOfferId));
+      const basicDataHref = `/offers/${encodedOfferId}/basicdata`;
+      const productsHref = `/offers/${encodedOfferId}/products`;
+      const basicDataIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>';
+      const productsMenuIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>';
+      const newTabIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>';
+      const viewBasicDataItem: MenuItemDef<Record<string, unknown>> = {
+        name: 'View Basic Data',
+        icon: basicDataIcon,
+        action: () => { routerRef.current.push(basicDataHref); },
+        subMenu: [
+          { name: 'Open', icon: basicDataIcon, action: () => { routerRef.current.push(basicDataHref); } },
+          { name: 'Open in new tab', icon: newTabIcon, action: () => { window.open(basicDataHref, '_blank', 'noopener,noreferrer'); } },
+        ],
+      };
+      const viewProductsItem: MenuItemDef<Record<string, unknown>> = {
+        name: 'View Products',
+        icon: productsMenuIcon,
+        action: () => { routerRef.current.push(productsHref); },
+        subMenu: [
+          { name: 'Open', icon: productsMenuIcon, action: () => { routerRef.current.push(productsHref); } },
+          { name: 'Open in new tab', icon: newTabIcon, action: () => { window.open(productsHref, '_blank', 'noopener,noreferrer'); } },
+        ],
+      };
+      items.unshift(viewBasicDataItem, viewProductsItem, 'separator');
+
       const customerId = normalizeOfferIdValue(
         (params.node?.data as { CustomerID?: unknown } | null | undefined)?.CustomerID ?? null,
       );
@@ -428,124 +450,6 @@ export default function OffersClient() {
     if (value == null || value === '') return '-';
     return formatDateTime(value as string | Date);
   };
-
-  const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
-    const ActionMenu: React.FC = () => {
-      const [open, setOpen] = useState(false);
-      const closeMenu = useCallback(() => setOpen(false), []);
-      const instanceId = useActionMenuCloseListener(closeMenu);
-      const { buttonRef, menuRef, menuPos } = useActionMenuPosition(open);
-      const id = params?.data?.offerId as string | number | undefined;
-      const encodedId = id != null ? encodeURIComponent(String(id)) : '';
-
-      const preventRangeSelection = (event: React.SyntheticEvent) => {
-        event.preventDefault();
-        event.stopPropagation();
-      };
-      const openInNewWindow = (suffix: 'products' | 'basicdata') => {
-        if (!encodedId) return;
-        const url = `/offers/${encodedId}/${suffix}`;
-        setOpen(false);
-        if (typeof window !== 'undefined') {
-          window.open(url, '_blank', 'noopener,noreferrer');
-          return;
-        }
-        routerRef.current.push(url);
-      };
-
-      useEffect(() => {
-        if (!open) return;
-        const onDocClick = (e: MouseEvent) => {
-          if (!(e.target instanceof Node)) return setOpen(false);
-          if (buttonRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
-          setOpen(false);
-        };
-        window.addEventListener('click', onDocClick);
-        return () => window.removeEventListener('click', onDocClick);
-      }, [open, buttonRef, menuRef]);
-
-      const lines = (
-        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="3" y="4" width="10" height="1.5" rx="0.75" fill="currentColor"/>
-          <rect x="3" y="7.25" width="10" height="1.5" rx="0.75" fill="currentColor"/>
-          <rect x="3" y="10.5" width="10" height="1.5" rx="0.75" fill="currentColor"/>
-        </svg>
-      );
-
-      return (
-        <div
-          className={styles.actionCell}
-          {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-        >
-          <button
-            type="button"
-            aria-haspopup="menu"
-            aria-expanded={open}
-            className={styles.actionButton}
-            {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (!open) {
-                dispatchActionMenuCloseEvent(instanceId);
-              }
-              setOpen((v) => !v);
-            }}
-            onMouseDownCapture={preventRangeSelection}
-            onPointerDownCapture={preventRangeSelection}
-            onContextMenuCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
-            disabled={!encodedId}
-            title={encodedId ? 'Open menu' : 'Missing offer ID'}
-            ref={buttonRef}
-          >
-            {lines}
-          </button>
-          {open && menuPos && createPortal(
-            <div
-              role="menu"
-              className={styles.actionMenu}
-              style={{ top: menuPos.top, left: menuPos.left }}
-              ref={menuRef}
-              {...{ [ACTION_MENU_PANEL_ATTRIBUTE]: 'true' }}
-              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
-            >
-            <button
-              type="button"
-              role="menuitem"
-              className={styles.actionMenuItem}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                openInNewWindow('basicdata');
-              }}
-            >
-              View Basic Data
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              className={styles.actionMenuItem}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                openInNewWindow('products');
-              }}
-            >
-              View Products
-            </button>
-            </div>,
-            document.body
-          )}
-        </div>
-      );
-    };
-
-    return <ActionMenu />;
-  }, []);
 
   const OfferVersionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
     const data = params.data as Record<string, unknown> | null | undefined;
@@ -645,23 +549,6 @@ export default function OffersClient() {
   }, []);
 
   const columnDefs: ColDef[] = useMemo(() => [
-      {
-        headerName: '',
-        field: '__actions__',
-        pinned: 'left',
-        lockPinned: true,
-        lockPosition: true,
-        suppressNavigable: true,
-        resizable: false,
-        sortable: false,
-        filter: false,
-        suppressMovable: true,
-        suppressSizeToFit: true,
-        suppressColumnsToolPanel: true,
-        width: 48,
-        cellClass: styles.actionCellContainer,
-        cellRenderer: ActionCell,
-      },
     { field: 'ERPProjectCode', headerName: 'ERP Project Code', filter: 'agTextColumnFilter' },
     { field: 'ERPFWCProjectShortName', headerName: 'ERP FWC Project', filter: 'agTextColumnFilter' },
     { field: 'CustomerName', headerName: 'Customer Name', filter: 'agTextColumnFilter', enableRowGroup: true },
@@ -803,7 +690,7 @@ export default function OffersClient() {
       filterParams: { browserDatePicker: false, minValidYear: 2000 },
       hide: true,
     },
-  ], [ActionCell, OfferVersionCell]);
+  ], [OfferVersionCell]);
 
   return (
     <main className={styles.page}>

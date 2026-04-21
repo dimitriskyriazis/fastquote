@@ -8,13 +8,9 @@ import type {
   ColDef,
   GetContextMenuItemsParams,
   GridApi,
-  ICellRendererParams,
+  MenuItemDef,
   ValueFormatterParams,
 } from "ag-grid-community";
-import { createPortal } from "react-dom";
-import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from "../components/actionMenuMarkers";
-import { dispatchActionMenuCloseEvent, useActionMenuCloseListener } from "../components/useActionMenuCoordinator";
-import { useActionMenuPosition } from "../components/useActionMenuPosition";
 import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import styles from "./PriceListsClient.module.css";
@@ -77,12 +73,68 @@ const PRICE_LIST_FIELD_LABELS: Record<string, string> = {
   Enabled: "Enabled",
 };
 
+const PRICING_POLICY_SEPARATOR = "\u001F";
+
+const PRICING_POLICY_INITIALS: Record<string, string> = {
+  "Dealer Level 1": "DL1",
+  "Dealer Level 2": "DL2",
+  "Default Pricing Policy": "DPP",
+  "EP LINC 2023": "EPL23",
+  "Rental Level 1": "RL1",
+  "Rental Level 2": "RL2",
+  "AVC4": "AVC4",
+};
+
+const toPricingPolicyInitials = (name: string): string => {
+  const trimmed = name.trim();
+  if (PRICING_POLICY_INITIALS[trimmed]) return PRICING_POLICY_INITIALS[trimmed];
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return trimmed;
+  const initials = parts
+    .map((part) => {
+      const letter = part.match(/[A-Za-z]/)?.[0] ?? "";
+      const digits = part.match(/\d+/)?.[0] ?? "";
+      return `${letter}${digits}`;
+    })
+    .join("")
+    .toUpperCase();
+  return initials || trimmed;
+};
+
+const parsePricingPolicies = (value: unknown): string[] => {
+  if (typeof value !== "string" || value.length === 0) return [];
+  return value.split(PRICING_POLICY_SEPARATOR).filter((entry) => entry.length > 0);
+};
+
 export default function PriceListsClient() {
   const router = useRouter();
   const { roles, users } = useAuditUser();
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
+  const [maxPricingPolicies, setMaxPricingPolicies] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadMaxPricingPolicies = async () => {
+      try {
+        const res = await fetch("/api/price-lists", { method: "GET" });
+        const payload = (await res.json().catch(() => null)) as
+          | { ok?: boolean; maxPricingPolicies?: number }
+          | null;
+        if (cancelled) return;
+        if (res.ok && payload?.ok && typeof payload.maxPricingPolicies === "number") {
+          setMaxPricingPolicies(Math.max(0, Math.floor(payload.maxPricingPolicies)));
+        }
+      } catch {
+        /* noop */
+      }
+    };
+    void loadMaxPricingPolicies();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const responsibleUserNameById = useMemo(() => {
     const map = new Map<string, string>();
     users.forEach((user) => {
@@ -110,133 +162,6 @@ export default function PriceListsClient() {
 
   const handleImportClick = useCallback(() => {
     router.push("/price-lists/import");
-  }, [router]);
-
-  const ActionCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
-    const ActionMenu: React.FC = () => {
-      const [open, setOpen] = useState(false);
-      const closeMenu = useCallback(() => setOpen(false), []);
-      const instanceId = useActionMenuCloseListener(closeMenu);
-      const { buttonRef, menuRef, menuPos } = useActionMenuPosition(open);
-      const priceListId = params?.data?.PriceListID as string | number | undefined;
-      const encodedId = priceListId != null ? encodeURIComponent(String(priceListId)) : "";
-
-      const preventRangeSelection = (event: React.SyntheticEvent) => {
-        event.preventDefault();
-        event.stopPropagation();
-      };
-
-      const openInNewWindow = (suffix: "products" | "basicdata") => {
-        if (!encodedId) return;
-        const url = `/price-lists/${encodedId}/${suffix}`;
-        setOpen(false);
-        if (typeof window !== "undefined") {
-          window.open(url, "_blank", "noopener,noreferrer");
-          return;
-        }
-        router.push(url);
-      };
-
-      useEffect(() => {
-        if (!open) return;
-        const onDocClick = (e: MouseEvent) => {
-          if (!(e.target instanceof Node)) return setOpen(false);
-          if (buttonRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
-          setOpen(false);
-        };
-        window.addEventListener("click", onDocClick);
-        return () => window.removeEventListener("click", onDocClick);
-      }, [open, buttonRef, menuRef]);
-
-      const lines = (
-        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="3" y="4" width="10" height="1.5" rx="0.75" fill="currentColor" />
-          <rect x="3" y="7.25" width="10" height="1.5" rx="0.75" fill="currentColor" />
-          <rect x="3" y="10.5" width="10" height="1.5" rx="0.75" fill="currentColor" />
-        </svg>
-      );
-
-      return (
-        <div
-          className={styles.actionCell}
-          {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-        >
-          <button
-            type="button"
-            aria-haspopup="menu"
-            aria-expanded={open}
-            className={styles.actionButton}
-            {...{ [ACTION_MENU_TRIGGER_ATTRIBUTE]: 'true' }}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (!open) {
-                dispatchActionMenuCloseEvent(instanceId);
-              }
-              setOpen((v) => !v);
-            }}
-            onMouseDownCapture={preventRangeSelection}
-            onPointerDownCapture={preventRangeSelection}
-            onContextMenuCapture={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-            disabled={!encodedId}
-            title={encodedId ? "Open menu" : "Missing Price List ID"}
-            ref={buttonRef}
-          >
-            {lines}
-          </button>
-          {open &&
-            menuPos &&
-            createPortal(
-              <div
-                role="menu"
-                className={styles.actionMenu}
-                style={{ top: menuPos.top, left: menuPos.left }}
-                ref={menuRef}
-                {...{ [ACTION_MENU_PANEL_ATTRIBUTE]: 'true' }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-              >
-                <button
-                  type="button"
-                  role="menuitem"
-                  className={styles.actionMenuItem}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    openInNewWindow("basicdata");
-                  }}
-                >
-                  View Basic Data
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className={styles.actionMenuItem}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    openInNewWindow("products");
-                  }}
-                >
-                  View Products
-                </button>
-              </div>,
-              document.body
-            )}
-        </div>
-      );
-    };
-
-  return <ActionMenu />;
   }, [router]);
 
   const priceListRowDeletion = useMemo(
@@ -299,6 +224,32 @@ export default function PriceListsClient() {
       );
       if (priceListId == null) return baseItems;
 
+      const encodedPriceListId = encodeURIComponent(String(priceListId));
+      const basicDataHref = `/price-lists/${encodedPriceListId}/basicdata`;
+      const productsHref = `/price-lists/${encodedPriceListId}/products`;
+      const basicDataIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>';
+      const productsMenuIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>';
+      const newTabIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>';
+      const viewBasicDataItem: MenuItemDef<Record<string, unknown>> = {
+        name: 'View Basic Data',
+        icon: basicDataIcon,
+        action: () => { router.push(basicDataHref); },
+        subMenu: [
+          { name: 'Open', icon: basicDataIcon, action: () => { router.push(basicDataHref); } },
+          { name: 'Open in new tab', icon: newTabIcon, action: () => { window.open(basicDataHref, '_blank', 'noopener,noreferrer'); } },
+        ],
+      };
+      const viewProductsItem: MenuItemDef<Record<string, unknown>> = {
+        name: 'View Products',
+        icon: productsMenuIcon,
+        action: () => { router.push(productsHref); },
+        subMenu: [
+          { name: 'Open', icon: productsMenuIcon, action: () => { router.push(productsHref); } },
+          { name: 'Open in new tab', icon: newTabIcon, action: () => { window.open(productsHref, '_blank', 'noopener,noreferrer'); } },
+        ],
+      };
+      baseItems.unshift(viewBasicDataItem, viewProductsItem, 'separator');
+
       const importItem = {
         name: "Import new version",
         icon: importNewVersionIcon,
@@ -337,25 +288,29 @@ export default function PriceListsClient() {
     [priceListRowDeletion, router, importNewVersionIcon, viewOriginalFileIcon],
   );
 
+  const pricingPolicyColumns: ColDef[] = useMemo(
+    () =>
+      Array.from({ length: maxPricingPolicies }, (_, idx) => ({
+        colId: `PP${idx + 1}`,
+        headerName: `PP${idx + 1}`,
+        filter: "agTextColumnFilter",
+        sortable: true,
+        width: 90,
+        valueGetter: (params: { data?: Record<string, unknown> | null }) => {
+          const policies = parsePricingPolicies(params.data?.PricingPolicies);
+          const name = policies[idx];
+          return name ? toPricingPolicyInitials(name) : null;
+        },
+        tooltipValueGetter: (params: { data?: Record<string, unknown> | null }) => {
+          const policies = parsePricingPolicies(params.data?.PricingPolicies);
+          return policies[idx] ?? null;
+        },
+      })),
+    [maxPricingPolicies],
+  );
+
   const columnDefs: ColDef[] = useMemo(
     () => [
-      {
-        headerName: "",
-        field: "__actions__",
-        pinned: "left",
-        lockPinned: true,
-        lockPosition: true,
-        suppressNavigable: true,
-        resizable: false,
-        sortable: false,
-        filter: false,
-        suppressMovable: true,
-        suppressSizeToFit: true,
-        suppressColumnsToolPanel: true,
-        width: 48,
-        cellClass: styles.actionCellContainer,
-        cellRenderer: ActionCell,
-      },
       { field: "Name", headerName: "Price List Name", filter: "agTextColumnFilter" },
       { field: "BrandName", headerName: "Brand", filter: "agTextColumnFilter" },
       { field: "SupplierName", headerName: "Supplier", filter: "agTextColumnFilter", enableRowGroup: true },
@@ -434,8 +389,9 @@ export default function PriceListsClient() {
           return true;
         },
       },
+      ...pricingPolicyColumns,
     ],
-    [ActionCell, enabledOptions, responsibleUserNameById]
+    [enabledOptions, responsibleUserNameById, pricingPolicyColumns]
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {

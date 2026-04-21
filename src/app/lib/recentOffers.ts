@@ -17,12 +17,26 @@ const isValidRecentOffer = (value: unknown): value is RecentOfferSummary => {
 };
 
 const parseStoredValue = (raw: string | null): RecentOfferSummary[] => {
-  if (!raw) return [];
+  if (!raw) {
+    console.log('[recentOffers] No stored value found');
+    return [];
+  }
   try {
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isValidRecentOffer);
-  } catch {
+    if (!Array.isArray(parsed)) {
+      console.warn('[recentOffers] Stored value is not an array — discarding', { parsed });
+      return [];
+    }
+    const valid = parsed.filter(isValidRecentOffer);
+    if (valid.length !== parsed.length) {
+      console.warn('[recentOffers] Some stored entries failed validation', {
+        total: parsed.length,
+        valid: valid.length,
+      });
+    }
+    return valid;
+  } catch (err) {
+    console.warn('[recentOffers] Failed to parse stored value', err);
     return [];
   }
 };
@@ -31,8 +45,8 @@ const persistLocalOffers = (entries: RecentOfferSummary[]) => {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(entries));
-  } catch {
-    /* ignore */
+  } catch (err) {
+    console.warn('[recentOffers] Failed to persist — localStorage may be full or blocked', err);
   }
 };
 

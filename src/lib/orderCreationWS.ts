@@ -26,14 +26,19 @@ export async function createOrderViaWebService(
 
   const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
+  // SoftOne parses numeric strings using Greek locale where '.' is the thousands
+  // separator and ',' is the decimal separator. Sending "191.4" gets stripped to
+  // 1914. Always emit decimals with a comma and a fixed scale.
+  const toErpDecimal = (n: number, scale = 2) => n.toFixed(scale).replace('.', ',');
+
   const items: SetDocsLineItem[] = params.lines.map((line) => {
     const item: SetDocsLineItem = {
       productcode: line.erpCode,
-      qty1: String(line.qty),
-      price: String(line.price),
-      lineval: String(line.qty * line.price),
+      qty1: toErpDecimal(line.qty),
+      price: toErpDecimal(line.price),
+      lineval: toErpDecimal(line.qty * line.price),
     };
-    if (line.netCost != null) item.cost = String(line.netCost);
+    if (line.netCost != null) item.cost = toErpDecimal(line.netCost);
     if (line.warrantyMonths != null) item.warrantymonths = String(line.warrantyMonths);
     return item;
   });

@@ -44,6 +44,7 @@ type PriceListRow = {
   CreatedBy: string | null;
   CreatedOn: string | Date | null;
   FilePath: string | null;
+  PricingPolicies: string | null;
 };
 
 type PriceListRowWithCount = PriceListRow & { __totalCount: number | bigint | null };
@@ -165,6 +166,26 @@ const buildGroupKeyFilter = (field: GroupField, key: string | null) => {
 };
 
 
+export async function GET(req: NextRequest) {
+  logRequest(req, '/api/price-lists');
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<{ MaxCount: number | null }>(`
+      SELECT ISNULL(MAX(cnt), 0) AS MaxCount FROM (
+        SELECT PriceListID, COUNT(DISTINCT PricingPolicyID) AS cnt
+        FROM dbo.PriceListPricingPolicy
+        GROUP BY PriceListID
+      ) t
+    `);
+    const maxPricingPolicies = Number(result.recordset?.[0]?.MaxCount ?? 0);
+    return NextResponse.json({ ok: true, maxPricingPolicies });
+  } catch (err: unknown) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/price-lists');
   try {
@@ -189,7 +210,20 @@ export async function POST(req: NextRequest) {
         dbo.PriceLists.ValidityComment,
         COALESCE(NULLIF(LTRIM(RTRIM(created.FullName)), ''), NULLIF(LTRIM(RTRIM(created.UserName)), ''), CAST(dbo.PriceLists.CreatedBy AS NVARCHAR(450))) AS CreatedBy,
         dbo.PriceLists.CreatedOn,
-        dbo.PriceLists.FilePath
+        dbo.PriceLists.FilePath,
+        (
+          SELECT STRING_AGG(pp.Name, CHAR(31)) WITHIN GROUP (
+            ORDER BY
+              CASE WHEN pp.Name = 'Default Pricing Policy' THEN 0 ELSE 1 END,
+              pp.Name
+          )
+          FROM (
+            SELECT DISTINCT plpp.PricingPolicyID
+            FROM dbo.PriceListPricingPolicy plpp
+            WHERE plpp.PriceListID = dbo.PriceLists.ID
+          ) d
+          INNER JOIN dbo.PricingPolicies pp ON d.PricingPolicyID = pp.ID
+        ) AS PricingPolicies
     `;
 
     const from = `

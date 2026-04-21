@@ -77,6 +77,7 @@ import {
   pasteRowsMenuIcon,
   addStandardPackageMenuIcon,
   createNewProductMenuIcon,
+  viewProductMenuIcon,
 } from './offerProductsIcons';
 import type {
   GridRowNode,
@@ -336,6 +337,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [totalNetInputValue, setTotalNetInputValue] = useState('');
   const [totalNetApplying, setTotalNetApplying] = useState(false);
   const totalNetSubmitPendingRef = useRef(false);
+  const [totalMarginEditing, setTotalMarginEditing] = useState(false);
+  const [totalMarginInputValue, setTotalMarginInputValue] = useState('');
+  const totalMarginSubmitPendingRef = useRef(false);
   const [requestedColumnVisibility, setRequestedColumnVisibility] = useState<Record<RequestedDisplayFieldKey, boolean>>({
     RequestedBrand: false,
     RequestedModelNo: false,
@@ -3020,8 +3024,9 @@ const requestedColumnDefsMap = useMemo(
 
   // Drop the head of the queue plus every subsequent entry whose requested
   // fields are identical (case- and whitespace-insensitive) to the head, and
-  // bump processed count by everything we removed. Used by both assign and
-  // skip so a single user action also clears the duplicate rows.
+  // bump processed count by everything we removed. Returns the removed
+  // duplicate entries so callers (e.g. assign) can apply the same action to
+  // them.
   const consumeQueueHeadWithDuplicates = useCallback((head: RequestedProductMatchEntry) => {
     const norm = (v: string | null | undefined) =>
       (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -3034,30 +3039,31 @@ const requestedColumnDefsMap = useMemo(
       && norm(other.requestedDescription2) === norm(head.requestedDescription2)
       && norm(other.requestedDescription3) === norm(head.requestedDescription3);
 
-    let removed = 0;
+    const duplicates = requestedMatchQueue.slice(1).filter(isDuplicate);
     setRequestedMatchQueue((prev) => {
       if (prev.length === 0) return prev;
-      const tail = prev.slice(1);
-      const remaining = tail.filter((entry) => !isDuplicate(entry));
-      removed = tail.length - remaining.length;
-      return remaining;
+      return prev.slice(1).filter((entry) => !isDuplicate(entry));
     });
-    setProcessedRequestedMatches((prev) => prev + 1 + removed);
-    // removed isn't reliable until React commits the queue update; callers that
-    // need the count should read it via the queue diff instead.
-    const dupCount = requestedMatchQueue.slice(1).filter(isDuplicate).length;
-    return dupCount;
+    setProcessedRequestedMatches((prev) => prev + 1 + duplicates.length);
+    return duplicates;
   }, [requestedMatchQueue]);
 
   const handleManualAssign = useCallback(async (productId: number, comment: string) => {
     if (!currentRequestedMatch) return false;
     const match = currentRequestedMatch;
 
-    const duplicateCount = consumeQueueHeadWithDuplicates(match);
+    const duplicates = consumeQueueHeadWithDuplicates(match);
+    const duplicateCount = duplicates.length;
 
-    assignRequestedRowToProduct(match.offerDetailId, productId, match.parentCategoryId, comment)
-      .then((assignment) => {
-        if (assignment) {
+    Promise.all([
+      assignRequestedRowToProduct(match.offerDetailId, productId, match.parentCategoryId, comment),
+      ...duplicates.map((dup) =>
+        assignRequestedRowToProduct(dup.offerDetailId, productId, dup.parentCategoryId, comment),
+      ),
+    ])
+      .then((results) => {
+        const failed = results.filter((r) => !r).length;
+        if (failed === 0) {
           const msg = duplicateCount > 0
             ? `Requested item filled (+${duplicateCount} identical row${duplicateCount === 1 ? '' : 's'})`
             : 'Requested item filled';
@@ -3065,8 +3071,16 @@ const requestedColumnDefsMap = useMemo(
           try {
             refreshOfferProductGrid(null, { purge: true });
           } catch { /* noop */ }
-        } else {
+        } else if (failed === results.length) {
           showToastMessage('Unable to assign requested item. Please try again.', 'error');
+        } else {
+          showToastMessage(
+            `Assigned ${results.length - failed} of ${results.length} rows; ${failed} failed.`,
+            'error',
+          );
+          try {
+            refreshOfferProductGrid(null, { purge: true });
+          } catch { /* noop */ }
         }
       })
       .catch(() => {
@@ -3080,7 +3094,7 @@ const requestedColumnDefsMap = useMemo(
     if (!currentRequestedMatch) return;
     const match = currentRequestedMatch;
 
-    const duplicateCount = consumeQueueHeadWithDuplicates(match);
+    const duplicateCount = consumeQueueHeadWithDuplicates(match).length;
 
     const msg = duplicateCount > 0
       ? `Skipped requested item (+${duplicateCount} identical row${duplicateCount === 1 ? '' : 's'}).`
@@ -4221,9 +4235,75 @@ const requestedColumnDefsMap = useMemo(
       }
     }
 
-    const rowHasRequestedFields = hasRequestedPseudoFields(rowData);
+    const viewProductPartNumber = normalizeRequestedLookupValue(
+      (rowData as { PartNumber?: unknown }).PartNumber ??
+        (rowData as { RequestedPartNo?: unknown }).RequestedPartNo ?? null,
+    );
+    const viewProductDescription = normalizeDescriptionValue(
+      (rowData as { Description?: unknown }).Description ??
+        (rowData as { RequestedDescription?: unknown }).RequestedDescription ?? null,
+    );
+    if (viewProductPartNumber || viewProductDescription) {
+      const viewProductQs = new URLSearchParams();
+      if (viewProductPartNumber) viewProductQs.set('partNumber', viewProductPartNumber);
+      if (viewProductDescription) viewProductQs.set('description', viewProductDescription);
+      const rawPriceListId = (rowData as { PriceListID?: unknown }).PriceListID;
+      const parsedPriceListId =
+        typeof rawPriceListId === 'number'
+          ? rawPriceListId
+          : typeof rawPriceListId === 'string'
+            ? Number.parseInt(rawPriceListId, 10)
+            : null;
+      const resolvedPriceListId =
+        typeof parsedPriceListId === 'number' &&
+        Number.isInteger(parsedPriceListId) &&
+        parsedPriceListId > 0
+          ? parsedPriceListId
+          : null;
+      const viewProductSubItems: MenuItemDef[] = [
+        {
+          name: 'View Product in Products page',
+          icon: viewProductMenuIcon,
+          action: () => {
+            router.push(`/products?${viewProductQs.toString()}`);
+          },
+        },
+      ];
+      if (resolvedPriceListId != null) {
+        viewProductSubItems.push({
+          name: 'View Product in PriceList',
+          icon: viewProductMenuIcon,
+          action: () => {
+            router.push(
+              `/price-lists/${encodeURIComponent(String(resolvedPriceListId))}/products?${viewProductQs.toString()}`,
+            );
+          },
+        });
+      }
+      const viewProductItem: MenuItemDef = {
+        name: 'View Product',
+        icon: viewProductMenuIcon,
+        subMenu: viewProductSubItems,
+      };
+      const historyIdx = items.findIndex(
+        (item) => typeof item === 'object' && item != null && (item as MenuItemDef).name === "View Product's History",
+      );
+      if (historyIdx >= 0) {
+        items.splice(historyIdx, 0, viewProductItem);
+      } else {
+        const fallbackIdx = findDeleteMenuItemIndex(items);
+        if (fallbackIdx >= 0) {
+          items.splice(fallbackIdx, 0, viewProductItem);
+        } else {
+          items.push(viewProductItem);
+        }
+      }
+    }
 
-    if (rowHasRequestedFields) {
+    const rowHasRequestedFields = hasRequestedPseudoFields(rowData);
+    const rowIsActualProduct = isOfferProductProduct(rowData);
+
+    if (rowHasRequestedFields && !rowIsActualProduct) {
       const requestedBrand = normalizeRequestedLookupValue(
         (rowData as { RequestedBrand?: unknown }).RequestedBrand ?? null,
       );
@@ -4287,25 +4367,10 @@ const requestedColumnDefsMap = useMemo(
         : '';
       const rowIsOfferCurrency = rowCurrencyName.length === 0;
       const rowHasModifier = !rowIsOfferCurrency && currentModifier != null && currentModifier !== '' && currentModifier !== 0;
-      let anyRowHasModifier = rowHasModifier;
-      if (!anyRowHasModifier && api && typeof api.forEachNode === 'function') {
-        api.forEachNode((node) => {
-          if (anyRowHasModifier) return;
-          const val = (node?.data as { CurrencyCostModifier?: unknown } | null | undefined)?.CurrencyCostModifier ?? null;
-          if (val != null && val !== '' && val !== 0) {
-            anyRowHasModifier = true;
-          }
-        });
-      }
       const setModifierItem: MenuItemDef = {
         name: 'Set cost modifier for this brand',
         icon: costModifierMenuIcon,
         action: () => openBrandBulkEdit('CurrencyCostModifier', rowBrandName, currentModifier, 'brand'),
-      };
-      const setOfferModifierItem: MenuItemDef = {
-        name: 'Set cost modifier for this offer',
-        icon: costModifierMenuIcon,
-        action: () => openBrandBulkEdit('CurrencyCostModifier', '', currentModifier, 'offer'),
       };
       const currentCustomerDiscount = (rowData as { CustomerDiscount?: unknown }).CustomerDiscount ?? null;
       const currentTelmacoDiscount = (rowData as { TelmacoDiscount?: unknown }).TelmacoDiscount ?? null;
@@ -4334,9 +4399,6 @@ const requestedColumnDefsMap = useMemo(
       const bulkItems: MenuItemDef[] = [];
       if (rowHasModifier) {
         bulkItems.push(setModifierItem);
-      }
-      if (anyRowHasModifier) {
-        bulkItems.push(setOfferModifierItem);
       }
       bulkItems.push(brandSubmenu);
       if (bulkItems.length > 0) {
@@ -6095,6 +6157,53 @@ const requestedColumnDefsMap = useMemo(
     });
   }, [applyTotalNetPriceScale, totalNetInputValue]);
 
+  const beginEditTotalMargin = useCallback(() => {
+    if (totalNetApplying) return;
+    const current = totals?.totalMargin;
+    const initial = current != null && Number.isFinite(current) ? String(roundMoney(current, 2)) : '';
+    setTotalMarginInputValue(initial);
+    setTotalMarginEditing(true);
+  }, [totalNetApplying, totals]);
+
+  const cancelEditTotalMargin = useCallback(() => {
+    totalMarginSubmitPendingRef.current = false;
+    setTotalMarginEditing(false);
+    setTotalMarginInputValue('');
+  }, []);
+
+  const submitTotalMarginEdit = useCallback(() => {
+    if (totalMarginSubmitPendingRef.current) return;
+    const parsed = coerceNumber(totalMarginInputValue);
+    if (parsed == null || !Number.isFinite(parsed)) {
+      showToastMessage('Please enter a valid total margin.', 'error');
+      setTotalMarginEditing(false);
+      setTotalMarginInputValue('');
+      return;
+    }
+    if (parsed >= 100) {
+      showToastMessage('Total margin must be less than 100.', 'error');
+      return;
+    }
+    const currentCost = totals?.totalCost ?? 0;
+    if (!Number.isFinite(currentCost) || Math.abs(currentCost) < 1e-9) {
+      showToastMessage('Cannot derive target from a zero total cost.', 'error');
+      setTotalMarginEditing(false);
+      setTotalMarginInputValue('');
+      return;
+    }
+    const targetTotalNet = currentCost / (1 - parsed / 100);
+    if (!Number.isFinite(targetTotalNet)) {
+      showToastMessage('Unable to compute a valid target net price.', 'error');
+      return;
+    }
+    totalMarginSubmitPendingRef.current = true;
+    void applyTotalNetPriceScale(roundMoney(targetTotalNet, 2)).finally(() => {
+      totalMarginSubmitPendingRef.current = false;
+      setTotalMarginEditing(false);
+      setTotalMarginInputValue('');
+    });
+  }, [applyTotalNetPriceScale, totalMarginInputValue, totals]);
+
   // Real-time updates for collaborative editing
   // showNotifications: false - only the person making the edit sees toasts from their own actions
   useRealtimeGridUpdates({
@@ -6713,7 +6822,42 @@ const requestedColumnDefsMap = useMemo(
             </div>
             <div className={styles.totalItem}>
               <span className={styles.totalLabel}>Total Margin:</span>
-              <span className={styles.totalValue}>{formatPercentTotal(totals?.totalMargin)}</span>
+              {totalMarginEditing ? (
+                <input
+                  className={styles.totalNetInput}
+                  autoFocus
+                  inputMode="decimal"
+                  value={totalMarginInputValue}
+                  disabled={totalNetApplying}
+                  onChange={(e) => setTotalMarginInputValue(e.target.value)}
+                  onBlur={submitTotalMarginEdit}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      submitTotalMarginEdit();
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      cancelEditTotalMargin();
+                    }
+                  }}
+                />
+              ) : (
+                <span
+                  className={`${styles.totalValue} ${styles.totalNetEditable}`}
+                  role="button"
+                  tabIndex={0}
+                  title="Click to rescale all Net Unit Prices to match a target total margin"
+                  onClick={beginEditTotalMargin}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      beginEditTotalMargin();
+                    }
+                  }}
+                >
+                  {formatPercentTotal(totals?.totalMargin)}
+                </span>
+              )}
             </div>
           </div>
         )}

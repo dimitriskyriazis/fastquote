@@ -386,15 +386,12 @@ function getOfferMeta(data: OfferPdfData, lang: PdfLang) {
     return brand && brand !== name ? `${name}\n${brand}` : name;
   })();
 
-  const subtitle = str(data.customer.address).split(',').slice(0, 2).join(',').trim();
-
   return {
     salesName,
     approvalName,
     refNo,
     date: formatDate(data.offerDate) || '-',
     customerName,
-    subtitle,
     attn: str(data.offerContact) || str(data.contactFullName),
   };
 }
@@ -619,17 +616,6 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
           alignment: 'center',
           margin: [0, 18, 0, 0],
         },
-        ...(meta.subtitle
-          ? [
-              {
-                text: meta.subtitle,
-                fontSize: isLandscape ? 13 : 12,
-                color: COLORS.secondaryText,
-                alignment: 'center',
-                margin: [0, 8, 0, 0],
-              },
-            ]
-          : []),
       ],
       margin: [0, isLandscape ? 70 : 96, 0, 0],
     },
@@ -1156,6 +1142,9 @@ function buildTotalsAndTerms(
 ) {
   const hasPriceColumns = selectedColumns.some(c => PRICE_COLUMNS.has(c));
   const showDiscountSummary = selectedColumns.includes('discount');
+  const hasNetColumns = selectedColumns.includes('unitPrice') || selectedColumns.includes('total');
+  const hasListColumns = selectedColumns.includes('listPrice') || selectedColumns.includes('totalList');
+  const useListTotal = hasListColumns && !hasNetColumns;
   const discountSummary = calculateDiscountSummary(data);
 
   let terms = [
@@ -1203,9 +1192,10 @@ function buildTotalsAndTerms(
     : [];
 
   const finalPriceLabel = str(data.finalPriceLabel) || L.total;
+  const finalPriceValue = useListTotal ? discountSummary.listSubtotal : discountSummary.totalNet;
   const totalRow: PdfCell[] = [
     { text: finalPriceLabel, ...finalPriceStyle },
-    { text: formatCurrency(discountSummary.totalNet), ...finalPriceStyle, alignment: 'right' },
+    { text: formatCurrency(finalPriceValue), ...finalPriceStyle, alignment: 'right' },
   ];
 
   const summaryRows: PdfCell[][] = [...baseRows, totalRow];

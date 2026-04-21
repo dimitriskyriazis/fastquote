@@ -334,13 +334,13 @@ const buildFieldDefinitions = (
   { id: 'customerRef', label: 'Customer Ref', section: 'code', recordKey: 'CustomerRef', updateField: 'CustomerRef' },
   { id: 'protocolNo', label: 'Protocol No', section: 'code', recordKey: 'ProtocolNo', updateField: 'ProtocolNo', valueType: 'number', inputType: 'number' },
 
+  { id: 'offerDate', label: 'Offer', section: 'dates', recordKey: 'OfferDate', updateField: 'OfferDate', inputType: 'date', valueType: 'date' },
+  { id: 'orderSigned', label: 'Order Signed', section: 'dates', recordKey: 'OrderSignedDate', updateField: 'OrderSignedDate', inputType: 'date', valueType: 'date' },
+  { id: 'possibleOrderDate', label: 'Possible Order', section: 'dates', recordKey: 'PossibleOrderDate', updateField: 'PossibleOrderDate', inputType: 'date', valueType: 'date' },
   { id: 'initialRequest', label: 'Draft Request', section: 'dates', recordKey: 'DraftRequestDate', updateField: 'DraftRequestDate', inputType: 'date', valueType: 'date' },
   { id: 'draftOffer', label: 'Draft Offer', section: 'dates', recordKey: 'DraftOfferDate', updateField: 'DraftOfferDate', inputType: 'date', valueType: 'date' },
   { id: 'officialRequest', label: 'Request', section: 'dates', recordKey: 'RequestDate', updateField: 'RequestDate', inputType: 'date', valueType: 'date' },
-  { id: 'offerDate', label: 'Offer', section: 'dates', recordKey: 'OfferDate', updateField: 'OfferDate', inputType: 'date', valueType: 'date' },
   { id: 'offerDeadline', label: 'Offer Deadline', section: 'dates', recordKey: 'OfferDeadlineDate', updateField: 'OfferDeadlineDate', inputType: 'date', valueType: 'date' },
-  { id: 'orderSigned', label: 'Order Signed', section: 'dates', recordKey: 'OrderSignedDate', updateField: 'OrderSignedDate', inputType: 'date', valueType: 'date' },
-  { id: 'possibleOrderDate', label: 'Possible Order', section: 'dates', recordKey: 'PossibleOrderDate', updateField: 'PossibleOrderDate', inputType: 'date', valueType: 'date' },
   { id: 'deliveryDue', label: 'Delivery Due', section: 'dates', recordKey: 'DeliveryDueDate', updateField: 'DeliveryDueDate', inputType: 'date', valueType: 'date' },
 ];
 
@@ -809,6 +809,14 @@ export default function OfferBasicDataClient({
       });
       setValues((prev) => ({ ...prev, [def.id]: resolvedDisplayValue }));
 
+      if (def.id === 'orderSigned') {
+        window.dispatchEvent(
+          new CustomEvent('fastquote:order-signed-date-changed', {
+            detail: resolvedDisplayValue || null,
+          }),
+        );
+      }
+
       if (def.id === 'offerLanguage' && (resolvedDisplayValue === 'Greek' || resolvedDisplayValue === 'English')) {
         const prevLang: OfferLanguage = oldDisplayValue === 'English' ? 'English' : 'Greek';
         const nextLang: OfferLanguage = resolvedDisplayValue as OfferLanguage;
@@ -852,6 +860,29 @@ export default function OfferBasicDataClient({
             } catch (langErr) {
               console.error('Failed to sync language defaults', langErr);
             }
+          }
+        }
+      }
+
+      if (def.id === 'status') {
+        const statusLabel = localStatuses.find((option) => option.value === resolvedDisplayValue)?.label ?? '';
+        if (statusLabel.trim().toLowerCase() === 'order signed' && (savedValuesRef.current.probability ?? '') !== '100') {
+          try {
+            const probRes = await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ updates: [{ field: 'Probability', value: 100 }] }),
+            });
+            if (probRes.ok) {
+              setSavedValues((prev) => {
+                const next = { ...prev, probability: '100' };
+                savedValuesRef.current = next;
+                return next;
+              });
+              setValues((prev) => ({ ...prev, probability: '100' }));
+            }
+          } catch (probErr) {
+            console.error('Failed to auto-set probability to 100', probErr);
           }
         }
       }
@@ -912,7 +943,7 @@ export default function OfferBasicDataClient({
     } finally {
       setPendingFields((prev) => ({ ...prev, [def.id]: false }));
     }
-  }, [fetchContactsByCustomer, offerId, pushUndo, performUndo]);
+  }, [fetchContactsByCustomer, offerId, pushUndo, performUndo, localStatuses]);
 
   const handleBlur = useCallback((def: FieldDefinition) => {
     cancelAutoSaveRef.current(def.id);

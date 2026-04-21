@@ -904,8 +904,6 @@ export default function ClientProductsPage({
         <Link
           href={`/offers/${encodeURIComponent(offerId)}/basicdata`}
           className={`${layoutStyles.headerActionButton} page-header-button`}
-          target="_blank"
-          rel="noopener noreferrer"
         >
           View Basic Data
         </Link>

@@ -94,6 +94,15 @@ export const pasteRowsMenuIcon = `
   </span>
 `;
 
+export const viewProductMenuIcon = `
+  <span class="fastquote-menu-icon fastquote-menu-icon--view-product" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  </span>
+`;
+
 export const createNewProductMenuIcon = `
   <span class="fastquote-menu-icon fastquote-menu-icon--create-product" aria-hidden="true">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">

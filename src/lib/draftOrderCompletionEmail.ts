@@ -49,7 +49,7 @@ async function loadRecipient(userId: string): Promise<Recipient | null> {
   return { email, fullName: row.FullNameGR?.trim() || row.FullName?.trim() || null };
 }
 
-const STATIC_CC_EMAIL = 'neworder@telmaco.gr';
+const STATIC_CC_EMAILS = ['neworder@telmaco.gr', 'procurement@telmaco.gr'];
 const BUSINESS_UNIT_ADMIN_EMAILS: Record<'AVS' | 'TVS', string> = {
   AVS: 'avsadmin@telmaco.gr',
   TVS: 'tvsadmin@telmaco.gr',
@@ -223,7 +223,7 @@ export async function sendDraftOrderCompletionEmail(params: {
     const stakeholderEmails = await loadOfferStakeholderEmails(params.offerId);
     const ccSet = new Set<string>();
     for (const e of stakeholderEmails) ccSet.add(e.toLowerCase());
-    ccSet.add(STATIC_CC_EMAIL.toLowerCase());
+    for (const e of STATIC_CC_EMAILS) ccSet.add(e.toLowerCase());
     if (params.businessUnit) {
       ccSet.add(BUSINESS_UNIT_ADMIN_EMAILS[params.businessUnit].toLowerCase());
     }

@@ -24,6 +24,8 @@ export type HistoryRow = {
   OfferID: number | null;
   OfferDate: Date | string | null;
   CustomerName: string | null;
+  SalesPerson: string | null;
+  PricingPolicyName: string | null;
   ListPrice: number | null;
   CustomerDiscount: number | null;
   NetUnitPrice: number | null;
@@ -88,6 +90,8 @@ export default function ProductHistoryGrid({ rows }: Props) {
       } 
     },
     { field: 'CustomerName', headerName: 'Customer', filter: 'agTextColumnFilter', width: 200, suppressHeaderMenuButton: true, enableRowGroup: true },
+    { field: 'SalesPerson', headerName: 'Sales Person', filter: 'agTextColumnFilter', width: 160, suppressHeaderMenuButton: true, enableRowGroup: true },
+    { field: 'PricingPolicyName', headerName: 'Pricing Policy', filter: 'agTextColumnFilter', width: 160, suppressHeaderMenuButton: true, enableRowGroup: true },
     { field: 'ListPrice', headerName: 'List Price', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: currencyFormatter, suppressHeaderMenuButton: true, enableRowGroup: true },
     { field: 'CustomerDiscount', headerName: 'Customer Discount', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 140, valueFormatter: percentFormatter, suppressHeaderMenuButton: true, enableRowGroup: true },
     { field: 'NetUnitPrice', headerName: 'Net Unit Price', filter: 'agNumberColumnFilter', type: 'numericColumn', width: 150, valueFormatter: currencyFormatter, suppressHeaderMenuButton: true, enableRowGroup: true },
