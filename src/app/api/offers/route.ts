@@ -82,6 +82,7 @@ type OfferRow = {
   Enabled: boolean | number | null;
   OfferDate: string | null;
   ModifiedOn: string | null;
+  ModifiedOnAny: string | null;
   CreatedOn: string | null;
   Probability: number | null;
   PaymentTerms: string | null;
@@ -117,6 +118,15 @@ const LATEST_MODIFIED_EXPRESSION = `
   END
 `.trim();
 
+const LATEST_MODIFIED_ANY_EXPRESSION = `
+  CASE
+    WHEN allOfferDetailsStats.DetailsModifiedOn IS NULL THEN dbo.Offer.ModifiedOn
+    WHEN dbo.Offer.ModifiedOn IS NULL THEN allOfferDetailsStats.DetailsModifiedOn
+    WHEN allOfferDetailsStats.DetailsModifiedOn > dbo.Offer.ModifiedOn THEN allOfferDetailsStats.DetailsModifiedOn
+    ELSE dbo.Offer.ModifiedOn
+  END
+`.trim();
+
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   Description: 'dbo.Offer.Description',
   Title: 'dbo.Offer.Title',
@@ -141,6 +151,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Enabled: 'dbo.Offer.Enabled',
   OfferDate: 'dbo.Offer.OfferDate',
   ModifiedOn: LATEST_MODIFIED_EXPRESSION,
+  ModifiedOnAny: LATEST_MODIFIED_ANY_EXPRESSION,
   CreatedOn: 'dbo.Offer.CreatedOn',
   Probability: 'dbo.Offer.Probability',
   PaymentTerms: 'dbo.Offer.PaymentTerms',
@@ -368,8 +379,8 @@ export async function POST(req: NextRequest) {
 	        dbo.Offer.ParentOfferID,
         COALESCE(versionTree.RootOfferID, dbo.Offer.ID) AS VersionGroupId,
         CASE
-          WHEN EXISTS (SELECT 1 FROM dbo.Offer child WHERE child.ParentOfferID = dbo.Offer.ID) THEN 0
-          ELSE 1
+          WHEN dbo.Offer.OfferVersion = COALESCE(versionStats.MaxOfferVersion, dbo.Offer.OfferVersion) THEN 1
+          ELSE 0
         END AS IsLatestVersion,
         CASE
           WHEN versionStats.VersionCount > 1 THEN 1
@@ -384,6 +395,7 @@ export async function POST(req: NextRequest) {
         dbo.Offer.Probability,
         dbo.Offer.CreatedOn AS CreatedOn,
         ${LATEST_MODIFIED_EXPRESSION} AS ModifiedOn,
+        ${LATEST_MODIFIED_ANY_EXPRESSION} AS ModifiedOnAny,
         dbo.Offer.PaymentTerms,
         dbo.Offer.InstallationSchedule,
         dbo.Offer.OfferNotesClosing,
@@ -407,9 +419,10 @@ export async function POST(req: NextRequest) {
         LEFT JOIN VersionTree versionTree ON versionTree.ID = dbo.Offer.ID
         LEFT JOIN dbo.Offer rootOffer ON rootOffer.ID = COALESCE(versionTree.RootOfferID, dbo.Offer.ID)
         LEFT JOIN (
-          SELECT RootOfferID, COUNT(1) AS VersionCount
-          FROM VersionTree
-          GROUP BY RootOfferID
+          SELECT vt.RootOfferID, COUNT(1) AS VersionCount, MAX(o.OfferVersion) AS MaxOfferVersion
+          FROM VersionTree vt
+          INNER JOIN dbo.Offer o ON o.ID = vt.ID
+          GROUP BY vt.RootOfferID
         ) AS versionStats ON versionStats.RootOfferID = versionTree.RootOfferID
 	        INNER JOIN dbo.Customers ON dbo.Offer.CustomerID = dbo.Customers.ID
 	        LEFT JOIN dbo.CustomerGroups AS offerCustomerGroup ON dbo.Customers.CustomerGroupID = offerCustomerGroup.ID
@@ -428,6 +441,11 @@ export async function POST(req: NextRequest) {
 	          WHERE od.OfferID = dbo.Offer.ID
             AND od.ModifiedBy = @__auditUserId
         ) AS offerDetailsStats
+	        OUTER APPLY (
+	          SELECT MAX(od.ModifiedOn) AS DetailsModifiedOn
+	          FROM dbo.OfferDetails od
+	          WHERE od.OfferID = dbo.Offer.ID
+        ) AS allOfferDetailsStats
     `;
 
     const { where, params: whereParams } = buildWhereAndParams(gridRequest.filterModel);
@@ -450,9 +468,9 @@ export async function POST(req: NextRequest) {
         // When version groups are expanded, historical versions must bypass grid filters
         // (e.g. Enabled=true) so ALL versions in the group are shown.
         // Structure: IsStandardPackage=0 AND ((grid_filters AND is_latest_or_in_expanded) OR is_historical_in_expanded)
-        const isLatest = 'NOT EXISTS (SELECT 1 FROM dbo.Offer child WHERE child.ParentOfferID = dbo.Offer.ID)';
+        const isLatest = 'dbo.Offer.OfferVersion = COALESCE(versionStats.MaxOfferVersion, dbo.Offer.OfferVersion)';
         const inExpandedGroup = `COALESCE(versionTree.RootOfferID, dbo.Offer.ID) IN (${expandedInList})`;
-        const isHistorical = 'EXISTS (SELECT 1 FROM dbo.Offer child WHERE child.ParentOfferID = dbo.Offer.ID)';
+        const isHistorical = 'dbo.Offer.OfferVersion < COALESCE(versionStats.MaxOfferVersion, dbo.Offer.OfferVersion)';
 
         // Strip leading WHERE from the filter clause so we can wrap it in parens
         const filterClause = combinedWhere.trim();
@@ -471,7 +489,7 @@ export async function POST(req: NextRequest) {
           )`;
         }
       } else {
-        const versionVisibilityClause = 'AND NOT EXISTS (SELECT 1 FROM dbo.Offer child WHERE child.ParentOfferID = dbo.Offer.ID)';
+        const versionVisibilityClause = 'AND dbo.Offer.OfferVersion = COALESCE(versionStats.MaxOfferVersion, dbo.Offer.OfferVersion)';
         combinedWhereWithVersions = mergeWhereClauses(combinedWhereWithStandardOffersOnly, versionVisibilityClause);
       }
     } else {

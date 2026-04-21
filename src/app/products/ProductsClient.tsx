@@ -767,20 +767,25 @@ export default function ProductsClient() {
     (api: GridApi<Record<string, unknown>>) => {
       productsApiRef.current = api;
       if (!defaultEnabledFilterAppliedRef.current) {
-        const existingModel = api.getFilterModel() as Record<string, unknown> | null;
-        const nextModel = existingModel && typeof existingModel === "object" ? { ...existingModel } : {};
         const initialPartNumber = initialPartNumberFilterRef.current;
         const initialDescription = initialDescriptionFilterRef.current;
-        let changed = false;
+        const arrivingFromViewProduct = Boolean(initialPartNumber || initialDescription);
+        const existingModel = api.getFilterModel() as Record<string, unknown> | null;
+        const nextModel: Record<string, unknown> = arrivingFromViewProduct
+          ? {}
+          : existingModel && typeof existingModel === "object"
+            ? { ...existingModel }
+            : {};
+        let changed = arrivingFromViewProduct;
         if (!("Enabled" in nextModel)) {
           nextModel.Enabled = { filterType: "set", values: ["true"] };
           changed = true;
         }
-        if (initialPartNumber && !("PartNumber" in nextModel)) {
+        if (initialPartNumber) {
           nextModel.PartNumber = { filterType: "text", type: "equals", filter: initialPartNumber };
           changed = true;
         }
-        if (initialDescription && !("Description" in nextModel)) {
+        if (initialDescription) {
           nextModel.Description = { filterType: "text", type: "contains", filter: initialDescription };
           changed = true;
         }

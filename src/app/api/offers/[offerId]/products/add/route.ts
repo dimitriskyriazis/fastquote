@@ -48,6 +48,12 @@ type GridRequestEnvelope = {
   // Used to keep the filter-pill UI clean (one phrase visible) while the
   // real query still ORs a broad set of synonyms/word-tokens/cross-folds.
   hiddenFilterTokens?: Record<string, HiddenFilterToken[]>;
+  // Product IDs returned by the semantic (vector) search for the current
+  // query — products whose embeddings are nearest to the user's prompt.
+  // Applied as a ranking bonus only (does NOT filter rows out), so keyword
+  // matches still drive inclusion while semantic neighbors bubble to the top
+  // when the user's phrasing doesn't appear literally in the description.
+  semanticCandidates?: number[];
 };
 
 const TREE_ORDERING_RAW_EXPRESSION = 'NULLIF(LTRIM(RTRIM(od.TreeOrdering)), \'\')';
@@ -616,6 +622,23 @@ async function handleProductGrid(
       }
     });
   }
+
+  // Semantic candidates: rank-ordered ProductIDs from the vector search.
+  // Applied as a pure score boost (not a WHERE filter) so that keyword
+  // matches still drive inclusion but semantically similar products bubble
+  // up even when the user's phrasing doesn't appear literally.  The weight
+  // decays linearly with rank — top candidate scores ~100, 50th scores ~2.
+  const rawSemanticCandidates = Array.isArray(body?.semanticCandidates) ? body.semanticCandidates : [];
+  const SEMANTIC_MAX_WEIGHT = 100;
+  let seenSemanticIds = 0;
+  rawSemanticCandidates.forEach((pid, rank) => {
+    if (typeof pid !== 'number' || !Number.isFinite(pid)) return;
+    const paramKey = `__sem_${seenSemanticIds}`;
+    params.push({ key: paramKey, value: Math.trunc(pid) });
+    const weight = Math.max(2, SEMANTIC_MAX_WEIGHT - rank * 2);
+    scoreClauses.push({ clause: `bp.ProductID = @${paramKey}`, weight });
+    seenSemanticIds += 1;
+  });
 
   const orCols = new Set(Array.isArray(body?.orFilterColumns) ? body.orFilterColumns : []);
   const orClauses = clauses.filter((c) => orCols.has(c.colId)).map((c) => c.clause);

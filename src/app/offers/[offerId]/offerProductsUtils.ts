@@ -350,6 +350,364 @@ export type FilterExpansions = {
   description?: string[];
 };
 
+// AI-supplied classification of a free-text prompt into column-specific
+// fragments.  When present, each non-null value is the verbatim substring of
+// the user's query that belongs in that column — e.g. "Samsung TV 55 inch"
+// → { brand: "Samsung", description: "TV 55 inch" }.  Lets the visible filter
+// chip land on the correct column instead of dumping everything into
+// Description.  Optional priceMin/priceMax populate a ListPrice number
+// filter when the prompt includes a price hint ("tv around 5000$",
+// "projector under 10k", "camera 3000-5000€").
+export type PromptRouting = {
+  brand: string | null;
+  partNumber: string | null;
+  modelNumber: string | null;
+  description: string | null;
+  priceMin: number | null;
+  priceMax: number | null;
+};
+
+export type HiddenFilterTokens = Record<string, Array<{ filter: string; weight?: number }>>;
+
+// Brand tiering: primary (user-specified) brand tokens get this much of a
+// score boost over synonym expansions, so rows whose BrandName matches the
+// exact requested brand rank above rows matching only a synonym.  Synonym
+// matches still appear — they just fall to the bottom when primary-brand
+// hits exist.
+const BRAND_PRIMARY_WEIGHT = 10;
+const BRAND_SYNONYM_WEIGHT = 1;
+
+// Split the compound brand filter into:
+//   - one visible BrandName chip showing the raw primary brand (unchanged UX), and
+//   - a hidden-tokens list carrying ALL brand conditions including the primary,
+//     with primary tokens weight-10 and synonym expansions weight-1.
+// The duplicated-in-hidden primary is intentional: the visible filter clause
+// carries no weight multiplier server-side, so stashing the primary in hidden
+// with a high weight is how we inject the tiered score.
+function splitBrandFilterWithTiering(
+  filters: Record<string, FuzzyTextFilter>,
+  hidden: HiddenFilterTokens,
+  compound: FuzzyTextFilter | null,
+  rawBrand: string | null,
+): void {
+  if (!compound) return;
+  const rawTrimmed = typeof rawBrand === 'string' ? rawBrand.trim() : '';
+  const primaryTokens = new Set(
+    rawTrimmed ? tokenizeBrand(rawTrimmed).map((t) => t.toUpperCase()) : [],
+  );
+  if (rawTrimmed) primaryTokens.add(rawTrimmed.toUpperCase());
+  const allConditions = 'conditions' in compound ? compound.conditions : [compound];
+  const rawUpper = rawTrimmed.toUpperCase();
+  const visibleCond = allConditions.find((c) => c.filter.toUpperCase() === rawUpper)
+    ?? allConditions.find((c) => primaryTokens.has(c.filter.toUpperCase()))
+    ?? allConditions[0];
+  if (!visibleCond) return;
+  filters.BrandName = { filterType: 'text', type: 'contains', filter: visibleCond.filter };
+  const brandHidden = allConditions.map((c) => ({
+    filter: c.filter,
+    weight: primaryTokens.has(c.filter.toUpperCase()) ? BRAND_PRIMARY_WEIGHT : BRAND_SYNONYM_WEIGHT,
+  }));
+  if (brandHidden.length > 0) hidden.BrandName = brandHidden;
+}
+
+// Split a compound OR-fuzzy filter into a single visible condition (the primary
+// value, or the first condition if that's not present) and a hidden-tokens list
+// carrying every remaining condition for the same column.  Keeps AG Grid's
+// filter popup to one chip per column while preserving the full match coverage
+// server-side via the hidden-tokens sidecar.  Optional visibleWeight is
+// serialized onto the visible filter model so the server boosts its score
+// above incidental brand-only matches.
+function splitCompoundIntoVisibleAndHidden(
+  filters: Record<string, FuzzyTextFilter>,
+  hidden: HiddenFilterTokens,
+  colId: string,
+  compound: FuzzyTextFilter | null,
+  primaryValue: string | null,
+  visibleWeight?: number,
+  hiddenWeight?: number,
+): void {
+  if (!compound) return;
+  const primaryTrimmed = typeof primaryValue === 'string' ? primaryValue.trim() : '';
+  const allConditions = 'conditions' in compound ? compound.conditions : [compound];
+  const primaryUpper = primaryTrimmed.toUpperCase();
+  const visibleCond =
+    allConditions.find((c) => c.filter.toUpperCase() === primaryUpper) ?? allConditions[0];
+  if (!visibleCond) return;
+  filters[colId] = {
+    filterType: 'text',
+    type: 'contains',
+    filter: visibleCond.filter,
+    ...(visibleWeight != null ? { weight: visibleWeight } : {}),
+  };
+  const visibleUpper = visibleCond.filter.toUpperCase();
+  const extras = allConditions
+    .filter((c) => c.filter.toUpperCase() !== visibleUpper)
+    .map((c) => ({
+      filter: c.filter,
+      weight: hiddenWeight ?? c.weight,
+    }));
+  if (extras.length > 0) hidden[colId] = extras;
+}
+
+// Weight multiplier applied to the visible PartNumber / ModelNumber filter
+// chip.  A substring match on those columns is almost always the definitive
+// signal that the user wants that specific product.
+const VISIBLE_CODE_WEIGHT = 20;
+// Weight multiplier for hidden PartNumber / ModelNumber tokens.  A
+// requested part number like "50cm Mike PLM502F , 71.98.0095" tokenizes
+// into ["50cm", "PLM502F", "71.98.0095"], each of which is a strong match
+// signal when it appears in a product's part-number cell.  Default weight 1
+// buries those hits under incidental brand-only matches, so we boost all
+// tokenized parts to the same tier as the visible primary.
+const HIDDEN_CODE_WEIGHT = 15;
+
+// Append tokens to the hidden-tokens map for one column, deduping (case-
+// insensitive) against both the visible-filter value and tokens already stashed
+// for the same column.  Accepts pre-weighted tokens or plain strings.
+function addHiddenTokens(
+  filters: Record<string, FuzzyTextFilter>,
+  hidden: HiddenFilterTokens,
+  colId: string,
+  tokens: Array<{ filter: string; weight?: number }> | string[] | undefined,
+): void {
+  if (!tokens || tokens.length === 0) return;
+  const normalized = (tokens as Array<unknown>).map((t) =>
+    typeof t === 'string' ? { filter: t } : (t as { filter: string; weight?: number }),
+  );
+  const existing = hidden[colId] ?? [];
+  const visibleFilter = filters[colId];
+  const seen = new Set<string>([
+    ...(visibleFilter && 'filter' in visibleFilter ? [visibleFilter.filter.toUpperCase()] : []),
+    ...existing.map((t) => t.filter.toUpperCase()),
+  ]);
+  const merged = [...existing];
+  normalized.forEach((t) => {
+    const key = t.filter.trim().toUpperCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    merged.push(t);
+  });
+  if (merged.length > 0) hidden[colId] = merged;
+}
+
+// SKU-shaped substring test: >= 5 chars with >= 2 digits.  Catches part
+// numbers embedded in descriptions without matching plain English words.
+function looksLikeCode(token: string): boolean {
+  if (token.length < 5) return false;
+  let digits = 0;
+  for (const ch of token) { if (ch >= '0' && ch <= '9') digits += 1; }
+  return digits >= 2;
+}
+
+function harvestCodeTokens(sources: Array<string | null | undefined>): string[] {
+  const codeTokens = new Set<string>();
+  sources.forEach((src) => {
+    if (typeof src !== 'string') return;
+    const trimmed = src.trim();
+    if (!trimmed) return;
+    trimmed.split(/[\s,;|/()[\]"'.!?:=<>+*]+/).forEach((raw) => {
+      const t = raw.trim();
+      if (looksLikeCode(t)) codeTokens.add(t);
+    });
+  });
+  return Array.from(codeTokens);
+}
+
+// Build the visible filter model + hidden-tokens sidecar for a requested-product
+// context.  One-stop shop for the semantics shared between the Add-Products and
+// Match-Requested modals:
+//   - One visible chip per column (raw primary value); fuzzy + synonym tokens
+//     ride along hidden.
+//   - Cross-field leakage: requested part/model/brand → hidden on Description
+//     (catches rows where a manufacturer name or code is embedded in the
+//     description of a rebranded product).
+//   - Reverse leakage: code-looking tokens from descriptions → hidden on
+//     PartNumber and ModelNumber.
+//   - Optional folding of pre-fetched AI expansions into the sidecar (so the
+//     grid issues one query with the expanded filter already applied).
+export function buildRequestedFilterState(input: {
+  requestedBrand?: string | null;
+  requestedPartNumber?: string | null;
+  requestedModelNumber?: string | null;
+  requestedDescriptions?: Array<string | null | undefined>;
+  prefetchedExpansion?: FilterExpansions | null;
+}): {
+  visibleModel: Record<string, FuzzyTextFilter> | null;
+  hiddenTokens: HiddenFilterTokens | null;
+} {
+  const filters: Record<string, FuzzyTextFilter> = {};
+  const hidden: HiddenFilterTokens = {};
+
+  const descriptions = input.requestedDescriptions ?? [];
+  // Use the first description (desc1) as the visible primary — matches prior
+  // behavior for both single-description and desc1/2/3 callers.
+  const primaryDescription = descriptions.length > 0 && typeof descriptions[0] === 'string'
+    ? descriptions[0]
+    : null;
+  const descriptionFilter = buildMultiFuzzyContainsFilter(descriptions, { mode: 'description' });
+  splitCompoundIntoVisibleAndHidden(filters, hidden, 'Description', descriptionFilter, primaryDescription ?? null);
+
+  splitBrandFilterWithTiering(
+    filters, hidden,
+    buildFuzzyContainsFilter(input.requestedBrand, { mode: 'brand' }),
+    input.requestedBrand ?? null,
+  );
+  splitCompoundIntoVisibleAndHidden(
+    filters, hidden, 'PartNumber',
+    buildFuzzyContainsFilter(input.requestedPartNumber, { mode: 'partNumber' }),
+    input.requestedPartNumber ?? null,
+    VISIBLE_CODE_WEIGHT,
+    HIDDEN_CODE_WEIGHT,
+  );
+  splitCompoundIntoVisibleAndHidden(
+    filters, hidden, 'ModelNumber',
+    buildFuzzyContainsFilter(input.requestedModelNumber, { mode: 'partNumber' }),
+    input.requestedModelNumber ?? null,
+    VISIBLE_CODE_WEIGHT,
+    HIDDEN_CODE_WEIGHT,
+  );
+
+  const partTrimmed = typeof input.requestedPartNumber === 'string' ? input.requestedPartNumber.trim() : '';
+  const modelTrimmed = typeof input.requestedModelNumber === 'string' ? input.requestedModelNumber.trim() : '';
+  const brandTrimmed = typeof input.requestedBrand === 'string' ? input.requestedBrand.trim() : '';
+  if (partTrimmed) addHiddenTokens(filters, hidden, 'Description', [{ filter: partTrimmed, weight: 1 }]);
+  if (modelTrimmed) addHiddenTokens(filters, hidden, 'Description', [{ filter: modelTrimmed, weight: 1 }]);
+  if (brandTrimmed && !isUnknownBrand(brandTrimmed)) {
+    addHiddenTokens(filters, hidden, 'Description', [{ filter: brandTrimmed, weight: 1 }]);
+  }
+
+  const codeTokens = harvestCodeTokens(descriptions);
+  if (codeTokens.length > 0) {
+    const arr = codeTokens.map((t) => ({ filter: t, weight: 1 }));
+    addHiddenTokens(filters, hidden, 'PartNumber', arr);
+    addHiddenTokens(filters, hidden, 'ModelNumber', arr);
+  }
+
+  if (input.prefetchedExpansion) {
+    addHiddenTokens(filters, hidden, 'BrandName', input.prefetchedExpansion.brand);
+    addHiddenTokens(filters, hidden, 'PartNumber', input.prefetchedExpansion.partNumber);
+    addHiddenTokens(filters, hidden, 'ModelNumber', input.prefetchedExpansion.modelNumber);
+    addHiddenTokens(filters, hidden, 'Description', input.prefetchedExpansion.description);
+  }
+
+  return {
+    visibleModel: Object.keys(filters).length > 0 ? filters : null,
+    hiddenTokens: Object.keys(hidden).length > 0 ? hidden : null,
+  };
+}
+
+// Build a ListPrice number filter from an optional min/max pair.  Returns a
+// shape that matches AG Grid's server-side number filter model so the grid's
+// request pipeline picks it up without any custom server code.  Returns null
+// when neither bound is supplied.
+export function buildListPriceFilter(
+  priceMin: number | null | undefined,
+  priceMax: number | null | undefined,
+): unknown | null {
+  const hasMin = typeof priceMin === 'number' && Number.isFinite(priceMin) && priceMin > 0;
+  const hasMax = typeof priceMax === 'number' && Number.isFinite(priceMax) && priceMax > 0;
+  if (!hasMin && !hasMax) return null;
+  if (hasMin && hasMax) {
+    return { filterType: 'number', type: 'inRange', filter: priceMin, filterTo: priceMax };
+  }
+  if (hasMax) {
+    return { filterType: 'number', type: 'lessThanOrEqual', filter: priceMax };
+  }
+  return { filterType: 'number', type: 'greaterThanOrEqual', filter: priceMin };
+}
+
+// Build the filter state produced when the user submits a free-text prompt
+// ("TV 55 inches Samsung").
+//
+// Preferred path — the AI returned a `routed` classification: treat each
+// routed fragment like a requested-row column (Samsung → BrandName chip, "TV
+// 55 inch" → Description chip), fuzzy-expanded with synonyms, plus the AI
+// expansion tokens folded into the hidden sidecar.  This gives a visible
+// filter that actually matches something, per-column, instead of dumping the
+// raw phrase into Description.
+//
+// Fallback — no routing: keep the legacy behavior of a single Description
+// chip with the raw prompt text.  Only hit when the AI classifier declined.
+export function buildPromptFilterState(
+  promptText: string,
+  expansions: FilterExpansions,
+  routed?: PromptRouting | null,
+): {
+  visibleModel: Record<string, FuzzyTextFilter>;
+  hiddenTokens: HiddenFilterTokens | null;
+} {
+  if (routed && (
+    routed.brand
+    || routed.partNumber
+    || routed.modelNumber
+    || routed.description
+    || routed.priceMin != null
+    || routed.priceMax != null
+  )) {
+    const { visibleModel, hiddenTokens } = buildRequestedFilterState({
+      requestedBrand: routed.brand,
+      requestedPartNumber: routed.partNumber,
+      requestedModelNumber: routed.modelNumber,
+      requestedDescriptions: routed.description ? [routed.description] : [],
+      prefetchedExpansion: expansions,
+    });
+    const filters: Record<string, FuzzyTextFilter> = { ...(visibleModel ?? {}) };
+    // Price range → ListPrice number filter.  AG Grid's server-side filter
+    // processor picks up the standard number-filter shape so no custom
+    // server code is needed.
+    const priceFilter = buildListPriceFilter(routed.priceMin, routed.priceMax);
+    if (priceFilter) {
+      (filters as unknown as Record<string, unknown>).ListPrice = priceFilter;
+    }
+    return {
+      visibleModel: filters,
+      hiddenTokens,
+    };
+  }
+
+  const trimmed = promptText.trim();
+  const promptFuzzy = buildFuzzyContainsFilter(trimmed, { mode: 'description' });
+  const promptUpper = trimmed.toUpperCase();
+  const promptHidden: Array<{ filter: string; weight?: number }> = [];
+  if (promptFuzzy) {
+    const conds = 'conditions' in promptFuzzy ? promptFuzzy.conditions : [promptFuzzy];
+    conds.forEach((c) => {
+      if (c.filter.toUpperCase() !== promptUpper) {
+        promptHidden.push({ filter: c.filter, weight: c.weight });
+      }
+    });
+  }
+  const filters: Record<string, FuzzyTextFilter> = {
+    Description: { filterType: 'text', type: 'contains', filter: trimmed },
+  };
+  const hidden: HiddenFilterTokens = {};
+  if (promptHidden.length > 0) addHiddenTokens(filters, hidden, 'Description', promptHidden);
+  addHiddenTokens(filters, hidden, 'BrandName', expansions.brand);
+  addHiddenTokens(filters, hidden, 'PartNumber', expansions.partNumber);
+  addHiddenTokens(filters, hidden, 'ModelNumber', expansions.modelNumber);
+  addHiddenTokens(filters, hidden, 'Description', expansions.description);
+  return {
+    visibleModel: filters,
+    hiddenTokens: Object.keys(hidden).length > 0 ? hidden : null,
+  };
+}
+
+// Merge AI-supplied expansion tokens into an existing hidden-tokens payload.
+// Returns a fresh object — does not mutate the input.
+export function mergeExpansionsIntoHiddenTokens(
+  prev: HiddenFilterTokens | null,
+  expansions: FilterExpansions,
+): HiddenFilterTokens | null {
+  const base: HiddenFilterTokens = {};
+  Object.entries(prev ?? {}).forEach(([k, v]) => { base[k] = [...v]; });
+  const filtersDummy: Record<string, FuzzyTextFilter> = {};
+  addHiddenTokens(filtersDummy, base, 'BrandName', expansions.brand);
+  addHiddenTokens(filtersDummy, base, 'PartNumber', expansions.partNumber);
+  addHiddenTokens(filtersDummy, base, 'ModelNumber', expansions.modelNumber);
+  addHiddenTokens(filtersDummy, base, 'Description', expansions.description);
+  return Object.keys(base).length > 0 ? base : null;
+}
+
 // Merge AI-supplied expansion tokens into an existing filter model as extra
 // OR conditions.  Existing conditions are preserved; tokens that duplicate
 // something already present (case-insensitive) are skipped.

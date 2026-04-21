@@ -577,6 +577,17 @@ export default function OffersClient() {
         minValidYear: 2000,
       },
     },
+    {
+      field: 'ModifiedOnAny',
+      headerName: 'Last Modified',
+      width: 180,
+      filter: 'agDateColumnFilter',
+      valueFormatter: (params) => formatLastModifiedValue(params.value),
+      filterParams: {
+        browserDatePicker: false,
+        minValidYear: 2000,
+      },
+    },
     { field: 'OfferStatus', headerName: 'Status', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'CustomerGroup', headerName: 'Customer Group', filter: 'agTextColumnFilter', enableRowGroup: true },
     { field: 'SalesPerson', headerName: 'Sales Person', filter: 'agTextColumnFilter', enableRowGroup: true },

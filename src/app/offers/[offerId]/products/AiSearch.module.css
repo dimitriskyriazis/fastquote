@@ -1,0 +1,187 @@
+/* Shared UI for AI-driven product search — used by both AddProductsModal
+   and MatchRequestedProductsModal so the pill, banner, and filter-lock
+   styling stay identical across the two flows.  Each modal also references
+   `.gridShellAiLocked` on its grid-shell wrapper to hide the AG Grid
+   floating-filter row while AI search is driving the grid. */
+
+.promptLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  padding: 6px 12px;
+}
+
+.promptLabelText {
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.promptInput {
+  border: none;
+  background: transparent;
+  outline: none;
+  color: #0f172a;
+  font-size: 13px;
+  width: 360px;
+  min-width: 260px;
+  max-width: 480px;
+}
+
+.promptInput::placeholder {
+  color: #64748b;
+}
+
+.promptInput:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Active state — prompt has been submitted, results are on screen. */
+.promptLabelActive {
+  background: #dbeafe;
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+}
+.promptLabelActive .promptLabelText {
+  color: #1e3a8a;
+}
+
+/* Inline submit (→) / clear (✕) button inside the prompt pill. */
+.promptActionButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: #1e40af;
+  color: #ffffff;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.promptActionButton:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+.promptActionButton:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+.promptLabelActive .promptActionButton {
+  background: #2563eb;
+}
+.promptLabelActive .promptActionButton:hover:not(:disabled) {
+  background: #1e3a8a;
+}
+
+.promptSpinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(30, 64, 175, 0.2);
+  border-top-color: #1e40af;
+  border-radius: 50%;
+  animation: aiSearchPromptSpin 0.8s linear infinite;
+}
+
+@keyframes aiSearchPromptSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* AI search summary band — rendered in the slot normally occupied by the
+   column filter row while an AI search is driving the grid. */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: linear-gradient(90deg, #dbeafe, #eff6ff 70%);
+  border-bottom: 1px solid #bfdbfe;
+  font-size: 12px;
+  color: #1e3a8a;
+  flex-wrap: wrap;
+}
+.bannerLabel {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  font-size: 10px;
+  background: #1e40af;
+  color: #ffffff;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.bannerChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: #ffffff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  color: #1e40af;
+}
+.bannerChipField {
+  font-weight: 600;
+  opacity: 0.75;
+}
+.bannerMeta {
+  margin-left: auto;
+  color: #475569;
+  font-size: 11px;
+  font-style: italic;
+}
+.bannerClear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  color: #1e3a8a;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  transition: background 120ms ease, color 120ms ease;
+}
+.bannerClear:hover {
+  background: #1e40af;
+  color: #ffffff;
+}
+
+/* AI-lock class — apply this to the grid-shell element while AI search is
+   driving the grid.  Hides the AG Grid floating-filter row and filter
+   buttons so the user can only exit via the ✕ controls.  Also collapses
+   the header height so body rows sit flush under the column headers with
+   no leftover gap where the filter row used to be. */
+.gridShellAiLocked :global(.ag-header-row-floating-filter),
+.gridShellAiLocked :global(.ag-floating-filter) {
+  display: none !important;
+  height: 0 !important;
+  min-height: 0 !important;
+}
+.gridShellAiLocked :global(.ag-header-icon.ag-header-cell-filter-button),
+.gridShellAiLocked :global(.ag-header-cell-menu-button),
+.gridShellAiLocked :global(.ag-header-cell-filter-button),
+.gridShellAiLocked :global(.ag-filter-icon) {
+  display: none !important;
+}
+/* Shrink the header container itself so the body viewport starts right
+   under the column-label row.  AG Grid inline-styles the `.ag-header`
+   height based on header + floating-filter heights; overriding to use
+   only the column-header height snaps everything upward. */
+.gridShellAiLocked :global(.ag-header) {
+  height: var(--ag-header-height, 32px) !important;
+  min-height: var(--ag-header-height, 32px) !important;
+}

@@ -283,6 +283,10 @@
   cursor: not-allowed;
 }
 
+/* Pill active state, submit/clear button, banner, and filter-row lock are
+   defined in AiSearch.module.css and imported via the shared AiSearch
+   components (AiSearchPromptPill, AiSearchBanner, AI_GRID_LOCK_CLASS). */
+
 /* Suggested (pinned) row styling
    Cell-level rules use .gridShell repeated 3× to beat the high-specificity
    catch-all in ag-grid-overrides.css (0,7,0) that would otherwise paint

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import dynamic from 'next/dynamic';
 import type { CellValueChangedEvent, ColDef, GridApi, RowNode } from 'ag-grid-community';
 import styles from './AddProductsModal.module.css';
@@ -11,10 +12,17 @@ import { useFarnellSearch, isFarnellRow, type FarnellSearchRow } from '../../../
 import { useFarnellProductResolver } from '../../../hooks/useFarnellProductResolver';
 import {
   isFarnellBrand,
-  buildFuzzyContainsFilter,
-  type FuzzyTextFilter,
+  buildRequestedFilterState,
+  buildPromptFilterState,
+  mergeExpansionsIntoHiddenTokens,
+  type HiddenFilterTokens,
   type FilterExpansions,
+  type PromptRouting,
 } from '../offerProductsUtils';
+import {
+  AiSearchPromptPill,
+  AI_GRID_LOCK_CLASS,
+} from './AiSearch';
 
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), { ssr: false });
 
@@ -49,6 +57,7 @@ type Props = {
   defaultPlacementMode?: 'fill' | 'below';
   onPlacementModeChange?: (mode: 'fill' | 'below') => void;
   getLastClickedRowId?: () => number | null;
+  onRequestDetach?: () => void;
 };
 
 type CategoryRow = {
@@ -117,6 +126,7 @@ type ProductsGridPanelProps = {
   handleProductsGridReady: (api: GridApi) => void;
   handleProductsGridModelUpdated: (api: GridApi) => void;
   onRequestPayloadConsumed?: () => void;
+  aiLocked?: boolean;
 };
 
 const ProductsGridPanel = React.memo(function ProductsGridPanel({
@@ -129,11 +139,12 @@ const ProductsGridPanel = React.memo(function ProductsGridPanel({
   handleProductsGridReady,
   handleProductsGridModelUpdated,
   onRequestPayloadConsumed,
+  aiLocked,
 }: ProductsGridPanelProps) {
   return (
     <div className={`${styles.sectionInner} ${styles.productsColumn}`}>
       <div
-        className={`${styles.productsGridShell} offer-products-grid`}
+        className={`${styles.productsGridShell} offer-products-grid ${aiLocked ? AI_GRID_LOCK_CLASS : ''}`}
         data-fastquote-keep-selection="true"
       >
         <AgGridAll
@@ -235,8 +246,10 @@ export default function AddProductsModal({
   defaultPlacementMode,
   onPlacementModeChange,
   getLastClickedRowId: _getLastClickedRowId,
+  onRequestDetach,
 }: Props) {
   void _getLastClickedRowId;
+  const [detachMenu, setDetachMenu] = useState<{ x: number; y: number } | null>(null);
   const [selectedCategory] = useState<CategoryRow | null>(null);
   const [selectedProducts, setSelectedProducts] = useState<ProductRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -260,7 +273,22 @@ export default function AddProductsModal({
   const [promptText, setPromptText] = useState('');
   const [suggesting, setSuggesting] = useState(false);
   const [noSuggestionsFound, setNoSuggestionsFound] = useState(false);
-  const [hiddenFilterTokens, setHiddenFilterTokens] = useState<Record<string, Array<{ filter: string; weight?: number }>> | null>(null);
+  const [hiddenFilterTokens, setHiddenFilterTokens] = useState<HiddenFilterTokens | null>(null);
+  // ProductIDs surfaced by the server-side semantic (vector) search for the
+  // current prompt.  Feeds into requestPayload as a ranking bonus only.
+  const [semanticCandidates, setSemanticCandidates] = useState<number[] | null>(null);
+  // True while a user-submitted AI search prompt is driving the grid.  While
+  // this is on: the prompt input is read-only (until cleared), the column
+  // filter row is visually locked, and the filter-change-driven semantic
+  // expansion is suppressed (the prompt owns the filter state).
+  const [promptSubmitted, setPromptSubmitted] = useState(false);
+  const promptSubmittedRef = useRef(false);
+  promptSubmittedRef.current = promptSubmitted;
+  // Refs for filter-change-driven semantic expansion.  Declared here (above
+  // the handlers that consume them) so the clear handler can reset them.
+  const semanticExpandTimerRef = useRef<number | null>(null);
+  const semanticExpandAbortRef = useRef<AbortController | null>(null);
+  const lastSemanticSigRef = useRef<string>('');
 
   // Comment modal state — keeps the header clean.  Draft is a scratch buffer
   // so cancelling doesn't wipe a saved comment.
@@ -301,9 +329,10 @@ export default function AddProductsModal({
       orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
     };
     if (hiddenFilterTokens) payload.hiddenFilterTokens = hiddenFilterTokens;
+    if (semanticCandidates && semanticCandidates.length > 0) payload.semanticCandidates = semanticCandidates;
     if (newProductId != null) payload.newProductId = newProductId;
     return payload;
-  }, [hiddenFilterTokens, newProductId]);
+  }, [hiddenFilterTokens, semanticCandidates, newProductId]);
 
   const handleProductSelection = useCallback((rows: ProductRow[]) => {
     setSelectedProducts(rows ?? []);
@@ -335,55 +364,31 @@ export default function AddProductsModal({
       });
       if (!res.ok) throw new Error('Failed to expand filters');
       if (currentAnchorIdRef.current !== targetAnchorId) return;
-      const data = (await res.json()) as { ok: boolean; expansions?: FilterExpansions };
+      const data = (await res.json()) as {
+        ok: boolean;
+        expansions?: FilterExpansions;
+        routed?: PromptRouting | null;
+        semanticCandidates?: number[];
+      };
       const expansions = data.expansions ?? {};
+      const routed = data.routed ?? null;
+      const semantic = Array.isArray(data.semanticCandidates) ? data.semanticCandidates : [];
+      setSemanticCandidates(semantic.length > 0 ? semantic : null);
       const api = productsApiRef.current;
       if (!api) return;
 
       if (promptText) {
-        // Prompt submitted — clear the pre-populated filters, show just the
-        // prompt as a single-condition visible filter, and stash everything
-        // else (prompt tokens + AI expansion) in hidden.
-        const promptFuzzy = buildFuzzyContainsFilter(promptText, { mode: 'description' });
-        const promptUpper = promptText.toUpperCase();
-        const promptHidden: Array<{ filter: string; weight?: number }> = [];
-        if (promptFuzzy) {
-          const conds = 'conditions' in promptFuzzy ? promptFuzzy.conditions : [promptFuzzy];
-          conds.forEach((c) => {
-            if (c.filter.toUpperCase() !== promptUpper) {
-              promptHidden.push({ filter: c.filter, weight: c.weight });
-            }
-          });
-        }
-        const newHidden: Record<string, Array<{ filter: string; weight?: number }>> = {};
-        const pushHidden = (
-          colId: string,
-          tokens: Array<{ filter: string; weight?: number }> | string[] | undefined,
-        ) => {
-          if (!tokens || (Array.isArray(tokens) && tokens.length === 0)) return;
-          const normalized = (tokens as Array<unknown>).map((t) =>
-            typeof t === 'string' ? { filter: t } : (t as { filter: string; weight?: number }),
-          );
-          const existing = newHidden[colId] ?? [];
-          const seen = new Set(existing.map((x) => x.filter.toUpperCase()));
-          normalized.forEach((t) => {
-            const key = t.filter.trim().toUpperCase();
-            if (!key || seen.has(key)) return;
-            seen.add(key);
-            existing.push(t);
-          });
-          if (existing.length > 0) newHidden[colId] = existing;
-        };
-        if (promptHidden.length > 0) pushHidden('Description', promptHidden);
-        pushHidden('BrandName', expansions.brand);
-        pushHidden('PartNumber', expansions.partNumber);
-        pushHidden('ModelNumber', expansions.modelNumber);
-        pushHidden('Description', expansions.description);
-        setHiddenFilterTokens(Object.keys(newHidden).length > 0 ? newHidden : null);
-        const visibleModel: Record<string, FuzzyTextFilter> = {
-          Description: { filterType: 'text', type: 'contains', filter: promptText },
-        };
+        // Prompt submitted — shared helper routes the prompt fragments to the
+        // correct visible-filter columns (brand → BrandName chip, part code →
+        // PartNumber chip, residual → Description chip) and folds the AI
+        // expansion tokens into the hidden sidecar.  Falls back to a single
+        // Description chip if the AI didn't classify.
+        const { visibleModel, hiddenTokens } = buildPromptFilterState(promptText, expansions, routed);
+        setHiddenFilterTokens(hiddenTokens);
         try { api.setFilterModel(visibleModel); } catch { /* noop */ }
+        // Lock the grid + prompt UI until the user clicks the clear (✕)
+        // button — tells them at a glance that AI search is driving results.
+        setPromptSubmitted(true);
         return;
       }
 
@@ -397,27 +402,7 @@ export default function AddProductsModal({
         if (!options?.silent) setNoSuggestionsFound(true);
         return;
       }
-      setHiddenFilterTokens((prev) => {
-        const base: Record<string, Array<{ filter: string; weight?: number }>> = {};
-        Object.entries(prev ?? {}).forEach(([k, v]) => { base[k] = [...v]; });
-        const pushHidden = (colId: string, tokens: string[] | undefined) => {
-          if (!tokens || tokens.length === 0) return;
-          const existing = base[colId] ?? [];
-          const seen = new Set(existing.map((x) => x.filter.toUpperCase()));
-          tokens.forEach((t) => {
-            const key = t.trim().toUpperCase();
-            if (!key || seen.has(key)) return;
-            seen.add(key);
-            existing.push({ filter: t });
-          });
-          if (existing.length > 0) base[colId] = existing;
-        };
-        pushHidden('BrandName', expansions.brand);
-        pushHidden('PartNumber', expansions.partNumber);
-        pushHidden('ModelNumber', expansions.modelNumber);
-        pushHidden('Description', expansions.description);
-        return Object.keys(base).length > 0 ? base : null;
-      });
+      setHiddenFilterTokens((prev) => mergeExpansionsIntoHiddenTokens(prev, expansions));
     } catch (err) {
       console.error('AI expansion failed', err);
     } finally {
@@ -431,16 +416,109 @@ export default function AddProductsModal({
     void runExpand({ prompt: trimmed });
   }, [promptText, suggesting, runExpand]);
 
+  // Exit AI search mode — wipes the prompt, clears the expansion hidden
+  // tokens and semantic candidates, and resets the grid's filter model so
+  // the user is back to plain keyword browsing.
+  const handleClearAIPrompt = useCallback(() => {
+    setPromptText('');
+    setPromptSubmitted(false);
+    setHiddenFilterTokens(null);
+    setSemanticCandidates(null);
+    setNoSuggestionsFound(false);
+    lastSemanticSigRef.current = '';
+    const api = productsApiRef.current;
+    if (api) {
+      try { api.setFilterModel(null); } catch { /* noop */ }
+    }
+  }, []);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
+        if (detachMenu) {
+          setDetachMenu(null);
+          return;
+        }
         onClose();
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, detachMenu]);
+
+  // Right-click on the modal's empty space shows a small context menu with a
+  // "Detach to new window" action.  We deliberately skip interactive elements
+  // (buttons, inputs, links) and the ag-grid area so the native browser menu
+  // or ag-grid's own menu still work where they're expected.
+  const handleModalContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!onRequestDetach) return;
+    const target = event.target as HTMLElement | null;
+    // Only skip cases where the native menu is genuinely useful: text inputs
+    // (copy/paste) and anything opted out via data-detach-menu-skip.  Everything
+    // else — buttons, labels, header background, body background, and the
+    // products-grid background — counts as "empty space" for the detach menu.
+    if (
+      target && target.closest(
+        'input, textarea, select, [contenteditable="true"], [data-detach-menu-skip="true"]',
+      )
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    // Clamp to viewport so the popup doesn't render as a thin sliver when the
+    // click lands near the right/bottom edge.
+    const menuW = 220;
+    const menuH = 48;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const x = Math.min(event.clientX, Math.max(0, vw - menuW - 4));
+    const y = Math.min(event.clientY, Math.max(0, vh - menuH - 4));
+    setDetachMenu({ x, y });
+  }, [onRequestDetach]);
+
+  useEffect(() => {
+    if (!detachMenu) return;
+    const onDown = () => setDetachMenu(null);
+    const onScroll = () => setDetachMenu(null);
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [detachMenu]);
+
+  const handleDetachClick = useCallback(() => {
+    setDetachMenu(null);
+    onRequestDetach?.();
+  }, [onRequestDetach]);
+
+  const detachMenuNode = detachMenu && typeof document !== 'undefined'
+    ? createPortal(
+        (
+          <div
+            className={styles.detachMenu}
+            style={{ top: detachMenu.y, left: detachMenu.x }}
+            role="menu"
+            onMouseDown={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
+            data-detach-menu-skip="true"
+          >
+            <button
+              type="button"
+              className={styles.detachMenuItem}
+              onClick={handleDetachClick}
+              role="menuitem"
+            >
+              Detach to new window
+            </button>
+          </div>
+        ),
+        document.body,
+      )
+    : null;
 
   // Reset placement mode and Farnell state when anchor changes
   useEffect(() => {
@@ -456,13 +534,16 @@ export default function AddProductsModal({
     setFarnellDescription(placementAnchor?.requestedDescription ?? null);
     setPromptText('');
     setNoSuggestionsFound(false);
+    setSemanticCandidates(null);
+    setPromptSubmitted(false);
+    lastSemanticSigRef.current = '';
   }, [placementAnchor, defaultPlacementMode, onPlacementModeChange, clearFarnellResults]);
 
   // Apply requested data as filters on the products grid when selecting a row to fill.
   // Produces a two-layer filter: the visible filter model (single raw value per
   // column — clean AG Grid popup) plus a hidden-tokens sidecar (all expansion
   // tokens + synonyms + cross-fold codes) that rides along in requestPayload.
-  // Semantics match the Match-Requested modal one-for-one.
+  // Semantics match the Match-Requested modal one-for-one (shared helper).
   useEffect(() => {
     const api = productsApiRef.current;
     if (!api) return;
@@ -470,93 +551,14 @@ export default function AddProductsModal({
       // Deselected / below-mode: keep existing filters untouched.
       return;
     }
-    const { requestedBrand, requestedPartNo, requestedModelNo, requestedDescription } = placementAnchor;
-    const hasAnyFilter = requestedBrand || requestedPartNo || requestedModelNo || requestedDescription;
-    if (!hasAnyFilter) {
-      api.setFilterModel(null);
-      setHiddenFilterTokens(null);
-      return;
-    }
-
-    const filterModel: Record<string, FuzzyTextFilter> = {};
-    const hidden: Record<string, Array<{ filter: string; weight?: number }>> = {};
-
-    const splitCompoundIntoVisibleAndHidden = (
-      colId: string,
-      compound: FuzzyTextFilter | null,
-      primaryValue: string | null,
-    ) => {
-      if (!compound) return;
-      const primaryTrimmed = typeof primaryValue === 'string' ? primaryValue.trim() : '';
-      const allConditions = 'conditions' in compound ? compound.conditions : [compound];
-      const primaryUpper = primaryTrimmed.toUpperCase();
-      const visibleCond = allConditions.find((c) => c.filter.toUpperCase() === primaryUpper)
-        ?? allConditions[0];
-      if (!visibleCond) return;
-      filterModel[colId] = { filterType: 'text', type: 'contains', filter: visibleCond.filter };
-      const visibleUpper = visibleCond.filter.toUpperCase();
-      const extras = allConditions
-        .filter((c) => c.filter.toUpperCase() !== visibleUpper)
-        .map((c) => ({ filter: c.filter, weight: c.weight }));
-      if (extras.length > 0) hidden[colId] = extras;
-    };
-
-    const pushHidden = (colId: string, tokens: Array<{ filter: string; weight?: number }>) => {
-      if (tokens.length === 0) return;
-      const existing = hidden[colId] ?? [];
-      const seen = new Set([
-        ...(filterModel[colId] && 'filter' in filterModel[colId] ? [filterModel[colId].filter.toUpperCase()] : []),
-        ...existing.map((t) => t.filter.toUpperCase()),
-      ]);
-      const merged = [...existing];
-      tokens.forEach((t) => {
-        const key = t.filter.trim().toUpperCase();
-        if (!key || seen.has(key)) return;
-        seen.add(key);
-        merged.push(t);
-      });
-      if (merged.length > 0) hidden[colId] = merged;
-    };
-
-    splitCompoundIntoVisibleAndHidden('BrandName', buildFuzzyContainsFilter(requestedBrand, { mode: 'brand' }), requestedBrand ?? null);
-    splitCompoundIntoVisibleAndHidden('PartNumber', buildFuzzyContainsFilter(requestedPartNo, { mode: 'partNumber' }), requestedPartNo ?? null);
-    splitCompoundIntoVisibleAndHidden('ModelNumber', buildFuzzyContainsFilter(requestedModelNo, { mode: 'partNumber' }), requestedModelNo ?? null);
-    splitCompoundIntoVisibleAndHidden('Description', buildFuzzyContainsFilter(requestedDescription, { mode: 'description' }), requestedDescription ?? null);
-
-    // Cross-field: the requested part/model/brand values land as hidden tokens
-    // on Description.  Covers descriptions that embed a manufacturer name or
-    // code (e.g. "LOGICKEYBOARD Mac ASTRA…" in a keyboard sold under a
-    // distributor brand).
-    if (requestedPartNo && requestedPartNo.trim()) pushHidden('Description', [{ filter: requestedPartNo.trim(), weight: 1 }]);
-    if (requestedModelNo && requestedModelNo.trim()) pushHidden('Description', [{ filter: requestedModelNo.trim(), weight: 1 }]);
-    const requestedBrandTrimmed = typeof requestedBrand === 'string' ? requestedBrand.trim() : '';
-    if (requestedBrandTrimmed && !/^(idk|unknown|n\/?a|none|any|various|\?+|-+)$/i.test(requestedBrandTrimmed)) {
-      pushHidden('Description', [{ filter: requestedBrandTrimmed, weight: 1 }]);
-    }
-
-    // Reverse direction: harvest code-looking tokens from the description →
-    // hidden PartNumber / ModelNumber tokens.
-    const looksLikeCode = (token: string): boolean => {
-      if (token.length < 5) return false;
-      let digitCount = 0;
-      for (const ch of token) { if (ch >= '0' && ch <= '9') digitCount += 1; }
-      return digitCount >= 2;
-    };
-    const codeTokens = new Set<string>();
-    if (requestedDescription) {
-      requestedDescription.split(/[\s,;|/()[\]"'.!?:=<>+*]+/).forEach((raw) => {
-        const t = raw.trim();
-        if (looksLikeCode(t)) codeTokens.add(t);
-      });
-    }
-    if (codeTokens.size > 0) {
-      const arr = Array.from(codeTokens).map((t) => ({ filter: t, weight: 1 }));
-      pushHidden('PartNumber', arr);
-      pushHidden('ModelNumber', arr);
-    }
-
-    api.setFilterModel(Object.keys(filterModel).length > 0 ? filterModel : null);
-    setHiddenFilterTokens(Object.keys(hidden).length > 0 ? hidden : null);
+    const { visibleModel, hiddenTokens } = buildRequestedFilterState({
+      requestedBrand: placementAnchor.requestedBrand,
+      requestedPartNumber: placementAnchor.requestedPartNo,
+      requestedModelNumber: placementAnchor.requestedModelNo,
+      requestedDescriptions: [placementAnchor.requestedDescription],
+    });
+    api.setFilterModel(visibleModel);
+    setHiddenFilterTokens(hiddenTokens);
   }, [placementAnchor, defaultPlacementMode]);
 
   // Sync selectedRequestedRowId with placement mode for anchor-based requested rows
@@ -1211,6 +1213,81 @@ export default function AddProductsModal({
 
   // Farnell filter listener
   const filterListenerRef = useRef<(() => void) | null>(null);
+  // Debounced semantic-expansion trigger for column-filter edits.  Without
+  // this the user only gets semantic-search help when they type into the
+  // "Search (AI)" box — typing directly into the Brand / Description column
+  // filters falls back to pure keyword matching.  Refs declared near the
+  // state block so the clear handler can reset them.
+  const triggerSemanticFromFilters = useCallback((api: GridApi) => {
+    // Skip while a prompt-driven search is active — the prompt owns the
+    // filter and hidden-token state; we must not overwrite it.
+    if (promptSubmittedRef.current) return;
+    const model = (api.getFilterModel?.() ?? {}) as Record<string, { filter?: string }>;
+    const pick = (colId: string): string | null => {
+      const v = model[colId]?.filter;
+      if (typeof v !== 'string') return null;
+      const t = v.trim();
+      // Below 2 chars the embedding is too noisy to be useful.
+      return t.length >= 2 ? t : null;
+    };
+    const requestedBrand = pick('BrandName');
+    const requestedPartNumber = pick('PartNumber');
+    const requestedModelNumber = pick('ModelNumber');
+    const requestedDescription = pick('Description');
+    const anyValue = requestedBrand || requestedPartNumber || requestedModelNumber || requestedDescription;
+    const sig = `${requestedBrand ?? ''}|${requestedPartNumber ?? ''}|${requestedModelNumber ?? ''}|${requestedDescription ?? ''}`;
+    if (sig === lastSemanticSigRef.current) return;
+    lastSemanticSigRef.current = sig;
+    if (!anyValue) {
+      setSemanticCandidates(null);
+      setHiddenFilterTokens(null);
+      return;
+    }
+    semanticExpandAbortRef.current?.abort();
+    const controller = new AbortController();
+    semanticExpandAbortRef.current = controller;
+    (async () => {
+      try {
+        const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/expand`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requestedBrand,
+            requestedPartNumber,
+            requestedModelNumber,
+            requestedDescription,
+          }),
+          signal: controller.signal,
+        });
+        if (!res.ok || controller.signal.aborted) return;
+        const data = (await res.json()) as {
+          ok?: boolean;
+          expansions?: FilterExpansions;
+          semanticCandidates?: number[];
+        };
+        if (controller.signal.aborted) return;
+        // Fold the full requested-filter state — fuzzy + synonym expansion of
+        // each column's value plus the AI-supplied expansions — into the
+        // hidden-tokens sidecar.  Without this, column-filter queries only
+        // match literal text and miss the family-name/synonym recall that
+        // the "Search (AI)" prompt path already gets.
+        const expansions = data.expansions ?? {};
+        const { hiddenTokens } = buildRequestedFilterState({
+          requestedBrand,
+          requestedPartNumber,
+          requestedModelNumber,
+          requestedDescriptions: requestedDescription ? [requestedDescription] : [],
+          prefetchedExpansion: expansions,
+        });
+        setHiddenFilterTokens(hiddenTokens);
+        const semantic = Array.isArray(data.semanticCandidates) ? data.semanticCandidates : [];
+        setSemanticCandidates(semantic.length > 0 ? semantic : null);
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') return;
+        console.warn('Semantic filter expansion failed', err);
+      }
+    })();
+  }, [offerId]);
 
   const attachFilterListener = useCallback((api: GridApi) => {
     if (filterListenerRef.current) {
@@ -1231,11 +1308,28 @@ export default function AddProductsModal({
         setFarnellPartNumber(partFilter?.filter ?? null);
         setFarnellDescription(descFilter?.filter ?? null);
       } catch { /* noop */ }
+      // Debounce semantic expansion — wait for typing to pause before
+      // issuing the embedding call.
+      if (semanticExpandTimerRef.current != null) {
+        window.clearTimeout(semanticExpandTimerRef.current);
+      }
+      semanticExpandTimerRef.current = window.setTimeout(() => {
+        semanticExpandTimerRef.current = null;
+        triggerSemanticFromFilters(api);
+      }, 500);
     };
     filterListenerRef.current = listener;
     try {
       api.addEventListener('filterChanged', listener as never);
     } catch { /* noop */ }
+  }, [triggerSemanticFromFilters]);
+
+  // Clean up any pending debounce / abort when the modal unmounts.
+  useEffect(() => () => {
+    if (semanticExpandTimerRef.current != null) {
+      window.clearTimeout(semanticExpandTimerRef.current);
+    }
+    semanticExpandAbortRef.current?.abort();
   }, []);
 
   // Sync Farnell pinned rows
@@ -1344,30 +1438,18 @@ export default function AddProductsModal({
     </div>
   ) : null;
 
-  // AI prompt input — shared between split view and modal view
+  // AI prompt input — shared pill component used across modal + split view.
   const promptInput = (
     <>
-      <label className={styles.promptLabel}>
-        <span className={styles.promptLabelText}>What are you looking for?</span>
-        <input
-          type="text"
-          className={styles.promptInput}
-          value={promptText}
-          onChange={(e) => setPromptText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              handlePromptSubmit();
-            }
-          }}
-          placeholder="e.g. TV 55 inches Samsung"
-          disabled={submitting}
-          data-fastquote-keep-selection="true"
-        />
-        {suggesting ? (
-          <span className={styles.promptSpinner} aria-label="Expanding with AI" />
-        ) : null}
-      </label>
+      <AiSearchPromptPill
+        promptText={promptText}
+        onPromptTextChange={setPromptText}
+        onSubmit={handlePromptSubmit}
+        onClear={handleClearAIPrompt}
+        submitted={promptSubmitted}
+        busy={suggesting}
+        disabled={submitting}
+      />
       {noSuggestionsFound && !suggesting && (
         <span className={styles.noPromptLabel}>No extra terms to add</span>
       )}
@@ -1482,13 +1564,14 @@ export default function AddProductsModal({
 
   if (splitViewMode) {
     return (
-      <div 
-        className={styles.splitViewContainer} 
-        role="dialog" 
+      <div
+        className={styles.splitViewContainer}
+        role="dialog"
         aria-label="Add products to offer"
         data-fastquote-keep-selection="true"
+        onContextMenu={handleModalContextMenu}
       >
-        <div className={styles.splitViewCard}>
+        <div className={styles.splitViewCard} onContextMenu={handleModalContextMenu}>
           <div className={styles.header}>
           <div className={styles.headerTopRow}>
             <div className={styles.title}>Add Products</div>
@@ -1540,11 +1623,13 @@ export default function AddProductsModal({
               handleProductsGridReady={handleProductsGridReady}
               handleProductsGridModelUpdated={handleProductsGridModelUpdated}
               onRequestPayloadConsumed={onRequestPayloadConsumed}
+              aiLocked={promptSubmitted}
             />
           </section>
         </div>
         </div>
         {commentPopup}
+        {detachMenuNode}
       </div>
     );
   }
@@ -1553,11 +1638,12 @@ export default function AddProductsModal({
     <div
       className={styles.overlay}
       role="dialog"
-      aria-modal="true" 
+      aria-modal="true"
       aria-label="Add products to offer"
       data-fastquote-keep-selection="true"
+      onContextMenu={handleModalContextMenu}
     >
-      <div className={styles.card}>
+      <div className={styles.card} onContextMenu={handleModalContextMenu}>
         <div className={styles.header}>
           <div className={styles.headerTopRow}>
             <div className={styles.title}>Add Products</div>
@@ -1608,11 +1694,13 @@ export default function AddProductsModal({
               handleProductsGridReady={handleProductsGridReady}
               handleProductsGridModelUpdated={handleProductsGridModelUpdated}
               onRequestPayloadConsumed={onRequestPayloadConsumed}
+              aiLocked={promptSubmitted}
             />
           </section>
         </div>
       </div>
       {commentPopup}
+      {detachMenuNode}
     </div>
   );
 }

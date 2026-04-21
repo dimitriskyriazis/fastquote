@@ -185,6 +185,10 @@ export default function ClientProductsPage({
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
   const showAddProductModalRef = useRef(showAddProductModal);
   showAddProductModalRef.current = showAddProductModal;
+  const [detachedWindowOpen, setDetachedWindowOpen] = useState(false);
+  const detachedWindowRef = useRef<Window | null>(null);
+  const detachedWindowOpenRef = useRef(false);
+  detachedWindowOpenRef.current = detachedWindowOpen;
   const splitLeftRef = useRef<HTMLDivElement | null>(null);
   const layoutStorageKey = useMemo(() => buildLayoutStorageKey(userId), [userId]);
   const layoutLoadedRef = useRef<string | null>(null);
@@ -539,12 +543,22 @@ export default function ClientProductsPage({
 
   const skipSelectionChangeUntilRef = useRef(0);
 
+  const postToDetached = useCallback((payload: Record<string, unknown>) => {
+    const win = detachedWindowRef.current;
+    if (!win || win.closed) return;
+    try {
+      win.postMessage(payload, window.location.origin);
+    } catch {
+      /* noop */
+    }
+  }, []);
+
   const handleMainGridSelectionChanged = useCallback((selectedRow: { offerDetailId: number; treeOrdering: string; label: string; isRequested: boolean; parentPath: number[]; requestedBrand?: string | null; requestedPartNo?: string | null; requestedModelNo?: string | null; requestedDescription?: string | null } | null) => {
     if (Date.now() < skipSelectionChangeUntilRef.current) {
       return;
     }
     if (selectedRow) {
-      setPlacementAnchor({
+      const nextAnchor = {
         label: selectedRow.label,
         treeOrdering: selectedRow.treeOrdering,
         isRequested: selectedRow.isRequested,
@@ -554,28 +568,57 @@ export default function ClientProductsPage({
         requestedPartNo: selectedRow.requestedPartNo,
         requestedModelNo: selectedRow.requestedModelNo,
         requestedDescription: selectedRow.requestedDescription,
-      });
+      };
+      setPlacementAnchor(nextAnchor);
       setDefaultPlacementMode('fill');
       offerProductsPanelRef.current?.setInsertLineVisible?.(false);
+      if (detachedWindowOpenRef.current) {
+        postToDetached({
+          type: 'fastquote:detached-add-products:anchor',
+          anchor: nextAnchor,
+          defaultPlacementMode: 'fill',
+          initialRequestedRowId: selectedRow.isRequested ? selectedRow.offerDetailId : null,
+        });
+        try { detachedWindowRef.current?.focus(); } catch { /* noop */ }
+      }
     } else {
       setPlacementAnchor(null);
       // When the add modal is open and no row is selected, show the insertion
       // line below the last row so the user sees where the product will go.
-      if (showAddProductModalRef.current) {
+      if (showAddProductModalRef.current || detachedWindowOpenRef.current) {
         offerProductsPanelRef.current?.setInsertLineVisible?.(true, true);
       }
+      if (detachedWindowOpenRef.current) {
+        postToDetached({
+          type: 'fastquote:detached-add-products:anchor',
+          anchor: null,
+          defaultPlacementMode: 'fill',
+          initialRequestedRowId: null,
+        });
+      }
     }
-  }, []);
+  }, [postToDetached]);
 
   const handleRequestInsertProduct = useCallback((anchor: { offerDetailId: number; parentPath: number[]; label: string; treeOrdering: string; isRequested: boolean }) => {
     skipSelectionChangeUntilRef.current = Date.now() + 200;
-    setPlacementAnchor({ label: anchor.label, treeOrdering: anchor.treeOrdering, isRequested: anchor.isRequested, offerDetailId: anchor.offerDetailId, parentPath: anchor.parentPath });
+    const nextAnchor = { label: anchor.label, treeOrdering: anchor.treeOrdering, isRequested: anchor.isRequested, offerDetailId: anchor.offerDetailId, parentPath: anchor.parentPath };
+    setPlacementAnchor(nextAnchor);
     setDefaultPlacementMode('below');
     if (anchor.isRequested) {
       setInitialRequestedRowId(anchor.offerDetailId);
     }
+    if (detachedWindowOpenRef.current) {
+      postToDetached({
+        type: 'fastquote:detached-add-products:anchor',
+        anchor: nextAnchor,
+        defaultPlacementMode: 'below',
+        initialRequestedRowId: anchor.isRequested ? anchor.offerDetailId : null,
+      });
+      try { detachedWindowRef.current?.focus(); } catch { /* noop */ }
+      return;
+    }
     setShowAddProductModal(true);
-  }, []);
+  }, [postToDetached]);
 
   const handlePlacementModeChange = useCallback((mode: 'fill' | 'below') => {
     if (mode === 'below') {
@@ -591,6 +634,80 @@ export default function ClientProductsPage({
     setDefaultPlacementMode('fill');
     offerProductsPanelRef.current?.setInsertLineVisible?.(false);
   }, []);
+
+  const handleRequestDetachAddProducts = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    const context = {
+      placementAnchor,
+      defaultPlacementMode,
+      initialRequestedRowId,
+      isStandardPackage,
+      showRequestedColumns: isStandardPackage ? false : tableLayout === 'wReq',
+    };
+    try {
+      window.sessionStorage.setItem(
+        `fastquote-detached-add-products:${offerId}`,
+        JSON.stringify(context),
+      );
+    } catch {
+      /* noop */
+    }
+    const url = `/offers/${encodeURIComponent(offerId)}/products/add-window`;
+    const features = 'popup=yes,width=1400,height=900,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes';
+    const win = window.open(url, `fastquote-add-products-${offerId}`, features);
+    if (!win) {
+      showToastMessage('Popup blocked. Allow popups to detach the modal.', 'error');
+      return;
+    }
+    try { win.focus(); } catch { /* noop */ }
+    detachedWindowRef.current = win;
+    setDetachedWindowOpen(true);
+    setShowAddProductModal(false);
+  }, [offerId, placementAnchor, defaultPlacementMode, initialRequestedRowId, isStandardPackage, tableLayout]);
+
+  useEffect(() => {
+    if (!detachedWindowOpen) return;
+    const interval = window.setInterval(() => {
+      const win = detachedWindowRef.current;
+      if (!win || win.closed) {
+        detachedWindowRef.current = null;
+        setDetachedWindowOpen(false);
+        setPlacementAnchor(null);
+        setDefaultPlacementMode('fill');
+        offerProductsPanelRef.current?.setInsertLineVisible?.(false);
+      }
+    }, 500);
+    return () => window.clearInterval(interval);
+  }, [detachedWindowOpen]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const listener = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data as { type?: string; offerId?: string; count?: number; insertedOfferDetailIds?: unknown } | null;
+      if (!data || typeof data !== 'object') return;
+      if (data.offerId !== offerId) return;
+      if (data.type === 'fastquote:detached-add-products:added') {
+        const ids = Array.isArray(data.insertedOfferDetailIds)
+          ? data.insertedOfferDetailIds
+              .map((v) => (typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : null))
+              .filter((v): v is number => v != null)
+          : [];
+        handleProductsAdded(typeof data.count === 'number' ? data.count : ids.length, ids);
+        return;
+      }
+      if (data.type === 'fastquote:detached-add-products:closed') {
+        detachedWindowRef.current = null;
+        setDetachedWindowOpen(false);
+        setPlacementAnchor(null);
+        setDefaultPlacementMode('fill');
+        offerProductsPanelRef.current?.setInsertLineVisible?.(false);
+        return;
+      }
+    };
+    window.addEventListener('message', listener);
+    return () => window.removeEventListener('message', listener);
+  }, [offerId, handleProductsAdded]);
   const handleCloseRequestedModal = useCallback(() => setShowRequestedModal(false), []);
   const handleOpenAddProductForm = useCallback(() => setShowAddProductFormModal(true), []);
   const handleCloseAddProductForm = useCallback(() => setShowAddProductFormModal(false), []);
@@ -1089,7 +1206,7 @@ export default function ClientProductsPage({
               offerCreatedByUserId={offerCreatedByUserId}
               onMainGridSelectionChanged={handleMainGridSelectionChanged}
               onRequestInsertProduct={handleRequestInsertProduct}
-              showInsertLineOnHover={showAddProductModal}
+              showInsertLineOnHover={showAddProductModal || detachedWindowOpen}
             />
           </div>
           {showAddProductModal ? (
@@ -1113,6 +1230,7 @@ export default function ClientProductsPage({
                 defaultPlacementMode={defaultPlacementMode}
                 onPlacementModeChange={handlePlacementModeChange}
                 getLastClickedRowId={() => offerProductsPanelRef.current?.getLastClickedRowId?.() ?? null}
+                onRequestDetach={handleRequestDetachAddProducts}
               />
             </div>
           ) : null}

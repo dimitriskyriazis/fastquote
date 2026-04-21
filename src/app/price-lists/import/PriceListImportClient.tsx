@@ -762,7 +762,7 @@ const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: numbe
     .filter((row) => Array.isArray(row) && row.some(hasCellValue));
   const rowCount = nonEmptyDataRows.length;
   const previewRows = nonEmptyDataRows
-    .slice(0, 3)
+    .slice(0, 20)
     .map((row) => {
       const preview: Record<number, string> = {};
       row.forEach((cell, colIdx) => {
@@ -1671,6 +1671,16 @@ export default function PriceListImportClient({
         isListPrice: key === "listPrice",
       };
     }).filter((col): col is PreviewColumn => Boolean(col));
+  }, [activeSheet]);
+
+  const displayPreviewRows = useMemo<Record<number, string>[]>(() => {
+    if (!activeSheet) return [];
+    const partCol = activeSheet.selection.partNumber;
+    const priceCol = activeSheet.selection.listPrice;
+    const rows = activeSheet.previewRows;
+    if (partCol == null || priceCol == null) return rows.slice(0, 3);
+    const isFilled = (value: string | undefined) => typeof value === "string" && value.trim().length > 0;
+    return rows.filter((row) => isFilled(row[partCol]) && isFilled(row[priceCol])).slice(0, 3);
   }, [activeSheet]);
 
   const handleSheetChange = useCallback((nextIndex: number) => {
@@ -2646,7 +2656,7 @@ export default function PriceListImportClient({
                               <div className={styles.previewSection}>
                                 <div className={styles.previewHeading}>
                                   <span>
-                                    Sample rows (first {activeSheet.previewRows.length > 0 ? activeSheet.previewRows.length : 3})
+                                    Sample rows (first {displayPreviewRows.length > 0 ? displayPreviewRows.length : 3})
                                   </span>
                                   <span className={styles.previewHint}>
                                     Showing mapped columns; the list price column is bold.
@@ -2656,7 +2666,7 @@ export default function PriceListImportClient({
                                   <div className={styles.previewEmpty}>
                                     Select columns for Part Number and List Price to see a preview.
                                   </div>
-                                ) : activeSheet.previewRows.length === 0 ? (
+                                ) : displayPreviewRows.length === 0 ? (
                                   <div className={styles.previewEmpty}>
                                     No preview data available for this sheet yet.
                                   </div>
@@ -2671,7 +2681,7 @@ export default function PriceListImportClient({
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {activeSheet.previewRows.map((row, rowIndex) => (
+                                        {displayPreviewRows.map((row, rowIndex) => (
                                           <tr key={rowIndex}>
                                             {previewColumns.map((column) => (
                                               <td

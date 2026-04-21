@@ -10,6 +10,7 @@ import { logger } from "../../../../lib/logger";
 import { logAddAuditDetails } from "../../../../lib/mutationAudit";
 import { validateRequest, positiveIntSchema, stringSchema, urlSchema, partModelNumberSchema } from "../../../../lib/validation";
 import { clearPartModelNumberUpper } from "../../../../lib/partModelNumber";
+import { embedProductAsync } from "../../../../lib/productEmbeddings";
 
 const toClearedPartModel = (value: string | null | undefined) => {
   if (!value) return null;
@@ -160,6 +161,11 @@ export async function POST(req: NextRequest) {
       ],
       message: "Product created",
     });
+
+    // Semantic index: fire-and-forget embedding so the new product becomes
+    // findable via "What are you looking for?" without waiting for the
+    // nightly backfill.  Soft-failures are logged inside embedProductAsync.
+    void embedProductAsync(productId);
 
     return NextResponse.json({ ok: true, productId });
   } catch (err) {

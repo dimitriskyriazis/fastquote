@@ -14,12 +14,18 @@ import { useFarnellSearch, isFarnellRow, type FarnellSearchRow } from '../../../
 import { useFarnellProductResolver } from '../../../hooks/useFarnellProductResolver';
 import {
   isFarnellBrand,
-  buildFuzzyContainsFilter,
-  buildMultiFuzzyContainsFilter,
+  buildRequestedFilterState,
+  buildPromptFilterState,
   mergeExpansionsIntoFilterModel,
   type FuzzyTextFilter,
+  type HiddenFilterTokens,
   type FilterExpansions,
+  type PromptRouting,
 } from '../offerProductsUtils';
+import {
+  AiSearchPromptPill,
+  AI_GRID_LOCK_CLASS,
+} from './AiSearch';
 
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), {
   ssr: false,
@@ -284,129 +290,20 @@ export default function MatchRequestedProductsModal({
   // filter popup stays readable; the full set of fuzzy tokens / synonyms /
   // cross-fold terms ride along in requestPayload.hiddenFilterTokens and are
   // applied server-side with identical WHERE + relevance-score semantics.
+  // Semantics shared with AddProductsModal via the common helper.
   const { requestedFilterModel, hiddenFilterTokens } = useMemo(() => {
-    const filters: Record<string, FuzzyTextFilter> = {};
-    const hidden: Record<string, Array<{ filter: string; weight?: number }>> = {};
-
-    const splitCompoundIntoVisibleAndHidden = (
-      colId: string,
-      compound: FuzzyTextFilter | null,
-      primaryValue: string | null,
-    ) => {
-      if (!compound) return;
-      const primaryTrimmed = typeof primaryValue === 'string' ? primaryValue.trim() : '';
-      const allConditions = 'conditions' in compound
-        ? compound.conditions
-        : [compound];
-      const primaryUpper = primaryTrimmed.toUpperCase();
-      // Find the condition matching the primary (desc1 / raw brand / etc.),
-      // or fall back to the first condition.
-      const visibleCond = allConditions.find((c) => c.filter.toUpperCase() === primaryUpper)
-        ?? allConditions[0];
-      if (!visibleCond) return;
-      filters[colId] = { filterType: 'text', type: 'contains', filter: visibleCond.filter };
-      const visibleUpper = visibleCond.filter.toUpperCase();
-      const extras = allConditions
-        .filter((c) => c.filter.toUpperCase() !== visibleUpper)
-        .map((c) => ({ filter: c.filter, weight: c.weight }));
-      if (extras.length > 0) hidden[colId] = extras;
-    };
-
-    // Description — multi-source fuzzy filter, priority-weighted across
-    // desc1/desc2/desc3.  Visible pill shows desc1 only; the rest go hidden.
-    const descriptionFilter = buildMultiFuzzyContainsFilter(
-      [entry.requestedDescription, entry.requestedDescription2, entry.requestedDescription3],
-      { mode: 'description' },
-    );
-    splitCompoundIntoVisibleAndHidden('Description', descriptionFilter, entry.requestedDescription ?? null);
-
-    // Brand — single raw value (or multi-brand) with synonym expansion; UI
-    // shows the raw requested brand and expansions hide.
-    const brandFilter = buildFuzzyContainsFilter(entry.requestedBrand, { mode: 'brand' });
-    splitCompoundIntoVisibleAndHidden('BrandName', brandFilter, entry.requestedBrand ?? null);
-
-    // PartNumber / ModelNumber — fuzzy part-model tokenization; raw requested
-    // value stays visible, split-off tokens hide.
-    const partFilter = buildFuzzyContainsFilter(entry.requestedPartNumber, { mode: 'partNumber' });
-    splitCompoundIntoVisibleAndHidden('PartNumber', partFilter, entry.requestedPartNumber ?? null);
-    const modelFilter = buildFuzzyContainsFilter(entry.requestedModelNumber, { mode: 'partNumber' });
-    splitCompoundIntoVisibleAndHidden('ModelNumber', modelFilter, entry.requestedModelNumber ?? null);
-
-    const pushHidden = (colId: string, tokens: Array<{ filter: string; weight?: number }>) => {
-      if (tokens.length === 0) return;
-      const existing = hidden[colId] ?? [];
-      const seen = new Set([
-        ...(filters[colId] && 'filter' in filters[colId] ? [filters[colId].filter.toUpperCase()] : []),
-        ...existing.map((t) => t.filter.toUpperCase()),
-      ]);
-      const merged = [...existing];
-      tokens.forEach((t) => {
-        const key = t.filter.trim().toUpperCase();
-        if (!key || seen.has(key)) return;
-        seen.add(key);
-        merged.push(t);
-      });
-      if (merged.length > 0) hidden[colId] = merged;
-    };
-
-    // Cross-field: the requested part/model/brand values also land as hidden
-    // tokens on the Description column.  Covers descriptions that embed the
-    // part number, model, or manufacturer name (e.g. "LOGICKEYBOARD Mac ASTRA"
-    // in the description of a keyboard carried under a distributor brand).
-    const requestedPartNoStr = typeof entry.requestedPartNumber === 'string' ? entry.requestedPartNumber.trim() : '';
-    const requestedModelNoStr = typeof entry.requestedModelNumber === 'string' ? entry.requestedModelNumber.trim() : '';
-    const requestedBrandStr = typeof entry.requestedBrand === 'string' ? entry.requestedBrand.trim() : '';
-    if (requestedPartNoStr) pushHidden('Description', [{ filter: requestedPartNoStr, weight: 1 }]);
-    if (requestedModelNoStr) pushHidden('Description', [{ filter: requestedModelNoStr, weight: 1 }]);
-    if (requestedBrandStr && !/^(idk|unknown|n\/?a|none|any|various|\?+|-+)$/i.test(requestedBrandStr)) {
-      pushHidden('Description', [{ filter: requestedBrandStr, weight: 1 }]);
-    }
-
-    // Reverse direction: harvest code-looking tokens from descriptions → add
-    // as hidden tokens on PartNumber and ModelNumber.
-    const descSources = [
-      entry.requestedDescription,
-      entry.requestedDescription2,
-      entry.requestedDescription3,
-    ]
-      .map((v) => (typeof v === 'string' ? v.trim() : ''))
-      .filter((v) => v.length > 0);
-    const looksLikeCode = (token: string): boolean => {
-      if (token.length < 5) return false;
-      let digitCount = 0;
-      for (const ch of token) { if (ch >= '0' && ch <= '9') digitCount += 1; }
-      return digitCount >= 2;
-    };
-    const codeTokens = new Set<string>();
-    descSources.forEach((src) => {
-      src.split(/[\s,;|/()[\]"'.!?:=<>+*]+/).forEach((raw) => {
-        const t = raw.trim();
-        if (looksLikeCode(t)) codeTokens.add(t);
-      });
+    const { visibleModel, hiddenTokens } = buildRequestedFilterState({
+      requestedBrand: entry.requestedBrand,
+      requestedPartNumber: entry.requestedPartNumber,
+      requestedModelNumber: entry.requestedModelNumber,
+      requestedDescriptions: [
+        entry.requestedDescription,
+        entry.requestedDescription2,
+        entry.requestedDescription3,
+      ],
+      prefetchedExpansion,
     });
-    if (codeTokens.size > 0) {
-      const arr = Array.from(codeTokens).map((t) => ({ filter: t, weight: 1 }));
-      pushHidden('PartNumber', arr);
-      pushHidden('ModelNumber', arr);
-    }
-
-    // Fold prefetched AI expansions into hidden tokens for their column —
-    // keeps them server-side only so the filter popup stays clean.
-    if (prefetchedExpansion) {
-      const push = (colId: string, tokens: string[] | undefined) => {
-        if (!tokens || tokens.length === 0) return;
-        pushHidden(colId, tokens.map((t) => ({ filter: t })));
-      };
-      push('BrandName', prefetchedExpansion.brand);
-      push('PartNumber', prefetchedExpansion.partNumber);
-      push('ModelNumber', prefetchedExpansion.modelNumber);
-      push('Description', prefetchedExpansion.description);
-    }
-
-    return {
-      requestedFilterModel: Object.keys(filters).length > 0 ? filters : null,
-      hiddenFilterTokens: Object.keys(hidden).length > 0 ? hidden : null,
-    };
+    return { requestedFilterModel: visibleModel, hiddenFilterTokens: hiddenTokens };
   }, [
     entry.requestedBrand,
     entry.requestedModelNumber,
@@ -420,8 +317,26 @@ export default function MatchRequestedProductsModal({
   // When the user submits a prompt or the auto-expand AI response lands, we
   // override the hidden-token payload so the in-flight query picks up the
   // extended terms.  Cleared on entry change so each row starts fresh.
-  const [overrideHiddenTokens, setOverrideHiddenTokens] = useState<Record<string, Array<{ filter: string; weight?: number }>> | null>(null);
+  const [overrideHiddenTokens, setOverrideHiddenTokens] = useState<HiddenFilterTokens | null>(null);
   const effectiveHiddenTokens = overrideHiddenTokens ?? hiddenFilterTokens;
+  // Semantic-search candidates from /expand — ProductIDs nearest (cosine) to
+  // the prompt or requested-row context.  Flow through as a score-only boost.
+  const [semanticCandidates, setSemanticCandidates] = useState<number[] | null>(null);
+  // Prompt-driven AI search lock state (mirrors AddProductsModal).  When
+  // true: prompt input becomes read-only, the column filter row is hidden,
+  // and a banner in the filter-row slot shows the AI's interpretation.
+  const [promptSubmitted, setPromptSubmitted] = useState(false);
+  const promptSubmittedRef = useRef(false);
+  promptSubmittedRef.current = promptSubmitted;
+  // Debounced filter-change-driven semantic expansion (same mechanism as
+  // AddProductsModal).
+  const semanticExpandTimerRef = useRef<number | null>(null);
+  const semanticExpandAbortRef = useRef<AbortController | null>(null);
+  const lastSemanticSigRef = useRef<string>('');
+  // Forward ref for triggerSemanticFromFilters — attachFilterListener runs
+  // earlier in the file than the trigger is defined, so we thread it
+  // through a ref that's populated after the callback is created below.
+  const triggerSemanticFromFiltersRef = useRef<((api: MatcherGridApi) => void) | null>(null);
 
   const requestPayload = useMemo(() => {
     const payload: Record<string, unknown> = {
@@ -433,9 +348,10 @@ export default function MatchRequestedProductsModal({
       orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
     };
     if (effectiveHiddenTokens) payload.hiddenFilterTokens = effectiveHiddenTokens;
+    if (semanticCandidates && semanticCandidates.length > 0) payload.semanticCandidates = semanticCandidates;
     if (newProductId != null) payload.newProductId = newProductId;
     return Object.keys(payload).length > 0 ? payload : null;
-  }, [effectiveHiddenTokens, newProductId]);
+  }, [effectiveHiddenTokens, semanticCandidates, newProductId]);
 
   const endpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
@@ -689,6 +605,14 @@ export default function MatchRequestedProductsModal({
         setFarnellPartNumber(partFilter?.filter ?? null);
         setFarnellDescription(descFilter?.filter ?? null);
       } catch { /* noop */ }
+      // Debounced semantic expansion when user edits column filters directly.
+      if (semanticExpandTimerRef.current != null) {
+        window.clearTimeout(semanticExpandTimerRef.current);
+      }
+      semanticExpandTimerRef.current = window.setTimeout(() => {
+        semanticExpandTimerRef.current = null;
+        triggerSemanticFromFiltersRef.current?.(api);
+      }, 500);
     };
     filterListenerRef.current = listener;
     try {
@@ -705,21 +629,6 @@ export default function MatchRequestedProductsModal({
   useEffect(() => () => {
     clearPinnedTopRow();
   }, [clearPinnedTopRow]);
-
-  const applyProducts = useCallback((products: MatcherRowData[]) => {
-    suggestedProductsRef.current = products;
-    setSuggestedProducts(products);
-    setSuggesting(false);
-    setSuggestionsVisible(true);
-    setNoSuggestionsFound(products.length === 0);
-    if (products.length > 0) {
-      try {
-        productsApiRef.current?.deselectAll?.();
-      } catch { /* noop */ }
-      userManuallySelectedRef.current = false;
-      setSelectedProduct(products[0]);
-    }
-  }, []);
 
   const runExpand = useCallback(async (options?: { prompt?: string; silent?: boolean }) => {
     const targetEntryId = entry.offerDetailId;
@@ -744,52 +653,27 @@ export default function MatchRequestedProductsModal({
       });
       if (!res.ok) throw new Error('Failed to expand filters');
       if (currentEntryIdRef.current !== targetEntryId) return;
-      const data = (await res.json()) as { ok: boolean; expansions?: FilterExpansions };
+      const data = (await res.json()) as {
+        ok: boolean;
+        expansions?: FilterExpansions;
+        routed?: PromptRouting | null;
+        semanticCandidates?: number[];
+      };
       const expansions = data.expansions ?? {};
+      const routed = data.routed ?? null;
+      const semantic = Array.isArray(data.semanticCandidates) ? data.semanticCandidates : [];
+      setSemanticCandidates(semantic.length > 0 ? semantic : null);
       const api = productsApiRef.current;
       if (!api) return;
       if (promptText) {
-        // Prompt submitted: wipe the pre-populated requested-row filters.
-        // Visible filter pill shows ONLY the raw prompt text (single condition
-        // so AG Grid's popup stays clean); the full fuzzy-token expansion +
-        // AI-expansion tokens travel via the hidden-tokens payload.
-        const promptFuzzy = buildFuzzyContainsFilter(promptText, { mode: 'description' });
-        const promptUpper = promptText.toUpperCase();
-        const promptHidden: Array<{ filter: string; weight?: number }> = [];
-        if (promptFuzzy) {
-          const conds = 'conditions' in promptFuzzy ? promptFuzzy.conditions : [promptFuzzy];
-          conds.forEach((c) => {
-            if (c.filter.toUpperCase() !== promptUpper) {
-              promptHidden.push({ filter: c.filter, weight: c.weight });
-            }
-          });
-        }
-        const newHidden: Record<string, Array<{ filter: string; weight?: number }>> = {};
-        const pushHidden = (colId: string, tokens: Array<{ filter: string; weight?: number }> | string[] | undefined) => {
-          if (!tokens || (Array.isArray(tokens) && tokens.length === 0)) return;
-          const normalized = (tokens as Array<unknown>).map((t) =>
-            typeof t === 'string' ? { filter: t } : (t as { filter: string; weight?: number }),
-          );
-          const existing = newHidden[colId] ?? [];
-          const seen = new Set(existing.map((x) => x.filter.toUpperCase()));
-          normalized.forEach((t) => {
-            const key = t.filter.trim().toUpperCase();
-            if (!key || seen.has(key)) return;
-            seen.add(key);
-            existing.push(t);
-          });
-          if (existing.length > 0) newHidden[colId] = existing;
-        };
-        if (promptHidden.length > 0) pushHidden('Description', promptHidden);
-        pushHidden('BrandName', expansions.brand);
-        pushHidden('PartNumber', expansions.partNumber);
-        pushHidden('ModelNumber', expansions.modelNumber);
-        pushHidden('Description', expansions.description);
-        setOverrideHiddenTokens(Object.keys(newHidden).length > 0 ? newHidden : null);
-        const visibleModel: Record<string, FuzzyTextFilter> = {
-          Description: { filterType: 'text', type: 'contains', filter: promptText },
-        };
+        // Prompt submitted: shared helper wipes the pre-populated requested-row
+        // filters and routes prompt fragments to the correct visible-filter
+        // columns (brand / part / model / description), folding AI expansion
+        // tokens into the hidden sidecar.
+        const { visibleModel, hiddenTokens } = buildPromptFilterState(promptText, expansions, routed);
+        setOverrideHiddenTokens(hiddenTokens);
         try { api.setFilterModel(visibleModel); } catch { /* noop */ }
+        setPromptSubmitted(true);
         return;
       }
       // Silent auto-expand: merge into whatever filter is already there.
@@ -816,15 +700,14 @@ export default function MatchRequestedProductsModal({
   // needed if no prefetched expansion is available (prefetch is folded into
   // requestedFilterModel directly, so the grid fetches once with the widened
   // filter already applied — no second round-trip).
-  const autoExpandedEntriesRef = useRef<Set<number>>(new Set());
+  //
+  // No per-session dedup guard: entry-change resets both semanticCandidates
+  // and overrideHiddenTokens to null, so a revisit would otherwise lose the
+  // AI-driven boosts and rank matches differently than the first visit.  The
+  // /expand endpoint has its own 15-min LRU cache server-side, so re-firing
+  // on every visit is free after the first time through each entry.
   useEffect(() => {
-    const id = entry.offerDetailId;
-    if (autoExpandedEntriesRef.current.has(id)) return;
-    if (prefetchedExpansion) {
-      autoExpandedEntriesRef.current.add(id);
-      return;
-    }
-    autoExpandedEntriesRef.current.add(id);
+    if (prefetchedExpansion) return;
     void runExpand({ silent: true });
   }, [entry.offerDetailId, runExpand, prefetchedExpansion]);
 
@@ -833,6 +716,103 @@ export default function MatchRequestedProductsModal({
     if (!trimmed || suggesting) return;
     void runExpand({ prompt: trimmed });
   }, [promptText, suggesting, runExpand]);
+
+  // Exit AI search mode — clears the prompt-driven override so the grid
+  // returns to the requested-row-driven filter state that was active before
+  // the prompt submission.
+  const handleClearAIPrompt = useCallback(() => {
+    setPromptText('');
+    setPromptSubmitted(false);
+    setOverrideHiddenTokens(null);
+    setSemanticCandidates(null);
+    setNoSuggestionsFound(false);
+    lastSemanticSigRef.current = '';
+    hasAppliedRequestedFiltersRef.current = false;
+    const api = productsApiRef.current;
+    if (api) {
+      // Fall back to the requested-row's filter model (the state the user
+      // was in before they typed the prompt).
+      try { api.setFilterModel(requestedFilterModel ?? null); } catch { /* noop */ }
+      hasAppliedRequestedFiltersRef.current = true;
+    }
+  }, [requestedFilterModel]);
+
+  // Filter-change-driven semantic expansion.  When the user edits column
+  // filters directly, debounce and fire /expand with the current values so
+  // we fold both AI expansion tokens and fuzzy/synonym expansion into the
+  // hidden-tokens sidecar — same recall as the prompt path.  Suppressed
+  // while a prompt-driven search is active (the prompt owns filter state).
+  const triggerSemanticFromFilters = useCallback((api: MatcherGridApi) => {
+    if (promptSubmittedRef.current) return;
+    const model = (api.getFilterModel?.() ?? {}) as Record<string, { filter?: string }>;
+    const pick = (colId: string): string | null => {
+      const v = model[colId]?.filter;
+      if (typeof v !== 'string') return null;
+      const t = v.trim();
+      return t.length >= 2 ? t : null;
+    };
+    const requestedBrand = pick('BrandName');
+    const requestedPartNumber = pick('PartNumber');
+    const requestedModelNumber = pick('ModelNumber');
+    const requestedDescription = pick('Description');
+    const anyValue = requestedBrand || requestedPartNumber || requestedModelNumber || requestedDescription;
+    const sig = `${requestedBrand ?? ''}|${requestedPartNumber ?? ''}|${requestedModelNumber ?? ''}|${requestedDescription ?? ''}`;
+    if (sig === lastSemanticSigRef.current) return;
+    lastSemanticSigRef.current = sig;
+    if (!anyValue) {
+      setSemanticCandidates(null);
+      setOverrideHiddenTokens(null);
+      return;
+    }
+    semanticExpandAbortRef.current?.abort();
+    const controller = new AbortController();
+    semanticExpandAbortRef.current = controller;
+    (async () => {
+      try {
+        const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/expand`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requestedBrand,
+            requestedPartNumber,
+            requestedModelNumber,
+            requestedDescription,
+          }),
+          signal: controller.signal,
+        });
+        if (!res.ok || controller.signal.aborted) return;
+        const data = (await res.json()) as {
+          ok?: boolean;
+          expansions?: FilterExpansions;
+          semanticCandidates?: number[];
+        };
+        if (controller.signal.aborted) return;
+        const expansions = data.expansions ?? {};
+        const { hiddenTokens } = buildRequestedFilterState({
+          requestedBrand,
+          requestedPartNumber,
+          requestedModelNumber,
+          requestedDescriptions: requestedDescription ? [requestedDescription] : [],
+          prefetchedExpansion: expansions,
+        });
+        setOverrideHiddenTokens(hiddenTokens);
+        const semantic = Array.isArray(data.semanticCandidates) ? data.semanticCandidates : [];
+        setSemanticCandidates(semantic.length > 0 ? semantic : null);
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') return;
+        console.warn('Semantic filter expansion failed', err);
+      }
+    })();
+  }, [offerId]);
+
+  triggerSemanticFromFiltersRef.current = triggerSemanticFromFilters;
+
+  useEffect(() => () => {
+    if (semanticExpandTimerRef.current != null) {
+      window.clearTimeout(semanticExpandTimerRef.current);
+    }
+    semanticExpandAbortRef.current?.abort();
+  }, []);
 
   // Preserved name for the legacy button path in case anywhere still references it.
   const handleSuggestProducts = useCallback(() => {
@@ -947,6 +927,9 @@ export default function MatchRequestedProductsModal({
     setComment('');
     setPromptText('');
     setOverrideHiddenTokens(null);
+    setSemanticCandidates(null);
+    setPromptSubmitted(false);
+    lastSemanticSigRef.current = '';
     // selectedProduct and suggestion state (suggestedProducts, noSuggestionsFound,
     // suggesting) are managed by the useLayoutEffect below so it can apply
     // prefetched data before paint without being overwritten by this regular useEffect.
@@ -1052,27 +1035,15 @@ export default function MatchRequestedProductsModal({
               </div>
             </div>
             <div className={styles.headerActions}>
-              <label className={styles.promptLabel}>
-                <span className={styles.promptLabelText}>What are you looking for?</span>
-                <input
-                  type="text"
-                  className={styles.promptInput}
-                  value={promptText}
-                  onChange={(e) => setPromptText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handlePromptSubmit();
-                    }
-                  }}
-                  placeholder="e.g. TV 55 inches Samsung"
-                  disabled={assigning}
-                  data-fastquote-keep-selection="true"
-                />
-                {suggesting ? (
-                  <span className={styles.aiButtonSpinner} aria-label="Expanding with AI" />
-                ) : null}
-              </label>
+              <AiSearchPromptPill
+                promptText={promptText}
+                onPromptTextChange={setPromptText}
+                onSubmit={handlePromptSubmit}
+                onClear={handleClearAIPrompt}
+                submitted={promptSubmitted}
+                busy={suggesting}
+                disabled={assigning}
+              />
               {noSuggestionsFound && !suggesting && (
                 <span className={styles.noSuggestionsLabel}>No extra terms to add</span>
               )}
@@ -1160,7 +1131,10 @@ export default function MatchRequestedProductsModal({
                 </div>
               ) : null}
             </div>
-            <div className={`${styles.gridShell} offer-products-grid`} ref={gridShellRef}>
+            <div
+              className={`${styles.gridShell} offer-products-grid ${promptSubmitted ? AI_GRID_LOCK_CLASS : ''}`}
+              ref={gridShellRef}
+            >
               <AgGridAll
                 endpoint={endpoint}
                 columnDefs={productColumns}

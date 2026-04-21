@@ -298,7 +298,10 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
   let selectedIds: number[] = [];
   try {
     const completion = await getOpenAI().chat.completions.create({
-      model: 'gpt-4o-mini',
+      // gpt-4o (not mini): the re-ranker depends on fine-grained model-variant
+      // disambiguation (CX-30 vs CX-20, 1-button vs 2-button).  Mini frequently
+      // confuses siblings in the same product family; 4o holds the distinction.
+      model: 'gpt-4o',
       temperature: 0,
       response_format: { type: 'json_object' },
       messages: [

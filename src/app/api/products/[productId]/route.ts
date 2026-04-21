@@ -9,6 +9,7 @@ import { logger } from '../../../../lib/logger';
 import { resolveAuditUserId } from '../../../../lib/auditTrail';
 import { logEditAuditDetails, type FieldChange } from '../../../../lib/mutationAudit';
 import { clearPartModelNumberUpper } from '../../../../lib/partModelNumber';
+import { embedProductAsync } from '../../../../lib/productEmbeddings';
 import {
   validateParams,
   validateRequest,
@@ -291,6 +292,18 @@ export async function PATCH(
         changes,
         message: 'Product updated',
       });
+    }
+
+    // Semantic index: re-embed only when the text that feeds the embedding
+    // actually changed (brand/part/model/description).  Other fields like
+    // categoryId or enabled don't affect the vector.
+    const embeddingRelevant = updates.some((entry) =>
+      entry.column === 'PartNumber'
+      || entry.column === 'ModelNumber'
+      || entry.column === 'Description',
+    );
+    if (embeddingRelevant) {
+      void embedProductAsync(normalized);
     }
 
     return NextResponse.json({ ok: true });
