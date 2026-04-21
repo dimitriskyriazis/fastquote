@@ -143,6 +143,7 @@ import {
   isRequestedFieldKey,
   type ProductSummary,
   type FarnellLookupResponse,
+  type FilterExpansions,
 } from './offerProductsUtils';
 
 export type { OfferProductsPanelHandle, OfferProductsTemplateExportRow } from './offerProductsPanelTypes';
@@ -364,21 +365,22 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [requestedMatchQueue, setRequestedMatchQueue] = useState<RequestedProductMatchEntry[]>([]);
   const [processedRequestedMatches, setProcessedRequestedMatches] = useState(0);
 
-  // --- AI suggestion prefetch cache ---
-  // Prefetches ALL entries upfront with bounded concurrency.
-  // Each result lands independently so the first ones are ready fast.
-  const suggestionCacheRef = useRef<Map<number, Record<string, unknown>[]>>(new Map());
-  const prefetchingRef = useRef<Set<number>>(new Set());
-  const prefetchStartedRef = useRef(false);
-  const [suggestionCacheVersion, setSuggestionCacheVersion] = useState(0);
+  // --- AI expansion prefetch cache ---
+  // Fetches expansion tokens for every requested entry in the queue upfront
+  // with bounded concurrency (4 in-flight).  Modal folds cached tokens into
+  // the initial filter model so the grid fetches data exactly once per
+  // entry — no second round-trip after AI returns.
+  const expansionCacheRef = useRef<Map<number, FilterExpansions>>(new Map());
+  const expansionPrefetchingRef = useRef<Set<number>>(new Set());
+  const expansionPrefetchStartedRef = useRef(false);
+  const [expansionCacheVersion, setExpansionCacheVersion] = useState(0);
 
-  const prefetchEntry = useCallback(async (entry: RequestedProductMatchEntry) => {
+  const prefetchExpansion = useCallback(async (entry: RequestedProductMatchEntry) => {
     const id = entry.offerDetailId;
-    if (suggestionCacheRef.current.has(id) || prefetchingRef.current.has(id)) return;
-    prefetchingRef.current.add(id);
-    console.log(`[suggest-prefetch] START #${prefetchingRef.current.size} offerDetailId=${id}`);
+    if (expansionCacheRef.current.has(id) || expansionPrefetchingRef.current.has(id)) return;
+    expansionPrefetchingRef.current.add(id);
     try {
-      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/suggest`, {
+      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/expand`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -391,30 +393,28 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         }),
       });
       if (res.ok) {
-        const data = (await res.json()) as { ok: boolean; products?: Record<string, unknown>[] };
-        suggestionCacheRef.current.set(id, data.products ?? []);
-        console.log(`[suggest-prefetch] DONE offerDetailId=${id} products=${(data.products ?? []).length} cached=${suggestionCacheRef.current.size}`);
-        setSuggestionCacheVersion((v) => v + 1);
+        const data = (await res.json()) as { ok: boolean; expansions?: FilterExpansions };
+        expansionCacheRef.current.set(id, data.expansions ?? {});
+        setExpansionCacheVersion((v) => v + 1);
       }
     } catch { /* noop */ }
   }, [offerId]);
 
-  // Prefetch all entries with bounded concurrency (max 4 in-flight at a time)
   useEffect(() => {
-    if (requestedMatchQueue.length === 0 || prefetchStartedRef.current) return;
-    prefetchStartedRef.current = true;
+    if (requestedMatchQueue.length === 0 || expansionPrefetchStartedRef.current) return;
+    expansionPrefetchStartedRef.current = true;
     const entries = [...requestedMatchQueue];
     const MAX_CONCURRENT = 4;
     let idx = 0;
     const worker = async () => {
       while (idx < entries.length) {
-        const entry = entries[idx++];
-        await prefetchEntry(entry);
+        const next = entries[idx++];
+        await prefetchExpansion(next);
       }
     };
     const workers = Array.from({ length: Math.min(MAX_CONCURRENT, entries.length) }, () => worker());
     void Promise.all(workers);
-  }, [requestedMatchQueue, prefetchEntry]);
+  }, [requestedMatchQueue, prefetchExpansion]);
   const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() =>
     readCollapsedCategoryPathsFromCookie(offerId),
   );
@@ -2974,9 +2974,10 @@ const requestedColumnDefsMap = useMemo(
   }, [addProductsEndpoint, assignRequestedRowToProduct, promoteNodeToCategory, promoteNodeToProduct, pushUndo, refreshOfferProductGrid, resolvedEndpoint]);
 
   const currentRequestedMatch = requestedMatchQueue[0] ?? null;
-  void suggestionCacheVersion; // trigger re-read from ref on cache update
-  const currentPrefetchedSuggestions = currentRequestedMatch
-    ? suggestionCacheRef.current.get(currentRequestedMatch.offerDetailId) ?? null
+  const currentPrefetchedSuggestions = null;
+  void expansionCacheVersion; // trigger re-read from ref on cache update
+  const currentPrefetchedExpansion: FilterExpansions | null = currentRequestedMatch
+    ? expansionCacheRef.current.get(currentRequestedMatch.offerDetailId) ?? null
     : null;
   const matchAddProductInitialValues = useMemo<AddProductInitialValues | null>(() => {
     if (!currentRequestedMatch) return null;
@@ -3114,9 +3115,9 @@ const requestedColumnDefsMap = useMemo(
     showToastMessage('Skipped all requested items.', 'info');
     setRequestedMatchQueue([]);
     setProcessedRequestedMatches(0);
-    prefetchStartedRef.current = false;
-    prefetchingRef.current.clear();
-    suggestionCacheRef.current.clear();
+    expansionCacheRef.current.clear();
+    expansionPrefetchingRef.current.clear();
+    expansionPrefetchStartedRef.current = false;
     // Force re-show requested columns that may have been hidden during the
     // populate/match flow.
     if (typeof window !== 'undefined') {
@@ -4420,19 +4421,19 @@ const requestedColumnDefsMap = useMemo(
           const deleteCheck = checkDeletePermissionForClient(roles, Math.max(totalSelected, 1), 'offerProducts', 'editOffers', { isCreator: isOfferCreator });
           items[deleteItemIndex] = {
             ...(existingDeleteItem as MenuItemDef),
-            name: 'Delete Products',
+            name: 'Delete product rows',
             disabled: !deleteCheck.allowed,
             tooltip: deleteCheck.allowed ? undefined : deleteCheck.reason,
             action: async () => {
               try {
                 const ids = await fetchAllFilteredOfferDetailIds();
                 if (ids.length === 0) {
-                  showToastMessage('No products selected for deletion.', 'info');
+                  showToastMessage('No product rows selected for deletion.', 'info');
                   return;
                 }
-                const countLabel = ids.length === 1 ? 'product' : 'products';
-                const confirmLabel = ids.length === 1 ? 'Delete product' : 'Delete products';
-                const keepLabel = ids.length === 1 ? 'Keep product' : 'Keep products';
+                const countLabel = ids.length === 1 ? 'product row' : 'product rows';
+                const confirmLabel = ids.length === 1 ? 'Delete product row' : 'Delete product rows';
+                const keepLabel = ids.length === 1 ? 'Keep product row' : 'Keep product rows';
                 const confirmed = await showConfirmDialog({
                   title: confirmLabel,
                   message: `Delete ${ids.length} ${countLabel}?`,
@@ -6876,6 +6877,7 @@ const requestedColumnDefsMap = useMemo(
           onClearNewProductId={clearMatchAddedProductId}
           onRequestPayloadConsumed={clearMatchAddedProductId}
           prefetchedSuggestions={currentPrefetchedSuggestions}
+          prefetchedExpansion={currentPrefetchedExpansion}
         />
       ) : null}
       <AddProductModal

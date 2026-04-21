@@ -19,6 +19,45 @@ type WarningGroup = {
   matches: DuplicateMatch[];
 };
 
+function normalizeForCompare(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const prev = new Array<number>(cols);
+  const curr = new Array<number>(cols);
+  for (let j = 0; j < cols; j++) prev[j] = j;
+  for (let i = 1; i < rows; i++) {
+    curr[0] = i;
+    for (let j = 1; j < cols; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j < cols; j++) prev[j] = curr[j];
+  }
+  return prev[cols - 1];
+}
+
+function isSimilarName(needle: string, candidate: string): boolean {
+  const a = normalizeForCompare(needle);
+  const b = normalizeForCompare(candidate);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length >= 2 && b.includes(a)) return true;
+  if (b.length >= 2 && a.includes(b)) return true;
+  const maxLen = Math.max(a.length, b.length);
+  const minLen = Math.min(a.length, b.length);
+  if (maxLen - minLen > 3) return false;
+  const distance = levenshtein(a, b);
+  const threshold = Math.max(1, Math.floor(maxLen * 0.25));
+  return distance <= threshold;
+}
+
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/duplicates');
   const requestId = await getRequestId(req);
@@ -64,15 +103,23 @@ export async function POST(req: NextRequest) {
 
       if (name && name.length >= 2) {
         const result = await pool.request()
-          .input("name", sql.NVarChar(512), `%${name}%`)
+          .input("name", sql.NVarChar(512), name)
+          .input("nameLike", sql.NVarChar(512), `%${name}%`)
           .query<{ ID: number; Name: string; TaxID: string | null }>(
-            `SELECT TOP 10 ID, Name, TaxID FROM dbo.Customers WHERE Name LIKE @name`
+            `SELECT TOP 50 ID, Name, TaxID FROM dbo.Customers
+             WHERE Name LIKE @nameLike
+                OR @name LIKE '%' + Name + '%'
+                OR SOUNDEX(Name) = SOUNDEX(@name)
+                OR DIFFERENCE(Name, @name) >= 3`
           );
-        if (result.recordset.length > 0) {
+        const matches = result.recordset
+          .filter((r) => isSimilarName(name, r.Name ?? ""))
+          .slice(0, 10);
+        if (matches.length > 0) {
           warnings.push({
             type: "name",
             label: "Similar Name",
-            matches: result.recordset.map((r) => ({ id: r.ID, name: r.Name, taxId: r.TaxID })),
+            matches: matches.map((r) => ({ id: r.ID, name: r.Name, taxId: r.TaxID })),
           });
         }
       }
@@ -99,15 +146,23 @@ export async function POST(req: NextRequest) {
 
       if (name && name.length >= 2) {
         const result = await pool.request()
-          .input("name", sql.NVarChar(255), `%${name}%`)
+          .input("name", sql.NVarChar(255), name)
+          .input("nameLike", sql.NVarChar(255), `%${name}%`)
           .query<{ ID: number; Name: string; TaxID: string | null }>(
-            `SELECT TOP 10 ID, Name, TaxID FROM dbo.Suppliers WHERE Name LIKE @name`
+            `SELECT TOP 50 ID, Name, TaxID FROM dbo.Suppliers
+             WHERE Name LIKE @nameLike
+                OR @name LIKE '%' + Name + '%'
+                OR SOUNDEX(Name) = SOUNDEX(@name)
+                OR DIFFERENCE(Name, @name) >= 3`
           );
-        if (result.recordset.length > 0) {
+        const matches = result.recordset
+          .filter((r) => isSimilarName(name, r.Name ?? ""))
+          .slice(0, 10);
+        if (matches.length > 0) {
           warnings.push({
             type: "name",
             label: "Similar Name",
-            matches: result.recordset.map((r) => ({ id: r.ID, name: r.Name, taxId: r.TaxID })),
+            matches: matches.map((r) => ({ id: r.ID, name: r.Name, taxId: r.TaxID })),
           });
         }
       }
@@ -118,15 +173,23 @@ export async function POST(req: NextRequest) {
 
       if (name && name.length >= 2) {
         const result = await pool.request()
-          .input("name", sql.NVarChar(255), `%${name}%`)
+          .input("name", sql.NVarChar(255), name)
+          .input("nameLike", sql.NVarChar(255), `%${name}%`)
           .query<{ ID: number; Name: string }>(
-            `SELECT TOP 10 ID, Name FROM dbo.Brands WHERE Name LIKE @name`
+            `SELECT TOP 50 ID, Name FROM dbo.Brands
+             WHERE Name LIKE @nameLike
+                OR @name LIKE '%' + Name + '%'
+                OR SOUNDEX(Name) = SOUNDEX(@name)
+                OR DIFFERENCE(Name, @name) >= 3`
           );
-        if (result.recordset.length > 0) {
+        const matches = result.recordset
+          .filter((r) => isSimilarName(name, r.Name ?? ""))
+          .slice(0, 10);
+        if (matches.length > 0) {
           warnings.push({
             type: "name",
             label: "Similar Name",
-            matches: result.recordset.map((r) => ({ id: r.ID, name: r.Name })),
+            matches: matches.map((r) => ({ id: r.ID, name: r.Name })),
           });
         }
       }

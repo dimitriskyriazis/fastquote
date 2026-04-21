@@ -12,7 +12,14 @@ import styles from './MatchRequestedProductsModal.module.css';
 import { useModalDragResize } from '../../../hooks/useModalDragResize';
 import { useFarnellSearch, isFarnellRow, type FarnellSearchRow } from '../../../hooks/useFarnellSearch';
 import { useFarnellProductResolver } from '../../../hooks/useFarnellProductResolver';
-import { isFarnellBrand } from '../offerProductsUtils';
+import {
+  isFarnellBrand,
+  buildFuzzyContainsFilter,
+  buildMultiFuzzyContainsFilter,
+  mergeExpansionsIntoFilterModel,
+  type FuzzyTextFilter,
+  type FilterExpansions,
+} from '../offerProductsUtils';
 
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), {
   ssr: false,
@@ -65,6 +72,7 @@ type Props = {
   onRequestPayloadConsumed?: () => void;
   onSkipAll: () => void;
   prefetchedSuggestions?: MatcherRowData[] | null;
+  prefetchedExpansion?: FilterExpansions | null;
 };
 
 const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
@@ -131,6 +139,7 @@ export default function MatchRequestedProductsModal({
   onRequestPayloadConsumed,
   onSkipAll,
   prefetchedSuggestions,
+  prefetchedExpansion,
 }: Props) {
   const { cardRef: setCardRef, cardStyle: dragCardStyle, headerProps: dragHeaderProps, resizeHandles } = useModalDragResize({ draggable: true, resizable: true });
   const [selectedProduct, setSelectedProduct] = useState<MatcherRowData | null>(null);
@@ -141,6 +150,7 @@ export default function MatchRequestedProductsModal({
   const [suggestedProducts, setSuggestedProducts] = useState<MatcherRowData[]>([]);
   const [suggestionsVisible, setSuggestionsVisible] = useState(true);
   const [noSuggestionsFound, setNoSuggestionsFound] = useState(false);
+  const [promptText, setPromptText] = useState('');
   const productsApiRef = useRef<MatcherGridApi | null>(null);
   const pendingSelectionProductIdRef = useRef<number | null>(null);
   const suggestedProductsRef = useRef<MatcherRowData[]>([]);
@@ -269,29 +279,134 @@ export default function MatchRequestedProductsModal({
     [],
   );
 
-  const requestedFilterModel = useMemo(() => {
-    const filters: Record<string, { filterType: 'text'; type: 'contains'; filter: string }> = {};
-    const applyFilter = (colId: string, value: string | null) => {
-      if (!value) return;
-      filters[colId] = { filterType: 'text', type: 'contains', filter: value };
+  // Build the filter model along with a per-column "hidden tokens" sidecar.
+  // The visible filter is kept minimal (one condition per column) so AG Grid's
+  // filter popup stays readable; the full set of fuzzy tokens / synonyms /
+  // cross-fold terms ride along in requestPayload.hiddenFilterTokens and are
+  // applied server-side with identical WHERE + relevance-score semantics.
+  const { requestedFilterModel, hiddenFilterTokens } = useMemo(() => {
+    const filters: Record<string, FuzzyTextFilter> = {};
+    const hidden: Record<string, Array<{ filter: string; weight?: number }>> = {};
+
+    const splitCompoundIntoVisibleAndHidden = (
+      colId: string,
+      compound: FuzzyTextFilter | null,
+      primaryValue: string | null,
+    ) => {
+      if (!compound) return;
+      const primaryTrimmed = typeof primaryValue === 'string' ? primaryValue.trim() : '';
+      const allConditions = 'conditions' in compound
+        ? compound.conditions
+        : [compound];
+      const primaryUpper = primaryTrimmed.toUpperCase();
+      // Find the condition matching the primary (desc1 / raw brand / etc.),
+      // or fall back to the first condition.
+      const visibleCond = allConditions.find((c) => c.filter.toUpperCase() === primaryUpper)
+        ?? allConditions[0];
+      if (!visibleCond) return;
+      filters[colId] = { filterType: 'text', type: 'contains', filter: visibleCond.filter };
+      const visibleUpper = visibleCond.filter.toUpperCase();
+      const extras = allConditions
+        .filter((c) => c.filter.toUpperCase() !== visibleUpper)
+        .map((c) => ({ filter: c.filter, weight: c.weight }));
+      if (extras.length > 0) hidden[colId] = extras;
     };
-    applyFilter('BrandName', entry.requestedBrand);
-    applyFilter('ModelNumber', entry.requestedModelNumber);
-    applyFilter('PartNumber', entry.requestedPartNumber);
-    // Pick a description value to drop into the Description "contains" filter.
-    // Among desc1/desc2/desc3 prefer the shortest non-empty one — long marketing
-    // strings (e.g. "Cat 7 SFTP RJ45 patch cord, colour-coded – Blue Book CE v2
-    // compliant") would otherwise produce zero "contains" matches.
-    const descriptionForFilter = [
+
+    // Description — multi-source fuzzy filter, priority-weighted across
+    // desc1/desc2/desc3.  Visible pill shows desc1 only; the rest go hidden.
+    const descriptionFilter = buildMultiFuzzyContainsFilter(
+      [entry.requestedDescription, entry.requestedDescription2, entry.requestedDescription3],
+      { mode: 'description' },
+    );
+    splitCompoundIntoVisibleAndHidden('Description', descriptionFilter, entry.requestedDescription ?? null);
+
+    // Brand — single raw value (or multi-brand) with synonym expansion; UI
+    // shows the raw requested brand and expansions hide.
+    const brandFilter = buildFuzzyContainsFilter(entry.requestedBrand, { mode: 'brand' });
+    splitCompoundIntoVisibleAndHidden('BrandName', brandFilter, entry.requestedBrand ?? null);
+
+    // PartNumber / ModelNumber — fuzzy part-model tokenization; raw requested
+    // value stays visible, split-off tokens hide.
+    const partFilter = buildFuzzyContainsFilter(entry.requestedPartNumber, { mode: 'partNumber' });
+    splitCompoundIntoVisibleAndHidden('PartNumber', partFilter, entry.requestedPartNumber ?? null);
+    const modelFilter = buildFuzzyContainsFilter(entry.requestedModelNumber, { mode: 'partNumber' });
+    splitCompoundIntoVisibleAndHidden('ModelNumber', modelFilter, entry.requestedModelNumber ?? null);
+
+    const pushHidden = (colId: string, tokens: Array<{ filter: string; weight?: number }>) => {
+      if (tokens.length === 0) return;
+      const existing = hidden[colId] ?? [];
+      const seen = new Set([
+        ...(filters[colId] && 'filter' in filters[colId] ? [filters[colId].filter.toUpperCase()] : []),
+        ...existing.map((t) => t.filter.toUpperCase()),
+      ]);
+      const merged = [...existing];
+      tokens.forEach((t) => {
+        const key = t.filter.trim().toUpperCase();
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        merged.push(t);
+      });
+      if (merged.length > 0) hidden[colId] = merged;
+    };
+
+    // Cross-field: the requested part/model/brand values also land as hidden
+    // tokens on the Description column.  Covers descriptions that embed the
+    // part number, model, or manufacturer name (e.g. "LOGICKEYBOARD Mac ASTRA"
+    // in the description of a keyboard carried under a distributor brand).
+    const requestedPartNoStr = typeof entry.requestedPartNumber === 'string' ? entry.requestedPartNumber.trim() : '';
+    const requestedModelNoStr = typeof entry.requestedModelNumber === 'string' ? entry.requestedModelNumber.trim() : '';
+    const requestedBrandStr = typeof entry.requestedBrand === 'string' ? entry.requestedBrand.trim() : '';
+    if (requestedPartNoStr) pushHidden('Description', [{ filter: requestedPartNoStr, weight: 1 }]);
+    if (requestedModelNoStr) pushHidden('Description', [{ filter: requestedModelNoStr, weight: 1 }]);
+    if (requestedBrandStr && !/^(idk|unknown|n\/?a|none|any|various|\?+|-+)$/i.test(requestedBrandStr)) {
+      pushHidden('Description', [{ filter: requestedBrandStr, weight: 1 }]);
+    }
+
+    // Reverse direction: harvest code-looking tokens from descriptions → add
+    // as hidden tokens on PartNumber and ModelNumber.
+    const descSources = [
       entry.requestedDescription,
       entry.requestedDescription2,
       entry.requestedDescription3,
     ]
       .map((v) => (typeof v === 'string' ? v.trim() : ''))
-      .filter((v) => v.length > 0)
-      .sort((a, b) => a.length - b.length)[0] ?? null;
-    applyFilter('Description', descriptionForFilter);
-    return Object.keys(filters).length > 0 ? filters : null;
+      .filter((v) => v.length > 0);
+    const looksLikeCode = (token: string): boolean => {
+      if (token.length < 5) return false;
+      let digitCount = 0;
+      for (const ch of token) { if (ch >= '0' && ch <= '9') digitCount += 1; }
+      return digitCount >= 2;
+    };
+    const codeTokens = new Set<string>();
+    descSources.forEach((src) => {
+      src.split(/[\s,;|/()[\]"'.!?:=<>+*]+/).forEach((raw) => {
+        const t = raw.trim();
+        if (looksLikeCode(t)) codeTokens.add(t);
+      });
+    });
+    if (codeTokens.size > 0) {
+      const arr = Array.from(codeTokens).map((t) => ({ filter: t, weight: 1 }));
+      pushHidden('PartNumber', arr);
+      pushHidden('ModelNumber', arr);
+    }
+
+    // Fold prefetched AI expansions into hidden tokens for their column —
+    // keeps them server-side only so the filter popup stays clean.
+    if (prefetchedExpansion) {
+      const push = (colId: string, tokens: string[] | undefined) => {
+        if (!tokens || tokens.length === 0) return;
+        pushHidden(colId, tokens.map((t) => ({ filter: t })));
+      };
+      push('BrandName', prefetchedExpansion.brand);
+      push('PartNumber', prefetchedExpansion.partNumber);
+      push('ModelNumber', prefetchedExpansion.modelNumber);
+      push('Description', prefetchedExpansion.description);
+    }
+
+    return {
+      requestedFilterModel: Object.keys(filters).length > 0 ? filters : null,
+      hiddenFilterTokens: Object.keys(hidden).length > 0 ? hidden : null,
+    };
   }, [
     entry.requestedBrand,
     entry.requestedModelNumber,
@@ -299,13 +414,28 @@ export default function MatchRequestedProductsModal({
     entry.requestedDescription,
     entry.requestedDescription2,
     entry.requestedDescription3,
+    prefetchedExpansion,
   ]);
 
+  // When the user submits a prompt or the auto-expand AI response lands, we
+  // override the hidden-token payload so the in-flight query picks up the
+  // extended terms.  Cleared on entry change so each row starts fresh.
+  const [overrideHiddenTokens, setOverrideHiddenTokens] = useState<Record<string, Array<{ filter: string; weight?: number }>> | null>(null);
+  const effectiveHiddenTokens = overrideHiddenTokens ?? hiddenFilterTokens;
+
   const requestPayload = useMemo(() => {
-    const payload: Record<string, unknown> = { action: 'products' };
+    const payload: Record<string, unknown> = {
+      action: 'products',
+      // BrandName joins the cross-column OR group: catalogs often carry
+      // manufacturer-branded products under a distributor name (e.g.
+      // "Logickeyboard" keyboard sold as brand "Canford Audio"), so matching
+      // by Description alone needs to surface the row even if Brand fails.
+      orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
+    };
+    if (effectiveHiddenTokens) payload.hiddenFilterTokens = effectiveHiddenTokens;
     if (newProductId != null) payload.newProductId = newProductId;
     return Object.keys(payload).length > 0 ? payload : null;
-  }, [newProductId]);
+  }, [effectiveHiddenTokens, newProductId]);
 
   const endpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
@@ -591,20 +721,15 @@ export default function MatchRequestedProductsModal({
     }
   }, []);
 
-  const handleSuggestProducts = useCallback(async () => {
-    if (suggesting) return;
-    userWantsSuggestionsRef.current = true;
-
-    // Use prefetched suggestions if already available (instant)
-    if (prefetchedSuggestions && prefetchedSuggestions.length > 0) {
-      applyProducts(prefetchedSuggestions);
-      return;
-    }
-
+  const runExpand = useCallback(async (options?: { prompt?: string; silent?: boolean }) => {
     const targetEntryId = entry.offerDetailId;
-    setSuggesting(true);
+    const promptText = options?.prompt?.trim() || null;
+    if (!options?.silent) {
+      setSuggesting(true);
+      setNoSuggestionsFound(false);
+    }
     try {
-      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/suggest`, {
+      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/expand`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -614,19 +739,106 @@ export default function MatchRequestedProductsModal({
           requestedDescription: entry.requestedDescription,
           requestedDescription2: entry.requestedDescription2,
           requestedDescription3: entry.requestedDescription3,
+          prompt: promptText,
         }),
       });
-      if (!res.ok) throw new Error('Failed to suggest products');
-      // Discard result if the entry changed while we were fetching
+      if (!res.ok) throw new Error('Failed to expand filters');
       if (currentEntryIdRef.current !== targetEntryId) return;
-      const data = (await res.json()) as { ok: boolean; products?: MatcherRowData[] };
-      applyProducts(data.products ?? []);
+      const data = (await res.json()) as { ok: boolean; expansions?: FilterExpansions };
+      const expansions = data.expansions ?? {};
+      const api = productsApiRef.current;
+      if (!api) return;
+      if (promptText) {
+        // Prompt submitted: wipe the pre-populated requested-row filters.
+        // Visible filter pill shows ONLY the raw prompt text (single condition
+        // so AG Grid's popup stays clean); the full fuzzy-token expansion +
+        // AI-expansion tokens travel via the hidden-tokens payload.
+        const promptFuzzy = buildFuzzyContainsFilter(promptText, { mode: 'description' });
+        const promptUpper = promptText.toUpperCase();
+        const promptHidden: Array<{ filter: string; weight?: number }> = [];
+        if (promptFuzzy) {
+          const conds = 'conditions' in promptFuzzy ? promptFuzzy.conditions : [promptFuzzy];
+          conds.forEach((c) => {
+            if (c.filter.toUpperCase() !== promptUpper) {
+              promptHidden.push({ filter: c.filter, weight: c.weight });
+            }
+          });
+        }
+        const newHidden: Record<string, Array<{ filter: string; weight?: number }>> = {};
+        const pushHidden = (colId: string, tokens: Array<{ filter: string; weight?: number }> | string[] | undefined) => {
+          if (!tokens || (Array.isArray(tokens) && tokens.length === 0)) return;
+          const normalized = (tokens as Array<unknown>).map((t) =>
+            typeof t === 'string' ? { filter: t } : (t as { filter: string; weight?: number }),
+          );
+          const existing = newHidden[colId] ?? [];
+          const seen = new Set(existing.map((x) => x.filter.toUpperCase()));
+          normalized.forEach((t) => {
+            const key = t.filter.trim().toUpperCase();
+            if (!key || seen.has(key)) return;
+            seen.add(key);
+            existing.push(t);
+          });
+          if (existing.length > 0) newHidden[colId] = existing;
+        };
+        if (promptHidden.length > 0) pushHidden('Description', promptHidden);
+        pushHidden('BrandName', expansions.brand);
+        pushHidden('PartNumber', expansions.partNumber);
+        pushHidden('ModelNumber', expansions.modelNumber);
+        pushHidden('Description', expansions.description);
+        setOverrideHiddenTokens(Object.keys(newHidden).length > 0 ? newHidden : null);
+        const visibleModel: Record<string, FuzzyTextFilter> = {
+          Description: { filterType: 'text', type: 'contains', filter: promptText },
+        };
+        try { api.setFilterModel(visibleModel); } catch { /* noop */ }
+        return;
+      }
+      // Silent auto-expand: merge into whatever filter is already there.
+      const totalTokens =
+        (expansions.brand?.length ?? 0)
+        + (expansions.partNumber?.length ?? 0)
+        + (expansions.modelNumber?.length ?? 0)
+        + (expansions.description?.length ?? 0);
+      if (totalTokens === 0) {
+        if (!options?.silent) setNoSuggestionsFound(true);
+        return;
+      }
+      const current = (api.getFilterModel?.() ?? null) as Record<string, FuzzyTextFilter> | null;
+      const merged = mergeExpansionsIntoFilterModel(current, expansions);
+      try { api.setFilterModel(merged); } catch { /* noop */ }
     } catch (err) {
-      console.error('AI suggest failed', err);
+      console.error('AI expansion failed', err);
     } finally {
-      setSuggesting(false);
+      if (!options?.silent) setSuggesting(false);
     }
-  }, [suggesting, offerId, entry, prefetchedSuggestions, applyProducts]);
+  }, [offerId, entry]);
+
+  // Auto-expand filters with AI whenever the requested entry changes — only
+  // needed if no prefetched expansion is available (prefetch is folded into
+  // requestedFilterModel directly, so the grid fetches once with the widened
+  // filter already applied — no second round-trip).
+  const autoExpandedEntriesRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const id = entry.offerDetailId;
+    if (autoExpandedEntriesRef.current.has(id)) return;
+    if (prefetchedExpansion) {
+      autoExpandedEntriesRef.current.add(id);
+      return;
+    }
+    autoExpandedEntriesRef.current.add(id);
+    void runExpand({ silent: true });
+  }, [entry.offerDetailId, runExpand, prefetchedExpansion]);
+
+  const handlePromptSubmit = useCallback(() => {
+    const trimmed = promptText.trim();
+    if (!trimmed || suggesting) return;
+    void runExpand({ prompt: trimmed });
+  }, [promptText, suggesting, runExpand]);
+
+  // Preserved name for the legacy button path in case anywhere still references it.
+  const handleSuggestProducts = useCallback(() => {
+    void runExpand();
+  }, [runExpand]);
+  void handleSuggestProducts;
 
   // Keep ref in sync so the auto-suggest timer can call the latest version
   handleSuggestProductsRef.current = handleSuggestProducts;
@@ -733,6 +945,8 @@ export default function MatchRequestedProductsModal({
     hasAppliedRequestedFiltersRef.current = true;
     setAssigning(false);
     setComment('');
+    setPromptText('');
+    setOverrideHiddenTokens(null);
     // selectedProduct and suggestion state (suggestedProducts, noSuggestionsFound,
     // suggesting) are managed by the useLayoutEffect below so it can apply
     // prefetched data before paint without being overwritten by this regular useEffect.
@@ -746,29 +960,17 @@ export default function MatchRequestedProductsModal({
     setFarnellDescription(entry.requestedDescription ?? null);
   }, [entry.offerDetailId, requestedFilterModel, clearFarnellResults, entry.requestedBrand, entry.requestedPartNumber, entry.requestedDescription]);
 
-  // Auto-apply prefetched suggestions when the user has previously opted in.
-  // On the first product userWantsSuggestionsRef is false, so the user must
-  // click "Suggest Products (AI)" to opt in.  After that, subsequent products
-  // will auto-show suggestions until the user clicks "Hide suggestions".
-  // Uses useLayoutEffect to apply before paint — avoids a flash of empty state.
+  // Reset transient match state when the entry changes.  The AI-expand flow
+  // writes directly into the grid's filter model, so there's no prefetched
+  // suggestions payload to apply here.
   useLayoutEffect(() => {
-    // Clear stale state from the previous entry
     setSelectedProduct(null);
     suggestedProductsRef.current = [];
     setSuggestedProducts([]);
     setNoSuggestionsFound(false);
     setSuggesting(false);
-
-    if (!userWantsSuggestionsRef.current) return;
-    if (prefetchedSuggestions != null) {
-      // Prefetch completed — apply results (may be empty = no matching products)
-      applyProducts(prefetchedSuggestions);
-      return;
-    }
-    // Prefetch hasn't arrived yet — show spinner while we wait.
-    // The effect will re-run when prefetchedSuggestions changes from null/undefined to an array.
-    setSuggesting(true);
-  }, [prefetchedSuggestions, entry.offerDetailId, applyProducts]);
+    void prefetchedSuggestions;
+  }, [prefetchedSuggestions, entry.offerDetailId]);
 
   useEffect(() => {
     applyRequestedFilterModel(productsApiRef.current);
@@ -850,25 +1052,29 @@ export default function MatchRequestedProductsModal({
               </div>
             </div>
             <div className={styles.headerActions}>
-              {suggestedProducts.length === 0 && (
-              <button
-                type="button"
-                className={styles.aiButton}
-                onClick={handleSuggestProducts}
-                disabled={suggesting || assigning}
-              >
+              <label className={styles.promptLabel}>
+                <span className={styles.promptLabelText}>What are you looking for?</span>
+                <input
+                  type="text"
+                  className={styles.promptInput}
+                  value={promptText}
+                  onChange={(e) => setPromptText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handlePromptSubmit();
+                    }
+                  }}
+                  placeholder="e.g. TV 55 inches Samsung"
+                  disabled={assigning}
+                  data-fastquote-keep-selection="true"
+                />
                 {suggesting ? (
-                  <>
-                    <span className={styles.aiButtonSpinner} />
-                    Suggesting…
-                  </>
-                ) : (
-                  'Suggest Products (AI)'
-                )}
-              </button>
-              )}
-              {noSuggestionsFound && suggestedProducts.length === 0 && !suggesting && (
-                <span className={styles.noSuggestionsLabel}>No matching products found</span>
+                  <span className={styles.aiButtonSpinner} aria-label="Expanding with AI" />
+                ) : null}
+              </label>
+              {noSuggestionsFound && !suggesting && (
+                <span className={styles.noSuggestionsLabel}>No extra terms to add</span>
               )}
               {suggestedProducts.length > 0 && suggestionsVisible && (
                 <button

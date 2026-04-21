@@ -21,11 +21,24 @@
 }
 
 .header {
-  padding: 6px 16px;
+  padding: 8px 16px;
   display: flex;
   align-items: center;
   gap: 12px;
   border-bottom: 1px solid #e2e8f0;
+  flex-wrap: wrap;
+}
+
+.headerTopRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.header > .headerActions {
+  margin-left: auto;
+  justify-content: flex-end;
 }
 
 .title {
@@ -42,7 +55,9 @@
 
 .placementIndicator {
   display: flex;
+  flex-direction: row;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 6px 12px;
   border: 1px solid #e2e8f0;
@@ -52,6 +67,12 @@
   font-weight: 600;
   color: #0f172a;
   white-space: nowrap;
+}
+
+.placementTextColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .placementText {
@@ -125,6 +146,11 @@
   align-items: center;
   flex-wrap: wrap;
   margin-left: auto;
+  row-gap: 8px;
+}
+
+.headerActions > * {
+  flex-shrink: 0;
 }
 
 .headerMeta {
@@ -168,6 +194,58 @@
   padding-left: 12px;
 }
 
+.commentPopupOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 2147483647;
+}
+
+.commentPopupCard {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 20px;
+  width: min(520px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+}
+
+.commentPopupTitle {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.commentPopupTextarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  color: #0f172a;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 120ms ease;
+}
+
+.commentPopupTextarea:focus {
+  border-color: #64748b;
+}
+
+.commentPopupActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .commentLabel {
   font-weight: 600;
   font-size: 0.8rem;
@@ -176,8 +254,9 @@
 }
 
 .commentInput {
-  flex: 1;
+  width: 260px;
   min-width: 200px;
+  max-width: 320px;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
   padding: 4px 10px;
@@ -189,19 +268,25 @@
 
 @media (max-width: 1400px) {
   .commentInput {
-    min-width: 400px;
+    width: 260px;
+    min-width: 200px;
+    max-width: 320px;
   }
 }
 
 @media (max-width: 1000px) {
   .commentInput {
-    min-width: 200px;
+    width: 200px;
+    min-width: 160px;
+    max-width: 240px;
   }
 }
 
 @media (max-width: 700px) {
   .commentInput {
+    width: 140px;
     min-width: 100px;
+    max-width: 180px;
   }
 }
 
@@ -579,6 +664,64 @@
 }
 
 .noFarnellLabel {
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.promptLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  padding: 6px 12px;
+}
+
+.promptLabelText {
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.promptInput {
+  border: none;
+  background: transparent;
+  outline: none;
+  color: #0f172a;
+  font-size: 13px;
+  width: 220px;
+  min-width: 160px;
+  max-width: 260px;
+}
+
+.promptInput::placeholder {
+  color: #64748b;
+}
+
+.promptInput:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.promptSpinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(30, 64, 175, 0.2);
+  border-top-color: #1e40af;
+  border-radius: 50%;
+  animation: addProductsPromptSpin 0.8s linear infinite;
+}
+
+@keyframes addProductsPromptSpin {
+  to { transform: rotate(360deg); }
+}
+
+.noPromptLabel {
   color: #92400e;
   font-size: 12px;
   font-weight: 500;

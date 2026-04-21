@@ -9,7 +9,12 @@ import { priceListStatusClassRules } from '../../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../../lib/localeNumber';
 import { useFarnellSearch, isFarnellRow, type FarnellSearchRow } from '../../../hooks/useFarnellSearch';
 import { useFarnellProductResolver } from '../../../hooks/useFarnellProductResolver';
-import { isFarnellBrand } from '../offerProductsUtils';
+import {
+  isFarnellBrand,
+  buildFuzzyContainsFilter,
+  type FuzzyTextFilter,
+  type FilterExpansions,
+} from '../offerProductsUtils';
 
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), { ssr: false });
 
@@ -251,6 +256,30 @@ export default function AddProductsModal({
   const categoryRowClickHandlerRef = useRef<((event: { node?: RowNode }) => void) | null>(null);
   const initialRequestedRowConsumedRef = useRef(false);
 
+  // AI expansion / hidden-token state
+  const [promptText, setPromptText] = useState('');
+  const [suggesting, setSuggesting] = useState(false);
+  const [noSuggestionsFound, setNoSuggestionsFound] = useState(false);
+  const [hiddenFilterTokens, setHiddenFilterTokens] = useState<Record<string, Array<{ filter: string; weight?: number }>> | null>(null);
+
+  // Comment modal state — keeps the header clean.  Draft is a scratch buffer
+  // so cancelling doesn't wipe a saved comment.
+  const [commentModalOpen, setCommentModalOpen] = useState(false);
+  const [commentDraft, setCommentDraft] = useState('');
+  const openCommentModal = useCallback(() => {
+    setCommentDraft(comment);
+    setCommentModalOpen(true);
+  }, [comment]);
+  const saveCommentModal = useCallback(() => {
+    setComment(commentDraft);
+    setCommentModalOpen(false);
+  }, [commentDraft]);
+  const cancelCommentModal = useCallback(() => {
+    setCommentModalOpen(false);
+  }, []);
+  const currentAnchorIdRef = useRef<number | null | undefined>(placementAnchor?.offerDetailId ?? null);
+  currentAnchorIdRef.current = placementAnchor?.offerDetailId ?? null;
+
   // Farnell search state
   const [brandFilterIsFarnell, setBrandFilterIsFarnell] = useState(() => isFarnellBrand(placementAnchor?.requestedBrand ?? null));
   const [farnellVisible, setFarnellVisible] = useState(true);
@@ -264,14 +293,143 @@ export default function AddProductsModal({
   const { resolveFarnellProduct, resolving: farnellResolving } = useFarnellProductResolver();
 
   const productRequestPayload = useMemo(() => {
-    const payload: Record<string, unknown> = { action: 'products' };
+    const payload: Record<string, unknown> = {
+      action: 'products',
+      // BrandName joins the cross-column OR: catalogs often rebrand
+      // manufacturer products under a distributor name, so matching by
+      // Description alone needs to surface the row.
+      orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
+    };
+    if (hiddenFilterTokens) payload.hiddenFilterTokens = hiddenFilterTokens;
     if (newProductId != null) payload.newProductId = newProductId;
     return payload;
-  }, [newProductId]);
+  }, [hiddenFilterTokens, newProductId]);
 
   const handleProductSelection = useCallback((rows: ProductRow[]) => {
     setSelectedProducts(rows ?? []);
   }, []);
+
+  // AI-driven filter expansion.  `prompt` path: user typed a free-text query —
+  // wipes existing visible filter, shows only the prompt, folds prompt tokens
+  // + AI synonyms into the hidden-tokens payload.  Silent mode (no prompt)
+  // merges AI tokens into the currently-applied hidden payload without
+  // touching the visible filter.
+  const runExpand = useCallback(async (options?: { prompt?: string; silent?: boolean }) => {
+    const targetAnchorId = currentAnchorIdRef.current;
+    const promptText = options?.prompt?.trim() || null;
+    if (!options?.silent) {
+      setSuggesting(true);
+      setNoSuggestionsFound(false);
+    }
+    try {
+      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/expand`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestedBrand: placementAnchor?.requestedBrand ?? null,
+          requestedModelNumber: placementAnchor?.requestedModelNo ?? null,
+          requestedPartNumber: placementAnchor?.requestedPartNo ?? null,
+          requestedDescription: placementAnchor?.requestedDescription ?? null,
+          prompt: promptText,
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to expand filters');
+      if (currentAnchorIdRef.current !== targetAnchorId) return;
+      const data = (await res.json()) as { ok: boolean; expansions?: FilterExpansions };
+      const expansions = data.expansions ?? {};
+      const api = productsApiRef.current;
+      if (!api) return;
+
+      if (promptText) {
+        // Prompt submitted — clear the pre-populated filters, show just the
+        // prompt as a single-condition visible filter, and stash everything
+        // else (prompt tokens + AI expansion) in hidden.
+        const promptFuzzy = buildFuzzyContainsFilter(promptText, { mode: 'description' });
+        const promptUpper = promptText.toUpperCase();
+        const promptHidden: Array<{ filter: string; weight?: number }> = [];
+        if (promptFuzzy) {
+          const conds = 'conditions' in promptFuzzy ? promptFuzzy.conditions : [promptFuzzy];
+          conds.forEach((c) => {
+            if (c.filter.toUpperCase() !== promptUpper) {
+              promptHidden.push({ filter: c.filter, weight: c.weight });
+            }
+          });
+        }
+        const newHidden: Record<string, Array<{ filter: string; weight?: number }>> = {};
+        const pushHidden = (
+          colId: string,
+          tokens: Array<{ filter: string; weight?: number }> | string[] | undefined,
+        ) => {
+          if (!tokens || (Array.isArray(tokens) && tokens.length === 0)) return;
+          const normalized = (tokens as Array<unknown>).map((t) =>
+            typeof t === 'string' ? { filter: t } : (t as { filter: string; weight?: number }),
+          );
+          const existing = newHidden[colId] ?? [];
+          const seen = new Set(existing.map((x) => x.filter.toUpperCase()));
+          normalized.forEach((t) => {
+            const key = t.filter.trim().toUpperCase();
+            if (!key || seen.has(key)) return;
+            seen.add(key);
+            existing.push(t);
+          });
+          if (existing.length > 0) newHidden[colId] = existing;
+        };
+        if (promptHidden.length > 0) pushHidden('Description', promptHidden);
+        pushHidden('BrandName', expansions.brand);
+        pushHidden('PartNumber', expansions.partNumber);
+        pushHidden('ModelNumber', expansions.modelNumber);
+        pushHidden('Description', expansions.description);
+        setHiddenFilterTokens(Object.keys(newHidden).length > 0 ? newHidden : null);
+        const visibleModel: Record<string, FuzzyTextFilter> = {
+          Description: { filterType: 'text', type: 'contains', filter: promptText },
+        };
+        try { api.setFilterModel(visibleModel); } catch { /* noop */ }
+        return;
+      }
+
+      // Silent auto-expand — merge AI tokens into the existing hidden payload.
+      const totalTokens =
+        (expansions.brand?.length ?? 0)
+        + (expansions.partNumber?.length ?? 0)
+        + (expansions.modelNumber?.length ?? 0)
+        + (expansions.description?.length ?? 0);
+      if (totalTokens === 0) {
+        if (!options?.silent) setNoSuggestionsFound(true);
+        return;
+      }
+      setHiddenFilterTokens((prev) => {
+        const base: Record<string, Array<{ filter: string; weight?: number }>> = {};
+        Object.entries(prev ?? {}).forEach(([k, v]) => { base[k] = [...v]; });
+        const pushHidden = (colId: string, tokens: string[] | undefined) => {
+          if (!tokens || tokens.length === 0) return;
+          const existing = base[colId] ?? [];
+          const seen = new Set(existing.map((x) => x.filter.toUpperCase()));
+          tokens.forEach((t) => {
+            const key = t.trim().toUpperCase();
+            if (!key || seen.has(key)) return;
+            seen.add(key);
+            existing.push({ filter: t });
+          });
+          if (existing.length > 0) base[colId] = existing;
+        };
+        pushHidden('BrandName', expansions.brand);
+        pushHidden('PartNumber', expansions.partNumber);
+        pushHidden('ModelNumber', expansions.modelNumber);
+        pushHidden('Description', expansions.description);
+        return Object.keys(base).length > 0 ? base : null;
+      });
+    } catch (err) {
+      console.error('AI expansion failed', err);
+    } finally {
+      if (!options?.silent) setSuggesting(false);
+    }
+  }, [offerId, placementAnchor]);
+
+  const handlePromptSubmit = useCallback(() => {
+    const trimmed = promptText.trim();
+    if (!trimmed || suggesting) return;
+    void runExpand({ prompt: trimmed });
+  }, [promptText, suggesting, runExpand]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -296,31 +454,109 @@ export default function AddProductsModal({
     setFarnellVisible(true);
     setFarnellPartNumber(placementAnchor?.requestedPartNo ?? null);
     setFarnellDescription(placementAnchor?.requestedDescription ?? null);
+    setPromptText('');
+    setNoSuggestionsFound(false);
   }, [placementAnchor, defaultPlacementMode, onPlacementModeChange, clearFarnellResults]);
 
   // Apply requested data as filters on the products grid when selecting a row to fill.
-  // Only update filters when a row is actively selected in "fill" mode — never clear
-  // the filter model on deselection or mode switch so that filters persist when the
-  // user clicks between rows or stays idle.
+  // Produces a two-layer filter: the visible filter model (single raw value per
+  // column — clean AG Grid popup) plus a hidden-tokens sidecar (all expansion
+  // tokens + synonyms + cross-fold codes) that rides along in requestPayload.
+  // Semantics match the Match-Requested modal one-for-one.
   useEffect(() => {
     const api = productsApiRef.current;
     if (!api) return;
-    if (defaultPlacementMode === 'fill' && placementAnchor) {
-      const { requestedBrand, requestedPartNo, requestedModelNo, requestedDescription } = placementAnchor;
-      const hasAnyFilter = requestedBrand || requestedPartNo || requestedModelNo || requestedDescription;
-      if (hasAnyFilter) {
-        const filterModel: Record<string, { filterType: string; type: string; filter: string }> = {};
-        if (requestedPartNo) filterModel.PartNumber = { filterType: 'text', type: 'contains', filter: requestedPartNo };
-        if (requestedBrand) filterModel.BrandName = { filterType: 'text', type: 'contains', filter: requestedBrand };
-        if (requestedModelNo) filterModel.ModelNumber = { filterType: 'text', type: 'contains', filter: requestedModelNo };
-        if (requestedDescription) filterModel.Description = { filterType: 'text', type: 'contains', filter: requestedDescription };
-        api.setFilterModel(filterModel);
-      } else {
-        api.setFilterModel(null);
-      }
+    if (defaultPlacementMode !== 'fill' || !placementAnchor) {
+      // Deselected / below-mode: keep existing filters untouched.
+      return;
     }
-    // When placementAnchor is null (deselected / between rows) or mode is "below",
-    // keep existing filters so they are not erased while the user is idle.
+    const { requestedBrand, requestedPartNo, requestedModelNo, requestedDescription } = placementAnchor;
+    const hasAnyFilter = requestedBrand || requestedPartNo || requestedModelNo || requestedDescription;
+    if (!hasAnyFilter) {
+      api.setFilterModel(null);
+      setHiddenFilterTokens(null);
+      return;
+    }
+
+    const filterModel: Record<string, FuzzyTextFilter> = {};
+    const hidden: Record<string, Array<{ filter: string; weight?: number }>> = {};
+
+    const splitCompoundIntoVisibleAndHidden = (
+      colId: string,
+      compound: FuzzyTextFilter | null,
+      primaryValue: string | null,
+    ) => {
+      if (!compound) return;
+      const primaryTrimmed = typeof primaryValue === 'string' ? primaryValue.trim() : '';
+      const allConditions = 'conditions' in compound ? compound.conditions : [compound];
+      const primaryUpper = primaryTrimmed.toUpperCase();
+      const visibleCond = allConditions.find((c) => c.filter.toUpperCase() === primaryUpper)
+        ?? allConditions[0];
+      if (!visibleCond) return;
+      filterModel[colId] = { filterType: 'text', type: 'contains', filter: visibleCond.filter };
+      const visibleUpper = visibleCond.filter.toUpperCase();
+      const extras = allConditions
+        .filter((c) => c.filter.toUpperCase() !== visibleUpper)
+        .map((c) => ({ filter: c.filter, weight: c.weight }));
+      if (extras.length > 0) hidden[colId] = extras;
+    };
+
+    const pushHidden = (colId: string, tokens: Array<{ filter: string; weight?: number }>) => {
+      if (tokens.length === 0) return;
+      const existing = hidden[colId] ?? [];
+      const seen = new Set([
+        ...(filterModel[colId] && 'filter' in filterModel[colId] ? [filterModel[colId].filter.toUpperCase()] : []),
+        ...existing.map((t) => t.filter.toUpperCase()),
+      ]);
+      const merged = [...existing];
+      tokens.forEach((t) => {
+        const key = t.filter.trim().toUpperCase();
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        merged.push(t);
+      });
+      if (merged.length > 0) hidden[colId] = merged;
+    };
+
+    splitCompoundIntoVisibleAndHidden('BrandName', buildFuzzyContainsFilter(requestedBrand, { mode: 'brand' }), requestedBrand ?? null);
+    splitCompoundIntoVisibleAndHidden('PartNumber', buildFuzzyContainsFilter(requestedPartNo, { mode: 'partNumber' }), requestedPartNo ?? null);
+    splitCompoundIntoVisibleAndHidden('ModelNumber', buildFuzzyContainsFilter(requestedModelNo, { mode: 'partNumber' }), requestedModelNo ?? null);
+    splitCompoundIntoVisibleAndHidden('Description', buildFuzzyContainsFilter(requestedDescription, { mode: 'description' }), requestedDescription ?? null);
+
+    // Cross-field: the requested part/model/brand values land as hidden tokens
+    // on Description.  Covers descriptions that embed a manufacturer name or
+    // code (e.g. "LOGICKEYBOARD Mac ASTRA…" in a keyboard sold under a
+    // distributor brand).
+    if (requestedPartNo && requestedPartNo.trim()) pushHidden('Description', [{ filter: requestedPartNo.trim(), weight: 1 }]);
+    if (requestedModelNo && requestedModelNo.trim()) pushHidden('Description', [{ filter: requestedModelNo.trim(), weight: 1 }]);
+    const requestedBrandTrimmed = typeof requestedBrand === 'string' ? requestedBrand.trim() : '';
+    if (requestedBrandTrimmed && !/^(idk|unknown|n\/?a|none|any|various|\?+|-+)$/i.test(requestedBrandTrimmed)) {
+      pushHidden('Description', [{ filter: requestedBrandTrimmed, weight: 1 }]);
+    }
+
+    // Reverse direction: harvest code-looking tokens from the description →
+    // hidden PartNumber / ModelNumber tokens.
+    const looksLikeCode = (token: string): boolean => {
+      if (token.length < 5) return false;
+      let digitCount = 0;
+      for (const ch of token) { if (ch >= '0' && ch <= '9') digitCount += 1; }
+      return digitCount >= 2;
+    };
+    const codeTokens = new Set<string>();
+    if (requestedDescription) {
+      requestedDescription.split(/[\s,;|/()[\]"'.!?:=<>+*]+/).forEach((raw) => {
+        const t = raw.trim();
+        if (looksLikeCode(t)) codeTokens.add(t);
+      });
+    }
+    if (codeTokens.size > 0) {
+      const arr = Array.from(codeTokens).map((t) => ({ filter: t, weight: 1 }));
+      pushHidden('PartNumber', arr);
+      pushHidden('ModelNumber', arr);
+    }
+
+    api.setFilterModel(Object.keys(filterModel).length > 0 ? filterModel : null);
+    setHiddenFilterTokens(Object.keys(hidden).length > 0 ? hidden : null);
   }, [placementAnchor, defaultPlacementMode]);
 
   // Sync selectedRequestedRowId with placement mode for anchor-based requested rows
@@ -1047,6 +1283,97 @@ export default function AddProductsModal({
     trySelectPendingProduct(api);
   }, [ensureProductSort, trySelectPendingProduct]);
 
+  // Comment button — replaces the inline comment input.  Only shown when
+  // exactly one product is selected.  Clicking opens a modal.  The button
+  // label reflects whether a comment has been entered.
+  const commentButton = selectedProducts.length === 1 ? (
+    <button
+      type="button"
+      className={styles.secondaryButton}
+      onClick={openCommentModal}
+      disabled={submitting}
+    >
+      {comment.trim() ? '✓ Edit comment' : '+ Add comment'}
+    </button>
+  ) : null;
+
+  const commentPopup = commentModalOpen ? (
+    <div
+      className={styles.commentPopupOverlay}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Add comment to product"
+      onClick={cancelCommentModal}
+    >
+      <div className={styles.commentPopupCard} onClick={(e) => e.stopPropagation()}>
+        <div className={styles.commentPopupTitle}>Add comment to product</div>
+        <textarea
+          className={styles.commentPopupTextarea}
+          value={commentDraft}
+          onChange={(e) => setCommentDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              saveCommentModal();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              cancelCommentModal();
+            }
+          }}
+          autoFocus
+          placeholder="Enter a note for this product…"
+          data-fastquote-keep-selection="true"
+        />
+        <div className={styles.commentPopupActions}>
+          <button
+            type="button"
+            className={styles.ghostButton}
+            onClick={cancelCommentModal}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className={styles.primaryButton}
+            onClick={saveCommentModal}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  // AI prompt input — shared between split view and modal view
+  const promptInput = (
+    <>
+      <label className={styles.promptLabel}>
+        <span className={styles.promptLabelText}>What are you looking for?</span>
+        <input
+          type="text"
+          className={styles.promptInput}
+          value={promptText}
+          onChange={(e) => setPromptText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              handlePromptSubmit();
+            }
+          }}
+          placeholder="e.g. TV 55 inches Samsung"
+          disabled={submitting}
+          data-fastquote-keep-selection="true"
+        />
+        {suggesting ? (
+          <span className={styles.promptSpinner} aria-label="Expanding with AI" />
+        ) : null}
+      </label>
+      {noSuggestionsFound && !suggesting && (
+        <span className={styles.noPromptLabel}>No extra terms to add</span>
+      )}
+    </>
+  );
+
   // Farnell button fragment — shared between split view and modal view
   const farnellButtons = brandFilterIsFarnell ? (
     <>
@@ -1146,7 +1473,10 @@ export default function AddProductsModal({
     )
   ) : (
     <div className={styles.placementIndicator}>
-      <span className={styles.placementText}>Adding product at the end of the list — select a row to fill or click between rows to insert there</span>
+      <div className={styles.placementTextColumn}>
+        <span className={styles.placementText}>Adding product at the end of the list</span>
+        <span className={styles.placementText}>select a row to fill or click between rows to insert there</span>
+      </div>
     </div>
   );
 
@@ -1160,30 +1490,20 @@ export default function AddProductsModal({
       >
         <div className={styles.splitViewCard}>
           <div className={styles.header}>
-          <div className={styles.title}>Add Products</div>
-          {placementIndicator}
+          <div className={styles.headerTopRow}>
+            <div className={styles.title}>Add Products</div>
+            {placementIndicator}
+          </div>
           <div className={styles.headerActions}>
+            {promptInput}
             <div className={styles.headerMeta}>
               <div className={styles.headerMetaItem}>
                 <span className={styles.headerMetaLabel}>Products selected:</span>
                 <span className={styles.headerMetaValue}>{selectedProducts.length}</span>
               </div>
             </div>
-            {selectedProducts.length === 1 ? (
-              <>
-                <label className={styles.commentLabel}>Comment:</label>
-                <input
-                  type="text"
-                  className={styles.commentInput}
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  disabled={submitting}
-                  placeholder=""
-                  data-fastquote-keep-selection="true"
-                />
-              </>
-            ) : null}
             {farnellButtons}
+            {commentButton}
             {onRequestAddProduct ? (
               <button
                 type="button"
@@ -1224,45 +1544,33 @@ export default function AddProductsModal({
           </section>
         </div>
         </div>
+        {commentPopup}
       </div>
     );
   }
 
   return (
-    <div 
-      className={styles.overlay} 
-      role="dialog" 
+    <div
+      className={styles.overlay}
+      role="dialog"
       aria-modal="true" 
       aria-label="Add products to offer"
       data-fastquote-keep-selection="true"
     >
       <div className={styles.card}>
         <div className={styles.header}>
-          <div>
+          <div className={styles.headerTopRow}>
             <div className={styles.title}>Add Products</div>
             {placementIndicator}
           </div>
           <div className={styles.headerActions}>
+            {promptInput}
             <div className={styles.headerMeta}>
               <div className={styles.headerMetaItem}>
                 <span className={styles.headerMetaLabel}>Products selected:</span>
                 <span className={styles.headerMetaValue}>{selectedProducts.length}</span>
               </div>
             </div>
-            {selectedProducts.length === 1 ? (
-              <>
-                <label className={styles.commentLabel}>Comment:</label>
-                <input
-                  type="text"
-                  className={styles.commentInput}
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  disabled={submitting}
-                  placeholder=""
-                  data-fastquote-keep-selection="true"
-                />
-              </>
-            ) : null}
             {farnellButtons}
             {onRequestAddProduct ? (
               <button
@@ -1304,6 +1612,7 @@ export default function AddProductsModal({
           </section>
         </div>
       </div>
+      {commentPopup}
     </div>
   );
 }

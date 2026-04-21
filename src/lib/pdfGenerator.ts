@@ -1141,11 +1141,11 @@ function buildTotalsAndTerms(
   equipmentList: boolean = false,
 ) {
   const hasPriceColumns = selectedColumns.some(c => PRICE_COLUMNS.has(c));
-  const showDiscountSummary = selectedColumns.includes('discount');
   const hasNetColumns = selectedColumns.includes('unitPrice') || selectedColumns.includes('total');
   const hasListColumns = selectedColumns.includes('listPrice') || selectedColumns.includes('totalList');
   const useListTotal = hasListColumns && !hasNetColumns;
   const discountSummary = calculateDiscountSummary(data);
+  const showDiscountSummary = discountSummary.discountEur > 0;
 
   let terms = [
     { label: L.offerValidity, value: fixObviousTypos(str(data.terms.offerValidity)) },

@@ -41,6 +41,361 @@ export function readCollapsedCategoryPathsFromCookie(offerId: string): Set<strin
   }
 }
 
+type FuzzyTextCondition = {
+  filterType: 'text';
+  type: 'contains';
+  filter: string;
+  // Optional relevance-score multiplier.  Server multiplies this into the
+  // base weight (filter-value length) when ranking.  Left undefined for
+  // conditions that should use the default (1x).
+  weight?: number;
+};
+type FuzzyCompoundTextFilter = {
+  filterType: 'text';
+  operator: 'OR';
+  conditions: FuzzyTextCondition[];
+};
+export type FuzzyTextFilter = FuzzyTextCondition | FuzzyCompoundTextFilter;
+
+export type FuzzyMode = 'partNumber' | 'description' | 'brand';
+
+// Static synonym dictionary — short, high-confidence equivalences consulted
+// automatically during filter building.  Keys are lowercased & stripped of
+// punctuation; values are display forms that will be used in LIKE clauses.
+// Matches are bidirectional: looking up any one of ["hp", "hewlettpackard"]
+// returns every other form in the same group.
+const SYNONYM_GROUPS: string[][] = [
+  ['hp', 'hewlett packard', 'hewlett-packard'],
+  ['ibm', 'international business machines'],
+  ['ge', 'general electric'],
+  ['jvc', 'victor company of japan'],
+  ['lg', 'lg electronics', 'lucky goldstar'],
+  ['db', 'd&b', 'd&b audiotechnik'],
+  ['cat5', 'cat 5', 'category 5'],
+  ['cat5e', 'cat 5e', 'category 5e'],
+  ['cat6', 'cat 6', 'category 6'],
+  ['cat6a', 'cat 6a', 'category 6a'],
+  ['cat7', 'cat 7', 'category 7'],
+  ['cat8', 'cat 8', 'category 8'],
+  ['sftp', 's/ftp', 's-ftp', 'shielded'],
+  ['utp', 'u/utp', 'unshielded'],
+  ['ftp', 'f/utp', 'foiled'],
+  ['usb-c', 'usbc', 'type-c', 'typec'],
+  ['usb-a', 'usba', 'type-a', 'typea'],
+  ['usb-b', 'usbb', 'type-b', 'typeb'],
+  ['rj45', 'rj-45', '8p8c'],
+  ['rj11', 'rj-11'],
+  ['hdmi', 'high definition multimedia interface'],
+  ['vga', 'video graphics array', 'd-sub'],
+  ['dp', 'displayport', 'display port'],
+  ['dvi', 'digital visual interface'],
+  ['ethernet', 'lan', 'network cable', 'patch cord', 'patch cable'],
+  ['ssd', 'solid state drive'],
+  ['hdd', 'hard disk drive', 'hard drive'],
+  ['nvme', 'm.2 nvme'],
+  ['psu', 'power supply'],
+  ['ups', 'uninterruptible power supply'],
+  ['kvm', 'keyboard video mouse'],
+  ['poe', 'power over ethernet'],
+  ['wifi', 'wi-fi', 'wireless'],
+  ['tv', 'television'],
+  ['monitor', 'display', 'screen'],
+  ['pc', 'desktop', 'computer'],
+  ['laptop', 'notebook'],
+  ['inch', 'inches', '"', "''"],
+];
+
+const normalizeSynonymKey = (value: string): string =>
+  value.toLowerCase().replace(/[\s\-_.]+/g, '');
+
+const SYNONYM_LOOKUP: Map<string, string[]> = (() => {
+  const map = new Map<string, string[]>();
+  for (const group of SYNONYM_GROUPS) {
+    const normalizedGroup = group.map((term) => ({ term, key: normalizeSynonymKey(term) }));
+    for (const { key } of normalizedGroup) {
+      if (!key) continue;
+      const existing = map.get(key) ?? [];
+      for (const { term } of normalizedGroup) {
+        if (!existing.includes(term)) existing.push(term);
+      }
+      map.set(key, existing);
+    }
+  }
+  return map;
+})();
+
+export function expandWithSynonyms(tokens: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (t: string) => {
+    const up = t.toUpperCase();
+    if (seen.has(up)) return;
+    seen.add(up);
+    out.push(t);
+  };
+  tokens.forEach((token) => {
+    push(token);
+    const synonyms = SYNONYM_LOOKUP.get(normalizeSynonymKey(token));
+    if (synonyms) synonyms.forEach(push);
+  });
+  return out;
+}
+
+const UNKNOWN_BRAND_MARKERS = new Set([
+  'idk',
+  'unknown',
+  'n/a',
+  'na',
+  'none',
+  'tbd',
+  '?',
+  '??',
+  '-',
+  '--',
+  'any',
+  'various',
+]);
+
+export function isUnknownBrand(value: string): boolean {
+  const normalized = value.trim().toLowerCase().replace(/[.\s]+/g, '');
+  return UNKNOWN_BRAND_MARKERS.has(normalized)
+    || UNKNOWN_BRAND_MARKERS.has(value.trim().toLowerCase());
+}
+
+// Split a brand value on multi-brand separators so "Apple/Samsung" or
+// "Apple, Samsung" or "Apple or Samsung" each become two tokens OR'd together.
+export function tokenizeBrand(value: string): string[] {
+  const withSpaceSeparators = value
+    .replace(/\s+(?:or|and|\/|&|\+)\s+/gi, '|')
+    .replace(/[/\\,;|&+]+/g, '|');
+  return withSpaceSeparators
+    .split('|')
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+}
+
+// Split a requested part/model number into meaningful tokens so that noise
+// prefixes like "VX 5308813" still match a product whose actual part number
+// is "5308813".  Prefer tokens containing digits (typically the real number);
+// otherwise fall back to all tokens of length >= 3.
+export function tokenizePartModelNumber(value: string): string[] {
+  const parts = value
+    .split(/[\s,;|/]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  if (parts.length <= 1) return parts;
+  const withDigits = parts.filter((p) => /\d/.test(p));
+  if (withDigits.length > 0) return withDigits;
+  return parts.filter((p) => p.length >= 3);
+}
+
+// Split a description into word-level tokens so that each meaningful word
+// is OR'd independently.  Threshold >= 3 keeps short-but-meaningful words
+// (LG, TV, USB, HP, CAT, VGA); the occasional 3-char false positive
+// (indi[cat]or matching "cat") is tolerated because the length-weighted
+// relevance score buries low-weight hits at the bottom.  Additionally,
+// emit adjacent letter↔digit pair joins ("Cat 7" → "Cat7", "RJ 45" → "RJ45")
+// so products written without the space still match.
+export function tokenizeDescription(value: string): string[] {
+  const words = value
+    .split(/[\s,;|/()[\]"'.!?:=<>+*]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  const tokens = words.filter((t) => t.length >= 3);
+  for (let i = 0; i < words.length - 1; i += 1) {
+    const a = words[i];
+    const b = words[i + 1];
+    const hasLetterThenDigit = /[A-Za-z]/.test(a) && /^\d+$/.test(b);
+    const hasDigitThenLetter = /^\d+$/.test(a) && /[A-Za-z]/.test(b);
+    if (hasLetterThenDigit || hasDigitThenLetter) {
+      const joined = a + b;
+      if (joined.length >= 3) tokens.push(joined);
+    }
+  }
+  return tokens;
+}
+
+// Build a combined fuzzy filter from multiple source strings (e.g. requested
+// descriptions 1/2/3 on a single line).  Each source contributes its raw
+// phrase AND its tokens; duplicates across sources are dropped.  The result
+// is a single compound-OR filter that the grid applies to one column —
+// unlike picking just the shortest description, every unique word from every
+// description is available for matching and scoring.
+// Priority weights applied to sources by array position (desc1 > desc2 > desc3).
+// Winners keep their stronger match boost even when later descriptions contain
+// longer strings.
+const DEFAULT_PRIORITY_WEIGHTS = [3, 2, 1];
+
+export function buildMultiFuzzyContainsFilter(
+  values: Array<string | null | undefined>,
+  options?: { mode?: FuzzyMode | null; priorityWeights?: number[] },
+): FuzzyTextFilter | null {
+  const mode = options?.mode ?? null;
+  const priorityWeights = options?.priorityWeights ?? DEFAULT_PRIORITY_WEIGHTS;
+  // Preserve each source's original index so we can look up its priority weight
+  // even after empties are dropped.
+  const trimmedSources = values
+    .map((v, idx) => ({ value: typeof v === 'string' ? v.trim() : '', idx }))
+    .filter((entry) => entry.value.length > 0);
+  if (trimmedSources.length === 0) return null;
+  if (trimmedSources.length === 1) return buildFuzzyContainsFilter(trimmedSources[0].value, options);
+
+  const weightFor = (sourceIdx: number): number =>
+    priorityWeights[sourceIdx] ?? priorityWeights[priorityWeights.length - 1] ?? 1;
+
+  // No fuzzy mode requested — build a plain OR of the raw phrases, priority-weighted.
+  if (!mode) {
+    const seen = new Map<string, FuzzyTextCondition>();
+    trimmedSources.forEach((src) => {
+      const key = src.value.toUpperCase();
+      const w = weightFor(src.idx);
+      const existing = seen.get(key);
+      if (existing) {
+        if ((existing.weight ?? 1) < w) existing.weight = w;
+        return;
+      }
+      seen.set(key, { filterType: 'text', type: 'contains', filter: src.value, weight: w });
+    });
+    const conditions = Array.from(seen.values());
+    if (conditions.length === 1) return conditions[0];
+    return { filterType: 'text', operator: 'OR', conditions };
+  }
+
+  if (mode === 'brand') {
+    const anyUnknown = trimmedSources.every((s) => isUnknownBrand(s.value));
+    if (anyUnknown) return null;
+  }
+
+  // Dedupe across sources, but track the HIGHEST priority weight per token
+  // so a phrase that appears in both desc1 and desc3 keeps the desc1 boost.
+  const weighted = new Map<string, { value: string; weight: number }>();
+  const push = (t: string, w: number) => {
+    const key = t.toUpperCase();
+    const existing = weighted.get(key);
+    if (existing) {
+      if (existing.weight < w) existing.weight = w;
+      return;
+    }
+    weighted.set(key, { value: t, weight: w });
+  };
+  trimmedSources.forEach((src) => {
+    if (mode === 'brand' && isUnknownBrand(src.value)) return;
+    const w = weightFor(src.idx);
+    const tokens =
+      mode === 'partNumber' ? tokenizePartModelNumber(src.value)
+      : mode === 'description' ? tokenizeDescription(src.value)
+      : tokenizeBrand(src.value);
+    const expanded = expandWithSynonyms(tokens);
+    // For brand mode, don't include the raw multi-brand string — see the
+    // single-value builder below for the rationale.
+    if (!(mode === 'brand' && expanded.length > 1)) push(src.value, w);
+    expanded.forEach((t) => push(t, w));
+  });
+  if (weighted.size === 0) return null;
+  const all = Array.from(weighted.values());
+  if (all.length === 1) {
+    return { filterType: 'text', type: 'contains', filter: all[0].value, weight: all[0].weight };
+  }
+  return {
+    filterType: 'text',
+    operator: 'OR',
+    conditions: all.map((w) => ({ filterType: 'text', type: 'contains', filter: w.value, weight: w.weight })),
+  };
+}
+
+export function buildFuzzyContainsFilter(
+  value: string | null | undefined,
+  options?: { mode?: FuzzyMode | null },
+): FuzzyTextFilter | null {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed) return null;
+  const mode = options?.mode ?? null;
+  if (!mode) return { filterType: 'text', type: 'contains', filter: trimmed };
+  if (mode === 'brand' && isUnknownBrand(trimmed)) return null;
+  let tokens: string[];
+  if (mode === 'partNumber') tokens = tokenizePartModelNumber(trimmed);
+  else if (mode === 'description') tokens = tokenizeDescription(trimmed);
+  else tokens = tokenizeBrand(trimmed);
+  // Expand tokens with static synonyms/abbreviations (e.g. HP ↔ Hewlett Packard,
+  // Cat6 ↔ Category 6, TV ↔ television).  Applied for all modes: brand synonyms
+  // cover manufacturer abbreviations, description and part modes cover technical
+  // shorthand that shows up in both fields.
+  tokens = expandWithSynonyms(tokens);
+  // For brand mode, when multiple tokens survive the separator split we only
+  // want the tokens themselves — NOT the raw multi-brand string (which would
+  // never match a single-brand product row).
+  const baseValues = mode === 'brand' && tokens.length > 1 ? tokens : [trimmed, ...tokens];
+  const seen = new Set<string>();
+  const values: string[] = [];
+  baseValues.forEach((t) => {
+    const up = t.toUpperCase();
+    if (seen.has(up)) return;
+    seen.add(up);
+    values.push(t);
+  });
+  if (values.length <= 1) {
+    return { filterType: 'text', type: 'contains', filter: values[0] ?? trimmed };
+  }
+  return {
+    filterType: 'text',
+    operator: 'OR',
+    conditions: values.map((t) => ({ filterType: 'text', type: 'contains', filter: t })),
+  };
+}
+
+export type FilterExpansions = {
+  brand?: string[];
+  partNumber?: string[];
+  modelNumber?: string[];
+  description?: string[];
+};
+
+// Merge AI-supplied expansion tokens into an existing filter model as extra
+// OR conditions.  Existing conditions are preserved; tokens that duplicate
+// something already present (case-insensitive) are skipped.
+export function mergeExpansionsIntoFilterModel(
+  currentModel: Record<string, FuzzyTextFilter> | null,
+  expansions: FilterExpansions,
+): Record<string, FuzzyTextFilter> {
+  const out: Record<string, FuzzyTextFilter> = { ...(currentModel ?? {}) };
+  const apply = (colId: string, tokens: string[] | undefined) => {
+    if (!tokens || tokens.length === 0) return;
+    const cleaned = tokens.map((t) => t.trim()).filter((t) => t.length > 0);
+    if (cleaned.length === 0) return;
+    const existing = out[colId] ?? null;
+    const existingValues: string[] = [];
+    if (existing) {
+      if ('conditions' in existing) {
+        existing.conditions.forEach((c) => { if (c.filter) existingValues.push(c.filter); });
+      } else if (existing.filter) {
+        existingValues.push(existing.filter);
+      }
+    }
+    const seen = new Set(existingValues.map((v) => v.toUpperCase()));
+    const merged = [...existingValues];
+    cleaned.forEach((t) => {
+      const key = t.toUpperCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      merged.push(t);
+    });
+    if (merged.length === 1) {
+      out[colId] = { filterType: 'text', type: 'contains', filter: merged[0] };
+    } else {
+      out[colId] = {
+        filterType: 'text',
+        operator: 'OR',
+        conditions: merged.map((t) => ({ filterType: 'text', type: 'contains', filter: t })),
+      };
+    }
+  };
+  apply('BrandName', expansions.brand);
+  apply('PartNumber', expansions.partNumber);
+  apply('ModelNumber', expansions.modelNumber);
+  apply('Description', expansions.description);
+  return out;
+}
+
 export function writeCollapsedCategoryPathsToCookie(offerId: string, paths: Set<string>): void {
   if (typeof document === 'undefined' || !offerId) return;
   try {

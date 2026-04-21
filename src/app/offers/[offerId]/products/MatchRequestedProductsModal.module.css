@@ -248,6 +248,41 @@
   font-weight: 500;
 }
 
+.promptLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  padding: 6px 12px;
+}
+
+.promptLabelText {
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.promptInput {
+  border: none;
+  background: transparent;
+  outline: none;
+  color: #0f172a;
+  font-size: 13px;
+  min-width: 220px;
+}
+
+.promptInput::placeholder {
+  color: #64748b;
+}
+
+.promptInput:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* Suggested (pinned) row styling
    Cell-level rules use .gridShell repeated 3× to beat the high-specificity
    catch-all in ag-grid-overrides.css (0,7,0) that would otherwise paint

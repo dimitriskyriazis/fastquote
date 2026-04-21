@@ -37,9 +37,17 @@ type GridRequest = {
   sortModel?: Array<{ colId: string; sort: 'asc' | 'desc' }>;
 };
 
+type HiddenFilterToken = { filter: string; weight?: number };
+
 type GridRequestEnvelope = {
   request?: GridRequest;
   action?: string | null;
+  orFilterColumns?: string[];
+  // Per-column extra LIKE tokens the client wants OR'd into the WHERE clause
+  // and relevance score — without AG Grid's filter popup exposing them.
+  // Used to keep the filter-pill UI clean (one phrase visible) while the
+  // real query still ORs a broad set of synonyms/word-tokens/cross-folds.
+  hiddenFilterTokens?: Record<string, HiddenFilterToken[]>;
 };
 
 const TREE_ORDERING_RAW_EXPRESSION = 'NULLIF(LTRIM(RTRIM(od.TreeOrdering)), \'\')';
@@ -183,11 +191,30 @@ const buildBlankClause = (columnExpression: string): string =>
 const buildNotBlankClause = (columnExpression: string): string =>
   `(NULLIF(LTRIM(RTRIM(COALESCE(CAST(${columnExpression} AS NVARCHAR(MAX)), ''))), '') IS NOT NULL)`;
 
+// Weight a text condition by the length of its search value so specific
+// phrases dominate generic single-word matches when ranking relevance.
+// A product row matching "Cat 7 SFTP RJ45 patch cord" (27 chars → weight 27)
+// now outranks one matching just "Cat" (3 chars → weight 3) nine to one.
+// When the client tags a condition with an explicit `weight` (e.g. priority
+// weight for desc1 vs desc3), that value multiplies the base length weight.
+const computeTextWeight = (value: unknown, priority: unknown = 1): number => {
+  const baseLen = value == null ? 1 : Math.max(1, String(value).trim().length);
+  const mult = typeof priority === 'number' && Number.isFinite(priority) && priority > 0
+    ? priority
+    : 1;
+  return Math.max(1, Math.round(baseLen * mult));
+};
+
 const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpressions: Record<string, string>) => {
   if (!filterModel || Object.keys(filterModel).length === 0) {
-    return { clauses: [] as string[], params: [] as QueryParam[] };
+    return {
+      clauses: [] as Array<{ colId: string; clause: string }>,
+      scoreClauses: [] as Array<{ clause: string; weight: number }>,
+      params: [] as QueryParam[],
+    };
   }
-  const clauses: string[] = [];
+  const clauses: Array<{ colId: string; clause: string }> = [];
+  const scoreClauses: Array<{ clause: string; weight: number }> = [];
   const params: QueryParam[] = [];
   const typedModel = filterModel as Record<string, KnownFilterModel>;
   const isCompoundTextFilter = (filter: KnownFilterModel): filter is CompoundTextFilterModel => (
@@ -303,23 +330,37 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
         if (isCompoundTextFilter(fm)) {
           const operator = fm.operator === 'OR' ? 'OR' : 'AND';
           const conditionResults = fm.conditions
-            .map((condition, conditionIdx) => (
-              buildTextConditionClause(condition, `${paramBase}_c${conditionIdx}`)
-            ))
-            .filter((result) => result.clause);
+            .map((condition, conditionIdx) => ({
+              condition,
+              result: buildTextConditionClause(condition, `${paramBase}_c${conditionIdx}`),
+            }))
+            .filter((entry) => entry.result.clause);
           if (conditionResults.length === 0) break;
           if (conditionResults.length === 1) {
-            clauses.push(conditionResults[0].clause);
+            clauses.push({ colId: col, clause: conditionResults[0].result.clause });
           } else {
-            clauses.push(`(${conditionResults.map((result) => result.clause).join(` ${operator} `)})`);
+            clauses.push({ colId: col, clause: `(${conditionResults.map(({ result }) => result.clause).join(` ${operator} `)})` });
           }
-          conditionResults.forEach((result) => result.params.forEach((p) => params.push(p)));
+          conditionResults.forEach(({ condition, result }) => {
+            scoreClauses.push({
+              clause: result.clause,
+              weight: computeTextWeight(condition.filter, (condition as { weight?: unknown }).weight),
+            });
+            result.params.forEach((p) => params.push(p));
+          });
           break;
         }
 
         const single = buildTextConditionClause(fm as TextFilterModel, paramBase);
         if (single.clause) {
-          clauses.push(single.clause);
+          clauses.push({ colId: col, clause: single.clause });
+          scoreClauses.push({
+            clause: single.clause,
+            weight: computeTextWeight(
+              (fm as TextFilterModel).filter,
+              (fm as { weight?: unknown }).weight,
+            ),
+          });
           single.params.forEach((p) => params.push(p));
         }
         break;
@@ -362,17 +403,21 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
             .filter((result) => result.clause);
           if (conditionResults.length === 0) break;
           if (conditionResults.length === 1) {
-            clauses.push(conditionResults[0].clause);
+            clauses.push({ colId: col, clause: conditionResults[0].clause });
           } else {
-            clauses.push(`(${conditionResults.map((result) => result.clause).join(` ${operator} `)})`);
+            clauses.push({ colId: col, clause: `(${conditionResults.map((result) => result.clause).join(` ${operator} `)})` });
           }
-          conditionResults.forEach((result) => result.params.forEach((p) => params.push(p)));
+          conditionResults.forEach((result) => {
+            scoreClauses.push({ clause: result.clause, weight: 1 });
+            result.params.forEach((p) => params.push(p));
+          });
           break;
         }
 
         const single = buildNumberConditionClause(fm as NumberFilterModel, paramBase);
         if (single.clause) {
-          clauses.push(single.clause);
+          clauses.push({ colId: col, clause: single.clause });
+          scoreClauses.push({ clause: single.clause, weight: 1 });
           single.params.forEach((p) => params.push(p));
         }
         break;
@@ -382,7 +427,7 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
     }
   });
 
-  return { clauses, params };
+  return { clauses, scoreClauses, params };
 };
 
 const buildOrderSql = (sortModel: GridRequest['sortModel'], columnExpressions: Record<string, string>, defaultOrder: string) => {
@@ -430,7 +475,14 @@ async function handleCategoryGrid(
   };
 
   const { clauses, params } = buildWhereClauses(gridRequest.filterModel, columnExpressions);
-  const whereSql = clauses.length ? `AND ${clauses.join(' AND ')}` : '';
+  const orCols = new Set(Array.isArray(body?.orFilterColumns) ? body.orFilterColumns : []);
+  const orClauses = clauses.filter((c) => orCols.has(c.colId)).map((c) => c.clause);
+  const andClauses = clauses.filter((c) => !orCols.has(c.colId)).map((c) => c.clause);
+  const finalClauses = [...andClauses];
+  if (orClauses.length > 0) {
+    finalClauses.push(orClauses.length === 1 ? orClauses[0] : `(${orClauses.join(' OR ')})`);
+  }
+  const whereSql = finalClauses.length ? `AND ${finalClauses.join(' AND ')}` : '';
   const quickFilterColumns = Object.entries(columnExpressions).map(([colId, expression]) => ({
     colId,
     expression,
@@ -523,8 +575,56 @@ async function handleProductGrid(
     CostPrice: 'price.CostPrice',
   };
 
-  const { clauses, params } = buildWhereClauses(gridRequest.filterModel, columnExpressions);
-  const whereSql = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  const { clauses, scoreClauses, params } = buildWhereClauses(gridRequest.filterModel, columnExpressions);
+
+  // Fold in hidden per-column tokens from the request payload.  These are
+  // extra LIKE predicates the client wants applied without polluting AG Grid's
+  // filter popup (e.g. desc2/desc3/synonym expansions).  Each token OR'd into
+  // the column's existing clause and also contributes a weighted score term.
+  const hiddenTokens = body?.hiddenFilterTokens;
+  if (hiddenTokens && typeof hiddenTokens === 'object' && !Array.isArray(hiddenTokens)) {
+    Object.entries(hiddenTokens).forEach(([colId, tokens]) => {
+      if (!Array.isArray(tokens) || tokens.length === 0) return;
+      const colExpr = columnExpressions[colId];
+      if (!colExpr) return;
+      const tokenClauses: string[] = [];
+      tokens.forEach((token, idx) => {
+        if (!token || typeof token.filter !== 'string') return;
+        const value = token.filter.trim();
+        if (!value) return;
+        const paramKey = `hidden_${colId}_${idx}`;
+        const { clause, params: tokenParams } = buildTextMatchPredicate(colExpr, value, {
+          paramKey,
+          mode: 'contains',
+          enableFuzzy: false,
+        });
+        if (!clause) return;
+        tokenClauses.push(clause);
+        tokenParams.forEach((p) => params.push(p));
+        scoreClauses.push({ clause, weight: computeTextWeight(value, token.weight) });
+      });
+      if (tokenClauses.length === 0) return;
+      const existingIdx = clauses.findIndex((c) => c.colId === colId);
+      if (existingIdx >= 0) {
+        const merged = `(${clauses[existingIdx].clause} OR ${tokenClauses.join(' OR ')})`;
+        clauses[existingIdx] = { colId, clause: merged };
+      } else {
+        clauses.push({
+          colId,
+          clause: tokenClauses.length === 1 ? tokenClauses[0] : `(${tokenClauses.join(' OR ')})`,
+        });
+      }
+    });
+  }
+
+  const orCols = new Set(Array.isArray(body?.orFilterColumns) ? body.orFilterColumns : []);
+  const orClauses = clauses.filter((c) => orCols.has(c.colId)).map((c) => c.clause);
+  const andClauses = clauses.filter((c) => !orCols.has(c.colId)).map((c) => c.clause);
+  const finalClauses = [...andClauses];
+  if (orClauses.length > 0) {
+    finalClauses.push(orClauses.length === 1 ? orClauses[0] : `(${orClauses.join(' OR ')})`);
+  }
+  const whereSql = finalClauses.length ? `WHERE ${finalClauses.join(' AND ')}` : '';
   const quickFilterColumns = Object.entries(columnExpressions).map(([colId, expression]) => ({
     colId,
     expression,
@@ -539,16 +639,35 @@ async function handleProductGrid(
     ? `${whereSql} ${quickFilterClause.clause}`.trim()
     : whereSql;
   const combinedParams = [...params, ...quickFilterClause.params];
-  const defaultOrder = DEFAULT_PRODUCT_ORDER;
+  // Relevance score: weighted sum over matching atomic filter conditions.
+  // Each condition's weight is the length of its search string — "Cat 7 SFTP
+  // RJ45 patch cord" (27) beats "Cat" (3) 9:1, so rows that hit the full
+  // requested phrase crowd out rows that only hit a stray generic token.
+  const scoreExpr = scoreClauses.length > 0
+    ? scoreClauses.map((c) => `(CASE WHEN ${c.clause} THEN ${c.weight} ELSE 0 END)`).join(' + ')
+    : null;
+  const userSortActive = Array.isArray(gridRequest.sortModel) && gridRequest.sortModel.length > 0;
+  // When relevance score is active but the user hasn't picked a sort column,
+  // avoid the generic BrandName/ModelNumber default — it tends to surface
+  // alphabetically-first rows (often numeric/prefix noise) within score ties.
+  // ProductID DESC is a cleaner tiebreaker: newer products first, fully
+  // deterministic, and score stays dominant.
+  const defaultOrder = scoreExpr && !userSortActive
+    ? 'ORDER BY bp.ProductID DESC'
+    : DEFAULT_PRODUCT_ORDER;
   const baseOrderSql = buildOrderSql(
     gridRequest.sortModel,
     columnExpressions,
     defaultOrder,
   );
-  // If we have a highlightProductId, prioritize it at the top, then use the rest of the order
-  const orderSql = highlightProductId != null
-    ? baseOrderSql.replace(/^ORDER BY /i, 'ORDER BY CASE WHEN bp.ProductID = @__highlightProductId THEN 0 ELSE 1 END, ')
+  // Prepend match-score DESC so the closest match wins, then the user's sort
+  // (if any), then the highlight pin.
+  const orderSqlWithScore = scoreExpr
+    ? baseOrderSql.replace(/^ORDER BY /i, `ORDER BY (${scoreExpr}) DESC, `)
     : baseOrderSql;
+  const orderSql = highlightProductId != null
+    ? orderSqlWithScore.replace(/^ORDER BY /i, 'ORDER BY CASE WHEN bp.ProductID = @__highlightProductId THEN 0 ELSE 1 END, ')
+    : orderSqlWithScore;
 
   const pool = await getPool();
 

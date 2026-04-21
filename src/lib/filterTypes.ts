@@ -3,6 +3,9 @@ export type TextCondition = {
   filterType: "text";
   type?: "contains" | "equals" | "notEqual" | "startsWith" | "endsWith" | "blank" | "notBlank";
   filter?: string;
+  // Optional relevance-score multiplier set by the client when priority
+  // across conditions matters (e.g. desc1 vs desc3).  Default treated as 1.
+  weight?: number;
 };
 
 export type NumberCondition = {
