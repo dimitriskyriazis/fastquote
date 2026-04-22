@@ -288,9 +288,6 @@ export default function AddProductsModal({
   // / carrying cases.  Stored as the negativeDescription array straight from
   // /expand and folded into the request payload via buildNegativeHiddenTokens.
   const [negativeDescriptionTerms, setNegativeDescriptionTerms] = useState<string[] | null>(null);
-  // ProductIDs surfaced by the server-side semantic (vector) search for the
-  // current prompt.  Feeds into requestPayload as a ranking bonus only.
-  const [semanticCandidates, setSemanticCandidates] = useState<number[] | null>(null);
   // True while a user-submitted AI search prompt is driving the grid.  While
   // this is on: the prompt input is read-only (until cleared), the column
   // filter row is visually locked, and the filter-change-driven semantic
@@ -345,9 +342,9 @@ export default function AddProductsModal({
       orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
     };
     if (hiddenFilterTokens) payload.hiddenFilterTokens = hiddenFilterTokens;
-    if (semanticCandidates && semanticCandidates.length > 0) payload.semanticCandidates = semanticCandidates;
     const negative = buildNegativeHiddenTokens(
       negativeDescriptionTerms ? { negativeDescription: negativeDescriptionTerms } : null,
+      hiddenFilterTokens,
     );
     if (negative) payload.negativeHiddenTokens = negative;
     // newProductId is intentionally NOT forwarded to the server.  The old
@@ -355,7 +352,7 @@ export default function AddProductsModal({
     // rendered the new product twice (the server row plus the client-side
     // pinned row).  The new product is now shown only as a pinned top row.
     return payload;
-  }, [hiddenFilterTokens, semanticCandidates, negativeDescriptionTerms]);
+  }, [hiddenFilterTokens, negativeDescriptionTerms]);
 
   const handleProductSelection = useCallback((rows: ProductRow[]) => {
     setSelectedProducts(rows ?? []);
@@ -391,12 +388,9 @@ export default function AddProductsModal({
         ok: boolean;
         expansions?: FilterExpansions;
         routed?: PromptRouting | null;
-        semanticCandidates?: number[];
       };
       const expansions = data.expansions ?? {};
       const routed = data.routed ?? null;
-      const semantic = Array.isArray(data.semanticCandidates) ? data.semanticCandidates : [];
-      setSemanticCandidates(semantic.length > 0 ? semantic : null);
       const negatives = Array.isArray(expansions.negativeDescription) ? expansions.negativeDescription : [];
       setNegativeDescriptionTerms(negatives.length > 0 ? negatives : null);
       const api = productsApiRef.current;
@@ -448,7 +442,6 @@ export default function AddProductsModal({
     setPromptText('');
     setPromptSubmitted(false);
     setHiddenFilterTokens(null);
-    setSemanticCandidates(null);
     setNoSuggestionsFound(false);
     lastSemanticSigRef.current = '';
     const api = productsApiRef.current;
@@ -559,7 +552,6 @@ export default function AddProductsModal({
     setFarnellDescription(placementAnchor?.requestedDescription ?? null);
     setPromptText('');
     setNoSuggestionsFound(false);
-    setSemanticCandidates(null);
     setPromptSubmitted(false);
     lastSemanticSigRef.current = '';
   }, [placementAnchor, defaultPlacementMode, onPlacementModeChange, clearFarnellResults]);
@@ -578,6 +570,7 @@ export default function AddProductsModal({
     }
     if (!smartFilteringEnabled) {
       const { visibleModel } = buildBasicRequestedFilterState({
+        requestedBrand: placementAnchor.requestedBrand,
         requestedPartNumber: placementAnchor.requestedPartNo,
         requestedModelNumber: placementAnchor.requestedModelNo,
       });
@@ -1283,7 +1276,6 @@ export default function AddProductsModal({
     if (sig === lastSemanticSigRef.current) return;
     lastSemanticSigRef.current = sig;
     if (!anyValue) {
-      setSemanticCandidates(null);
       setHiddenFilterTokens(null);
       return;
     }
@@ -1307,7 +1299,6 @@ export default function AddProductsModal({
         const data = (await res.json()) as {
           ok?: boolean;
           expansions?: FilterExpansions;
-          semanticCandidates?: number[];
         };
         if (controller.signal.aborted) return;
         // Fold the full requested-filter state — fuzzy + synonym expansion of
@@ -1324,8 +1315,6 @@ export default function AddProductsModal({
           prefetchedExpansion: expansions,
         });
         setHiddenFilterTokens(hiddenTokens);
-        const semantic = Array.isArray(data.semanticCandidates) ? data.semanticCandidates : [];
-        setSemanticCandidates(semantic.length > 0 ? semantic : null);
         const negatives = Array.isArray(expansions.negativeDescription) ? expansions.negativeDescription : [];
         setNegativeDescriptionTerms(negatives.length > 0 ? negatives : null);
       } catch (err) {

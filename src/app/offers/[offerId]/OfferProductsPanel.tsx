@@ -148,6 +148,7 @@ import {
   type ProductSummary,
   type FarnellLookupResponse,
   type FilterExpansions,
+  type HiddenFilterTokens,
 } from './offerProductsUtils';
 
 export type { OfferProductsPanelHandle, OfferProductsTemplateExportRow } from './offerProductsPanelTypes';
@@ -287,7 +288,13 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     [offerId],
   );
   const assignRequestedRowToProduct = useCallback(
-    async (requestedRowId: number, productId: number, categoryId: number | null, comment?: string) => {
+    async (
+      requestedRowId: number,
+      productId: number,
+      categoryId: number | null,
+      comment?: string,
+      metrics?: Record<string, unknown> | null,
+    ) => {
       try {
         const body: Record<string, unknown> = {
           action: 'assign-requested',
@@ -299,6 +306,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         }
         if (comment) {
           body.comment = comment;
+        }
+        if (metrics) {
+          body.metrics = metrics;
         }
         const res = await fetch(addProductsEndpoint, {
           method: 'POST',
@@ -413,7 +423,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       // the first paint after the toggle flips.
       const smart = smartFilteringEnabledRef.current;
       let filterModel: Record<string, unknown>;
-      let hiddenTokens: Record<string, unknown> | null = null;
+      let hiddenTokens: HiddenFilterTokens | null = null;
       if (smart) {
         const built = buildRequestedFilterState({
           requestedBrand: entry.requestedBrand,
@@ -430,6 +440,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         hiddenTokens = built.hiddenTokens ?? null;
       } else {
         const { visibleModel } = buildBasicRequestedFilterState({
+          requestedBrand: entry.requestedBrand,
           requestedPartNumber: entry.requestedPartNumber,
           requestedModelNumber: entry.requestedModelNumber,
         });
@@ -457,7 +468,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       };
       if (hiddenTokens) body.hiddenFilterTokens = hiddenTokens;
       if (smart) {
-        const negative = buildNegativeHiddenTokens(expansion);
+        const negative = buildNegativeHiddenTokens(expansion, hiddenTokens);
         if (negative) body.negativeHiddenTokens = negative;
       }
       const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/add`, {
@@ -533,11 +544,41 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     setProductPageCacheVersion((v) => v + 1);
   }, [smartFilteringEnabled]);
 
+  // Background prefetch for upcoming entries.  Held off until the current
+  // entry's modal has actually loaded its grid data — otherwise entries 2+
+  // race entry 1 for the same OpenAI + SQL quota and the user waits longer
+  // for the one they're looking at.  The modal calls onCurrentEntryReady
+  // when its first /products/add response arrives, which flips
+  // firstEntryReady and lets the background workers start.
+  const [firstEntryReady, setFirstEntryReady] = useState(false);
+  const handleCurrentEntryReady = useCallback(() => {
+    setFirstEntryReady(true);
+  }, []);
+  const currentQueueHeadId = requestedMatchQueue[0]?.offerDetailId ?? null;
   useEffect(() => {
-    if (requestedMatchQueue.length === 0 || expansionPrefetchStartedRef.current) return;
+    // New head (fresh batch or user skipped) — re-gate the prefetch so the
+    // background workers wait for the new head to load before chasing
+    // entries 2+ again.
+    setFirstEntryReady(false);
+    expansionPrefetchStartedRef.current = false;
+  }, [currentQueueHeadId]);
+  useEffect(() => {
+    if (requestedMatchQueue.length === 0) return;
+    if (!firstEntryReady) return;
+    if (expansionPrefetchStartedRef.current) return;
     expansionPrefetchStartedRef.current = true;
-    const entries = [...requestedMatchQueue];
-    const MAX_CONCURRENT = 4;
+    // Skip index 0: the modal itself is fetching the current entry.
+    // prefetchExpansion is a no-op for already-cached ids, so re-queuing
+    // a previously-prefetched entry is cheap.
+    const entries = requestedMatchQueue.slice(1);
+    if (entries.length === 0) return;
+    // MAX_CONCURRENT 3: originally 4 → 2 → 1 to avoid OpenAI chat TPM
+    // queueing, but with /expand now short-timeout-ing the chat call
+    // (300ms, continues in background) the blocking factor is just the
+    // embedding call which has a much higher rate limit.  3 in-flight
+    // keeps entries 2-4 warm for the user while staying well under
+    // embeddings TPM.
+    const MAX_CONCURRENT = 3;
     let idx = 0;
     const worker = async () => {
       while (idx < entries.length) {
@@ -547,7 +588,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     };
     const workers = Array.from({ length: Math.min(MAX_CONCURRENT, entries.length) }, () => worker());
     void Promise.all(workers);
-  }, [requestedMatchQueue, prefetchExpansion, smartFilteringEnabled]);
+  }, [requestedMatchQueue, prefetchExpansion, smartFilteringEnabled, firstEntryReady]);
   const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() =>
     readCollapsedCategoryPathsFromCookie(offerId),
   );
@@ -2674,6 +2715,35 @@ const requestedColumnDefsMap = useMemo(
     let lastAssignedCategoryOrdinal: string | null = null;
     const productChildCounters = new Map<string, number>();
 
+    // Prewarm lookup + summary caches in parallel so the sequential loop below
+    // only waits for the per-row assignment write. Without this, each row blocks
+    // on resolve → summary → assign roundtrips, so the first product only
+    // appears after three serial server hits.
+    try {
+      const prewarmInfos: RequestedLookupInfo[] = [];
+      for (const node of nodesToProcess) {
+        const data = node?.data ?? null;
+        if (!data || typeof data !== 'object') continue;
+        const info = buildRequestedLookupInfo(data);
+        if (!info.partNumber && !info.modelNumber) continue;
+        if (isFarnellBrand(info.brand)) continue;
+        prewarmInfos.push(info);
+      }
+      if (prewarmInfos.length > 0) {
+        const productIds = await Promise.all(
+          prewarmInfos.map((info) => resolveProductIdFromRequestedInfo(info).catch(() => null)),
+        );
+        const uniqueIds = Array.from(
+          new Set(productIds.filter((id): id is number => id != null)),
+        );
+        if (uniqueIds.length > 0) {
+          await Promise.all(uniqueIds.map((id) => fetchProductSummary(id).catch(() => null)));
+        }
+      }
+    } catch {
+      /* prewarm is best-effort; the sequential loop falls back to per-row fetches */
+    }
+
     try {
       for (const node of nodesToProcess) {
         const data = node?.data ?? null;
@@ -3189,15 +3259,21 @@ const requestedColumnDefsMap = useMemo(
     return duplicates;
   }, [requestedMatchQueue]);
 
-  const handleManualAssign = useCallback(async (productId: number, comment: string) => {
+  const handleManualAssign = useCallback(async (
+    productId: number,
+    comment: string,
+    metrics?: Record<string, unknown> | null,
+  ) => {
     if (!currentRequestedMatch) return false;
     const match = currentRequestedMatch;
 
     const duplicates = consumeQueueHeadWithDuplicates(match);
     const duplicateCount = duplicates.length;
 
+    // Metrics only attached to the head-row assignment, not to duplicate
+    // auto-fills — rank is only meaningful for the user's actual click.
     Promise.all([
-      assignRequestedRowToProduct(match.offerDetailId, productId, match.parentCategoryId, comment),
+      assignRequestedRowToProduct(match.offerDetailId, productId, match.parentCategoryId, comment, metrics ?? null),
       ...duplicates.map((dup) =>
         assignRequestedRowToProduct(dup.offerDetailId, productId, dup.parentCategoryId, comment),
       ),
@@ -7021,6 +7097,7 @@ const requestedColumnDefsMap = useMemo(
           prefetchedSuggestions={currentPrefetchedSuggestions}
           prefetchedExpansion={currentPrefetchedExpansion}
           prefetchedFirstPage={currentPrefetchedFirstPage}
+          onCurrentEntryReady={handleCurrentEntryReady}
         />
       ) : null}
       <AddProductModal

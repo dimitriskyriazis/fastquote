@@ -114,8 +114,15 @@ const SYNONYM_GROUPS: string[][] = [
   ['adapter', 'adapters', 'adaptor', 'adaptors'],
   ['converter', 'converters'],
   ['light', 'lights', 'lamp', 'lamps'],
-  ['projector', 'projectors'],
+  ['projector', 'projectors', 'projection'],
   ['connector', 'connectors'],
+  ['box', 'boxes'],
+  ['child', 'children'],
+  ['receiver', 'receivers', 'reception'],
+  ['transmitter', 'transmitters', 'transmission'],
+  ['switcher', 'switchers', 'switching'],
+  ['mixer', 'mixers', 'mixing'],
+  ['recorder', 'recorders', 'recording'],
 ];
 
 const normalizeSynonymKey = (value: string): string =>
@@ -140,12 +147,26 @@ const SYNONYM_LOOKUP: Map<string, string[]> = (() => {
 // Generic plural/singular expansion — adds the opposite form so LIKE
 // predicates hit both.  Without this, a catalog row "microphone stand"
 // doesn't match a user-typed "stands" (no 's' at end of "stand" in the
-// catalog), and vice versa.  Handles the common `-s` / `-es` / `-ies`
-// suffixes conservatively; short tokens (< 4 chars) are left alone to
-// avoid pathological matches like "hub" → "hubs" → "hubsetc".
+// catalog), and vice versa.
+//
+// Only applied to plain English words.  Skipped for tokens that look like
+// SKUs / codes / abbreviations — "HDMI" → "HDMIs" / "HDMIes", "TVOne" →
+// "TVOnes" / "TVOnees", "NJR-CTB" → "NJR-CTBs" are nonsense variants that
+// never match catalog text, they just bloat the scoreClause count.
 function expandPluralVariants(token: string): string[] {
   const variants: string[] = [];
   if (token.length < 4) return variants;
+  // Contains a digit → treat as SKU / technical spec (HDMI2.0, 4K60, 1U).
+  if (/\d/.test(token)) return variants;
+  // Contains hyphen, slash, underscore, period, or other punctuation → SKU-
+  // shaped (NJR-CTB, CM2-HDMI-4K-4IN, Tesira_sec-4).
+  if (/[-_/.\\+]/.test(token)) return variants;
+  // ALL-CAPS short words are usually acronyms/abbreviations (HDMI, USB, RJ,
+  // LG, CAT) — their plural isn't a real English word either.
+  if (token.length <= 5 && token === token.toUpperCase()) return variants;
+  // CamelCase multi-word compounds (TVOne, SmartPanel, CORIOmaster) — the
+  // pluralizer would produce garbage.  Detect via inner capital letter.
+  if (/^[A-Z][a-z]+[A-Z]/.test(token)) return variants;
   const lower = token.toLowerCase();
   if (lower.endsWith('ies') && token.length >= 5) {
     variants.push(`${token.slice(0, -3)}y`);
@@ -157,7 +178,12 @@ function expandPluralVariants(token: string): string[] {
     variants.push(token.slice(0, -1));
   } else {
     variants.push(`${token}s`);
-    variants.push(`${token}es`);
+    // Skip -es except for legit -es pluralized English words.  The old
+    // code added -es unconditionally, producing "inputes", "Under-deskes",
+    // "connectiones" which match nothing.
+    if (/(s|x|z|ch|sh)$/i.test(token)) {
+      variants.push(`${token}es`);
+    }
   }
   return variants;
 }
@@ -554,6 +580,11 @@ export function looksLikeProse(value: string | null | undefined): boolean {
   if (!trimmed) return false;
   const hasWhitespace = /\s/.test(trimmed);
   if (!hasWhitespace) return false;
+  // "Model X" / "Series 5" / "Type 7" / "V 2" — one descriptive word followed
+  // by a short alphanumeric version identifier.  Keep these as PartNumber
+  // codes (not prose) because they DO identify a product code in many
+  // catalogs; the short back half isn't fluff the way "frame" is.
+  if (/^[A-Za-z]{2,8}\s+[A-Za-z]?\d+[A-Za-z]?$/.test(trimmed)) return false;
   const hasDigit = /[0-9]/.test(trimmed);
   return !hasDigit;
 }
@@ -669,45 +700,64 @@ export function buildRequestedFilterState(input: {
 }
 
 // Build the filter state when the user has turned "Smart filtering" OFF.
-// Only PartNumber and ModelNumber chips are produced — no Description, no
-// Brand, no fuzzy expansion, no hidden-token sidecar.  An `equals`
-// condition keeps the match strict: after the server cleans both sides
-// (strip non-alphanumerics + uppercase) the row's PartNumber /
-// ModelNumber / LegacyPartNoCleaned must match exactly, rather than merely
-// containing the substring.  The server still cross-searches all three
-// columns automatically whenever either filter is present.
+// BrandName, PartNumber and ModelNumber chips are produced — no Description,
+// no fuzzy expansion, no hidden-token sidecar.  All three use `contains` so
+// minor spelling / punctuation variants still match.  The server still
+// cross-searches part/model/legacy columns automatically whenever either
+// filter is present.
 // Translate the LLM's negativeDescription array into the same HiddenFilterTokens
 // shape the server already understands.  Each term becomes a Description
 // LIKE token; the server applies them as negative score contributions (not
 // WHERE filters) so rows matching them sink but aren't hidden entirely —
 // preserves graceful behavior when the LLM over-negates.
+//
+// Optional `positiveTokens` argument: any token already present in the
+// positive hidden-tokens sidecar is silently dropped from the negative list
+// so the LLM can't both boost and penalize the same word (which would
+// cancel out on-score and confuse future debugging).
 export function buildNegativeHiddenTokens(
   expansion: FilterExpansions | null | undefined,
+  positiveTokens?: HiddenFilterTokens | null,
 ): HiddenFilterTokens | null {
   const terms = expansion?.negativeDescription;
   if (!Array.isArray(terms) || terms.length === 0) return null;
+  const positiveSet = new Set<string>();
+  if (positiveTokens && typeof positiveTokens === 'object') {
+    Object.values(positiveTokens).forEach((list) => {
+      list.forEach((token) => {
+        const raw = typeof token?.filter === 'string' ? token.filter.trim().toLowerCase() : '';
+        if (raw) positiveSet.add(raw);
+      });
+    });
+  }
   const tokens = terms
     .map((t) => (typeof t === 'string' ? t.trim() : ''))
     .filter((t) => t.length >= 2)
+    .filter((t) => !positiveSet.has(t.toLowerCase()))
     .map((t) => ({ filter: t, weight: 1 }));
   if (tokens.length === 0) return null;
   return { Description: tokens };
 }
 
 export function buildBasicRequestedFilterState(input: {
+  requestedBrand?: string | null;
   requestedPartNumber?: string | null;
   requestedModelNumber?: string | null;
 }): {
   visibleModel: Record<string, FuzzyTextFilter> | null;
 } {
   const filters: Record<string, FuzzyTextFilter> = {};
+  const brand = typeof input.requestedBrand === 'string' ? input.requestedBrand.trim() : '';
   const part = typeof input.requestedPartNumber === 'string' ? input.requestedPartNumber.trim() : '';
   const model = typeof input.requestedModelNumber === 'string' ? input.requestedModelNumber.trim() : '';
+  if (brand) {
+    filters.BrandName = { filterType: 'text', type: 'contains', filter: brand } as unknown as FuzzyTextFilter;
+  }
   if (part) {
-    filters.PartNumber = { filterType: 'text', type: 'equals', filter: part } as unknown as FuzzyTextFilter;
+    filters.PartNumber = { filterType: 'text', type: 'contains', filter: part } as unknown as FuzzyTextFilter;
   }
   if (model) {
-    filters.ModelNumber = { filterType: 'text', type: 'equals', filter: model } as unknown as FuzzyTextFilter;
+    filters.ModelNumber = { filterType: 'text', type: 'contains', filter: model } as unknown as FuzzyTextFilter;
   }
   return { visibleModel: Object.keys(filters).length > 0 ? filters : null };
 }
@@ -1337,25 +1387,37 @@ export const resolveProductIdFromRequestedInfo = async (info: RequestedLookupInf
   if (requestedHistoryLookupCache.has(cacheKey)) {
     return requestedHistoryLookupCache.get(cacheKey) ?? null;
   }
-  try {
-    const response = await fetch(`${REQUESTED_HISTORY_LOOKUP_ENDPOINT}?${params.toString()}`);
-    if (!response.ok) {
+  const existing = requestedHistoryLookupInflight.get(cacheKey);
+  if (existing) return existing;
+  const promise = (async (): Promise<number | null> => {
+    try {
+      const response = await fetch(`${REQUESTED_HISTORY_LOOKUP_ENDPOINT}?${params.toString()}`);
+      if (!response.ok) {
+        requestedHistoryLookupCache.set(cacheKey, null);
+        return null;
+      }
+      const payload = (await response.json().catch(() => null)) as { ok?: boolean; productId?: number | null } | null;
+      const productId =
+        payload?.ok && typeof payload.productId === 'number' && Number.isInteger(payload.productId)
+          ? payload.productId
+          : null;
+      requestedHistoryLookupCache.set(cacheKey, productId);
+      return productId;
+    } catch (err) {
+      console.error('Failed to resolve product for requested row', err);
       requestedHistoryLookupCache.set(cacheKey, null);
       return null;
     }
-    const payload = (await response.json().catch(() => null)) as { ok?: boolean; productId?: number | null } | null;
-    const productId =
-      payload?.ok && typeof payload.productId === 'number' && Number.isInteger(payload.productId)
-        ? payload.productId
-        : null;
-    requestedHistoryLookupCache.set(cacheKey, productId);
-    return productId;
-  } catch (err) {
-    console.error('Failed to resolve product for requested row', err);
-    requestedHistoryLookupCache.set(cacheKey, null);
-    return null;
+  })();
+  requestedHistoryLookupInflight.set(cacheKey, promise);
+  try {
+    return await promise;
+  } finally {
+    requestedHistoryLookupInflight.delete(cacheKey);
   }
 };
+
+const requestedHistoryLookupInflight = new Map<string, Promise<number | null>>();
 
 export type ProductSummary = {
   ProductID: number;
@@ -1366,25 +1428,36 @@ export type ProductSummary = {
 };
 
 export const productSummaryCache = new Map<number, ProductSummary | null>();
+const productSummaryInflight = new Map<number, Promise<ProductSummary | null>>();
 
 export const fetchProductSummary = async (productId: number): Promise<ProductSummary | null> => {
   if (productSummaryCache.has(productId)) {
     return productSummaryCache.get(productId) ?? null;
   }
-  try {
-    const res = await fetch(`/api/products/${encodeURIComponent(String(productId))}`);
-    if (!res.ok) {
+  const existing = productSummaryInflight.get(productId);
+  if (existing) return existing;
+  const promise = (async (): Promise<ProductSummary | null> => {
+    try {
+      const res = await fetch(`/api/products/${encodeURIComponent(String(productId))}`);
+      if (!res.ok) {
+        productSummaryCache.set(productId, null);
+        return null;
+      }
+      const payload = (await res.json().catch(() => null)) as { ok?: boolean; product?: ProductSummary } | null;
+      const product = payload?.ok && payload.product ? payload.product : null;
+      productSummaryCache.set(productId, product);
+      return product;
+    } catch (err) {
+      console.error('Failed to fetch product summary', err);
       productSummaryCache.set(productId, null);
       return null;
     }
-    const payload = (await res.json().catch(() => null)) as { ok?: boolean; product?: ProductSummary } | null;
-    const product = payload?.ok && payload.product ? payload.product : null;
-    productSummaryCache.set(productId, product);
-    return product;
-  } catch (err) {
-    console.error('Failed to fetch product summary', err);
-    productSummaryCache.set(productId, null);
-    return null;
+  })();
+  productSummaryInflight.set(productId, promise);
+  try {
+    return await promise;
+  } finally {
+    productSummaryInflight.delete(productId);
   }
 };
 

@@ -6,7 +6,6 @@ import styles from './AiSearch.module.css';
 export type AiSearchSummary = {
   chips: Array<{ field: string; value: string }>;
   expansionCount: number;
-  semanticCount: number;
 };
 
 // Column-id → human-readable label mapping used when constructing summary
@@ -22,7 +21,6 @@ export const AI_SEARCH_COLUMN_LABELS: Record<string, string> = {
 export function buildAiSearchSummary(params: {
   visibleModel: Record<string, { filter?: string } | unknown>;
   hiddenTokens: Record<string, Array<{ filter: string; weight?: number }>> | null;
-  semanticCount: number;
 }): AiSearchSummary {
   const chips = Object.entries(params.visibleModel)
     .map(([colId, cond]) => ({
@@ -33,7 +31,7 @@ export function buildAiSearchSummary(params: {
   const expansionCount = params.hiddenTokens
     ? Object.values(params.hiddenTokens).reduce((n, arr) => n + arr.length, 0)
     : 0;
-  return { chips, expansionCount, semanticCount: params.semanticCount };
+  return { chips, expansionCount };
 }
 
 type PillProps = {
@@ -129,8 +127,6 @@ export function AiSearchBanner({ summary, onClear }: BannerProps) {
       ))}
       <span className={styles.bannerMeta}>
         {summary.expansionCount > 0 && `${summary.expansionCount} related terms`}
-        {summary.expansionCount > 0 && summary.semanticCount > 0 && ' · '}
-        {summary.semanticCount > 0 && `${summary.semanticCount} similar products`}
       </span>
       <button
         type="button"

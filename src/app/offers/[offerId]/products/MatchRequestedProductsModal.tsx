@@ -42,6 +42,23 @@ type DetailEntry = {
   value: string;
 };
 
+// Structured assignment-accuracy metrics captured at assign-button click
+// time.  Flows through onAssign → the parent's assignRequestedRowToProduct
+// → server, where it's logged with category 'assignment-metrics' for later
+// MRR / top-K analysis.  rank is 1-based in the visible grid; -1 means the
+// assigned product wasn't in the visible rows (prompt search, pinned
+// suggestion, Farnell, etc.).
+export type AssignmentMetrics = {
+  rank: number;
+  totalRows: number;
+  hadRerank: boolean;
+  hadPrefetchedExpansion: boolean;
+  entryBrand: string | null;
+  entryPart: string | null;
+  entryModel: string | null;
+  entryDesc: string | null;
+};
+
 export type RequestedProductMatchEntry = {
   offerDetailId: number;
   parentCategoryId: number | null;
@@ -76,7 +93,7 @@ type Props = {
   entry: RequestedProductMatchEntry;
   position: number;
   total: number;
-  onAssign: (productId: number, comment: string) => Promise<boolean>;
+  onAssign: (productId: number, comment: string, metrics?: AssignmentMetrics | null) => Promise<boolean>;
   onSkip: () => void;
   onRequestAddProduct: () => void;
   newProductId?: number | null;
@@ -86,6 +103,7 @@ type Props = {
   prefetchedSuggestions?: MatcherRowData[] | null;
   prefetchedExpansion?: FilterExpansions | null;
   prefetchedFirstPage?: GridResponse | null;
+  onCurrentEntryReady?: () => void;
 };
 
 const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
@@ -154,6 +172,7 @@ export default function MatchRequestedProductsModal({
   prefetchedSuggestions,
   prefetchedExpansion,
   prefetchedFirstPage,
+  onCurrentEntryReady,
 }: Props) {
   const { cardRef: setCardRef, cardStyle: dragCardStyle, headerProps: dragHeaderProps, resizeHandles } = useModalDragResize({ draggable: true, resizable: true });
   const [selectedProduct, setSelectedProduct] = useState<MatcherRowData | null>(null);
@@ -297,6 +316,12 @@ export default function MatchRequestedProductsModal({
   const smartFilteringEnabledRef = useRef(smartFilteringEnabled);
   smartFilteringEnabledRef.current = smartFilteringEnabled;
 
+  // Live AI expansion for the current entry, fetched by the modal when the
+  // parent didn't prefetch.  Populated in the useEffect further down; folded
+  // into the filter model via effectiveExpansion so the initial grid query
+  // includes the widened hidden tokens and we avoid a second round-trip.
+  const [liveExpansion, setLiveExpansion] = useState<FilterExpansions | null>(null);
+
   // Build the filter model along with a per-column "hidden tokens" sidecar.
   // The visible filter is kept minimal (one condition per column) so AG Grid's
   // filter popup stays readable; the full set of fuzzy tokens / synonyms /
@@ -308,9 +333,13 @@ export default function MatchRequestedProductsModal({
   // PartNumber / ModelNumber-only filter with no hidden tokens — the server
   // still cross-searches PartNumber / ModelNumber / LegacyPartNoCleaned on
   // its own when either column is filtered.
+  // Effective expansion: prefer the parent's prefetched response if present,
+  // otherwise use the modal's own /expand fetch (liveExpansion).
+  const effectiveExpansion = prefetchedExpansion ?? liveExpansion;
   const { requestedFilterModel, hiddenFilterTokens } = useMemo(() => {
     if (!smartFilteringEnabled) {
       const { visibleModel } = buildBasicRequestedFilterState({
+        requestedBrand: entry.requestedBrand,
         requestedPartNumber: entry.requestedPartNumber,
         requestedModelNumber: entry.requestedModelNumber,
       });
@@ -325,7 +354,7 @@ export default function MatchRequestedProductsModal({
         entry.requestedDescription2,
         entry.requestedDescription3,
       ],
-      prefetchedExpansion,
+      prefetchedExpansion: effectiveExpansion,
     });
     return { requestedFilterModel: visibleModel, hiddenFilterTokens: hiddenTokens };
   }, [
@@ -336,7 +365,7 @@ export default function MatchRequestedProductsModal({
     entry.requestedDescription,
     entry.requestedDescription2,
     entry.requestedDescription3,
-    prefetchedExpansion,
+    effectiveExpansion,
   ]);
 
   // When the user submits a prompt or the auto-expand AI response lands, we
@@ -344,9 +373,6 @@ export default function MatchRequestedProductsModal({
   // extended terms.  Cleared on entry change so each row starts fresh.
   const [overrideHiddenTokens, setOverrideHiddenTokens] = useState<HiddenFilterTokens | null>(null);
   const effectiveHiddenTokens = overrideHiddenTokens ?? hiddenFilterTokens;
-  // Semantic-search candidates from /expand — ProductIDs nearest (cosine) to
-  // the prompt or requested-row context.  Flow through as a score-only boost.
-  const [semanticCandidates, setSemanticCandidates] = useState<number[] | null>(null);
   // Prompt-driven AI search lock state (mirrors AddProductsModal).  When
   // true: prompt input becomes read-only, the column filter row is hidden,
   // and a banner in the filter-row slot shows the AI's interpretation.
@@ -363,6 +389,26 @@ export default function MatchRequestedProductsModal({
   // through a ref that's populated after the callback is created below.
   const triggerSemanticFromFiltersRef = useRef<((api: MatcherGridApi) => void) | null>(null);
 
+  // Rerank is now server-inline (see products/add route) so no client state
+  // or refetch dance is needed.  The grid's first response already arrives
+  // in LLM-determined order.
+
+  // Tracks whether the user has manually edited the filter row since the
+  // entry's auto-populated chips were applied.  Once true, rerank is
+  // suppressed — the filters no longer represent the entry's original
+  // spec, so reranking against that spec would drag results back toward
+  // things the user is explicitly filtering away from.  Mirrors the plain
+  // keyword-score behavior of AddProductsModal so the two modals feel
+  // identical once the user takes manual control.  Reset on entry change
+  // and after prompt-exit.  Declared here (above requestPayload) so the
+  // memo can read it; the setter is wired into the filter-change listener
+  // further down.
+  const [userTouchedFilters, setUserTouchedFilters] = useState(false);
+  const suppressNextFilterChangeRef = useRef(0);
+  const markProgrammaticFilterChange = useCallback(() => {
+    suppressNextFilterChangeRef.current += 1;
+  }, []);
+
   const requestPayload = useMemo(() => {
     // Keep BrandName in the cross-column OR group.  A strict Brand AND-gate
     // silently drops valid rebrands (e.g. Logickeyboard keyboards catalogued
@@ -375,9 +421,32 @@ export default function MatchRequestedProductsModal({
       action: 'products',
       orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
     };
+    // Raw requested spec for the server's inline LLM rerank on first-page
+    // loads.  Sent as a sibling of filterModel (not derived from it) so the
+    // rerank prompt sees the original chip text — the filterModel's
+    // BrandName gets normalized (lowercase, spaces stripped) for LIKE
+    // matching which would make "TVOne" look like "tvone" in the prompt.
+    //
+    // Only included when the auto-populated entry filters are still in
+    // effect — i.e. the user has NOT submitted an AI prompt and has NOT
+    // manually edited the filter chips.  Once either happens, the filter
+    // state no longer represents the entry's original spec, so reranking
+    // against that spec would drag results back toward things the user is
+    // trying to move away from.  Omitting `requested` matches the plain
+    // keyword-score behavior of AddProductsModal so the two modals feel
+    // identical once the user takes manual control.
+    if (!promptSubmitted && !userTouchedFilters) {
+      payload.requested = {
+        brand: entry.requestedBrand,
+        partNumber: entry.requestedPartNumber,
+        modelNumber: entry.requestedModelNumber,
+        description: entry.requestedDescription,
+        description2: entry.requestedDescription2,
+        description3: entry.requestedDescription3,
+      };
+    }
     if (effectiveHiddenTokens) payload.hiddenFilterTokens = effectiveHiddenTokens;
-    if (semanticCandidates && semanticCandidates.length > 0) payload.semanticCandidates = semanticCandidates;
-    const negative = buildNegativeHiddenTokens(prefetchedExpansion);
+    const negative = buildNegativeHiddenTokens(effectiveExpansion, effectiveHiddenTokens);
     if (negative) payload.negativeHiddenTokens = negative;
     // newProductId is intentionally NOT forwarded to the server.  The old
     // flow also asked the server to order the new product first, which
@@ -385,7 +454,7 @@ export default function MatchRequestedProductsModal({
     // plus the client-side pinned row below).  We now show the new product
     // only as a client-side pinned top row.
     return Object.keys(payload).length > 0 ? payload : null;
-  }, [effectiveHiddenTokens, semanticCandidates, prefetchedExpansion]);
+  }, [effectiveHiddenTokens, effectiveExpansion, entry, promptSubmitted, userTouchedFilters]);
 
   const endpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
@@ -400,12 +469,13 @@ export default function MatchRequestedProductsModal({
     const filters = requestedFilterModel ?? null;
     if (!filters) return;
     try {
+      markProgrammaticFilterChange();
       api.setFilterModel(filters);
     } catch {
       /* noop */
     }
     hasAppliedRequestedFiltersRef.current = true;
-  }, [requestedFilterModel]);
+  }, [requestedFilterModel, markProgrammaticFilterChange]);
 
   const selectedProductId = useMemo(
     () => normalizeProductId(selectedProduct?.ProductID ?? null),
@@ -508,14 +578,56 @@ export default function MatchRequestedProductsModal({
     if (assigning) return;
     setAssigning(true);
     try {
-      await onAssign(productId, assignComment ?? comment);
+      // Capture assignment-accuracy metrics at click time.  Feeds a
+      // structured server log (category: assignment-metrics) so we can
+      // compute MRR / top-K accuracy over real assignments without
+      // relying on eyeballing.  Rank 1 = user picked the top row; rank
+      // >20 suggests the ranker missed; rank -1 = product wasn't in the
+      // visible rows (e.g. via prompt search or clipboard paste).
+      const metrics = (() => {
+        try {
+          const api = productsApiRef.current as unknown as {
+            getDisplayedRowCount?: () => number;
+            forEachNode?: (cb: (node: { data?: { ProductID?: unknown } }, idx: number) => void) => void;
+          } | null;
+          let rank = -1;
+          let totalRows = 0;
+          if (api) {
+            try { totalRows = api.getDisplayedRowCount?.() ?? 0; } catch { /* noop */ }
+            try {
+              api.forEachNode?.((node, idx) => {
+                if (rank >= 0) return;
+                const rid = node?.data?.ProductID;
+                const rn = typeof rid === 'number' ? rid : Number(rid);
+                if (Number.isFinite(rn) && rn === productId) rank = idx + 1;
+              });
+            } catch { /* noop */ }
+          }
+          return {
+            rank,
+            totalRows,
+            // Rerank is always applied server-side on first-page loads when
+            // a Description is present, so this is effectively true for any
+            // real match run.  Kept in the metric for historical continuity.
+            hadRerank: Boolean(entry.requestedDescription && entry.requestedDescription.trim()),
+            hadPrefetchedExpansion: Boolean(prefetchedExpansion),
+            entryBrand: entry.requestedBrand ?? null,
+            entryPart: entry.requestedPartNumber ?? null,
+            entryModel: entry.requestedModelNumber ?? null,
+            entryDesc: entry.requestedDescription ?? null,
+          };
+        } catch {
+          return null;
+        }
+      })();
+      await onAssign(productId, assignComment ?? comment, metrics);
       // Don't reset selectedProduct/comment here — the cleanup effect handles
       // it when the entry changes (which now happens optimistically inside onAssign,
       // so the microtask resolution of this await would override autoSelectTopProduct).
     } finally {
       setAssigning(false);
     }
-  }, [assigning, onAssign, comment]);
+  }, [assigning, onAssign, comment, prefetchedExpansion, entry]);
 
   const getSelectedProductIdFromApi = useCallback(() => {
     const api = productsApiRef.current;
@@ -626,6 +738,15 @@ export default function MatchRequestedProductsModal({
       } catch { /* noop */ }
     }
     const listener = () => {
+      // Flip userTouchedFilters on genuine user edits only — programmatic
+      // setFilterModel calls (entry-auto-apply, prompt override, AI merge)
+      // increment suppressNextFilterChangeRef.current first, and we
+      // consume one token per fire here.
+      if (suppressNextFilterChangeRef.current > 0) {
+        suppressNextFilterChangeRef.current -= 1;
+      } else {
+        setUserTouchedFilters(true);
+      }
       try {
         const model = api.getFilterModel?.() ?? {};
         const brandFilter = (model as Record<string, { filter?: string }>).BrandName;
@@ -687,12 +808,9 @@ export default function MatchRequestedProductsModal({
         ok: boolean;
         expansions?: FilterExpansions;
         routed?: PromptRouting | null;
-        semanticCandidates?: number[];
       };
       const expansions = data.expansions ?? {};
       const routed = data.routed ?? null;
-      const semantic = Array.isArray(data.semanticCandidates) ? data.semanticCandidates : [];
-      setSemanticCandidates(semantic.length > 0 ? semantic : null);
       const api = productsApiRef.current;
       if (!api) return;
       if (promptText) {
@@ -702,7 +820,10 @@ export default function MatchRequestedProductsModal({
         // tokens into the hidden sidecar.
         const { visibleModel, hiddenTokens } = buildPromptFilterState(promptText, expansions, routed);
         setOverrideHiddenTokens(hiddenTokens);
-        try { api.setFilterModel(visibleModel); } catch { /* noop */ }
+        try {
+          markProgrammaticFilterChange();
+          api.setFilterModel(visibleModel);
+        } catch { /* noop */ }
         setPromptSubmitted(true);
         return;
       }
@@ -718,29 +839,74 @@ export default function MatchRequestedProductsModal({
       }
       const current = (api.getFilterModel?.() ?? null) as Record<string, FuzzyTextFilter> | null;
       const merged = mergeExpansionsIntoFilterModel(current, expansions);
-      try { api.setFilterModel(merged); } catch { /* noop */ }
+      try {
+        markProgrammaticFilterChange();
+        api.setFilterModel(merged);
+      } catch { /* noop */ }
     } catch (err) {
       console.error('AI expansion failed', err);
     } finally {
       if (!options?.silent) setSuggesting(false);
     }
-  }, [offerId, entry]);
+  }, [offerId, entry, markProgrammaticFilterChange]);
 
-  // Auto-expand filters with AI whenever the requested entry changes — only
-  // needed if no prefetched expansion is available (prefetch is folded into
-  // requestedFilterModel directly, so the grid fetches once with the widened
-  // filter already applied — no second round-trip).
+  // Auto-expand filters with AI whenever the requested entry changes.  To
+  // avoid the expensive double-fetch (initial basic query then a second
+  // widened-filter query after /expand lands), we fetch /expand *before* the
+  // grid is allowed to mount: store the result in liveExpansion, which the
+  // requestedFilterModel memo folds into hidden tokens.  The grid then mounts
+  // once with the full filter already in place and fires a single getRows.
   //
-  // No per-session dedup guard: entry-change resets both semanticCandidates
-  // and overrideHiddenTokens to null, so a revisit would otherwise lose the
-  // AI-driven boosts and rank matches differently than the first visit.  The
-  // /expand endpoint has its own 15-min LRU cache server-side, so re-firing
-  // on every visit is free after the first time through each entry.
+  // A 2s timeout prevents a slow /expand from freezing the UI — if it hasn't
+  // answered by then we unblock the grid and fall back to basic filter; the
+  // expansion still lands asynchronously and a manual refresh picks it up.
+  // Simplified flow: always mount the grid immediately.  If the parent
+  // has a prefetched expansion, use it; otherwise the modal's own
+  // /expand fires in the background and populates liveExpansion when
+  // it returns.  No gating, no timeouts.  Grid renders keyword results
+  // fast; LLM rerank (triggered on first grid response) handles
+  // relevance.
   useEffect(() => {
-    if (!smartFilteringEnabled) return;
-    if (prefetchedExpansion) return;
-    void runExpand({ silent: true });
-  }, [entry.offerDetailId, runExpand, prefetchedExpansion, smartFilteringEnabled]);
+    if (!smartFilteringEnabled) { setLiveExpansion(null); return; }
+    if (prefetchedExpansion) { setLiveExpansion(null); return; }
+    setLiveExpansion(null);
+    const targetEntryId = entry.offerDetailId;
+    (async () => {
+      try {
+        const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/expand`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requestedBrand: entry.requestedBrand,
+            requestedModelNumber: entry.requestedModelNumber,
+            requestedPartNumber: entry.requestedPartNumber,
+            requestedDescription: entry.requestedDescription,
+            requestedDescription2: entry.requestedDescription2,
+            requestedDescription3: entry.requestedDescription3,
+          }),
+        });
+        if (currentEntryIdRef.current !== targetEntryId) return;
+        if (!res.ok) return;
+        const data = (await res.json()) as { ok?: boolean; expansions?: FilterExpansions };
+        const expansion = data.expansions ?? null;
+        if (currentEntryIdRef.current !== targetEntryId) return;
+        setLiveExpansion(expansion);
+      } catch {
+        /* network — fall through to basic filter */
+      }
+    })();
+  }, [
+    entry.offerDetailId,
+    entry.requestedBrand,
+    entry.requestedModelNumber,
+    entry.requestedPartNumber,
+    entry.requestedDescription,
+    entry.requestedDescription2,
+    entry.requestedDescription3,
+    prefetchedExpansion,
+    smartFilteringEnabled,
+    offerId,
+  ]);
 
   const handlePromptSubmit = useCallback(() => {
     const trimmed = promptText.trim();
@@ -755,18 +921,21 @@ export default function MatchRequestedProductsModal({
     setPromptText('');
     setPromptSubmitted(false);
     setOverrideHiddenTokens(null);
-    setSemanticCandidates(null);
     setNoSuggestionsFound(false);
     lastSemanticSigRef.current = '';
     hasAppliedRequestedFiltersRef.current = false;
+    setUserTouchedFilters(false);
     const api = productsApiRef.current;
     if (api) {
       // Fall back to the requested-row's filter model (the state the user
       // was in before they typed the prompt).
-      try { api.setFilterModel(requestedFilterModel ?? null); } catch { /* noop */ }
+      try {
+        markProgrammaticFilterChange();
+        api.setFilterModel(requestedFilterModel ?? null);
+      } catch { /* noop */ }
       hasAppliedRequestedFiltersRef.current = true;
     }
-  }, [requestedFilterModel]);
+  }, [requestedFilterModel, markProgrammaticFilterChange]);
 
   // Filter-change-driven semantic expansion.  When the user edits column
   // filters directly, debounce and fire /expand with the current values so
@@ -791,7 +960,6 @@ export default function MatchRequestedProductsModal({
     if (sig === lastSemanticSigRef.current) return;
     lastSemanticSigRef.current = sig;
     if (!anyValue) {
-      setSemanticCandidates(null);
       setOverrideHiddenTokens(null);
       return;
     }
@@ -815,7 +983,6 @@ export default function MatchRequestedProductsModal({
         const data = (await res.json()) as {
           ok?: boolean;
           expansions?: FilterExpansions;
-          semanticCandidates?: number[];
         };
         if (controller.signal.aborted) return;
         const expansions = data.expansions ?? {};
@@ -827,8 +994,6 @@ export default function MatchRequestedProductsModal({
           prefetchedExpansion: expansions,
         });
         setOverrideHiddenTokens(hiddenTokens);
-        const semantic = Array.isArray(data.semanticCandidates) ? data.semanticCandidates : [];
-        setSemanticCandidates(semantic.length > 0 ? semantic : null);
       } catch (err) {
         if ((err as Error)?.name === 'AbortError') return;
         console.warn('Semantic filter expansion failed', err);
@@ -929,19 +1094,46 @@ export default function MatchRequestedProductsModal({
     autoSelectTopProduct(api);
   }, [applyRequestedFilterModel, autoSelectTopProduct, ensureProductSort, trySelectPendingProduct]);
 
+  // Fires once per entry when the grid's first server response lands.  Parent
+  // uses this to delay the queue-wide prefetch until the current entry has
+  // actually returned results — otherwise entries 2+ race entry 1 for OpenAI
+  // and SQL quota and the user waits longer for the one they're looking at.
+  //
+  // LLM rerank is now performed inline on the server for the first page
+  // (see products/add route), so the rows arriving here are already in
+  // LLM-determined order — no client-side /rerank fetch or grid refetch
+  // needed.
+  const firstLoadFiredRef = useRef(false);
+  useEffect(() => { firstLoadFiredRef.current = false; }, [entry.offerDetailId]);
+  const handleFirstGridResponse = useCallback(() => {
+    if (firstLoadFiredRef.current) return;
+    firstLoadFiredRef.current = true;
+    onCurrentEntryReady?.();
+  }, [onCurrentEntryReady]);
+
+  // Entry-change reset — fires ONLY when the entry actually changes.  Do
+  // NOT add requestedFilterModel / effectiveExpansion / prefetched* to this
+  // dep list: those memos recompute as late-arriving /expand results land,
+  // which would re-fire the whole reset and wipe state the eager /expand
+  // just populated (logs showed semanticCandidates: 50 → 0 flip-flop
+  // because the reset ran a second time after setLiveExpansion bumped the
+  // filter-model memo).  Entry-scoped state resets belong to entry changes
+  // only.
   useEffect(() => {
     hasAppliedRequestedFiltersRef.current = false;
+    setUserTouchedFilters(false);
     // Prevent stale grid selection from a previous requested item.
     try {
       productsApiRef.current?.deselectAll?.();
     } catch {
       /* noop */
     }
-    // Apply the new entry's filter directly instead of first clearing to null.
-    // Clearing to null then re-applying caused two server-side reloads that
-    // could race with user selections.
+    // Reset sort for every new entry so the server-side relevance ranking
+    // (score DESC, ProductID DESC tiebreak) drives ordering.
     try {
-      productsApiRef.current?.setFilterModel(requestedFilterModel ?? null);
+      const api = productsApiRef.current;
+      const setter = api?.setSortModel;
+      if (typeof setter === 'function') setter([{ colId: 'ProductID', sort: 'desc' }]);
     } catch {
       /* noop */
     }
@@ -950,12 +1142,8 @@ export default function MatchRequestedProductsModal({
     setComment('');
     setPromptText('');
     setOverrideHiddenTokens(null);
-    setSemanticCandidates(null);
     setPromptSubmitted(false);
     lastSemanticSigRef.current = '';
-    // selectedProduct and suggestion state (suggestedProducts, noSuggestionsFound,
-    // suggesting) are managed by the useLayoutEffect below so it can apply
-    // prefetched data before paint without being overwritten by this regular useEffect.
     userManuallySelectedRef.current = false;
     setSuggestionsVisible(true);
     // Reset Farnell state for the new entry
@@ -964,7 +1152,21 @@ export default function MatchRequestedProductsModal({
     setFarnellVisible(true);
     setFarnellPartNumber(entry.requestedPartNumber ?? null);
     setFarnellDescription(entry.requestedDescription ?? null);
-  }, [entry.offerDetailId, requestedFilterModel, clearFarnellResults, entry.requestedBrand, entry.requestedPartNumber, entry.requestedDescription]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry.offerDetailId]);
+
+  // Apply the current filter model to the grid API whenever the model
+  // changes (entry change, late /expand result landing, prompt submission).
+  // Split from the reset effect so re-running this on requestedFilterModel
+  // changes doesn't also wipe semantic / comment / assign state.
+  useEffect(() => {
+    try {
+      markProgrammaticFilterChange();
+      productsApiRef.current?.setFilterModel(requestedFilterModel ?? null);
+    } catch {
+      /* noop */
+    }
+  }, [requestedFilterModel, markProgrammaticFilterChange]);
 
   // Reset transient match state when the entry changes.  The AI-expand flow
   // writes directly into the grid's filter model, so there's no prefetched
@@ -1170,12 +1372,20 @@ export default function MatchRequestedProductsModal({
               className={`${styles.gridShell} offer-products-grid ${promptSubmitted ? AI_GRID_LOCK_CLASS : ''}`}
               ref={gridShellRef}
             >
+              {/* Grid mounts immediately on every entry — no "Preparing
+                  smart search…" gate.  The grid endpoint itself does a
+                  server-side semantic fallback (with a 1.5s timeout so it
+                  can't hang) and the late-arrival refetch effect re-fires
+                  getRows when semantic candidates land after the initial
+                  fetch, so we get the right rows without paying a gate
+                  delay on every single entry. */}
               <AgGridAll
                 endpoint={endpoint}
                 columnDefs={productColumns}
                 defaultColDef={productDefaultColDef}
                 columnWidthDefaults={emptyColumnWidthDefaults}
                 requestPayload={requestPayload}
+                onResponse={handleFirstGridResponse}
                 serverSideEnableClientSideSort={false}
                 // Larger block + generous in-memory cache so scrolling
                 // through smart-filtered results doesn't refire the

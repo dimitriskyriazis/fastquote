@@ -148,11 +148,11 @@ export const deriveListPrice = (
 ): number | null => {
   if (np != null && cd != null) {
     const factor = 1 - percentageToFactor(cd);
-    if (factor > 0) return roundTo(np / factor);
+    if (factor > 0 && factor < 1) return roundTo(np / factor);
   }
   if (tc != null && td != null) {
     const factor = 1 - percentageToFactor(td);
-    if (factor > 0) return roundTo(tc / factor);
+    if (factor > 0 && factor < 1) return roundTo(tc / factor);
   }
   return null;
 };
@@ -208,6 +208,30 @@ export const resolvePricing = (input: PricingInput): ResolvedPricing | null => {
   const np = input.netUnitPrice;
   const tc = input.netCost;
   const m = input.margin;
+  const providedMap = input.provided;
+
+  // When the user changed only ListPrice and both NetUnitPrice and NetCost
+  // are already set, preserve those actual prices and derive discounts from
+  // them.  Without this, scenario A would fire using stale CustomerDiscount=0
+  // / TelmacoDiscount=0 defaults left over from product insert (see add
+  // route's `COALESCE(..., 0)`) and overwrite the prices with
+  // ListPrice * (1 - 0) = ListPrice, wiping the user's entered prices.
+  const onlyListPriceProvided = providedMap.listPrice
+    && !providedMap.customerDiscount
+    && !providedMap.telmacoDiscount
+    && !providedMap.netUnitPrice
+    && !providedMap.netCost
+    && !providedMap.margin;
+
+  if (onlyListPriceProvided && np != null && tc != null) {
+    return {
+      customerDiscount: roundTo((1 - np / lp) * 100),
+      telmacoDiscount: roundTo((1 - tc / lp) * 100),
+      netUnitPrice: np,
+      netCost: tc,
+      margin: deriveMarginPercent(np, tc),
+    };
+  }
 
   type PricingRequiredKey = keyof PricingInput['provided'];
 
@@ -226,7 +250,6 @@ export const resolvePricing = (input: PricingInput): ResolvedPricing | null => {
   ];
 
   const values: PricingSnapshot = { listPrice: lp, customerDiscount: cd, telmacoDiscount: td, netUnitPrice: np, netCost: tc, margin: m };
-  const providedMap = input.provided;
 
   for (const scenario of scenarios) {
     const missingRequired = scenario.required.some((field) => values[field] == null);

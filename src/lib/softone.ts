@@ -159,7 +159,7 @@ export type SetDocsLineItem = {
   discount?: string;
   lineval?: string;
   cost?: string;
-  warrantymonths?: string; // warranty in months
+  warranty?: string; // warranty in months
 };
 
 export type SetDocsParams = {

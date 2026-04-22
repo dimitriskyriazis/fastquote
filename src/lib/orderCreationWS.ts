@@ -8,16 +8,19 @@ import { logger } from './logger';
  *
  * setDocs creates the document header and all lines atomically in one call.
  *
- * Field mapping:
- *   custcode  = customer CODE string (from dbo.TRDR.CODE, NOT numeric TRDR)
- *   date      = today (YYYY-MM-DD)
- *   status    = '10' (Εκκρεμούν Παραγγελίες σε Προμηθευτή)
- *   comments  = offer description
- *   comments1 = "FastQuote Offer #<offerId>"
+ * Field mapping (per Web_Services_Documentation_Telmaco_V6):
+ *   custcode    = customer CODE string (from dbo.TRDR.CODE, NOT numeric TRDR)
+ *   projectcode = PRJC CODE (e.g. COV.0239)
+ *   date        = today (YYYY-MM-DD)
+ *   status      = '10' (Εκκρεμούν Παραγγελίες σε Προμηθευτή)
+ *   comments    = offer description
+ *   comments1   = "FastQuote Offer #<offerId>"
  *   items[].productcode = product ERPCode
  *   items[].qty1        = quantity
- *   items[].price       = list price
+ *   items[].price       = net unit price (list)
  *   items[].lineval     = qty * price
+ *   items[].cost        = net unit cost (when available)
+ *   items[].warranty    = warranty in months (when available)
  */
 export async function createOrderViaWebService(
   params: CreateOrderWithLinesParams,
@@ -39,7 +42,7 @@ export async function createOrderViaWebService(
       lineval: toErpDecimal(line.qty * line.price),
     };
     if (line.netCost != null) item.cost = toErpDecimal(line.netCost);
-    if (line.warrantyMonths != null) item.warrantymonths = String(line.warrantyMonths);
+    if (line.warrantyMonths != null) item.warranty = String(line.warrantyMonths);
     return item;
   });
 

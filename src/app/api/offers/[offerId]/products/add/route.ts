@@ -15,6 +15,7 @@ import {
 import { clearPartModelNumberUpper } from '../../../../../../lib/partModelNumber';
 import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../../lib/authz';
+import { performRerank, type RerankCandidate } from '../../../../../../lib/rerank';
 import {
   buildTreeFromRows,
   collectResequencedUpdates,
@@ -53,12 +54,19 @@ type GridRequestEnvelope = {
   // excluded.  Lets accessories / spare parts / carrying cases sink below
   // real matches without over-filtering when the LLM mis-classifies.
   negativeHiddenTokens?: Record<string, HiddenFilterToken[]>;
-  // Product IDs returned by the semantic (vector) search for the current
-  // query — products whose embeddings are nearest to the user's prompt.
-  // Applied as a ranking bonus only (does NOT filter rows out), so keyword
-  // matches still drive inclusion while semantic neighbors bubble to the top
-  // when the user's phrasing doesn't appear literally in the description.
-  semanticCandidates?: number[];
+  // Raw requested product spec for inline LLM reranking on the first page.
+  // When present (and offset===0 with a Description chip), the server calls
+  // performRerank() with the top 50 keyword-ranked rows as candidates and
+  // reorders the returned page by LLM judgment before responding.  Kills
+  // the old grid→/rerank→grid double-fetch cycle the client used to run.
+  requested?: {
+    brand?: string | null;
+    partNumber?: string | null;
+    modelNumber?: string | null;
+    description?: string | null;
+    description2?: string | null;
+    description3?: string | null;
+  } | null;
 };
 
 const TREE_ORDERING_RAW_EXPRESSION = 'NULLIF(LTRIM(RTRIM(od.TreeOrdering)), \'\')';
@@ -202,18 +210,27 @@ const buildBlankClause = (columnExpression: string): string =>
 const buildNotBlankClause = (columnExpression: string): string =>
   `(NULLIF(LTRIM(RTRIM(COALESCE(CAST(${columnExpression} AS NVARCHAR(MAX)), ''))), '') IS NOT NULL)`;
 
-// Weight a text condition by the length of its search value so specific
-// phrases dominate generic single-word matches when ranking relevance.
-// A product row matching "Cat 7 SFTP RJ45 patch cord" (27 chars → weight 27)
-// now outranks one matching just "Cat" (3 chars → weight 3) nine to one.
-// When the client tags a condition with an explicit `weight` (e.g. priority
-// weight for desc1 vs desc3), that value multiplies the base length weight.
+// Weight a text condition by the length of its search value — super-linear
+// (length^1.6) so specific phrases *dominate*, not just outscore, generic
+// short-word matches.  Linear weighting made a row matching many short tokens
+// like "panel" + "port" + "cat" (5 + 4 + 3 = 12) beat a row matching one
+// strong token like "patch panel" (11) — Riedel SmartPanel/Intercom products
+// kept winning over actual Rittal patch panels for a "Lanberg PATCH PANEL
+// 24 PORT CAT.7" query because they matched more weak tokens.  With 1.6:
+//   "cat"         (3)  → 6
+//   "panel"       (5)  → 13
+//   "patch panel" (11) → 41
+//   full desc     (70) → 918
+// Now long/specific tokens contribute 3–4× what a pile of short generics
+// ever can, so the row actually containing the query phrase wins.
+// Priority multiplier (e.g. 20 for visible PartNumber/ModelNumber chips) is
+// still applied linearly on top — those remain the definitive signal.
 const computeTextWeight = (value: unknown, priority: unknown = 1): number => {
   const baseLen = value == null ? 1 : Math.max(1, String(value).trim().length);
   const mult = typeof priority === 'number' && Number.isFinite(priority) && priority > 0
     ? priority
     : 1;
-  return Math.max(1, Math.round(baseLen * mult));
+  return Math.max(1, Math.round(Math.pow(baseLen, 1.6) * mult));
 };
 
 const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpressions: Record<string, string>) => {
@@ -578,33 +595,218 @@ async function handleProductGrid(
   const pageSize = Math.max(1, Math.min(400, windowSize));
   const offset = Math.max(0, startRow);
 
+  // BrandName expression is NORMALIZED on both sides: lowercase + all
+  // whitespace and common separator punctuation stripped.  This is how
+  // "TVOne" matches catalog "TV one", how "biamp" matches "Biamp", and how
+  // "LG " with a trailing space matches "LG".  Slightly slower than a raw
+  // LIKE (index-unfriendly), but brand filters typically produce narrow
+  // match sets anyway.  The buildTextMatchPredicate function will wrap the
+  // search value in `%...%` and pre-normalize it identically on the param
+  // side, so both sides meet in the middle.
+  const NORMALIZED_BRAND_EXPR = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(ISNULL(bp.BrandName, '')), ' ', ''), '-', ''), '_', ''), '.', ''), '/', '')";
   const columnExpressions: Record<string, string> = {
     ProductID: 'bp.ProductID',
     PartNumber: 'bp.PartNumber',
     Description: 'bp.Description',
     ModelNumber: 'bp.ModelNumber',
-    BrandName: 'bp.BrandName',
+    BrandName: NORMALIZED_BRAND_EXPR,
     PriceListName: 'price.PriceListName',
     ListPrice: 'price.ListPrice',
     CostPrice: 'price.CostPrice',
   };
 
-  const { clauses, scoreClauses, params } = buildWhereClauses(gridRequest.filterModel, columnExpressions);
+  // Pre-normalize any BrandName filter values so they meet the normalized
+  // column expression halfway: both sides lowercased and stripped of spaces,
+  // hyphens, underscores, periods, slashes.  Without this the normalized
+  // expression would pattern-match against a raw "TVOne" param and miss
+  // catalog "TV one" just as before.
+  const normalizeBrandForMatch = (raw: string): string =>
+    raw.toLowerCase().replace(/[\s\-_./]/g, '');
+  const normalizedFilterModel = (() => {
+    const fm = gridRequest.filterModel;
+    if (!fm || typeof fm !== 'object') return fm;
+    const brand = (fm as Record<string, unknown>).BrandName as
+      | { filter?: unknown; conditions?: Array<{ filter?: unknown }> }
+      | undefined;
+    if (!brand) return fm;
+    const normalizeCond = (c: { filter?: unknown }) => {
+      if (typeof c?.filter === 'string') {
+        return { ...c, filter: normalizeBrandForMatch(c.filter) };
+      }
+      return c;
+    };
+    const next: Record<string, unknown> = { ...fm };
+    if (Array.isArray(brand.conditions)) {
+      next.BrandName = { ...brand, conditions: brand.conditions.map(normalizeCond) };
+    } else if (typeof brand.filter === 'string') {
+      next.BrandName = { ...brand, filter: normalizeBrandForMatch(brand.filter) };
+    }
+    return next as typeof gridRequest.filterModel;
+  })();
 
-  // Fold in hidden per-column tokens from the request payload.  These are
-  // extra LIKE predicates the client wants applied without polluting AG Grid's
-  // filter popup (e.g. desc2/desc3/synonym expansions).  Each token OR'd into
-  // the column's existing clause and also contributes a weighted score term.
+  const { clauses, scoreClauses, params } = buildWhereClauses(normalizedFilterModel, columnExpressions);
+
+  // Phrase-match scoring: extract consecutive 2-grams from the visible
+  // Description chip and add a HIGH-weight score clause for each literal
+  // phrase that appears in the catalog row.  This fixes the "Riedel
+  // Artist client card beats Rittal patch panel" problem: a row that
+  // contains the phrase "PATCH PANEL" literally scores much higher than
+  // a row that matches scattered "PANEL" + "PORT" + "CAT" tokens in
+  // different positions.  Weight = length × 50 so "PATCH PANEL" (11
+  // chars) contributes ~550 score to a matching row — enough to push
+  // real-category products past keyword-noise rows even when those
+  // match 5+ weaker single-token clauses.
+  (() => {
+    const fm = normalizedFilterModel as Record<string, { filter?: unknown; conditions?: Array<{ filter?: unknown }> }> | null | undefined;
+    const descEntry = fm?.Description;
+    const descValue = typeof descEntry?.filter === 'string'
+      ? descEntry.filter
+      : (Array.isArray(descEntry?.conditions) && typeof descEntry.conditions[0]?.filter === 'string'
+          ? descEntry.conditions[0].filter
+          : null);
+    if (!descValue) return;
+    // Tokenize on whitespace and common punctuation, drop very short /
+    // fluff words so phrases like "1U 19" or "OF THE" don't get the
+    // phrase-weight boost.
+    const STOPWORDS = new Set(['WITH', 'AND', 'OR', 'THE', 'FOR', 'FROM', 'TO', 'OF', 'IN', 'ON', 'BY', 'A', 'AN']);
+    const tokens = descValue
+      .split(/[\s,;/|()[\]"':=<>+*]+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length >= 3 && !STOPWORDS.has(t.toUpperCase()));
+    const colExpr = columnExpressions.Description;
+    const seenPhrases = new Set<string>();
+    // Register both the spaced variant ("patch cord") and the concatenated
+    // variant ("patchcord").  Our catalog is inconsistent — some rows have
+    // "patchcord" as a single token, others "patch cord" as two tokens.
+    // Without both variants a "Cat 7 patch cord" query only hits the space
+    // form and silently misses the single-word catalog rows.
+    const pushPhraseClause = (phrase: string, idKey: string) => {
+      const key = phrase.toUpperCase();
+      if (seenPhrases.has(key)) return;
+      seenPhrases.add(key);
+      const { clause, params: phraseParams } = buildTextMatchPredicate(colExpr, phrase, {
+        paramKey: idKey,
+        mode: 'contains',
+        enableFuzzy: false,
+      });
+      if (!clause) return;
+      phraseParams.forEach((p) => params.push(p));
+      // High weight — length × 50.  "PATCH PANEL" (11 chars) → 550, which
+      // dominates any sum of scattered single-token matches.
+      const weight = phrase.length * 50;
+      scoreClauses.push({ clause, weight });
+    };
+    for (let i = 0; i < tokens.length - 1; i += 1) {
+      const spaced = `${tokens[i]} ${tokens[i + 1]}`;
+      pushPhraseClause(spaced, `phrase_${i}`);
+      // Concatenated variant to match single-word catalog forms like
+      // "patchcord", "patchpanel", "hdmicable".  Only generate when both
+      // halves are plain word-characters (letters only) so we don't produce
+      // garbage joins like "24portCat7" or "RJ45keystone" that would never
+      // appear as a single catalog token.
+      if (/^[A-Za-z]+$/.test(tokens[i]) && /^[A-Za-z]+$/.test(tokens[i + 1])) {
+        const joined = `${tokens[i]}${tokens[i + 1]}`;
+        pushPhraseClause(joined, `phrase_join_${i}`);
+      }
+    }
+
+    // Category-mismatch penalty.  For each CATEGORY_SIGNAL keyword the user
+    // actually typed, penalize rows whose Description contains a KNOWN
+    // WRONG-CATEGORY keyword without also containing the right one.  This
+    // is what was missing: even when the rerank pool contains correct
+    // patchcords for a "patch cord" query, the LLM was still ranking
+    // patch panels (same family, overlapping words) at positions 1-10.
+    // A deterministic -2000 SQL-side penalty makes the correct-category
+    // row's ordinal score dominate the rerank even before the LLM runs.
+    //
+    // Kept small and conservative: a few well-known AV/cabling confusions.
+    // Adding more is cheap (one line each) when we see them fail in logs.
+    type Confusion = { want: string; wrong: string[] };
+    const CONFUSIONS: Confusion[] = [
+      // Query mentions "cord" / "cable" → penalize rack-mount panels etc.
+      { want: 'cord', wrong: ['panel', 'organizer', 'bracket'] },
+      { want: 'cable', wrong: ['panel', 'organizer', 'bracket'] },
+      // Query mentions "panel" → penalize accessories/cable-management rows.
+      { want: 'panel', wrong: ['organizer', 'bracket', 'tool', 'carrying'] },
+      // Query mentions "connector" / "keystone" / "jack" → penalize panels.
+      { want: 'connector', wrong: ['panel', 'organizer'] },
+      { want: 'keystone', wrong: ['panel', 'organizer'] },
+      { want: 'jack', wrong: ['panel', 'organizer'] },
+    ];
+    const upperTokens = new Set(tokens.map((t) => t.toUpperCase()));
+    CONFUSIONS.forEach((conf, confIdx) => {
+      if (!upperTokens.has(conf.want.toUpperCase())) return;
+      conf.wrong.forEach((bad, badIdx) => {
+        // Skip if the user actually typed the "wrong" word too — then it's
+        // not a mismatch signal (e.g. "patch panel cable organizer" query).
+        if (upperTokens.has(bad.toUpperCase())) return;
+        const paramKey = `confusion_${confIdx}_${badIdx}`;
+        const { clause, params: p } = buildTextMatchPredicate(colExpr, bad, {
+          paramKey,
+          mode: 'contains',
+          enableFuzzy: false,
+        });
+        if (!clause) return;
+        // Also require the row NOT contain the wanted word, so rows that
+        // say "patch cord / patch panel bundle" aren't penalized unfairly.
+        const wantParamKey = `confusion_want_${confIdx}_${badIdx}`;
+        const { clause: wantClause, params: wantParams } = buildTextMatchPredicate(colExpr, conf.want, {
+          paramKey: wantParamKey,
+          mode: 'contains',
+          enableFuzzy: false,
+        });
+        p.forEach((pp) => params.push(pp));
+        wantParams.forEach((pp) => params.push(pp));
+        const guardedClause = wantClause ? `(${clause} AND NOT (${wantClause}))` : clause;
+        // -2000 dominates any positive phrase score (max ~900 from the
+        // phrase-match block); moves category-wrong rows below all
+        // category-right rows even when keyword overlap is high.
+        scoreClauses.push({ clause: guardedClause, weight: -2000 });
+      });
+    });
+  })();
+
+  // Hidden per-column tokens from the request payload (AI expansions, fuzzy
+  // sidecar, etc.) split into two roles:
+  //
+  //   Description column: tokens go to BOTH WHERE and score.  Description is
+  //   where broad textual recall lives; a row that matches any meaningful
+  //   description token should be eligible even if PartNumber/ModelNumber
+  //   chips don't match verbatim.  Description LIKE terms are also what
+  //   makes the semantic-only path not-too-restrictive — catalog entries
+  //   with different SKU formats (e.g. "PPS7 1024B" vs "PPS7-1024-B") still
+  //   surface via description keywords.
+  //
+  //   PartNumber / ModelNumber / BrandName columns: tokens go to SCORE ONLY.
+  //   These columns already have an explicit visible chip from the requested
+  //   entry; piling on LIKE variants just adds noise (weak tokens like
+  //   "panel" on PartNumber match garbage) and inflates SQL cost without
+  //   improving recall.
+  const HIDDEN_TOKEN_MAX_PER_COLUMN = 10;
+  // Reject hidden tokens longer than 40 chars — at that length they're
+  // truncated description sentences, not search substrings.  LIKE '%<long
+  // phrase>%' almost never matches a catalog row and inflates the SQL cost
+  // for zero recall benefit.
+  const HIDDEN_TOKEN_MAX_LEN = 40;
+  const DESCRIPTION_RECALL_COLS = new Set(['Description']);
   const hiddenTokens = body?.hiddenFilterTokens;
   if (hiddenTokens && typeof hiddenTokens === 'object' && !Array.isArray(hiddenTokens)) {
     Object.entries(hiddenTokens).forEach(([colId, tokens]) => {
       if (!Array.isArray(tokens) || tokens.length === 0) return;
       const colExpr = columnExpressions[colId];
       if (!colExpr) return;
+      const contributesToWhere = DESCRIPTION_RECALL_COLS.has(colId);
       const tokenClauses: string[] = [];
-      tokens.forEach((token, idx) => {
+      const cappedTokens = tokens.slice(0, HIDDEN_TOKEN_MAX_PER_COLUMN);
+      cappedTokens.forEach((token, idx) => {
         if (!token || typeof token.filter !== 'string') return;
-        const value = token.filter.trim();
+        let value = token.filter.trim();
+        if (!value) return;
+        if (value.length > HIDDEN_TOKEN_MAX_LEN) return;
+        // Brand hidden tokens go through the same normalization as the
+        // visible brand chip — strip spaces/case so "TVOne" matches "TV
+        // one" on both sides of the LIKE.
+        if (colId === 'BrandName') value = normalizeBrandForMatch(value);
         if (!value) return;
         const paramKey = `hidden_${colId}_${idx}`;
         const { clause, params: tokenParams } = buildTextMatchPredicate(colExpr, value, {
@@ -613,11 +815,11 @@ async function handleProductGrid(
           enableFuzzy: false,
         });
         if (!clause) return;
-        tokenClauses.push(clause);
         tokenParams.forEach((p) => params.push(p));
         scoreClauses.push({ clause, weight: computeTextWeight(value, token.weight) });
+        if (contributesToWhere) tokenClauses.push(clause);
       });
-      if (tokenClauses.length === 0) return;
+      if (!contributesToWhere || tokenClauses.length === 0) return;
       const existingIdx = clauses.findIndex((c) => c.colId === colId);
       if (existingIdx >= 0) {
         const merged = `(${clauses[existingIdx].clause} OR ${tokenClauses.join(' OR ')})`;
@@ -664,23 +866,6 @@ async function handleProductGrid(
       });
     });
   }
-
-  // Semantic candidates: rank-ordered ProductIDs from the vector search.
-  // Applied as a pure score boost (not a WHERE filter) so that keyword
-  // matches still drive inclusion but semantically similar products bubble
-  // up even when the user's phrasing doesn't appear literally.  The weight
-  // decays linearly with rank — top candidate scores ~100, 50th scores ~2.
-  const rawSemanticCandidates = Array.isArray(body?.semanticCandidates) ? body.semanticCandidates : [];
-  const SEMANTIC_MAX_WEIGHT = 100;
-  let seenSemanticIds = 0;
-  rawSemanticCandidates.forEach((pid, rank) => {
-    if (typeof pid !== 'number' || !Number.isFinite(pid)) return;
-    const paramKey = `__sem_${seenSemanticIds}`;
-    params.push({ key: paramKey, value: Math.trunc(pid) });
-    const weight = Math.max(2, SEMANTIC_MAX_WEIGHT - rank * 2);
-    scoreClauses.push({ clause: `bp.ProductID = @${paramKey}`, weight });
-    seenSemanticIds += 1;
-  });
 
   const orCols = new Set(Array.isArray(body?.orFilterColumns) ? body.orFilterColumns : []);
   const orClauses = clauses.filter((c) => orCols.has(c.colId)).map((c) => c.clause);
@@ -730,9 +915,31 @@ async function handleProductGrid(
   const orderSqlWithScore = scoreExpr
     ? baseOrderSql.replace(/^ORDER BY /i, `ORDER BY (${scoreExpr}) DESC, `)
     : baseOrderSql;
-  const orderSql = highlightProductId != null
+  let orderSql = highlightProductId != null
     ? orderSqlWithScore.replace(/^ORDER BY /i, 'ORDER BY CASE WHEN bp.ProductID = @__highlightProductId THEN 0 ELSE 1 END, ')
     : orderSqlWithScore;
+
+  // Rerank override: client has called /rerank and now wants rows returned in
+  // the LLM-determined order.  Build a ranked-position CASE expression that
+  // prepends the order, so those IDs surface first in the exact order the
+  // LLM returned.  Rows not in the rerank list keep the score-based order
+  // below them.  Only honored on the first page (offset === 0) — server-
+  // side pagination for later blocks keeps the natural sort.
+  const rawRerankOrder = Array.isArray(body?.rerankOrder) ? body.rerankOrder : [];
+  const rerankIds: number[] = [];
+  rawRerankOrder.forEach((pid) => {
+    if (typeof pid === 'number' && Number.isFinite(pid)) rerankIds.push(Math.trunc(pid));
+  });
+  if (rerankIds.length > 0 && offset === 0) {
+    const rerankCaseBranches: string[] = [];
+    rerankIds.forEach((pid, rank) => {
+      const paramKey = `__rerank_${rank}`;
+      combinedParams.push({ key: paramKey, value: pid });
+      rerankCaseBranches.push(`WHEN @${paramKey} THEN ${rank}`);
+    });
+    const rerankCase = `CASE bp.ProductID ${rerankCaseBranches.join(' ')} ELSE ${rerankIds.length} END`;
+    orderSql = orderSql.replace(/^ORDER BY /i, `ORDER BY (${rerankCase}) ASC, `);
+  }
 
   const pool = await getPool();
 
@@ -755,6 +962,20 @@ async function handleProductGrid(
     request.input('__highlightProductId', sql.Int, highlightProductId);
   }
 
+  // Two key perf structure choices here:
+  //   1. Paginate the base filter FIRST (PagedBase CTE), then OUTER APPLY the
+  //      per-row price lookup.  Otherwise a broad WHERE match (many LIKE
+  //      tokens) fires a price subquery for every matching product — enough
+  //      to hit the 30s MSSQL timeout.
+  //   2. No COUNT_BIG() OVER ().  The exact total row count forces SQL Server
+  //      to evaluate the WHERE against every row in the catalog; for the
+  //      matcher modal we don't need it — AG Grid infers end-of-data from a
+  //      short last page.  We signal "more available" by adding 1 to rowCount
+  //      whenever the page came back full.
+  //
+  // __score is materialized on PagedBase so the debug log below can show why
+  // each returned row ranks where it does.  Stripped from the client response.
+  const scoreColumnSql = scoreExpr ? `(${scoreExpr}) AS __score` : `CAST(0 AS INT) AS __score`;
   const query = `
     WITH BaseProducts AS (
       SELECT
@@ -769,15 +990,22 @@ async function handleProductGrid(
         b.Name AS BrandName
       FROM dbo.Products p
         LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
+    ),
+    PagedBase AS (
+      SELECT bp.*, ${scoreColumnSql}
+      FROM BaseProducts bp
+      ${combinedWhereSql}
+      ${orderSql}
+      OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY
     )
     SELECT
-      COUNT_BIG(1) OVER () AS __totalCount,
       bp.ProductID,
       bp.PartNumber,
       bp.WebLink,
       bp.Description,
       bp.ModelNumber,
       bp.BrandName,
+      bp.__score,
       price.PriceListItemID,
       price.PriceListID,
       price.PriceListName,
@@ -786,7 +1014,7 @@ async function handleProductGrid(
       price.PriceListValidFromDate,
       price.PriceListValidToDate,
       price.PriceListEnabled
-    FROM BaseProducts bp
+    FROM PagedBase bp
       OUTER APPLY (
         SELECT TOP (1)
           pli.ID AS PriceListItemID,
@@ -809,19 +1037,123 @@ async function handleProductGrid(
           pl.ValidFromDate DESC,
           pli.ID DESC
       ) price
-    ${combinedWhereSql}
-    ${orderSql}
-    OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY;
+    ${orderSql};
   `;
 
-  const result = await request.query<ProductGridRow>(query);
-  const rows = result.recordset ?? [];
-  const rowCount = rows.length > 0 ? Number(rows[0].__totalCount ?? 0) : 0;
+  const result = await request.query<ProductGridRow & { __score?: number }>(query);
+  let rows = result.recordset ?? [];
+
+  // Inline LLM rerank on the first page.  Previously the client did this
+  // as a separate roundtrip (fetch grid → POST /rerank → refetch grid with
+  // rerankOrder), which caused a visible reshuffle and a second SQL round-
+  // trip.  Running it here instead returns already-ordered rows in a single
+  // response.  Gated on offset===0 and the presence of a Description to
+  // rerank against; rerankOrder (client-supplied order for back-compat) is
+  // skipped — that path bypasses this branch via the ORDER BY CASE above.
+  if (
+    offset === 0
+    && rerankIds.length === 0
+    && rows.length > 1
+    && body?.requested
+    && typeof body.requested === 'object'
+    && typeof body.requested.description === 'string'
+    && body.requested.description.trim().length > 0
+  ) {
+    const req = body.requested;
+    const candidates: RerankCandidate[] = rows.slice(0, 50).map((r) => ({
+      productId: r.ProductID,
+      brand: r.BrandName,
+      partNumber: r.PartNumber,
+      modelNumber: r.ModelNumber,
+      description: r.Description,
+    }));
+    // 12s ceiling — typical rerank latency is 3-6s, so this catches a
+    // pathological stall without letting the user wait 30+s.  On timeout
+    // we just return keyword-ordered rows; the grid still works, just
+    // without the LLM's reordering.
+    const rerankTimeout = new Promise<null>((resolve) => {
+      setTimeout(() => resolve(null), 12_000);
+    });
+    try {
+      const ranked = await Promise.race([
+        performRerank({
+          requestedBrand: req.brand,
+          requestedPartNumber: req.partNumber,
+          requestedModelNumber: req.modelNumber,
+          requestedDescription: req.description,
+          requestedDescription2: req.description2,
+          requestedDescription3: req.description3,
+          candidates,
+        }),
+        rerankTimeout,
+      ]);
+      if (ranked && ranked.length > 0) {
+        const orderIndex = new Map<number, number>();
+        ranked.forEach((r, idx) => { orderIndex.set(r.productId, idx); });
+        const UNRANKED = Number.MAX_SAFE_INTEGER;
+        rows = [...rows].sort((a, b) => {
+          const ai = orderIndex.get(a.ProductID) ?? UNRANKED;
+          const bi = orderIndex.get(b.ProductID) ?? UNRANKED;
+          return ai - bi;
+        });
+      }
+    } catch (err) {
+      console.warn('[productGrid] inline rerank failed — returning keyword order', err);
+    }
+  }
+
+  // Debug: log how the top rows ranked and why.  Only fires on first-page
+  // requests (offset === 0) so scrolling doesn't spam.  Shows the scored
+  // inputs (visible filter model + hidden-token + semantic counts) and the
+  // top 15 rows' scores + brand + description snippets so bad ranking is
+  // immediately diagnosable from the server console.
+  if (offset === 0) {
+    const visibleFilterEntries = Object.entries(gridRequest.filterModel ?? {}).map(([col, v]) => {
+      const entry = v as { filter?: unknown; conditions?: Array<{ filter?: unknown }> } | null | undefined;
+      if (!entry) return `${col}=<null>`;
+      if (Array.isArray(entry.conditions)) {
+        return `${col}=[${entry.conditions.map((c) => c?.filter ?? '').join('|')}]`;
+      }
+      return `${col}=${String(entry.filter ?? '').slice(0, 60)}`;
+    });
+    const hiddenSummary = hiddenTokens && typeof hiddenTokens === 'object' && !Array.isArray(hiddenTokens)
+      ? Object.fromEntries(
+          Object.entries(hiddenTokens as Record<string, Array<{ filter?: unknown }>>).map(([col, toks]) => [
+            col,
+            (Array.isArray(toks) ? toks : []).slice(0, 10).map((t) => t?.filter ?? '').filter(Boolean),
+          ]),
+        )
+      : {};
+    const topRows = rows.slice(0, 15).map((r) => ({
+      score: typeof r.__score === 'number' ? r.__score : null,
+      id: r.ProductID,
+      brand: r.BrandName,
+      part: r.PartNumber,
+      desc: typeof r.Description === 'string' ? r.Description.slice(0, 80) : null,
+    }));
+    console.log('[productGrid debug]', JSON.stringify({
+      offerId,
+      visibleFilter: visibleFilterEntries,
+      hiddenTokens: hiddenSummary,
+      scoreClauseCount: scoreClauses.length,
+      rowsReturned: rows.length,
+      topRows,
+    }, null, 2));
+  }
+
   const mappedRows = rows.map((row) => {
-    const { __totalCount, ...rest } = row;
+    const { __totalCount, __score, ...rest } = row;
     void __totalCount;
+    void __score;
     return rest;
   });
+  // Without COUNT_BIG we don't know the real total.  If this page was full,
+  // signal "more available" by claiming one extra row; if it came back short,
+  // the absolute row count is exactly what we returned.  AG Grid converts this
+  // into correct scroll + end-of-data behavior.
+  const rowCount = mappedRows.length < pageSize
+    ? offset + mappedRows.length
+    : offset + mappedRows.length + 1;
 
   return NextResponse.json({ ok: true, rows: mappedRows, rowCount });
 }
@@ -1579,6 +1911,28 @@ async function handleAssignProductToRequestedRow(
   );
   const commentRaw = body?.comment ?? (body as { Comment?: unknown })?.Comment ?? null;
   const commentValue = typeof commentRaw === 'string' ? commentRaw.trim() || null : null;
+
+  // Instrumentation: assignment-accuracy metrics from the match-requested
+  // modal.  Tagged with "tag: assignment-metrics" in the log context (the
+  // category enum is fixed at view|mutation|delete) so you can grep the
+  // logs / query the LogEvents table later to compute MRR / top-K accuracy
+  // and tell whether retrieval changes (semantic, rerank, embedding model,
+  // etc.) actually moved the needle against real user behavior.
+  if (requestedRowId != null && productId != null
+      && body?.metrics && typeof body.metrics === 'object' && !Array.isArray(body.metrics)) {
+    try {
+      logger.info('[assignment metrics]', {
+        endpoint: `/api/offers/${offerId}/products/add`,
+        method: 'POST',
+        category: 'mutation',
+        tag: 'assignment-metrics',
+        offerId,
+        requestedRowId,
+        productId,
+        ...(body.metrics as Record<string, unknown>),
+      });
+    } catch { /* logging must never break assignment */ }
+  }
 
   if (requestedRowId == null || productId == null) {
     return NextResponse.json(

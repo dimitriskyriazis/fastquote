@@ -2,19 +2,13 @@ import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { logRequest } from '../../../../../../lib/apiHelpers';
 import { requirePermission } from '../../../../../../lib/authz';
-import { embedSingle, getSemanticIndex } from '../../../../../../lib/productEmbeddings';
+// Semantic search removed — replaced with client-side mandatory LLM rerank
+// on top-50 keyword results.  See /products/rerank.  Keeping the /expand
+// endpoint purely for synonym / family-name expansion tokens used by the
+// hidden-token sidecar on the grid query.
 import OpenAI from 'openai';
 
 export const runtime = 'nodejs';
-
-// How many semantic neighbors we surface per query.  50 is enough to seed the
-// score boost without drowning the filter pipeline in low-confidence matches;
-// the client's keyword filters still bound the final result set.
-const SEMANTIC_TOP_K = 50;
-// Minimum cosine similarity to surface a candidate.  OpenAI embeddings
-// typically produce 0.25-0.55 for loosely-related items and 0.55+ for tight
-// matches.  Anything below 0.3 is almost always noise.
-const SEMANTIC_MIN_SCORE = 0.3;
 
 // In-memory cache for AI expansion results.  The structured auto-expand
 // path (Match-Requested silent, Add-Products filter-change) hits the same
@@ -54,6 +48,13 @@ function setCached(key: string, value: Omit<CachedExpansion, 'expiresAt'>): void
   }
   expandCache.set(key, { ...value, expiresAt: Date.now() + EXPAND_CACHE_TTL_MS });
 }
+
+// In-flight dedup: coalesces concurrent requests for the same cache key onto
+// a single OpenAI call.  The parent's batch prefetch, the modal's eager fetch,
+// and column-filter debounce all hit this endpoint for the same input when a
+// requested entry is opened — previously each fired its own OpenAI request,
+// which stacked up against the 30k TPM cap and caused 30–60s wall times.
+const expandInflight = new Map<string, Promise<{ expansions: ExpandResponse; routed: PromptRouting | null }>>();
 
 let _openai: OpenAI | null = null;
 function getOpenAI() {
@@ -227,14 +228,29 @@ const sanitizeRouted = (value: unknown): PromptRouting | null => {
   return routed;
 };
 
-const sanitizeArray = (value: unknown): string[] => {
+const sanitizeArray = (value: unknown, opts?: { maxLen?: number; codeShape?: boolean }): string[] => {
   if (!Array.isArray(value)) return [];
+  const maxLen = opts?.maxLen ?? 40;
   const out: string[] = [];
   const seen = new Set<string>();
   for (const raw of value) {
     if (typeof raw !== 'string') continue;
     const s = raw.trim();
     if (!s) continue;
+    // Reject tokens too long to be useful search substrings.  LIKE '%<long
+    // sentence>%' essentially never matches anything and only burns SQL
+    // time.  Catches the "H.323/SIP/Webex/WebRTC, 2×HDMI 1080p60..." sort
+    // of full-description-sentence garbage the LLM occasionally returns.
+    if (s.length > maxLen) continue;
+    // For partNumber / modelNumber arrays: reject prose (multi-word with
+    // no digits) — things like "Play App", "Record App", "Movie Recorder"
+    // that the LLM put in a code column but clearly aren't SKUs.  Real
+    // SKUs are single-token or have digits.
+    if (opts?.codeShape) {
+      const hasSpaceMultiWord = /\s/.test(s) && s.split(/\s+/).length >= 2;
+      const hasDigit = /\d/.test(s);
+      if (hasSpaceMultiWord && !hasDigit) continue;
+    }
     const key = s.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -260,7 +276,25 @@ export async function POST(
       return NextResponse.json({ ok: false, error: 'Invalid offerId' }, { status: 400 });
     }
 
-    const body = (await req.json()) as ExpandInput;
+    // Guard against empty / malformed bodies — most commonly produced by an
+    // aborted client fetch (React StrictMode double-mount + AbortController
+    // cleanup on the modal's eager /expand) where the server sees a
+    // truncated request and `req.json()` throws "Unexpected end of JSON
+    // input".  Return an empty but well-formed response instead of a 500
+    // so callers' .catch branches don't spam error logs.
+    let body: ExpandInput;
+    try {
+      body = (await req.json()) as ExpandInput;
+    } catch {
+      const empty: ExpandResponse = {
+        brand: [],
+        partNumber: [],
+        modelNumber: [],
+        description: [],
+        negativeDescription: [],
+      };
+      return NextResponse.json({ ok: true, expansions: empty, routed: null });
+    }
     const isPrompt = Boolean(trim(body.prompt));
     const userPrompt = buildUserPrompt(body);
     if (!userPrompt) {
@@ -271,7 +305,7 @@ export async function POST(
         description: [],
         negativeDescription: [],
       };
-      return NextResponse.json({ ok: true, expansions: empty, routed: null, semanticCandidates: [] });
+      return NextResponse.json({ ok: true, expansions: empty, routed: null });
     }
 
     // Model tiering — gpt-4o only for free-text prompts (user is actively
@@ -283,75 +317,98 @@ export async function POST(
     // user-typed prompts actually need.
     const model = isPrompt ? 'gpt-4o' : 'gpt-4o-mini';
     const cacheKey = cacheKeyFor(userPrompt, model);
-    let expansions: ExpandResponse;
-    let routed: PromptRouting | null;
+    const emptyExpansions: ExpandResponse = {
+      brand: [],
+      partNumber: [],
+      modelNumber: [],
+      description: [],
+      negativeDescription: [],
+    };
+    let expansions: ExpandResponse = emptyExpansions;
+    let routed: PromptRouting | null = null;
     const cached = getCached(cacheKey);
     if (cached) {
       expansions = cached.expansions;
       routed = cached.routed;
     } else {
-      const openai = getOpenAI();
-      let parsed: Record<string, unknown> = {};
-      try {
-        const completion = await openai.chat.completions.create({
-          model,
-          response_format: { type: 'json_object' },
-          temperature: 0.2,
-          max_tokens: 1200,
-          messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: userPrompt },
-          ],
+      // Kick off chat completion in the BACKGROUND and race it against a
+      // timeout.  Synonym expansion from gpt-4o-mini is nice-to-have —
+      // semantic embedding search already covers most of what it adds.
+      // When OpenAI is rate-limiting (chat TPM cap hit), a blocking call
+      // can park the request for 40-60 seconds.  With this non-blocking
+      // structure the endpoint returns in ~300ms with semantic recall
+      // even while the chat call is still queued; when it eventually
+      // completes, the response is written to cache so the NEXT call for
+      // the same input gets the synonym tokens for free.
+      const startChatInflight = () => {
+        const p = (async () => {
+          const openai = getOpenAI();
+          let parsed: Record<string, unknown> = {};
+          try {
+            const completion = await openai.chat.completions.create({
+              model,
+              response_format: { type: 'json_object' },
+              temperature: 0.2,
+              max_tokens: 1200,
+              messages: [
+                { role: 'system', content: SYSTEM_PROMPT },
+                { role: 'user', content: userPrompt },
+              ],
+            });
+            const raw = completion.choices?.[0]?.message?.content ?? '{}';
+            try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch { parsed = {}; }
+          } catch (err) {
+            const status = (err as { status?: number } | null)?.status;
+            const code = (err as { code?: string } | null)?.code;
+            if (status === 429 || code === 'rate_limit_exceeded') {
+              console.warn('OpenAI expand rate-limited — falling back to empty expansion');
+            } else {
+              console.error('OpenAI expand call failed', err);
+            }
+            parsed = {};
+          }
+          const shared: { expansions: ExpandResponse; routed: PromptRouting | null } = {
+            expansions: {
+              brand: sanitizeArray(parsed.brand, { maxLen: 40 }),
+              partNumber: sanitizeArray(parsed.partNumber, { maxLen: 30, codeShape: true }),
+              modelNumber: sanitizeArray(parsed.modelNumber, { maxLen: 30, codeShape: true }),
+              description: sanitizeArray(parsed.description, { maxLen: 40 }),
+              negativeDescription: sanitizeArray(parsed.negativeDescription, { maxLen: 30 }),
+            },
+            routed: isPrompt ? sanitizeRouted(parsed.routed) : null,
+          };
+          setCached(cacheKey, shared);
+          return shared;
+        })();
+        expandInflight.set(cacheKey, p);
+        p.finally(() => {
+          if (expandInflight.get(cacheKey) === p) expandInflight.delete(cacheKey);
         });
-        const raw = completion.choices?.[0]?.message?.content ?? '{}';
-        try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch { parsed = {}; }
-      } catch (err) {
-        // Rate-limit or transient OpenAI failure — degrade gracefully.
-        // Keyword + semantic search still work without expansion tokens;
-        // returning an empty expansion is much better than a 500 that
-        // spams the user with "Failed to expand filters" errors.
-        const status = (err as { status?: number } | null)?.status;
-        const code = (err as { code?: string } | null)?.code;
-        if (status === 429 || code === 'rate_limit_exceeded') {
-          console.warn('OpenAI expand rate-limited — falling back to empty expansion');
-        } else {
-          console.error('OpenAI expand call failed', err);
-        }
-        parsed = {};
-      }
-      expansions = {
-        brand: sanitizeArray(parsed.brand),
-        partNumber: sanitizeArray(parsed.partNumber),
-        modelNumber: sanitizeArray(parsed.modelNumber),
-        description: sanitizeArray(parsed.description),
-        negativeDescription: sanitizeArray(parsed.negativeDescription),
+        return p;
       };
-      // Routing is only meaningful for free-text prompts — for structured
-      // auto-expand the fields were already classified by the caller.
-      routed = isPrompt ? sanitizeRouted(parsed.routed) : null;
-      setCached(cacheKey, { expansions, routed });
+      const existingInflight = expandInflight.get(cacheKey);
+      const chatPromise = existingInflight ?? startChatInflight();
+      // Wait at most 600ms (prompt mode) / 300ms (structured auto-expand)
+      // for the chat call.  Structured auto-expand fires on every entry
+      // in bulk, so the short timeout + eventual caching means later calls
+      // for the same input (modal reopen, rerank, etc.) see the synonyms.
+      const chatTimeoutMs = isPrompt ? 600 : 300;
+      const raced = await Promise.race([
+        chatPromise,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), chatTimeoutMs)),
+      ]);
+      if (raced) {
+        expansions = raced.expansions;
+        routed = raced.routed;
+      }
     }
 
-    // Semantic candidates: embed the query (or the requested-row context) and
-    // rank every product by cosine similarity.  The top IDs flow through to
-    // the grid as a score bonus so semantically-similar rows surface even when
-    // the user's words don't literally appear in the product description.
-    // Non-blocking: if the index isn't loaded (cold start) or embedding fails
-    // the catalog search still works via keyword matching.
-    let semanticCandidates: number[] = [];
-    try {
-      const queryVec = await embedSingle(userPrompt);
-      const index = getSemanticIndex();
-      await index.ensureLoaded();
-      const hits = index.search(queryVec, SEMANTIC_TOP_K);
-      semanticCandidates = hits
-        .filter((h) => h.score >= SEMANTIC_MIN_SCORE)
-        .map((h) => h.productId);
-    } catch (err) {
-      console.warn('Semantic search failed (keyword-only fallback)', err);
-    }
-
-    return NextResponse.json({ ok: true, expansions, routed, semanticCandidates });
+    // Semantic search removed.  This endpoint now only returns the
+    // LLM-generated synonym expansion tokens (for the hidden-token
+    // sidecar used by grid keyword scoring).  Ranking quality comes
+    // from the /rerank endpoint which the modal calls on the top-50
+    // keyword results.
+    return NextResponse.json({ ok: true, expansions, routed });
   } catch (err) {
     console.error('Failed to expand filters', err);
     const message = err instanceof Error ? err.message : 'Server error';
