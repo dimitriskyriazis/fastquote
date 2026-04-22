@@ -1318,7 +1318,10 @@ export default function ClientProductsPage({
             setNewProductId(result.productId);
           }
           handleCloseAddProductForm();
-          setRefreshToken((prev) => prev + 1);
+          // Don't bump refreshToken here — the AddProductsModal handles the
+          // new product via a pinned top row + single-row fetch, and the
+          // outer offer grid doesn't need to refresh just because a product
+          // was created in the global catalog.
         }}
       />
     </>

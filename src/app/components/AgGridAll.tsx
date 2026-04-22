@@ -601,6 +601,11 @@ type Props = {
   filterServerRow?: (row: RowData) => boolean;
   /** Sync grid filter/sort/quick-search state to URL query parameters. Default true. */
   syncStateToUrl?: boolean;
+  /** Pre-fetched response for the first block of rows (startRow: 0). When
+   *  provided, the datasource returns it directly for the next getRows call
+   *  instead of hitting the network, and is consumed exactly once per
+   *  distinct prop reference (i.e. re-supply a fresh object to reuse). */
+  prefetchedFirstPage?: GridResponse | null;
 };
 
 type RowData = Record<string, unknown>;
@@ -1231,6 +1236,7 @@ export default function AgGridAll({
   onColumnStateRestored,
   filterServerRow,
   syncStateToUrl = true,
+  prefetchedFirstPage = null,
 }: Props) {
   // Initialize editor focus management hooks
   useMutationCaret();
@@ -2986,6 +2992,17 @@ requestPayloadRef.current = requestPayload;
 const filterServerRowRef = useRef(filterServerRow);
 filterServerRowRef.current = filterServerRow;
 const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
+// Consume prefetchedFirstPage exactly once per distinct prop reference.  The
+// parent re-supplies a fresh GridResponse each time a new first block is
+// ready (e.g. after navigating to the next requested product in the
+// matcher), and we want to serve that block for the grid's next
+// startRow === 0 request before falling back to the network.
+const prefetchedFirstPageRef = useRef<GridResponse | null>(null);
+const lastPrefetchedFirstPageIdentityRef = useRef<GridResponse | null | undefined>(undefined);
+if (lastPrefetchedFirstPageIdentityRef.current !== prefetchedFirstPage) {
+  prefetchedFirstPageRef.current = prefetchedFirstPage ?? null;
+  lastPrefetchedFirstPageIdentityRef.current = prefetchedFirstPage;
+}
 
   // TREE ORDERING - Path Calculation & Parent Path Derivation
   const getRowPath = useCallback((node: IRowNode<RowData> | null | undefined): string[] => {
@@ -3100,6 +3117,20 @@ const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
         const bodyRequest = { ...payload, request: serverRequest, fields };
         const cacheKey = `${endpoint}:${safeStringify(payload)}:${safeStringify(serverRequest)}:${safeStringify(fields)}`;
           let responsePromise = requestCacheRef.current.get(cacheKey);
+          // Consume a pre-fetched first block when available.  Only applies
+          // to the first request (startRow === 0) and is consumed exactly
+          // once per distinct prefetchedFirstPage prop reference, so
+          // subsequent scroll-triggered blocks fall through to the network.
+          const startRowForRequest = serverRequest.startRow ?? 0;
+          if (
+            !responsePromise
+            && startRowForRequest === 0
+            && prefetchedFirstPageRef.current
+          ) {
+            const cached = prefetchedFirstPageRef.current;
+            prefetchedFirstPageRef.current = null;
+            responsePromise = Promise.resolve(cached);
+          }
           if (!responsePromise) {
             responsePromise = (async () => {
               const res = await fetch(endpoint, {

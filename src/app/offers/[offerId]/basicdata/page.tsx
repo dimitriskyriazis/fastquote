@@ -4,6 +4,8 @@ import OfferBasicDataPanel from '../OfferBasicDataPanel';
 import CreateDraftOfferButton from './CreateDraftOfferButton';
 import ViewStatusHistoryButton from './ViewStatusHistoryButton';
 import ExportPdfButton from './ExportPdfButton';
+import CreateNewVersionButton from './CreateNewVersionButton';
+import CopyOfferButton from './CopyOfferButton';
 import { getPool } from '../../../../lib/sql';
 import styles from '../../offersDetail.module.css';
 
@@ -40,6 +42,14 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
             <span aria-hidden="true">←</span>
             Back to offers
           </Link>
+          <CreateNewVersionButton
+            offerId={decodedId}
+            className={`${styles.headerActionButton} page-header-button`}
+          />
+          <CopyOfferButton
+            offerId={decodedId}
+            className={`${styles.headerActionButton} page-header-button`}
+          />
         </div>
         <h1 className={`${styles.heading} ${styles.headingCentered}`}>{headingText}</h1>
         <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>

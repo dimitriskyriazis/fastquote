@@ -131,6 +131,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Description: 'dbo.Offer.Description',
   Title: 'dbo.Offer.Title',
   Comments: 'dbo.Offer.Comments',
+  CustomerID: 'dbo.Offer.CustomerID',
   CustomerName: 'dbo.Customers.Name',
   CustomerGroup: 'offerCustomerGroup.Name',
   PricingPolicyName: 'dbo.PricingPolicies.Name',

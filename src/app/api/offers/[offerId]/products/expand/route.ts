@@ -76,6 +76,11 @@ type ExpandResponse = {
   partNumber: string[];
   modelNumber: string[];
   description: string[];
+  // Negative / anti-intent tokens.  Short words that strongly suggest a row
+  // is the WRONG kind of product (accessories, cases, parts, stands when
+  // searching for the actual product itself).  Server subtracts these from
+  // relevance score when matched, so accessories sink below real matches.
+  negativeDescription: string[];
 };
 
 // Classification of a free-text prompt into column-specific fragments.  Only
@@ -101,8 +106,22 @@ const trim = (v: string | null | undefined): string | null => {
 const SYSTEM_PROMPT = `You translate a product search spec into short alternate search keywords so a keyword-based product database can find matching items — even when the user's words don't literally appear in how the product is listed in the catalog.
 
 Rules:
-- Return ONLY JSON. Always include keys: brand, partNumber, modelNumber, description. Each is an array of strings.
+- Return ONLY JSON. Always include keys: brand, partNumber, modelNumber, description, negativeDescription. Each is an array of strings.
 - Each returned keyword should be substring-searchable against a product catalog (short, concrete, no marketing fluff, no punctuation except when part of a recognised form like "Cat-6" or "RJ-45").
+
+## Negative tokens (IMPORTANT for precision)
+- Populate \`negativeDescription\` with short single-word tokens that strongly suggest a catalog row is the WRONG KIND of product for this query — typically accessories, spare parts, carrying cases, or mounting hardware when the user actually wants the product itself.
+- These are substring-matched against product descriptions and SUBTRACTED from the relevance score, so rows that match them sink below true matches. Do NOT include generic words that would also appear in the right product (e.g. never put "microphone" in negativeDescription when the user asked for a microphone).
+- Examples:
+  - Request "microphone" or "handheld mic" → negativeDescription: ["holder", "clip", "mount", "case", "pouch", "stand", "spare", "replacement", "earpad", "bag"]. (Do NOT include "cable" — wireless mic systems often include cables.)
+  - Request "headset microphone" → negativeDescription: ["speaker", "loudspeaker", "earpad", "spare", "case", "pouch", "replacement", "portable pa"].
+  - Request "earphone" or "earbuds" → negativeDescription: ["case", "pouch", "bag", "spare", "replacement", "earshell", "cable", "tip"] (the tips/shells are accessories not earphones).
+  - Request "projector" → negativeDescription: ["lamp", "bulb", "mount", "bracket", "ceiling mount", "remote", "carrying case", "replacement", "filter"].
+  - Request "speaker" or "loudspeaker" → negativeDescription: ["bracket", "cover", "grille", "mount", "stand", "case", "replacement", "spare"].
+  - Request "camera" → negativeDescription: ["mount", "bracket", "tripod plate", "lens cap", "case", "bag", "strap", "battery"].
+  - Request "cable" or "patch cord" → negativeDescription: ["connector only", "plug only", "tester", "stripper", "organizer", "labeller"].
+- If the query is ambiguous, or the user is actually asking for one of these accessory items (e.g. "microphone stand"), leave negativeDescription empty — DO NOT negate "stand" when the user asked for stands.
+- Keep to at most 12 entries; short words work best (each becomes a LIKE '%word%' predicate server-side).
 
 ## Synonym / abbreviation expansion
 - Abbreviations <-> expansions ("HP" <-> "Hewlett Packard"), industry shorthand ("CAT6" <-> "Category 6"), unit forms ("55\\"" <-> "55 inch"), common alternate spellings.
@@ -245,7 +264,13 @@ export async function POST(
     const isPrompt = Boolean(trim(body.prompt));
     const userPrompt = buildUserPrompt(body);
     if (!userPrompt) {
-      const empty: ExpandResponse = { brand: [], partNumber: [], modelNumber: [], description: [] };
+      const empty: ExpandResponse = {
+        brand: [],
+        partNumber: [],
+        modelNumber: [],
+        description: [],
+        negativeDescription: [],
+      };
       return NextResponse.json({ ok: true, expansions: empty, routed: null, semanticCandidates: [] });
     }
 
@@ -299,6 +324,7 @@ export async function POST(
         partNumber: sanitizeArray(parsed.partNumber),
         modelNumber: sanitizeArray(parsed.modelNumber),
         description: sanitizeArray(parsed.description),
+        negativeDescription: sanitizeArray(parsed.negativeDescription),
       };
       // Routing is only meaningful for free-text prompts — for structured
       // auto-expand the fields were already classified by the caller.

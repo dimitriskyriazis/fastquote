@@ -48,6 +48,11 @@ type GridRequestEnvelope = {
   // Used to keep the filter-pill UI clean (one phrase visible) while the
   // real query still ORs a broad set of synonyms/word-tokens/cross-folds.
   hiddenFilterTokens?: Record<string, HiddenFilterToken[]>;
+  // Anti-intent tokens from the LLM — rows whose target columns match these
+  // LIKE tokens are DEPRIORITIZED (subtracted from relevance score) but not
+  // excluded.  Lets accessories / spare parts / carrying cases sink below
+  // real matches without over-filtering when the LLM mis-classifies.
+  negativeHiddenTokens?: Record<string, HiddenFilterToken[]>;
   // Product IDs returned by the semantic (vector) search for the current
   // query — products whose embeddings are nearest to the user's prompt.
   // Applied as a ranking bonus only (does NOT filter rows out), so keyword
@@ -265,9 +270,12 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
           if (isPartOrModel) {
             const searchVal = normalizePartModelNumber(value);
             const expr = partModelNumberSql(columnExpression);
-            // Also search LegacyPartNoCleaned when filtering by PartNumber
-            const legacyExpr = columnExpression.includes('.PartNumber')
-              ? `UPPER(ISNULL(${columnExpression.replace('.PartNumber', '.LegacyPartNoCleaned')}, ''))`
+            // Always search LegacyPartNoCleaned alongside PartNumber / ModelNumber.
+            // Resolve the alias (`bp` / `p`) from whichever column expression
+            // was supplied so the legacy column uses the same table prefix.
+            const tablePrefixMatch = /^([a-zA-Z_]\w*)\.(PartNumber|ModelNumber)$/.exec(columnExpression);
+            const legacyExpr = tablePrefixMatch
+              ? `UPPER(ISNULL(${tablePrefixMatch[1]}.LegacyPartNoCleaned, ''))`
               : null;
             const legacyOr = legacyExpr ? ` OR ${legacyExpr}` : '';
             if (type === 'equals') {
@@ -620,6 +628,40 @@ async function handleProductGrid(
           clause: tokenClauses.length === 1 ? tokenClauses[0] : `(${tokenClauses.join(' OR ')})`,
         });
       }
+    });
+  }
+
+  // Negative hidden tokens: LLM-derived anti-intent words.  Each matched
+  // token subtracts from the relevance score so accessories / spare parts /
+  // carrying cases rank below true product matches.  We do NOT add these
+  // to the WHERE clauses — rows matching only negatives still appear, they
+  // just sink.  The per-token penalty is scaled to the token's own length
+  // so a strong signal like "carrying case" outweighs a weak one like "kit".
+  const negativeTokens = body?.negativeHiddenTokens;
+  if (negativeTokens && typeof negativeTokens === 'object' && !Array.isArray(negativeTokens)) {
+    Object.entries(negativeTokens).forEach(([colId, tokens]) => {
+      if (!Array.isArray(tokens) || tokens.length === 0) return;
+      const colExpr = columnExpressions[colId];
+      if (!colExpr) return;
+      tokens.forEach((token, idx) => {
+        if (!token || typeof token.filter !== 'string') return;
+        const value = token.filter.trim();
+        if (!value) return;
+        const paramKey = `neg_${colId}_${idx}`;
+        const { clause, params: tokenParams } = buildTextMatchPredicate(colExpr, value, {
+          paramKey,
+          mode: 'contains',
+          enableFuzzy: false,
+        });
+        if (!clause) return;
+        tokenParams.forEach((p) => params.push(p));
+        // Negative weight scaled by value length × 4 so a matched negative
+        // cancels roughly four times that word's positive contribution.
+        // That's enough to bump accessories below real matches without
+        // zeroing them out entirely.
+        const basePenalty = Math.max(4, value.length * 4);
+        scoreClauses.push({ clause, weight: -basePenalty });
+      });
     });
   }
 

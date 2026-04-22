@@ -103,6 +103,19 @@ const SYNONYM_GROUPS: string[][] = [
   ['pc', 'desktop', 'computer'],
   ['laptop', 'notebook'],
   ['inch', 'inches', '"', "''"],
+  ['mic', 'mics', 'microphone', 'microphones'],
+  ['speaker', 'speakers', 'loudspeaker', 'loudspeakers'],
+  ['headphone', 'headphones', 'headset', 'headsets'],
+  ['camera', 'cameras', 'cam', 'cams'],
+  ['stand', 'stands', 'tripod', 'tripods'],
+  ['cable', 'cables', 'lead', 'leads', 'cord', 'cords'],
+  ['keyboard', 'keyboards'],
+  ['mouse', 'mice'],
+  ['adapter', 'adapters', 'adaptor', 'adaptors'],
+  ['converter', 'converters'],
+  ['light', 'lights', 'lamp', 'lamps'],
+  ['projector', 'projectors'],
+  ['connector', 'connectors'],
 ];
 
 const normalizeSynonymKey = (value: string): string =>
@@ -124,6 +137,31 @@ const SYNONYM_LOOKUP: Map<string, string[]> = (() => {
   return map;
 })();
 
+// Generic plural/singular expansion — adds the opposite form so LIKE
+// predicates hit both.  Without this, a catalog row "microphone stand"
+// doesn't match a user-typed "stands" (no 's' at end of "stand" in the
+// catalog), and vice versa.  Handles the common `-s` / `-es` / `-ies`
+// suffixes conservatively; short tokens (< 4 chars) are left alone to
+// avoid pathological matches like "hub" → "hubs" → "hubsetc".
+function expandPluralVariants(token: string): string[] {
+  const variants: string[] = [];
+  if (token.length < 4) return variants;
+  const lower = token.toLowerCase();
+  if (lower.endsWith('ies') && token.length >= 5) {
+    variants.push(`${token.slice(0, -3)}y`);
+    variants.push(token.slice(0, -1));
+  } else if (lower.endsWith('es') && token.length >= 5) {
+    variants.push(token.slice(0, -2));
+    variants.push(token.slice(0, -1));
+  } else if (lower.endsWith('s')) {
+    variants.push(token.slice(0, -1));
+  } else {
+    variants.push(`${token}s`);
+    variants.push(`${token}es`);
+  }
+  return variants;
+}
+
 export function expandWithSynonyms(tokens: string[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -137,6 +175,7 @@ export function expandWithSynonyms(tokens: string[]): string[] {
     push(token);
     const synonyms = SYNONYM_LOOKUP.get(normalizeSynonymKey(token));
     if (synonyms) synonyms.forEach(push);
+    expandPluralVariants(token).forEach(push);
   });
   return out;
 }
@@ -348,6 +387,10 @@ export type FilterExpansions = {
   partNumber?: string[];
   modelNumber?: string[];
   description?: string[];
+  // Anti-intent tokens from the LLM — terms that strongly suggest the row
+  // is the WRONG kind of product (accessories, spare parts, carrying cases).
+  // Server subtracts matches from the relevance score rather than filtering.
+  negativeDescription?: string[];
 };
 
 // AI-supplied classification of a free-text prompt into column-specific
@@ -499,6 +542,22 @@ function looksLikeCode(token: string): boolean {
   return digits >= 2;
 }
 
+// Treat a value as prose (belongs in Description, not in a code column) when
+// it contains whitespace AND no digits.  Part and model numbers are nearly
+// always alphanumeric codes — something like "oGx Frame" has a space and no
+// digits, so it's almost certainly description text that accidentally landed
+// in the Part Number column.  Leaving it on PartNumber gives its tokens
+// outsized weight against every row whose Description contains "frame".
+export function looksLikeProse(value: string | null | undefined): boolean {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  const hasWhitespace = /\s/.test(trimmed);
+  if (!hasWhitespace) return false;
+  const hasDigit = /[0-9]/.test(trimmed);
+  return !hasDigit;
+}
+
 function harvestCodeTokens(sources: Array<string | null | undefined>): string[] {
   const codeTokens = new Set<string>();
   sources.forEach((src) => {
@@ -552,20 +611,33 @@ export function buildRequestedFilterState(input: {
     buildFuzzyContainsFilter(input.requestedBrand, { mode: 'brand' }),
     input.requestedBrand ?? null,
   );
-  splitCompoundIntoVisibleAndHidden(
-    filters, hidden, 'PartNumber',
-    buildFuzzyContainsFilter(input.requestedPartNumber, { mode: 'partNumber' }),
-    input.requestedPartNumber ?? null,
-    VISIBLE_CODE_WEIGHT,
-    HIDDEN_CODE_WEIGHT,
-  );
-  splitCompoundIntoVisibleAndHidden(
-    filters, hidden, 'ModelNumber',
-    buildFuzzyContainsFilter(input.requestedModelNumber, { mode: 'partNumber' }),
-    input.requestedModelNumber ?? null,
-    VISIBLE_CODE_WEIGHT,
-    HIDDEN_CODE_WEIGHT,
-  );
+  // Demote prose-looking values out of Part/Model code fields.  An entry
+  // like "oGx Frame" in the Part Number column is really description text
+  // (whitespace, no digits) — letting it ride as a PartNumber chip gives
+  // it outsized weight on rows that happen to contain "frame" anywhere,
+  // which is exactly the Skaarhoj/oGx failure mode.  In that case we skip
+  // the visible chip + hidden tokens on Part/Model and reroute the phrase
+  // into Description instead so the signal isn't lost.
+  const partLooksLikeProse = looksLikeProse(input.requestedPartNumber);
+  const modelLooksLikeProse = looksLikeProse(input.requestedModelNumber);
+  if (!partLooksLikeProse) {
+    splitCompoundIntoVisibleAndHidden(
+      filters, hidden, 'PartNumber',
+      buildFuzzyContainsFilter(input.requestedPartNumber, { mode: 'partNumber' }),
+      input.requestedPartNumber ?? null,
+      VISIBLE_CODE_WEIGHT,
+      HIDDEN_CODE_WEIGHT,
+    );
+  }
+  if (!modelLooksLikeProse) {
+    splitCompoundIntoVisibleAndHidden(
+      filters, hidden, 'ModelNumber',
+      buildFuzzyContainsFilter(input.requestedModelNumber, { mode: 'partNumber' }),
+      input.requestedModelNumber ?? null,
+      VISIBLE_CODE_WEIGHT,
+      HIDDEN_CODE_WEIGHT,
+    );
+  }
 
   const partTrimmed = typeof input.requestedPartNumber === 'string' ? input.requestedPartNumber.trim() : '';
   const modelTrimmed = typeof input.requestedModelNumber === 'string' ? input.requestedModelNumber.trim() : '';
@@ -594,6 +666,50 @@ export function buildRequestedFilterState(input: {
     visibleModel: Object.keys(filters).length > 0 ? filters : null,
     hiddenTokens: Object.keys(hidden).length > 0 ? hidden : null,
   };
+}
+
+// Build the filter state when the user has turned "Smart filtering" OFF.
+// Only PartNumber and ModelNumber chips are produced — no Description, no
+// Brand, no fuzzy expansion, no hidden-token sidecar.  An `equals`
+// condition keeps the match strict: after the server cleans both sides
+// (strip non-alphanumerics + uppercase) the row's PartNumber /
+// ModelNumber / LegacyPartNoCleaned must match exactly, rather than merely
+// containing the substring.  The server still cross-searches all three
+// columns automatically whenever either filter is present.
+// Translate the LLM's negativeDescription array into the same HiddenFilterTokens
+// shape the server already understands.  Each term becomes a Description
+// LIKE token; the server applies them as negative score contributions (not
+// WHERE filters) so rows matching them sink but aren't hidden entirely —
+// preserves graceful behavior when the LLM over-negates.
+export function buildNegativeHiddenTokens(
+  expansion: FilterExpansions | null | undefined,
+): HiddenFilterTokens | null {
+  const terms = expansion?.negativeDescription;
+  if (!Array.isArray(terms) || terms.length === 0) return null;
+  const tokens = terms
+    .map((t) => (typeof t === 'string' ? t.trim() : ''))
+    .filter((t) => t.length >= 2)
+    .map((t) => ({ filter: t, weight: 1 }));
+  if (tokens.length === 0) return null;
+  return { Description: tokens };
+}
+
+export function buildBasicRequestedFilterState(input: {
+  requestedPartNumber?: string | null;
+  requestedModelNumber?: string | null;
+}): {
+  visibleModel: Record<string, FuzzyTextFilter> | null;
+} {
+  const filters: Record<string, FuzzyTextFilter> = {};
+  const part = typeof input.requestedPartNumber === 'string' ? input.requestedPartNumber.trim() : '';
+  const model = typeof input.requestedModelNumber === 'string' ? input.requestedModelNumber.trim() : '';
+  if (part) {
+    filters.PartNumber = { filterType: 'text', type: 'equals', filter: part } as unknown as FuzzyTextFilter;
+  }
+  if (model) {
+    filters.ModelNumber = { filterType: 'text', type: 'equals', filter: model } as unknown as FuzzyTextFilter;
+  }
+  return { visibleModel: Object.keys(filters).length > 0 ? filters : null };
 }
 
 // Build a ListPrice number filter from an optional min/max pair.  Returns a

@@ -15,21 +15,27 @@ import { useFarnellProductResolver } from '../../../hooks/useFarnellProductResol
 import {
   isFarnellBrand,
   buildRequestedFilterState,
+  buildBasicRequestedFilterState,
   buildPromptFilterState,
+  buildNegativeHiddenTokens,
   mergeExpansionsIntoFilterModel,
   type FuzzyTextFilter,
   type HiddenFilterTokens,
   type FilterExpansions,
   type PromptRouting,
 } from '../offerProductsUtils';
+import { useSmartFiltering } from '../../../hooks/useSmartFiltering';
 import {
   AiSearchPromptPill,
   AI_GRID_LOCK_CLASS,
 } from './AiSearch';
+import { showConfirmDialog } from '../../../../lib/confirm';
 
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), {
   ssr: false,
 });
+
+import type { GridResponse } from '../../../components/AgGridAll';
 
 type DetailEntry = {
   label: string;
@@ -79,6 +85,7 @@ type Props = {
   onSkipAll: () => void;
   prefetchedSuggestions?: MatcherRowData[] | null;
   prefetchedExpansion?: FilterExpansions | null;
+  prefetchedFirstPage?: GridResponse | null;
 };
 
 const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
@@ -146,6 +153,7 @@ export default function MatchRequestedProductsModal({
   onSkipAll,
   prefetchedSuggestions,
   prefetchedExpansion,
+  prefetchedFirstPage,
 }: Props) {
   const { cardRef: setCardRef, cardStyle: dragCardStyle, headerProps: dragHeaderProps, resizeHandles } = useModalDragResize({ draggable: true, resizable: true });
   const [selectedProduct, setSelectedProduct] = useState<MatcherRowData | null>(null);
@@ -285,13 +293,29 @@ export default function MatchRequestedProductsModal({
     [],
   );
 
+  const [smartFilteringEnabled, setSmartFilteringEnabled] = useSmartFiltering();
+  const smartFilteringEnabledRef = useRef(smartFilteringEnabled);
+  smartFilteringEnabledRef.current = smartFilteringEnabled;
+
   // Build the filter model along with a per-column "hidden tokens" sidecar.
   // The visible filter is kept minimal (one condition per column) so AG Grid's
   // filter popup stays readable; the full set of fuzzy tokens / synonyms /
   // cross-fold terms ride along in requestPayload.hiddenFilterTokens and are
   // applied server-side with identical WHERE + relevance-score semantics.
   // Semantics shared with AddProductsModal via the common helper.
+  //
+  // When the user flips "Smart filtering" off, fall back to a minimal
+  // PartNumber / ModelNumber-only filter with no hidden tokens — the server
+  // still cross-searches PartNumber / ModelNumber / LegacyPartNoCleaned on
+  // its own when either column is filtered.
   const { requestedFilterModel, hiddenFilterTokens } = useMemo(() => {
+    if (!smartFilteringEnabled) {
+      const { visibleModel } = buildBasicRequestedFilterState({
+        requestedPartNumber: entry.requestedPartNumber,
+        requestedModelNumber: entry.requestedModelNumber,
+      });
+      return { requestedFilterModel: visibleModel, hiddenFilterTokens: null as HiddenFilterTokens | null };
+    }
     const { visibleModel, hiddenTokens } = buildRequestedFilterState({
       requestedBrand: entry.requestedBrand,
       requestedPartNumber: entry.requestedPartNumber,
@@ -305,6 +329,7 @@ export default function MatchRequestedProductsModal({
     });
     return { requestedFilterModel: visibleModel, hiddenFilterTokens: hiddenTokens };
   }, [
+    smartFilteringEnabled,
     entry.requestedBrand,
     entry.requestedModelNumber,
     entry.requestedPartNumber,
@@ -339,19 +364,28 @@ export default function MatchRequestedProductsModal({
   const triggerSemanticFromFiltersRef = useRef<((api: MatcherGridApi) => void) | null>(null);
 
   const requestPayload = useMemo(() => {
+    // Keep BrandName in the cross-column OR group.  A strict Brand AND-gate
+    // silently drops valid rebrands (e.g. Logickeyboard keyboards catalogued
+    // under "Canford Audio", Ross Video resold under a house brand).  The
+    // brand term is mirrored as a hidden Description token in
+    // buildRequestedFilterState, so rebranded rows still match via
+    // Description and the scoring pushes correct-brand rows up without
+    // censoring valid distributor listings.
     const payload: Record<string, unknown> = {
       action: 'products',
-      // BrandName joins the cross-column OR group: catalogs often carry
-      // manufacturer-branded products under a distributor name (e.g.
-      // "Logickeyboard" keyboard sold as brand "Canford Audio"), so matching
-      // by Description alone needs to surface the row even if Brand fails.
       orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
     };
     if (effectiveHiddenTokens) payload.hiddenFilterTokens = effectiveHiddenTokens;
     if (semanticCandidates && semanticCandidates.length > 0) payload.semanticCandidates = semanticCandidates;
-    if (newProductId != null) payload.newProductId = newProductId;
+    const negative = buildNegativeHiddenTokens(prefetchedExpansion);
+    if (negative) payload.negativeHiddenTokens = negative;
+    // newProductId is intentionally NOT forwarded to the server.  The old
+    // flow also asked the server to order the new product first, which
+    // produced a duplicate rendering (the regular row served by the server
+    // plus the client-side pinned row below).  We now show the new product
+    // only as a client-side pinned top row.
     return Object.keys(payload).length > 0 ? payload : null;
-  }, [effectiveHiddenTokens, semanticCandidates, newProductId]);
+  }, [effectiveHiddenTokens, semanticCandidates, prefetchedExpansion]);
 
   const endpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
@@ -606,9 +640,11 @@ export default function MatchRequestedProductsModal({
         setFarnellDescription(descFilter?.filter ?? null);
       } catch { /* noop */ }
       // Debounced semantic expansion when user edits column filters directly.
+      // Skipped when "Smart filtering" is off — plain column filters only.
       if (semanticExpandTimerRef.current != null) {
         window.clearTimeout(semanticExpandTimerRef.current);
       }
+      if (!smartFilteringEnabledRef.current) return;
       semanticExpandTimerRef.current = window.setTimeout(() => {
         semanticExpandTimerRef.current = null;
         triggerSemanticFromFiltersRef.current?.(api);
@@ -619,12 +655,6 @@ export default function MatchRequestedProductsModal({
       api.addEventListener('filterChanged', listener as never);
     } catch { /* noop */ }
   }, []);
-
-  useEffect(() => {
-    if (newProductId == null && suggestedProducts.length === 0 && farnellResults.length === 0) {
-      clearPinnedTopRow();
-    }
-  }, [newProductId, clearPinnedTopRow, suggestedProducts.length, farnellResults.length]);
 
   useEffect(() => () => {
     clearPinnedTopRow();
@@ -707,9 +737,10 @@ export default function MatchRequestedProductsModal({
   // /expand endpoint has its own 15-min LRU cache server-side, so re-firing
   // on every visit is free after the first time through each entry.
   useEffect(() => {
+    if (!smartFilteringEnabled) return;
     if (prefetchedExpansion) return;
     void runExpand({ silent: true });
-  }, [entry.offerDetailId, runExpand, prefetchedExpansion]);
+  }, [entry.offerDetailId, runExpand, prefetchedExpansion, smartFilteringEnabled]);
 
   const handlePromptSubmit = useCallback(() => {
     const trimmed = promptText.trim();
@@ -823,28 +854,6 @@ export default function MatchRequestedProductsModal({
   // Keep ref in sync so the auto-suggest timer can call the latest version
   handleSuggestProductsRef.current = handleSuggestProducts;
 
-  const refreshProductsGrid = useCallback(() => {
-    const api = productsApiRef.current;
-    if (!api) return;
-    const refreshFn = api.refreshServerSide;
-    if (typeof refreshFn === 'function') {
-      try {
-        refreshFn.call(api, { purge: true });
-        return;
-      } catch {
-        /* noop */
-      }
-    }
-    const purgeFn = api.purgeServerSideCache;
-    if (typeof purgeFn === 'function') {
-      try {
-        purgeFn.call(api);
-      } catch {
-        /* noop */
-      }
-    }
-  }, []);
-
   const ensureProductSort = useCallback(() => {
     const api = productsApiRef.current;
     if (!api) return;
@@ -861,17 +870,31 @@ export default function MatchRequestedProductsModal({
     }
   }, []);
 
+  // After creating a new product via the "Add product" dialog, prompt the
+  // user whether to assign it straight away to the current requested item.
+  // "Yes" advances the queue via the normal assign flow; "No" just drops
+  // the id and leaves the matcher on the current requested row so the user
+  // can keep searching.  Neither branch refetches the grid — the new
+  // product will appear naturally on the next normal load.
   useEffect(() => {
     if (newProductId == null) return;
-    ensureProductSort();
-    pendingSelectionProductIdRef.current = newProductId;
-    const timer = window.setTimeout(() => {
-      refreshProductsGrid();
-    }, 0);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [newProductId, ensureProductSort, refreshProductsGrid]);
+    const targetId = newProductId;
+    let cancelled = false;
+    (async () => {
+      const proceed = await showConfirmDialog({
+        title: 'Assign newly added product?',
+        message: 'Assign the newly added product to this requested item?',
+        confirmLabel: 'Assign',
+        cancelLabel: 'Keep searching',
+      });
+      if (cancelled) return;
+      if (proceed) {
+        void handleAssignWithId(targetId);
+      }
+      onClearNewProductId?.();
+    })();
+    return () => { cancelled = true; };
+  }, [newProductId, handleAssignWithId, onClearNewProductId]);
 
   const handleGridReady = useCallback((api: MatcherGridApi) => {
     productsApiRef.current = api;
@@ -1035,6 +1058,18 @@ export default function MatchRequestedProductsModal({
               </div>
             </div>
             <div className={styles.headerActions}>
+              <label
+                className={styles.smartFilterToggle}
+                title="Smart filtering: when ON the modal folds description, brand and AI synonyms into the filter. When OFF only part/model number filters are emitted."
+              >
+                <input
+                  type="checkbox"
+                  checked={smartFilteringEnabled}
+                  onChange={(e) => setSmartFilteringEnabled(e.target.checked)}
+                  disabled={assigning}
+                />
+                <span>Smart filtering</span>
+              </label>
               <AiSearchPromptPill
                 promptText={promptText}
                 onPromptTextChange={setPromptText}
@@ -1042,7 +1077,7 @@ export default function MatchRequestedProductsModal({
                 onClear={handleClearAIPrompt}
                 submitted={promptSubmitted}
                 busy={suggesting}
-                disabled={assigning}
+                disabled={assigning || !smartFilteringEnabled}
               />
               {noSuggestionsFound && !suggesting && (
                 <span className={styles.noSuggestionsLabel}>No extra terms to add</span>
@@ -1142,7 +1177,14 @@ export default function MatchRequestedProductsModal({
                 columnWidthDefaults={emptyColumnWidthDefaults}
                 requestPayload={requestPayload}
                 serverSideEnableClientSideSort={false}
-                cacheBlockSize={25}
+                // Larger block + generous in-memory cache so scrolling
+                // through smart-filtered results doesn't refire the
+                // expensive fuzzy/hidden-token query on every 25 rows.
+                // 200 rows/block keeps the server cost amortized and
+                // matches the prefetched first page's size.
+                cacheBlockSize={200}
+                maxBlocksInCache={20}
+                prefetchedFirstPage={prefetchedFirstPage ?? null}
                 onRequestPayloadConsumed={onRequestPayloadConsumed}
                 rowSelection="single"
                 rowMultiSelectWithClick

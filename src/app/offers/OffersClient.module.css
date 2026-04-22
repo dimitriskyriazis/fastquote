@@ -28,6 +28,24 @@
   gap: 8px;
 }
 
+.clearCustomerFilterButton {
+  margin-left: 8px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1e3a8a;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.clearCustomerFilterButton:hover,
+.clearCustomerFilterButton:focus-visible {
+  background: #dbeafe;
+  outline: none;
+}
+
 
 .primaryButton {
   border: 1px solid #d1d5db;

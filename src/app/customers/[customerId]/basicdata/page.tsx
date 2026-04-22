@@ -41,6 +41,12 @@ export default function Page() {
             Create Offer for Customer
           </Link>
           <Link
+            href={`/offers?customerId=${encodedId}`}
+            className={`${layoutStyles.headerActionButton} page-header-button`}
+          >
+            View Customer&apos;s Offers
+          </Link>
+          <Link
             href={`/customers/${encodedId}/contacts`}
             className={`${layoutStyles.headerActionButton} page-header-button`}
           >

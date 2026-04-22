@@ -13,12 +13,15 @@ import { useFarnellProductResolver } from '../../../hooks/useFarnellProductResol
 import {
   isFarnellBrand,
   buildRequestedFilterState,
+  buildBasicRequestedFilterState,
   buildPromptFilterState,
+  buildNegativeHiddenTokens,
   mergeExpansionsIntoHiddenTokens,
   type HiddenFilterTokens,
   type FilterExpansions,
   type PromptRouting,
 } from '../offerProductsUtils';
+import { useSmartFiltering } from '../../../hooks/useSmartFiltering';
 import {
   AiSearchPromptPill,
   AI_GRID_LOCK_CLASS,
@@ -252,6 +255,13 @@ export default function AddProductsModal({
   const [detachMenu, setDetachMenu] = useState<{ x: number; y: number } | null>(null);
   const [selectedCategory] = useState<CategoryRow | null>(null);
   const [selectedProducts, setSelectedProducts] = useState<ProductRow[]>([]);
+  // Tracks a locally-pinned new product row (created via "Add product").
+  // The pinned-rows sync effect merges this with Farnell results so the new
+  // product sits on top and isn't wiped when Farnell results clear.
+  const [pinnedNewProductRow, setPinnedNewProductRow] = useState<Record<string, unknown> | null>(null);
+  const [smartFilteringEnabled, setSmartFilteringEnabled] = useSmartFiltering();
+  const smartFilteringEnabledRef = useRef(smartFilteringEnabled);
+  smartFilteringEnabledRef.current = smartFilteringEnabled;
   const [submitting, setSubmitting] = useState(false);
   const [comment, setComment] = useState('');
   const [requestedRows, setRequestedRows] = useState<RequestedRow[]>([]);
@@ -274,6 +284,10 @@ export default function AddProductsModal({
   const [suggesting, setSuggesting] = useState(false);
   const [noSuggestionsFound, setNoSuggestionsFound] = useState(false);
   const [hiddenFilterTokens, setHiddenFilterTokens] = useState<HiddenFilterTokens | null>(null);
+  // LLM-derived anti-intent tokens that deprioritize accessories / spare parts
+  // / carrying cases.  Stored as the negativeDescription array straight from
+  // /expand and folded into the request payload via buildNegativeHiddenTokens.
+  const [negativeDescriptionTerms, setNegativeDescriptionTerms] = useState<string[] | null>(null);
   // ProductIDs surfaced by the server-side semantic (vector) search for the
   // current prompt.  Feeds into requestPayload as a ranking bonus only.
   const [semanticCandidates, setSemanticCandidates] = useState<number[] | null>(null);
@@ -321,18 +335,27 @@ export default function AddProductsModal({
   const { resolveFarnellProduct, resolving: farnellResolving } = useFarnellProductResolver();
 
   const productRequestPayload = useMemo(() => {
+    // BrandName stays in the cross-column OR group.  Strict brand AND-gating
+    // drops valid rebrands (manufacturer products resold under distributor
+    // brands) — the brand term is mirrored as a hidden Description token in
+    // buildRequestedFilterState so rebranded rows still match via
+    // Description, while correct-brand rows rank higher via scoring.
     const payload: Record<string, unknown> = {
       action: 'products',
-      // BrandName joins the cross-column OR: catalogs often rebrand
-      // manufacturer products under a distributor name, so matching by
-      // Description alone needs to surface the row.
       orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
     };
     if (hiddenFilterTokens) payload.hiddenFilterTokens = hiddenFilterTokens;
     if (semanticCandidates && semanticCandidates.length > 0) payload.semanticCandidates = semanticCandidates;
-    if (newProductId != null) payload.newProductId = newProductId;
+    const negative = buildNegativeHiddenTokens(
+      negativeDescriptionTerms ? { negativeDescription: negativeDescriptionTerms } : null,
+    );
+    if (negative) payload.negativeHiddenTokens = negative;
+    // newProductId is intentionally NOT forwarded to the server.  The old
+    // flow also asked the server to order the new product first, which
+    // rendered the new product twice (the server row plus the client-side
+    // pinned row).  The new product is now shown only as a pinned top row.
     return payload;
-  }, [hiddenFilterTokens, semanticCandidates, newProductId]);
+  }, [hiddenFilterTokens, semanticCandidates, negativeDescriptionTerms]);
 
   const handleProductSelection = useCallback((rows: ProductRow[]) => {
     setSelectedProducts(rows ?? []);
@@ -374,6 +397,8 @@ export default function AddProductsModal({
       const routed = data.routed ?? null;
       const semantic = Array.isArray(data.semanticCandidates) ? data.semanticCandidates : [];
       setSemanticCandidates(semantic.length > 0 ? semantic : null);
+      const negatives = Array.isArray(expansions.negativeDescription) ? expansions.negativeDescription : [];
+      setNegativeDescriptionTerms(negatives.length > 0 ? negatives : null);
       const api = productsApiRef.current;
       if (!api) return;
 
@@ -551,6 +576,15 @@ export default function AddProductsModal({
       // Deselected / below-mode: keep existing filters untouched.
       return;
     }
+    if (!smartFilteringEnabled) {
+      const { visibleModel } = buildBasicRequestedFilterState({
+        requestedPartNumber: placementAnchor.requestedPartNo,
+        requestedModelNumber: placementAnchor.requestedModelNo,
+      });
+      api.setFilterModel(visibleModel);
+      setHiddenFilterTokens(null);
+      return;
+    }
     const { visibleModel, hiddenTokens } = buildRequestedFilterState({
       requestedBrand: placementAnchor.requestedBrand,
       requestedPartNumber: placementAnchor.requestedPartNo,
@@ -559,7 +593,7 @@ export default function AddProductsModal({
     });
     api.setFilterModel(visibleModel);
     setHiddenFilterTokens(hiddenTokens);
-  }, [placementAnchor, defaultPlacementMode]);
+  }, [placementAnchor, defaultPlacementMode, smartFilteringEnabled]);
 
   // Sync selectedRequestedRowId with placement mode for anchor-based requested rows
   useEffect(() => {
@@ -1148,46 +1182,56 @@ export default function AddProductsModal({
     }
   }, [onClearNewProductId]);
 
+  // When newProductId is cleared, drop any transient ProductID DESC sort
+  // that ensureProductSort may have applied while the prop was set.  The
+  // pinned-rows sync effect handles pin teardown independently.
   useEffect(() => {
-    if (newProductId == null) {
-      clearPinnedTopRow();
-      // Clear ProductID DESC sort when newProductId is cleared
-      const api = productsApiRef.current;
-      if (api) {
-        const sortModelGetter = api.getSortModel;
-        const sortModel = typeof sortModelGetter === 'function' ? sortModelGetter() : [];
-        const hasProductIdDesc = sortModel.some(
-          (entry: { colId: string; sort: 'asc' | 'desc' }) => entry.colId === 'ProductID' && entry.sort === 'desc',
-        );
-        if (hasProductIdDesc) {
-          // Remove ProductID DESC from sort, keep other sorts
-          const filteredSort = sortModel.filter(
-            (entry: { colId: string; sort: 'asc' | 'desc' }) => !(entry.colId === 'ProductID' && entry.sort === 'desc'),
-          );
-          const setter = api.setSortModel;
-          if (typeof setter === 'function') {
-            setter(filteredSort.length > 0 ? filteredSort : []);
-          }
-        }
-      }
+    if (newProductId != null) return;
+    const api = productsApiRef.current;
+    if (!api) return;
+    const sortModelGetter = api.getSortModel;
+    const sortModel = typeof sortModelGetter === 'function' ? sortModelGetter() : [];
+    const hasProductIdDesc = sortModel.some(
+      (entry: { colId: string; sort: 'asc' | 'desc' }) => entry.colId === 'ProductID' && entry.sort === 'desc',
+    );
+    if (!hasProductIdDesc) return;
+    const filteredSort = sortModel.filter(
+      (entry: { colId: string; sort: 'asc' | 'desc' }) => !(entry.colId === 'ProductID' && entry.sort === 'desc'),
+    );
+    const setter = api.setSortModel;
+    if (typeof setter === 'function') {
+      setter(filteredSort.length > 0 ? filteredSort : []);
     }
-  }, [newProductId, clearPinnedTopRow]);
+  }, [newProductId]);
 
   useEffect(() => () => {
     clearPinnedTopRow();
   }, [clearPinnedTopRow]);
 
+  // After creating a new product via the "Add product" dialog, don't refetch
+  // the whole grid — fetch just the new row and let the pinned-rows sync
+  // effect render it on top.  Old flow did a full purge + refresh AND asked
+  // the server to order the new product first, which rendered it twice (the
+  // server row plus the client pinned row).
   useEffect(() => {
     if (newProductId == null) return;
-    ensureProductSort();
-    pendingSelectionProductIdRef.current = newProductId;
-    const timer = window.setTimeout(() => {
-      refreshProductsGrid();
-    }, 0);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [newProductId, ensureProductSort, refreshProductsGrid]);
+    const targetId = newProductId;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/products/${targetId}`);
+        if (!res.ok) return;
+        const data = (await res.json()) as { ok?: boolean; product?: Record<string, unknown> | null } | null;
+        if (cancelled || !data?.ok || !data.product) return;
+        const rowData = data.product;
+        setPinnedNewProductRow(rowData);
+        try { productsApiRef.current?.deselectAll?.(); } catch { /* noop */ }
+        setSelectedProducts([rowData as ProductRow]);
+        onClearNewProductId?.();
+      } catch { /* noop */ }
+    })();
+    return () => { cancelled = true; };
+  }, [newProductId, onClearNewProductId]);
 
   const selectedCategoryIdRef = useRef<number | null>(null);
   selectedCategoryIdRef.current = selectedCategory?.OfferDetailID ?? null;
@@ -1282,6 +1326,8 @@ export default function AddProductsModal({
         setHiddenFilterTokens(hiddenTokens);
         const semantic = Array.isArray(data.semanticCandidates) ? data.semanticCandidates : [];
         setSemanticCandidates(semantic.length > 0 ? semantic : null);
+        const negatives = Array.isArray(expansions.negativeDescription) ? expansions.negativeDescription : [];
+        setNegativeDescriptionTerms(negatives.length > 0 ? negatives : null);
       } catch (err) {
         if ((err as Error)?.name === 'AbortError') return;
         console.warn('Semantic filter expansion failed', err);
@@ -1309,10 +1355,11 @@ export default function AddProductsModal({
         setFarnellDescription(descFilter?.filter ?? null);
       } catch { /* noop */ }
       // Debounce semantic expansion — wait for typing to pause before
-      // issuing the embedding call.
+      // issuing the embedding call.  Skipped when "Smart filtering" is off.
       if (semanticExpandTimerRef.current != null) {
         window.clearTimeout(semanticExpandTimerRef.current);
       }
+      if (!smartFilteringEnabledRef.current) return;
       semanticExpandTimerRef.current = window.setTimeout(() => {
         semanticExpandTimerRef.current = null;
         triggerSemanticFromFilters(api);
@@ -1332,18 +1379,21 @@ export default function AddProductsModal({
     semanticExpandAbortRef.current?.abort();
   }, []);
 
-  // Sync Farnell pinned rows
+  // Sync pinned rows: a locally-pinned new product sits on top, followed
+  // by any visible Farnell results.  When neither is present the pin is
+  // cleared.
   useEffect(() => {
     const api = productsApiRef.current;
     if (!api) return;
     const setter = api.setPinnedTopRowData;
     if (typeof setter !== 'function') return;
+    const rows: Record<string, unknown>[] = [];
+    if (pinnedNewProductRow) rows.push(pinnedNewProductRow);
     if (farnellResults.length > 0 && farnellVisible) {
-      try { setter(farnellResults as unknown as Record<string, unknown>[]); } catch { /* noop */ }
-    } else if (newProductId == null) {
-      try { setter([]); } catch { /* noop */ }
+      rows.push(...(farnellResults as unknown as Record<string, unknown>[]));
     }
-  }, [farnellResults, farnellVisible, newProductId]);
+    try { setter(rows); } catch { /* noop */ }
+  }, [pinnedNewProductRow, farnellResults, farnellVisible]);
 
   // Attach cell click listener for Farnell pinned rows
   const farnellCellClickRef = useRef<((event: { node?: RowNode; data?: unknown }) => void) | null>(null);
@@ -1441,6 +1491,18 @@ export default function AddProductsModal({
   // AI prompt input — shared pill component used across modal + split view.
   const promptInput = (
     <>
+      <label
+        className={styles.smartFilterToggle}
+        title="Smart filtering: when ON the modal folds description, brand and AI synonyms into the filter. When OFF only part/model number filters are emitted."
+      >
+        <input
+          type="checkbox"
+          checked={smartFilteringEnabled}
+          onChange={(e) => setSmartFilteringEnabled(e.target.checked)}
+          disabled={submitting}
+        />
+        <span>Smart filtering</span>
+      </label>
       <AiSearchPromptPill
         promptText={promptText}
         onPromptTextChange={setPromptText}
@@ -1448,7 +1510,7 @@ export default function AddProductsModal({
         onClear={handleClearAIPrompt}
         submitted={promptSubmitted}
         busy={suggesting}
-        disabled={submitting}
+        disabled={submitting || !smartFilteringEnabled}
       />
       {noSuggestionsFound && !suggesting && (
         <span className={styles.noPromptLabel}>No extra terms to add</span>

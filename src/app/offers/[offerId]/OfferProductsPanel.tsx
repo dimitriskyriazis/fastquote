@@ -57,6 +57,7 @@ import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselect
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
 import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
+import { useSmartFiltering } from '../../hooks/useSmartFiltering';
 import MatchRequestedProductsModal, {
   type RequestedProductMatchEntry,
 } from './products/MatchRequestedProductsModal';
@@ -137,6 +138,9 @@ import {
   isOfferProductCommentOrProduct,
   findDeleteMenuItemIndex,
   buildEndpointForOffer,
+  buildRequestedFilterState,
+  buildBasicRequestedFilterState,
+  buildNegativeHiddenTokens,
   type RequestedDisplayFieldKey,
   REQUESTED_DISPLAY_FIELD_KEYS,
   REQUESTED_FIELD_LABELS,
@@ -365,6 +369,14 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [requestedMatchQueue, setRequestedMatchQueue] = useState<RequestedProductMatchEntry[]>([]);
   const [processedRequestedMatches, setProcessedRequestedMatches] = useState(0);
 
+  // --- Smart filtering toggle ---
+  // Read-only here — the modals own the UI control; we mirror the value so
+  // background prefetch generates rows that match what the modal actually
+  // sends on first paint.
+  const [smartFilteringEnabled] = useSmartFiltering();
+  const smartFilteringEnabledRef = useRef(smartFilteringEnabled);
+  smartFilteringEnabledRef.current = smartFilteringEnabled;
+
   // --- AI expansion prefetch cache ---
   // Fetches expansion tokens for every requested entry in the queue upfront
   // with bounded concurrency (4 in-flight).  Modal folds cached tokens into
@@ -375,11 +387,108 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const expansionPrefetchStartedRef = useRef(false);
   const [expansionCacheVersion, setExpansionCacheVersion] = useState(0);
 
+  // --- Product first-page prefetch cache ---
+  // Chained off the expansion prefetch: as soon as the AI expansion for an
+  // entry lands, we fire the same POST /products/add the modal would send
+  // for its first block of rows and stash the response keyed by
+  // offerDetailId.  The modal (via AgGridAll's prefetchedFirstPage prop)
+  // consumes the cached block on first paint, so navigating through the
+  // queue doesn't incur a server round-trip per product.
+  const productPageCacheRef = useRef<Map<number, GridResponse>>(new Map());
+  const productPagePrefetchingRef = useRef<Set<number>>(new Set());
+  const [productPageCacheVersion, setProductPageCacheVersion] = useState(0);
+
+  const prefetchProductPage = useCallback(async (
+    entry: RequestedProductMatchEntry,
+    expansion: FilterExpansions | null,
+  ) => {
+    const id = entry.offerDetailId;
+    if (productPageCacheRef.current.has(id) || productPagePrefetchingRef.current.has(id)) return;
+    productPagePrefetchingRef.current.add(id);
+    try {
+      // Match the modal's filter-model build exactly, honoring the current
+      // Smart-filtering toggle.  Smart ON → fuzzy + hidden tokens from the
+      // full expansion flow.  Smart OFF → plain equals chips on Part/Model
+      // only, no hidden tokens.  Mismatching this would serve wrong rows on
+      // the first paint after the toggle flips.
+      const smart = smartFilteringEnabledRef.current;
+      let filterModel: Record<string, unknown>;
+      let hiddenTokens: Record<string, unknown> | null = null;
+      if (smart) {
+        const built = buildRequestedFilterState({
+          requestedBrand: entry.requestedBrand,
+          requestedPartNumber: entry.requestedPartNumber,
+          requestedModelNumber: entry.requestedModelNumber,
+          requestedDescriptions: [
+            entry.requestedDescription,
+            entry.requestedDescription2,
+            entry.requestedDescription3,
+          ],
+          prefetchedExpansion: expansion,
+        });
+        filterModel = built.visibleModel ?? {};
+        hiddenTokens = built.hiddenTokens ?? null;
+      } else {
+        const { visibleModel } = buildBasicRequestedFilterState({
+          requestedPartNumber: entry.requestedPartNumber,
+          requestedModelNumber: entry.requestedModelNumber,
+        });
+        filterModel = visibleModel ?? {};
+      }
+      const body: Record<string, unknown> = {
+        action: 'products',
+        orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
+        request: {
+          startRow: 0,
+          // Must match the modal grid's cacheBlockSize (200) — AG Grid
+          // caches the first getRows response as block 0, and if the
+          // prefetch returned only 25 rows the grid would skip rows 25-199
+          // on the next scroll block.
+          endRow: 200,
+          filterModel,
+          sortModel: [{ colId: 'ProductID', sort: 'desc' }],
+          rowGroupCols: [],
+          valueCols: [],
+          pivotCols: [],
+          pivotMode: false,
+          groupKeys: [],
+        },
+        fields: ['PartNumber', 'Description', 'BrandName', 'ModelNumber', 'ListPrice', 'CostPrice', 'PriceListName'],
+      };
+      if (hiddenTokens) body.hiddenFilterTokens = hiddenTokens;
+      if (smart) {
+        const negative = buildNegativeHiddenTokens(expansion);
+        if (negative) body.negativeHiddenTokens = negative;
+      }
+      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as GridResponse;
+      if (data && data.ok) {
+        productPageCacheRef.current.set(id, data);
+        setProductPageCacheVersion((v) => v + 1);
+      }
+    } catch { /* noop */ }
+    finally {
+      productPagePrefetchingRef.current.delete(id);
+    }
+  }, [offerId]);
+
   const prefetchExpansion = useCallback(async (entry: RequestedProductMatchEntry) => {
     const id = entry.offerDetailId;
     if (expansionCacheRef.current.has(id) || expansionPrefetchingRef.current.has(id)) return;
     expansionPrefetchingRef.current.add(id);
     try {
+      // When Smart filtering is off the modal ignores expansion tokens
+      // entirely, so skip the /expand round-trip and go straight to a
+      // basic-filter product-page prefetch.
+      if (!smartFilteringEnabledRef.current) {
+        void prefetchProductPage(entry, null);
+        return;
+      }
       const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/expand`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -392,13 +501,37 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           requestedDescription3: entry.requestedDescription3,
         }),
       });
+      let expansion: FilterExpansions | null = null;
       if (res.ok) {
         const data = (await res.json()) as { ok: boolean; expansions?: FilterExpansions };
-        expansionCacheRef.current.set(id, data.expansions ?? {});
+        expansion = data.expansions ?? {};
+        expansionCacheRef.current.set(id, expansion);
         setExpansionCacheVersion((v) => v + 1);
       }
+      // Chain the product-page prefetch once we know the expansion tokens, so
+      // the cached first block uses the exact same hiddenFilterTokens the
+      // modal would send.  If the expansion call failed, we still prefetch
+      // without expansion (the modal would too).
+      void prefetchProductPage(entry, expansion);
     } catch { /* noop */ }
-  }, [offerId]);
+    finally {
+      expansionPrefetchingRef.current.delete(id);
+    }
+  }, [offerId, prefetchProductPage]);
+
+  // When Smart filtering flips, invalidate every prefetched page and let the
+  // background workers re-fire with the new filter mode.  Without this the
+  // modal would render cached smart-mode rows under a basic-mode request
+  // (or vice versa) on the very first navigation after toggling.
+  useEffect(() => {
+    expansionCacheRef.current.clear();
+    expansionPrefetchingRef.current.clear();
+    productPageCacheRef.current.clear();
+    productPagePrefetchingRef.current.clear();
+    expansionPrefetchStartedRef.current = false;
+    setExpansionCacheVersion((v) => v + 1);
+    setProductPageCacheVersion((v) => v + 1);
+  }, [smartFilteringEnabled]);
 
   useEffect(() => {
     if (requestedMatchQueue.length === 0 || expansionPrefetchStartedRef.current) return;
@@ -414,7 +547,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     };
     const workers = Array.from({ length: Math.min(MAX_CONCURRENT, entries.length) }, () => worker());
     void Promise.all(workers);
-  }, [requestedMatchQueue, prefetchExpansion]);
+  }, [requestedMatchQueue, prefetchExpansion, smartFilteringEnabled]);
   const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() =>
     readCollapsedCategoryPathsFromCookie(offerId),
   );
@@ -2938,6 +3071,17 @@ const requestedColumnDefsMap = useMemo(
       if (manualMatchesRequired) {
         setRequestedMatchQueue((prev) => [...prev, ...unmatchedRequestedRows]);
       }
+      // Also refresh when we unassigned rows (re-populate from scratch) — the local
+      // node data was reset without setDataValue, so AG Grid needs a purge refresh
+      // to redraw those cells even if nothing auto-matched afterwards.
+      const shouldRefresh = updates.length > 0 || productsAdded > 0 || nodesToUnassign.length > 0;
+      if (shouldRefresh) {
+        try {
+          window.requestAnimationFrame(() => refreshOfferProductGrid(null, { purge: true }));
+        } catch {
+          refreshOfferProductGrid(null, { purge: true });
+        }
+      }
       const parts: string[] = [];
       if (categoriesAdded > 0) parts.push(`${categoriesAdded} categor${categoriesAdded === 1 ? 'y' : 'ies'}`);
       if (productsAdded > 0) parts.push(`${productsAdded} product${productsAdded === 1 ? '' : 's'}`);
@@ -2951,14 +3095,6 @@ const requestedColumnDefsMap = useMemo(
         return;
       }
       showToastMessage(`Populated ${parts.join(' and ')} in the offer.`, 'success');
-      const shouldRefresh = updates.length > 0 || productsAdded > 0;
-      if (shouldRefresh) {
-        try {
-          window.requestAnimationFrame(() => refreshOfferProductGrid(null, { purge: true }));
-        } catch {
-          refreshOfferProductGrid(null, { purge: true });
-        }
-      }
       if (manualMatchesRequired) {
         showToastMessage(
           'Some requested products require manual matching. Please resolve them using the matcher.',
@@ -2976,8 +3112,12 @@ const requestedColumnDefsMap = useMemo(
   const currentRequestedMatch = requestedMatchQueue[0] ?? null;
   const currentPrefetchedSuggestions = null;
   void expansionCacheVersion; // trigger re-read from ref on cache update
+  void productPageCacheVersion; // trigger re-read from ref on cache update
   const currentPrefetchedExpansion: FilterExpansions | null = currentRequestedMatch
     ? expansionCacheRef.current.get(currentRequestedMatch.offerDetailId) ?? null
+    : null;
+  const currentPrefetchedFirstPage: GridResponse | null = currentRequestedMatch
+    ? productPageCacheRef.current.get(currentRequestedMatch.offerDetailId) ?? null
     : null;
   const matchAddProductInitialValues = useMemo<AddProductInitialValues | null>(() => {
     if (!currentRequestedMatch) return null;
@@ -3118,6 +3258,8 @@ const requestedColumnDefsMap = useMemo(
     expansionCacheRef.current.clear();
     expansionPrefetchingRef.current.clear();
     expansionPrefetchStartedRef.current = false;
+    productPageCacheRef.current.clear();
+    productPagePrefetchingRef.current.clear();
     // Force re-show requested columns that may have been hidden during the
     // populate/match flow.
     if (typeof window !== 'undefined') {
@@ -6878,6 +7020,7 @@ const requestedColumnDefsMap = useMemo(
           onRequestPayloadConsumed={clearMatchAddedProductId}
           prefetchedSuggestions={currentPrefetchedSuggestions}
           prefetchedExpansion={currentPrefetchedExpansion}
+          prefetchedFirstPage={currentPrefetchedFirstPage}
         />
       ) : null}
       <AddProductModal
