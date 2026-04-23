@@ -2650,22 +2650,6 @@ const requestedColumnDefsMap = useMemo(
     let productsAdded = 0;
     const unmatchedRequestedRows: RequestedProductMatchEntry[] = [];
     const unfoundFarnellPartNumbers: string[] = [];
-    const brandMismatchPending: Array<{
-      node: (typeof nodesToProcess)[0];
-      data: Record<string, unknown>;
-      offerDetailId: number;
-      productId: number;
-      productMeta: ProductSummary;
-      lookupInfo: RequestedLookupInfo;
-      brandIsFarnell: boolean;
-      farnellLookupResponse: FarnellLookupResponse | null;
-      parentCategoryId: number | null;
-      requestedQuantityValue: number | null;
-      actualQuantityValue: number | null;
-      descriptionOverride: string | null;
-      requestedBrand: string;
-      matchedBrand: string;
-    }> = [];
     const farnellProductCache = new Map<string, number>();
     const farnellLookupCache = new Map<string, FarnellLookupResponse | null>();
     const getFarnellLookupCacheKey = (partNumber: string, quantity: number, searchType: 'id' | 'manuPartNum' = 'id') => `${searchType}::${partNumber}::${quantity}`;
@@ -2874,25 +2858,7 @@ const requestedColumnDefsMap = useMemo(
             ? productMeta.BrandName.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
             : null;
           if (requestedBrandNorm && matchedBrandNorm && requestedBrandNorm !== matchedBrandNorm) {
-            const parentCategoryId = normalizeOfferDetailId(
-              (data as { ParentOfferDetailID?: unknown }).ParentOfferDetailID ?? null,
-            );
-            brandMismatchPending.push({
-              node,
-              data,
-              offerDetailId,
-              productId,
-              productMeta: productMeta!,
-              lookupInfo,
-              brandIsFarnell,
-              farnellLookupResponse,
-              parentCategoryId,
-              requestedQuantityValue,
-              actualQuantityValue,
-              descriptionOverride,
-              requestedBrand: lookupInfo.brand!,
-              matchedBrand: productMeta!.BrandName!,
-            });
+            unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
             continue;
           }
 
@@ -2974,101 +2940,6 @@ const requestedColumnDefsMap = useMemo(
           console.error('Failed to populate requested row in offer', err);
         }
         continue;
-      }
-
-      // Handle brand-mismatched items: prompt user before assigning
-      if (brandMismatchPending.length > 0) {
-        const mismatchSummary = brandMismatchPending
-          .map((item) => `${item.requestedBrand} → ${item.matchedBrand}`)
-          .join(', ');
-        const confirmed = await showConfirmDialog({
-          title: 'Brand mismatch detected',
-          message: `${brandMismatchPending.length} product${brandMismatchPending.length === 1 ? '' : 's'} matched with a different brand than requested (${mismatchSummary}). Accept these brand changes or send them to manual matching?`,
-          confirmLabel: 'Accept Changes',
-          cancelLabel: 'Manual Match',
-        });
-        if (confirmed) {
-          for (const pending of brandMismatchPending) {
-            try {
-              const assignment = await assignRequestedRowToProduct(
-                pending.offerDetailId,
-                pending.productId,
-                pending.parentCategoryId,
-              );
-              if (!assignment) {
-                unmatchedRequestedRows.push(buildRequestedProductMatchEntry(pending.data, pending.offerDetailId));
-                continue;
-              }
-
-              const pm = pending.productMeta;
-              const assignedProductBrandIsFarnell = pending.brandIsFarnell || isFarnellBrand(pm?.BrandName ?? null);
-              const productPartNumber = typeof pm?.PartNumber === 'string' ? pm.PartNumber.trim() : '';
-              const assignedPartNumber = pending.lookupInfo.partNumber
-                ?? (productPartNumber.length > 0 ? productPartNumber : null);
-
-              if (assignedProductBrandIsFarnell && assignedPartNumber) {
-                const quantityForLookupRaw = assignment.pricing?.quantity ?? pending.requestedQuantityValue ?? pending.actualQuantityValue ?? 1;
-                const quantityForLookup = quantityForLookupRaw > 0 ? Math.trunc(quantityForLookupRaw) : 1;
-                let lookupResponse = pending.farnellLookupResponse;
-                if (!lookupResponse || quantityForLookup !== 1 || pending.lookupInfo.partNumber !== assignedPartNumber) {
-                  lookupResponse = await getFarnellLookupCached(assignedPartNumber, quantityForLookup);
-                }
-                if (lookupResponse?.product.matchedPrice != null) {
-                  const farnellPatch = buildFarnellPricingPatch(
-                    pending.offerDetailId,
-                    lookupResponse.product.matchedPrice,
-                    assignment.pricing,
-                  );
-                  if (farnellPatch) {
-                    updates.push(farnellPatch);
-                  }
-                }
-              }
-
-              const productDescription = normalizeDescriptionValue(pm?.Description ?? null);
-              const description = productDescription ?? pending.descriptionOverride ?? null;
-              const requestedModelNumberRaw = getExactTextValue(
-                (pending.data as { RequestedModelNo?: unknown }).RequestedModelNo ?? null,
-              );
-              const requestedBrandRaw = getExactTextValue(
-                (pending.data as { RequestedBrand?: unknown }).RequestedBrand ?? null,
-              );
-              const partNumber = pm?.PartNumber ?? null;
-              const modelNumber = requestedModelNumberRaw
-                ?? getExactTextValue((pending.data as { ModelNumber?: unknown }).ModelNumber ?? null)
-                ?? pm?.ModelNumber
-                ?? null;
-              const brandName = requestedBrandRaw
-                ?? getExactTextValue((pending.data as { BrandName?: unknown }).BrandName ?? null)
-                ?? pm?.BrandName
-                ?? null;
-              const fallbackProductMeta: ProductSummary = {
-                ProductID: pending.productId,
-                PartNumber: null,
-                ModelNumber: null,
-                BrandName: null,
-                Description: null,
-              };
-              const summary = pm ?? fallbackProductMeta;
-              promoteNodeToProduct(
-                pending.node,
-                summary,
-                partNumber ?? null,
-                modelNumber ?? null,
-                brandName ?? null,
-                description ?? null,
-              );
-              productsAdded += 1;
-            } catch (err) {
-              console.error('Failed to assign brand-mismatched row', err);
-            }
-          }
-        } else {
-          // User declined — send all brand-mismatched items to manual matching
-          for (const pending of brandMismatchPending) {
-            unmatchedRequestedRows.push(buildRequestedProductMatchEntry(pending.data, pending.offerDetailId));
-          }
-        }
       }
 
       if (updates.length > 0) {
@@ -6264,11 +6135,13 @@ const requestedColumnDefsMap = useMemo(
           setGroupNet(g, toUnits(g.newNet) + steps);
           diffUnits -= steps * g.totalQty;
         }
-        // Pass 2: one step on the smallest-qty group if it moves closer to target
-        // (may overshoot). Preserves equal-price rule; can't always hit exact target.
+        // Pass 2: prefer the most expensive group for the residual. Skip groups
+        // whose totalQty would overshoot (equal-price rule means a totalQty=2
+        // group moves the total by 2 cents per step, so it can't close a 1-cent
+        // gap — the guard below auto-skips to the next most expensive group).
         if (diffUnits !== 0) {
-          const byQtyAsc = groups.filter((g) => g.totalQty > 0).sort((a, b) => a.totalQty - b.totalQty);
-          for (const g of byQtyAsc) {
+          const byPriceDesc = groups.filter((g) => g.totalQty > 0).sort((a, b) => b.newNet - a.newNet);
+          for (const g of byPriceDesc) {
             if (diffUnits === 0) break;
             const dir = diffUnits > 0 ? 1 : -1;
             const delta = dir * g.totalQty;

@@ -17,6 +17,8 @@ import { useAutoSaveTimer } from '../../hooks/useAutoSaveTimer';
 import { pushCellEditUndo } from '../../../lib/undoHelpers';
 import { addRecentOffer, buildRecentOfferLabel } from '../../lib/recentOffers';
 import UKDatePicker from '../../components/DatePicker';
+import AddContactModal from '../../components/AddContactModal';
+import lookupButtonStyles from '../../components/LookupAddButton.module.css';
 import { formatDisplayValue } from '../../lib/formatDisplayValue';
 import { normalizeValueForApi } from '../../lib/normalizeValueForApi';
 import { formatDateInputValue } from '../../lib/formatDateInputValue';
@@ -413,6 +415,7 @@ export default function OfferBasicDataClient({
   const [contactEntries, setContactEntries] = useState<OfferContactInfo[]>(contacts);
   const [isRefreshingContacts, setIsRefreshingContacts] = useState(false);
   const [includeInitialContactOption, setIncludeInitialContactOption] = useState(true);
+  const [isAddContactOpen, setIsAddContactOpen] = useState(false);
   const contactRefreshTokenRef = useRef(0);
   const [highlightOrderSignedMissing, setHighlightOrderSignedMissing] = useState(false);
 
@@ -1121,9 +1124,22 @@ export default function OfferBasicDataClient({
   }, [fetchContactsByCustomer, record.CustomerID, refreshLookups, values.customer]);
 
   const renderLookupAddButton = useCallback(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    (_: FieldDefinition) => null,
-    [],
+    (field: FieldDefinition) => {
+      if (field.id !== 'contactId') return null;
+      const customerReady = activeCustomerId != null;
+      return (
+        <button
+          type="button"
+          className={lookupButtonStyles.lookupAddButton}
+          onClick={() => setIsAddContactOpen(true)}
+          disabled={!customerReady}
+          title={customerReady ? 'Add a new contact for this customer' : 'Select a customer first'}
+        >
+          + Add Contact
+        </button>
+      );
+    },
+    [activeCustomerId],
   );
 
   const getFieldContextMenuItemLabel = useCallback((fieldId: string) => {
@@ -1455,6 +1471,33 @@ export default function OfferBasicDataClient({
             {getFieldContextMenuItemLabel(contextMenuState.fieldId)}
           </button>
         </div>
+      ) : null}
+      {isAddContactOpen ? (
+        <AddContactModal
+          open
+          onClose={() => setIsAddContactOpen(false)}
+          customerId={activeCustomerId != null ? String(activeCustomerId) : ''}
+          customerName={customerText || null}
+          onCreated={(contactId, fullName) => {
+          const newEntry: OfferContactInfo = {
+            ContactID: contactId,
+            FirstName: null,
+            LastName: null,
+            FullName: fullName,
+          };
+          setContactEntries((prev) => {
+            if (prev.some((entry) => Number(entry.ContactID) === contactId)) return prev;
+            return [...prev, newEntry];
+          });
+          setIncludeInitialContactOption(false);
+          const contactDef = fieldDefinitions.find((def) => def.id === 'contactId');
+          if (contactDef) {
+            handleSelectChange(contactDef, String(contactId));
+          } else {
+            setValues((prev) => ({ ...prev, contactId: String(contactId) }));
+          }
+        }}
+        />
       ) : null}
     </>
   );

@@ -397,8 +397,9 @@ function getOfferMeta(data: OfferPdfData, lang: PdfLang) {
 }
 
 /**
- * If comment/delivery are not visible as columns, render them subtly under Description.
- * Warranty is intentionally excluded when the warranty column is not selected.
+ * If delivery is not visible as a column, render it subtly under Description.
+ * Comment and Warranty are intentionally excluded when their columns are not selected —
+ * they should appear only when explicitly selected as columns.
  */
 function buildDescriptionCell(
   row: OfferProductRow,
@@ -409,7 +410,6 @@ function buildDescriptionCell(
     return { text: baseText };
   }
 
-  const showCommentCol = selectedColumns.includes('comment');
   const showDeliveryCol = selectedColumns.includes('delivery');
 
   const extraLines: string[] = [];
@@ -417,11 +417,6 @@ function buildDescriptionCell(
   if (!showDeliveryCol) {
     const delivery = str(row.delivery);
     if (delivery) extraLines.push(`Delivery: ${delivery}`);
-  }
-
-  if (!showCommentCol) {
-    const comment = str(row.comment);
-    if (comment) extraLines.push(comment);
   }
 
   if (extraLines.length === 0) {
@@ -1141,9 +1136,6 @@ function buildTotalsAndTerms(
   equipmentList: boolean = false,
 ) {
   const hasPriceColumns = selectedColumns.some(c => PRICE_COLUMNS.has(c));
-  const hasNetColumns = selectedColumns.includes('unitPrice') || selectedColumns.includes('total');
-  const hasListColumns = selectedColumns.includes('listPrice') || selectedColumns.includes('totalList');
-  const useListTotal = hasListColumns && !hasNetColumns;
   const discountSummary = calculateDiscountSummary(data);
   const showDiscountSummary = discountSummary.discountEur > 0;
 
@@ -1192,7 +1184,7 @@ function buildTotalsAndTerms(
     : [];
 
   const finalPriceLabel = str(data.finalPriceLabel) || L.total;
-  const finalPriceValue = useListTotal ? discountSummary.listSubtotal : discountSummary.totalNet;
+  const finalPriceValue = discountSummary.totalNet;
   const totalRow: PdfCell[] = [
     { text: finalPriceLabel, ...finalPriceStyle },
     { text: formatCurrency(finalPriceValue), ...finalPriceStyle, alignment: 'right' },

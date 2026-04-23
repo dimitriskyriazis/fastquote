@@ -10,6 +10,8 @@ import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import panelStyles from '../[offerId]/OfferBasicDataPanel.module.css';
 import styles from './OfferCreateClient.module.css';
 import UKDatePicker from '../../components/DatePicker';
+import AddContactModal from '../../components/AddContactModal';
+import lookupButtonStyles from '../../components/LookupAddButton.module.css';
 import {
   DEFAULT_OFFER_LANGUAGE,
   OFFER_LANGUAGES,
@@ -215,6 +217,7 @@ export default function OfferCreateClient({
   const [contactOptions, setContactOptions] = useState<DropdownOption[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [contactLoadError, setContactLoadError] = useState<string | null>(null);
+  const [isAddContactOpen, setIsAddContactOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [customerText, setCustomerText] = useState('');
   const [showCustomerList, setShowCustomerList] = useState(false);
@@ -821,6 +824,17 @@ export default function OfferCreateClient({
           {field.label}
           {field.required ? <span className={styles.requiredMark}>*</span> : null}
         </div>
+        {field.id === 'contactId' ? (
+          <button
+            type="button"
+            className={lookupButtonStyles.lookupAddButton}
+            onClick={() => setIsAddContactOpen(true)}
+            disabled={!values.customerId.trim()}
+            title={!values.customerId.trim() ? 'Select a customer first' : 'Add a new contact for this customer'}
+          >
+            + Add Contact
+          </button>
+        ) : null}
       </div>
     </label>
   );
@@ -1134,6 +1148,34 @@ export default function OfferCreateClient({
           </div>
         </section>
       </form>
+      {isAddContactOpen ? (
+        <AddContactModal
+          open
+          onClose={() => setIsAddContactOpen(false)}
+          customerId={values.customerId}
+          customerName={customerText || localCustomers.find((c) => c.value === values.customerId)?.label || null}
+          onCreated={(contactId, fullName) => {
+          const newOption: DropdownOption = { value: String(contactId), label: fullName };
+          setContactOptions((prev) => {
+            if (prev.some((opt) => opt.value === newOption.value)) return prev;
+            return [...prev, newOption];
+          });
+          setContactLoadError(null);
+          appliedContactParamRef.current = true;
+          setValues((prev) => ({ ...prev, contactId: newOption.value }));
+          setFieldErrors((prev) => {
+            if (!prev.contactId) return prev;
+            const next = { ...prev };
+            delete next.contactId;
+            return next;
+          });
+          const customerId = values.customerId.trim();
+          if (customerId) {
+            void loadContactsForCustomer(customerId);
+          }
+        }}
+        />
+      ) : null}
     </>
   );
 }
