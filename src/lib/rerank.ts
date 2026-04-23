@@ -146,10 +146,16 @@ export async function performRerank(input: RerankInput): Promise<RankedEntry[]> 
         // latency/cost for this size of prompt.  The rerank rubric has
         // real category-vs-category judgment calls (patch panel vs
         // SmartPanel vs patch cord) so a reasoning-tier model pays off.
+        //
+        // gpt-5 family rejects the legacy `max_tokens` param — it only
+        // accepts `max_completion_tokens` (the visible output budget; the
+        // model internally consumes a separate reasoning-token budget that
+        // we don't cap here).  Sending max_tokens silently 400's the call
+        // and rerank falls back to keyword order.
         model: 'gpt-5-mini',
         response_format: { type: 'json_object' },
         temperature: 0,
-        max_tokens: 2000,
+        max_completion_tokens: 2000,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: prompt },

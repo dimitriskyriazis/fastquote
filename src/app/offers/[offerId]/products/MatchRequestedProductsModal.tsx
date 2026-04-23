@@ -15,7 +15,6 @@ import { useFarnellProductResolver } from '../../../hooks/useFarnellProductResol
 import {
   isFarnellBrand,
   buildRequestedFilterState,
-  buildBasicRequestedFilterState,
   buildPromptFilterState,
   buildNegativeHiddenTokens,
   mergeExpansionsIntoFilterModel,
@@ -24,7 +23,6 @@ import {
   type FilterExpansions,
   type PromptRouting,
 } from '../offerProductsUtils';
-import { useSmartFiltering } from '../../../hooks/useSmartFiltering';
 import {
   AiSearchPromptPill,
   AI_GRID_LOCK_CLASS,
@@ -312,10 +310,6 @@ export default function MatchRequestedProductsModal({
     [],
   );
 
-  const [smartFilteringEnabled, setSmartFilteringEnabled] = useSmartFiltering();
-  const smartFilteringEnabledRef = useRef(smartFilteringEnabled);
-  smartFilteringEnabledRef.current = smartFilteringEnabled;
-
   // Live AI expansion for the current entry, fetched by the modal when the
   // parent didn't prefetch.  Populated in the useEffect further down; folded
   // into the filter model via effectiveExpansion so the initial grid query
@@ -329,22 +323,10 @@ export default function MatchRequestedProductsModal({
   // applied server-side with identical WHERE + relevance-score semantics.
   // Semantics shared with AddProductsModal via the common helper.
   //
-  // When the user flips "Smart filtering" off, fall back to a minimal
-  // PartNumber / ModelNumber-only filter with no hidden tokens — the server
-  // still cross-searches PartNumber / ModelNumber / LegacyPartNoCleaned on
-  // its own when either column is filtered.
   // Effective expansion: prefer the parent's prefetched response if present,
   // otherwise use the modal's own /expand fetch (liveExpansion).
   const effectiveExpansion = prefetchedExpansion ?? liveExpansion;
   const { requestedFilterModel, hiddenFilterTokens } = useMemo(() => {
-    if (!smartFilteringEnabled) {
-      const { visibleModel } = buildBasicRequestedFilterState({
-        requestedBrand: entry.requestedBrand,
-        requestedPartNumber: entry.requestedPartNumber,
-        requestedModelNumber: entry.requestedModelNumber,
-      });
-      return { requestedFilterModel: visibleModel, hiddenFilterTokens: null as HiddenFilterTokens | null };
-    }
     const { visibleModel, hiddenTokens } = buildRequestedFilterState({
       requestedBrand: entry.requestedBrand,
       requestedPartNumber: entry.requestedPartNumber,
@@ -358,7 +340,6 @@ export default function MatchRequestedProductsModal({
     });
     return { requestedFilterModel: visibleModel, hiddenFilterTokens: hiddenTokens };
   }, [
-    smartFilteringEnabled,
     entry.requestedBrand,
     entry.requestedModelNumber,
     entry.requestedPartNumber,
@@ -373,6 +354,31 @@ export default function MatchRequestedProductsModal({
   // extended terms.  Cleared on entry change so each row starts fresh.
   const [overrideHiddenTokens, setOverrideHiddenTokens] = useState<HiddenFilterTokens | null>(null);
   const effectiveHiddenTokens = overrideHiddenTokens ?? hiddenFilterTokens;
+  // Refetch the grid whenever the hidden-token payload changes AFTER the
+  // initial render for this entry.  AgGridAll reads requestPayload from a
+  // ref at fetch time and does NOT auto-refetch on prop change, so without
+  // this effect the widened-recall hidden tokens that /expand writes after
+  // the user's filter-change debounce never actually reach the server.
+  //
+  // The initial-fire skip is critical: on entry change we remount with
+  // prefetchedFirstPage + prefetchedExpansion-derived tokens already
+  // correct, so firing a purged refresh on mount would wipe the just-
+  // consumed cached first page and force a redundant ~1s SQL round-trip.
+  // The skip is reset on every entry change so the NEXT entry also gets
+  // its one-free-pass.
+  const hiddenTokensInitialFireRef = useRef(true);
+  useEffect(() => {
+    hiddenTokensInitialFireRef.current = true;
+  }, [entry.offerDetailId]);
+  useEffect(() => {
+    if (hiddenTokensInitialFireRef.current) {
+      hiddenTokensInitialFireRef.current = false;
+      return;
+    }
+    const api = productsApiRef.current as unknown as { refreshServerSide?: (p?: { purge?: boolean }) => void; isDestroyed?: () => boolean } | null;
+    if (!api || api.isDestroyed?.()) return;
+    try { api.refreshServerSide?.({ purge: true }); } catch { /* noop */ }
+  }, [effectiveHiddenTokens]);
   // Prompt-driven AI search lock state (mirrors AddProductsModal).  When
   // true: prompt input becomes read-only, the column filter row is hidden,
   // and a banner in the filter-row slot shows the AI's interpretation.
@@ -742,7 +748,8 @@ export default function MatchRequestedProductsModal({
       // setFilterModel calls (entry-auto-apply, prompt override, AI merge)
       // increment suppressNextFilterChangeRef.current first, and we
       // consume one token per fire here.
-      if (suppressNextFilterChangeRef.current > 0) {
+      const wasProgrammatic = suppressNextFilterChangeRef.current > 0;
+      if (wasProgrammatic) {
         suppressNextFilterChangeRef.current -= 1;
       } else {
         setUserTouchedFilters(true);
@@ -760,12 +767,23 @@ export default function MatchRequestedProductsModal({
         setFarnellPartNumber(partFilter?.filter ?? null);
         setFarnellDescription(descFilter?.filter ?? null);
       } catch { /* noop */ }
-      // Debounced semantic expansion when user edits column filters directly.
-      // Skipped when "Smart filtering" is off — plain column filters only.
+      // Only schedule the debounced /expand for genuine user edits.  For
+      // programmatic setFilterModel calls (entry-auto-apply, prompt, AI
+      // merge) the hidden tokens are already correct from the prefetched
+      // expansion — firing /expand again would just produce the same tokens
+      // and trigger a wasteful grid refetch a few seconds later that
+      // manifests as the "rows flash, then reload" regression after
+      // advancing to an entry with a prefetched first page.
+      if (wasProgrammatic) {
+        if (semanticExpandTimerRef.current != null) {
+          window.clearTimeout(semanticExpandTimerRef.current);
+          semanticExpandTimerRef.current = null;
+        }
+        return;
+      }
       if (semanticExpandTimerRef.current != null) {
         window.clearTimeout(semanticExpandTimerRef.current);
       }
-      if (!smartFilteringEnabledRef.current) return;
       semanticExpandTimerRef.current = window.setTimeout(() => {
         semanticExpandTimerRef.current = null;
         triggerSemanticFromFiltersRef.current?.(api);
@@ -867,7 +885,6 @@ export default function MatchRequestedProductsModal({
   // fast; LLM rerank (triggered on first grid response) handles
   // relevance.
   useEffect(() => {
-    if (!smartFilteringEnabled) { setLiveExpansion(null); return; }
     if (prefetchedExpansion) { setLiveExpansion(null); return; }
     setLiveExpansion(null);
     const targetEntryId = entry.offerDetailId;
@@ -904,7 +921,6 @@ export default function MatchRequestedProductsModal({
     entry.requestedDescription2,
     entry.requestedDescription3,
     prefetchedExpansion,
-    smartFilteringEnabled,
     offerId,
   ]);
 
@@ -960,6 +976,17 @@ export default function MatchRequestedProductsModal({
     if (sig === lastSemanticSigRef.current) return;
     lastSemanticSigRef.current = sig;
     if (!anyValue) {
+      setOverrideHiddenTokens(null);
+      return;
+    }
+    // Precise-code mode: when the user has typed into Part or Model, they're
+    // searching by a specific identifier and smart expansion does more harm
+    // than good — "sec" in Model would /expand to SEC→SECURE/SECURITY and
+    // bleed into Description matches via hidden tokens, returning unrelated
+    // rows (e.g. "Secure mounting bracket" when the user wanted a SEC-4
+    // model).  Skip the /expand entirely and drop any previously-applied
+    // override tokens so the grid runs plain visible-filter matching.
+    if (requestedPartNumber || requestedModelNumber) {
       setOverrideHiddenTokens(null);
       return;
     }
@@ -1260,18 +1287,6 @@ export default function MatchRequestedProductsModal({
               </div>
             </div>
             <div className={styles.headerActions}>
-              <label
-                className={styles.smartFilterToggle}
-                title="Smart filtering: when ON the modal folds description, brand and AI synonyms into the filter. When OFF only part/model number filters are emitted."
-              >
-                <input
-                  type="checkbox"
-                  checked={smartFilteringEnabled}
-                  onChange={(e) => setSmartFilteringEnabled(e.target.checked)}
-                  disabled={assigning}
-                />
-                <span>Smart filtering</span>
-              </label>
               <AiSearchPromptPill
                 promptText={promptText}
                 onPromptTextChange={setPromptText}
@@ -1279,7 +1294,7 @@ export default function MatchRequestedProductsModal({
                 onClear={handleClearAIPrompt}
                 submitted={promptSubmitted}
                 busy={suggesting}
-                disabled={assigning || !smartFilteringEnabled}
+                disabled={assigning}
               />
               {noSuggestionsFound && !suggesting && (
                 <span className={styles.noSuggestionsLabel}>No extra terms to add</span>

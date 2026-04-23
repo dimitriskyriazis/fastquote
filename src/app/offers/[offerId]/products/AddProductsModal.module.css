@@ -610,6 +610,31 @@
   border: 1px solid #e2e8f0;
 }
 
+/* Newly-added product (pinned top) row styling — light purple (unselected)
+   and darker purple (selected).  Classes applied via getRowClass on rows
+   tagged with __source === 'new-product'; __selected adds the modifier. */
+.productsGridShell :global(.ag-floating-top .ag-row.new-product-pinned-row),
+.productsGridShell :global(.ag-floating-top .ag-row.new-product-pinned-row .ag-cell) {
+  background: #e9d5ff !important;
+  background-color: #e9d5ff !important;
+  cursor: pointer;
+}
+.productsGridShell.productsGridShell.productsGridShell :global(.ag-floating-top .ag-row.new-product-pinned-row),
+.productsGridShell.productsGridShell.productsGridShell :global(.ag-floating-top .ag-row.new-product-pinned-row .ag-cell) {
+  background: #e9d5ff !important;
+  background-color: #e9d5ff !important;
+}
+.productsGridShell :global(.ag-floating-top .ag-row.new-product-pinned-row--selected),
+.productsGridShell :global(.ag-floating-top .ag-row.new-product-pinned-row--selected .ag-cell) {
+  background: #b49ae0 !important;
+  background-color: #b49ae0 !important;
+}
+.productsGridShell.productsGridShell.productsGridShell :global(.ag-floating-top .ag-row.new-product-pinned-row--selected),
+.productsGridShell.productsGridShell.productsGridShell :global(.ag-floating-top .ag-row.new-product-pinned-row--selected .ag-cell) {
+  background: #b49ae0 !important;
+  background-color: #b49ae0 !important;
+}
+
 /* Farnell search result (pinned) row styling — amber tones.
    Target rows by row-id attribute since Farnell rows use "farnell-{sku}" IDs. */
 .productsGridShell :global(.ag-floating-top .ag-row[row-id^="farnell-"]) {

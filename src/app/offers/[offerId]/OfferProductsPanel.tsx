@@ -57,7 +57,6 @@ import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselect
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
 import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
-import { useSmartFiltering } from '../../hooks/useSmartFiltering';
 import MatchRequestedProductsModal, {
   type RequestedProductMatchEntry,
 } from './products/MatchRequestedProductsModal';
@@ -139,7 +138,6 @@ import {
   findDeleteMenuItemIndex,
   buildEndpointForOffer,
   buildRequestedFilterState,
-  buildBasicRequestedFilterState,
   buildNegativeHiddenTokens,
   type RequestedDisplayFieldKey,
   REQUESTED_DISPLAY_FIELD_KEYS,
@@ -383,10 +381,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   // Read-only here — the modals own the UI control; we mirror the value so
   // background prefetch generates rows that match what the modal actually
   // sends on first paint.
-  const [smartFilteringEnabled] = useSmartFiltering();
-  const smartFilteringEnabledRef = useRef(smartFilteringEnabled);
-  smartFilteringEnabledRef.current = smartFilteringEnabled;
-
   // --- AI expansion prefetch cache ---
   // Fetches expansion tokens for every requested entry in the queue upfront
   // with bounded concurrency (4 in-flight).  Modal folds cached tokens into
@@ -416,39 +410,37 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     if (productPageCacheRef.current.has(id) || productPagePrefetchingRef.current.has(id)) return;
     productPagePrefetchingRef.current.add(id);
     try {
-      // Match the modal's filter-model build exactly, honoring the current
-      // Smart-filtering toggle.  Smart ON → fuzzy + hidden tokens from the
-      // full expansion flow.  Smart OFF → plain equals chips on Part/Model
-      // only, no hidden tokens.  Mismatching this would serve wrong rows on
-      // the first paint after the toggle flips.
-      const smart = smartFilteringEnabledRef.current;
-      let filterModel: Record<string, unknown>;
-      let hiddenTokens: HiddenFilterTokens | null = null;
-      if (smart) {
-        const built = buildRequestedFilterState({
-          requestedBrand: entry.requestedBrand,
-          requestedPartNumber: entry.requestedPartNumber,
-          requestedModelNumber: entry.requestedModelNumber,
-          requestedDescriptions: [
-            entry.requestedDescription,
-            entry.requestedDescription2,
-            entry.requestedDescription3,
-          ],
-          prefetchedExpansion: expansion,
-        });
-        filterModel = built.visibleModel ?? {};
-        hiddenTokens = built.hiddenTokens ?? null;
-      } else {
-        const { visibleModel } = buildBasicRequestedFilterState({
-          requestedBrand: entry.requestedBrand,
-          requestedPartNumber: entry.requestedPartNumber,
-          requestedModelNumber: entry.requestedModelNumber,
-        });
-        filterModel = visibleModel ?? {};
-      }
+      // Match the modal's filter-model build exactly — fuzzy + hidden
+      // tokens from the full expansion flow, same helper the modal uses.
+      const built = buildRequestedFilterState({
+        requestedBrand: entry.requestedBrand,
+        requestedPartNumber: entry.requestedPartNumber,
+        requestedModelNumber: entry.requestedModelNumber,
+        requestedDescriptions: [
+          entry.requestedDescription,
+          entry.requestedDescription2,
+          entry.requestedDescription3,
+        ],
+        prefetchedExpansion: expansion,
+      });
+      const filterModel: Record<string, unknown> = built.visibleModel ?? {};
+      const hiddenTokens: HiddenFilterTokens | null = built.hiddenTokens ?? null;
       const body: Record<string, unknown> = {
         action: 'products',
         orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
+        // Send `requested` so the server runs its inline LLM rerank on the
+        // prefetched first page too.  Without this, the cached page the
+        // modal consumes is keyword-ordered only, and because AgGridAll's
+        // prefetch-consumption path never re-fetches block 0, rerank would
+        // be silently skipped for any entry the user advances into.
+        requested: {
+          brand: entry.requestedBrand,
+          partNumber: entry.requestedPartNumber,
+          modelNumber: entry.requestedModelNumber,
+          description: entry.requestedDescription,
+          description2: entry.requestedDescription2,
+          description3: entry.requestedDescription3,
+        },
         request: {
           startRow: 0,
           // Must match the modal grid's cacheBlockSize (200) — AG Grid
@@ -467,10 +459,8 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         fields: ['PartNumber', 'Description', 'BrandName', 'ModelNumber', 'ListPrice', 'CostPrice', 'PriceListName'],
       };
       if (hiddenTokens) body.hiddenFilterTokens = hiddenTokens;
-      if (smart) {
-        const negative = buildNegativeHiddenTokens(expansion, hiddenTokens);
-        if (negative) body.negativeHiddenTokens = negative;
-      }
+      const negative = buildNegativeHiddenTokens(expansion, hiddenTokens);
+      if (negative) body.negativeHiddenTokens = negative;
       const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -493,13 +483,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     if (expansionCacheRef.current.has(id) || expansionPrefetchingRef.current.has(id)) return;
     expansionPrefetchingRef.current.add(id);
     try {
-      // When Smart filtering is off the modal ignores expansion tokens
-      // entirely, so skip the /expand round-trip and go straight to a
-      // basic-filter product-page prefetch.
-      if (!smartFilteringEnabledRef.current) {
-        void prefetchProductPage(entry, null);
-        return;
-      }
       const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/expand`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -529,20 +512,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       expansionPrefetchingRef.current.delete(id);
     }
   }, [offerId, prefetchProductPage]);
-
-  // When Smart filtering flips, invalidate every prefetched page and let the
-  // background workers re-fire with the new filter mode.  Without this the
-  // modal would render cached smart-mode rows under a basic-mode request
-  // (or vice versa) on the very first navigation after toggling.
-  useEffect(() => {
-    expansionCacheRef.current.clear();
-    expansionPrefetchingRef.current.clear();
-    productPageCacheRef.current.clear();
-    productPagePrefetchingRef.current.clear();
-    expansionPrefetchStartedRef.current = false;
-    setExpansionCacheVersion((v) => v + 1);
-    setProductPageCacheVersion((v) => v + 1);
-  }, [smartFilteringEnabled]);
 
   // Background prefetch for upcoming entries.  Held off until the current
   // entry's modal has actually loaded its grid data — otherwise entries 2+
@@ -588,7 +557,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     };
     const workers = Array.from({ length: Math.min(MAX_CONCURRENT, entries.length) }, () => worker());
     void Promise.all(workers);
-  }, [requestedMatchQueue, prefetchExpansion, smartFilteringEnabled, firstEntryReady]);
+  }, [requestedMatchQueue, prefetchExpansion, firstEntryReady]);
   const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() =>
     readCollapsedCategoryPathsFromCookie(offerId),
   );

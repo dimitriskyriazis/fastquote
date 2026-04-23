@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import dynamic from 'next/dynamic';
-import type { CellValueChangedEvent, ColDef, GridApi, RowNode } from 'ag-grid-community';
+import type { CellValueChangedEvent, ColDef, GridApi, RowClassParams, RowNode } from 'ag-grid-community';
 import styles from './AddProductsModal.module.css';
 import { showToastMessage } from '../../../../lib/toast';
 import { priceListStatusClassRules } from '../../../../lib/priceListStatus';
@@ -13,7 +13,6 @@ import { useFarnellProductResolver } from '../../../hooks/useFarnellProductResol
 import {
   isFarnellBrand,
   buildRequestedFilterState,
-  buildBasicRequestedFilterState,
   buildPromptFilterState,
   buildNegativeHiddenTokens,
   mergeExpansionsIntoHiddenTokens,
@@ -21,7 +20,6 @@ import {
   type FilterExpansions,
   type PromptRouting,
 } from '../offerProductsUtils';
-import { useSmartFiltering } from '../../../hooks/useSmartFiltering';
 import {
   AiSearchPromptPill,
   AI_GRID_LOCK_CLASS,
@@ -119,6 +117,19 @@ const computeNextItemNo = (treeOrdering: string): string => {
 const emptyColumnWidthDefaults = {};
 const productAutoSizeExclusions = ['Description'];
 
+const NEW_PRODUCT_ROW_CLASS = 'new-product-pinned-row';
+const NEW_PRODUCT_ROW_SELECTED_CLASS = 'new-product-pinned-row--selected';
+
+const getProductRowClass = (
+  params: RowClassParams<Record<string, unknown>>,
+): string[] | undefined => {
+  const data = params.data as { __source?: unknown; __selected?: unknown } | undefined;
+  if (data?.__source !== 'new-product') return undefined;
+  return data.__selected
+    ? [NEW_PRODUCT_ROW_CLASS, NEW_PRODUCT_ROW_SELECTED_CLASS]
+    : [NEW_PRODUCT_ROW_CLASS];
+};
+
 type ProductsGridPanelProps = {
   endpoint: string;
   productColumns: ColDef[];
@@ -169,6 +180,7 @@ const ProductsGridPanel = React.memo(function ProductsGridPanel({
           onGridReady={handleProductsGridReady}
           onModelUpdated={handleProductsGridModelUpdated}
           onRequestPayloadConsumed={onRequestPayloadConsumed}
+          getRowClass={getProductRowClass}
           columnStateNamespace="add-products-modal-v2"
           applyColumnStateOrder={true}
           maintainColumnOrder={true}
@@ -258,10 +270,12 @@ export default function AddProductsModal({
   // Tracks a locally-pinned new product row (created via "Add product").
   // The pinned-rows sync effect merges this with Farnell results so the new
   // product sits on top and isn't wiped when Farnell results clear.
+  // The pinned row stores its visual-selection flag as `__selected` on the
+  // row data itself.  Pinned rows don't participate in AG Grid's native
+  // selection (setSelected is a no-op on pinned nodes in v34+), so we drive
+  // the purple "selected" shade via the data and sync `selectedProducts` for
+  // the submit payload.
   const [pinnedNewProductRow, setPinnedNewProductRow] = useState<Record<string, unknown> | null>(null);
-  const [smartFilteringEnabled, setSmartFilteringEnabled] = useSmartFiltering();
-  const smartFilteringEnabledRef = useRef(smartFilteringEnabled);
-  smartFilteringEnabledRef.current = smartFilteringEnabled;
   const [submitting, setSubmitting] = useState(false);
   const [comment, setComment] = useState('');
   const [requestedRows, setRequestedRows] = useState<RequestedRow[]>([]);
@@ -355,7 +369,22 @@ export default function AddProductsModal({
   }, [hiddenFilterTokens, negativeDescriptionTerms]);
 
   const handleProductSelection = useCallback((rows: ProductRow[]) => {
-    setSelectedProducts(rows ?? []);
+    // Merge rather than replace: AG Grid's selectionChanged event only knows
+    // about main-grid rows, so a naive replace wipes out any pinned rows
+    // (new-product or Farnell) we've tracked as selected.  Keep anything
+    // marked with __source from the previous state.
+    setSelectedProducts((prev) => {
+      const pinnedSelected = prev.filter(
+        (row) => (row as { __source?: unknown }).__source != null,
+      );
+      const mainRows = (rows ?? []).filter((row) => {
+        const productId = (row as { ProductID?: unknown }).ProductID;
+        return !pinnedSelected.some(
+          (pinned) => (pinned as { ProductID?: unknown }).ProductID === productId,
+        );
+      });
+      return [...pinnedSelected, ...mainRows];
+    });
   }, []);
 
   // AI-driven filter expansion.  `prompt` path: user typed a free-text query —
@@ -568,16 +597,6 @@ export default function AddProductsModal({
       // Deselected / below-mode: keep existing filters untouched.
       return;
     }
-    if (!smartFilteringEnabled) {
-      const { visibleModel } = buildBasicRequestedFilterState({
-        requestedBrand: placementAnchor.requestedBrand,
-        requestedPartNumber: placementAnchor.requestedPartNo,
-        requestedModelNumber: placementAnchor.requestedModelNo,
-      });
-      api.setFilterModel(visibleModel);
-      setHiddenFilterTokens(null);
-      return;
-    }
     const { visibleModel, hiddenTokens } = buildRequestedFilterState({
       requestedBrand: placementAnchor.requestedBrand,
       requestedPartNumber: placementAnchor.requestedPartNo,
@@ -586,7 +605,7 @@ export default function AddProductsModal({
     });
     api.setFilterModel(visibleModel);
     setHiddenFilterTokens(hiddenTokens);
-  }, [placementAnchor, defaultPlacementMode, smartFilteringEnabled]);
+  }, [placementAnchor, defaultPlacementMode]);
 
   // Sync selectedRequestedRowId with placement mode for anchor-based requested rows
   useEffect(() => {
@@ -1037,6 +1056,7 @@ export default function AddProductsModal({
       onAdded(addedCount, affectedIds);
       setSelectedRequestedRowId(null);
       setSelectedProducts([]);
+      setPinnedNewProductRow(null);
       setComment('');
       try { productsApiRef.current?.deselectAll?.(); } catch { /* noop */ }
       pendingFilterClearRef.current = true;
@@ -1073,6 +1093,27 @@ export default function AddProductsModal({
       }
     }
   }, []);
+
+  // Refetch the grid whenever the hidden-token payload changes AFTER the
+  // initial render.  AgGridAll reads requestPayload from a ref at fetch
+  // time and does NOT auto-refetch on prop change, so without this effect
+  // the widened-recall hidden tokens written after the user's filter-
+  // change debounce never reach the server — column-filter search would
+  // stay at plain-keyword results.
+  //
+  // The initial-fire skip avoids wiping the grid's first cached page on
+  // mount: the initial tokens are already folded into the opening query,
+  // and refreshing immediately just double-fetches.
+  const hiddenTokensInitialFireRef = useRef(true);
+  useEffect(() => {
+    if (hiddenTokensInitialFireRef.current) {
+      hiddenTokensInitialFireRef.current = false;
+      return;
+    }
+    const api = productsApiRef.current as (GridApi & { refreshServerSide?: (p?: { purge?: boolean }) => void; isDestroyed?: () => boolean }) | null;
+    if (!api || api.isDestroyed?.()) return;
+    try { api.refreshServerSide?.({ purge: true }); } catch { /* noop */ }
+  }, [hiddenFilterTokens, negativeDescriptionTerms]);
 
   const refreshProductsGrid = useCallback(() => {
     const api = productsApiRef.current;
@@ -1216,7 +1257,7 @@ export default function AddProductsModal({
         if (!res.ok) return;
         const data = (await res.json()) as { ok?: boolean; product?: Record<string, unknown> | null } | null;
         if (cancelled || !data?.ok || !data.product) return;
-        const rowData = data.product;
+        const rowData = { ...data.product, __source: 'new-product', __selected: true };
         setPinnedNewProductRow(rowData);
         try { productsApiRef.current?.deselectAll?.(); } catch { /* noop */ }
         setSelectedProducts([rowData as ProductRow]);
@@ -1277,6 +1318,18 @@ export default function AddProductsModal({
     lastSemanticSigRef.current = sig;
     if (!anyValue) {
       setHiddenFilterTokens(null);
+      return;
+    }
+    // Precise-code mode: when the user has typed into Part or Model, they're
+    // searching by a specific identifier and smart expansion does more harm
+    // than good — "sec" in Model would /expand to SEC→SECURE/SECURITY and
+    // bleed into Description matches via hidden tokens, returning unrelated
+    // rows (e.g. "Secure mounting bracket" when the user wanted a SEC-4
+    // model).  Skip the /expand entirely and drop any previously-applied
+    // hidden tokens so the grid runs plain visible-filter matching.
+    if (requestedPartNumber || requestedModelNumber) {
+      setHiddenFilterTokens(null);
+      setNegativeDescriptionTerms(null);
       return;
     }
     semanticExpandAbortRef.current?.abort();
@@ -1344,11 +1397,10 @@ export default function AddProductsModal({
         setFarnellDescription(descFilter?.filter ?? null);
       } catch { /* noop */ }
       // Debounce semantic expansion — wait for typing to pause before
-      // issuing the embedding call.  Skipped when "Smart filtering" is off.
+      // issuing the embedding call.
       if (semanticExpandTimerRef.current != null) {
         window.clearTimeout(semanticExpandTimerRef.current);
       }
-      if (!smartFilteringEnabledRef.current) return;
       semanticExpandTimerRef.current = window.setTimeout(() => {
         semanticExpandTimerRef.current = null;
         triggerSemanticFromFilters(api);
@@ -1370,19 +1422,45 @@ export default function AddProductsModal({
 
   // Sync pinned rows: a locally-pinned new product sits on top, followed
   // by any visible Farnell results.  When neither is present the pin is
-  // cleared.
+  // cleared.  AG Grid v33+ removed api.setPinnedTopRowData — the grid-option
+  // path is the only remaining way to mutate pinned-top data at runtime.
   useEffect(() => {
     const api = productsApiRef.current;
     if (!api) return;
-    const setter = api.setPinnedTopRowData;
-    if (typeof setter !== 'function') return;
     const rows: Record<string, unknown>[] = [];
     if (pinnedNewProductRow) rows.push(pinnedNewProductRow);
     if (farnellResults.length > 0 && farnellVisible) {
       rows.push(...(farnellResults as unknown as Record<string, unknown>[]));
     }
-    try { setter(rows); } catch { /* noop */ }
+    try {
+      const legacySetter = (api as { setPinnedTopRowData?: (data: Record<string, unknown>[]) => void }).setPinnedTopRowData;
+      if (typeof legacySetter === 'function') {
+        legacySetter.call(api, rows);
+      } else if (typeof api.setGridOption === 'function') {
+        api.setGridOption('pinnedTopRowData', rows);
+      }
+    } catch { /* noop */ }
   }, [pinnedNewProductRow, farnellResults, farnellVisible]);
+
+  // Force AG Grid to re-run cellStyle on the pinned new-product row after a
+  // selection toggle.  Passing a new array to setGridOption refreshes the
+  // pinned data but AG Grid reuses the existing RowNode (same row-id), so
+  // cell rendering doesn't always pick up the new `__selected` flag without
+  // an explicit redraw.
+  useEffect(() => {
+    const api = productsApiRef.current;
+    if (!api || typeof api.redrawRows !== 'function') return;
+    const pinnedCount = typeof api.getPinnedTopRowCount === 'function' ? api.getPinnedTopRowCount() : 0;
+    const nodes: RowNode[] = [];
+    for (let i = 0; i < pinnedCount; i++) {
+      const node = typeof api.getPinnedTopRow === 'function' ? api.getPinnedTopRow(i) : null;
+      const source = (node?.data as { __source?: unknown } | undefined)?.__source;
+      if (node && source === 'new-product') nodes.push(node as RowNode);
+    }
+    if (nodes.length > 0) {
+      try { api.redrawRows({ rowNodes: nodes }); } catch { /* noop */ }
+    }
+  }, [pinnedNewProductRow]);
 
   // Attach cell click listener for Farnell pinned rows
   const farnellCellClickRef = useRef<((event: { node?: RowNode; data?: unknown }) => void) | null>(null);
@@ -1392,9 +1470,28 @@ export default function AddProductsModal({
       try { api.removeEventListener('cellClicked', farnellCellClickRef.current as never); } catch { /* noop */ }
     }
     const listener = (event: { node?: RowNode; data?: unknown }) => {
-      if (event.node?.rowPinned === 'top' && event.data && isFarnellRow(event.data as Record<string, unknown>)) {
+      if (event.node?.rowPinned !== 'top' || !event.data) return;
+      const data = event.data as Record<string, unknown>;
+      if (isFarnellRow(data)) {
         try { api.deselectAll?.(); } catch { /* noop */ }
-        setSelectedProducts([event.data as ProductRow]);
+        setSelectedProducts([data as unknown as ProductRow]);
+        return;
+      }
+      if (data.__source === 'new-product') {
+        setPinnedNewProductRow((current) => {
+          if (!current) return current;
+          const next: Record<string, unknown> = { ...current, __selected: !current.__selected };
+          if (next.__selected) {
+            try { api.deselectAll?.(); } catch { /* noop */ }
+            setSelectedProducts([next as unknown as ProductRow]);
+          } else {
+            const nextProductId = (next as { ProductID?: unknown }).ProductID;
+            setSelectedProducts((selected) =>
+              selected.filter((row) => (row as { ProductID?: unknown }).ProductID !== nextProductId),
+            );
+          }
+          return next;
+        });
       }
     };
     farnellCellClickRef.current = listener;
@@ -1480,18 +1577,6 @@ export default function AddProductsModal({
   // AI prompt input — shared pill component used across modal + split view.
   const promptInput = (
     <>
-      <label
-        className={styles.smartFilterToggle}
-        title="Smart filtering: when ON the modal folds description, brand and AI synonyms into the filter. When OFF only part/model number filters are emitted."
-      >
-        <input
-          type="checkbox"
-          checked={smartFilteringEnabled}
-          onChange={(e) => setSmartFilteringEnabled(e.target.checked)}
-          disabled={submitting}
-        />
-        <span>Smart filtering</span>
-      </label>
       <AiSearchPromptPill
         promptText={promptText}
         onPromptTextChange={setPromptText}
@@ -1499,7 +1584,7 @@ export default function AddProductsModal({
         onClear={handleClearAIPrompt}
         submitted={promptSubmitted}
         busy={suggesting}
-        disabled={submitting || !smartFilteringEnabled}
+        disabled={submitting}
       />
       {noSuggestionsFound && !suggesting && (
         <span className={styles.noPromptLabel}>No extra terms to add</span>

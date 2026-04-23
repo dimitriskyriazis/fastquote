@@ -583,6 +583,146 @@ type ProductGridRow = {
   PriceListEnabled: boolean | number | null;
 };
 
+// Stage-1 "quick match": before firing the full smart-search machinery
+// (fuzzy, synonyms, hidden tokens, phrase scoring, category penalties, LLM
+// rerank), try a narrow exact-ish lookup across Part, Model, and Description
+// for the entry's Part/Model codes.  If ANY rows match, we treat that as the
+// definitive answer and skip the rest — a Part that literally exists in the
+// catalog is the user's answer, no need to rerank against 50 keyword
+// neighbors or call the LLM.
+//
+// Returns the raw rows on a hit, or null on a miss (callers must fall
+// through to stage 2 — the full smart search).  Only applicable on the
+// first page (offset === 0) with a non-empty Part or Model in `requested`;
+// also skipped when the user has started typing their own filter (the
+// client omits `requested` in that case, and `userTouchedFilters` flips).
+async function tryStage1QuickMatch(
+  pool: Awaited<ReturnType<typeof getPool>>,
+  offerPricingPolicyId: number | null,
+  pageSize: number,
+  highlightProductId: number | null,
+  requestedPartNumber: string | null,
+  requestedModelNumber: string | null,
+): Promise<ProductGridRow[] | null> {
+  const partClean = requestedPartNumber ? normalizePartModelNumber(requestedPartNumber) : null;
+  const modelClean = requestedModelNumber ? normalizePartModelNumber(requestedModelNumber) : null;
+  if (!partClean && !modelClean) return null;
+
+  const codes: Array<{ key: string; cleanValue: string; rawValue: string }> = [];
+  if (partClean && requestedPartNumber) {
+    codes.push({ key: 's1_part', cleanValue: partClean, rawValue: requestedPartNumber });
+  }
+  if (modelClean && requestedModelNumber && modelClean !== partClean) {
+    codes.push({ key: 's1_model', cleanValue: modelClean, rawValue: requestedModelNumber });
+  }
+  if (codes.length === 0) return null;
+
+  // For each code, OR across PartCleared / ModelCleared / LegacyPartNoCleaned
+  // (all already normalized/upper-cased) and plain Description (raw, with
+  // UPPER + ISNULL to handle nulls).  LIKE '%<code>%' on cleared columns is
+  // index-friendly enough for 56k rows; Description LIKE is a scan but only
+  // fires once per code, so typical total is <100ms.
+  const orGroups: string[] = [];
+  codes.forEach(({ key }) => {
+    orGroups.push(
+      `(UPPER(ISNULL(p.PartNumberCleared, '')) LIKE '%' + @${key}_clean + '%'`
+      + ` OR UPPER(ISNULL(p.ModelNumberCleared, '')) LIKE '%' + @${key}_clean + '%'`
+      + ` OR UPPER(ISNULL(p.LegacyPartNoCleaned, '')) LIKE '%' + @${key}_clean + '%'`
+      + ` OR UPPER(ISNULL(p.Description, '')) LIKE '%' + @${key}_raw + '%')`,
+    );
+  });
+  const whereSql = `WHERE ${orGroups.join(' OR ')}`;
+
+  // Rank: exact Part match first, then exact Model match, then LIKE matches.
+  // Within each tier, newer products (ProductID DESC) first.
+  const scoreParts: string[] = [];
+  codes.forEach(({ key }) => {
+    scoreParts.push(`CASE WHEN UPPER(ISNULL(p.PartNumberCleared, '')) = @${key}_clean THEN 1000 ELSE 0 END`);
+    scoreParts.push(`CASE WHEN UPPER(ISNULL(p.ModelNumberCleared, '')) = @${key}_clean THEN 900 ELSE 0 END`);
+    scoreParts.push(`CASE WHEN UPPER(ISNULL(p.LegacyPartNoCleaned, '')) = @${key}_clean THEN 800 ELSE 0 END`);
+  });
+  const scoreExpr = scoreParts.length > 0 ? scoreParts.join(' + ') : '0';
+  const highlightOrderClause = highlightProductId != null
+    ? 'CASE WHEN p.ID = @__highlightProductId THEN 0 ELSE 1 END, '
+    : '';
+  const orderSql = `ORDER BY ${highlightOrderClause}(${scoreExpr}) DESC, p.ID DESC`;
+
+  const request = pool.request();
+  request.input('__limit', sql.Int, pageSize);
+  request.input('__pricingPolicyId', sql.Int, offerPricingPolicyId);
+  codes.forEach(({ key, cleanValue, rawValue }) => {
+    request.input(`${key}_clean`, sql.NVarChar(255), cleanValue);
+    request.input(`${key}_raw`, sql.NVarChar(255), rawValue.trim().toUpperCase());
+  });
+  if (highlightProductId != null) {
+    request.input('__highlightProductId', sql.Int, highlightProductId);
+  }
+
+  const query = `
+    WITH PagedBase AS (
+      SELECT TOP (@__limit)
+        p.ID AS ProductID,
+        p.PartNumber,
+        p.Description,
+        p.ModelNumber,
+        p.WebLink,
+        b.Name AS BrandName
+      FROM dbo.Products p
+        LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
+      ${whereSql}
+      ${orderSql}
+    )
+    SELECT
+      bp.ProductID,
+      bp.PartNumber,
+      bp.WebLink,
+      bp.Description,
+      bp.ModelNumber,
+      bp.BrandName,
+      price.PriceListItemID,
+      price.PriceListID,
+      price.PriceListName,
+      price.ListPrice,
+      price.CostPrice,
+      price.PriceListValidFromDate,
+      price.PriceListValidToDate,
+      price.PriceListEnabled
+    FROM PagedBase bp
+      OUTER APPLY (
+        SELECT TOP (1)
+          pli.ID AS PriceListItemID,
+          pli.PriceListID,
+          pl.Name AS PriceListName,
+          pli.ListPrice,
+          pli.CostPrice,
+          pl.ValidFromDate AS PriceListValidFromDate,
+          pl.ValidToDate AS PriceListValidToDate,
+          pl.Enabled AS PriceListEnabled
+        FROM dbo.PriceListItems pli
+          INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
+          LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @__pricingPolicyId
+        WHERE pl.Enabled = 1
+          AND pli.ProductID = bp.ProductID
+        ORDER BY
+          CASE WHEN plpp.ID IS NOT NULL THEN 0 ELSE 1 END,
+          CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
+          pl.ValidToDate,
+          pl.ValidFromDate DESC,
+          pli.ID DESC
+      ) price
+    ${orderSql.replace(/\bp\.ID\b/g, 'bp.ProductID')};
+  `;
+
+  try {
+    const result = await request.query<ProductGridRow>(query);
+    const rows = result.recordset ?? [];
+    return rows.length > 0 ? rows : null;
+  } catch (err) {
+    console.warn('[productGrid stage1] SQL failed — falling through to stage 2', err);
+    return null;
+  }
+}
+
 async function handleProductGrid(
   offerId: number,
   body: GridRequestEnvelope & Record<string, unknown>,
@@ -952,6 +1092,52 @@ async function handleProductGrid(
     WHERE o.ID = @__offerId
   `);
   const offerPricingPolicyId = policyResult.recordset?.[0]?.PricingPolicyID ?? null;
+
+  // Stage 1: if the entry has a Part or Model code, try a narrow exact-ish
+  // lookup across Part/Model/Description before firing the full smart query.
+  // When the code exists in the catalog this is the right answer — no need
+  // for fuzzy expansion, hidden tokens, or LLM rerank.  Gated on offset 0,
+  // rerankIds empty (no client-supplied ordering), and `requested` being
+  // present (the client omits it once the user starts typing filters, so
+  // manual-search mode bypasses stage 1 entirely).
+  {
+    const reqBody = body?.requested;
+    const stage1Part = reqBody && typeof reqBody === 'object' && typeof reqBody.partNumber === 'string'
+      ? reqBody.partNumber.trim() || null
+      : null;
+    const stage1Model = reqBody && typeof reqBody === 'object' && typeof reqBody.modelNumber === 'string'
+      ? reqBody.modelNumber.trim() || null
+      : null;
+    if (offset === 0 && rerankIds.length === 0 && (stage1Part || stage1Model)) {
+      const stage1Start = Date.now();
+      const stage1Rows = await tryStage1QuickMatch(
+        pool,
+        offerPricingPolicyId,
+        pageSize,
+        highlightProductId,
+        stage1Part,
+        stage1Model,
+      );
+      if (stage1Rows && stage1Rows.length > 0) {
+        const mapped = stage1Rows.map((row) => {
+          const { __totalCount, ...rest } = row;
+          void __totalCount;
+          return rest;
+        });
+        const rowCount = mapped.length < pageSize
+          ? mapped.length
+          : mapped.length + 1;
+        console.log('[productGrid stage1]', JSON.stringify({
+          offerId,
+          latencyMs: Date.now() - stage1Start,
+          part: stage1Part,
+          model: stage1Model,
+          matched: mapped.length,
+        }));
+        return NextResponse.json({ ok: true, rows: mapped, rowCount });
+      }
+    }
+  }
 
   const request = pool.request();
   request.input('__offset', sql.Int, offset);
