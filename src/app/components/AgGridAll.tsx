@@ -8,6 +8,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { AgGridReact } from 'ag-grid-react';
 import {
   CellContextMenuEvent,
@@ -110,6 +111,7 @@ import {
   exportSelectedCellsAsExcel,
 } from '../../lib/gridExport';
 import styles from './AgGridAll.module.css';
+import { PageHeaderContext } from './PageHeader';
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from './actionMenuMarkers';
 import { getServerSideDeselectedRowIds, setGridRowDeletionContextMenuSelectionSnapshot, setGridQuickFilterText } from '../../lib/gridRowDeletion';
 import { useAuditUser } from './AuditUserProvider';
@@ -1168,6 +1170,42 @@ const ROW_DRAG_EDGE_THRESHOLD = 10;
 const EMPTY_COLUMN_WIDTH_DEFAULTS: Record<string, ColumnWidthAssignment> = {};
 const EMPTY_AUTO_SIZE_EXCLUSIONS: string[] = [];
 
+// Active filters indicator — renders into PageHeader's search slot via portal when
+// user-meaningful filters (anything not in IGNORED_FILTER_COLS) are active.
+function ActiveFiltersIndicator({
+  activeFilterCount,
+  displayedRowCount,
+  onClear,
+}: {
+  activeFilterCount: number;
+  displayedRowCount: number | null;
+  onClear: () => void;
+}) {
+  const slot = useContext(PageHeaderContext);
+  if (!slot || activeFilterCount <= 0) return null;
+  const rowLabel = displayedRowCount == null
+    ? ''
+    : `Showing ${displayedRowCount.toLocaleString()} row${displayedRowCount === 1 ? '' : 's'} with `;
+  const filterLabel = `${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'}`;
+  return createPortal(
+    <div className={styles.activeFiltersIndicator} role="status" aria-live="polite">
+      <span className={styles.activeFiltersLabel}>
+        {rowLabel}{filterLabel}
+      </span>
+      <button
+        type="button"
+        className={styles.activeFiltersClearButton}
+        onClick={onClear}
+        aria-label="Clear filters"
+        title="Clear filters"
+      >
+        ×
+      </button>
+    </div>,
+    slot,
+  );
+}
+
 // MAIN COMPONENT - AgGridAll
 export default function AgGridAll({
   endpoint,
@@ -1361,6 +1399,8 @@ export default function AgGridAll({
   const [gridEmpty, setGridEmpty] = useState(true);
   const gridEmptyRef = useRef(true);
   const [hasUserFilters, setHasUserFilters] = useState(false);
+  const [activeFilterCount, setActiveFilterCount] = useState(0);
+  const [displayedRowCount, setDisplayedRowCount] = useState<number | null>(null);
   const { userId } = useAuditUser();
   const pathname = usePathname();
 
@@ -3672,6 +3712,7 @@ if (lastPrefetchedFirstPageIdentityRef.current !== prefetchedFirstPage) {
     // Track whether any user-meaningful filters are active (ignore Enabled/IsParent)
     const meaningfulKeys = model ? Object.keys(model).filter(k => !IGNORED_FILTER_COLS.has(k)) : [];
     setHasUserFilters(meaningfulKeys.length > 0);
+    setActiveFilterCount(meaningfulKeys.length);
 
     if (!model) {
       // Persist empty filter model when filters are cleared (skip during restoration)
@@ -3787,6 +3828,12 @@ if (lastPrefetchedFirstPageIdentityRef.current !== prefetchedFirstPage) {
     }
     if (typeof onModelUpdated === 'function') {
       onModelUpdated(event.api);
+    }
+    try {
+      const count = event.api.getDisplayedRowCount?.();
+      setDisplayedRowCount(typeof count === 'number' ? count : null);
+    } catch {
+      /* api not ready yet */
     }
     const pendingWidthSnapshot = pendingFilterWidthRestoreRef.current;
     if (pendingWidthSnapshot && pendingWidthSnapshot.length > 0) {
@@ -4415,9 +4462,25 @@ if (lastPrefetchedFirstPageIdentityRef.current !== prefetchedFirstPage) {
     }
   }, []);
 
+  const handleClearUserFilters = useCallback(() => {
+    const api = gridApiRef.current ?? gridRef.current?.api ?? null;
+    if (!api || api.isDestroyed?.()) return;
+    const current = (api.getFilterModel() as Record<string, unknown> | null) ?? {};
+    const next: Record<string, unknown> = {};
+    Object.entries(current).forEach(([key, value]) => {
+      if (IGNORED_FILTER_COLS.has(key)) next[key] = value;
+    });
+    api.setFilterModel(Object.keys(next).length > 0 ? next : null);
+  }, []);
+
   // RENDER - AgGridReact Component with All Props
   return (
     <div className={styles.container}>
+      <ActiveFiltersIndicator
+        activeFilterCount={activeFilterCount}
+        displayedRowCount={displayedRowCount}
+        onClear={handleClearUserFilters}
+      />
       <div
         className={`ag-theme-quartz ${styles.gridShell}`}
         data-ag-grid-size="compact"

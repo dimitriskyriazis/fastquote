@@ -753,3 +753,44 @@
 .gridShell[data-suppress-sidebar="true"] :global(.ag-body-viewport-wrapper) {
   width: 100% !important;
 }
+
+.activeFiltersIndicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1e3a8a;
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.activeFiltersLabel {
+  font-weight: 500;
+}
+
+.activeFiltersClearButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #1e3a8a;
+  border-radius: 999px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.activeFiltersClearButton:hover,
+.activeFiltersClearButton:focus-visible {
+  background: #dbeafe;
+  outline: none;
+}
