@@ -159,22 +159,31 @@ export const buildTreeFromRows = (rows: TreeOrderingRow[]): TreeOrderingNode[] =
   return roots;
 };
 
-const buildSegmentList = (nodes: TreeOrderingNode[], depth: number): string[] => {
-  // Preserve each node's existing segment at this depth unless the sibling
-  // group carries a renumber signal. Callers (reorder/insert) flag rows
+const buildSegmentList = (
+  nodes: TreeOrderingNode[],
+  depth: number,
+  forceRenumber: boolean,
+): string[] => {
+  // With forceRenumber, always assign 1..N so gaps (e.g. from a deletion)
+  // close up. Otherwise preserve each node's existing segment unless the
+  // sibling group carries a renumber sentinel: reorder/insert flag rows
   // that should pick up a fresh number by rewriting their last segment to
-  // "0" — we only strict-renumber when such a sentinel is present, so
-  // bespoke numbering like a root "6" survives unrelated edits.
+  // "0", so bespoke numbering like a root "6" survives unrelated edits.
+  if (forceRenumber) return nodes.map((_, idx) => String(idx + 1));
   const existing = nodes.map((n) => (n.path.length > depth ? n.path[depth] : '0'));
   const hasSentinel = existing.some((seg) => seg === '0' || seg === '');
   if (!hasSentinel) return existing;
   return nodes.map((_, idx) => String(idx + 1));
 };
 
-export const collectResequencedUpdates = (roots: TreeOrderingNode[]): TreeOrderingUpdateInput[] => {
+export const collectResequencedUpdates = (
+  roots: TreeOrderingNode[],
+  options: { forceRenumber?: boolean } = {},
+): TreeOrderingUpdateInput[] => {
+  const forceRenumber = options.forceRenumber === true;
   const updates: TreeOrderingUpdateInput[] = [];
   const assign = (nodes: TreeOrderingNode[], parentPath: string[]) => {
-    const segments = buildSegmentList(nodes, parentPath.length);
+    const segments = buildSegmentList(nodes, parentPath.length, forceRenumber);
     nodes.forEach((node, idx) => {
       const nextPath = [...parentPath, segments[idx]];
       if (node.id !== VIRTUAL_NODE_ID && !pathsEqual(node.path, nextPath)) {

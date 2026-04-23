@@ -3872,6 +3872,7 @@ const requestedColumnDefsMap = useMemo(
       canUndo,
       performUndo,
       lastUndoLabel: lastLabel,
+      pushUndo,
       setInsertLineVisible: (visible: boolean, atEnd?: boolean) => setInsertLineVisibleRef.current?.(visible, atEnd),
       deselectAllRows: () => {
         const api = gridApiRef.current;
@@ -3895,7 +3896,7 @@ const requestedColumnDefsMap = useMemo(
       },
       clearSelectedRowHighlight,
     }),
-    [canUndo, clearSelectedRowHighlight, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer],
+    [canUndo, clearSelectedRowHighlight, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer, pushUndo],
   );
 
 

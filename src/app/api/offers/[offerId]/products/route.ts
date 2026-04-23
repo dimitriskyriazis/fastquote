@@ -712,7 +712,10 @@ async function resequenceTreeOrdering(
   `);
   const rows = readResult.recordset ?? [];
   const roots = buildTreeFromRows(rows);
-  const updates = collectResequencedUpdates(roots);
+  // Force renumber: after a deletion the remaining siblings need to close
+  // gaps (e.g. 1,2,3,5,6,7 → 1,2,3,4,5,6). No sentinel is set by the delete
+  // flow, so the default preserve-on-no-sentinel path would leave the gap.
+  const updates = collectResequencedUpdates(roots, { forceRenumber: true });
   if (updates.length === 0) {
     return { updated: 0, rowsAffected: 0 };
   }

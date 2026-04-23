@@ -431,6 +431,22 @@ export default function ClientProductsPage({
       creationCountersRef.current[action] = nextIndex;
       setRefreshToken((prev) => prev + 1);
       showToastMessage(`${baseLabel} added`, 'success');
+      if (createdId != null) {
+        const undoId = createdId;
+        offerProductsPanelRef.current?.pushUndo?.({
+          label: `Add ${baseLabel}`,
+          undo: async () => {
+            const res = await fetch(endpoint, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ OfferDetailIDs: [undoId] }),
+            });
+            const payload = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!res.ok || !payload?.ok) throw new Error('Failed to undo add row');
+            setRefreshToken((prev) => prev + 1);
+          },
+        });
+      }
     } catch (err) {
       console.error('Failed to add offer row', err);
       showToastMessage('Unable to add row. Please try again.', 'error');
@@ -500,7 +516,6 @@ export default function ClientProductsPage({
     : `${toolbarStyles.pivotToggle} page-header-button`;
 
   const handleProductsAdded = useCallback((count: number, insertedOfferDetailIds?: number[]) => {
-    void count;
     // Clear placement selection and deselect rows after adding
     skipSelectionChangeUntilRef.current = Date.now() + 200;
     setPlacementAnchor(null);
@@ -519,6 +534,23 @@ export default function ClientProductsPage({
     if (insertedOfferDetailIds && insertedOfferDetailIds.length > 0) {
       offerProductsPanelRef.current?.flashRows?.(insertedOfferDetailIds);
     }
+    if (insertedOfferDetailIds && insertedOfferDetailIds.length > 0) {
+      const ids = [...insertedOfferDetailIds];
+      const label = `Add ${count === 1 ? 'Product' : `${count} Products`}`;
+      offerProductsPanelRef.current?.pushUndo?.({
+        label,
+        undo: async () => {
+          const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ OfferDetailIDs: ids }),
+          });
+          const payload = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+          if (!res.ok || !payload?.ok) throw new Error('Failed to undo add products');
+          setRefreshToken((prev) => prev + 1);
+        },
+      });
+    }
     setRefreshToken((prev) => prev + 1);
     // Restore scroll positions after grid reloads
     const restore = () => {
@@ -535,7 +567,7 @@ export default function ClientProductsPage({
       window.clearTimeout(t2);
       window.clearTimeout(t3);
     }, 400);
-  }, []);
+  }, [offerId]);
   const handleGetAddInsertionAnchor = useCallback(
     () => offerProductsPanelRef.current?.getAddInsertionAnchor?.() ?? null,
     [],
