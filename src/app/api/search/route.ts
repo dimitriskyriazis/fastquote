@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool } from '../../../lib/sql';
-import { getSessionUserId } from '../../../lib/session';
 
 type SearchResult = {
   id: string;
@@ -21,9 +20,6 @@ type SearchResponse = {
 };
 
 export async function GET(req: NextRequest) {
-  if (!getSessionUserId(req.cookies)) {
-    return NextResponse.json({ ok: false, error: 'Authentication required' }, { status: 401 });
-  }
   const query = req.nextUrl.searchParams.get('q')?.trim() ?? '';
   const limit = Math.min(Number(req.nextUrl.searchParams.get('limit')) || 5, 10);
 

@@ -26,9 +26,7 @@ export async function POST(request: NextRequest) {
       const body = (await request.json().catch(() => ({}))) as MeRequestBody;
       const rawWindowsUserName =
         typeof body.windowsUserName === 'string' ? body.windowsUserName.trim() : '';
-      const allowBodyOverride =
-        process.env.NODE_ENV !== 'production' &&
-        process.env.ALLOW_WINDOWS_USER_BODY === 'true';
+      const allowBodyOverride = process.env.ALLOW_WINDOWS_USER_BODY === 'true';
       windowsUserName = allowBodyOverride ? rawWindowsUserName : '';
     }
 
