@@ -5,6 +5,7 @@ import { getErpPool, getPool } from '../../../../lib/sql';
 import { findProject, PROJECT_FIND_STATUS } from '../../../../lib/projectValidation';
 import { getSoftOneClient } from '../../../../lib/softone';
 import { fuzzyCustomerSearch } from '../../../../lib/customerSearch';
+import { requirePermission } from '../../../../lib/authz';
 
 type SmokeTestPostBody = {
   offerId: number; // FastQuote offer ID to validate readiness for ERP integration
@@ -12,8 +13,9 @@ type SmokeTestPostBody = {
 
 export async function GET(_req: NextRequest) {
   logRequest(_req, '/api/erp/smoke-test');
+  const auth = await requirePermission(_req, 'criticalOps');
+  if (!auth.ok) return auth.response;
   try {
-    void _req;
     const erpPool = await getErpPool();
 
     // Basic connectivity check
@@ -68,6 +70,8 @@ export async function GET(_req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/erp/smoke-test');
+  const auth = await requirePermission(req, 'criticalOps');
+  if (!auth.ok) return auth.response;
   let body: SmokeTestPostBody | null = null;
 
   try {

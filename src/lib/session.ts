@@ -52,13 +52,11 @@ export const buildSessionCookie = (userId: string, windowsUserName: string) => {
   return {
     name: SESSION_COOKIE_NAME,
     value: `${payloadEncoded}.${signature}`,
-    options: {
-      httpOnly: true,
-      secure: SESSION_COOKIE_SECURE,
-      sameSite: 'lax' as const,
-      path: '/',
-      maxAge: SESSION_TTL_SECONDS,
-    },
+    httpOnly: true,
+    secure: SESSION_COOKIE_SECURE,
+    sameSite: 'lax' as const,
+    path: '/',
+    maxAge: SESSION_TTL_SECONDS,
   };
 };
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { buildAuditContext } from './auditTrail';
+import { getSessionUserId } from './session';
 import { getPool, sql } from './sql';
 import { coerceRoles, roleHasPermission, type AppRole, type Permission } from './roles';
 
@@ -64,8 +64,7 @@ export async function requirePermission(
   req: NextRequest,
   permission: Permission,
 ): Promise<{ ok: true; userId: string; roles: AppRole[] } | { ok: false; response: NextResponse }> {
-  const audit = buildAuditContext(req);
-  const userId = normalizeUserId(audit.userId);
+  const userId = normalizeUserId(getSessionUserId(req.cookies));
 
   if (!userId) {
     return {

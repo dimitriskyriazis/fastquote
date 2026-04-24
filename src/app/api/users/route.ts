@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { logRequest } from '../../../lib/apiHelpers';
 import { getPool } from '../../../lib/sql';
 import { coerceRoles } from '../../../lib/roles';
+import { getSessionUserId } from '../../../lib/session';
 
 type UserRecord = {
   Id: number;
@@ -18,6 +19,9 @@ type ColumnCheckRow = {
 
 export async function GET(req: NextRequest) {
   logRequest(req, '/api/users');
+  if (!getSessionUserId(req.cookies)) {
+    return NextResponse.json({ ok: false, error: 'Authentication required' }, { status: 401 });
+  }
   try {
     const pool = await getPool();
     const columnCheck = await pool.request().query<ColumnCheckRow>(`

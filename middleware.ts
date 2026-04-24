@@ -9,7 +9,7 @@ export async function middleware(request: NextRequest) {
   const requestId = await getRequestId(request);
   const pathname = request.nextUrl.pathname;
 
-  const requireSession = process.env.AUTH_REQUIRE_SESSION === 'true';
+  const requireSession = process.env.AUTH_REQUIRE_SESSION !== 'false';
   const isApi = pathname.startsWith('/api/');
   const allowUnauthedApi =
     pathname === '/api/sso' ||

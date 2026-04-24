@@ -4,6 +4,7 @@ import sql from "mssql";
 import { getPool } from "../../../lib/sql";
 import { getRequestId } from "../../../lib/requestId";
 import { handleApiError } from "../../../lib/errorHandler";
+import { clearPartModelNumberUpper } from "../../../lib/partModelNumber";
 
 type DuplicateMatch = {
   id: number;
@@ -240,8 +241,9 @@ export async function POST(req: NextRequest) {
       const modelNumber = body.modelNumber?.trim();
       const brandId = body.brandId ? parseInt(body.brandId, 10) : null;
 
-      if (partNumber) {
-        const cleared = partNumber.replace(/[-_\s.]+/g, "").toUpperCase();
+      const clearedPart = partNumber ? clearPartModelNumberUpper(partNumber) : "";
+      if (clearedPart) {
+        const cleared = clearedPart;
         const request = pool.request()
           .input("partNumber", sql.NVarChar(255), cleared);
         let partQuery = `SELECT TOP 10 p.ID, p.PartNumber, p.ModelNumber, p.Description FROM dbo.Products p WHERE (p.PartNumberCleared = @partNumber OR p.LegacyPartNoCleaned = @partNumber)`;
@@ -264,8 +266,9 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      if (modelNumber) {
-        const cleared = modelNumber.replace(/[-_\s.]+/g, "").toUpperCase();
+      const clearedModel = modelNumber ? clearPartModelNumberUpper(modelNumber) : "";
+      if (clearedModel) {
+        const cleared = clearedModel;
         const request = pool.request()
           .input("modelNumber", sql.NVarChar(255), cleared);
         let modelQuery = `SELECT TOP 10 p.ID, p.PartNumber, p.ModelNumber, p.Description FROM dbo.Products p WHERE p.ModelNumberCleared = @modelNumber`;
