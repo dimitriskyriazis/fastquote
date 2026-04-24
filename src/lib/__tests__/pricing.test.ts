@@ -194,7 +194,8 @@ describe('resolvePricing', () => {
     margin: false,
   };
 
-  it('returns null when listPrice is null', () => {
+  it('returns null for multi-field edits when listPrice is null', () => {
+    // Multi-field edits require LP to anchor the scenario engine.
     const input: PricingInput = {
       listPrice: null,
       customerDiscount: 10,
@@ -202,12 +203,12 @@ describe('resolvePricing', () => {
       netUnitPrice: null,
       netCost: null,
       margin: null,
-      provided: { ...noProvided, customerDiscount: true },
+      provided: { ...noProvided, customerDiscount: true, telmacoDiscount: true },
     };
     expect(resolvePricing(input)).toBeNull();
   });
 
-  it('returns null when listPrice is 0', () => {
+  it('returns null for multi-field edits when listPrice is 0', () => {
     const input: PricingInput = {
       listPrice: 0,
       customerDiscount: 10,
@@ -215,7 +216,7 @@ describe('resolvePricing', () => {
       netUnitPrice: null,
       netCost: null,
       margin: null,
-      provided: { ...noProvided, customerDiscount: true },
+      provided: { ...noProvided, customerDiscount: true, telmacoDiscount: true },
     };
     expect(resolvePricing(input)).toBeNull();
   });
@@ -338,5 +339,239 @@ describe('resolvePricing', () => {
     expect(result!.netCost).toBe(900);
     // Margin = (1 - 900/700) * 100 ≈ -28.5714%
     expect(result!.margin!).toBeLessThan(0);
+  });
+});
+
+/* ── Single-field edit priority rules ────────────────────────────────── */
+
+describe('resolvePricing — single-field edit cascade', () => {
+  const noProvided = {
+    listPrice: false,
+    customerDiscount: false,
+    telmacoDiscount: false,
+    netUnitPrice: false,
+    netCost: false,
+    margin: false,
+  };
+
+  describe('CustomerDiscount edit', () => {
+    it('price-list row: holds ListPrice, recomputes NetUnitPrice (cost side untouched)', () => {
+      // Row state: LP=1000, CD=10%, TD=20%, NP=900, TC=800. User edits CD to 15%.
+      const input: PricingInput = {
+        listPrice: 1000,
+        customerDiscount: 15,
+        telmacoDiscount: 20,
+        netUnitPrice: 900,
+        netCost: 800,
+        margin: 11.1111,
+        provided: { ...noProvided, customerDiscount: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(850);       // 1000 × 0.85
+      expect(r.customerDiscount).toBe(15);
+      expect(r.netCost).toBe(800);            // unchanged
+      expect(r.telmacoDiscount).toBe(20);     // unchanged
+      expect(r.margin).toBeCloseTo(5.8824, 3); // refreshed from 850/800
+    });
+
+    it('ad-hoc row (no LP): holds NetUnitPrice, returns it unchanged for downstream LP back-fill', () => {
+      const input: PricingInput = {
+        listPrice: null,
+        customerDiscount: 20,
+        telmacoDiscount: null,
+        netUnitPrice: 12.29,
+        netCost: null,
+        margin: null,
+        provided: { ...noProvided, customerDiscount: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(12.29);     // preserved
+      expect(r.customerDiscount).toBe(20);    // as edited
+    });
+
+    it('returns null when denominator blows up (CD=100%)', () => {
+      const input: PricingInput = {
+        listPrice: 1000,
+        customerDiscount: 100,
+        telmacoDiscount: 20,
+        netUnitPrice: 900,
+        netCost: 800,
+        margin: null,
+        provided: { ...noProvided, customerDiscount: true },
+      };
+      expect(resolvePricing(input)).toBeNull();
+    });
+  });
+
+  describe('NetUnitPrice edit', () => {
+    it('price-list row: holds LP, recomputes CustomerDiscount (cost side untouched)', () => {
+      const input: PricingInput = {
+        listPrice: 1000,
+        customerDiscount: 10,
+        telmacoDiscount: 20,
+        netUnitPrice: 850,    // user edited from 900
+        netCost: 800,
+        margin: null,
+        provided: { ...noProvided, netUnitPrice: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(850);
+      expect(r.customerDiscount).toBe(15);    // 1 - 850/1000
+      expect(r.netCost).toBe(800);            // unchanged
+      expect(r.telmacoDiscount).toBe(20);     // unchanged
+    });
+
+    it('ad-hoc row: holds NP, CD unchanged', () => {
+      const input: PricingInput = {
+        listPrice: null,
+        customerDiscount: 17,
+        telmacoDiscount: null,
+        netUnitPrice: 15,
+        netCost: null,
+        margin: null,
+        provided: { ...noProvided, netUnitPrice: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(15);
+      expect(r.customerDiscount).toBe(17);
+    });
+  });
+
+  describe('TelmacoDiscount edit', () => {
+    it('price-list row: holds LP, recomputes NetCost (sell side untouched)', () => {
+      const input: PricingInput = {
+        listPrice: 1000,
+        customerDiscount: 10,
+        telmacoDiscount: 25,    // user changed from 20
+        netUnitPrice: 900,
+        netCost: 800,
+        margin: null,
+        provided: { ...noProvided, telmacoDiscount: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netCost).toBe(750);            // 1000 × 0.75
+      expect(r.telmacoDiscount).toBe(25);
+      expect(r.netUnitPrice).toBe(900);       // unchanged
+      expect(r.customerDiscount).toBe(10);    // unchanged
+    });
+  });
+
+  describe('NetCost edit', () => {
+    it('price-list row: holds LP, recomputes TelmacoDiscount (sell side untouched)', () => {
+      const input: PricingInput = {
+        listPrice: 1000,
+        customerDiscount: 10,
+        telmacoDiscount: 20,
+        netUnitPrice: 900,
+        netCost: 750,    // user edited from 800
+        margin: null,
+        provided: { ...noProvided, netCost: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netCost).toBe(750);
+      expect(r.telmacoDiscount).toBe(25);     // 1 - 750/1000
+      expect(r.netUnitPrice).toBe(900);       // unchanged
+      expect(r.customerDiscount).toBe(10);    // unchanged
+    });
+  });
+
+  describe('Margin edit', () => {
+    it('price-list row: holds NetCost, recomputes NP and cascades to CustomerDiscount', () => {
+      // "edit cost then margin" workflow: user sets TC=480 earlier, then edits Margin=25%
+      // Expected: NP = 480 / 0.75 = 640. CD = 1 - 640/1000 = 36%.
+      const input: PricingInput = {
+        listPrice: 1000,
+        customerDiscount: 10,    // stale
+        telmacoDiscount: 52,     // previously recomputed
+        netUnitPrice: 900,       // stale
+        netCost: 480,
+        margin: 25,
+        provided: { ...noProvided, margin: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(640);
+      expect(r.customerDiscount).toBe(36);
+      expect(r.netCost).toBe(480);            // held
+      expect(r.telmacoDiscount).toBe(52);     // unchanged
+      expect(r.margin).toBe(25);
+    });
+
+    it('ad-hoc row: holds NetCost, recomputes NP, discounts unchanged', () => {
+      const input: PricingInput = {
+        listPrice: null,
+        customerDiscount: 17,
+        telmacoDiscount: null,
+        netUnitPrice: null,
+        netCost: 10,
+        margin: 20,
+        provided: { ...noProvided, margin: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(12.5);      // 10 / 0.8
+      expect(r.netCost).toBe(10);
+      expect(r.customerDiscount).toBe(17);    // unchanged
+      expect(r.margin).toBe(20);
+    });
+
+    it('returns null when margin is 100% (division by zero)', () => {
+      const input: PricingInput = {
+        listPrice: 1000,
+        customerDiscount: null,
+        telmacoDiscount: 20,
+        netUnitPrice: null,
+        netCost: 800,
+        margin: 100,
+        provided: { ...noProvided, margin: true },
+      };
+      expect(resolvePricing(input)).toBeNull();
+    });
+
+    it('returns null when NetCost is missing (nothing to hold)', () => {
+      const input: PricingInput = {
+        listPrice: 1000,
+        customerDiscount: null,
+        telmacoDiscount: null,
+        netUnitPrice: 900,
+        netCost: null,
+        margin: 25,
+        provided: { ...noProvided, margin: true },
+      };
+      expect(resolvePricing(input)).toBeNull();
+    });
+  });
+
+  describe('ListPrice edit', () => {
+    it('preserves NP and TC when both are populated (derives implied discounts)', () => {
+      // Post-insert stale-default guard: row has NP+TC from creation, user sets LP.
+      const input: PricingInput = {
+        listPrice: 1000,    // newly set
+        customerDiscount: 0,  // stale default
+        telmacoDiscount: 0,   // stale default
+        netUnitPrice: 900,
+        netCost: 800,
+        margin: null,
+        provided: { ...noProvided, listPrice: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(900);       // preserved
+      expect(r.netCost).toBe(800);            // preserved
+      expect(r.customerDiscount).toBe(10);    // implied
+      expect(r.telmacoDiscount).toBe(20);     // implied
+    });
+
+    it('with NP/TC empty and discounts populated: recomputes NP and TC from LP', () => {
+      const input: PricingInput = {
+        listPrice: 1000,
+        customerDiscount: 10,
+        telmacoDiscount: 20,
+        netUnitPrice: null,
+        netCost: null,
+        margin: null,
+        provided: { ...noProvided, listPrice: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(900);
+      expect(r.netCost).toBe(800);
+    });
   });
 });

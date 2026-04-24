@@ -36,6 +36,7 @@ import {
 import { useDuplicateCheck } from "../lib/useDuplicateCheck";
 import DuplicateWarning from "../components/DuplicateWarning";
 import ContactGroupsMailsModal from "./ContactGroupsMailsModal";
+import { showConfirmDialog } from "../../lib/confirm";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -900,6 +901,16 @@ export default function ContactsClient({
       const del = (await res.json().catch(() => null)) as { ok?: boolean } | null;
       if (!res.ok || !del?.ok) throw new Error('Failed to delete contact');
     });
+    const addToGroups = await showConfirmDialog({
+      title: 'Add to contact groups?',
+      message: `Would you like to add ${contactName || 'this contact'} to one or more contact groups?`,
+      confirmLabel: 'Add to groups',
+      cancelLabel: 'Not now',
+    });
+    if (addToGroups && typeof contactId === 'number') {
+      setGroupsMailsContactId(contactId);
+      setGroupsMailsContactName(contactName);
+    }
   }, [contactForm, closeAddContact, setContactError, setContactSaving, setRefreshToken, pushUndo, performUndo]);
 
   return (

@@ -1135,7 +1135,7 @@ export default function OfferBasicDataClient({
           disabled={!customerReady}
           title={customerReady ? 'Add a new contact for this customer' : 'Select a customer first'}
         >
-          + Add Contact
+          Add Contact
         </button>
       );
     },

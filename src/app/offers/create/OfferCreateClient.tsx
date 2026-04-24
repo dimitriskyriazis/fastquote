@@ -832,7 +832,7 @@ export default function OfferCreateClient({
             disabled={!values.customerId.trim()}
             title={!values.customerId.trim() ? 'Select a customer first' : 'Add a new contact for this customer'}
           >
-            + Add Contact
+            Add Contact
           </button>
         ) : null}
       </div>

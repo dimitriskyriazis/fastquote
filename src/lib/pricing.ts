@@ -197,48 +197,160 @@ export const deriveWithoutListPrice = (
   return { netUnitPrice: resolvedNp, netCost: resolvedTc, margin: resolvedM };
 };
 
-/* ── Main resolver ───────────────────────────────────────────────────── */
+/* ── Single-field edit resolver ──────────────────────────────────────── */
 
-export const resolvePricing = (input: PricingInput): ResolvedPricing | null => {
+/**
+ * Handles the common case where the user edited exactly one pricing field.
+ * Anchor selection by row type:
+ *   - price-list row (ListPrice present) → ListPrice is the anchor.
+ *   - ad-hoc row (ListPrice absent)       → NetUnitPrice / NetCost are anchors.
+ *
+ * Cascade table (single edit):
+ *   field edited        | price-list row                    | ad-hoc row
+ *   --------------------|-----------------------------------|--------------------------
+ *   ListPrice           | hold discounts → recompute NP,TC  | same
+ *   CustomerDiscount    | hold LP → recompute NP            | hold NP → LP back-fills downstream
+ *   NetUnitPrice        | hold LP → recompute CD            | hold CD → LP back-fills downstream
+ *   TelmacoDiscount     | hold LP → recompute TC            | hold TC → LP back-fills downstream
+ *   NetCost             | hold LP → recompute TD            | hold TD → LP back-fills downstream
+ *   Margin              | hold TC → recompute NP → recompute CD (holding LP) | hold TC → recompute NP
+ *
+ * Margin is always refreshed from NP/TC when both are known and the user didn't
+ * edit Margin directly.
+ *
+ * Returns null if nothing meaningful can be resolved (e.g. invalid denominator).
+ */
+const resolveSingleFieldEdit = (input: PricingInput): ResolvedPricing | null => {
+  const { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: np, netCost: tc, margin: m } = input;
   const lp = input.listPrice;
-  if (lp == null || !Number.isFinite(lp) || Object.is(lp, 0)) return null;
+  const p = input.provided;
+  const hasValidLp = lp != null && Number.isFinite(lp) && !Object.is(lp, 0);
 
-  const cd = input.customerDiscount;
-  const td = input.telmacoDiscount;
-  const np = input.netUnitPrice;
-  const tc = input.netCost;
-  const m = input.margin;
-  const providedMap = input.provided;
+  // Margin edit: hold NetCost, recompute NetUnitPrice, then cascade discounts.
+  if (p.margin) {
+    if (m == null || tc == null) return null;
+    const marginFactor = 1 - percentageToFactor(m);
+    if (!(marginFactor > 0)) return null; // margin >= 100% or invalid
+    const newNp = roundTo(tc / marginFactor);
+    if (hasValidLp) {
+      return {
+        customerDiscount: roundTo((1 - newNp / lp) * 100),
+        telmacoDiscount: td,
+        netUnitPrice: newNp,
+        netCost: tc,
+        margin: m,
+      };
+    }
+    return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: newNp, netCost: tc, margin: m };
+  }
 
-  // When the user changed only ListPrice and both NetUnitPrice and NetCost
-  // are already set, preserve those actual prices and derive discounts from
-  // them.  Without this, scenario A would fire using stale CustomerDiscount=0
-  // / TelmacoDiscount=0 defaults left over from product insert (see add
-  // route's `COALESCE(..., 0)`) and overwrite the prices with
-  // ListPrice * (1 - 0) = ListPrice, wiping the user's entered prices.
-  const onlyListPriceProvided = providedMap.listPrice
-    && !providedMap.customerDiscount
-    && !providedMap.telmacoDiscount
-    && !providedMap.netUnitPrice
-    && !providedMap.netCost
-    && !providedMap.margin;
-
-  if (onlyListPriceProvided && np != null && tc != null) {
+  // ListPrice edit: hold discounts, recompute NP and TC.
+  if (p.listPrice) {
+    if (!hasValidLp) return null;
+    // If NP and TC are already populated (stale discount defaults common after insert)
+    // prefer holding the prices and deriving the implied discounts. Otherwise recompute
+    // prices from the discounts.
+    if (np != null && tc != null) {
+      return {
+        customerDiscount: roundTo((1 - np / lp) * 100),
+        telmacoDiscount: roundTo((1 - tc / lp) * 100),
+        netUnitPrice: np,
+        netCost: tc,
+        margin: deriveMarginPercent(np, tc),
+      };
+    }
+    const newNp = cd != null ? roundTo(lp * (1 - percentageToFactor(cd))) : np;
+    const newTc = td != null ? roundTo(lp * (1 - percentageToFactor(td))) : tc;
     return {
-      customerDiscount: roundTo((1 - np / lp) * 100),
-      telmacoDiscount: roundTo((1 - tc / lp) * 100),
-      netUnitPrice: np,
-      netCost: tc,
-      margin: deriveMarginPercent(np, tc),
+      customerDiscount: cd,
+      telmacoDiscount: td,
+      netUnitPrice: newNp,
+      netCost: newTc,
+      margin: deriveMarginPercent(newNp, newTc),
     };
   }
 
-  type PricingRequiredKey = keyof PricingInput['provided'];
+  // CustomerDiscount edit
+  if (p.customerDiscount) {
+    if (cd == null) return null;
+    if (hasValidLp) {
+      const factor = 1 - percentageToFactor(cd);
+      if (!(factor > 0)) return null; // 100%+ discount: skip recompute
+      const newNp = roundTo(lp * factor);
+      return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: newNp, netCost: tc, margin: deriveMarginPercent(newNp, tc) };
+    }
+    // ad-hoc: hold NP; LP back-filled downstream via deriveListPrice
+    return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: np, netCost: tc, margin: deriveMarginPercent(np, tc) };
+  }
 
-  const scenarios: Array<{
-    key: ScenarioKey;
-    required: PricingRequiredKey[];
-  }> = [
+  // NetUnitPrice edit
+  if (p.netUnitPrice) {
+    if (np == null) return null;
+    if (hasValidLp) {
+      const newCd = roundTo((1 - np / lp) * 100);
+      return { customerDiscount: newCd, telmacoDiscount: td, netUnitPrice: np, netCost: tc, margin: deriveMarginPercent(np, tc) };
+    }
+    return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: np, netCost: tc, margin: deriveMarginPercent(np, tc) };
+  }
+
+  // TelmacoDiscount edit (mirror of CD)
+  if (p.telmacoDiscount) {
+    if (td == null) return null;
+    if (hasValidLp) {
+      const factor = 1 - percentageToFactor(td);
+      if (!(factor > 0)) return null;
+      const newTc = roundTo(lp * factor);
+      return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: np, netCost: newTc, margin: deriveMarginPercent(np, newTc) };
+    }
+    return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: np, netCost: tc, margin: deriveMarginPercent(np, tc) };
+  }
+
+  // NetCost edit (mirror of NP)
+  if (p.netCost) {
+    if (tc == null) return null;
+    if (hasValidLp) {
+      const newTd = roundTo((1 - tc / lp) * 100);
+      return { customerDiscount: cd, telmacoDiscount: newTd, netUnitPrice: np, netCost: tc, margin: deriveMarginPercent(np, tc) };
+    }
+    return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: np, netCost: tc, margin: deriveMarginPercent(np, tc) };
+  }
+
+  return null;
+};
+
+/* ── Main resolver ───────────────────────────────────────────────────── */
+
+export const resolvePricing = (input: PricingInput): ResolvedPricing | null => {
+  const p = input.provided;
+  const providedPricingCount =
+    (p.customerDiscount ? 1 : 0) +
+    (p.telmacoDiscount ? 1 : 0) +
+    (p.netUnitPrice ? 1 : 0) +
+    (p.netCost ? 1 : 0) +
+    (p.margin ? 1 : 0);
+
+  // Single-field edit (the common case) → explicit anchor rules.
+  // "Only ListPrice edited" also counts as a single edit and routes through here.
+  if (providedPricingCount <= 1) {
+    return resolveSingleFieldEdit(input);
+  }
+
+  // Multi-field edit (bulk paste / row creation / import) → scenario engine.
+  // Requires a valid ListPrice to anchor scenarios A–H.
+  const lp = input.listPrice;
+  if (lp == null || !Number.isFinite(lp) || Object.is(lp, 0)) return null;
+
+  const values: PricingSnapshot = {
+    listPrice: lp,
+    customerDiscount: input.customerDiscount,
+    telmacoDiscount: input.telmacoDiscount,
+    netUnitPrice: input.netUnitPrice,
+    netCost: input.netCost,
+    margin: input.margin,
+  };
+
+  type PricingRequiredKey = keyof PricingInput['provided'];
+  const scenarios: Array<{ key: ScenarioKey; required: PricingRequiredKey[] }> = [
     { key: 'A', required: ['customerDiscount', 'telmacoDiscount'] },
     { key: 'B', required: ['telmacoDiscount', 'margin'] },
     { key: 'C', required: ['netUnitPrice', 'netCost'] },
@@ -249,11 +361,9 @@ export const resolvePricing = (input: PricingInput): ResolvedPricing | null => {
     { key: 'H', required: ['netCost', 'margin'] },
   ];
 
-  const values: PricingSnapshot = { listPrice: lp, customerDiscount: cd, telmacoDiscount: td, netUnitPrice: np, netCost: tc, margin: m };
-
   for (const scenario of scenarios) {
     const missingRequired = scenario.required.some((field) => values[field] == null);
-    const hasUserInput = providedMap.listPrice || scenario.required.some((field) => providedMap[field]);
+    const hasUserInput = p.listPrice || scenario.required.some((field) => p[field]);
     if (missingRequired || !hasUserInput) continue;
     const resolved = computeScenario(
       scenario.key,
