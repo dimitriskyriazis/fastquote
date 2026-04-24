@@ -17,7 +17,7 @@ const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS ?? 60 * 60 * 
 const SESSION_COOKIE_SECURE =
   process.env.SESSION_COOKIE_SECURE != null
     ? process.env.SESSION_COOKIE_SECURE === 'true'
-    : true;
+    : false;
 
 const base64UrlEncode = (input: string | Buffer) => Buffer.from(input).toString('base64url');
 const base64UrlDecode = (input: string) => Buffer.from(input, 'base64url').toString('utf8');
