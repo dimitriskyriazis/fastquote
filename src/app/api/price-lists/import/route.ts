@@ -1175,6 +1175,13 @@ export async function POST(req: NextRequest) {
         oldCostPrice: number | null;
         newCostPrice: number | null;
       }> = [];
+      const skippedRowDetails: Array<{
+        partNumber: string | null;
+        modelNumber: string | null;
+        description: string | null;
+        listPrice: number | null;
+        reason: string;
+      }> = [];
 
       let legacyUpdatedCount = 0;
 
@@ -1184,10 +1191,24 @@ export async function POST(req: NextRequest) {
         const legacyKey = normalizeKey(row.legacyPartNumber);
         if (!partKey && !modelKey) {
           skippedRows += 1;
+          skippedRowDetails.push({
+            partNumber: row.partNumber,
+            modelNumber: row.modelNumber,
+            description: row.description,
+            listPrice: row.listPrice,
+            reason: "Missing part number and model number",
+          });
           continue;
         }
         if (row.listPrice == null) {
           skippedRows += 1;
+          skippedRowDetails.push({
+            partNumber: row.partNumber,
+            modelNumber: row.modelNumber,
+            description: row.description,
+            listPrice: row.listPrice,
+            reason: "Missing list price",
+          });
           continue;
         }
 
@@ -1238,6 +1259,13 @@ export async function POST(req: NextRequest) {
 
         if (!productId || seenProducts.has(productId)) {
           skippedRows += 1;
+          skippedRowDetails.push({
+            partNumber: row.partNumber,
+            modelNumber: row.modelNumber,
+            description: row.description,
+            listPrice: row.listPrice,
+            reason: !productId ? "Could not resolve product" : "Duplicate product in file",
+          });
           continue;
         }
 
@@ -1387,6 +1415,7 @@ export async function POST(req: NextRequest) {
         modelNumberMismatches,
         priceChanges: priceChangeDetails,
         newProducts: newProductDetails,
+        skippedRowDetails,
       });
     } catch (err) {
       await transaction.rollback();

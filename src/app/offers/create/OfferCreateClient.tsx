@@ -18,6 +18,7 @@ import {
   OFFER_LANGUAGE_DEFAULTS,
   type OfferLanguage,
 } from '../../../lib/offerLanguage';
+import { TVS_SALES_DIVISION_ID, TVS_APPROVAL_USER_ID } from '../../../lib/constants';
 
 type SectionKey = 'general' | 'info' | 'commercial' | 'code' | 'dates';
 
@@ -192,7 +193,7 @@ const resolveDefaultPricingPolicyId = (options: DropdownOption[]): string => {
 };
 
 const resolveDefaultStatusId = (options: DropdownOption[]): string => {
-  const normalizedTarget = 'draft offer';
+  const normalizedTarget = 'request';
   const byLabel = options.find((opt) => (opt.label ?? '').trim().toLowerCase() === normalizedTarget);
   if (byLabel?.value) return byLabel.value;
   const byValue = options.find((opt) => (opt.value ?? '').trim().toLowerCase() === normalizedTarget);
@@ -465,7 +466,11 @@ export default function OfferCreateClient({
     const defaultDivision = marketId ? marketDivisionMap.get(marketId) ?? '' : '';
     setValues((prev) => {
       if (prev.salesDivisionId === defaultDivision) return prev;
-      return { ...prev, salesDivisionId: defaultDivision };
+      const next = { ...prev, salesDivisionId: defaultDivision };
+      if (defaultDivision === String(TVS_SALES_DIVISION_ID)) {
+        next.approvalUserId = TVS_APPROVAL_USER_ID;
+      }
+      return next;
     });
   }, [marketDivisionMap, values.marketId]);
 
@@ -659,6 +664,9 @@ export default function OfferCreateClient({
           closingNote: swap(prev.closingNote, prevDefaults.closingNote, nextDefaults.closingNote),
           finalPriceLabel: swap(prev.finalPriceLabel, prevDefaults.finalPriceLabel, nextDefaults.finalPriceLabel),
         };
+      }
+      if (field === 'salesDivisionId' && value === String(TVS_SALES_DIVISION_ID) && prev.salesDivisionId !== value) {
+        return { ...prev, salesDivisionId: value, approvalUserId: TVS_APPROVAL_USER_ID };
       }
       return { ...prev, [field]: value } as FormValues;
     });

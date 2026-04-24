@@ -1100,6 +1100,10 @@ export function computeDisplayOrderingMap(rows: Record<string, unknown>[]): Map<
     .sort((a, b) => compareTreeOrderingValues(a.TreeOrdering, b.TreeOrdering));
 
   const result = new Map<string, string>();
+  // Non-printable comments are skipped from display, but they still occupy a
+  // sibling slot in the raw TreeOrdering. Track how many have been skipped per
+  // parent so later siblings aren't inflated by their presence.
+  const skippedByParent = new Map<string, number>();
 
   for (const row of sorted) {
     const actualKey = String(row.TreeOrdering ?? '').trim();
@@ -1107,12 +1111,17 @@ export function computeDisplayOrderingMap(rows: Record<string, unknown>[]): Map<
     const path = parseTreeOrderingPath(actualKey);
     if (path.length === 0) continue;
 
-    if (resolveOfferProductRowType(row) === 'non-printable-comment') continue;
+    const actualParentKey = path.slice(0, -1).join('.');
+
+    if (resolveOfferProductRowType(row) === 'non-printable-comment') {
+      skippedByParent.set(actualParentKey, (skippedByParent.get(actualParentKey) ?? 0) + 1);
+      continue;
+    }
 
     const lastSegment = path[path.length - 1];
-    const actualParentKey = path.slice(0, -1).join('.');
+    const adjustedSegment = lastSegment - (skippedByParent.get(actualParentKey) ?? 0);
     const parentDisplayKey = path.length === 1 ? '' : (result.get(actualParentKey) ?? actualParentKey);
-    const displayKey = parentDisplayKey ? `${parentDisplayKey}.${lastSegment}` : String(lastSegment);
+    const displayKey = parentDisplayKey ? `${parentDisplayKey}.${adjustedSegment}` : String(adjustedSegment);
     result.set(actualKey, displayKey);
   }
 

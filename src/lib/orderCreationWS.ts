@@ -21,6 +21,7 @@ import { logger } from './logger';
  *   items[].lineval     = qty * price
  *   items[].cost        = net unit cost (when available)
  *   items[].warranty    = warranty in months (when available)
+ *   items[].position    = our itemno (OfferDetails.TreeOrdering)
  */
 export async function createOrderViaWebService(
   params: CreateOrderWithLinesParams,
@@ -43,6 +44,7 @@ export async function createOrderViaWebService(
     };
     if (line.netCost != null) item.cost = toErpDecimal(line.netCost);
     if (line.warrantyMonths != null) item.warranty = String(line.warrantyMonths);
+    if (line.position != null) item.position = String(line.position);
     return item;
   });
 

@@ -965,8 +965,15 @@ export default function PriceListImportClient({
       listPrice: number | null;
       costPrice: number | null;
     }>;
+    skippedRowDetails: Array<{
+      partNumber: string | null;
+      modelNumber: string | null;
+      description: string | null;
+      listPrice: number | null;
+      reason: string;
+    }>;
   } | null>(null);
-  const [summaryTab, setSummaryTab] = useState<"priceChanges" | "newProducts">("priceChanges");
+  const [summaryTab, setSummaryTab] = useState<"priceChanges" | "newProducts" | "skipped">("priceChanges");
   const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [brandText, setBrandText] = useState(() => {
     if (prefill?.brandId) {
@@ -1937,6 +1944,13 @@ export default function PriceListImportClient({
           listPrice: number | null;
           costPrice: number | null;
         }>;
+        skippedRowDetails?: Array<{
+          partNumber: string | null;
+          modelNumber: string | null;
+          description: string | null;
+          listPrice: number | null;
+          reason: string;
+        }>;
       };
       const raw = await response.text().catch(() => "");
       const typedPayload: ImportResponse | null = (() => {
@@ -2029,7 +2043,8 @@ export default function PriceListImportClient({
 
       const hasSummaryData =
         (typedPayload.priceChanges && typedPayload.priceChanges.length > 0) ||
-        (typedPayload.newProducts && typedPayload.newProducts.length > 0);
+        (typedPayload.newProducts && typedPayload.newProducts.length > 0) ||
+        (typedPayload.skippedRowDetails && typedPayload.skippedRowDetails.length > 0);
 
       if (hasSummaryData) {
         const targetId =
@@ -2042,11 +2057,14 @@ export default function PriceListImportClient({
           skippedRows: typedPayload.skippedRows ?? 0,
           priceChanges: typedPayload.priceChanges ?? [],
           newProducts: typedPayload.newProducts ?? [],
+          skippedRowDetails: typedPayload.skippedRowDetails ?? [],
         });
         setSummaryTab(
           typedPayload.priceChanges && typedPayload.priceChanges.length > 0
             ? "priceChanges"
-            : "newProducts",
+            : typedPayload.newProducts && typedPayload.newProducts.length > 0
+              ? "newProducts"
+              : "skipped",
         );
       } else {
         const targetId =
@@ -3087,6 +3105,14 @@ export default function PriceListImportClient({
                 New Products
                 <span className={styles.summaryTabBadge}>{importSummary.newProducts.length}</span>
               </button>
+              <button
+                type="button"
+                className={`${styles.summaryTab} ${summaryTab === "skipped" ? styles.summaryTabActive : ""}`}
+                onClick={() => setSummaryTab("skipped")}
+              >
+                Skipped
+                <span className={styles.summaryTabBadge}>{importSummary.skippedRowDetails.length}</span>
+              </button>
             </div>
             <div className={styles.summaryBody}>
               {summaryTab === "priceChanges" ? (
@@ -3174,35 +3200,66 @@ export default function PriceListImportClient({
                 ) : (
                   <div className={styles.summaryEmpty}>No price changes detected.</div>
                 )
-              ) : importSummary.newProducts.length > 0 ? (
+              ) : summaryTab === "newProducts" ? (
+                importSummary.newProducts.length > 0 ? (
+                  <div className={styles.summaryTableWrapper}>
+                    <table className={styles.summaryTable}>
+                      <thead>
+                        <tr>
+                          <th>Part Number</th>
+                          <th>Description</th>
+                          <th style={{ textAlign: "right" }}>List Price</th>
+                          <th style={{ textAlign: "right" }}>Cost Price</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importSummary.newProducts.map((item, idx) => (
+                          <tr key={idx}>
+                            <td>{item.partNumber ?? ""}</td>
+                            <td>{item.description ?? ""}</td>
+                            <td className={styles.summaryPriceValue}>
+                              {formatPrice(item.listPrice)}
+                            </td>
+                            <td className={styles.summaryPriceValue}>
+                              {formatPrice(item.costPrice)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className={styles.summaryEmpty}>No new products.</div>
+                )
+              ) : importSummary.skippedRowDetails.length > 0 ? (
                 <div className={styles.summaryTableWrapper}>
                   <table className={styles.summaryTable}>
                     <thead>
                       <tr>
                         <th>Part Number</th>
+                        <th>Model Number</th>
                         <th>Description</th>
                         <th style={{ textAlign: "right" }}>List Price</th>
-                        <th style={{ textAlign: "right" }}>Cost Price</th>
+                        <th>Reason</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {importSummary.newProducts.map((item, idx) => (
+                      {importSummary.skippedRowDetails.map((item, idx) => (
                         <tr key={idx}>
                           <td>{item.partNumber ?? ""}</td>
+                          <td>{item.modelNumber ?? ""}</td>
                           <td>{item.description ?? ""}</td>
                           <td className={styles.summaryPriceValue}>
                             {formatPrice(item.listPrice)}
                           </td>
-                          <td className={styles.summaryPriceValue}>
-                            {formatPrice(item.costPrice)}
-                          </td>
+                          <td>{item.reason}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               ) : (
-                <div className={styles.summaryEmpty}>No new products.</div>
+                <div className={styles.summaryEmpty}>No skipped rows.</div>
               )}
             </div>
             <div className={styles.summaryFooter}>

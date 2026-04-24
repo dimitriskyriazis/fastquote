@@ -15,6 +15,12 @@ export const ALL_ROWS_LIMIT = 20000;
 export const PROBABILITY_MIN = 0;
 export const PROBABILITY_MAX = 100;
 
+/** SalesDivisionID for the TVS business unit (AVS = 4, TVS = 3). */
+export const TVS_SALES_DIVISION_ID = 3;
+
+/** AspNetUsers.Id forced as ApprovalUserId for every offer in the TVS sales division. */
+export const TVS_APPROVAL_USER_ID = '6';
+
 /** Standard max-length values for string fields */
 export const FIELD_MAX_LENGTHS = {
   title: 512,

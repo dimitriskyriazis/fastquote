@@ -160,6 +160,7 @@ export type SetDocsLineItem = {
   lineval?: string;
   cost?: string;
   warranty?: string; // warranty in months
+  position?: string; // Position No. (our line itemno / TreeOrdering)
 };
 
 export type SetDocsParams = {

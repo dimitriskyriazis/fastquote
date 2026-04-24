@@ -69,6 +69,8 @@ type OrderLine = {
   qty: number;
   price: number;
   lineTotal: number;
+  position: number | null;
+  warrantyYears: number | null;
 };
 
 type SummaryData = {
@@ -1214,28 +1216,34 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
           <thead>
             <tr>
               <th>#</th>
+              <th>Position</th>
               <th>Product</th>
               <th className={styles.tableRight}>Qty</th>
               <th className={styles.tableRight}>Price</th>
               <th className={styles.tableRight}>Total</th>
+              <th className={styles.tableRight}>Warranty</th>
             </tr>
           </thead>
           <tbody>
             {summary.orderLines.map((line, idx) => (
               <tr key={`${line.productId}-${idx}`}>
                 <td>{idx + 1}</td>
+                <td>{line.position ?? ''}</td>
                 <td>{line.productCode !== '(new)' ? `${line.productCode} — ` : ''}{line.productName}</td>
                 <td className={styles.tableRight}>{line.qty}</td>
                 <td className={styles.tableRight}>{formatCurrency(line.price)}</td>
                 <td className={styles.tableRight}>{formatCurrency(line.lineTotal)}</td>
+                <td className={styles.tableRight}>{line.warrantyYears != null ? `${line.warrantyYears}y (${line.warrantyYears * 12}m)` : ''}</td>
               </tr>
             ))}
             <tr className={styles.totalRow}>
+              <td></td>
               <td></td>
               <td><strong>Total</strong></td>
               <td className={styles.tableRight}><strong>{summary.orderLines.reduce((s, l) => s + l.qty, 0)}</strong></td>
               <td></td>
               <td className={styles.tableRight}><strong>{formatCurrency(summary.totals.totalValue)}</strong></td>
+              <td></td>
             </tr>
           </tbody>
         </table>

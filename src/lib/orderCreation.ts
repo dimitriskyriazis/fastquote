@@ -7,6 +7,7 @@ export type OrderLineForCreation = {
   price: number;
   netCost: number | null;
   warrantyMonths: number | null;
+  position: number | null; // our itemno (OfferDetails.TreeOrdering)
 };
 
 export type CreateOrderWithLinesParams = {

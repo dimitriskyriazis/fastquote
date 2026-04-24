@@ -1247,6 +1247,7 @@ async function handlePrepareSummary(
     Quantity: number | null;
     NetUnitPrice: number | null;
     NetCost: number | null;
+    Warranty: number | null;
     ERPID: number | null;
     ERPCode: string | null;
     ProductDescription: string | null;
@@ -1259,6 +1260,7 @@ async function handlePrepareSummary(
       od.Quantity,
       od.NetUnitPrice,
       od.NetCost,
+      od.Warranty,
       p.ERPID,
       p.ERPCode,
       p.Description AS ProductDescription,
@@ -1289,6 +1291,8 @@ async function handlePrepareSummary(
       qty: Number(line.Quantity),
       price: Number(line.NetUnitPrice),
       lineTotal: Number(line.Quantity!) * Number(line.NetUnitPrice!),
+      position: line.TreeOrdering != null ? Number(line.TreeOrdering) : null,
+      warrantyYears: line.Warranty != null ? Number(line.Warranty) : null,
     }));
 
   const totalValue = orderLines.reduce((sum, l) => sum + l.lineTotal, 0);
@@ -1460,6 +1464,7 @@ async function handleExecute(
         price: Number(l.NetUnitPrice),
         netCost: l.NetCost != null ? Number(l.NetCost) : null,
         warrantyMonths: l.Warranty != null ? Number(l.Warranty) * 12 : null,
+        position: l.TreeOrdering != null ? Number(l.TreeOrdering) : null,
       }));
 
     const orderInfo = await createOrderWithLines({
@@ -2469,6 +2474,7 @@ export async function POST(
               price: Number(line.NetUnitPrice),
               netCost: line.NetCost != null ? Number(line.NetCost) : null,
               warrantyMonths: line.Warranty != null ? Number(line.Warranty) * 12 : null,
+              position: line.TreeOrdering != null ? Number(line.TreeOrdering) : null,
             }));
 
           const orderInfo = await createOrderWithLines({
@@ -2915,6 +2921,7 @@ export async function POST(
             price: Number(line.NetUnitPrice),
             netCost: line.NetCost != null ? Number(line.NetCost) : null,
             warrantyMonths: line.Warranty != null ? Number(line.Warranty) * 12 : null,
+            position: line.TreeOrdering != null ? Number(line.TreeOrdering) : null,
           }));
 
         const orderInfo = await createOrderWithLines({
