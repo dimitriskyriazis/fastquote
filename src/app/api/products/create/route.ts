@@ -10,6 +10,11 @@ import { logger } from "../../../../lib/logger";
 import { logAddAuditDetails } from "../../../../lib/mutationAudit";
 import { validateRequest, positiveIntSchema, stringSchema, urlSchema, partModelNumberSchema } from "../../../../lib/validation";
 import { clearPartModelNumberUpper } from "../../../../lib/partModelNumber";
+import {
+  applyBrandPattern,
+  hasPatternConfig,
+  normalizePatternConfig,
+} from "../../../../lib/partNumberPattern";
 
 const toClearedPartModel = (value: string | null | undefined) => {
   if (!value) return null;
@@ -55,7 +60,40 @@ export async function POST(req: NextRequest) {
     const body = validation.data;
     const brandId = body.brandId!; // Validated as required
     const modelNumber = body.modelNumber;
-    const partNumber = body.partNumber;
+    let partNumber = body.partNumber;
+
+    const pool = await getPool();
+
+    if (partNumber) {
+      const brandPatternResult = await pool
+        .request()
+        .input("BrandID", sql.Int, brandId)
+        .query<{
+          PartNumberSuffix: string | null;
+          PartNumberPattern1: string | null;
+          PartNumberPattern2: string | null;
+        }>(`
+          SELECT PartNumberSuffix, PartNumberPattern1, PartNumberPattern2
+          FROM dbo.Brands
+          WHERE ID = @BrandID
+        `);
+      const brandRow = brandPatternResult.recordset?.[0];
+      const patternConfig = normalizePatternConfig({
+        suffix: brandRow?.PartNumberSuffix ?? null,
+        patterns: [brandRow?.PartNumberPattern1 ?? null, brandRow?.PartNumberPattern2 ?? null],
+      });
+      if (hasPatternConfig(patternConfig)) {
+        const result = applyBrandPattern(partNumber, patternConfig);
+        if (!result.ok) {
+          return NextResponse.json(
+            { ok: false, error: "Part number does not match the brand format." },
+            { status: 400 },
+          );
+        }
+        partNumber = result.value;
+      }
+    }
+
     const modelNumberCleared = toClearedPartModel(modelNumber);
     const partNumberCleared = toClearedPartModel(partNumber);
     const erpCode = body.erpCode;
@@ -68,7 +106,6 @@ export async function POST(req: NextRequest) {
     const enabled = body.enabled ?? true;
     const auditUserId = resolveAuditUserId(req);
 
-    const pool = await getPool();
     const request = pool.request();
     request.timeout = 30000;
     request.input("BrandID", sql.Int, brandId);

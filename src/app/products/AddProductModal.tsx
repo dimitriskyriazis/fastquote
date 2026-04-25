@@ -8,10 +8,22 @@ import lookupButtonStyles from '../components/LookupAddButton.module.css';
 import { showToastMessage } from '../../lib/toast';
 import { useDuplicateCheck } from '../lib/useDuplicateCheck';
 import DuplicateWarning from '../components/DuplicateWarning';
+import {
+  applyBrandPattern,
+  formatPatternExample,
+  hasPatternConfig,
+  normalizePatternConfig,
+  type PartNumberPatternConfig,
+} from '../../lib/partNumberPattern';
 
 type LookupOption = {
   id: number;
   name: string;
+};
+
+type BrandLookupOption = LookupOption & {
+  partNumberSuffix: string | null;
+  partNumberPatterns: string[];
 };
 
 type SubCategoryOption = LookupOption & {
@@ -19,7 +31,7 @@ type SubCategoryOption = LookupOption & {
 };
 
 type ProductLookups = {
-  brands: LookupOption[];
+  brands: BrandLookupOption[];
   categories: LookupOption[];
   subCategories: SubCategoryOption[];
   types: LookupOption[];
@@ -28,7 +40,7 @@ type ProductLookups = {
 type ProductLookupResponse = {
   ok?: boolean;
   error?: string;
-  brands?: LookupOption[];
+  brands?: BrandLookupOption[];
   categories?: LookupOption[];
   subCategories?: SubCategoryOption[];
   types?: LookupOption[];
@@ -255,7 +267,7 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
   );
 
   const handleBrandOptionSelect = useCallback(
-    (option: LookupOption) => {
+    (option: BrandLookupOption) => {
       cancelBrandListClose();
       updateFormField('brandId', String(option.id));
       setBrandText(option.name || `Brand ${option.id}`);
@@ -276,13 +288,25 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
             types: [],
           } as ProductLookups);
         if (base.brands.some((existing) => existing.id === brand.id)) return base;
-        return { ...base, brands: [...base.brands, { id: brand.id, name: brand.name }] };
+        return {
+          ...base,
+          brands: [
+            ...base.brands,
+            { id: brand.id, name: brand.name, partNumberSuffix: null, partNumberPatterns: [] },
+          ],
+        };
       });
       updateFormField('brandId', String(brand.id));
       setBrandText(brand.name);
       setIsBrandListOpen(false);
     },
     [updateFormField],
+  );
+
+  const brandOptions = useMemo(() => lookups?.brands ?? [], [lookups]);
+  const selectedBrand = useMemo(
+    () => brandOptions.find((option) => String(option.id) === form.brandId) ?? null,
+    [brandOptions, form.brandId],
   );
 
   const handleCreateProduct = useCallback(async () => {
@@ -301,13 +325,28 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
       setFormError('Part number is required.');
       return;
     }
+    let canonicalPartNumber = trimmedPartNumber;
+    if (selectedBrand) {
+      const config = normalizePatternConfig({
+        suffix: selectedBrand.partNumberSuffix,
+        patterns: selectedBrand.partNumberPatterns,
+      });
+      if (hasPatternConfig(config)) {
+        const result = applyBrandPattern(trimmedPartNumber, config);
+        if (!result.ok) {
+          setFormError('Part number does not match the brand format.');
+          return;
+        }
+        canonicalPartNumber = result.value;
+      }
+    }
     setFormError(null);
     setSavingProduct(true);
     try {
       const payload = {
         brandId: parseOptionalId(form.brandId),
         modelNumber: trimmedModelNumber || null,
-        partNumber: trimmedPartNumber || null,
+        partNumber: canonicalPartNumber || null,
         erpCode: form.erpCode.trim() || null,
         typeId: parseOptionalId(form.typeId),
         categoryId: parseOptionalId(form.categoryId),
@@ -338,15 +377,30 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
     } finally {
       setSavingProduct(false);
     }
-  }, [form, onAdded, onClose]);
+  }, [form, onAdded, onClose, selectedBrand]);
 
-  const isPartNumberInvalid = formError === 'Part number is required.';
-
-  const brandOptions = useMemo(() => lookups?.brands ?? [], [lookups]);
-  const selectedBrand = useMemo(
-    () => brandOptions.find((option) => String(option.id) === form.brandId) ?? null,
-    [brandOptions, form.brandId],
+  const brandPatternConfig = useMemo<PartNumberPatternConfig>(
+    () =>
+      normalizePatternConfig({
+        suffix: selectedBrand?.partNumberSuffix ?? null,
+        patterns: selectedBrand?.partNumberPatterns ?? [],
+      }),
+    [selectedBrand],
   );
+  const hasBrandPatterns = hasPatternConfig(brandPatternConfig);
+  const partNumberMatch = useMemo(() => {
+    if (!hasBrandPatterns) return null;
+    if (!form.partNumber.trim()) return null;
+    return applyBrandPattern(form.partNumber, brandPatternConfig);
+  }, [brandPatternConfig, form.partNumber, hasBrandPatterns]);
+  const partNumberFormatExamples = useMemo(
+    () => brandPatternConfig.patterns.map(formatPatternExample),
+    [brandPatternConfig],
+  );
+  const isPartNumberInvalid =
+    formError === 'Part number is required.'
+    || formError === 'Part number does not match the brand format.'
+    || (partNumberMatch !== null && !partNumberMatch.ok);
   const filteredBrandOptions = useMemo(() => {
     const query = brandText.trim().toLowerCase();
     if (!query) return brandOptions;
@@ -533,6 +587,33 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
             value={form.partNumber}
             onChange={(event) => updateFormField('partNumber', event.target.value)}
           />
+          {hasBrandPatterns ? (
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: 12,
+                lineHeight: 1.4,
+                color:
+                  partNumberMatch && !partNumberMatch.ok
+                    ? '#b91c1c'
+                    : partNumberMatch && partNumberMatch.transformed
+                      ? '#92400e'
+                      : '#475569',
+              }}
+            >
+              <div>
+                Expected format
+                {partNumberFormatExamples.length === 1 ? '' : 's'}:{' '}
+                {partNumberFormatExamples.join(' or ')}
+              </div>
+              {partNumberMatch && partNumberMatch.ok && partNumberMatch.transformed ? (
+                <div>Will be saved as: {partNumberMatch.value}</div>
+              ) : null}
+              {partNumberMatch && !partNumberMatch.ok ? (
+                <div>Part number does not match the brand format.</div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <div className={`${lookupStyles.field} ${lookupStyles.fieldFull}`}>
           <DuplicateWarning warnings={duplicateWarnings} />

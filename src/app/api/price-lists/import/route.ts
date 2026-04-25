@@ -12,6 +12,12 @@ import { logAddAuditDetails } from "../../../../lib/mutationAudit";
 import { requirePermission } from "../../../../lib/authz";
 import { clearPartModelNumberUpper } from "../../../../lib/partModelNumber";
 import {
+  applyBrandPattern,
+  hasPatternConfig,
+  normalizePatternConfig,
+  type PartNumberPatternConfig,
+} from "../../../../lib/partNumberPattern";
+import {
   DEFAULT_PRICE_LIST_DECIMAL_FORMAT,
   normalizePriceListDecimalFormat,
   type PriceListDecimalFormat,
@@ -705,6 +711,29 @@ const fetchProductsByKeys = async (
   return rows;
 };
 
+const loadBrandPatternConfig = async (
+  pool: ConnectionPool,
+  brandId: number,
+): Promise<PartNumberPatternConfig> => {
+  const result = await pool
+    .request()
+    .input("BrandID", sql.Int, brandId)
+    .query<{
+      PartNumberSuffix: string | null;
+      PartNumberPattern1: string | null;
+      PartNumberPattern2: string | null;
+    }>(`
+      SELECT PartNumberSuffix, PartNumberPattern1, PartNumberPattern2
+      FROM dbo.Brands
+      WHERE ID = @BrandID
+    `);
+  const row = result.recordset?.[0];
+  return normalizePatternConfig({
+    suffix: row?.PartNumberSuffix ?? null,
+    patterns: [row?.PartNumberPattern1 ?? null, row?.PartNumberPattern2 ?? null],
+  });
+};
+
 const loadExistingProducts = async (pool: ConnectionPool, parsedRows: ParsedPriceListRow[], brandId: number) => {
   const partKeys = Array.from(
     new Set(
@@ -987,6 +1016,17 @@ export async function POST(req: NextRequest) {
           },
           { status: 400 },
         );
+      }
+    }
+
+    // Apply brand-defined part number pattern (e.g. append suffix like "-RT",
+    // or insert separators if the imported file has only the digits).
+    const brandPatternConfig = await loadBrandPatternConfig(pool, brandId!);
+    if (hasPatternConfig(brandPatternConfig)) {
+      for (const row of parsedRows) {
+        if (!row.partNumber) continue;
+        const result = applyBrandPattern(row.partNumber, brandPatternConfig);
+        if (result.ok) row.partNumber = result.value;
       }
     }
 

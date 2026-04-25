@@ -1398,6 +1398,7 @@ export default function AgGridAll({
   const [isGridReady, setIsGridReady] = useState(false);
   const [gridEmpty, setGridEmpty] = useState(true);
   const gridEmptyRef = useRef(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [hasUserFilters, setHasUserFilters] = useState(false);
   const [activeFilterCount, setActiveFilterCount] = useState(0);
   const [displayedRowCount, setDisplayedRowCount] = useState<number | null>(null);
@@ -3245,6 +3246,7 @@ if (lastPrefetchedFirstPageIdentityRef.current !== prefetchedFirstPage) {
           const empty = filteredRows.length === 0;
           gridEmptyRef.current = empty;
           setGridEmpty(empty);
+          setHasLoadedOnce(true);
         }
       } catch (e) {
         console.error('Datasource fetch exception', e);
@@ -4487,7 +4489,7 @@ if (lastPrefetchedFirstPageIdentityRef.current !== prefetchedFirstPage) {
         data-suppress-sidebar={suppressSideBar}
         ref={shellRef}
       >
-        {gridEmpty && isGridReady && !suppressNoRowsOverlay && (
+        {gridEmpty && isGridReady && hasLoadedOnce && !suppressNoRowsOverlay && (
           <div className={styles.noRowsOverlay}>No data to display</div>
         )}
         <AgGridReact

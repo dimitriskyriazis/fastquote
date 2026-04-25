@@ -48,13 +48,31 @@ type BrandAuditRow = {
   SoftOneCode: string | null;
   AVC4Name: string | null;
   Enabled: boolean | number | null;
+  PartNumberSuffix: string | null;
+  PartNumberPattern1: string | null;
+  PartNumberPattern2: string | null;
 };
 
 type NormalizedBrandUpdate = {
   brandId: number;
-  field: "Name" | "Comment" | "SoftOneID" | "SoftOneCode" | "AVC4Name" | "Enabled";
+  field:
+    | "Name"
+    | "Comment"
+    | "SoftOneID"
+    | "SoftOneCode"
+    | "AVC4Name"
+    | "Enabled"
+    | "PartNumberSuffix"
+    | "PartNumberPattern1"
+    | "PartNumberPattern2";
   value: unknown;
 };
+
+const ADMIN_ONLY_FIELDS = new Set<NormalizedBrandUpdate["field"]>([
+  "PartNumberSuffix",
+  "PartNumberPattern1",
+  "PartNumberPattern2",
+]);
 
 class BrandUpdateError extends Error {
   status: number;
@@ -132,7 +150,10 @@ const fetchBrandAuditRows = async (ids: number[]) => {
       SoftOneID,
       SoftOneCode,
       AVC4Name,
-      Enabled
+      Enabled,
+      PartNumberSuffix,
+      PartNumberPattern1,
+      PartNumberPattern2
     FROM dbo.Brands
     WHERE ID IN (${ids.map((_, idx) => `@auditId${idx}`).join(", ")})
   `);
@@ -145,6 +166,9 @@ const fetchBrandAuditRows = async (ids: number[]) => {
     SoftOneCode: normalizeTextOutput(row.SoftOneCode),
     AVC4Name: normalizeTextOutput(row.AVC4Name),
     Enabled: normalizeBooleanOutput(row.Enabled),
+    PartNumberSuffix: normalizeTextOutput(row.PartNumberSuffix),
+    PartNumberPattern1: normalizeTextOutput(row.PartNumberPattern1),
+    PartNumberPattern2: normalizeTextOutput(row.PartNumberPattern2),
   }));
   return indexRowsById(normalizedRows, (row) => row.BrandID);
 };
@@ -294,7 +318,10 @@ export async function PATCH(req: NextRequest) {
             field !== "SoftOneID" &&
             field !== "SoftOneCode" &&
             field !== "AVC4Name" &&
-            field !== "Enabled")
+            field !== "Enabled" &&
+            field !== "PartNumberSuffix" &&
+            field !== "PartNumberPattern1" &&
+            field !== "PartNumberPattern2")
         ) {
           return null;
         }
@@ -304,6 +331,18 @@ export async function PATCH(req: NextRequest) {
 
     if (normalized.length === 0) {
       return NextResponse.json({ ok: false, error: "No valid updates provided" }, { status: 400 });
+    }
+
+    const hasAdminOnlyFields = normalized.some((entry) => ADMIN_ONLY_FIELDS.has(entry.field));
+    if (hasAdminOnlyFields) {
+      const isAdminOrDev =
+        auth.roles.includes("Administrator") || auth.roles.includes("Developer");
+      if (!isAdminOrDev) {
+        return NextResponse.json(
+          { ok: false, error: "Only administrators and developers can edit Part Number columns" },
+          { status: 403 },
+        );
+      }
     }
 
     const targetBrandIds = Array.from(new Set(normalized.map((entry) => entry.brandId)));
@@ -354,6 +393,33 @@ export async function PATCH(req: NextRequest) {
         await request.query(`
           UPDATE dbo.Brands
           SET Comment = @value,
+            ModifiedOn = SYSUTCDATETIME(),
+            ModifiedBy = @userId
+          WHERE ID = @brandId
+        `);
+      } else if (update.field === "PartNumberSuffix") {
+        request.input("value", sql.NVarChar(20), normalizeNullableTextValue(update.value));
+        await request.query(`
+          UPDATE dbo.Brands
+          SET PartNumberSuffix = @value,
+            ModifiedOn = SYSUTCDATETIME(),
+            ModifiedBy = @userId
+          WHERE ID = @brandId
+        `);
+      } else if (update.field === "PartNumberPattern1") {
+        request.input("value", sql.NVarChar(50), normalizeNullableTextValue(update.value));
+        await request.query(`
+          UPDATE dbo.Brands
+          SET PartNumberPattern1 = @value,
+            ModifiedOn = SYSUTCDATETIME(),
+            ModifiedBy = @userId
+          WHERE ID = @brandId
+        `);
+      } else if (update.field === "PartNumberPattern2") {
+        request.input("value", sql.NVarChar(50), normalizeNullableTextValue(update.value));
+        await request.query(`
+          UPDATE dbo.Brands
+          SET PartNumberPattern2 = @value,
             ModifiedOn = SYSUTCDATETIME(),
             ModifiedBy = @userId
           WHERE ID = @brandId

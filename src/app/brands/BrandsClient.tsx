@@ -44,6 +44,9 @@ type BrandRow = {
   SoftOneID: number | null;
   SoftOneCode: string | null;
   AVC4Name: string | null;
+  PartNumberSuffix: string | null;
+  PartNumberPattern1: string | null;
+  PartNumberPattern2: string | null;
 };
 
 const normalizeBrandId = (value: unknown): number | null => {
@@ -76,7 +79,12 @@ const BRAND_FIELD_LABELS: Record<string, string> = {
   Comment: "Comment",
   AVC4Name: "AVC4 Name",
   Enabled: "Enabled",
+  PartNumberSuffix: "Part Number Suffix",
+  PartNumberPattern1: "Part Number Pattern 1",
+  PartNumberPattern2: "Part Number Pattern 2",
 };
+
+const ADMIN_ONLY_FIELDS = new Set(["PartNumberSuffix", "PartNumberPattern1", "PartNumberPattern2"]);
 
 function normalizeMenuItemDef(item: MenuItemDef<BrandRow, unknown>): MenuItemDef<RowData, unknown> {
   return {
@@ -102,6 +110,10 @@ function normalizeBrandContextMenuItems(
 export default function BrandsClient() {
   useRouter();
   const { roles } = useAuditUser();
+  const canEditAdminOnly = useMemo(
+    () => roles.includes("Administrator") || roles.includes("Developer"),
+    [roles],
+  );
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
@@ -216,6 +228,7 @@ export default function BrandsClient() {
         filter: "agTextColumnFilter",
         width: 130,
         editable: true,
+        hide: true,
         valueSetter: (params) => {
           params.data = params.data ?? {};
           (params.data as Record<string, unknown>).SoftOneID = normalizeOptionalInt(params.newValue);
@@ -228,13 +241,35 @@ export default function BrandsClient() {
         filter: "agTextColumnFilter",
         width: 150,
         editable: true,
+        hide: true,
       },
       {
         field: "AVC4Name",
         headerName: "AVC4 Name",
         filter: "agTextColumnFilter",
         width: 180,
-        editable: true,
+        editable: canEditAdminOnly,
+      },
+      {
+        field: "PartNumberSuffix",
+        headerName: "Part Number Suffix",
+        filter: "agTextColumnFilter",
+        width: 160,
+        editable: canEditAdminOnly,
+      },
+      {
+        field: "PartNumberPattern1",
+        headerName: "Part Number Pattern 1",
+        filter: "agTextColumnFilter",
+        width: 180,
+        editable: canEditAdminOnly,
+      },
+      {
+        field: "PartNumberPattern2",
+        headerName: "Part Number Pattern 2",
+        filter: "agTextColumnFilter",
+        width: 180,
+        editable: canEditAdminOnly,
       },
       {
         field: "Comment",
@@ -266,7 +301,7 @@ export default function BrandsClient() {
         },
       },
     ],
-    [enabledOptions],
+    [enabledOptions, canEditAdminOnly],
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
