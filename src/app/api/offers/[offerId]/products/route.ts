@@ -114,6 +114,9 @@ type ProductRow = {
   TotalNet: number | null;
   Warranty: number | null;
   TelmacoWarranty: number | null;
+  Installation: number | null;
+  ElInstalation: number | null;
+  Commissioning: number | null;
   Delivery: string | null;
   OfferValidity: string | null;
   ListPrice: number | null;
@@ -162,6 +165,9 @@ type ProductRowWithCount = ProductRow & {
   __sumTotalPrice?: number | bigint | string | null;
   __sumTotalNet?: number | bigint | string | null;
   __sumTotalCost?: number | bigint | string | null;
+  __sumInstallation?: number | bigint | string | null;
+  __sumElInstalation?: number | bigint | string | null;
+  __sumCommissioning?: number | bigint | string | null;
   __hasRequestedItemNo?: number | bigint | null;
   __hasRequestedBrand?: number | bigint | null;
   __hasRequestedModelNo?: number | bigint | null;
@@ -179,6 +185,9 @@ type OfferProductTotals = {
   totalListPrice: number;
   totalNetPrice: number;
   totalCost: number;
+  totalInstallation: number;
+  totalElInstalation: number;
+  totalCommissioning: number;
 };
 
 type TreeOrderingUpdateRequest = {
@@ -219,6 +228,9 @@ type DetailUpdateInput = {
   RequestedQuantity?: number | string | null;
   PartNumber?: string | null;
   ModelNumber?: string | null;
+  Installation?: number | string | null;
+  ElInstalation?: number | string | null;
+  Commissioning?: number | string | null;
 };
 
 type DetailUpdateRequest = {
@@ -268,6 +280,9 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   TotalNet: 'od.TotalNet',
   Warranty: 'od.Warranty',
   TelmacoWarranty: 'od.TelmacoWarranty',
+  Installation: 'od.Installation',
+  ElInstalation: 'od.ElInstalation',
+  Commissioning: 'od.Commissioning',
   Delivery: 'od.Delivery',
   OfferValidity: 'o.OfferValidity',
   ListPrice: 'od.ListPrice',
@@ -1323,6 +1338,9 @@ export async function POST(
           SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalPrice, 0) ELSE 0 END) OVER () AS __sumTotalPrice,
           SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalNet, 0) ELSE 0 END) OVER () AS __sumTotalNet,
           SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalCost, 0) ELSE 0 END) OVER () AS __sumTotalCost,
+          SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.Quantity, 0) * COALESCE(od.Installation, 0) ELSE 0 END) OVER () AS __sumInstallation,
+          SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.Quantity, 0) * COALESCE(od.ElInstalation, 0) ELSE 0 END) OVER () AS __sumElInstalation,
+          SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.Quantity, 0) * COALESCE(od.Commissioning, 0) ELSE 0 END) OVER () AS __sumCommissioning,
           ${TREE_ORDERING_HIERARCHY_EXPRESSION} AS TreeOrderingHierarchy,
           ${selectedColumnSql},
           CASE
@@ -1393,8 +1411,11 @@ export async function POST(
         totalListPrice: normalizeAggregateValue(recordset[0].__sumTotalPrice ?? 0),
         totalNetPrice: normalizeAggregateValue(recordset[0].__sumTotalNet ?? 0),
         totalCost: normalizeAggregateValue(recordset[0].__sumTotalCost ?? 0),
+        totalInstallation: normalizeAggregateValue(recordset[0].__sumInstallation ?? 0),
+        totalElInstalation: normalizeAggregateValue(recordset[0].__sumElInstalation ?? 0),
+        totalCommissioning: normalizeAggregateValue(recordset[0].__sumCommissioning ?? 0),
       }
-      : { totalListPrice: 0, totalNetPrice: 0, totalCost: 0 };
+      : { totalListPrice: 0, totalNetPrice: 0, totalCost: 0, totalInstallation: 0, totalElInstalation: 0, totalCommissioning: 0 };
 
     // Query requested columns separately without filters to determine visibility
     // This ensures requested columns remain visible even when filters result in no rows
@@ -1456,6 +1477,9 @@ export async function POST(
         __sumTotalPrice,
         __sumTotalNet,
         __sumTotalCost,
+        __sumInstallation,
+        __sumElInstalation,
+        __sumCommissioning,
       __hasRequestedItemNo,
       __hasRequestedBrand,
       __hasRequestedModelNo,
@@ -1471,6 +1495,9 @@ export async function POST(
       void __sumTotalPrice;
       void __sumTotalNet;
       void __sumTotalCost;
+      void __sumInstallation;
+      void __sumElInstalation;
+      void __sumCommissioning;
       void __hasRequestedItemNo;
       void __hasRequestedBrand;
       void __hasRequestedModelNo;
@@ -1661,6 +1688,9 @@ export async function PATCH(
           : false;
         const hasPartNumber = entry ? Object.prototype.hasOwnProperty.call(entry, 'PartNumber') : false;
         const hasModelNumber = entry ? Object.prototype.hasOwnProperty.call(entry, 'ModelNumber') : false;
+        const hasInstallation = entry ? Object.prototype.hasOwnProperty.call(entry, 'Installation') : false;
+        const hasElInstalation = entry ? Object.prototype.hasOwnProperty.call(entry, 'ElInstalation') : false;
+        const hasCommissioning = entry ? Object.prototype.hasOwnProperty.call(entry, 'Commissioning') : false;
         const hasPricingFields = hasCustomerDiscount || hasTelmacoDiscount || hasNetUnitPrice || hasNetCost || hasMargin
           || hasNetCostOtherCurrency || hasOtherCurrencyID || hasCurrencyCostModifier;
         if (
@@ -1685,6 +1715,9 @@ export async function PATCH(
           && !hasRequestedDescription2
           && !hasRequestedDescription3
           && !hasRequestedQuantity
+          && !hasInstallation
+          && !hasElInstalation
+          && !hasCommissioning
         ) {
           return null;
         }
@@ -1755,6 +1788,9 @@ export async function PATCH(
         const isCommentValue = hasIsComment ? normalizeBoolean(entry?.IsComment ?? null) : null;
         const partNumber = hasPartNumber ? normalizeRequestedTextValue(entry?.PartNumber ?? null) : null;
         const modelNumber = hasModelNumber ? normalizeRequestedTextValue(entry?.ModelNumber ?? null) : null;
+        const installation = hasInstallation ? normalizeMoneyValue(entry?.Installation ?? null) : null;
+        const elInstalation = hasElInstalation ? normalizeMoneyValue(entry?.ElInstalation ?? null) : null;
+        const commissioning = hasCommissioning ? normalizeMoneyValue(entry?.Commissioning ?? null) : null;
 
         if (hasPricingFields) {
           const invalidPricing = (hasCustomerDiscount && customerDiscount == null)
@@ -1830,6 +1866,12 @@ export async function PATCH(
           PartNumber: partNumber,
           hasModelNumber,
           ModelNumber: modelNumber,
+          hasInstallation,
+          Installation: installation,
+          hasElInstalation,
+          ElInstalation: elInstalation,
+          hasCommissioning,
+          Commissioning: commissioning,
         };
       })
       .filter((entry): entry is {
@@ -1888,6 +1930,12 @@ export async function PATCH(
         PartNumber: string | null;
         hasModelNumber: boolean;
         ModelNumber: string | null;
+        hasInstallation: boolean;
+        Installation: number | null;
+        hasElInstalation: boolean;
+        ElInstalation: number | null;
+        hasCommissioning: boolean;
+        Commissioning: number | null;
       } => Boolean(entry));
 
     if (normalizedUpdates.length === 0) {
@@ -2058,6 +2106,12 @@ export async function PATCH(
         HasPartNumber: boolean;
         ModelNumber: string | null;
         HasModelNumber: boolean;
+        Installation: number | null;
+        HasInstallation: boolean;
+        ElInstalation: number | null;
+        HasElInstalation: boolean;
+        Commissioning: number | null;
+        HasCommissioning: boolean;
       }> = [];
       const errors: string[] = [];
 
@@ -2289,6 +2343,12 @@ export async function PATCH(
           HasPartNumber: entry.hasPartNumber,
           ModelNumber: entry.hasModelNumber ? entry.ModelNumber : null,
           HasModelNumber: entry.hasModelNumber,
+          Installation: entry.hasInstallation ? entry.Installation : null,
+          HasInstallation: entry.hasInstallation,
+          ElInstalation: entry.hasElInstalation ? entry.ElInstalation : null,
+          HasElInstalation: entry.hasElInstalation,
+          Commissioning: entry.hasCommissioning ? entry.Commissioning : null,
+          HasCommissioning: entry.hasCommissioning,
         });
       });
 
@@ -2319,7 +2379,7 @@ export async function PATCH(
       });
 
       const decimalType = getDecimalType();
-      const UPDATE_PARAMS_PER_ROW = 54;
+      const UPDATE_PARAMS_PER_ROW = 60;
       const UPDATE_BASE_PARAMS = 2;
       const updateChunkSize = Math.max(1, Math.floor((2100 - UPDATE_BASE_PARAMS) / UPDATE_PARAMS_PER_ROW));
 
@@ -2461,7 +2521,19 @@ export async function PATCH(
         request.input(hasPartNumberParam, sql.Bit, row.HasPartNumber ? 1 : 0);
         request.input(modelNumberParam, sql.NVarChar(400), row.HasModelNumber ? row.ModelNumber : null);
         request.input(hasModelNumberParam, sql.Bit, row.HasModelNumber ? 1 : 0);
-        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam}, @${partNumberParam}, @${hasPartNumberParam}, @${modelNumberParam}, @${hasModelNumberParam})`);
+        const installationParam = `installation_${rowIdx}`;
+        const hasInstallationParam = `hasInstallation_${rowIdx}`;
+        const elInstalationParam = `elInstalation_${rowIdx}`;
+        const hasElInstalationParam = `hasElInstalation_${rowIdx}`;
+        const commissioningParam = `commissioning_${rowIdx}`;
+        const hasCommissioningParam = `hasCommissioning_${rowIdx}`;
+        request.input(installationParam, decimalType, row.HasInstallation ? row.Installation : null);
+        request.input(hasInstallationParam, sql.Bit, row.HasInstallation ? 1 : 0);
+        request.input(elInstalationParam, decimalType, row.HasElInstalation ? row.ElInstalation : null);
+        request.input(hasElInstalationParam, sql.Bit, row.HasElInstalation ? 1 : 0);
+        request.input(commissioningParam, decimalType, row.HasCommissioning ? row.Commissioning : null);
+        request.input(hasCommissioningParam, sql.Bit, row.HasCommissioning ? 1 : 0);
+        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam}, @${partNumberParam}, @${hasPartNumberParam}, @${modelNumberParam}, @${hasModelNumberParam}, @${installationParam}, @${hasInstallationParam}, @${elInstalationParam}, @${hasElInstalationParam}, @${commissioningParam}, @${hasCommissioningParam})`);
       });
 
       const query = `
@@ -2519,7 +2591,13 @@ export async function PATCH(
           PartNumber,
           HasPartNumber,
           ModelNumber,
-          HasModelNumber
+          HasModelNumber,
+          Installation,
+          HasInstallation,
+          ElInstalation,
+          HasElInstalation,
+          Commissioning,
+          HasCommissioning
         ) AS (
           SELECT *
           FROM (VALUES ${valueClauses.join(', ')}) AS v (
@@ -2576,7 +2654,13 @@ export async function PATCH(
             PartNumber,
             HasPartNumber,
             ModelNumber,
-            HasModelNumber
+            HasModelNumber,
+            Installation,
+            HasInstallation,
+            ElInstalation,
+            HasElInstalation,
+            Commissioning,
+            HasCommissioning
           )
         )
         UPDATE od
@@ -2611,6 +2695,9 @@ export async function PATCH(
             od.IsComment = CASE WHEN PendingUpdates.HasIsComment = 1 THEN PendingUpdates.IsComment ELSE od.IsComment END,
             od.PartNumber = CASE WHEN PendingUpdates.HasPartNumber = 1 THEN PendingUpdates.PartNumber ELSE od.PartNumber END,
             od.ModelNumber = CASE WHEN PendingUpdates.HasModelNumber = 1 THEN PendingUpdates.ModelNumber ELSE od.ModelNumber END,
+            od.Installation = CASE WHEN PendingUpdates.HasInstallation = 1 THEN PendingUpdates.Installation ELSE od.Installation END,
+            od.ElInstalation = CASE WHEN PendingUpdates.HasElInstalation = 1 THEN PendingUpdates.ElInstalation ELSE od.ElInstalation END,
+            od.Commissioning = CASE WHEN PendingUpdates.HasCommissioning = 1 THEN PendingUpdates.Commissioning ELSE od.Commissioning END,
             od.ModifiedOn = SYSUTCDATETIME(),
             od.ModifiedBy = @__modifiedBy
         FROM dbo.OfferDetails od
@@ -2658,6 +2745,30 @@ export async function PATCH(
     }
 
     if (affected > 0) {
+      for (const entry of normalizedUpdates) {
+        const hourFields: Array<{ has: boolean; field: 'Installation' | 'ElInstalation' | 'Commissioning'; value: number | null }> = [
+          { has: entry.hasInstallation, field: 'Installation', value: entry.Installation },
+          { has: entry.hasElInstalation, field: 'ElInstalation', value: entry.ElInstalation },
+          { has: entry.hasCommissioning, field: 'Commissioning', value: entry.Commissioning },
+        ];
+        for (const { has, field, value } of hourFields) {
+          if (!has) continue;
+          realtimeEvents.emit(
+            `offer:${offerId}:products`,
+            'cell-updated',
+            {
+              rowId: entry.OfferDetailID,
+              OfferDetailID: entry.OfferDetailID,
+              field,
+              value,
+              updatedBy: audit.userId,
+            },
+          );
+        }
+      }
+    }
+
+    if (affected > 0) {
       const changes: FieldChange[] = [];
       normalizedUpdates.forEach((entry) => {
         const addChange = (field: string, after: unknown) => {
@@ -2690,6 +2801,9 @@ export async function PATCH(
         if (entry.hasRequestedQuantity) addChange('RequestedQuantity', entry.RequestedQuantity);
         if (entry.hasPartNumber) addChange('PartNumber', entry.PartNumber);
         if (entry.hasModelNumber) addChange('ModelNumber', entry.ModelNumber);
+        if (entry.hasInstallation) addChange('Installation', entry.Installation);
+        if (entry.hasElInstalation) addChange('ElInstalation', entry.ElInstalation);
+        if (entry.hasCommissioning) addChange('Commissioning', entry.Commissioning);
       });
       if (changes.length > 0) {
         logEditAuditDetails({

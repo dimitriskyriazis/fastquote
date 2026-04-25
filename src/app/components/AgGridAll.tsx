@@ -528,6 +528,9 @@ export type GridTotals = {
   totalListPrice: number;
   totalNetPrice: number;
   totalCost: number;
+  totalInstallation: number;
+  totalElInstalation: number;
+  totalCommissioning: number;
 };
 
 type Props = {
@@ -1013,11 +1016,21 @@ const normalizeAggregateValue = (value: unknown): number => {
 
 const parseTotalsPayload = (payload: unknown): GridTotals | null => {
   if (!payload || typeof payload !== 'object') return null;
-  const data = payload as { totalListPrice?: unknown; totalNetPrice?: unknown; totalCost?: unknown };
+  const data = payload as {
+    totalListPrice?: unknown;
+    totalNetPrice?: unknown;
+    totalCost?: unknown;
+    totalInstallation?: unknown;
+    totalElInstalation?: unknown;
+    totalCommissioning?: unknown;
+  };
   return {
     totalListPrice: normalizeAggregateValue(data.totalListPrice ?? 0),
     totalNetPrice: normalizeAggregateValue(data.totalNetPrice ?? 0),
     totalCost: normalizeAggregateValue(data.totalCost ?? 0),
+    totalInstallation: normalizeAggregateValue(data.totalInstallation ?? 0),
+    totalElInstalation: normalizeAggregateValue(data.totalElInstalation ?? 0),
+    totalCommissioning: normalizeAggregateValue(data.totalCommissioning ?? 0),
   };
 };
 

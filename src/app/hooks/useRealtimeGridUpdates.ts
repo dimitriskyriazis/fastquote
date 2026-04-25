@@ -43,7 +43,7 @@ type UseRealtimeGridUpdatesOptions = {
     updatedBy?: string;
   }) => void;
   onRowAdded?: (row: RowData) => void;
-  onRowUpdated?: (rowId: number, field: string, value: unknown) => void;
+  onRowUpdated?: (rowId: number, field: string, value: unknown, updatedBy?: string) => void;
   onRowDeleted?: (rowId: number) => void;
   onRowsReordered?: (updates: Array<{ OfferDetailID: number; TreeOrdering: string }>) => void;
 };
@@ -190,7 +190,7 @@ export function useRealtimeGridUpdates({
               });
             }
             if (targetId && field) {
-              onRowUpdatedRef.current?.(targetId, field, value);
+              onRowUpdatedRef.current?.(targetId, field, value, updatedBy);
             }
             break;
           }

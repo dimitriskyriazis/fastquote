@@ -1833,6 +1833,9 @@ export const COST_ANALYSIS_COLUMNS = [
   'GrossProfit',
   'TotalCost',
   'TelmacoWarranty',
+  'Installation',
+  'ElInstalation',
+  'Commissioning',
 ];
 
 export const STANDARD_PACKAGE_PRODUCTS_FIELDS = [

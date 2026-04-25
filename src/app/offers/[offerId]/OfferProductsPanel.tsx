@@ -21,6 +21,7 @@ import type {
 } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
+import { getUserNumberLocale } from '../../../lib/localeNumber';
 import styles from './OfferProductsPanel.module.css';
 import type {
   AgGridAllProps,
@@ -29,6 +30,7 @@ import type {
   ServerRequestWithQuickFilter,
 } from '../../components/AgGridAll';
 import {
+  buildColumnFingerprint,
   buildGridColumnStateStorageKey,
   collectPersistableColumnState,
   writePersistedColumnState,
@@ -345,7 +347,15 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     },
     [addProductsEndpoint],
   );
-  const [totals, setTotals] = useState<{ totalListPrice: number; totalNetPrice: number; totalCost: number; totalMargin: number } | null>(null);
+  const [totals, setTotals] = useState<{
+    totalListPrice: number;
+    totalNetPrice: number;
+    totalCost: number;
+    totalMargin: number;
+    totalInstallation: number;
+    totalElInstalation: number;
+    totalCommissioning: number;
+  } | null>(null);
   const [totalNetEditing, setTotalNetEditing] = useState(false);
   const [totalNetInputValue, setTotalNetInputValue] = useState('');
   const [totalNetApplying, setTotalNetApplying] = useState(false);
@@ -801,30 +811,43 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   }), []);
 
   const applyRowTotalsDelta = useCallback((
-    oldRow: { TotalPrice: number; TotalNet: number; TotalCost: number },
-    newRow: { TotalPrice: number; TotalNet: number; TotalCost: number },
+    oldRow: { TotalPrice: number; TotalNet: number; TotalCost: number; InstallationHours: number; ElInstalationHours: number; CommissioningHours: number },
+    newRow: { TotalPrice: number; TotalNet: number; TotalCost: number; InstallationHours: number; ElInstalationHours: number; CommissioningHours: number },
   ) => {
     const dTP = newRow.TotalPrice - oldRow.TotalPrice;
     const dTN = newRow.TotalNet - oldRow.TotalNet;
     const dTC = newRow.TotalCost - oldRow.TotalCost;
-    if (dTP === 0 && dTN === 0 && dTC === 0) return;
+    const dIH = newRow.InstallationHours - oldRow.InstallationHours;
+    const dEH = newRow.ElInstalationHours - oldRow.ElInstalationHours;
+    const dCH = newRow.CommissioningHours - oldRow.CommissioningHours;
+    if (dTP === 0 && dTN === 0 && dTC === 0 && dIH === 0 && dEH === 0 && dCH === 0) return;
     setTotals((prev) => {
       if (!prev) return prev;
       const totalListPrice = prev.totalListPrice + dTP;
       const totalNetPrice = prev.totalNetPrice + dTN;
       const totalCost = prev.totalCost + dTC;
+      const totalInstallation = prev.totalInstallation + dIH;
+      const totalElInstalation = prev.totalElInstalation + dEH;
+      const totalCommissioning = prev.totalCommissioning + dCH;
       const marginBasis = Object.is(totalNetPrice, 0) ? 0 : totalNetPrice;
       const totalMargin = marginBasis === 0 ? 0 : ((totalNetPrice - totalCost) / marginBasis) * 100;
-      return { totalListPrice, totalNetPrice, totalCost, totalMargin };
+      return { totalListPrice, totalNetPrice, totalCost, totalMargin, totalInstallation, totalElInstalation, totalCommissioning };
     });
   }, []);
 
   const snapshotRowTotals = useCallback((data: Record<string, unknown> | null | undefined) => {
-    if (!data) return { TotalPrice: 0, TotalNet: 0, TotalCost: 0 };
+    if (!data) return { TotalPrice: 0, TotalNet: 0, TotalCost: 0, InstallationHours: 0, ElInstalationHours: 0, CommissioningHours: 0 };
+    const qty = coerceNumber((data as { Quantity?: unknown }).Quantity) ?? 0;
+    const installation = coerceNumber((data as { Installation?: unknown }).Installation) ?? 0;
+    const elInstalation = coerceNumber((data as { ElInstalation?: unknown }).ElInstalation) ?? 0;
+    const commissioning = coerceNumber((data as { Commissioning?: unknown }).Commissioning) ?? 0;
     return {
       TotalPrice: coerceNumber((data as { TotalPrice?: unknown }).TotalPrice) ?? 0,
       TotalNet: coerceNumber((data as { TotalNet?: unknown }).TotalNet) ?? 0,
       TotalCost: coerceNumber((data as { TotalCost?: unknown }).TotalCost) ?? 0,
+      InstallationHours: qty * installation,
+      ElInstalationHours: qty * elInstalation,
+      CommissioningHours: qty * commissioning,
     };
   }, []);
 
@@ -836,6 +859,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const totalNetPrice = payload.totalNetPrice ?? 0;
     const totalListPrice = payload.totalListPrice ?? 0;
     const totalCost = payload.totalCost ?? 0;
+    const totalInstallation = payload.totalInstallation ?? 0;
+    const totalElInstalation = payload.totalElInstalation ?? 0;
+    const totalCommissioning = payload.totalCommissioning ?? 0;
     const marginBasis = Object.is(totalNetPrice, 0) ? 0 : totalNetPrice;
     const totalMargin = marginBasis === 0 ? 0 : ((totalNetPrice - totalCost) / marginBasis) * 100;
     setTotals((prev) => {
@@ -845,10 +871,13 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         && Object.is(prev.totalListPrice, totalListPrice)
         && Object.is(prev.totalCost, totalCost)
         && Object.is(prev.totalMargin, totalMargin)
+        && Object.is(prev.totalInstallation, totalInstallation)
+        && Object.is(prev.totalElInstalation, totalElInstalation)
+        && Object.is(prev.totalCommissioning, totalCommissioning)
       ) {
         return prev;
       }
-      return { totalNetPrice, totalListPrice, totalCost, totalMargin };
+      return { totalNetPrice, totalListPrice, totalCost, totalMargin, totalInstallation, totalElInstalation, totalCommissioning };
     });
   }, []);
 
@@ -1576,19 +1605,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       }
       return withWidth;
     });
-    // Derive fingerprint from the grid's live column IDs so saved state
-    // auto-invalidates when columns are added or removed.
-    const liveColIds: string[] = [];
-    try {
-      const allCols = (api as unknown as { getAllGridColumns?: () => Array<{ getColId?: () => string }> }).getAllGridColumns?.();
-      if (Array.isArray(allCols)) {
-        allCols.forEach((col) => {
-          const id = typeof col?.getColId === 'function' ? col.getColId() : '';
-          if (id) liveColIds.push(id);
-        });
-      }
-    } catch { /* noop */ }
-    const fingerprint = liveColIds.length > 0 ? liveColIds.sort().join('|') : undefined;
+    // Use the same fingerprint AgGridAll uses on read (derived from columnDefs),
+    // otherwise the read-time fingerprint check discards our saved state and wipes
+    // the localStorage entry — losing widths on the next load.
+    const fingerprint = buildColumnFingerprint(productColumnDefsRef.current);
     writePersistedColumnState(columnStateStorageKey, nextState, fingerprint);
     if (!options?.silent) {
       showToastMessage('Layout saved', 'success');
@@ -2262,6 +2282,7 @@ const requestedColumnDefsMap = useMemo(
     [actualNumericCellStyle, requestedCellClassRules, truncateCellStyle],
   );
 
+  const productColumnDefsRef = useRef<ColDef[]>([]);
   const productColumnDefs: ColDef[] = useMemo(() => buildProductColumnDefs({
       standardPackageMode,
       manualMode,
@@ -2306,6 +2327,7 @@ const requestedColumnDefsMap = useMemo(
     api.refreshCells({ force: true });
   }, [offerCurrencyName]);
 
+  productColumnDefsRef.current = productColumnDefs;
 
   const pendingGridScrollRestoreRef = useRef<number | null>(null);
 
@@ -5364,6 +5386,10 @@ const requestedColumnDefsMap = useMemo(
     };
 
     const oldRowTotalsSnapshot = snapshotRowTotals(event.data as Record<string, unknown>);
+    const installationAtEdit = coerceNumber((event.data as { Installation?: unknown }).Installation) ?? 0;
+    const elInstalationAtEdit = coerceNumber((event.data as { ElInstalation?: unknown }).ElInstalation) ?? 0;
+    const commissioningAtEdit = coerceNumber((event.data as { Commissioning?: unknown }).Commissioning) ?? 0;
+    const qtyDelta = (normalizedNewValue ?? 0) - (normalizedOldValue ?? 0);
 
     const runUpdate = async () => {
       try {
@@ -5409,6 +5435,19 @@ const requestedColumnDefsMap = useMemo(
           const newRowTotals = snapshotRowTotals(event.data as Record<string, unknown>);
           applyRowTotalsDelta(oldRowTotalsSnapshot, newRowTotals);
         }
+        if (qtyDelta !== 0) {
+          const dInstallation = qtyDelta * installationAtEdit;
+          const dElInstalation = qtyDelta * elInstalationAtEdit;
+          const dCommissioning = qtyDelta * commissioningAtEdit;
+          if (dInstallation !== 0 || dElInstalation !== 0 || dCommissioning !== 0) {
+            setTotals((prev) => prev ? {
+              ...prev,
+              totalInstallation: prev.totalInstallation + dInstallation,
+              totalElInstalation: prev.totalElInstalation + dElInstalation,
+              totalCommissioning: prev.totalCommissioning + dCommissioning,
+            } : prev);
+          }
+        }
       } catch (err) {
         console.error('Failed to update quantity', err);
         showToastMessage(`Unable to update quantity: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
@@ -5419,6 +5458,102 @@ const requestedColumnDefsMap = useMemo(
     };
     void runUpdate();
   }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo, snapshotRowTotals, applyRowTotalsDelta]);
+
+  const handleHoursFieldEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    const editedField = event.colDef.field;
+    if (editedField !== 'Installation' && editedField !== 'ElInstalation' && editedField !== 'Commissioning') return;
+    const source = (event as { source?: string }).source;
+    if (source === 'api') return;
+    if (shouldSkipRealtimeCellEdit(event)) return;
+    if (!isOfferProductCommentOrProduct(event.data)) {
+      try { event.node?.setDataValue?.(editedField, event.oldValue ?? null); } catch { /* noop */ }
+      return;
+    }
+    const normalizedOldValue = coerceNumber(event.oldValue);
+    const newRaw = event.newValue;
+    const isClearing = newRaw == null || (typeof newRaw === 'string' && newRaw.trim() === '');
+    let normalizedNewValue: number | null;
+    if (isClearing) {
+      normalizedNewValue = null;
+    } else {
+      const parsed = coerceNumber(newRaw);
+      if (parsed == null || parsed < 0) {
+        showToastMessage('Please enter a valid number of hours (zero or more).', 'error');
+        try { event.node?.setDataValue?.(editedField, normalizedOldValue ?? null); } catch { /* noop */ }
+        return;
+      }
+      normalizedNewValue = parsed;
+    }
+    if (
+      (normalizedOldValue == null && normalizedNewValue == null)
+      || (normalizedOldValue != null && normalizedNewValue != null && Object.is(normalizedOldValue, normalizedNewValue))
+    ) {
+      return;
+    }
+    const offerDetailId = normalizeOfferDetailId((event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null);
+    if (offerDetailId == null) {
+      showToastMessage('Unable to update value. Missing record identifier.', 'error');
+      try { event.node?.setDataValue?.(editedField, normalizedOldValue ?? null); } catch { /* noop */ }
+      return;
+    }
+    const revertValue = () => {
+      try { event.node?.setDataValue?.(editedField, normalizedOldValue ?? null); } catch { /* noop */ }
+    };
+    const qtyAtEdit = coerceNumber((event.data as { Quantity?: unknown }).Quantity) ?? 0;
+    const valueDelta = (normalizedNewValue ?? 0) - (normalizedOldValue ?? 0);
+    const hoursDelta = qtyAtEdit * valueDelta;
+    const totalKey: 'totalInstallation' | 'totalElInstalation' | 'totalCommissioning' =
+      editedField === 'Installation' ? 'totalInstallation'
+      : editedField === 'ElInstalation' ? 'totalElInstalation'
+      : 'totalCommissioning';
+    const runUpdate = async () => {
+      try {
+        const res = await fetch(resolvedEndpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: [{ OfferDetailID: offerDetailId, [editedField]: normalizedNewValue }],
+          }),
+        });
+        let payload: { ok?: boolean; error?: string } | null = null;
+        try { payload = (await res.json()) as { ok?: boolean; error?: string } | null; } catch { payload = null; }
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update value (status ${res.status})`);
+        }
+        const capturedOld = normalizedOldValue;
+        const capturedField = editedField;
+        const capturedDetailId = offerDetailId;
+        pushUndo({
+          label: `${editedField} updated`,
+          undo: async () => {
+            const undoRes = await fetch(resolvedEndpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, [capturedField]: capturedOld }] }),
+            });
+            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+            try { event.node?.setDataValue(capturedField, capturedOld); } catch { /* noop */ }
+            event.api?.refreshServerSide?.({ purge: false });
+          },
+        });
+        showToastMessage(`${editedField} updated`, 'success', 5500, {
+          label: 'Undo',
+          onClick: () => performUndo(),
+        });
+        if (hoursDelta !== 0) {
+          setTotals((prev) => (prev ? { ...prev, [totalKey]: prev[totalKey] + hoursDelta } : prev));
+        }
+      } catch (err) {
+        console.error(`Failed to update ${editedField}`, err);
+        showToastMessage(`Unable to update: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
+        revertValue();
+        event.api?.stopEditing?.();
+        event.api?.clearFocusedCell?.();
+      }
+    };
+    void runUpdate();
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
 
   const handleDescriptionEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const editedField = event.colDef.field;
@@ -5989,7 +6124,8 @@ const requestedColumnDefsMap = useMemo(
     handlePricingEdit(event);
     handlePartModelNumberEdit(event);
     handleOriginEdit(event);
-  }, [handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit, handleOriginEdit]);
+    handleHoursFieldEdit(event);
+  }, [handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit, handleOriginEdit, handleHoursFieldEdit]);
 
   const offerCurrencySymbol = offerCurrencyName ?? '€';
   const withCurrency = (formatted: string) =>
@@ -6001,6 +6137,14 @@ const requestedColumnDefsMap = useMemo(
   const formatPercentTotal = (value: number | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return '—';
     return `${decimalFormatter.format(value)} %`;
+  };
+  const hoursTotalFormatter = useMemo(
+    () => new Intl.NumberFormat(getUserNumberLocale(), { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
+    [],
+  );
+  const formatHoursTotal = (value: number | null | undefined) => {
+    if (value == null || !Number.isFinite(value)) return '—';
+    return `${hoursTotalFormatter.format(Math.ceil(value))} h`;
   };
   const formatDiscountTotal = (listPrice: number | null | undefined, netPrice: number | null | undefined) => {
     if (
@@ -6268,6 +6412,7 @@ const requestedColumnDefsMap = useMemo(
 
   // Real-time updates for collaborative editing
   // showNotifications: false - only the person making the edit sees toasts from their own actions
+  const realtimeRowSnapshotRef = useRef<Map<number, ReturnType<typeof snapshotRowTotals>>>(new Map());
   useRealtimeGridUpdates({
     resource: `offer:${offerId}:products`,
     gridApi: gridApiRef.current,
@@ -6275,6 +6420,32 @@ const requestedColumnDefsMap = useMemo(
     showNotifications: false,
     onBeforeCellUpdate: (info) => {
       registerRealtimeCellUpdate(info.rowId, info.field, info.value);
+      if (info.updatedBy != null && String(info.updatedBy) === String(userId)) return;
+      const api = gridApiRef.current;
+      if (!api || api.isDestroyed?.()) return;
+      api.forEachNode((node) => {
+        const id = (node.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID;
+        if (id === info.rowId) {
+          realtimeRowSnapshotRef.current.set(info.rowId, snapshotRowTotals(node.data as Record<string, unknown>));
+        }
+      });
+    },
+    onRowUpdated: (rowId, _field, _value, updatedBy) => {
+      void _field;
+      void _value;
+      if (updatedBy != null && String(updatedBy) === String(userId)) return;
+      const before = realtimeRowSnapshotRef.current.get(rowId);
+      if (!before) return;
+      realtimeRowSnapshotRef.current.delete(rowId);
+      const api = gridApiRef.current;
+      if (!api || api.isDestroyed?.()) return;
+      api.forEachNode((node) => {
+        const id = (node.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID;
+        if (id === rowId) {
+          const after = snapshotRowTotals(node.data as Record<string, unknown>);
+          applyRowTotalsDelta(before, after);
+        }
+      });
     },
   });
 
@@ -6920,6 +7091,18 @@ const requestedColumnDefsMap = useMemo(
                   {formatPercentTotal(totals?.totalMargin)}
                 </span>
               )}
+            </div>
+            <div className={styles.totalItem}>
+              <span className={styles.totalLabel}>Installation:</span>
+              <span className={styles.totalValue}>{formatHoursTotal(totals?.totalInstallation)}</span>
+            </div>
+            <div className={styles.totalItem}>
+              <span className={styles.totalLabel}>El. Installation:</span>
+              <span className={styles.totalValue}>{formatHoursTotal(totals?.totalElInstalation)}</span>
+            </div>
+            <div className={styles.totalItem}>
+              <span className={styles.totalLabel}>Commissioning:</span>
+              <span className={styles.totalValue}>{formatHoursTotal(totals?.totalCommissioning)}</span>
             </div>
           </div>
         )}
