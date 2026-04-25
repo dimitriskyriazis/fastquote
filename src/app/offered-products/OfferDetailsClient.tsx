@@ -191,6 +191,14 @@ export default function OfferDetailsClient() {
       width: 120,
     },
     {
+      field: 'TotalPrice',
+      headerName: 'Total Price',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      valueFormatter: (params) => formatNumber(params.value),
+      width: 120,
+    },
+    {
       field: 'CustomerDiscount',
       headerName: 'Cust. Discount',
       filter: 'agNumberColumnFilter',
@@ -205,14 +213,6 @@ export default function OfferDetailsClient() {
       type: 'numericColumn',
       valueFormatter: (params) => formatNumber(params.value),
       width: 130,
-    },
-    {
-      field: 'TotalPrice',
-      headerName: 'Total Price',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      valueFormatter: (params) => formatNumber(params.value),
-      width: 120,
     },
     {
       field: 'TotalNet',
@@ -299,6 +299,15 @@ export default function OfferDetailsClient() {
       width: 120,
     },
     {
+      field: 'TotalCost',
+      headerName: 'Total Cost',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      valueFormatter: (params) => formatNumber(params.value),
+      cellStyle: redCellStyle,
+      width: 120,
+    },
+    {
       field: 'Margin',
       headerName: 'Margin',
       filter: 'agNumberColumnFilter',
@@ -310,15 +319,6 @@ export default function OfferDetailsClient() {
     {
       field: 'GrossProfit',
       headerName: 'Gross Profit',
-      filter: 'agNumberColumnFilter',
-      type: 'numericColumn',
-      valueFormatter: (params) => formatNumber(params.value),
-      cellStyle: redCellStyle,
-      width: 120,
-    },
-    {
-      field: 'TotalCost',
-      headerName: 'Total Cost',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       valueFormatter: (params) => formatNumber(params.value),

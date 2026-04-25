@@ -6836,6 +6836,10 @@ const requestedColumnDefsMap = useMemo(
               <span className={styles.totalValue}>{formatEuroTotal(totals?.totalListPrice)}</span>
             </div>
             <div className={styles.totalItem}>
+              <span className={styles.totalLabel}>Total Discount:</span>
+              <span className={styles.totalValue}>{formatDiscountTotal(totals?.totalListPrice, totals?.totalNetPrice)}</span>
+            </div>
+            <div className={styles.totalItem}>
               <span className={styles.totalLabel}>Total Net:</span>
               {totalNetEditing ? (
                 <input
@@ -6873,10 +6877,6 @@ const requestedColumnDefsMap = useMemo(
                   {formatEuroTotal(totals?.totalNetPrice)}
                 </span>
               )}
-            </div>
-            <div className={styles.totalItem}>
-              <span className={styles.totalLabel}>Total Discount:</span>
-              <span className={styles.totalValue}>{formatDiscountTotal(totals?.totalListPrice, totals?.totalNetPrice)}</span>
             </div>
             <div className={styles.totalItem}>
               <span className={styles.totalLabel}>Total Cost:</span>
