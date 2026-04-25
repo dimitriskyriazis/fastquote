@@ -495,19 +495,15 @@ export default function AddProductsModal({
   }, [onClose, detachMenu]);
 
   // Right-click on the modal's empty space shows a small context menu with a
-  // "Detach to new window" action.  We deliberately skip interactive elements
-  // (buttons, inputs, links) and the ag-grid area so the native browser menu
-  // or ag-grid's own menu still work where they're expected.
+  // "Detach to new window" action.  Only true empty space counts — clicks on
+  // buttons, links, inputs, or inside the ag-grid table fall through to the
+  // native browser menu or ag-grid's own context menu.
   const handleModalContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (!onRequestDetach) return;
     const target = event.target as HTMLElement | null;
-    // Only skip cases where the native menu is genuinely useful: text inputs
-    // (copy/paste) and anything opted out via data-detach-menu-skip.  Everything
-    // else — buttons, labels, header background, body background, and the
-    // products-grid background — counts as "empty space" for the detach menu.
     if (
       target && target.closest(
-        'input, textarea, select, [contenteditable="true"], [data-detach-menu-skip="true"]',
+        'input, textarea, select, button, a, [role="button"], [contenteditable="true"], .ag-root-wrapper, [role="grid"], [role="treegrid"], [data-detach-menu-skip="true"]',
       )
     ) {
       return;

@@ -1928,6 +1928,15 @@ export default function PriceListImportClient({
         matchedProductCount?: number;
         skippedRows?: number;
         totalRows?: number;
+        blockers?: Array<{
+          rowIndex: number;
+          partNumber: string;
+          modelNumber: string | null;
+          description: string | null;
+          conflictProductId: number;
+          conflictBrandId: number | null;
+          conflictBrandName: string | null;
+        }>;
         descriptionMismatches?: { productId: number; partNumber: string; oldDescription: string; newDescription: string }[];
         modelNumberMismatches?: { productId: number; partNumber: string; oldModelNumber: string; newModelNumber: string }[];
         priceChanges?: Array<{
@@ -1960,6 +1969,29 @@ export default function PriceListImportClient({
           return null;
         }
       })();
+
+      if (response.status === 409 && typedPayload?.blockers && typedPayload.blockers.length > 0) {
+        const blockers = typedPayload.blockers;
+        await showConfirmDialog({
+          title: "Import cancelled — duplicate part numbers",
+          message: `${blockers.length} row${blockers.length > 1 ? "s" : ""} in the file have part numbers that already exist in the database under a different brand. Fix or remove these rows and re-upload.`,
+          confirmLabel: "OK",
+          cancelLabel: "Close",
+          tone: "danger",
+          details: {
+            columns: ["Row", "Part Number", "Description", "Existing Brand", "Existing Product ID"],
+            rows: blockers.map((b) => [
+              String(b.rowIndex + 1),
+              b.partNumber || "-",
+              b.description || "-",
+              b.conflictBrandName || (b.conflictBrandId != null ? `#${b.conflictBrandId}` : "-"),
+              String(b.conflictProductId),
+            ]),
+          },
+        });
+        setError(typedPayload.error ?? "Import cancelled: duplicate part numbers.");
+        return;
+      }
 
       if (!response.ok || !typedPayload?.ok) {
         const serverError =

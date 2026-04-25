@@ -298,6 +298,14 @@ export async function PATCH(
     // categoryId or enabled don't affect the vector.
     return NextResponse.json({ ok: true });
   } catch (err) {
+    const sqlNumber = (err as { number?: number } | null)?.number;
+    if (sqlNumber === 2627 || sqlNumber === 2601) {
+      return await createErrorResponse(
+        'A product with this part number already exists.',
+        409,
+        { requestId, endpoint: req.nextUrl.pathname, method: 'PATCH', userId },
+      );
+    }
     return await handleApiError(err, {
       requestId,
       endpoint: req.nextUrl.pathname,

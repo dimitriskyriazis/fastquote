@@ -84,8 +84,6 @@ const BRAND_FIELD_LABELS: Record<string, string> = {
   PartNumberPattern2: "Part Number Pattern 2",
 };
 
-const ADMIN_ONLY_FIELDS = new Set(["PartNumberSuffix", "PartNumberPattern1", "PartNumberPattern2"]);
-
 function normalizeMenuItemDef(item: MenuItemDef<BrandRow, unknown>): MenuItemDef<RowData, unknown> {
   return {
     ...item,

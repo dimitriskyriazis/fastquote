@@ -5,7 +5,7 @@ import { z } from "zod";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { getRequestId } from "../../../../lib/requestId";
-import { handleApiError } from "../../../../lib/errorHandler";
+import { handleApiError, createErrorResponse } from "../../../../lib/errorHandler";
 import { logger } from "../../../../lib/logger";
 import { logAddAuditDetails } from "../../../../lib/mutationAudit";
 import { validateRequest, positiveIntSchema, stringSchema, urlSchema, partModelNumberSchema } from "../../../../lib/validation";
@@ -200,6 +200,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, productId });
   } catch (err) {
+    const sqlNumber = (err as { number?: number } | null)?.number;
+    if (sqlNumber === 2627 || sqlNumber === 2601) {
+      return await createErrorResponse(
+        "A product with this part number already exists.",
+        409,
+        { requestId, endpoint: "/api/products/create", method: "POST", userId },
+      );
+    }
     return await handleApiError(err, {
       requestId,
       endpoint: "/api/products/create",

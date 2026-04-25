@@ -1052,6 +1052,110 @@ export async function POST(req: NextRequest) {
       }
     });
 
+    // Pre-flight: detect rows whose PartNumber would collide with the
+    // global UNIQUE constraint on dbo.Products.PartNumber.  A row is a
+    // blocker when it would INSERT a new product (no match found inside
+    // this brand) AND its PartNumber already exists under any brand.
+    {
+      const partNumbersToCheck = Array.from(
+        new Set(
+          parsedRows
+            .map((row) => row.partNumber?.trim() ?? null)
+            .filter((value): value is string => Boolean(value)),
+        ),
+      );
+
+      const globalCollisions = new Map<
+        string,
+        { id: number; brandId: number | null; brandName: string | null }
+      >();
+      if (partNumbersToCheck.length > 0) {
+        const chunks = chunkArray(partNumbersToCheck, 900);
+        for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
+          const chunk = chunks[chunkIdx];
+          const checkRequest = pool.request();
+          const paramNames = chunk.map((val, idx) => {
+            const param = `pn_${chunkIdx}_${idx}`;
+            checkRequest.input(param, sql.NVarChar(255), val);
+            return `@${param}`;
+          });
+          const result = await checkRequest.query<{
+            ID: number;
+            PartNumber: string | null;
+            BrandID: number | null;
+            BrandName: string | null;
+          }>(`
+            SELECT p.ID, p.PartNumber, p.BrandID, b.Name AS BrandName
+            FROM dbo.Products p
+            LEFT JOIN dbo.Brands b ON b.ID = p.BrandID
+            WHERE p.PartNumber IN (${paramNames.join(", ")})
+          `);
+          for (const r of result.recordset ?? []) {
+            const key = (r.PartNumber ?? "").trim().toLowerCase();
+            if (key && !globalCollisions.has(key)) {
+              globalCollisions.set(key, {
+                id: r.ID,
+                brandId: r.BrandID,
+                brandName: r.BrandName,
+              });
+            }
+          }
+        }
+      }
+
+      type ImportBlocker = {
+        rowIndex: number;
+        partNumber: string;
+        modelNumber: string | null;
+        description: string | null;
+        conflictProductId: number;
+        conflictBrandId: number | null;
+        conflictBrandName: string | null;
+      };
+      const blockers: ImportBlocker[] = [];
+
+      parsedRows.forEach((row, idx) => {
+        const partKey = normalizeKey(row.partNumber);
+        if (!partKey) return;
+        const modelKey = normalizeKey(row.modelNumber);
+        const legacyKey = normalizeKey(row.legacyPartNumber);
+
+        const sameBrandPartMatch = byPartNumber.has(partKey);
+        const legacyMatch = legacyKey ? byLegacyPartNumber.has(legacyKey) : false;
+        let modelMatch = false;
+        if (!sameBrandPartMatch && !legacyMatch && modelKey && byModelNumber.has(modelKey)) {
+          const candidate = byModelNumber.get(modelKey);
+          const candidatePartKey = normalizeKey(candidate?.PartNumber);
+          modelMatch = !partKey || (candidatePartKey != null && partKey === candidatePartKey);
+        }
+        if (sameBrandPartMatch || legacyMatch || modelMatch) return;
+
+        const collision = globalCollisions.get(partKey);
+        if (collision) {
+          blockers.push({
+            rowIndex: idx,
+            partNumber: row.partNumber!.trim(),
+            modelNumber: row.modelNumber,
+            description: row.description,
+            conflictProductId: collision.id,
+            conflictBrandId: collision.brandId,
+            conflictBrandName: collision.brandName,
+          });
+        }
+      });
+
+      if (blockers.length > 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: `Import cancelled: ${blockers.length} part number${blockers.length > 1 ? "s" : ""} already exist in the database under a different brand.`,
+            blockers,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     // Load previous prices for import summary comparison
     const previousPriceMap = new Map<number, { listPrice: number | null; costPrice: number | null }>();
     {
@@ -1463,6 +1567,18 @@ export async function POST(req: NextRequest) {
       throw err;
     }
   } catch (err) {
+    const sqlNumber = (err as { number?: number } | null)?.number;
+    if (sqlNumber === 2627 || sqlNumber === 2601) {
+      console.error("Price list import aborted: duplicate part number", err);
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Import cancelled: one or more part numbers in the file already exist in the database. Please remove or fix the duplicates and re-upload.",
+        },
+        { status: 409 },
+      );
+    }
     console.error("Failed to import price list", err);
     const message = err instanceof Error ? err.message : "Server error";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
