@@ -246,6 +246,15 @@
   transform: none;
 }
 
+.aiButton[aria-pressed="true"] {
+  background: #1e40af;
+  color: #ffffff;
+  border-color: #1e3a8a;
+}
+.aiButton[aria-pressed="true"]:hover {
+  background: #1e3a8a;
+}
+
 .aiButtonSpinner {
   display: inline-block;
   width: 14px;

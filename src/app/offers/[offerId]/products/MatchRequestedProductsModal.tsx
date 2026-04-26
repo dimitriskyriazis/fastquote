@@ -354,6 +354,22 @@ export default function MatchRequestedProductsModal({
   // extended terms.  Cleared on entry change so each row starts fresh.
   const [overrideHiddenTokens, setOverrideHiddenTokens] = useState<HiddenFilterTokens | null>(null);
   const effectiveHiddenTokens = overrideHiddenTokens ?? hiddenFilterTokens;
+  // Prompt-driven AI search lock state (mirrors AddProductsModal).  When
+  // true: prompt input becomes read-only, the column filter row is hidden,
+  // and a banner in the filter-row slot shows the AI's interpretation.
+  const [promptSubmitted, setPromptSubmitted] = useState(false);
+  const promptSubmittedRef = useRef(false);
+  promptSubmittedRef.current = promptSubmitted;
+  // Default: plain keyword search.  The smart-search sidecar (entry-derived
+  // hidden tokens, /expand synonyms, server-inline LLM rerank) is still
+  // prefetched in the background — we just do not apply it to the grid until
+  // the user opts in here, so flipping the toggle is one quick re-fetch with
+  // the cached sidecar.  A submitted AI prompt force-enables smart mode.
+  const [smartSearchEnabled, setSmartSearchEnabled] = useState(false);
+  // Reset to "off" on entry change so each row starts in plain mode.
+  useEffect(() => {
+    setSmartSearchEnabled(false);
+  }, [entry.offerDetailId]);
   // Refetch the grid whenever the hidden-token payload changes AFTER the
   // initial render for this entry.  AgGridAll reads requestPayload from a
   // ref at fetch time and does NOT auto-refetch on prop change, so without
@@ -378,13 +394,7 @@ export default function MatchRequestedProductsModal({
     const api = productsApiRef.current as unknown as { refreshServerSide?: (p?: { purge?: boolean }) => void; isDestroyed?: () => boolean } | null;
     if (!api || api.isDestroyed?.()) return;
     try { api.refreshServerSide?.({ purge: true }); } catch { /* noop */ }
-  }, [effectiveHiddenTokens]);
-  // Prompt-driven AI search lock state (mirrors AddProductsModal).  When
-  // true: prompt input becomes read-only, the column filter row is hidden,
-  // and a banner in the filter-row slot shows the AI's interpretation.
-  const [promptSubmitted, setPromptSubmitted] = useState(false);
-  const promptSubmittedRef = useRef(false);
-  promptSubmittedRef.current = promptSubmitted;
+  }, [effectiveHiddenTokens, smartSearchEnabled, promptSubmitted]);
   // Debounced filter-change-driven semantic expansion (same mechanism as
   // AddProductsModal).
   const semanticExpandTimerRef = useRef<number | null>(null);
@@ -423,10 +433,17 @@ export default function MatchRequestedProductsModal({
     // buildRequestedFilterState, so rebranded rows still match via
     // Description and the scoring pushes correct-brand rows up without
     // censoring valid distributor listings.
+    const smartActive = smartSearchEnabled || promptSubmitted;
     const payload: Record<string, unknown> = {
       action: 'products',
-      orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
     };
+    // orFilterColumns OR-combines column filters across BrandName / PartNumber
+    // / ModelNumber / Description so the entry's auto-populated chips catch
+    // rebrands and cross-column hits.  In plain mode we let the grid AND the
+    // column filters together as users expect from a normal grid filter.
+    if (smartActive) {
+      payload.orFilterColumns = ['BrandName', 'PartNumber', 'ModelNumber', 'Description'];
+    }
     // Raw requested spec for the server's inline LLM rerank on first-page
     // loads.  Sent as a sibling of filterModel (not derived from it) so the
     // rerank prompt sees the original chip text — the filterModel's
@@ -441,7 +458,7 @@ export default function MatchRequestedProductsModal({
     // trying to move away from.  Omitting `requested` matches the plain
     // keyword-score behavior of AddProductsModal so the two modals feel
     // identical once the user takes manual control.
-    if (!promptSubmitted && !userTouchedFilters) {
+    if (smartActive && !promptSubmitted && !userTouchedFilters) {
       payload.requested = {
         brand: entry.requestedBrand,
         partNumber: entry.requestedPartNumber,
@@ -451,16 +468,18 @@ export default function MatchRequestedProductsModal({
         description3: entry.requestedDescription3,
       };
     }
-    if (effectiveHiddenTokens) payload.hiddenFilterTokens = effectiveHiddenTokens;
-    const negative = buildNegativeHiddenTokens(effectiveExpansion, effectiveHiddenTokens);
-    if (negative) payload.negativeHiddenTokens = negative;
+    if (smartActive && effectiveHiddenTokens) payload.hiddenFilterTokens = effectiveHiddenTokens;
+    if (smartActive) {
+      const negative = buildNegativeHiddenTokens(effectiveExpansion, effectiveHiddenTokens);
+      if (negative) payload.negativeHiddenTokens = negative;
+    }
     // newProductId is intentionally NOT forwarded to the server.  The old
     // flow also asked the server to order the new product first, which
     // produced a duplicate rendering (the regular row served by the server
     // plus the client-side pinned row below).  We now show the new product
     // only as a client-side pinned top row.
     return Object.keys(payload).length > 0 ? payload : null;
-  }, [effectiveHiddenTokens, effectiveExpansion, entry, promptSubmitted, userTouchedFilters]);
+  }, [effectiveHiddenTokens, effectiveExpansion, entry, promptSubmitted, userTouchedFilters, smartSearchEnabled]);
 
   const endpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
@@ -1296,6 +1315,17 @@ export default function MatchRequestedProductsModal({
                 busy={suggesting}
                 disabled={assigning}
               />
+              {!promptSubmitted && (
+                <button
+                  type="button"
+                  className={styles.aiButton}
+                  onClick={() => setSmartSearchEnabled((v) => !v)}
+                  disabled={assigning}
+                  aria-pressed={smartSearchEnabled}
+                >
+                  {smartSearchEnabled ? 'Expand search: on' : 'Expand search: off'}
+                </button>
+              )}
               {noSuggestionsFound && !suggesting && (
                 <span className={styles.noSuggestionsLabel}>No extra terms to add</span>
               )}

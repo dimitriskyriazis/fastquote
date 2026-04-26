@@ -12,7 +12,7 @@ import {
   mergeWhereClauses,
   QueryParam,
 } from '../../../../../../lib/gridFilters';
-import { clearPartModelNumberUpper } from '../../../../../../lib/partModelNumber';
+import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from '../../../../../../lib/partModelNumber';
 import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../../lib/authz';
 import { performRerank, type RerankCandidate } from '../../../../../../lib/rerank';
@@ -191,17 +191,16 @@ const normalizePartModelNumber = (value: string): string => {
 };
 
 // Helper to get the cleared column name for part/model numbers
-// Uses the existing PartNumberCleared and ModelNumberCleared columns for better performance
+// Uses the existing PartNumberCleared and ModelNumberCleared columns for better performance.
+// Strips x/X between digits at query time to avoid backfilling stored cleared values.
 const partModelNumberSql = (expr: string) => {
-  // Replace PartNumber/ModelNumber with their cleared versions
   if (expr.includes('.PartNumber')) {
-    return `UPPER(ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, ''))`;
+    return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, ''))`);
   }
   if (expr.includes('.ModelNumber')) {
-    return `UPPER(ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, ''))`;
+    return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, ''))`);
   }
-  // Fallback for edge cases
-  return `UPPER(ISNULL(${expr}, ''))`;
+  return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr}, ''))`);
 };
 
 const buildBlankClause = (columnExpression: string): string =>
@@ -292,7 +291,7 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
             // was supplied so the legacy column uses the same table prefix.
             const tablePrefixMatch = /^([a-zA-Z_]\w*)\.(PartNumber|ModelNumber)$/.exec(columnExpression);
             const legacyExpr = tablePrefixMatch
-              ? `UPPER(ISNULL(${tablePrefixMatch[1]}.LegacyPartNoCleaned, ''))`
+              ? stripXBetweenDigitsSql(`UPPER(ISNULL(${tablePrefixMatch[1]}.LegacyPartNoCleaned, ''))`)
               : null;
             const legacyOr = legacyExpr ? ` OR ${legacyExpr}` : '';
             if (type === 'equals') {
@@ -622,12 +621,16 @@ async function tryStage1QuickMatch(
   // UPPER + ISNULL to handle nulls).  LIKE '%<code>%' on cleared columns is
   // index-friendly enough for 56k rows; Description LIKE is a scan but only
   // fires once per code, so typical total is <100ms.
+  const partClearedX = stripXBetweenDigitsSql(`UPPER(ISNULL(p.PartNumberCleared, ''))`);
+  const modelClearedX = stripXBetweenDigitsSql(`UPPER(ISNULL(p.ModelNumberCleared, ''))`);
+  const legacyClearedX = stripXBetweenDigitsSql(`UPPER(ISNULL(p.LegacyPartNoCleaned, ''))`);
+
   const orGroups: string[] = [];
   codes.forEach(({ key }) => {
     orGroups.push(
-      `(UPPER(ISNULL(p.PartNumberCleared, '')) LIKE '%' + @${key}_clean + '%'`
-      + ` OR UPPER(ISNULL(p.ModelNumberCleared, '')) LIKE '%' + @${key}_clean + '%'`
-      + ` OR UPPER(ISNULL(p.LegacyPartNoCleaned, '')) LIKE '%' + @${key}_clean + '%'`
+      `(${partClearedX} LIKE '%' + @${key}_clean + '%'`
+      + ` OR ${modelClearedX} LIKE '%' + @${key}_clean + '%'`
+      + ` OR ${legacyClearedX} LIKE '%' + @${key}_clean + '%'`
       + ` OR UPPER(ISNULL(p.Description, '')) LIKE '%' + @${key}_raw + '%')`,
     );
   });
@@ -637,9 +640,9 @@ async function tryStage1QuickMatch(
   // Within each tier, newer products (ProductID DESC) first.
   const scoreParts: string[] = [];
   codes.forEach(({ key }) => {
-    scoreParts.push(`CASE WHEN UPPER(ISNULL(p.PartNumberCleared, '')) = @${key}_clean THEN 1000 ELSE 0 END`);
-    scoreParts.push(`CASE WHEN UPPER(ISNULL(p.ModelNumberCleared, '')) = @${key}_clean THEN 900 ELSE 0 END`);
-    scoreParts.push(`CASE WHEN UPPER(ISNULL(p.LegacyPartNoCleaned, '')) = @${key}_clean THEN 800 ELSE 0 END`);
+    scoreParts.push(`CASE WHEN ${partClearedX} = @${key}_clean THEN 1000 ELSE 0 END`);
+    scoreParts.push(`CASE WHEN ${modelClearedX} = @${key}_clean THEN 900 ELSE 0 END`);
+    scoreParts.push(`CASE WHEN ${legacyClearedX} = @${key}_clean THEN 800 ELSE 0 END`);
   });
   const scoreExpr = scoreParts.length > 0 ? scoreParts.join(' + ') : '0';
   const highlightOrderClause = highlightProductId != null

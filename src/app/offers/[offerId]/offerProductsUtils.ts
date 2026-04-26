@@ -1802,6 +1802,22 @@ export const PRICING_FIELD_LABELS: Record<string, string> = {
 
 export const PRICING_EDITABLE_FIELDS = new Set(Object.keys(PRICING_FIELD_LABELS));
 
+// Fields whose value can be propagated to other rows of the same product within
+// the same offer when the user confirms. Excludes per-row identifiers
+// (Requested*), product-level fields (Origin), and product identifiers
+// (PartNumber/ModelNumber).
+export const PROPAGATABLE_FIELD_LABELS: Record<string, string> = {
+  ...PRICING_FIELD_LABELS,
+  Description: 'Description',
+  ProductDescription: 'Description',
+  Comment: 'Comment',
+  Delivery: 'Delivery',
+  Quantity: 'Quantity',
+  Installation: 'Installation Hours',
+  ElInstalation: 'Electrical Installation Hours',
+  Commissioning: 'Commissioning Hours',
+};
+
 // UI labels that should never be persisted as product descriptions.
 // Guards against accidental clipboard paste from the toolbar area.
 export const DESCRIPTION_PASTE_BLOCKLIST = new Set([

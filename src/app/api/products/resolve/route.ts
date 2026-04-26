@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { logRequest } from '../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../../lib/sql';
-import { clearPartModelNumber } from '../../../../lib/partModelNumber';
+import { clearPartModelNumber, stripXBetweenDigitsSql } from '../../../../lib/partModelNumber';
 
 const normalizeParam = (value: string | null): string | null => {
   if (!value) return null;
@@ -37,17 +37,16 @@ const normalizePartModelNumber = (value: string | null): string | null => {
 };
 
 // Helper to get the cleared column name for part/model numbers
-// Uses the existing PartNumberCleared and ModelNumberCleared columns for better performance
+// Uses the existing PartNumberCleared and ModelNumberCleared columns for better performance.
+// Strips x/X between digits at query time to avoid backfilling stored cleared values.
 const partModelNumberSql = (expr: string) => {
-  // Replace PartNumber/ModelNumber with their cleared versions
   if (expr.includes('.PartNumber')) {
-    return `ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, '')`;
+    return stripXBetweenDigitsSql(`ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, '')`);
   }
   if (expr.includes('.ModelNumber')) {
-    return `ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, '')`;
+    return stripXBetweenDigitsSql(`ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, '')`);
   }
-  // Fallback for edge cases
-  return `ISNULL(${expr}, '')`;
+  return stripXBetweenDigitsSql(`ISNULL(${expr}, '')`);
 };
 
 export async function GET(req: NextRequest) {
@@ -83,7 +82,7 @@ export async function GET(req: NextRequest) {
     // Cross-search: part/model number searches PartNumber, ModelNumber, and LegacyPartNoCleaned
     // Uses cleared columns (PartNumberCleared, ModelNumberCleared, LegacyPartNoCleaned) for index-based performance
     const partModelCondition = searchValue
-      ? `(${partModelNumberSql('p.PartNumber')} = @searchValue OR ${partModelNumberSql('p.ModelNumber')} = @searchValue OR ISNULL(p.LegacyPartNoCleaned, '') = @searchValue)`
+      ? `(${partModelNumberSql('p.PartNumber')} = @searchValue OR ${partModelNumberSql('p.ModelNumber')} = @searchValue OR ${stripXBetweenDigitsSql(`ISNULL(p.LegacyPartNoCleaned, '')`)} = @searchValue)`
       : '0=1';
     const whereConditions = [] as string[];
     if (searchValue) whereConditions.push(partModelCondition);
@@ -147,7 +146,7 @@ export async function GET(req: NextRequest) {
         const ambiguityResult = await ambiguityRequest.query<{ BrandCount: number }>(`
           SELECT COUNT(DISTINCT p.BrandID) AS BrandCount
           FROM dbo.Products p
-          WHERE (${partModelNumberSql('p.PartNumber')} = @searchValue OR ${partModelNumberSql('p.ModelNumber')} = @searchValue OR ISNULL(p.LegacyPartNoCleaned, '') = @searchValue)
+          WHERE (${partModelNumberSql('p.PartNumber')} = @searchValue OR ${partModelNumberSql('p.ModelNumber')} = @searchValue OR ${stripXBetweenDigitsSql(`ISNULL(p.LegacyPartNoCleaned, '')`)} = @searchValue)
         `);
         const brandCount = ambiguityResult.recordset?.[0]?.BrandCount ?? 0;
         if (brandCount > 1) {

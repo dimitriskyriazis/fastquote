@@ -9,7 +9,7 @@ import { fetchUserRoles } from "../../../../../lib/authz";
 import { checkDeletePermission } from "../../../../../lib/deletePermissions";
 import { KnownFilterModel, TextCondition, isCompoundFilter } from "../../../../../lib/filterTypes";
 import { processFilter } from "../../../../../lib/filterProcessing";
-import { clearPartModelNumberUpper } from "../../../../../lib/partModelNumber";
+import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from "../../../../../lib/partModelNumber";
 
 type GridRequest = {
   startRow: number;
@@ -86,14 +86,15 @@ const normalizeModelNumberInput = (value: unknown): string | null => {
 const normalizePartModelNumber = (value: string): string => clearPartModelNumberUpper(value);
 
 // Uses the existing PartNumberCleared and ModelNumberCleared columns for better performance.
+// Strips x/X between digits at query time to avoid backfilling stored cleared values.
 const partModelNumberSql = (expr: string) => {
   if (expr.includes(".PartNumber")) {
-    return `UPPER(ISNULL(${expr.replace(".PartNumber", ".PartNumberCleared")}, ''))`;
+    return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr.replace(".PartNumber", ".PartNumberCleared")}, ''))`);
   }
   if (expr.includes(".ModelNumber")) {
-    return `UPPER(ISNULL(${expr.replace(".ModelNumber", ".ModelNumberCleared")}, ''))`;
+    return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr.replace(".ModelNumber", ".ModelNumberCleared")}, ''))`);
   }
-  return `UPPER(ISNULL(${expr}, ''))`;
+  return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr}, ''))`);
 };
 
 const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
@@ -134,7 +135,7 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
       const descParam = `${pBase}_desc`;
 
       // Also search LegacyPartNoCleaned
-      const legacySql = `UPPER(ISNULL(dbo.Products.LegacyPartNoCleaned, ''))`;
+      const legacySql = stripXBetweenDigitsSql(`UPPER(ISNULL(dbo.Products.LegacyPartNoCleaned, ''))`);
 
       if (type === "contains") {
         let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase} OR ${legacySql} LIKE @${pBase}`;

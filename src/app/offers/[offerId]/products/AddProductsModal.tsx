@@ -309,6 +309,12 @@ export default function AddProductsModal({
   const [promptSubmitted, setPromptSubmitted] = useState(false);
   const promptSubmittedRef = useRef(false);
   promptSubmittedRef.current = promptSubmitted;
+  // Default: plain keyword search.  The smart-search sidecar (synonym /
+  // fuzzy / negative-intent tokens from /expand) is still prefetched in the
+  // background — we just do not apply it to the grid until the user opts in
+  // here, so flipping the toggle is effectively instant.  A submitted AI
+  // prompt force-enables smart mode regardless of this flag.
+  const [smartSearchEnabled, setSmartSearchEnabled] = useState(false);
   // Refs for filter-change-driven semantic expansion.  Declared here (above
   // the handlers that consume them) so the clear handler can reset them.
   const semanticExpandTimerRef = useRef<number | null>(null);
@@ -351,22 +357,33 @@ export default function AddProductsModal({
     // brands) — the brand term is mirrored as a hidden Description token in
     // buildRequestedFilterState so rebranded rows still match via
     // Description, while correct-brand rows rank higher via scoring.
+    const smartActive = smartSearchEnabled || promptSubmitted;
     const payload: Record<string, unknown> = {
       action: 'products',
-      orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
     };
-    if (hiddenFilterTokens) payload.hiddenFilterTokens = hiddenFilterTokens;
-    const negative = buildNegativeHiddenTokens(
-      negativeDescriptionTerms ? { negativeDescription: negativeDescriptionTerms } : null,
-      hiddenFilterTokens,
-    );
-    if (negative) payload.negativeHiddenTokens = negative;
+    // orFilterColumns OR-combines column filters across BrandName / PartNumber
+    // / ModelNumber / Description.  That is what makes expand mode catch
+    // rebrands and cross-column hits, but it also makes the plain (off) mode
+    // surprising — "SC4B" in PartNumber + "Safety Cable" in Description
+    // returns rows where only the description matches.  In plain mode we let
+    // the grid AND the column filters together as users expect.
+    if (smartActive) {
+      payload.orFilterColumns = ['BrandName', 'PartNumber', 'ModelNumber', 'Description'];
+    }
+    if (smartActive && hiddenFilterTokens) payload.hiddenFilterTokens = hiddenFilterTokens;
+    if (smartActive) {
+      const negative = buildNegativeHiddenTokens(
+        negativeDescriptionTerms ? { negativeDescription: negativeDescriptionTerms } : null,
+        hiddenFilterTokens,
+      );
+      if (negative) payload.negativeHiddenTokens = negative;
+    }
     // newProductId is intentionally NOT forwarded to the server.  The old
     // flow also asked the server to order the new product first, which
     // rendered the new product twice (the server row plus the client-side
     // pinned row).  The new product is now shown only as a pinned top row.
     return payload;
-  }, [hiddenFilterTokens, negativeDescriptionTerms]);
+  }, [hiddenFilterTokens, negativeDescriptionTerms, smartSearchEnabled, promptSubmitted]);
 
   const handleProductSelection = useCallback((rows: ProductRow[]) => {
     // Merge rather than replace: AG Grid's selectionChanged event only knows
@@ -1109,7 +1126,7 @@ export default function AddProductsModal({
     const api = productsApiRef.current as (GridApi & { refreshServerSide?: (p?: { purge?: boolean }) => void; isDestroyed?: () => boolean }) | null;
     if (!api || api.isDestroyed?.()) return;
     try { api.refreshServerSide?.({ purge: true }); } catch { /* noop */ }
-  }, [hiddenFilterTokens, negativeDescriptionTerms]);
+  }, [hiddenFilterTokens, negativeDescriptionTerms, smartSearchEnabled, promptSubmitted]);
 
   const refreshProductsGrid = useCallback(() => {
     const api = productsApiRef.current;
@@ -1571,6 +1588,10 @@ export default function AddProductsModal({
   ) : null;
 
   // AI prompt input — shared pill component used across modal + split view.
+  // The Smart-search toggle gates whether prefetched /expand sidecar tokens
+  // are applied to the grid; tokens still prefetch in the background, so
+  // toggling on is one quick re-fetch with the cached sidecar.  A submitted
+  // prompt force-enables smart mode and the toggle is hidden in that state.
   const promptInput = (
     <>
       <AiSearchPromptPill
@@ -1582,6 +1603,17 @@ export default function AddProductsModal({
         busy={suggesting}
         disabled={submitting}
       />
+      {!promptSubmitted && (
+        <button
+          type="button"
+          className={styles.aiButton}
+          onClick={() => setSmartSearchEnabled((v) => !v)}
+          disabled={submitting}
+          aria-pressed={smartSearchEnabled}
+        >
+          {smartSearchEnabled ? 'Expand search: on' : 'Expand search: off'}
+        </button>
+      )}
       {noSuggestionsFound && !suggesting && (
         <span className={styles.noPromptLabel}>No extra terms to add</span>
       )}

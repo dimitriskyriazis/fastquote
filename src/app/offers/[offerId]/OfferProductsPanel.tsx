@@ -133,6 +133,7 @@ import {
   roundMoney,
   PRICING_FIELD_LABELS,
   PRICING_EDITABLE_FIELDS,
+  PROPAGATABLE_FIELD_LABELS,
   DESCRIPTION_PASTE_BLOCKLIST,
   COST_ANALYSIS_COLUMNS,
   STANDARD_PACKAGE_PRODUCTS_FIELDS,
@@ -225,6 +226,21 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       }
       realtimeCellUpdateRef.current.delete(key);
       return true;
+    },
+    [],
+  );
+  const isProgrammaticCellEdit = useCallback(
+    (event: CellValueChangedEvent<Record<string, unknown>>) => {
+      const field = event.colDef.field;
+      if (!field) return false;
+      const rowId = normalizeOfferDetailId(
+        (event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null,
+      );
+      if (rowId == null) return false;
+      const key = `${rowId}:${field}:${String(event.newValue)}`;
+      const lastSeen = realtimeCellUpdateRef.current.get(key);
+      if (!lastSeen) return false;
+      return Date.now() - lastSeen <= 1500;
     },
     [],
   );
@@ -6115,7 +6131,131 @@ const requestedColumnDefsMap = useMemo(
     void runUpdate();
   }, [shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
 
+  const propagateChangeToDuplicates = useCallback(async (
+    event: CellValueChangedEvent<Record<string, unknown>>,
+    wasProgrammaticAtDispatch: boolean,
+  ) => {
+    const field = event.colDef.field;
+    if (!field || !PROPAGATABLE_FIELD_LABELS[field]) return;
+    const source = (event as { source?: string }).source;
+    if (source === 'api') return;
+    if (wasProgrammaticAtDispatch) return;
+    if (!isOfferProductProduct(event.data)) return;
+
+    const productId = normalizeProductId(
+      (event.data as { ProductID?: unknown } | undefined)?.ProductID ?? null,
+    );
+    if (productId == null) return;
+
+    const offerDetailId = normalizeOfferDetailId(
+      (event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null,
+    );
+    if (offerDetailId == null) return;
+
+    // Wait briefly so the source handler's PATCH/validation has a chance to settle.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // If the source handler reverted the cell (validation/server error), skip propagation.
+    const settledValue = (event.data as Record<string, unknown> | undefined)?.[field] ?? null;
+    const intendedValue = event.newValue ?? null;
+    const settledStr = settledValue == null ? '' : String(settledValue);
+    const intendedStr = intendedValue == null ? '' : String(intendedValue);
+    if (settledStr !== intendedStr) return;
+
+    type SiblingEntry = { OfferDetailID: number; oldValue: unknown };
+    let siblings: SiblingEntry[] = [];
+    const serverField = field === 'Description' ? 'ProductDescription' : field;
+    try {
+      const fetchRes = await fetch(resolvedEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request: {
+            allRows: true,
+            startRow: 0,
+            endRow: 5000,
+            view: 'pivot',
+            filterModel: {
+              ProductID: { filterType: 'number', type: 'equals', filter: productId },
+            },
+          },
+          fields: ['OfferDetailID', 'ProductID', serverField],
+        }),
+      });
+      const payload = (await fetchRes.json().catch(() => null)) as
+        | { ok?: boolean; rows?: Array<Record<string, unknown>> }
+        | null;
+      if (!fetchRes.ok || !payload?.ok) return;
+      siblings = (payload.rows ?? [])
+        .map((row): SiblingEntry | null => {
+          const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+          if (id == null || id === offerDetailId) return null;
+          return { OfferDetailID: id, oldValue: (row as Record<string, unknown>)[serverField] ?? null };
+        })
+        .filter((entry): entry is SiblingEntry => entry != null);
+    } catch {
+      return;
+    }
+
+    if (siblings.length === 0) return;
+
+    const labelText = PROPAGATABLE_FIELD_LABELS[field];
+    const confirmed = await showConfirmDialog({
+      title: 'Apply to all matching products?',
+      message: `This product appears in ${siblings.length + 1} rows of this offer. Apply the new ${labelText} to the other ${siblings.length} matching row${siblings.length === 1 ? '' : 's'}?`,
+      confirmLabel: 'Apply to all',
+      cancelLabel: 'Only this row',
+    });
+    if (!confirmed) return;
+
+    const newPatchValue = settledValue;
+    try {
+      const patchRes = await fetch(resolvedEndpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          updates: siblings.map((s) => ({ OfferDetailID: s.OfferDetailID, [serverField]: newPatchValue })),
+        }),
+      });
+      const payload = (await patchRes.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!patchRes.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? `Failed to propagate ${labelText}`);
+      }
+      showToastMessage(
+        `${labelText} applied to ${siblings.length} other matching row${siblings.length === 1 ? '' : 's'}`,
+        'success',
+        5500,
+        { label: 'Undo', onClick: () => performUndo() },
+      );
+      const capturedSiblings = siblings;
+      const capturedField = serverField;
+      pushUndo({
+        label: `${labelText} bulk update`,
+        undo: async () => {
+          const undoRes = await fetch(resolvedEndpoint, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              updates: capturedSiblings.map((s) => ({ OfferDetailID: s.OfferDetailID, [capturedField]: s.oldValue })),
+            }),
+          });
+          const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+          if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert bulk update');
+          event.api?.refreshServerSide?.({ purge: false });
+        },
+      });
+      event.api?.refreshServerSide?.({ purge: false });
+    } catch (err) {
+      console.error(`Failed to propagate ${labelText} to duplicates`, err);
+      showToastMessage(
+        `Unable to apply ${labelText} to all matching rows: ${err instanceof Error ? err.message : 'Please try again.'}`,
+        'error',
+      );
+    }
+  }, [resolvedEndpoint, pushUndo, performUndo]);
+
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    const wasProgrammatic = isProgrammaticCellEdit(event);
     handleDescriptionEdit(event);
     handleCommentEdit(event);
     handleDeliveryEdit(event);
@@ -6125,7 +6265,8 @@ const requestedColumnDefsMap = useMemo(
     handlePartModelNumberEdit(event);
     handleOriginEdit(event);
     handleHoursFieldEdit(event);
-  }, [handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit, handleOriginEdit, handleHoursFieldEdit]);
+    void propagateChangeToDuplicates(event, wasProgrammatic);
+  }, [isProgrammaticCellEdit, handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit, handleOriginEdit, handleHoursFieldEdit, propagateChangeToDuplicates]);
 
   const offerCurrencySymbol = offerCurrencyName ?? '€';
   const withCurrency = (formatted: string) =>

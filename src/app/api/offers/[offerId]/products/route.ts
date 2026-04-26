@@ -17,7 +17,7 @@ import {
   mergeWhereClauses,
   QueryParam,
 } from '../../../../../lib/gridFilters';
-import { clearPartModelNumber } from '../../../../../lib/partModelNumber';
+import { clearPartModelNumber, stripXBetweenDigitsSql } from '../../../../../lib/partModelNumber';
 import { realtimeEvents } from '../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../lib/authz';
 import { checkDeletePermission } from '../../../../../lib/deletePermissions';
@@ -888,23 +888,23 @@ const normalizePartModelNumber = (value: string): string => {
 };
 
 // Helper to get the cleared column name for part/model numbers
-// Uses the existing PartNumberCleared and ModelNumberCleared columns for better performance
+// Uses the existing PartNumberCleared and ModelNumberCleared columns for better performance.
+// Strips x/X between digits at query time to avoid backfilling stored cleared values.
 const partModelNumberSql = (expr: string) => {
   // OfferDetails (od) doesn't have Cleared columns — use Products (p) table instead
   if (expr.includes('.PartNumber')) {
     const cleared = expr.startsWith('od.')
       ? 'p.PartNumberCleared'
       : expr.replace('.PartNumber', '.PartNumberCleared');
-    return `ISNULL(${cleared}, '')`;
+    return stripXBetweenDigitsSql(`ISNULL(${cleared}, '')`);
   }
   if (expr.includes('.ModelNumber')) {
     const cleared = expr.startsWith('od.')
       ? 'p.ModelNumberCleared'
       : expr.replace('.ModelNumber', '.ModelNumberCleared');
-    return `ISNULL(${cleared}, '')`;
+    return stripXBetweenDigitsSql(`ISNULL(${cleared}, '')`);
   }
-  // Fallback for edge cases
-  return `ISNULL(${expr}, '')`;
+  return stripXBetweenDigitsSql(`ISNULL(${expr}, '')`);
 };
 
 const buildBlankClause = (columnExpression: string): string =>
@@ -974,7 +974,7 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
             const descCrossParam = `${conditionParamBase}_desc`;
 
             // Also search LegacyPartNoCleaned
-            const legacySql = `UPPER(ISNULL(p.LegacyPartNoCleaned, ''))`;
+            const legacySql = stripXBetweenDigitsSql(`UPPER(ISNULL(p.LegacyPartNoCleaned, ''))`);
 
             if (type === 'equals') {
               if (otherColumnExpression) {

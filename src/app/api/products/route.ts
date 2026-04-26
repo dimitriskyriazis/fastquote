@@ -13,7 +13,7 @@ import {
   mergeWhereClauses,
   QueryParam,
 } from "../../../lib/gridFilters";
-import { clearPartModelNumberUpper } from "../../../lib/partModelNumber";
+import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from "../../../lib/partModelNumber";
 import { KnownFilterModel, TextCondition, isCompoundFilter } from "../../../lib/filterTypes";
 import { processFilter } from "../../../lib/filterProcessing";
 import { normalizeId } from '../../../lib/normalize';
@@ -93,17 +93,16 @@ const normalizePartModelNumber = (value: string): string => {
 };
 
 // Helper to get the cleared column name for part/model numbers
-// Uses the existing PartNumberCleared and ModelNumberCleared columns for better performance
+// Uses the existing PartNumberCleared and ModelNumberCleared columns for better performance.
+// Strips x/X between digits at query time to avoid backfilling stored cleared values.
 const partModelNumberSql = (expr: string) => {
-  // Replace PartNumber/ModelNumber with their cleared versions
   if (expr.includes('.PartNumber')) {
-    return `UPPER(ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, ''))`;
+    return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, ''))`);
   }
   if (expr.includes('.ModelNumber')) {
-    return `UPPER(ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, ''))`;
+    return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, ''))`);
   }
-  // Fallback for edge cases
-  return `UPPER(ISNULL(${expr}, ''))`;
+  return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr}, ''))`);
 };
 
 function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
@@ -148,7 +147,7 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
       const descParam = `${pBase}_desc`;
 
       // Also search LegacyPartNoCleaned when filtering by PartNumber or ModelNumber
-      const legacySql = `UPPER(ISNULL(dbo.Products.LegacyPartNoCleaned, ''))`;
+      const legacySql = stripXBetweenDigitsSql(`UPPER(ISNULL(dbo.Products.LegacyPartNoCleaned, ''))`);
 
       if (type === "contains") {
         let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase} OR ${legacySql} LIKE @${pBase}`;

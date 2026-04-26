@@ -1,6 +1,6 @@
 import sql from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
-import { clearPartModelNumberUpper } from '../../../../../../lib/partModelNumber';
+import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from '../../../../../../lib/partModelNumber';
 import OpenAI from 'openai';
 
 let _openai: OpenAI | null = null;
@@ -104,7 +104,9 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
     const p = `${prefix}_${paramIdx++}`;
     request.input(p, sql.NVarChar(255), cleared);
     conditions.push(
-      `(UPPER(ISNULL(p.PartNumberCleared, '')) = @${p} OR UPPER(ISNULL(p.ModelNumberCleared, '')) = @${p} OR UPPER(ISNULL(p.LegacyPartNoCleaned, '')) = @${p})`,
+      `(${stripXBetweenDigitsSql(`UPPER(ISNULL(p.PartNumberCleared, ''))`)} = @${p}`
+      + ` OR ${stripXBetweenDigitsSql(`UPPER(ISNULL(p.ModelNumberCleared, ''))`)} = @${p}`
+      + ` OR ${stripXBetweenDigitsSql(`UPPER(ISNULL(p.LegacyPartNoCleaned, ''))`)} = @${p})`,
     );
     weights.push(weight);
   };
@@ -118,14 +120,17 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
     if (!cleared) return;
     const p = `${prefix}_${paramIdx++}`;
     request.input(p, sql.NVarChar(255), cleared);
+    const partX = stripXBetweenDigitsSql(`UPPER(ISNULL(p.PartNumberCleared, ''))`);
+    const modelX = stripXBetweenDigitsSql(`UPPER(ISNULL(p.ModelNumberCleared, ''))`);
+    const legacyX = stripXBetweenDigitsSql(`UPPER(ISNULL(p.LegacyPartNoCleaned, ''))`);
     conditions.push(
       `(
-        UPPER(ISNULL(p.PartNumberCleared, '')) LIKE @${p} + N'%'
-        OR UPPER(ISNULL(p.ModelNumberCleared, '')) LIKE @${p} + N'%'
-        OR UPPER(ISNULL(p.LegacyPartNoCleaned, '')) LIKE @${p} + N'%'
-        OR (LEN(p.PartNumberCleared) >= 4 AND @${p} LIKE UPPER(p.PartNumberCleared) + N'%')
-        OR (LEN(p.ModelNumberCleared) >= 4 AND @${p} LIKE UPPER(p.ModelNumberCleared) + N'%')
-        OR (LEN(p.LegacyPartNoCleaned) >= 4 AND @${p} LIKE UPPER(p.LegacyPartNoCleaned) + N'%')
+        ${partX} LIKE @${p} + N'%'
+        OR ${modelX} LIKE @${p} + N'%'
+        OR ${legacyX} LIKE @${p} + N'%'
+        OR (LEN(p.PartNumberCleared) >= 4 AND @${p} LIKE ${partX} + N'%')
+        OR (LEN(p.ModelNumberCleared) >= 4 AND @${p} LIKE ${modelX} + N'%')
+        OR (LEN(p.LegacyPartNoCleaned) >= 4 AND @${p} LIKE ${legacyX} + N'%')
       )`,
     );
     weights.push(weight);
