@@ -117,6 +117,7 @@ import {
   buildRequestedProductMatchEntry,
   hasRequestedRowData,
   hasRequestedPseudoFields,
+  hasRequestedLookupIdentifiers,
   buildRequestedLookupInfo,
   type RequestedLookupInfo,
   resolveProductIdFromRequestedInfo,
@@ -153,6 +154,8 @@ import {
 } from './offerProductsUtils';
 
 export type { OfferProductsPanelHandle, OfferProductsTemplateExportRow } from './offerProductsPanelTypes';
+
+const PRODUCT_PREFETCH_FIELDS = ['PartNumber', 'Description', 'BrandName', 'ModelNumber', 'ListPrice', 'CostPrice', 'PriceListName'];
 
 const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   offerId,
@@ -424,69 +427,32 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   // offerDetailId.  The modal (via AgGridAll's prefetchedFirstPage prop)
   // consumes the cached block on first paint, so navigating through the
   // queue doesn't incur a server round-trip per product.
-  const productPageCacheRef = useRef<Map<number, GridResponse>>(new Map());
+  const productPageCacheRef = useRef<Map<number, { plain: GridResponse | null; expand: GridResponse | null }>>(new Map());
   const productPagePrefetchingRef = useRef<Set<number>>(new Set());
   const [productPageCacheVersion, setProductPageCacheVersion] = useState(0);
 
-  const prefetchProductPage = useCallback(async (
+  // Modal pushes its naturally-fetched plain block 0 here so the parent's
+  // strict-sequential worker (1-plain → 1-expand → 2-plain → …) finds entry
+  // 0's plain already cached and skips the duplicate fetch — order is
+  // preserved, server load drops by one round-trip per modal open.
+  const registerModalFetchedBlock = useCallback((
+    offerDetailId: number,
+    mode: 'plain' | 'expand',
+    response: GridResponse,
+  ) => {
+    const prev = productPageCacheRef.current.get(offerDetailId) ?? { plain: null, expand: null };
+    if (prev[mode]) return;
+    productPageCacheRef.current.set(offerDetailId, { ...prev, [mode]: response });
+    setProductPageCacheVersion((v) => v + 1);
+  }, []);
+
+  const fetchAndCacheBlock = useCallback(async (
     entry: RequestedProductMatchEntry,
-    expansion: FilterExpansions | null,
+    body: Record<string, unknown>,
+    mode: 'plain' | 'expand',
   ) => {
     const id = entry.offerDetailId;
-    if (productPageCacheRef.current.has(id) || productPagePrefetchingRef.current.has(id)) return;
-    productPagePrefetchingRef.current.add(id);
     try {
-      // Match the modal's filter-model build exactly — fuzzy + hidden
-      // tokens from the full expansion flow, same helper the modal uses.
-      const built = buildRequestedFilterState({
-        requestedBrand: entry.requestedBrand,
-        requestedPartNumber: entry.requestedPartNumber,
-        requestedModelNumber: entry.requestedModelNumber,
-        requestedDescriptions: [
-          entry.requestedDescription,
-          entry.requestedDescription2,
-          entry.requestedDescription3,
-        ],
-        prefetchedExpansion: expansion,
-      });
-      const filterModel: Record<string, unknown> = built.visibleModel ?? {};
-      const hiddenTokens: HiddenFilterTokens | null = built.hiddenTokens ?? null;
-      const body: Record<string, unknown> = {
-        action: 'products',
-        orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
-        // Send `requested` so the server runs its inline LLM rerank on the
-        // prefetched first page too.  Without this, the cached page the
-        // modal consumes is keyword-ordered only, and because AgGridAll's
-        // prefetch-consumption path never re-fetches block 0, rerank would
-        // be silently skipped for any entry the user advances into.
-        requested: {
-          brand: entry.requestedBrand,
-          partNumber: entry.requestedPartNumber,
-          modelNumber: entry.requestedModelNumber,
-          description: entry.requestedDescription,
-          description2: entry.requestedDescription2,
-          description3: entry.requestedDescription3,
-        },
-        request: {
-          startRow: 0,
-          // Must match the modal grid's cacheBlockSize (200) — AG Grid
-          // caches the first getRows response as block 0, and if the
-          // prefetch returned only 25 rows the grid would skip rows 25-199
-          // on the next scroll block.
-          endRow: 200,
-          filterModel,
-          sortModel: [{ colId: 'ProductID', sort: 'desc' }],
-          rowGroupCols: [],
-          valueCols: [],
-          pivotCols: [],
-          pivotMode: false,
-          groupKeys: [],
-        },
-        fields: ['PartNumber', 'Description', 'BrandName', 'ModelNumber', 'ListPrice', 'CostPrice', 'PriceListName'],
-      };
-      if (hiddenTokens) body.hiddenFilterTokens = hiddenTokens;
-      const negative = buildNegativeHiddenTokens(expansion, hiddenTokens);
-      if (negative) body.negativeHiddenTokens = negative;
       const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -494,17 +460,131 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       });
       if (!res.ok) return;
       const data = (await res.json()) as GridResponse;
-      if (data && data.ok) {
-        productPageCacheRef.current.set(id, data);
-        setProductPageCacheVersion((v) => v + 1);
-      }
+      if (!data || !data.ok) return;
+      const prev = productPageCacheRef.current.get(id) ?? { plain: null, expand: null };
+      productPageCacheRef.current.set(id, { ...prev, [mode]: data });
+      setProductPageCacheVersion((v) => v + 1);
     } catch { /* noop */ }
-    finally {
-      productPagePrefetchingRef.current.delete(id);
-    }
   }, [offerId]);
 
-  const prefetchExpansion = useCallback(async (entry: RequestedProductMatchEntry) => {
+  // Plain (expand-OFF) prefetch: visible filter chips ANDed together, no
+  // OR-cross-search, no hidden tokens, no LLM rerank — matches what the
+  // modal sends when its toggle is in the default OFF state.
+  const prefetchProductPagePlain = useCallback(async (
+    entry: RequestedProductMatchEntry,
+    expansion: FilterExpansions | null,
+  ) => {
+    const id = entry.offerDetailId;
+    const cached = productPageCacheRef.current.get(id);
+    if (cached?.plain) return;
+    const built = buildRequestedFilterState({
+      requestedBrand: entry.requestedBrand,
+      requestedPartNumber: entry.requestedPartNumber,
+      requestedModelNumber: entry.requestedModelNumber,
+      requestedDescriptions: [
+        entry.requestedDescription,
+        entry.requestedDescription2,
+        entry.requestedDescription3,
+      ],
+      prefetchedExpansion: expansion,
+    });
+    const filterModel: Record<string, unknown> = built.visibleModel ?? {};
+    const body: Record<string, unknown> = {
+      action: 'products',
+      request: {
+        startRow: 0,
+        endRow: 200,
+        filterModel,
+        sortModel: [{ colId: 'ProductID', sort: 'desc' }],
+        rowGroupCols: [],
+        valueCols: [],
+        pivotCols: [],
+        pivotMode: false,
+        groupKeys: [],
+      },
+      fields: PRODUCT_PREFETCH_FIELDS,
+    };
+    await fetchAndCacheBlock(entry, body, 'plain');
+  }, [fetchAndCacheBlock]);
+
+  // Expand (smart) prefetch: orFilterColumns + hidden tokens + LLM rerank.
+  // What the modal sends when the toggle is ON.
+  const prefetchProductPageExpand = useCallback(async (
+    entry: RequestedProductMatchEntry,
+    expansion: FilterExpansions | null,
+  ) => {
+    const id = entry.offerDetailId;
+    const cached = productPageCacheRef.current.get(id);
+    if (cached?.expand) return;
+    const built = buildRequestedFilterState({
+      requestedBrand: entry.requestedBrand,
+      requestedPartNumber: entry.requestedPartNumber,
+      requestedModelNumber: entry.requestedModelNumber,
+      requestedDescriptions: [
+        entry.requestedDescription,
+        entry.requestedDescription2,
+        entry.requestedDescription3,
+      ],
+      prefetchedExpansion: expansion,
+    });
+    const filterModel: Record<string, unknown> = built.visibleModel ?? {};
+    const hiddenTokens: HiddenFilterTokens | null = built.hiddenTokens ?? null;
+    const body: Record<string, unknown> = {
+      action: 'products',
+      orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
+      requested: {
+        brand: entry.requestedBrand,
+        partNumber: entry.requestedPartNumber,
+        modelNumber: entry.requestedModelNumber,
+        description: entry.requestedDescription,
+        description2: entry.requestedDescription2,
+        description3: entry.requestedDescription3,
+      },
+      request: {
+        startRow: 0,
+        endRow: 200,
+        filterModel,
+        sortModel: [{ colId: 'ProductID', sort: 'desc' }],
+        rowGroupCols: [],
+        valueCols: [],
+        pivotCols: [],
+        pivotMode: false,
+        groupKeys: [],
+      },
+      fields: PRODUCT_PREFETCH_FIELDS,
+    };
+    if (hiddenTokens) body.hiddenFilterTokens = hiddenTokens;
+    const negative = buildNegativeHiddenTokens(expansion, hiddenTokens);
+    if (negative) body.negativeHiddenTokens = negative;
+    await fetchAndCacheBlock(entry, body, 'expand');
+  }, [fetchAndCacheBlock]);
+
+  // Sequenced prefetch per entry: plain first (default-mode block 0), then
+  // expand (toggled-ON block 0).  When skipPlain is true, only expand is
+  // fetched — used for entry 0, where the modal's natural grid fetch already
+  // covers plain so a parent prefetch of plain would just duplicate the call.
+  const prefetchProductPage = useCallback(async (
+    entry: RequestedProductMatchEntry,
+    expansion: FilterExpansions | null,
+    options?: { skipPlain?: boolean },
+  ) => {
+    const id = entry.offerDetailId;
+    if (productPagePrefetchingRef.current.has(id)) return;
+    productPagePrefetchingRef.current.add(id);
+    try {
+      if (!options?.skipPlain) {
+        await prefetchProductPagePlain(entry, expansion);
+      }
+      await prefetchProductPageExpand(entry, expansion);
+    } finally {
+      productPagePrefetchingRef.current.delete(id);
+    }
+  }, [prefetchProductPagePlain, prefetchProductPageExpand]);
+
+  const prefetchExpansion = useCallback(async (
+    entry: RequestedProductMatchEntry,
+    options?: { skipPlain?: boolean },
+  ) => {
     const id = entry.offerDetailId;
     if (expansionCacheRef.current.has(id) || expansionPrefetchingRef.current.has(id)) return;
     expansionPrefetchingRef.current.add(id);
@@ -531,59 +611,62 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       // Chain the product-page prefetch once we know the expansion tokens, so
       // the cached first block uses the exact same hiddenFilterTokens the
       // modal would send.  If the expansion call failed, we still prefetch
-      // without expansion (the modal would too).
-      void prefetchProductPage(entry, expansion);
+      // without expansion (the modal would too).  Awaited so the worker's
+      // strict 1-plain → 1-expand → 2-plain → 2-expand sequencing is honoured.
+      await prefetchProductPage(entry, expansion, options);
     } catch { /* noop */ }
     finally {
       expansionPrefetchingRef.current.delete(id);
     }
   }, [offerId, prefetchProductPage]);
 
-  // Background prefetch for upcoming entries.  Held off until the current
-  // entry's modal has actually loaded its grid data — otherwise entries 2+
-  // race entry 1 for the same OpenAI + SQL quota and the user waits longer
-  // for the one they're looking at.  The modal calls onCurrentEntryReady
-  // when its first /products/add response arrives, which flips
-  // firstEntryReady and lets the background workers start.
-  const [firstEntryReady, setFirstEntryReady] = useState(false);
+  // Background prefetch for the queue.  Used to be gated on firstEntryReady
+  // (modal's first response lands) to avoid contention between the worker and
+  // the modal's natural fetch.  We dropped the gate: with strict-sequential
+  // ordering the worker only has one call in flight at a time, and waiting
+  // for the modal meant entry 0's expand prefetch only started ~1 s after
+  // mount — fast clicks on the toggle missed the cache.  Now the worker
+  // kicks off as soon as the queue is known.
   const handleCurrentEntryReady = useCallback(() => {
-    setFirstEntryReady(true);
+    // No-op kept for prop compatibility with the modal.
   }, []);
   const currentQueueHeadId = requestedMatchQueue[0]?.offerDetailId ?? null;
   useEffect(() => {
-    // New head (fresh batch or user skipped) — re-gate the prefetch so the
-    // background workers wait for the new head to load before chasing
-    // entries 2+ again.
-    setFirstEntryReady(false);
+    // New head (fresh batch or user skipped) — clear the started flag so the
+    // worker re-runs against the new queue.
     expansionPrefetchStartedRef.current = false;
   }, [currentQueueHeadId]);
   useEffect(() => {
     if (requestedMatchQueue.length === 0) return;
-    if (!firstEntryReady) return;
     if (expansionPrefetchStartedRef.current) return;
     expansionPrefetchStartedRef.current = true;
-    // Skip index 0: the modal itself is fetching the current entry.
-    // prefetchExpansion is a no-op for already-cached ids, so re-queuing
-    // a previously-prefetched entry is cheap.
-    const entries = requestedMatchQueue.slice(1);
+    // Strictly sequential per user spec — entry N's plain → entry N's expand
+    // → entry N+1's plain → entry N+1's expand → …  No concurrency.
+    //
+    // Index 0 IS included: the modal itself fetches entry 0's plain via its
+    // natural grid getRows, but it does NOT prefetch entry 0's expand — that
+    // would only fire when the user clicked the toggle.  We kick off entry 0's
+    // expand here as soon as the modal signals firstEntryReady, so by the
+    // time the user reaches for the toggle, expand block 0 is warm.
+    // prefetchExpansion / prefetchProductPagePlain / prefetchProductPageExpand
+    // are all no-ops for already-cached ids, so the duplicate plain fetch on
+    // entry 0 (modal already fetched it) is at most a single wasted call.
+    const entries = requestedMatchQueue;
     if (entries.length === 0) return;
-    // MAX_CONCURRENT 3: originally 4 → 2 → 1 to avoid OpenAI chat TPM
-    // queueing, but with /expand now short-timeout-ing the chat call
-    // (300ms, continues in background) the blocking factor is just the
-    // embedding call which has a much higher rate limit.  3 in-flight
-    // keeps entries 2-4 warm for the user while staying well under
-    // embeddings TPM.
-    const MAX_CONCURRENT = 3;
-    let idx = 0;
-    const worker = async () => {
-      while (idx < entries.length) {
-        const next = entries[idx++];
+    void (async () => {
+      // Strict order per user spec: 1-plain → 1-expand → 2-plain → 2-expand …
+      // We do NOT skipPlain for entry 0 — even though the modal fires its own
+      // plain block 0 on mount, the user wants the parent's prefetch sequence
+      // to be exhaustive and ordered so entries 2+ aren't reordered by a
+      // missing entry-0 plain step.  Both the prefetchProductPagePlain and
+      // prefetchProductPageExpand helpers no-op when their cache slot is
+      // already populated (e.g. by the modal's onResponse capture), so the
+      // duplicate plain call is at most one wasted fetch on entry 0.
+      for (const next of entries) {
         await prefetchExpansion(next);
       }
-    };
-    const workers = Array.from({ length: Math.min(MAX_CONCURRENT, entries.length) }, () => worker());
-    void Promise.all(workers);
-  }, [requestedMatchQueue, prefetchExpansion, firstEntryReady]);
+    })();
+  }, [requestedMatchQueue, prefetchExpansion]);
   const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() =>
     readCollapsedCategoryPathsFromCookie(offerId),
   );
@@ -3064,9 +3147,11 @@ const requestedColumnDefsMap = useMemo(
   const currentPrefetchedExpansion: FilterExpansions | null = currentRequestedMatch
     ? expansionCacheRef.current.get(currentRequestedMatch.offerDetailId) ?? null
     : null;
-  const currentPrefetchedFirstPage: GridResponse | null = currentRequestedMatch
+  const currentPrefetchedPair = currentRequestedMatch
     ? productPageCacheRef.current.get(currentRequestedMatch.offerDetailId) ?? null
     : null;
+  const currentPrefetchedPlainFirstPage: GridResponse | null = currentPrefetchedPair?.plain ?? null;
+  const currentPrefetchedExpandFirstPage: GridResponse | null = currentPrefetchedPair?.expand ?? null;
   const matchAddProductInitialValues = useMemo<AddProductInitialValues | null>(() => {
     if (!currentRequestedMatch) return null;
     const descriptionParts = [
@@ -4341,7 +4426,9 @@ const requestedColumnDefsMap = useMemo(
       (rowData as { Description?: unknown }).Description ??
         (rowData as { RequestedDescription?: unknown }).RequestedDescription ?? null,
     );
-    if (viewProductPartNumber || viewProductDescription) {
+    const rowIsProductLike =
+      isOfferProductProduct(rowData) || hasRequestedLookupIdentifiers(rowData);
+    if (rowIsProductLike && (viewProductPartNumber || viewProductDescription)) {
       const viewProductQs = new URLSearchParams();
       if (viewProductPartNumber) viewProductQs.set('partNumber', viewProductPartNumber);
       if (viewProductDescription) viewProductQs.set('description', viewProductDescription);
@@ -7263,7 +7350,9 @@ const requestedColumnDefsMap = useMemo(
           onRequestPayloadConsumed={clearMatchAddedProductId}
           prefetchedSuggestions={currentPrefetchedSuggestions}
           prefetchedExpansion={currentPrefetchedExpansion}
-          prefetchedFirstPage={currentPrefetchedFirstPage}
+          prefetchedPlainFirstPage={currentPrefetchedPlainFirstPage}
+          prefetchedExpandFirstPage={currentPrefetchedExpandFirstPage}
+          onModalFetchedBlock={registerModalFetchedBlock}
           onCurrentEntryReady={handleCurrentEntryReady}
         />
       ) : null}

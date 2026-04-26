@@ -24,6 +24,12 @@ type MenuStep = 'columns' | 'totals' | 'orientation';
 type DropPosition = 'before' | 'after';
 type DropPreview = { column: PdfProductColumn; position: DropPosition } | null;
 
+const TERM_FIELD_LABELS: Record<string, string> = {
+  paymentTerms: 'Payment Terms',
+  deliveryTime: 'Delivery Time',
+  offerValidity: 'Offer Validity',
+};
+
 const menuItemStyle: React.CSSProperties = {
   display: 'block',
   width: '100%',
@@ -105,6 +111,53 @@ export default function ExportPdfButton({ offerId, className }: Props) {
   const [loadingSettings, setLoadingSettings] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  const openMenuWithValidation = useCallback(async () => {
+    if (showMenu) {
+      setShowMenu(false);
+      setMenuStep('columns');
+      return;
+    }
+    setLoadingSettings(true);
+    try {
+      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/pdf-settings`);
+      if (!res.ok) {
+        showToastMessage('Failed to load PDF settings.', 'error');
+        return;
+      }
+      const data = await res.json();
+      const terms = data.terms ?? {};
+      const isMissing = (v: unknown) => typeof v !== 'string' || v.trim().length === 0;
+      const missing: string[] = [];
+      if (isMissing(terms.paymentTerms)) missing.push('paymentTerms');
+      if (isMissing(terms.deliveryTime)) missing.push('deliveryTime');
+      if (isMissing(terms.offerValidity)) missing.push('offerValidity');
+      if (missing.length > 0) {
+        const labels = missing.map((id) => TERM_FIELD_LABELS[id]).join(', ');
+        window.dispatchEvent(
+          new CustomEvent('fastquote:highlight-pdf-terms-missing', { detail: missing }),
+        );
+        showToastMessage(
+          `Cannot generate PDF. Please fill in the following fields on the offer's Basic Data page: ${labels}.`,
+          'error',
+        );
+        return;
+      }
+      setNoOfLevels(data.noOfLevels ?? 0);
+      setPrintProducts(!!data.printProducts);
+      setPrintCategories(!!data.printCategories);
+      setPrintSubCategories(!!data.printSubCategories);
+      setPrintSubSubCategories(!!data.printSubSubCategories);
+      if (data.offerLanguage === 'English') setSelectedLang('en');
+      else if (data.offerLanguage === 'Greek') setSelectedLang('el');
+      setMenuStep('columns');
+      setShowMenu(true);
+    } catch {
+      showToastMessage('Failed to load PDF settings.', 'error');
+    } finally {
+      setLoadingSettings(false);
+    }
+  }, [offerId, showMenu]);
 
   useEffect(() => {
     if (!showMenu) return;
@@ -278,13 +331,10 @@ export default function ExportPdfButton({ offerId, className }: Props) {
         ref={buttonRef}
         type="button"
         className={className}
-        disabled={isExporting}
-        onClick={() => {
-          setShowMenu((prev) => !prev);
-          setMenuStep('columns');
-        }}
+        disabled={isExporting || loadingSettings}
+        onClick={openMenuWithValidation}
       >
-        {isExporting ? 'Printing...' : 'Print Offer in PDF'}
+        {isExporting ? 'Printing...' : loadingSettings ? 'Loading...' : 'Print Offer in PDF'}
       </button>
 
       {showMenu && (
@@ -459,40 +509,18 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                     fontSize: 13,
                     borderRadius: 6,
                     padding: '8px 10px',
-                    cursor: loadingSettings ? 'wait' : 'pointer',
-                    opacity: loadingSettings ? 0.7 : 1,
+                    cursor: 'pointer',
                   }}
-                  disabled={loadingSettings}
-                  onClick={async () => {
+                  onClick={() => {
                     const hasTotalColumns = !equipmentList && selectedColumns.some((c) => PRICE_COLUMN_SET.has(c));
-                    setLoadingSettings(true);
-                    try {
-                      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/pdf-settings`);
-                      if (res.ok) {
-                        const data = await res.json();
-                        setNoOfLevels(data.noOfLevels ?? 0);
-                        setPrintProducts(!!data.printProducts);
-                        setPrintCategories(!!data.printCategories);
-                        setPrintSubCategories(!!data.printSubCategories);
-                        setPrintSubSubCategories(!!data.printSubSubCategories);
-                        if (data.offerLanguage === 'English') setSelectedLang('en');
-                        else if (data.offerLanguage === 'Greek') setSelectedLang('el');
-                        if (hasTotalColumns && (data.noOfLevels ?? 0) > 0) {
-                          setMenuStep('totals');
-                        } else {
-                          setMenuStep('orientation');
-                        }
-                      } else {
-                        setMenuStep('orientation');
-                      }
-                    } catch {
+                    if (hasTotalColumns && noOfLevels > 0) {
+                      setMenuStep('totals');
+                    } else {
                       setMenuStep('orientation');
-                    } finally {
-                      setLoadingSettings(false);
                     }
                   }}
                 >
-                  {loadingSettings ? 'Loading...' : `Continue (${selectedColumns.length} selected)`}
+                  {`Continue (${selectedColumns.length} selected)`}
                 </button>
                 <button
                   type="button"

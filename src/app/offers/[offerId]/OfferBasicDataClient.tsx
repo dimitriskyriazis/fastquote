@@ -418,11 +418,26 @@ export default function OfferBasicDataClient({
   const [isAddContactOpen, setIsAddContactOpen] = useState(false);
   const contactRefreshTokenRef = useRef(0);
   const [highlightOrderSignedMissing, setHighlightOrderSignedMissing] = useState(false);
+  const [highlightedPdfTermFields, setHighlightedPdfTermFields] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     const handler = () => setHighlightOrderSignedMissing(true);
     window.addEventListener('fastquote:highlight-order-signed-missing', handler);
     return () => window.removeEventListener('fastquote:highlight-order-signed-missing', handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<string[] | undefined>).detail;
+      if (!Array.isArray(detail) || detail.length === 0) return;
+      setHighlightedPdfTermFields((prev) => {
+        const next = new Set(prev);
+        for (const id of detail) next.add(id);
+        return next;
+      });
+    };
+    window.addEventListener('fastquote:highlight-pdf-terms-missing', handler);
+    return () => window.removeEventListener('fastquote:highlight-pdf-terms-missing', handler);
   }, []);
 
   const contactOptions = useMemo(() => {
@@ -1282,14 +1297,18 @@ export default function OfferBasicDataClient({
     );
   }
 
+  const currentValue = values[def.id] ?? '';
+    const isPdfTermMissing =
+      highlightedPdfTermFields.has(def.id) && currentValue.trim().length === 0;
+
   if (def.multiline) {
       return (
         <textarea
           autoComplete="off"
           id={controlId}
           name={def.id}
-          className={`${styles.fieldControl} ${styles.fieldControlMultiline} ${pending ? styles.fieldControlPending : ''}`}
-          value={values[def.id] ?? ''}
+          className={`${styles.fieldControl} ${styles.fieldControlMultiline} ${pending ? styles.fieldControlPending : ''} ${isPdfTermMissing ? styles.fieldControlError : ''}`}
+          value={currentValue}
           placeholder={placeholder}
           onChange={(event) => handleValueChange(def.id, event.target.value)}
           onBlur={() => handleBlur(def)}
@@ -1319,13 +1338,13 @@ export default function OfferBasicDataClient({
           autoComplete="off"
           id={controlId}
           name={def.id}
-          className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
+          className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''} ${isPdfTermMissing ? styles.fieldControlError : ''}`}
           type={def.inputType ?? 'text'}
           min={def.id === 'probability' ? PROBABILITY_MIN : undefined}
           max={def.id === 'probability' ? PROBABILITY_MAX : undefined}
           step={def.step ?? (def.id === 'probability' ? 1 : undefined)}
           inputMode={def.id === 'probability' ? 'numeric' : undefined}
-          value={values[def.id] ?? ''}
+          value={currentValue}
           placeholder={placeholder}
           onChange={(event) => handleValueChange(def.id, event.target.value)}
           onBlur={() => handleBlur(def)}

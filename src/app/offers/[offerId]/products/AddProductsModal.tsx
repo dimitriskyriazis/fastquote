@@ -26,6 +26,7 @@ import {
 } from './AiSearch';
 
 const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), { ssr: false });
+import type { GridResponse, ServerRequestWithQuickFilter } from '../../../components/AgGridAll';
 
 type PlacementAnchor = {
   label: string;
@@ -141,6 +142,10 @@ type ProductsGridPanelProps = {
   handleProductsGridModelUpdated: (api: GridApi) => void;
   onRequestPayloadConsumed?: () => void;
   aiLocked?: boolean;
+  prefetchedFirstPage?: GridResponse | null;
+  prefetchedBlocks?: Map<number, GridResponse> | null;
+  onServerRequest?: (request: ServerRequestWithQuickFilter) => void;
+  onResponse?: (response: GridResponse | null) => void;
 };
 
 const ProductsGridPanel = React.memo(function ProductsGridPanel({
@@ -154,6 +159,10 @@ const ProductsGridPanel = React.memo(function ProductsGridPanel({
   handleProductsGridModelUpdated,
   onRequestPayloadConsumed,
   aiLocked,
+  prefetchedFirstPage,
+  prefetchedBlocks,
+  onServerRequest,
+  onResponse,
 }: ProductsGridPanelProps) {
   return (
     <div className={`${styles.sectionInner} ${styles.productsColumn}`}>
@@ -180,6 +189,10 @@ const ProductsGridPanel = React.memo(function ProductsGridPanel({
           onGridReady={handleProductsGridReady}
           onModelUpdated={handleProductsGridModelUpdated}
           onRequestPayloadConsumed={onRequestPayloadConsumed}
+          prefetchedFirstPage={prefetchedFirstPage ?? null}
+          prefetchedBlocks={prefetchedBlocks ?? null}
+          onServerRequest={onServerRequest}
+          onResponse={onResponse}
           getRowClass={getProductRowClass}
           columnStateNamespace="add-products-modal-v2"
           applyColumnStateOrder={true}
@@ -384,6 +397,154 @@ export default function AddProductsModal({
     // pinned row).  The new product is now shown only as a pinned top row.
     return payload;
   }, [hiddenFilterTokens, negativeDescriptionTerms, smartSearchEnabled, promptSubmitted]);
+
+  const endpoint = useMemo(
+    () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
+    [offerId],
+  );
+
+  // Multi-block prefetch caches.  Both modes are fetched in the background
+  // (block-by-block, paged via cacheBlockSize=200) so flipping the toggle is
+  // instant for the first page AND the next several scroll pages.  The cache
+  // for the CURRENT mode duplicates what the visible grid is fetching anyway
+  // — it only matters for the OPPOSITE mode, which is what gets handed to
+  // AG Grid via prefetchedBlocks at the moment of toggle.
+  //
+  // Keys are startRow values (0, 200, 400, ...).  Each cache is a fresh Map
+  // identity per filter signature so AgGridAll's consumption logic re-arms.
+  const PREFETCH_BLOCK_SIZE = 200;
+  const [plainCache, setPlainCache] = useState<Map<number, GridResponse>>(() => new Map());
+  const [expandCache, setExpandCache] = useState<Map<number, GridResponse>>(() => new Map());
+  // No transient swap slot needed — we feed the live mode's cache directly.
+  // AgGridAll deletes entries on consumption, and our parent invalidates by
+  // replacing the Map identity on filter/sort change, so passing the cache
+  // continuously is safe and doesn't cause stale hits.
+  const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
+  const lastServerRequestSigRef = useRef<string>('');
+  const prefetchAbortRef = useRef<AbortController | null>(null);
+  const handleServerRequest = useCallback((req: ServerRequestWithQuickFilter) => {
+    lastServerRequestRef.current = req;
+    const sig = JSON.stringify({
+      filter: req.filterModel ?? null,
+      sort: req.sortModel ?? null,
+      group: req.groupKeys ?? null,
+      quick: req.quickFilterText ?? null,
+    });
+    if (sig !== lastServerRequestSigRef.current) {
+      lastServerRequestSigRef.current = sig;
+      setPlainCache(new Map());
+      setExpandCache(new Map());
+    }
+  }, []);
+
+  // Capture every grid response into the cache that matches the live mode.
+  // Lets the natural grid fetch (block 0 on mount, blocks 200/400 on scroll)
+  // double as our prefetch — toggling back to a previously-visible mode is
+  // therefore instant without our walker having to refetch the same data.
+  const smartActiveRef = useRef(false);
+  smartActiveRef.current = smartSearchEnabled || promptSubmitted;
+  const handleGridResponse = useCallback((response: GridResponse | null) => {
+    if (!response || !response.ok) return;
+    const startRow = response.request?.startRow ?? 0;
+    const target = smartActiveRef.current ? setExpandCache : setPlainCache;
+    target((prev) => {
+      if (prev.has(startRow)) return prev;
+      const next = new Map(prev);
+      next.set(startRow, response);
+      return next;
+    });
+  }, []);
+
+  const handleSmartSearchToggle = useCallback(() => {
+    setSmartSearchEnabled((v) => !v);
+  }, []);
+
+  // The cache we feed to AgGridAll matches the live mode.  AgGridAll consumes
+  // entries one-by-one so it doesn't re-serve a block; filter/sort changes
+  // invalidate (we replace both Maps with empty ones), so swapping which
+  // Map we pass on toggle is safe and instantly serves cached blocks.
+  const activePrefetchedBlocks = (smartSearchEnabled || promptSubmitted) ? expandCache : plainCache;
+
+  // Single-block opposite-mode prefetch.  Block 0 only — enough to make the
+  // toggle instant.  Subsequent scroll blocks lazy-load via AG Grid's normal
+  // server-side row model behaviour.  No more bulk walker that would tie up
+  // the server for many seconds after every filter change.
+  useEffect(() => {
+    const lastReq = lastServerRequestRef.current;
+    if (!lastReq) return;
+    prefetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    prefetchAbortRef.current = controller;
+
+    const smartActive = smartSearchEnabled || promptSubmitted;
+    const targetCache = smartActive ? plainCache : expandCache;
+    if (targetCache.has(0)) {
+      // Already have opposite-mode block 0 (parent prefetch, prior fetch, or
+      // onResponse capture).  Nothing to do.
+      return () => { controller.abort(); };
+    }
+
+    const oppositePayload: Record<string, unknown> = smartActive
+      ? { action: 'products' }
+      : (() => {
+          const p: Record<string, unknown> = {
+            action: 'products',
+            orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
+          };
+          if (hiddenFilterTokens) p.hiddenFilterTokens = hiddenFilterTokens;
+          const neg = buildNegativeHiddenTokens(
+            negativeDescriptionTerms ? { negativeDescription: negativeDescriptionTerms } : null,
+            hiddenFilterTokens,
+          );
+          if (neg) p.negativeHiddenTokens = neg;
+          return p;
+        })();
+
+    const blockReq: ServerRequestWithQuickFilter = {
+      ...lastReq,
+      startRow: 0,
+      endRow: PREFETCH_BLOCK_SIZE,
+    };
+
+    void (async () => {
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...oppositePayload, request: blockReq }),
+          signal: controller.signal,
+        });
+        if (!res.ok || controller.signal.aborted) return;
+        const data = (await res.json()) as GridResponse | null;
+        if (controller.signal.aborted || !data || !data.ok) return;
+        const setCache = smartActive ? setPlainCache : setExpandCache;
+        setCache((prev) => {
+          if (prev.has(0)) return prev;
+          const next = new Map(prev);
+          next.set(0, data);
+          return next;
+        });
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') return;
+        console.warn('Opposite-mode block-0 prefetch failed', err);
+      }
+    })();
+
+    return () => {
+      controller.abort();
+    };
+    // plainCache / expandCache are in deps because handleServerRequest
+    // replaces them with empty Maps on filter/sort signature change — that
+    // re-renders the effect and gives us a chance to fire a fresh prefetch.
+  }, [
+    endpoint,
+    hiddenFilterTokens,
+    negativeDescriptionTerms,
+    smartSearchEnabled,
+    promptSubmitted,
+    plainCache,
+    expandCache,
+  ]);
 
   const handleProductSelection = useCallback((rows: ProductRow[]) => {
     // Merge rather than replace: AG Grid's selectionChanged event only knows
@@ -633,11 +794,6 @@ export default function AddProductsModal({
       });
     }
   }, [placementMode, placementAnchor?.isRequested, initialRequestedRowId]);
-
-  const endpoint = useMemo(
-    () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
-    [offerId],
-  );
 
   const fetchRequestedRows = useCallback(
     async (categoryId: number | null, options?: { force?: boolean }) => {
@@ -1607,7 +1763,7 @@ export default function AddProductsModal({
         <button
           type="button"
           className={styles.aiButton}
-          onClick={() => setSmartSearchEnabled((v) => !v)}
+          onClick={handleSmartSearchToggle}
           disabled={submitting}
           aria-pressed={smartSearchEnabled}
         >
@@ -1788,6 +1944,9 @@ export default function AddProductsModal({
               handleProductsGridModelUpdated={handleProductsGridModelUpdated}
               onRequestPayloadConsumed={onRequestPayloadConsumed}
               aiLocked={promptSubmitted}
+              prefetchedBlocks={activePrefetchedBlocks}
+              onServerRequest={handleServerRequest}
+              onResponse={handleGridResponse}
             />
           </section>
         </div>
@@ -1859,6 +2018,9 @@ export default function AddProductsModal({
               handleProductsGridModelUpdated={handleProductsGridModelUpdated}
               onRequestPayloadConsumed={onRequestPayloadConsumed}
               aiLocked={promptSubmitted}
+              prefetchedBlocks={activePrefetchedBlocks}
+              onServerRequest={handleServerRequest}
+              onResponse={handleGridResponse}
             />
           </section>
         </div>

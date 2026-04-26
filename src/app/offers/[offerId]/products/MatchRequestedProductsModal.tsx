@@ -33,7 +33,7 @@ const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), {
   ssr: false,
 });
 
-import type { GridResponse } from '../../../components/AgGridAll';
+import type { GridResponse, ServerRequestWithQuickFilter } from '../../../components/AgGridAll';
 
 type DetailEntry = {
   label: string;
@@ -100,7 +100,13 @@ type Props = {
   onSkipAll: () => void;
   prefetchedSuggestions?: MatcherRowData[] | null;
   prefetchedExpansion?: FilterExpansions | null;
-  prefetchedFirstPage?: GridResponse | null;
+  /** Parent's prefetch for the modal's default (expand-OFF) mode. */
+  prefetchedPlainFirstPage?: GridResponse | null;
+  /** Parent's prefetch for expand-ON mode. */
+  prefetchedExpandFirstPage?: GridResponse | null;
+  /** Modal pushes naturally-fetched block 0 responses here so the parent's
+   *  per-entry prefetch worker can skip what the modal already covered. */
+  onModalFetchedBlock?: (offerDetailId: number, mode: 'plain' | 'expand', response: GridResponse) => void;
   onCurrentEntryReady?: () => void;
 };
 
@@ -169,7 +175,9 @@ export default function MatchRequestedProductsModal({
   onSkipAll,
   prefetchedSuggestions,
   prefetchedExpansion,
-  prefetchedFirstPage,
+  prefetchedPlainFirstPage,
+  prefetchedExpandFirstPage,
+  onModalFetchedBlock,
   onCurrentEntryReady,
 }: Props) {
   const { cardRef: setCardRef, cardStyle: dragCardStyle, headerProps: dragHeaderProps, resizeHandles } = useModalDragResize({ draggable: true, resizable: true });
@@ -360,16 +368,10 @@ export default function MatchRequestedProductsModal({
   const [promptSubmitted, setPromptSubmitted] = useState(false);
   const promptSubmittedRef = useRef(false);
   promptSubmittedRef.current = promptSubmitted;
-  // Default: plain keyword search.  The smart-search sidecar (entry-derived
-  // hidden tokens, /expand synonyms, server-inline LLM rerank) is still
-  // prefetched in the background — we just do not apply it to the grid until
-  // the user opts in here, so flipping the toggle is one quick re-fetch with
-  // the cached sidecar.  A submitted AI prompt force-enables smart mode.
+  // Initial default: plain (expand search OFF).  The user's choice persists
+  // across entries — flipping the toggle on for entry 1 keeps it on for
+  // entries 2..N until the modal is closed or the user flips it back.
   const [smartSearchEnabled, setSmartSearchEnabled] = useState(false);
-  // Reset to "off" on entry change so each row starts in plain mode.
-  useEffect(() => {
-    setSmartSearchEnabled(false);
-  }, [entry.offerDetailId]);
   // Refetch the grid whenever the hidden-token payload changes AFTER the
   // initial render for this entry.  AgGridAll reads requestPayload from a
   // ref at fetch time and does NOT auto-refetch on prop change, so without
@@ -481,10 +483,193 @@ export default function MatchRequestedProductsModal({
     return Object.keys(payload).length > 0 ? payload : null;
   }, [effectiveHiddenTokens, effectiveExpansion, entry, promptSubmitted, userTouchedFilters, smartSearchEnabled]);
 
+  // Shadow payload mirrors requestPayload but with the OPPOSITE smart state.
+  // We use it to prefetch the alternate-mode first page in the background so
+  // flipping the toggle is instant — the grid finds a cached page in
+  // prefetchedFirstPageRef and skips the network round-trip.
+  // Multi-block prefetch caches.  Both modes are continuously fetched in the
+  // background so flipping the toggle is instant for the first block AND the
+  // next several scroll blocks.  Keys are startRow values; new Map identity
+  // per filter signature so AgGridAll's consumption logic re-arms.
+  const PREFETCH_BLOCK_SIZE = 200;
+  const [plainCache, setPlainCache] = useState<Map<number, GridResponse>>(() => new Map());
+  const [expandCache, setExpandCache] = useState<Map<number, GridResponse>>(() => new Map());
+  // No transient swap slot needed — see AddProductsModal for rationale.
+  const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
+  const lastServerRequestSigRef = useRef<string>('');
+  const prefetchAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    setPlainCache(new Map());
+    setExpandCache(new Map());
+    lastServerRequestRef.current = null;
+    lastServerRequestSigRef.current = '';
+  }, [entry.offerDetailId]);
+
+  // Seed both caches from the parent's per-entry prefetch.  The parent walks
+  // entries strictly sequentially (1-plain → 1-expand → 2-plain → …) so by
+  // the time the user reaches an entry, both block 0s are usually warm.
+  useEffect(() => {
+    if (!prefetchedPlainFirstPage) return;
+    setPlainCache((prev) => {
+      if (prev.has(0)) return prev;
+      const next = new Map(prev);
+      next.set(0, prefetchedPlainFirstPage);
+      return next;
+    });
+  }, [prefetchedPlainFirstPage]);
+  useEffect(() => {
+    if (!prefetchedExpandFirstPage) return;
+    setExpandCache((prev) => {
+      if (prev.has(0)) return prev;
+      const next = new Map(prev);
+      next.set(0, prefetchedExpandFirstPage);
+      return next;
+    });
+  }, [prefetchedExpandFirstPage]);
+
+  const handleServerRequest = useCallback((req: ServerRequestWithQuickFilter) => {
+    lastServerRequestRef.current = req;
+    const sig = JSON.stringify({
+      filter: req.filterModel ?? null,
+      sort: req.sortModel ?? null,
+      group: req.groupKeys ?? null,
+      quick: req.quickFilterText ?? null,
+    });
+    if (sig !== lastServerRequestSigRef.current) {
+      lastServerRequestSigRef.current = sig;
+      setPlainCache(new Map());
+      setExpandCache(new Map());
+    }
+  }, []);
+
+  // Capture every grid response into the cache that matches the live mode so
+  // the natural fetch (block 0 on mount, blocks 200/400 on scroll) doubles
+  // as our prefetch.  Toggling back to a previously-visible mode is then
+  // instant without our walker having to refetch the same data.
+  const smartActiveRef = useRef(false);
+  smartActiveRef.current = smartSearchEnabled || promptSubmitted;
+  const handleGridResponse = useCallback((response: GridResponse | null) => {
+    if (!response || !response.ok) return;
+    const startRow = response.request?.startRow ?? 0;
+    const target = smartActiveRef.current ? setExpandCache : setPlainCache;
+    target((prev) => {
+      if (prev.has(startRow)) return prev;
+      const next = new Map(prev);
+      next.set(startRow, response);
+      return next;
+    });
+    // Push block 0 back to the parent so its sequential prefetch worker
+    // (1-plain → 1-expand → 2-plain → …) skips what we already covered for
+    // the current entry, dropping the duplicate fetch on entry 0.
+    if (startRow === 0 && onModalFetchedBlock) {
+      const mode = smartActiveRef.current ? 'expand' : 'plain';
+      onModalFetchedBlock(entry.offerDetailId, mode, response);
+    }
+  }, [entry.offerDetailId, onModalFetchedBlock]);
+
+  const handleSmartSearchToggle = useCallback(() => {
+    setSmartSearchEnabled((v) => !v);
+  }, []);
+
+  const activePrefetchedBlocks = (smartSearchEnabled || promptSubmitted) ? expandCache : plainCache;
+
   const endpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
     [offerId],
   );
+
+  // Single-block opposite-mode prefetch.  Block 0 only — enough to make the
+  // toggle instant.  Scroll blocks lazy-load via AG Grid's standard SSR row
+  // model.  Skip if the cache already has block 0 (parent's per-entry
+  // prefetch usually beats us to it).
+  useEffect(() => {
+    const lastReq = lastServerRequestRef.current;
+    if (!lastReq) return;
+    prefetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    prefetchAbortRef.current = controller;
+
+    const smartActive = smartSearchEnabled || promptSubmitted;
+    const targetCache = smartActive ? plainCache : expandCache;
+    if (targetCache.has(0)) {
+      return () => { controller.abort(); };
+    }
+
+    const oppositePayload: Record<string, unknown> = smartActive
+      ? { action: 'products' }
+      : (() => {
+          const p: Record<string, unknown> = {
+            action: 'products',
+            orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
+          };
+          if (!promptSubmitted && !userTouchedFilters) {
+            p.requested = {
+              brand: entry.requestedBrand,
+              partNumber: entry.requestedPartNumber,
+              modelNumber: entry.requestedModelNumber,
+              description: entry.requestedDescription,
+              description2: entry.requestedDescription2,
+              description3: entry.requestedDescription3,
+            };
+          }
+          if (effectiveHiddenTokens) p.hiddenFilterTokens = effectiveHiddenTokens;
+          const neg = buildNegativeHiddenTokens(effectiveExpansion, effectiveHiddenTokens);
+          if (neg) p.negativeHiddenTokens = neg;
+          return p;
+        })();
+
+    const blockReq: ServerRequestWithQuickFilter = {
+      ...lastReq,
+      startRow: 0,
+      endRow: PREFETCH_BLOCK_SIZE,
+    };
+
+    void (async () => {
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...oppositePayload, request: blockReq }),
+          signal: controller.signal,
+        });
+        if (!res.ok || controller.signal.aborted) return;
+        const data = (await res.json()) as GridResponse | null;
+        if (controller.signal.aborted || !data || !data.ok) return;
+        const oppositeMode: 'plain' | 'expand' = smartActive ? 'plain' : 'expand';
+        const setCache = oppositeMode === 'plain' ? setPlainCache : setExpandCache;
+        setCache((prev) => {
+          if (prev.has(0)) return prev;
+          const next = new Map(prev);
+          next.set(0, data);
+          return next;
+        });
+        // Push to parent cache too so its sequential worker (1-plain →
+        // 1-expand → …) finds this block populated and doesn't re-fetch it.
+        if (onModalFetchedBlock) onModalFetchedBlock(entry.offerDetailId, oppositeMode, data);
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') return;
+        console.warn('Match modal opposite-mode block-0 prefetch failed', err);
+      }
+    })();
+
+    return () => {
+      controller.abort();
+    };
+    // plainCache / expandCache deps cover sig-change re-renders (see
+    // handleServerRequest, which replaces both Maps when the filter/sort
+    // signature changes).
+  }, [
+    endpoint,
+    effectiveHiddenTokens,
+    effectiveExpansion,
+    entry,
+    promptSubmitted,
+    userTouchedFilters,
+    smartSearchEnabled,
+    plainCache,
+    expandCache,
+    onModalFetchedBlock,
+  ]);
 
   const hasAppliedRequestedFiltersRef = useRef(false);
 
@@ -1319,7 +1504,7 @@ export default function MatchRequestedProductsModal({
                 <button
                   type="button"
                   className={styles.aiButton}
-                  onClick={() => setSmartSearchEnabled((v) => !v)}
+                  onClick={handleSmartSearchToggle}
                   disabled={assigning}
                   aria-pressed={smartSearchEnabled}
                 >
@@ -1430,7 +1615,7 @@ export default function MatchRequestedProductsModal({
                 defaultColDef={productDefaultColDef}
                 columnWidthDefaults={emptyColumnWidthDefaults}
                 requestPayload={requestPayload}
-                onResponse={handleFirstGridResponse}
+                onResponse={(response) => { handleFirstGridResponse(); handleGridResponse(response); }}
                 serverSideEnableClientSideSort={false}
                 // Larger block + generous in-memory cache so scrolling
                 // through smart-filtered results doesn't refire the
@@ -1439,7 +1624,9 @@ export default function MatchRequestedProductsModal({
                 // matches the prefetched first page's size.
                 cacheBlockSize={200}
                 maxBlocksInCache={20}
-                prefetchedFirstPage={prefetchedFirstPage ?? null}
+                prefetchedFirstPage={(smartSearchEnabled || promptSubmitted) ? prefetchedExpandFirstPage ?? null : prefetchedPlainFirstPage ?? null}
+                prefetchedBlocks={activePrefetchedBlocks}
+                onServerRequest={handleServerRequest}
                 onRequestPayloadConsumed={onRequestPayloadConsumed}
                 rowSelection="single"
                 rowMultiSelectWithClick

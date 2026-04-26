@@ -611,6 +611,14 @@ type Props = {
    *  instead of hitting the network, and is consumed exactly once per
    *  distinct prop reference (i.e. re-supply a fresh object to reuse). */
   prefetchedFirstPage?: GridResponse | null;
+  /** Pre-fetched responses for arbitrary blocks, keyed by startRow.  The
+   *  datasource consults this map before issuing a network request.  The
+   *  parent is responsible for ensuring the cached responses correspond to
+   *  the current filter/sort shape — pass a fresh Map (new identity) when
+   *  invalidating.  Each block is consumed at most once per Map identity
+   *  (deletes the entry on use), so repeated getRows for the same block
+   *  fall through to the network on subsequent calls. */
+  prefetchedBlocks?: Map<number, GridResponse> | null;
 };
 
 type RowData = Record<string, unknown>;
@@ -1288,6 +1296,7 @@ export default function AgGridAll({
   filterServerRow,
   syncStateToUrl = true,
   prefetchedFirstPage = null,
+  prefetchedBlocks = null,
 }: Props) {
   // Initialize editor focus management hooks
   useMutationCaret();
@@ -3057,6 +3066,15 @@ if (lastPrefetchedFirstPageIdentityRef.current !== prefetchedFirstPage) {
   prefetchedFirstPageRef.current = prefetchedFirstPage ?? null;
   lastPrefetchedFirstPageIdentityRef.current = prefetchedFirstPage;
 }
+// Multi-block prefetch cache.  Re-armed whenever the parent supplies a new
+// Map identity; consumed entry-by-entry as the grid scrolls through blocks.
+const prefetchedBlocksRef = useRef<Map<number, GridResponse> | null>(null);
+const lastPrefetchedBlocksIdentityRef = useRef<Map<number, GridResponse> | null | undefined>(undefined);
+if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
+  // Take a copy so consumption (delete-on-use) doesn't mutate the parent's Map.
+  prefetchedBlocksRef.current = prefetchedBlocks ? new Map(prefetchedBlocks) : null;
+  lastPrefetchedBlocksIdentityRef.current = prefetchedBlocks;
+}
 
   // TREE ORDERING - Path Calculation & Parent Path Derivation
   const getRowPath = useCallback((node: IRowNode<RowData> | null | undefined): string[] => {
@@ -3184,6 +3202,16 @@ if (lastPrefetchedFirstPageIdentityRef.current !== prefetchedFirstPage) {
             const cached = prefetchedFirstPageRef.current;
             prefetchedFirstPageRef.current = null;
             responsePromise = Promise.resolve(cached);
+          }
+          // Consume a pre-fetched block from the multi-block cache when the
+          // requested startRow matches.  Each block is taken at most once
+          // per Map identity — re-supply a fresh Map to refill.
+          if (!responsePromise && prefetchedBlocksRef.current) {
+            const cachedBlock = prefetchedBlocksRef.current.get(startRowForRequest);
+            if (cachedBlock) {
+              prefetchedBlocksRef.current.delete(startRowForRequest);
+              responsePromise = Promise.resolve(cachedBlock);
+            }
           }
           if (!responsePromise) {
             responsePromise = (async () => {

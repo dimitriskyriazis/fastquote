@@ -1010,6 +1010,93 @@ async function handleProductGrid(
     });
   }
 
+  // Requested-brand boost.  The visible Brand chip already filters via
+  // orFilterColumns, but in expand mode that's an OR — rows from other brands
+  // can still surface (and outscore the requested brand) when their
+  // Description tokens add up to more weight.  This boost re-asserts brand
+  // priority: a row whose BrandName matches the requested entry's brand gets
+  // a flat bonus large enough to dominate per-token differences within the
+  // same product family.  Only fires in expand mode (when `requested` is on
+  // the payload) — plain mode has the chips ANDed together so it doesn't
+  // need this.
+  const requestedObj = body?.requested && typeof body.requested === 'object' && !Array.isArray(body.requested)
+    ? body.requested as Record<string, unknown>
+    : null;
+  const requestedBrandRaw = requestedObj && typeof requestedObj.brand === 'string'
+    ? requestedObj.brand.trim()
+    : '';
+  if (requestedBrandRaw) {
+    const normalizedRequestedBrand = normalizeBrandForMatch(requestedBrandRaw);
+    if (normalizedRequestedBrand) {
+      const brandExpr = columnExpressions.BrandName;
+      if (brandExpr) {
+        const paramKey = 'requested_brand_match';
+        params.push({ key: paramKey, value: normalizedRequestedBrand });
+        const normalizedColExpr = `REPLACE(REPLACE(UPPER(COALESCE(CAST(${brandExpr} AS NVARCHAR(MAX)), '')), ' ', ''), '-', '')`;
+        const normalizedParam = `REPLACE(REPLACE(UPPER(@${paramKey}), ' ', ''), '-', '')`;
+        // CHARINDEX > 0 handles both directions: catalog row "Televic"
+        // matches requested "Televic Audio Technologies" and vice versa, so
+        // brand synonyms / variants still pick up the boost.
+        const clause = `((CHARINDEX(${normalizedParam}, ${normalizedColExpr}) > 0 OR CHARINDEX(${normalizedColExpr}, ${normalizedParam}) > 0) AND LEN(${normalizedColExpr}) > 0)`;
+        // 2000 dominates per-token Description scoring (typical row totals
+        // 200-1500 per the rerank debug logs) so brand-correct rows surface
+        // first within each product family.
+        scoreClauses.push({ clause, weight: 2000 });
+      }
+    }
+  }
+
+  // Requested-identifier boost.  When a token from the requested description /
+  // partNumber / modelNumber exactly equals a row's PartNumberCleared or
+  // ModelNumberCleared, that row is almost certainly THE product the user is
+  // looking for — even if some other row scores higher on bag-of-words
+  // description overlap.  Example: requested description "TEL152 Headphones"
+  // contains the token "TEL152"; the catalog row whose ModelNumber is
+  // exactly "TEL152" should rank #1 above generic headphone rows.
+  //
+  // Weight is set higher than the brand boost (2000) so a model match wins
+  // even when the catalog row is from a different brand (rebrands, OEM
+  // distributors).
+  if (requestedObj) {
+    const collectIdTokens = (value: unknown): string[] => {
+      if (typeof value !== 'string') return [];
+      return value.split(/[\s,/;]+/).map((t) => t.trim()).filter(Boolean);
+    };
+    const rawTokens: string[] = [
+      ...collectIdTokens((requestedObj as { description?: unknown }).description),
+      ...collectIdTokens((requestedObj as { description2?: unknown }).description2),
+      ...collectIdTokens((requestedObj as { description3?: unknown }).description3),
+      ...collectIdTokens((requestedObj as { partNumber?: unknown }).partNumber),
+      ...collectIdTokens((requestedObj as { modelNumber?: unknown }).modelNumber),
+    ];
+    const seen = new Set<string>();
+    const cleared: string[] = [];
+    rawTokens.forEach((tok) => {
+      const c = clearPartModelNumberUpper(tok);
+      // Require length >= 3 and at least one digit — short alphabetic tokens
+      // ("for", "the", "kit") match too many spurious model numbers; an
+      // identifier almost always contains a digit (TEL152, M4250, 16085).
+      if (c.length < 3) return;
+      if (!/\d/.test(c)) return;
+      if (seen.has(c)) return;
+      seen.add(c);
+      cleared.push(c);
+    });
+    if (cleared.length > 0) {
+      const partExpr = partModelNumberSql(columnExpressions.PartNumber ?? 'bp.PartNumber');
+      const modelExpr = partModelNumberSql(columnExpressions.ModelNumber ?? 'bp.ModelNumber');
+      const paramNames: string[] = [];
+      cleared.forEach((tok, idx) => {
+        const key = `requested_id_match_${idx}`;
+        params.push({ key, value: tok });
+        paramNames.push(`@${key}`);
+      });
+      const inList = paramNames.join(', ');
+      const clause = `((${partExpr} IN (${inList}) OR ${modelExpr} IN (${inList})) AND (LEN(${partExpr}) > 0 OR LEN(${modelExpr}) > 0))`;
+      scoreClauses.push({ clause, weight: 5000 });
+    }
+  }
+
   const orCols = new Set(Array.isArray(body?.orFilterColumns) ? body.orFilterColumns : []);
   const orClauses = clauses.filter((c) => orCols.has(c.colId)).map((c) => c.clause);
   const andClauses = clauses.filter((c) => !orCols.has(c.colId)).map((c) => c.clause);

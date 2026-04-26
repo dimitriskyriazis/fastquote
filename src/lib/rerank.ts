@@ -154,7 +154,8 @@ export async function performRerank(input: RerankInput): Promise<RankedEntry[]> 
         // and rerank falls back to keyword order.
         model: 'gpt-5-mini',
         response_format: { type: 'json_object' },
-        temperature: 0,
+        // gpt-5 family only supports the default temperature (1); sending
+        // temperature: 0 400's the call and rerank falls back to keyword order.
         max_completion_tokens: 2000,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },

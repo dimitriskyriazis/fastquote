@@ -58,13 +58,21 @@ export async function GET(
         PrintSubCategories: boolean | number | null;
         PrintCategories: boolean | number | null;
         OfferLanguage: string | null;
+        PaymentTerms: string | null;
+        DeliveryTime: string | null;
+        OfferValidity: string | null;
+        InstallationSchedule: string | null;
       }>(`
         SELECT
           PrintProducts,
           PrintSubSubCategories,
           PrintSubCategories,
           PrintCategories,
-          OfferLanguage
+          OfferLanguage,
+          PaymentTerms,
+          DeliveryTime,
+          OfferValidity,
+          InstallationSchedule
         FROM dbo.Offer
         WHERE ID = @offerId
       `);
@@ -79,6 +87,12 @@ export async function GET(
       printSubCategories: row ? (!!row.PrintSubCategories ? 1 : 0) : 0,
       printCategories: row ? (!!row.PrintCategories ? 1 : 0) : 0,
       offerLanguage: row?.OfferLanguage ?? null,
+      terms: {
+        paymentTerms: row?.PaymentTerms ?? null,
+        deliveryTime: row?.DeliveryTime ?? null,
+        offerValidity: row?.OfferValidity ?? null,
+        installationSchedule: row?.InstallationSchedule ?? null,
+      },
     });
   } catch (err) {
     console.error('PDF settings fetch failed:', err);

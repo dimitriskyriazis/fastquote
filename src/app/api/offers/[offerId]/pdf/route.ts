@@ -164,19 +164,16 @@ export async function GET(
 
     const equipmentList = req.nextUrl.searchParams.get('equipmentList') === '1';
     const requiredTerms: { key: keyof OfferHeaderRow; label: string }[] = [
-      { key: 'OfferValidity', label: lang === 'el' ? 'Ισχύς Προσφοράς' : 'Offer Validity' },
-      { key: 'DeliveryTime', label: lang === 'el' ? 'Χρόνος Παράδοσης' : 'Delivery Time' },
-      { key: 'InstallationSchedule', label: lang === 'el' ? 'Προβλεπόμενος Χρόνος Εγκατάστασης' : 'Installation Schedule' },
+      { key: 'OfferValidity', label: 'Offer Validity' },
+      { key: 'DeliveryTime', label: 'Delivery Time' },
     ];
     if (!equipmentList) {
-      requiredTerms.splice(1, 0, { key: 'PaymentTerms', label: lang === 'el' ? 'Τρόπος Πληρωμής' : 'Payment Terms' });
+      requiredTerms.splice(1, 0, { key: 'PaymentTerms', label: 'Payment Terms' });
     }
     const missingTerms = requiredTerms.filter((t) => !(header[t.key] as string | null)?.trim());
     if (missingTerms.length > 0) {
       const names = missingTerms.map((t) => t.label).join(', ');
-      const message = lang === 'el'
-        ? `Δεν είναι δυνατή η δημιουργία PDF. Συμπληρώστε τα παρακάτω πεδία στα Βασικά Στοιχεία της προσφοράς: ${names}.`
-        : `Cannot generate PDF. Please fill in the following fields on the offer's Basic Data page: ${names}.`;
+      const message = `Cannot generate PDF. Please fill in the following fields on the offer's Basic Data page: ${names}.`;
       return NextResponse.json({ ok: false, error: message }, { status: 400 });
     }
 
