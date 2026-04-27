@@ -251,12 +251,6 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
         cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
       },
       {
-        field: 'ProductID',
-        hide: true,
-        lockVisible: true,
-        suppressColumnsToolPanel: true,
-      },
-      {
         field: 'TreeOrdering',
         headerName: 'Item No',
         filter: 'agTextColumnFilter',

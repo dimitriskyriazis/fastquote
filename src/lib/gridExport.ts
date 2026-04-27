@@ -1,4 +1,4 @@
-import type { GridApi, Column } from 'ag-grid-community';
+import type { GridApi, Column, GetRowIdParams } from 'ag-grid-community';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 
@@ -267,13 +267,18 @@ export async function fetchAllFilteredRows<RowData>(
   endpoint: string,
   requestPayload?: Record<string, unknown>,
   quickFilterText?: string | null,
+  excludeRowIds?: Set<string>,
 ): Promise<RowData[]> {
   if (!api) {
     console.warn('[fetchAllFilteredRows] No API provided');
     return [];
   }
 
-  console.log('[fetchAllFilteredRows] Starting fetch', { endpoint });
+  console.log('[fetchAllFilteredRows] Starting fetch', { endpoint, excludeCount: excludeRowIds?.size ?? 0 });
+
+  const getRowIdFn = excludeRowIds && excludeRowIds.size > 0
+    ? (api.getGridOption?.('getRowId') as ((params: GetRowIdParams<RowData>) => string) | undefined)
+    : undefined;
 
   try {
     // Get current filter model
@@ -349,8 +354,19 @@ export async function fetchAllFilteredRows<RowData>(
         break;
       }
 
-      allRows.push(...batchRows);
       currentRow += batchRows.length;
+
+      if (getRowIdFn && excludeRowIds && excludeRowIds.size > 0) {
+        for (const row of batchRows) {
+          try {
+            const id = getRowIdFn({ data: row } as GetRowIdParams<RowData>);
+            if (excludeRowIds.has(String(id))) continue;
+          } catch { /* fall through and include the row */ }
+          allRows.push(row);
+        }
+      } else {
+        allRows.push(...batchRows);
+      }
 
       // Check if we've reached the end of available data
       if (data.rowCount && currentRow >= data.rowCount) {
@@ -382,6 +398,7 @@ export async function exportAllFilteredRowsAsCsv<RowData>(
   fileName?: string,
   requestPayload?: Record<string, unknown>,
   quickFilterText?: string | null,
+  excludeRowIds?: Set<string>,
 ): Promise<void> {
   if (!api) {
     console.warn('[exportAllFilteredRowsAsCsv] No API provided');
@@ -391,7 +408,7 @@ export async function exportAllFilteredRowsAsCsv<RowData>(
   console.log('[exportAllFilteredRowsAsCsv] Starting export', { endpoint, fileName, requestPayload, quickFilterText });
 
   try {
-    const allRows = await fetchAllFilteredRows(api, endpoint, requestPayload, quickFilterText);
+    const allRows = await fetchAllFilteredRows(api, endpoint, requestPayload, quickFilterText, excludeRowIds);
     console.log('[exportAllFilteredRowsAsCsv] Fetched rows:', allRows.length);
 
     const csv = generateCsvFromRows(api, allRows);
@@ -716,6 +733,7 @@ export async function exportAllFilteredRowsAsExcel<RowData>(
   fileName?: string,
   requestPayload?: Record<string, unknown>,
   quickFilterText?: string | null,
+  excludeRowIds?: Set<string>,
 ): Promise<void> {
   if (!api) {
     console.warn('[exportAllFilteredRowsAsExcel] No API provided');
@@ -725,7 +743,7 @@ export async function exportAllFilteredRowsAsExcel<RowData>(
   console.log('[exportAllFilteredRowsAsExcel] Starting export', { endpoint, fileName });
 
   try {
-    const allRows = await fetchAllFilteredRows(api, endpoint, requestPayload, quickFilterText);
+    const allRows = await fetchAllFilteredRows(api, endpoint, requestPayload, quickFilterText, excludeRowIds);
     console.log('[exportAllFilteredRowsAsExcel] Fetched rows:', allRows.length);
 
     const excelBuffer = await generateExcelFromRows(api, allRows);

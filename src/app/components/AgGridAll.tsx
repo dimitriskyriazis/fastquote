@@ -2432,11 +2432,21 @@ export default function AgGridAll({
     if (columnStateLoadedRef.current) return;
     const persisted = readPersistedColumnState(columnStateStorageKey, columnFingerprint);
     if (!persisted || persisted.length === 0) {
+      // Reset to columnDef defaults so columns don't keep hide/pinned from a previous
+      // storage key (e.g. layout switch on Offer Products). Without this, the grid
+      // retains state from the prior key when the new key has nothing saved yet.
+      try {
+        api.applyColumnState({
+          state: [],
+          applyOrder: false,
+          defaultState: { hide: null, pinned: null },
+        });
+      } catch { /* noop */ }
       columnStateLoadedRef.current = true;
       onColumnStateRestored?.();
       return;
     }
-    
+
     // Create a map of persisted state by colId for quick lookup
     const persistedMap = new Map<string, SavedColumnStateEntry>();
     persisted.forEach((entry) => {
@@ -2444,7 +2454,7 @@ export default function AgGridAll({
         persistedMap.set(entry.colId, entry);
       }
     });
-    
+
     // Get current column state for properties
     const currentState = api.getColumnState();
     if (!currentState || currentState.length === 0) {
@@ -2452,7 +2462,7 @@ export default function AgGridAll({
       onColumnStateRestored?.();
       return;
     }
-    
+
     // Build a map of persisted order
     const orderMap = new Map<string, number>();
     persisted.forEach((entry) => {
@@ -2460,21 +2470,24 @@ export default function AgGridAll({
         orderMap.set(entry.colId, entry.order);
       }
     });
-    
-    // Apply other properties (width, hide, etc.) without reordering
-    const stateToApply = currentState.map((entry) => {
-      const persistedEntry = persistedMap.get(entry.colId ?? '');
-      if (!persistedEntry) return entry;
-      return {
-        ...entry,
-        width: persistedEntry.width ?? entry.width,
-        flex: persistedEntry.flex ?? entry.flex,
-        pinned: persistedEntry.pinned ?? entry.pinned,
-        rowGroup: persistedEntry.rowGroup ?? entry.rowGroup,
-        rowGroupIndex: persistedEntry.rowGroupIndex ?? entry.rowGroupIndex,
-        hide: typeof persistedEntry.hide === 'boolean' ? persistedEntry.hide : entry.hide,
-      };
-    });
+
+    // Build state ONLY from persisted entries. Columns NOT in persisted state get
+    // reset to columnDef defaults via defaultState below — so a layout switch
+    // doesn't carry over hide/pinned values that the user set in the previous layout.
+    const stateToApply = currentState
+      .filter((entry) => persistedMap.has(entry.colId ?? ''))
+      .map((entry) => {
+        const persistedEntry = persistedMap.get(entry.colId ?? '')!;
+        return {
+          ...entry,
+          width: persistedEntry.width ?? entry.width,
+          flex: persistedEntry.flex ?? entry.flex,
+          pinned: persistedEntry.pinned ?? entry.pinned,
+          rowGroup: persistedEntry.rowGroup ?? entry.rowGroup,
+          rowGroupIndex: persistedEntry.rowGroupIndex ?? entry.rowGroupIndex,
+          hide: typeof persistedEntry.hide === 'boolean' ? persistedEntry.hide : entry.hide,
+        };
+      });
     
     try {
       if (applyColumnStateOrder) {
@@ -2491,7 +2504,7 @@ export default function AgGridAll({
             return aOrder - bOrder;
           })
           .map(({ entry }) => entry);
-        api.applyColumnState({ state: ordered, applyOrder: true, defaultState: { hide: null } });
+        api.applyColumnState({ state: ordered, applyOrder: true, defaultState: { hide: null, pinned: null } });
         const orderedColIds = persisted
           .filter((entry) => typeof entry.order === 'number' && Number.isFinite(entry.order))
           .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
@@ -2517,7 +2530,7 @@ export default function AgGridAll({
       }
 
       // Apply properties first (without order)
-      api.applyColumnState({ state: stateToApply, applyOrder: false, defaultState: { hide: null } });
+      api.applyColumnState({ state: stateToApply, applyOrder: false, defaultState: { hide: null, pinned: null } });
       // Force selection column back to its defined width after state restore
       if (rowSelection === 'multiple') {
         api.applyColumnState({
@@ -2754,6 +2767,11 @@ export default function AgGridAll({
   // COLUMN STATE PERSISTENCE - Save State
   const persistColumnState = useCallback(() => {
     if (!shouldPersistColumnState || !columnStateStorageKey) return;
+    // Don't write before the saved state has been loaded for the current key.
+    // Otherwise refreshServerSide (which calls this via persistColumnStateNowRef)
+    // can clobber the new key with state carried over from the previous key —
+    // particularly after a layout switch on Offer Products.
+    if (!columnStateLoadedRef.current) return;
     const api = gridRef.current?.api;
     if (!api || api.isDestroyed?.()) return;
     const columnOrderMap: ColumnOrderMap = new Map();
@@ -3558,8 +3576,19 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
                   console.log('[Excel Export] Exporting selected cells');
                   await exportSelectedCellsAsExcel(api);
                 } else if (mode === 'selected-rows') {
-                  console.log('[Excel Export] Exporting selected rows');
-                  await exportSelectedRowsAsExcel(api);
+                  if (hasServerSideSelectAll(api)) {
+                    console.log('[Excel Export] SSRM selectAll active — fetching all filtered rows');
+                    const payload = requestPayloadRef.current && typeof requestPayloadRef.current === 'object'
+                      ? { ...requestPayloadRef.current }
+                      : undefined;
+                    const quickFilter = allowQuickSearch !== false ? quickSearchFilterRef.current : null;
+                    const excludeIds = getServerSideDeselectedRowIds(api);
+                    await exportAllFilteredRowsAsExcel(api, endpoint, 'export.xlsx', payload, quickFilter, excludeIds);
+                    console.log('[Excel Export] Export completed');
+                  } else {
+                    console.log('[Excel Export] Exporting selected rows');
+                    await exportSelectedRowsAsExcel(api);
+                  }
                 } else {
                   console.log('[Excel Export] Exporting all filtered rows');
                   // Export all filtered rows
@@ -3591,8 +3620,19 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
                   console.log('[CSV Export] Exporting selected cells');
                   exportSelectedCellsAsCsv(api);
                 } else if (mode === 'selected-rows') {
-                  console.log('[CSV Export] Exporting selected rows');
-                  exportSelectedRowsAsCsv(api);
+                  if (hasServerSideSelectAll(api)) {
+                    console.log('[CSV Export] SSRM selectAll active — fetching all filtered rows');
+                    const payload = requestPayloadRef.current && typeof requestPayloadRef.current === 'object'
+                      ? { ...requestPayloadRef.current }
+                      : undefined;
+                    const quickFilter = allowQuickSearch !== false ? quickSearchFilterRef.current : null;
+                    const excludeIds = getServerSideDeselectedRowIds(api);
+                    await exportAllFilteredRowsAsCsv(api, endpoint, 'export.csv', payload, quickFilter, excludeIds);
+                    console.log('[CSV Export] Export completed');
+                  } else {
+                    console.log('[CSV Export] Exporting selected rows');
+                    exportSelectedRowsAsCsv(api);
+                  }
                 } else {
                   console.log('[CSV Export] Exporting all filtered rows');
                   // Export all filtered rows
@@ -3669,7 +3709,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     }
 
     return wrapActions(replaceExportItem(replaceDeleteItem(itemsWithFilter)));
-  }, [clearContextMenuRow, deleteSelectionValues, getContextMenuItems, resolveAutoSizeMenuItems, endpoint, allowQuickSearch]);
+  }, [clearContextMenuRow, deleteSelectionValues, getContextMenuItems, resolveAutoSizeMenuItems, endpoint, allowQuickSearch, hasServerSideSelectAll]);
 
   const headerMenuItemsHandler = useCallback<GetMainMenuItems<RowData>>((params) => {
     const column = params.column;
