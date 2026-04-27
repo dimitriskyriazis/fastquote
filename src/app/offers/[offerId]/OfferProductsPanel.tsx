@@ -6243,11 +6243,24 @@ const requestedColumnDefsMap = useMemo(
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     // If the source handler reverted the cell (validation/server error), skip propagation.
+    // Numeric fields can flip between string/number representations during this 300ms
+    // window — the realtime echo replaces the user's typed text (e.g. "5,5" or "8")
+    // with the server's parsed number (5.5 or 8), so a raw String() comparison would
+    // mismatch and silently skip the prompt. Compare numerically when both sides parse.
     const settledValue = (event.data as Record<string, unknown> | undefined)?.[field] ?? null;
     const intendedValue = event.newValue ?? null;
-    const settledStr = settledValue == null ? '' : String(settledValue);
-    const intendedStr = intendedValue == null ? '' : String(intendedValue);
-    if (settledStr !== intendedStr) return;
+    const settledIsBlank = settledValue == null || (typeof settledValue === 'string' && settledValue.trim() === '');
+    const intendedIsBlank = intendedValue == null || (typeof intendedValue === 'string' && intendedValue.trim() === '');
+    if (settledIsBlank !== intendedIsBlank) return;
+    if (!settledIsBlank) {
+      const settledNum = coerceNumber(settledValue);
+      const intendedNum = coerceNumber(intendedValue);
+      if (settledNum != null && intendedNum != null) {
+        if (!Object.is(settledNum, intendedNum)) return;
+      } else if (String(settledValue) !== String(intendedValue)) {
+        return;
+      }
+    }
 
     type SiblingEntry = { OfferDetailID: number; oldValue: unknown };
     let siblings: SiblingEntry[] = [];
@@ -6286,6 +6299,18 @@ const requestedColumnDefsMap = useMemo(
 
     if (siblings.length === 0) return;
 
+    // Pick the value to propagate. For numeric fields, use the locale-aware client
+    // parse — sending the raw "5,5" string would let the server's parseFloat truncate
+    // at the comma and round to 5. For string fields (Description/Comment/Delivery),
+    // pass the settled string through as-is.
+    const intendedNumeric = coerceNumber(intendedValue);
+    const settledNumeric = coerceNumber(settledValue);
+    const newPatchValue: unknown = intendedNumeric != null
+      ? intendedNumeric
+      : settledNumeric != null
+        ? settledNumeric
+        : settledValue;
+
     const labelText = PROPAGATABLE_FIELD_LABELS[field];
     const confirmed = await showConfirmDialog({
       title: 'Apply to all matching products?',
@@ -6295,7 +6320,6 @@ const requestedColumnDefsMap = useMemo(
     });
     if (!confirmed) return;
 
-    const newPatchValue = settledValue;
     try {
       const patchRes = await fetch(resolvedEndpoint, {
         method: 'PATCH',
