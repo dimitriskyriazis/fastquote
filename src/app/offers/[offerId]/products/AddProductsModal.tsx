@@ -198,7 +198,6 @@ const ProductsGridPanel = React.memo(function ProductsGridPanel({
           applyColumnStateOrder={true}
           maintainColumnOrder={true}
           disableAutoSize={true}
-          allowCellSelectionInPerformanceMode={false}
         />
       </div>
     </div>
@@ -872,11 +871,12 @@ export default function AddProductsModal({
 
   const productColumns: ColDef[] = useMemo(() => {
     const columns: ColDef[] = [
-      { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter', width: 150 },
+      { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter', filterParams: { debounceMs: 250, applyMiniFilterWhileTyping: true, defaultOption: 'contains' }, width: 150 },
       {
         field: 'PartNumber',
         headerName: 'Part Number',
         filter: 'agTextColumnFilter',
+        filterParams: { debounceMs: 250, applyMiniFilterWhileTyping: true, defaultOption: 'contains' },
         cellRenderer: PartNumberCellRenderer,
         width: 170,
         editable: true,
@@ -891,6 +891,7 @@ export default function AddProductsModal({
         field: 'Description',
         headerName: 'Description',
         filter: 'agTextColumnFilter',
+        filterParams: { debounceMs: 250, applyMiniFilterWhileTyping: true, defaultOption: 'contains' },
         width: 550,
         cellRenderer: DescriptionCellRenderer,
         editable: true,
@@ -905,6 +906,7 @@ export default function AddProductsModal({
         field: 'ModelNumber',
         headerName: 'Model Number',
         filter: 'agTextColumnFilter',
+        filterParams: { debounceMs: 250, applyMiniFilterWhileTyping: true, defaultOption: 'contains' },
         width: 200,
         editable: true,
         valueParser: (params) => {

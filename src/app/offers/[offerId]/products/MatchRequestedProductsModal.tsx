@@ -279,6 +279,7 @@ export default function MatchRequestedProductsModal({
         field: 'PartNumber',
         headerName: 'Part Number',
         filter: 'agTextColumnFilter',
+        filterParams: { debounceMs: 250, applyMiniFilterWhileTyping: true, defaultOption: 'contains' },
         cellRenderer: PartNumberCellRenderer,
         width: 225,
       },
@@ -286,14 +287,16 @@ export default function MatchRequestedProductsModal({
         field: 'Description',
         headerName: 'Description',
         filter: 'agTextColumnFilter',
+        filterParams: { debounceMs: 250, applyMiniFilterWhileTyping: true, defaultOption: 'contains' },
         cellRenderer: DescriptionCellRenderer,
         width: 500,
       },
-      { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter', width: 200 },
+      { field: 'BrandName', headerName: 'Brand', filter: 'agTextColumnFilter', filterParams: { debounceMs: 250, applyMiniFilterWhileTyping: true, defaultOption: 'contains' }, width: 200 },
       {
         field: 'ModelNumber',
         headerName: 'Model Number',
         filter: 'agTextColumnFilter',
+        filterParams: { debounceMs: 250, applyMiniFilterWhileTyping: true, defaultOption: 'contains' },
         width: 225,
       },
       {
@@ -361,7 +364,15 @@ export default function MatchRequestedProductsModal({
   // override the hidden-token payload so the in-flight query picks up the
   // extended terms.  Cleared on entry change so each row starts fresh.
   const [overrideHiddenTokens, setOverrideHiddenTokens] = useState<HiddenFilterTokens | null>(null);
-  const effectiveHiddenTokens = overrideHiddenTokens ?? hiddenFilterTokens;
+  // Once the user edits the filter chips, stop falling back to the entry-
+  // derived hidden tokens — those encode synonyms of the ORIGINAL entry text
+  // and would keep biasing the SQL WHERE toward the old data while the
+  // debounced /expand for the new filter values is still in flight.  Mirrors
+  // AddProductsModal, which has no entry to fall back on.
+  const [userTouchedFilters, setUserTouchedFilters] = useState(false);
+  const effectiveHiddenTokens = userTouchedFilters
+    ? overrideHiddenTokens
+    : (overrideHiddenTokens ?? hiddenFilterTokens);
   // Prompt-driven AI search lock state (mirrors AddProductsModal).  When
   // true: prompt input becomes read-only, the column filter row is hidden,
   // and a banner in the filter-row slot shows the AI's interpretation.
@@ -393,6 +404,12 @@ export default function MatchRequestedProductsModal({
       hiddenTokensInitialFireRef.current = false;
       return;
     }
+    // Drop both caches before refreshing so AG Grid can't briefly serve a
+    // block 0 that was captured under the previous smart-mode / hidden-token
+    // payload — that's the "stuck on old results" symptom.
+    setPlainCache(new Map());
+    setExpandCache(new Map());
+    lastServerRequestSigRef.current = '';
     const api = productsApiRef.current as unknown as { refreshServerSide?: (p?: { purge?: boolean }) => void; isDestroyed?: () => boolean } | null;
     if (!api || api.isDestroyed?.()) return;
     try { api.refreshServerSide?.({ purge: true }); } catch { /* noop */ }
@@ -418,10 +435,9 @@ export default function MatchRequestedProductsModal({
   // things the user is explicitly filtering away from.  Mirrors the plain
   // keyword-score behavior of AddProductsModal so the two modals feel
   // identical once the user takes manual control.  Reset on entry change
-  // and after prompt-exit.  Declared here (above requestPayload) so the
-  // memo can read it; the setter is wired into the filter-change listener
-  // further down.
-  const [userTouchedFilters, setUserTouchedFilters] = useState(false);
+  // and after prompt-exit.  (State declared earlier — alongside
+  // overrideHiddenTokens — so effectiveHiddenTokens can read it; the setter
+  // is wired into the filter-change listener further down.)
   const suppressNextFilterChangeRef = useRef(0);
   const markProgrammaticFilterChange = useCallback(() => {
     suppressNextFilterChangeRef.current += 1;
@@ -491,13 +507,11 @@ export default function MatchRequestedProductsModal({
   // background so flipping the toggle is instant for the first block AND the
   // next several scroll blocks.  Keys are startRow values; new Map identity
   // per filter signature so AgGridAll's consumption logic re-arms.
-  const PREFETCH_BLOCK_SIZE = 200;
   const [plainCache, setPlainCache] = useState<Map<number, GridResponse>>(() => new Map());
   const [expandCache, setExpandCache] = useState<Map<number, GridResponse>>(() => new Map());
   // No transient swap slot needed — see AddProductsModal for rationale.
   const lastServerRequestRef = useRef<ServerRequestWithQuickFilter | null>(null);
   const lastServerRequestSigRef = useRef<string>('');
-  const prefetchAbortRef = useRef<AbortController | null>(null);
   useEffect(() => {
     setPlainCache(new Map());
     setExpandCache(new Map());
@@ -508,8 +522,17 @@ export default function MatchRequestedProductsModal({
   // Seed both caches from the parent's per-entry prefetch.  The parent walks
   // entries strictly sequentially (1-plain → 1-expand → 2-plain → …) so by
   // the time the user reaches an entry, both block 0s are usually warm.
+  //
+  // Skip the seed once the grid has fired a real request (lastServerRequestSig
+  // is non-empty): the parent's prefetch was computed for the entry's
+  // auto-populated chips, but if the user has since typed in the filter row
+  // or toggled smart mode the filter sig has moved on and the prefetched
+  // response no longer matches what's requested.  Without this guard a late-
+  // arriving stale prefetch could repopulate cache[0] after handleServerRequest
+  // had cleared it, leaving the grid serving rows from a different query.
   useEffect(() => {
     if (!prefetchedPlainFirstPage) return;
+    if (lastServerRequestSigRef.current !== '') return;
     setPlainCache((prev) => {
       if (prev.has(0)) return prev;
       const next = new Map(prev);
@@ -519,6 +542,7 @@ export default function MatchRequestedProductsModal({
   }, [prefetchedPlainFirstPage]);
   useEffect(() => {
     if (!prefetchedExpandFirstPage) return;
+    if (lastServerRequestSigRef.current !== '') return;
     setExpandCache((prev) => {
       if (prev.has(0)) return prev;
       const next = new Map(prev);
@@ -578,98 +602,11 @@ export default function MatchRequestedProductsModal({
     [offerId],
   );
 
-  // Single-block opposite-mode prefetch.  Block 0 only — enough to make the
-  // toggle instant.  Scroll blocks lazy-load via AG Grid's standard SSR row
-  // model.  Skip if the cache already has block 0 (parent's per-entry
-  // prefetch usually beats us to it).
-  useEffect(() => {
-    const lastReq = lastServerRequestRef.current;
-    if (!lastReq) return;
-    prefetchAbortRef.current?.abort();
-    const controller = new AbortController();
-    prefetchAbortRef.current = controller;
-
-    const smartActive = smartSearchEnabled || promptSubmitted;
-    const targetCache = smartActive ? plainCache : expandCache;
-    if (targetCache.has(0)) {
-      return () => { controller.abort(); };
-    }
-
-    const oppositePayload: Record<string, unknown> = smartActive
-      ? { action: 'products' }
-      : (() => {
-          const p: Record<string, unknown> = {
-            action: 'products',
-            orFilterColumns: ['BrandName', 'PartNumber', 'ModelNumber', 'Description'],
-          };
-          if (!promptSubmitted && !userTouchedFilters) {
-            p.requested = {
-              brand: entry.requestedBrand,
-              partNumber: entry.requestedPartNumber,
-              modelNumber: entry.requestedModelNumber,
-              description: entry.requestedDescription,
-              description2: entry.requestedDescription2,
-              description3: entry.requestedDescription3,
-            };
-          }
-          if (effectiveHiddenTokens) p.hiddenFilterTokens = effectiveHiddenTokens;
-          const neg = buildNegativeHiddenTokens(effectiveExpansion, effectiveHiddenTokens);
-          if (neg) p.negativeHiddenTokens = neg;
-          return p;
-        })();
-
-    const blockReq: ServerRequestWithQuickFilter = {
-      ...lastReq,
-      startRow: 0,
-      endRow: PREFETCH_BLOCK_SIZE,
-    };
-
-    void (async () => {
-      try {
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...oppositePayload, request: blockReq }),
-          signal: controller.signal,
-        });
-        if (!res.ok || controller.signal.aborted) return;
-        const data = (await res.json()) as GridResponse | null;
-        if (controller.signal.aborted || !data || !data.ok) return;
-        const oppositeMode: 'plain' | 'expand' = smartActive ? 'plain' : 'expand';
-        const setCache = oppositeMode === 'plain' ? setPlainCache : setExpandCache;
-        setCache((prev) => {
-          if (prev.has(0)) return prev;
-          const next = new Map(prev);
-          next.set(0, data);
-          return next;
-        });
-        // Push to parent cache too so its sequential worker (1-plain →
-        // 1-expand → …) finds this block populated and doesn't re-fetch it.
-        if (onModalFetchedBlock) onModalFetchedBlock(entry.offerDetailId, oppositeMode, data);
-      } catch (err) {
-        if ((err as Error)?.name === 'AbortError') return;
-        console.warn('Match modal opposite-mode block-0 prefetch failed', err);
-      }
-    })();
-
-    return () => {
-      controller.abort();
-    };
-    // plainCache / expandCache deps cover sig-change re-renders (see
-    // handleServerRequest, which replaces both Maps when the filter/sort
-    // signature changes).
-  }, [
-    endpoint,
-    effectiveHiddenTokens,
-    effectiveExpansion,
-    entry,
-    promptSubmitted,
-    userTouchedFilters,
-    smartSearchEnabled,
-    plainCache,
-    expandCache,
-    onModalFetchedBlock,
-  ]);
+  // Opposite-mode block-0 prefetch was removed: the parent's per-entry
+  // worker already fires the heavy /products/add expand for every queued
+  // entry, so a second prefetch from the modal was duplicating the LLM
+  // rerank call (visible in server logs as paired identical durations).
+  // Toggle-OFF (plain) on entries 2+ now lazy-loads on first toggle.
 
   const hasAppliedRequestedFiltersRef = useRef(false);
 
@@ -1640,7 +1577,6 @@ export default function MatchRequestedProductsModal({
                 applyColumnStateOrder={true}
                 maintainColumnOrder={true}
                 disableAutoSize={true}
-                suppressCellSelection
                 getContextMenuItems={handleContextMenuItems}
                 suppressNoRowsOverlay={
                   (suggestedProducts.length > 0 && suggestionsVisible) ||

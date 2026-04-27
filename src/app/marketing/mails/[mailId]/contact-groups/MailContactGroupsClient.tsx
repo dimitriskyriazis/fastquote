@@ -161,6 +161,8 @@ export default function MailContactGroupsClient({ mailId, description }: Props) 
 
       items.push('separator');
       items.push('copy');
+      items.push('separator');
+      items.push('export');
 
       return normalizeContextMenuItems(items);
     },
@@ -198,6 +200,8 @@ export default function MailContactGroupsClient({ mailId, description }: Props) 
 
       items.push('separator');
       items.push('copy');
+      items.push('separator');
+      items.push('export');
 
       return normalizeAssignedContextMenuItems(items);
     },

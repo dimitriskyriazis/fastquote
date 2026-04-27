@@ -1421,6 +1421,7 @@ export default function AgGridAll({
   const [gridEmpty, setGridEmpty] = useState(true);
   const gridEmptyRef = useRef(true);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const [blockZeroLoading, setBlockZeroLoading] = useState(false);
   const [hasUserFilters, setHasUserFilters] = useState(false);
   const [activeFilterCount, setActiveFilterCount] = useState(0);
   const [displayedRowCount, setDisplayedRowCount] = useState<number | null>(null);
@@ -3180,6 +3181,8 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
   // SERVER-SIDE DATASOURCE - Implementation
   const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     getRows: async (params: IServerSideGetRowsParams<RowData>) => {
+      const isBlockZero = (params.request.startRow ?? 0) === 0;
+      if (isBlockZero) setBlockZeroLoading(true);
       try {
         const payload = requestPayloadRef.current && typeof requestPayloadRef.current === 'object'
           ? { ...requestPayloadRef.current }
@@ -3207,6 +3210,25 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
         const bodyRequest = { ...payload, request: serverRequest, fields };
         const cacheKey = `${endpoint}:${safeStringify(payload)}:${safeStringify(serverRequest)}:${safeStringify(fields)}`;
           let responsePromise = requestCacheRef.current.get(cacheKey);
+          // Cached prefetched blocks are only valid when the request shape
+          // they were fetched for matches the current request.  Without this
+          // check, a filter change triggers refreshServerSide → AG Grid asks
+          // the datasource for block 0 → onServerRequest queues a parent
+          // state update to invalidate the cache → but the parent's state
+          // update is async, so we still see the stale Map identity here in
+          // the same tick and serve the previous filter's rows.  Comparing
+          // filter/sort/group/quick on the cached request itself sidesteps
+          // the race entirely.
+          const requestShapeMatches = (cached: GridResponse | null | undefined) => {
+            const cachedReq = cached?.request;
+            if (!cachedReq) return true;
+            return (
+              safeStringify(cachedReq.filterModel ?? null) === safeStringify(serverRequest.filterModel ?? null)
+              && safeStringify(cachedReq.sortModel ?? null) === safeStringify(serverRequest.sortModel ?? null)
+              && safeStringify(cachedReq.groupKeys ?? null) === safeStringify(serverRequest.groupKeys ?? null)
+              && (cachedReq.quickFilterText ?? null) === (serverRequest.quickFilterText ?? null)
+            );
+          };
           // Consume a pre-fetched first block when available.  Only applies
           // to the first request (startRow === 0) and is consumed exactly
           // once per distinct prefetchedFirstPage prop reference, so
@@ -3219,7 +3241,9 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
           ) {
             const cached = prefetchedFirstPageRef.current;
             prefetchedFirstPageRef.current = null;
-            responsePromise = Promise.resolve(cached);
+            if (requestShapeMatches(cached)) {
+              responsePromise = Promise.resolve(cached);
+            }
           }
           // Consume a pre-fetched block from the multi-block cache when the
           // requested startRow matches.  Each block is taken at most once
@@ -3228,16 +3252,27 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
             const cachedBlock = prefetchedBlocksRef.current.get(startRowForRequest);
             if (cachedBlock) {
               prefetchedBlocksRef.current.delete(startRowForRequest);
-              responsePromise = Promise.resolve(cachedBlock);
+              if (requestShapeMatches(cachedBlock)) {
+                responsePromise = Promise.resolve(cachedBlock);
+              }
             }
           }
           if (!responsePromise) {
             responsePromise = (async () => {
+              const perfStart = performance.now();
               const res = await fetch(endpoint, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(bodyRequest),
             });
+              if (endpoint.includes('/products/add')) {
+                console.log('[populate-perf] AgGrid natural fetch', {
+                  endpoint,
+                  startRow: startRowForRequest,
+                  durationMs: Math.round(performance.now() - perfStart),
+                  hasOrFilterColumns: Boolean((bodyRequest as Record<string, unknown>).orFilterColumns),
+                });
+              }
 
             let data: GridResponse | null = null;
             let text = '';
@@ -3310,6 +3345,8 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       } catch (e) {
         console.error('Datasource fetch exception', e);
         params.fail();
+      } finally {
+        if (isBlockZero) setBlockZeroLoading(false);
       }
     },
   }), [
@@ -4570,7 +4607,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
         data-suppress-sidebar={suppressSideBar}
         ref={shellRef}
       >
-        {gridEmpty && isGridReady && hasLoadedOnce && !suppressNoRowsOverlay && (
+        {gridEmpty && isGridReady && hasLoadedOnce && !blockZeroLoading && !suppressNoRowsOverlay && (
           <div className={styles.noRowsOverlay}>No data to display</div>
         )}
         <AgGridReact

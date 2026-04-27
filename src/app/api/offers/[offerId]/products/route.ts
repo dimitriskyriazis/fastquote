@@ -94,6 +94,7 @@ type ProductRow = {
   IsPrintable: boolean | null;
   IsComment: boolean | null;
   IsCategory: boolean | null;
+  IsOption: boolean | null;
   Enabled: boolean | number | null;
   CreatedOn: Date | string | null;
   CreatedBy: string | null;
@@ -217,6 +218,7 @@ type DetailUpdateInput = {
   IsCategory?: boolean | null;
   IsPrintable?: boolean | number | string | null;
   IsComment?: boolean | number | string | null;
+  IsOption?: boolean | number | string | null;
   RequestedItemNo?: string | null;
   RequestedBrand?: string | null;
   RequestedModelNo?: string | null;
@@ -259,6 +261,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   IsPrintable: 'od.IsPrintable',
   IsComment: 'od.IsComment',
   IsCategory: 'od.IsCategory',
+  IsOption: 'od.IsOption',
   Enabled: 'od.Enabled',
   CreatedOn: 'od.CreatedOn',
   CreatedBy: 'od.CreatedBy',
@@ -1261,6 +1264,7 @@ export async function POST(
       'IsPrintable',
       'IsComment',
       'IsCategory',
+      'IsOption',
       'Description',
       'ProductDescription',
       'BrandName',
@@ -1335,12 +1339,12 @@ export async function POST(
     const query = `
         SELECT
           COUNT_BIG(1) OVER () AS __totalCount,
-          SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalPrice, 0) ELSE 0 END) OVER () AS __sumTotalPrice,
-          SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalNet, 0) ELSE 0 END) OVER () AS __sumTotalNet,
-          SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.TotalCost, 0) ELSE 0 END) OVER () AS __sumTotalCost,
-          SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.Quantity, 0) * COALESCE(od.Installation, 0) ELSE 0 END) OVER () AS __sumInstallation,
-          SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.Quantity, 0) * COALESCE(od.ElInstalation, 0) ELSE 0 END) OVER () AS __sumElInstalation,
-          SUM(CASE WHEN od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1 THEN COALESCE(od.Quantity, 0) * COALESCE(od.Commissioning, 0) ELSE 0 END) OVER () AS __sumCommissioning,
+          SUM(CASE WHEN (od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0 THEN COALESCE(od.TotalPrice, 0) ELSE 0 END) OVER () AS __sumTotalPrice,
+          SUM(CASE WHEN (od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0 THEN COALESCE(od.TotalNet, 0) ELSE 0 END) OVER () AS __sumTotalNet,
+          SUM(CASE WHEN (od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0 THEN COALESCE(od.TotalCost, 0) ELSE 0 END) OVER () AS __sumTotalCost,
+          SUM(CASE WHEN (od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0 THEN COALESCE(od.Quantity, 0) * COALESCE(od.Installation, 0) ELSE 0 END) OVER () AS __sumInstallation,
+          SUM(CASE WHEN (od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0 THEN COALESCE(od.Quantity, 0) * COALESCE(od.ElInstalation, 0) ELSE 0 END) OVER () AS __sumElInstalation,
+          SUM(CASE WHEN (od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0 THEN COALESCE(od.Quantity, 0) * COALESCE(od.Commissioning, 0) ELSE 0 END) OVER () AS __sumCommissioning,
           ${TREE_ORDERING_HIERARCHY_EXPRESSION} AS TreeOrderingHierarchy,
           ${selectedColumnSql},
           CASE
@@ -1659,6 +1663,7 @@ export async function PATCH(
         const hasIsCategory = entry ? Object.prototype.hasOwnProperty.call(entry, 'IsCategory') : false;
         const hasIsPrintable = entry ? Object.prototype.hasOwnProperty.call(entry, 'IsPrintable') : false;
         const hasIsComment = entry ? Object.prototype.hasOwnProperty.call(entry, 'IsComment') : false;
+        const hasIsOption = entry ? Object.prototype.hasOwnProperty.call(entry, 'IsOption') : false;
         const hasRequestedItemNo = entry
           ? Object.prototype.hasOwnProperty.call(entry, 'RequestedItemNo')
           : false;
@@ -1704,6 +1709,7 @@ export async function PATCH(
           && !hasIsCategory
           && !hasIsPrintable
           && !hasIsComment
+          && !hasIsOption
           && !hasRequestedItemNo
           && !hasRequestedBrand
           && !hasRequestedModelNo
@@ -1786,6 +1792,7 @@ export async function PATCH(
         const isCategoryValue = hasIsCategory ? normalizeBoolean(entry?.IsCategory ?? null) : null;
         const isPrintableValue = hasIsPrintable ? normalizeBoolean(entry?.IsPrintable ?? null) : null;
         const isCommentValue = hasIsComment ? normalizeBoolean(entry?.IsComment ?? null) : null;
+        const isOptionValue = hasIsOption ? normalizeBoolean(entry?.IsOption ?? null) : null;
         const partNumber = hasPartNumber ? normalizeRequestedTextValue(entry?.PartNumber ?? null) : null;
         const modelNumber = hasModelNumber ? normalizeRequestedTextValue(entry?.ModelNumber ?? null) : null;
         const installation = hasInstallation ? normalizeMoneyValue(entry?.Installation ?? null) : null;
@@ -1851,6 +1858,8 @@ export async function PATCH(
           IsCategory: isCategoryValue,
           IsPrintable: isPrintableValue,
           IsComment: isCommentValue,
+          hasIsOption,
+          IsOption: isOptionValue,
           requestedItemNo: hasRequestedItemNo
             ? normalizeRequestedItemNoValue(entry?.RequestedItemNo ?? null)
             : null,
@@ -1917,6 +1926,8 @@ export async function PATCH(
         IsCategory: boolean | null;
         IsPrintable: boolean | null;
         IsComment: boolean | null;
+        hasIsOption: boolean;
+        IsOption: boolean | null;
         requestedItemNo: string | null;
         RequestedBrand: string | null;
         RequestedModelNo: string | null;
@@ -2102,6 +2113,8 @@ export async function PATCH(
         HasIsPrintable: boolean;
         IsComment: boolean | null;
         HasIsComment: boolean;
+        IsOption: boolean | null;
+        HasIsOption: boolean;
         PartNumber: string | null;
         HasPartNumber: boolean;
         ModelNumber: string | null;
@@ -2339,6 +2352,8 @@ export async function PATCH(
           HasIsPrintable: entry.hasIsPrintable,
           IsComment: entry.hasIsComment ? entry.IsComment : null,
           HasIsComment: entry.hasIsComment,
+          IsOption: entry.hasIsOption ? entry.IsOption : null,
+          HasIsOption: entry.hasIsOption,
           PartNumber: entry.hasPartNumber ? entry.PartNumber : null,
           HasPartNumber: entry.hasPartNumber,
           ModelNumber: entry.hasModelNumber ? entry.ModelNumber : null,
@@ -2379,7 +2394,7 @@ export async function PATCH(
       });
 
       const decimalType = getDecimalType();
-      const UPDATE_PARAMS_PER_ROW = 60;
+      const UPDATE_PARAMS_PER_ROW = 62;
       const UPDATE_BASE_PARAMS = 2;
       const updateChunkSize = Math.max(1, Math.floor((2100 - UPDATE_BASE_PARAMS) / UPDATE_PARAMS_PER_ROW));
 
@@ -2425,6 +2440,8 @@ export async function PATCH(
         const hasIsPrintableParam = `hasIsPrintable_${rowIdx}`;
         const isCommentParam = `isComment_${rowIdx}`;
         const hasIsCommentParam = `hasIsComment_${rowIdx}`;
+        const isOptionParam = `isOption_${rowIdx}`;
+        const hasIsOptionParam = `hasIsOption_${rowIdx}`;
         const requestedItemNoParam = `requestedItemNo_${rowIdx}`;
         const hasRequestedItemNoParam = `hasRequestedItemNo_${rowIdx}`;
         const requestedBrandParam = `requestedBrand_${rowIdx}`;
@@ -2513,6 +2530,12 @@ export async function PATCH(
           row.HasIsComment ? (row.IsComment == null ? null : (row.IsComment ? 1 : 0)) : null,
         );
         request.input(hasIsCommentParam, sql.Bit, row.HasIsComment ? 1 : 0);
+        request.input(
+          isOptionParam,
+          sql.Bit,
+          row.HasIsOption ? (row.IsOption == null ? null : (row.IsOption ? 1 : 0)) : null,
+        );
+        request.input(hasIsOptionParam, sql.Bit, row.HasIsOption ? 1 : 0);
         const partNumberParam = `partNumber_${rowIdx}`;
         const hasPartNumberParam = `hasPartNumber_${rowIdx}`;
         const modelNumberParam = `modelNumber_${rowIdx}`;
@@ -2533,7 +2556,7 @@ export async function PATCH(
         request.input(hasElInstalationParam, sql.Bit, row.HasElInstalation ? 1 : 0);
         request.input(commissioningParam, decimalType, row.HasCommissioning ? row.Commissioning : null);
         request.input(hasCommissioningParam, sql.Bit, row.HasCommissioning ? 1 : 0);
-        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam}, @${partNumberParam}, @${hasPartNumberParam}, @${modelNumberParam}, @${hasModelNumberParam}, @${installationParam}, @${hasInstallationParam}, @${elInstalationParam}, @${hasElInstalationParam}, @${commissioningParam}, @${hasCommissioningParam})`);
+        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam}, @${isOptionParam}, @${hasIsOptionParam}, @${partNumberParam}, @${hasPartNumberParam}, @${modelNumberParam}, @${hasModelNumberParam}, @${installationParam}, @${hasInstallationParam}, @${elInstalationParam}, @${hasElInstalationParam}, @${commissioningParam}, @${hasCommissioningParam})`);
       });
 
       const query = `
@@ -2588,6 +2611,8 @@ export async function PATCH(
           HasIsPrintable,
           IsComment,
           HasIsComment,
+          IsOption,
+          HasIsOption,
           PartNumber,
           HasPartNumber,
           ModelNumber,
@@ -2651,6 +2676,8 @@ export async function PATCH(
             HasIsPrintable,
             IsComment,
             HasIsComment,
+            IsOption,
+            HasIsOption,
             PartNumber,
             HasPartNumber,
             ModelNumber,
@@ -2693,6 +2720,7 @@ export async function PATCH(
             od.IsCategory = CASE WHEN PendingUpdates.HasIsCategory = 1 THEN PendingUpdates.IsCategory ELSE od.IsCategory END,
             od.IsPrintable = CASE WHEN PendingUpdates.HasIsPrintable = 1 THEN PendingUpdates.IsPrintable ELSE od.IsPrintable END,
             od.IsComment = CASE WHEN PendingUpdates.HasIsComment = 1 THEN PendingUpdates.IsComment ELSE od.IsComment END,
+            od.IsOption = CASE WHEN PendingUpdates.HasIsOption = 1 THEN PendingUpdates.IsOption ELSE od.IsOption END,
             od.PartNumber = CASE WHEN PendingUpdates.HasPartNumber = 1 THEN PendingUpdates.PartNumber ELSE od.PartNumber END,
             od.ModelNumber = CASE WHEN PendingUpdates.HasModelNumber = 1 THEN PendingUpdates.ModelNumber ELSE od.ModelNumber END,
             od.Installation = CASE WHEN PendingUpdates.HasInstallation = 1 THEN PendingUpdates.Installation ELSE od.Installation END,

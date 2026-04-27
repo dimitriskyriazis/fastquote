@@ -46,6 +46,7 @@ export type OfferProductRow = {
   treeOrdering: string | null;
   isCategory: boolean;
   isComment: boolean;
+  isOption: boolean;
   quantity: number | null;
   brandName: string | null;
   modelNumber: string | null;
@@ -90,6 +91,7 @@ const LABELS = {
     responsible: 'Αρμόδιος',
     responsibleEmail: 'Email',
     colNo: 'Α/Α',
+    optionTag: 'Επιλογή',
     colQty: 'Τεμ',
     colBrand: 'Οίκος',
     colType: 'Κωδικός',
@@ -138,6 +140,7 @@ const LABELS = {
     responsible: 'Responsible',
     responsibleEmail: 'Email',
     colNo: 'No',
+    optionTag: 'Option',
     colQty: 'Qty',
     colBrand: 'Brand',
     colType: 'Part Number',
@@ -428,7 +431,7 @@ function buildDescriptionCell(
       { text: baseText },
       {
         text: extraLines.join('\n'),
-        fontSize: 6.6,
+        fontSize: 6.0,
         color: COLORS.secondaryText,
         margin: [0, 1, 0, 0],
       },
@@ -747,10 +750,21 @@ function shouldShowPrices(row: OfferProductRow, printSettings: PdfPrintSettings 
   return printSettings.printProducts;
 }
 
-function columnValue(row: OfferProductRow, column: PdfProductColumn): string {
+function columnValue(row: OfferProductRow, column: PdfProductColumn, L?: Labels): string {
   switch (column) {
-    case 'no': return str(row.treeOrdering);
-    case 'qty': return row.quantity != null ? String(row.quantity) : '';
+    case 'no': {
+      const base = str(row.treeOrdering);
+      if (!base) return base;
+      if (row.isOption) {
+        const label = L?.optionTag ?? 'Option';
+        return `${base} (${label})`;
+      }
+      return base;
+    }
+    case 'qty': {
+      if (row.isComment && (row.quantity == null || row.quantity === 0)) return '';
+      return row.quantity != null ? String(row.quantity) : '';
+    }
     case 'brand': return str(row.brandName);
     case 'type': return str(row.partNumber);
     case 'modelNumber': return str(row.modelNumber);
@@ -800,12 +814,12 @@ function dynamicCellFont(
   const len = value.length;
 
   if (column === 'description') {
-    if (len > 90) return { style: 'cellTight', fontSize: 6.6, lineHeight: 1.22 };
+    if (len > 90) return { style: 'cellTight', fontSize: 6.0, lineHeight: 1.22 };
     if (len > 55) return { style: 'cellTight', lineHeight: 1.24 };
     return { style: 'cell', lineHeight: 1.28 };
   }
 
-  if (len > 90) return { style: 'cellTight', fontSize: 6.6, lineHeight: 1.1 };
+  if (len > 90) return { style: 'cellTight', fontSize: 6.0, lineHeight: 1.1 };
   if (len > 55) return { style: 'cellTight', lineHeight: 1.12 };
   return { style: 'cell', lineHeight: 1.15 };
 }
@@ -983,7 +997,7 @@ function buildItemsTable(
       selectedColumns.map((col) => {
         // Description supports compact sub-lines when comment/delivery columns are hidden.
         if (col === 'description') {
-          const base = columnValue(row, col);
+          const base = columnValue(row, col, L);
           const dyn = dynamicCellFont(col, base);
           const descCell = buildDescriptionCell(row, base, selectedColumns);
 
@@ -994,16 +1008,17 @@ function buildItemsTable(
           };
           if (dyn.fontSize) cell.fontSize = dyn.fontSize;
           if (dyn.lineHeight) cell.lineHeight = dyn.lineHeight;
+          if (row.isOption) cell.italics = true;
           return cell;
         }
 
-        const value = hidePrices && priceColumns.has(col) ? '' : columnValue(row, col);
+        const value = hidePrices && priceColumns.has(col) ? '' : columnValue(row, col, L);
         const dyn = dynamicCellFont(col, value);
 
         const baseCell: PdfCell = {
           text: value,
           style: dyn.style,
-          noWrap: numericCols.has(col) || col === 'no',
+          noWrap: (numericCols.has(col) || col === 'no') && !(col === 'no' && row.isOption),
         };
         if (dyn.fontSize) baseCell.fontSize = dyn.fontSize;
         if (dyn.lineHeight) baseCell.lineHeight = dyn.lineHeight;
@@ -1011,6 +1026,7 @@ function buildItemsTable(
           baseCell.alignment = 'right';
           baseCell.fontFeatures = ['tnum'];
         }
+        if (row.isOption) baseCell.italics = true;
 
         if ((col === 'type' || col === 'modelNumber') && str(row.webLink) && value) {
           const hasPartNumber = !!str(row.partNumber);
@@ -1023,7 +1039,7 @@ function buildItemsTable(
         }
 
         // Tag first column so layout callbacks can detect normal item rows.
-        if (col === selectedColumns[0]) baseCell.rowKind = 'item';
+        if (col === selectedColumns[0]) baseCell.rowKind = row.isOption ? 'option' : 'item';
 
         return baseCell;
       }),
@@ -1072,18 +1088,19 @@ function buildItemsTable(
       paddingTop: (i: number, node: PdfTableNode) => {
         const kind = node.table.body[i]?.[0]?.rowKind;
         if (kind === 'category') return 4;
-        if (kind === 'item') return 3;
+        if (kind === 'item' || kind === 'option') return 3;
         return 5;
       },
       paddingBottom: (i: number, node: PdfTableNode) => {
         const kind = node.table.body[i]?.[0]?.rowKind;
         if (kind === 'category') return 7;
-        if (kind === 'item') return 3;
+        if (kind === 'item' || kind === 'option') return 3;
         return 5;
       },
 
       fillColor: (i: number, node: PdfTableNode) => {
         const kind = node.table.body[i]?.[0]?.rowKind;
+        if (kind === 'option') return '#f3e8ff';
         if (kind !== 'item') return null;
         return zebraRows.has(i) ? COLORS.zebraRowBg : null;
       },
@@ -1096,7 +1113,7 @@ function calculateDiscountSummary(data: OfferPdfData): {
   discountEur: number;
   totalNet: number;
 } {
-  const detailRows = data.products.filter((p) => !p.isCategory);
+  const detailRows = data.products.filter((p) => !p.isCategory && !p.isOption);
 
   let listSubtotal = 0;
   let totalNet = 0;
@@ -1134,7 +1151,7 @@ function buildTotalsAndTerms(
   orientation: PdfOrientation,
   selectedColumns: PdfProductColumn[],
   equipmentList: boolean = false,
-) {
+): { totals: unknown[]; terms: unknown[] } {
   const hasPriceColumns = selectedColumns.some(c => PRICE_COLUMNS.has(c));
   const discountSummary = calculateDiscountSummary(data);
   const showDiscountSummary = discountSummary.discountEur > 0;
@@ -1166,7 +1183,8 @@ function buildTotalsAndTerms(
     termRows.push([cell(terms[i]), cell(terms[i + 1])]);
   }
 
-  const blocks: unknown[] = [];
+  const totalsBlocks: unknown[] = [];
+  const termsBlocks: unknown[] = [];
 
   const summaryRowStyle = { fontSize: 8.5, color: COLORS.primaryText };
   const finalPriceStyle = { fontSize: 9.5, bold: true, color: COLORS.primaryText };
@@ -1218,7 +1236,7 @@ function buildTotalsAndTerms(
     };
 
     if (discountNote) {
-      blocks.push({
+      totalsBlocks.push({
         columns: [
           {
             width: '*',
@@ -1255,7 +1273,7 @@ function buildTotalsAndTerms(
         margin: [0, 18, 0, 18],
       });
     } else {
-      blocks.push({
+      totalsBlocks.push({
         columns: [
           { width: '*', text: '' },
           totalsBox,
@@ -1265,13 +1283,13 @@ function buildTotalsAndTerms(
     }
   }
 
-  blocks.push({
+  termsBlocks.push({
       text: L.termsTitle,
       style: 'h2',
       margin: [0, 10, 0, 6],
     });
 
-  blocks.push({
+  termsBlocks.push({
       table: {
         widths: ['*', '*'],
         body: termRows,
@@ -1292,7 +1310,7 @@ function buildTotalsAndTerms(
       margin: [0, 0, 0, 10],
     });
 
-  return blocks;
+  return { totals: totalsBlocks, terms: termsBlocks };
 }
 
 function buildSignatureBlock(data: OfferPdfData, L: Labels, lang: PdfLang, orientation: PdfOrientation) {
@@ -1446,9 +1464,18 @@ export async function generateOfferPdf(
         : buildCoverPage(data, L, lang, orientation, logo, equipmentList)),
       ...openingNote,
       itemsTable,
-      ...totalsAndTerms,
-      ...notes,
-      buildSignatureBlock(data, L, lang, orientation),
+      ...totalsAndTerms.totals,
+      // Keep commercial terms, notes, and signatures together: if they don't
+      // fit under the totals on the current page, push the whole group onto
+      // the next page rather than splitting it.
+      {
+        stack: [
+          ...totalsAndTerms.terms,
+          ...notes,
+          buildSignatureBlock(data, L, lang, orientation),
+        ],
+        unbreakable: true,
+      },
     ],
 
     styles: {
@@ -1457,9 +1484,9 @@ export async function generateOfferPdf(
       metaLabel: { fontSize: 9, color: COLORS.secondaryText },
       metaValue: { fontSize: 10, color: COLORS.primaryText, bold: true },
       body: { fontSize: 8.5, color: COLORS.primaryText },
-      tableHeader: { fontSize: 8, bold: true, color: COLORS.primaryText },
-      cell: { fontSize: 7.2, color: COLORS.primaryText },
-      cellTight: { fontSize: 6.8, color: COLORS.primaryText },
+      tableHeader: { fontSize: 7.2, bold: true, color: COLORS.primaryText },
+      cell: { fontSize: 6.5, color: COLORS.primaryText },
+      cellTight: { fontSize: 6.2, color: COLORS.primaryText },
       secondary: { fontSize: 9, color: COLORS.secondaryText },
       foot: { fontSize: 8, color: COLORS.secondaryText },
     },

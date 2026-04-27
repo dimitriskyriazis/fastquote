@@ -665,6 +665,7 @@ export default function ClientProductsPage({
     setPlacementAnchor(null);
     setDefaultPlacementMode('fill');
     offerProductsPanelRef.current?.setInsertLineVisible?.(false);
+    offerProductsPanelRef.current?.deselectAllRows?.();
   }, []);
 
   const handleRequestDetachAddProducts = useCallback(() => {

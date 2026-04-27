@@ -70,4 +70,5 @@ export type OfferExportRow = {
   IsPrintable?: boolean | null;
   IsComment?: boolean | null;
   IsCategory?: boolean | null;
+  IsOption?: boolean | number | null;
 };

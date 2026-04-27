@@ -447,12 +447,6 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       rowDrag: true,
       cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
     },
-    {
-      field: 'ProductID',
-      hide: true,
-      lockVisible: true,
-      suppressColumnsToolPanel: true,
-    },
     requestedItemNoColumn,
     ...requestedColumns,
     treeColumn,
@@ -868,7 +862,6 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
 
   const fixedStartIds = [
     '__row_drag__',
-    'ProductID',
     'RequestedItemNo',
     ...REQUESTED_DISPLAY_FIELD_KEYS,
     'TreeOrdering',

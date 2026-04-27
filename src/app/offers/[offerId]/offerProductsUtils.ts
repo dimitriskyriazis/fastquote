@@ -1716,6 +1716,7 @@ export const OFFER_PRODUCTS_EXPORT_FIELDS = [
   'IsPrintable',
   'IsComment',
   'IsCategory',
+  'IsOption',
 ] as const;
 
 export const normalizeNoForExport = (value: unknown): string | number => {

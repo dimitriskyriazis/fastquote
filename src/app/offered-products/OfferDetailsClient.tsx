@@ -136,6 +136,22 @@ export default function OfferDetailsClient() {
       filterParams: { browserDatePicker: false, minValidYear: 2000 },
     },
     {
+      field: 'OfferDeadlineDate',
+      headerName: 'Offer Due Date',
+      filter: 'agDateColumnFilter',
+      valueFormatter: (params) => formatDateDMY(params.value),
+      width: 140,
+      filterParams: { browserDatePicker: false, minValidYear: 2000 },
+    },
+    {
+      field: 'Probability',
+      headerName: 'Probability',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      valueFormatter: (params) => formatPercent(params.value),
+      width: 120,
+    },
+    {
       field: 'OfferTitle',
       headerName: 'Offer Title',
       filter: 'agTextColumnFilter',
@@ -412,7 +428,7 @@ export default function OfferDetailsClient() {
         (params.node?.data as { OfferID?: unknown } | null | undefined)?.OfferID ?? null,
       );
       if (offerId == null) {
-        return [];
+        return ['export'];
       }
       const viewItem: MenuItemDef<Record<string, unknown>> = {
         name: 'View in Offer',
@@ -421,7 +437,7 @@ export default function OfferDetailsClient() {
           router.push(`/offers/${encodeURIComponent(String(offerId))}/products`);
         },
       };
-      return [viewItem];
+      return [viewItem, 'separator', 'export'];
     },
     [router],
   );
@@ -435,6 +451,9 @@ export default function OfferDetailsClient() {
               endpoint="/api/offered-products"
               columnDefs={columnDefs}
               rowGroupPanelShow="always"
+              rowSelection="multiple"
+              rowMultiSelectWithClick
+              rowDeselection
               onCellValueChanged={handleCellValueChanged}
               getContextMenuItems={getContextMenuItems}
             />

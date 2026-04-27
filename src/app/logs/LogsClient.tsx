@@ -65,14 +65,6 @@ export default function LogsClient() {
         minWidth: 250,
       },
       {
-        field: "Details",
-        headerName: "Details",
-        filter: "agTextColumnFilter",
-        flex: 1,
-        minWidth: 200,
-        hide: true,
-      },
-      {
         field: "Endpoint",
         headerName: "Endpoint",
         filter: "agTextColumnFilter",
@@ -96,13 +88,6 @@ export default function LogsClient() {
         },
       },
       {
-        field: "UserId",
-        headerName: "User ID",
-        filter: "agTextColumnFilter",
-        width: 100,
-        hide: true,
-      },
-      {
         field: "Method",
         headerName: "Method",
         filter: "agSetColumnFilter",
@@ -110,13 +95,6 @@ export default function LogsClient() {
         filterParams: {
           values: ["GET", "POST", "PATCH", "PUT", "DELETE"],
         },
-      },
-      {
-        field: "RequestId",
-        headerName: "Request ID",
-        filter: "agTextColumnFilter",
-        width: 140,
-        hide: true,
       },
     ],
     [],
@@ -130,7 +108,14 @@ export default function LogsClient() {
       <PageHeader title="Logs">
         <GridQuickSearchProvider>
           <div className={styles.gridFrame}>
-            <AgGridAll endpoint="/api/logs" columnDefs={columnDefs} disableAutoSize />
+            <AgGridAll
+              endpoint="/api/logs"
+              columnDefs={columnDefs}
+              disableAutoSize
+              cacheBlockSize={100}
+              rowBuffer={20}
+              maxBlocksInCache={10}
+            />
           </div>
         </GridQuickSearchProvider>
       </PageHeader>

@@ -47,6 +47,7 @@ type ProductRow = {
   IsCategory: boolean | number | null;
   IsComment: boolean | number | null;
   IsPrintable: boolean | number | null;
+  IsOption: boolean | number | null;
   Quantity: number | null;
   ProductDescription: string | null;
   Warranty: string | number | null;
@@ -188,6 +189,7 @@ export async function GET(
           od.IsCategory,
           od.IsComment,
           od.IsPrintable,
+          od.IsOption,
           od.Quantity,
           od.ProductDescription,
           od.Warranty,
@@ -249,6 +251,7 @@ export async function GET(
       treeOrdering: r.TreeOrdering,
       isCategory: !!r.IsCategory,
       isComment: !!r.IsComment,
+      isOption: !!r.IsOption,
       quantity: r.Quantity,
       brandName: r.BrandName,
       modelNumber: r.ModelNumber,

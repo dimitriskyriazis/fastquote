@@ -57,7 +57,7 @@ import { pushCellEditUndo } from '../../../lib/undoHelpers';
 import { showConfirmDialog, showMultiChoiceDialog } from '../../../lib/confirm';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselectedRowIds, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
-import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
+import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption } from '../../../lib/offerProductRows';
 import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
 import MatchRequestedProductsModal, {
   type RequestedProductMatchEntry,
@@ -416,7 +416,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   // the initial filter model so the grid fetches data exactly once per
   // entry — no second round-trip after AI returns.
   const expansionCacheRef = useRef<Map<number, FilterExpansions>>(new Map());
-  const expansionPrefetchingRef = useRef<Set<number>>(new Set());
   const expansionPrefetchStartedRef = useRef(false);
   const [expansionCacheVersion, setExpansionCacheVersion] = useState(0);
 
@@ -450,68 +449,50 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     entry: RequestedProductMatchEntry,
     body: Record<string, unknown>,
     mode: 'plain' | 'expand',
+    signal?: AbortSignal,
   ) => {
     const id = entry.offerDetailId;
+    const perfStart = performance.now();
     try {
       const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal,
       });
       if (!res.ok) return;
       const data = (await res.json()) as GridResponse;
+      console.log('[populate-perf] worker /products/add', {
+        offerDetailId: id,
+        mode,
+        durationMs: Math.round(performance.now() - perfStart),
+      });
       if (!data || !data.ok) return;
       const prev = productPageCacheRef.current.get(id) ?? { plain: null, expand: null };
       productPageCacheRef.current.set(id, { ...prev, [mode]: data });
       setProductPageCacheVersion((v) => v + 1);
-    } catch { /* noop */ }
+    } catch (err) {
+      if ((err as Error)?.name !== 'AbortError') {
+        console.log('[populate-perf] worker /products/add ERROR', {
+          offerDetailId: id,
+          mode,
+          durationMs: Math.round(performance.now() - perfStart),
+          err: (err as Error)?.message,
+        });
+      }
+    }
   }, [offerId]);
 
-  // Plain (expand-OFF) prefetch: visible filter chips ANDed together, no
-  // OR-cross-search, no hidden tokens, no LLM rerank — matches what the
-  // modal sends when its toggle is in the default OFF state.
-  const prefetchProductPagePlain = useCallback(async (
-    entry: RequestedProductMatchEntry,
-    expansion: FilterExpansions | null,
-  ) => {
-    const id = entry.offerDetailId;
-    const cached = productPageCacheRef.current.get(id);
-    if (cached?.plain) return;
-    const built = buildRequestedFilterState({
-      requestedBrand: entry.requestedBrand,
-      requestedPartNumber: entry.requestedPartNumber,
-      requestedModelNumber: entry.requestedModelNumber,
-      requestedDescriptions: [
-        entry.requestedDescription,
-        entry.requestedDescription2,
-        entry.requestedDescription3,
-      ],
-      prefetchedExpansion: expansion,
-    });
-    const filterModel: Record<string, unknown> = built.visibleModel ?? {};
-    const body: Record<string, unknown> = {
-      action: 'products',
-      request: {
-        startRow: 0,
-        endRow: 200,
-        filterModel,
-        sortModel: [{ colId: 'ProductID', sort: 'desc' }],
-        rowGroupCols: [],
-        valueCols: [],
-        pivotCols: [],
-        pivotMode: false,
-        groupKeys: [],
-      },
-      fields: PRODUCT_PREFETCH_FIELDS,
-    };
-    await fetchAndCacheBlock(entry, body, 'plain');
-  }, [fetchAndCacheBlock]);
-
   // Expand (smart) prefetch: orFilterColumns + hidden tokens + LLM rerank.
-  // What the modal sends when the toggle is ON.
+  // What the modal sends when the toggle is ON — the only mode the parent
+  // worker prefetches.  Plain (expand-OFF) is the non-default path; on first
+  // toggle the modal's own opposite-mode block-0 prefetch covers it lazily,
+  // and the cache slot is still seeded by the modal's natural fetch on entry
+  // 0 via onModalFetchedBlock for return navigation.
   const prefetchProductPageExpand = useCallback(async (
     entry: RequestedProductMatchEntry,
     expansion: FilterExpansions | null,
+    signal?: AbortSignal,
   ) => {
     const id = entry.offerDetailId;
     const cached = productPageCacheRef.current.get(id);
@@ -556,69 +537,95 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     if (hiddenTokens) body.hiddenFilterTokens = hiddenTokens;
     const negative = buildNegativeHiddenTokens(expansion, hiddenTokens);
     if (negative) body.negativeHiddenTokens = negative;
-    await fetchAndCacheBlock(entry, body, 'expand');
+    await fetchAndCacheBlock(entry, body, 'expand', signal);
   }, [fetchAndCacheBlock]);
 
-  // Sequenced prefetch per entry: plain first (default-mode block 0), then
-  // expand (toggled-ON block 0).  When skipPlain is true, only expand is
-  // fetched — used for entry 0, where the modal's natural grid fetch already
-  // covers plain so a parent prefetch of plain would just duplicate the call.
+  // Per-entry product-page prefetch: expand block 0 only.
   const prefetchProductPage = useCallback(async (
     entry: RequestedProductMatchEntry,
     expansion: FilterExpansions | null,
-    options?: { skipPlain?: boolean },
+    signal?: AbortSignal,
   ) => {
     const id = entry.offerDetailId;
     if (productPagePrefetchingRef.current.has(id)) return;
     productPagePrefetchingRef.current.add(id);
     try {
-      if (!options?.skipPlain) {
-        await prefetchProductPagePlain(entry, expansion);
-      }
-      await prefetchProductPageExpand(entry, expansion);
+      await prefetchProductPageExpand(entry, expansion, signal);
     } finally {
       productPagePrefetchingRef.current.delete(id);
     }
-  }, [prefetchProductPagePlain, prefetchProductPageExpand]);
+  }, [prefetchProductPageExpand]);
 
-  const prefetchExpansion = useCallback(async (
+  // Phase 1: lightweight /expand call (OpenAI tokens only — no SQL contention
+  // with the modal's natural plain fetch).  Safe to run in parallel with the
+  // modal so by the time plain lands, the expansion tokens are already cached
+  // and the heavy /products/add expand can fire immediately.  Concurrent
+  // callers share a single in-flight promise per entry.
+  const expansionInflightRef = useRef<Map<number, Promise<FilterExpansions | null>>>(new Map());
+  const fetchExpansionTokens = useCallback((
     entry: RequestedProductMatchEntry,
-    options?: { skipPlain?: boolean },
-  ) => {
+    signal?: AbortSignal,
+  ): Promise<FilterExpansions | null> => {
     const id = entry.offerDetailId;
-    if (expansionCacheRef.current.has(id) || expansionPrefetchingRef.current.has(id)) return;
-    expansionPrefetchingRef.current.add(id);
-    try {
-      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/expand`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestedBrand: entry.requestedBrand,
-          requestedModelNumber: entry.requestedModelNumber,
-          requestedPartNumber: entry.requestedPartNumber,
-          requestedDescription: entry.requestedDescription,
-          requestedDescription2: entry.requestedDescription2,
-          requestedDescription3: entry.requestedDescription3,
-        }),
-      });
-      let expansion: FilterExpansions | null = null;
-      if (res.ok) {
+    const cached = expansionCacheRef.current.get(id);
+    if (cached) return Promise.resolve(cached);
+    const inflight = expansionInflightRef.current.get(id);
+    if (inflight) return inflight;
+    const promise = (async () => {
+      const perfStart = performance.now();
+      try {
+        const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products/expand`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requestedBrand: entry.requestedBrand,
+            requestedModelNumber: entry.requestedModelNumber,
+            requestedPartNumber: entry.requestedPartNumber,
+            requestedDescription: entry.requestedDescription,
+            requestedDescription2: entry.requestedDescription2,
+            requestedDescription3: entry.requestedDescription3,
+          }),
+          signal,
+        });
+        if (!res.ok) return null;
         const data = (await res.json()) as { ok: boolean; expansions?: FilterExpansions };
-        expansion = data.expansions ?? {};
+        console.log('[populate-perf] worker /products/expand', {
+          offerDetailId: id,
+          durationMs: Math.round(performance.now() - perfStart),
+        });
+        const expansion = data.expansions ?? {};
         expansionCacheRef.current.set(id, expansion);
         setExpansionCacheVersion((v) => v + 1);
+        return expansion;
+      } catch (err) {
+        if ((err as Error)?.name !== 'AbortError') {
+          console.log('[populate-perf] worker /products/expand ERROR', {
+            offerDetailId: id,
+            durationMs: Math.round(performance.now() - perfStart),
+            err: (err as Error)?.message,
+          });
+        }
+        return null;
       }
-      // Chain the product-page prefetch once we know the expansion tokens, so
-      // the cached first block uses the exact same hiddenFilterTokens the
-      // modal would send.  If the expansion call failed, we still prefetch
-      // without expansion (the modal would too).  Awaited so the worker's
-      // strict 1-plain → 1-expand → 2-plain → 2-expand sequencing is honoured.
-      await prefetchProductPage(entry, expansion, options);
-    } catch { /* noop */ }
-    finally {
-      expansionPrefetchingRef.current.delete(id);
-    }
-  }, [offerId, prefetchProductPage]);
+      finally {
+        expansionInflightRef.current.delete(id);
+      }
+    })();
+    expansionInflightRef.current.set(id, promise);
+    return promise;
+  }, [offerId]);
+
+  // Phase 2: heavy /products/add expand (SQL + LLM rerank).  Reads cached
+  // tokens from phase 1; gated by the worker on firstEntryReady so it doesn't
+  // contend with the modal's natural plain fetch on the current entry.
+  const prefetchExpansion = useCallback(async (
+    entry: RequestedProductMatchEntry,
+    signal?: AbortSignal,
+  ) => {
+    const expansion = await fetchExpansionTokens(entry, signal);
+    if (signal?.aborted) return;
+    await prefetchProductPage(entry, expansion, signal);
+  }, [fetchExpansionTokens, prefetchProductPage]);
 
   // Background prefetch for the queue.  Used to be gated on firstEntryReady
   // (modal's first response lands) to avoid contention between the worker and
@@ -627,46 +634,65 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   // for the modal meant entry 0's expand prefetch only started ~1 s after
   // mount — fast clicks on the toggle missed the cache.  Now the worker
   // kicks off as soon as the queue is known.
+  const [firstEntryReady, setFirstEntryReady] = useState(false);
   const handleCurrentEntryReady = useCallback(() => {
-    // No-op kept for prop compatibility with the modal.
+    setFirstEntryReady(true);
   }, []);
   const currentQueueHeadId = requestedMatchQueue[0]?.offerDetailId ?? null;
+  const workerAbortRef = useRef<AbortController | null>(null);
   useEffect(() => {
-    // New head (fresh batch or user skipped) — clear the started flag so the
-    // worker re-runs against the new queue.
+    // New head (fresh batch or user skipped) — abort any stale in-flight
+    // expand prefetch so the new current entry doesn't queue behind the old
+    // one's heavy /products/add (LLM rerank) call.  Reset the
+    // firstEntryReady gate too: the worker should wait until the modal's
+    // natural plain fetch on the NEW current entry lands before contending
+    // for the SQL backend with another /products/add round-trip.
+    workerAbortRef.current?.abort();
+    workerAbortRef.current = null;
     expansionPrefetchStartedRef.current = false;
+    setFirstEntryReady(false);
   }, [currentQueueHeadId]);
+  // Phase 1 walker: prefetch /expand tokens for every queued entry.  Runs
+  // immediately (no gate) and in parallel with the modal's natural plain
+  // fetch — /expand only hits OpenAI, never SQL Server, so there's no
+  // contention.  Bounded concurrency keeps OpenAI rate limits sane.
   useEffect(() => {
     if (requestedMatchQueue.length === 0) return;
+    const entries = requestedMatchQueue;
+    const controller = new AbortController();
+    const CONCURRENCY = 4;
+    let cursor = 0;
+    const worker = async () => {
+      while (!controller.signal.aborted) {
+        const idx = cursor++;
+        if (idx >= entries.length) return;
+        await fetchExpansionTokens(entries[idx], controller.signal);
+      }
+    };
+    void Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    return () => controller.abort();
+  }, [requestedMatchQueue, fetchExpansionTokens]);
+
+  // Phase 2 walker: heavy /products/add expand block 0.  Strictly sequential
+  // and gated on firstEntryReady so we don't pile a heavy SQL+LLM-rerank
+  // call onto the backend while the user's modal is still waiting for its
+  // natural plain block 0.  Reads tokens cached by phase 1.
+  useEffect(() => {
+    if (requestedMatchQueue.length === 0) return;
+    if (!firstEntryReady) return;
     if (expansionPrefetchStartedRef.current) return;
     expansionPrefetchStartedRef.current = true;
-    // Strictly sequential per user spec — entry N's plain → entry N's expand
-    // → entry N+1's plain → entry N+1's expand → …  No concurrency.
-    //
-    // Index 0 IS included: the modal itself fetches entry 0's plain via its
-    // natural grid getRows, but it does NOT prefetch entry 0's expand — that
-    // would only fire when the user clicked the toggle.  We kick off entry 0's
-    // expand here as soon as the modal signals firstEntryReady, so by the
-    // time the user reaches for the toggle, expand block 0 is warm.
-    // prefetchExpansion / prefetchProductPagePlain / prefetchProductPageExpand
-    // are all no-ops for already-cached ids, so the duplicate plain fetch on
-    // entry 0 (modal already fetched it) is at most a single wasted call.
     const entries = requestedMatchQueue;
     if (entries.length === 0) return;
+    const controller = new AbortController();
+    workerAbortRef.current = controller;
     void (async () => {
-      // Strict order per user spec: 1-plain → 1-expand → 2-plain → 2-expand …
-      // We do NOT skipPlain for entry 0 — even though the modal fires its own
-      // plain block 0 on mount, the user wants the parent's prefetch sequence
-      // to be exhaustive and ordered so entries 2+ aren't reordered by a
-      // missing entry-0 plain step.  Both the prefetchProductPagePlain and
-      // prefetchProductPageExpand helpers no-op when their cache slot is
-      // already populated (e.g. by the modal's onResponse capture), so the
-      // duplicate plain call is at most one wasted fetch on entry 0.
       for (const next of entries) {
-        await prefetchExpansion(next);
+        if (controller.signal.aborted) return;
+        await prefetchExpansion(next, controller.signal);
       }
     })();
-  }, [requestedMatchQueue, prefetchExpansion]);
+  }, [requestedMatchQueue, prefetchExpansion, firstEntryReady]);
   const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() =>
     readCollapsedCategoryPathsFromCookie(offerId),
   );
@@ -1136,7 +1162,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           const dragIndex = currentOrder.indexOf('__row_drag__');
           const anchorIndex = dragIndex >= 0 ? dragIndex + 1 : 0;
 
-          const desiredStartIds = ['ProductID', 'RequestedItemNo', ...keys, 'TreeOrdering'];
+          const desiredStartIds = ['RequestedItemNo', ...keys, 'TreeOrdering'];
           const toMove = desiredStartIds.filter((id) => currentOrder.includes(id));
           if (toMove.length === 0) return;
           api.moveColumns(toMove, anchorIndex);
@@ -1541,7 +1567,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           || cell.classList.contains('ag-selection-checkbox')
           || cell.querySelector('.ag-selection-checkbox, .ag-row-drag, .ag-drag-handle')
         ) continue;
-        (cell as HTMLElement).style.setProperty('background-color', '#93c5fd', 'important');
+        (cell as HTMLElement).style.setProperty('background-color', '#bfdbfe', 'important');
         selectedRowHighlightRef.current.push(cell as HTMLElement);
       }
     }
@@ -2060,6 +2086,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           classes.push('offer-row--category-empty');
         }
       }
+      if (rowType === 'product' && isOfferProductOption(params.data)) {
+        classes.push('offer-row--option');
+      }
     }
     if (classes.length === 0) {
       return undefined;
@@ -2121,6 +2150,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       display = actualKey
         ? (displayOrderingMapRef.current.get(actualKey) ?? formatDisplayTreeOrdering(rawValue))
         : formatDisplayTreeOrdering(rawValue);
+      if (display && isOfferProductOption(rowData)) {
+        display = `${display}O`;
+      }
     }
     return (
       <span className={styles.treeOrderingCell}>
@@ -3295,7 +3327,7 @@ const requestedColumnDefsMap = useMemo(
     setRequestedMatchQueue([]);
     setProcessedRequestedMatches(0);
     expansionCacheRef.current.clear();
-    expansionPrefetchingRef.current.clear();
+    expansionInflightRef.current.clear();
     expansionPrefetchStartedRef.current = false;
     productPageCacheRef.current.clear();
     productPagePrefetchingRef.current.clear();
@@ -3657,8 +3689,12 @@ const requestedColumnDefsMap = useMemo(
         && !description
         && listPrice == null;
       const actualKey = String(row.TreeOrdering ?? '').trim();
+      const noBase = normalizeNoForExport(displayMap.get(actualKey) ?? row.TreeOrdering);
+      const noWithOption = isOfferProductOption(row as unknown as Record<string, unknown>) && noBase !== ''
+        ? `${noBase} (Option)`
+        : noBase;
       return {
-        no: normalizeNoForExport(displayMap.get(actualKey) ?? row.TreeOrdering),
+        no: noWithOption,
         productReference: row.PartNumber?.toString().trim() ?? '',
         manufacturer: (row.AVC4BrandName?.toString().trim() || row.BrandName?.toString().trim()) ?? '',
         descriptionType,
@@ -4925,6 +4961,98 @@ const requestedColumnDefsMap = useMemo(
         items.splice(deleteIndexAfterHistory, 0, makeCommentItem);
       } else {
         items.push(makeCommentItem);
+      }
+    }
+
+    // --- "Mark/Unmark Option" for product rows (supports multi-selection) ---
+    const optionTargetNodes = relevantNodes.filter((n) => {
+      const d = n.data;
+      if (!isOfferProductProduct(d)) return false;
+      const id = normalizeOfferDetailId((d as { OfferDetailID?: unknown })?.OfferDetailID ?? null);
+      return id != null;
+    });
+    if (optionTargetNodes.length > 0) {
+      const buildToggleOptionAction = (markAsOption: boolean) => async () => {
+        const prevStates = optionTargetNodes.map((n) => ({
+          node: n,
+          IsOption: n.data ? (n.data as { IsOption?: unknown }).IsOption : null,
+        }));
+        for (const n of optionTargetNodes) {
+          try {
+            n.setDataValue('IsOption', markAsOption ? 1 : 0);
+          } catch { /* noop */ }
+        }
+        const api = gridApiRef.current;
+        try {
+          api?.refreshCells?.({ rowNodes: optionTargetNodes as GridRowNode[], force: true });
+        } catch { /* noop */ }
+        try {
+          const updates = optionTargetNodes.map((n) => ({
+            OfferDetailID: normalizeOfferDetailId((n.data as { OfferDetailID?: unknown })?.OfferDetailID ?? null),
+            IsOption: markAsOption ? 1 : 0,
+          }));
+          const res = await fetch(resolvedEndpoint, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates }),
+          });
+          const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+          if (!res.ok || !payload?.ok) {
+            throw new Error(payload?.error ?? `Unable to update option flag (status ${res.status})`);
+          }
+          const verb = markAsOption ? 'set as option' : 'unset as option';
+          const capturedUndoUpdates = prevStates.map((prev) => ({
+            OfferDetailID: normalizeOfferDetailId((prev.node.data as { OfferDetailID?: unknown })?.OfferDetailID ?? null),
+            IsOption: prev.IsOption == null ? 0 : (prev.IsOption ? 1 : 0),
+          }));
+          pushUndo({
+            label: optionTargetNodes.length === 1 ? `Row ${verb}` : `${optionTargetNodes.length} rows ${verb}`,
+            undo: async () => {
+              const undoRes = await fetch(resolvedEndpoint, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ updates: capturedUndoUpdates }),
+              });
+              const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+              if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+              refreshOfferProductGrid(null, { purge: true });
+            },
+          });
+          showToastMessage(
+            optionTargetNodes.length === 1
+              ? (markAsOption ? 'Set as option' : 'Option unset')
+              : `${optionTargetNodes.length} rows ${verb}`,
+            'success',
+            5500,
+            { label: 'Undo', onClick: () => performUndo() },
+          );
+          try { api?.deselectAll?.(); } catch { /* noop */ }
+          refreshOfferProductGrid(null, { purge: true });
+        } catch (err) {
+          for (const prev of prevStates) {
+            try { prev.node.setDataValue('IsOption', prev.IsOption ?? null); } catch { /* noop */ }
+          }
+          try {
+            api?.refreshCells?.({ rowNodes: optionTargetNodes as GridRowNode[], force: true });
+          } catch { /* noop */ }
+          console.error('Failed to update option flag', err);
+          showToastMessage('Unable to update option flag. Please try again.', 'error');
+        }
+      };
+      const optionCount = optionTargetNodes.length;
+      const allAreOptions = optionTargetNodes.every((n) => isOfferProductOption(n.data));
+      const nextMark = !allAreOptions; // mixed or none-options → set as option; all options → unset
+      const noun = optionCount > 1 ? 'Options' : 'Option';
+      const verbName = nextMark ? `Set as ${noun}` : `Unset as ${noun}`;
+      const makeOptionItem: MenuItemDef = {
+        name: optionCount > 1 ? `${verbName} (${optionCount})` : verbName,
+        icon: categoryMenuIcon,
+        action: buildToggleOptionAction(nextMark),
+      };
+      if (deleteIndexAfterHistory >= 0) {
+        items.splice(deleteIndexAfterHistory, 0, makeOptionItem);
+      } else {
+        items.push(makeOptionItem);
       }
     }
 

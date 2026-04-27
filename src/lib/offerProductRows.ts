@@ -77,6 +77,11 @@ export const isOfferProductComment = (row: OfferProductRow) => {
   return type === 'printable-comment' || type === 'non-printable-comment';
 };
 
+export const isOfferProductOption = (row: OfferProductRow): boolean => {
+  if (!row || typeof row !== 'object') return false;
+  return isTruthy((row as { IsOption?: unknown }).IsOption);
+};
+
 export const describeOfferProductRowType = (type: OfferProductRowType | null | undefined) => {
   switch (type) {
     case 'category':

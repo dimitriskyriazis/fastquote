@@ -367,8 +367,8 @@
 .drag-overlay-row .ag-cell {
   color: #00000082 !important;
 }
-.offer-products-grid .ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell,
-.offer-products-grid .ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category) .ag-cell {
+.offer-products-grid .ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category):not(.offer-row--option) .ag-cell,
+.offer-products-grid .ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category):not(.offer-row--option) .ag-cell {
   background-color: #d1d5db !important;
 }
 
@@ -399,24 +399,24 @@
 
 /* Preserve price list cell colors when row is hovered - make them darker like the hover background */
 /* Active price list: darker green on hover */
-.offer-products-grid .ag-row.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-active,
-.offer-products-grid .ag-row-hover.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active,
+.offer-products-grid .ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-active,
+.offer-products-grid .ag-row-hover.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active,
 .offer-products-grid .ag-row:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-active,
 .offer-products-grid .ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active {
   background-color: #9fe5b8 !important; /* Slightly darker version of #b7ffcf for hover */
 }
 
 /* Expiring price list: darker yellow on hover */
-.offer-products-grid .ag-row.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-expiring,
-.offer-products-grid .ag-row-hover.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring,
+.offer-products-grid .ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-expiring,
+.offer-products-grid .ag-row-hover.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring,
 .offer-products-grid .ag-row:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-expiring,
 .offer-products-grid .ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring {
   background-color: #f0e88f !important; /* Slightly darker version of #fff8a5 for hover */
 }
 
 /* Expired price list: darker red on hover */
-.offer-products-grid .ag-row.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-expired,
-.offer-products-grid .ag-row-hover.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired,
+.offer-products-grid .ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-expired,
+.offer-products-grid .ag-row-hover.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired,
 .offer-products-grid .ag-row:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-expired,
 .offer-products-grid .ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired {
   background-color: #e7afaf !important; /* Slightly darker version of #ffcfcf for hover */
@@ -454,15 +454,30 @@
   background-color: #ffffff !important;
 }
 
-.offer-products-grid .offer-row--product.ag-row-selected .ag-cell,
-.offer-products-grid .offer-row--product.ag-row-range-selected .ag-cell,
-.offer-products-grid .offer-row--product.ag-row--context-menu-active .ag-cell {
+.offer-products-grid .offer-row--product:not(.offer-row--option).ag-row-selected .ag-cell,
+.offer-products-grid .offer-row--product:not(.offer-row--option).ag-row-range-selected .ag-cell,
+.offer-products-grid .offer-row--product:not(.offer-row--option).ag-row--context-menu-active .ag-cell {
   background-color: #d1d5db !important;
 }
 
+/* Option rows: light purple base, darker purple for selected/hover, italic text */
+.offer-products-grid .offer-row--option .ag-cell {
+  background-color: #e9d8fd !important;
+  font-style: italic !important;
+}
+.offer-products-grid .offer-row--option.ag-row-selected .ag-cell,
+.offer-products-grid .offer-row--option.ag-row-range-selected .ag-cell,
+.offer-products-grid .offer-row--option.ag-row--context-menu-active .ag-cell {
+  background-color: #bca4f7 !important;
+}
+.offer-products-grid .ag-row.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell,
+.offer-products-grid .ag-row-hover.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell {
+  background-color: #d6c5fa !important;
+}
+
 /* Hover state for product rows (only when not selected) - using :hover pseudo-class */
-.offer-products-grid .ag-row.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell,
-.offer-products-grid .ag-row-hover.offer-row--product:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell {
+.offer-products-grid .ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell,
+.offer-products-grid .ag-row-hover.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell {
   background-color: #f5f5f5 !important;
 }
 

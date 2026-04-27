@@ -54,6 +54,8 @@ type OfferDetailRow = {
   Warranty: number | null;
   TelmacoWarranty: number | null;
   OfferDate: string | null;
+  OfferDeadlineDate: string | null;
+  Probability: number | null;
   CreatedOn: string | null;
   ModifiedOn: string | null;
 };
@@ -93,6 +95,8 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Warranty: 'od.Warranty',
   TelmacoWarranty: 'od.TelmacoWarranty',
   OfferDate: 'o.OfferDate',
+  OfferDeadlineDate: 'o.OfferDeadlineDate',
+  Probability: 'o.Probability',
   CreatedOn: 'od.CreatedOn',
   ModifiedOn: 'od.ModifiedOn',
 };
@@ -250,6 +254,8 @@ const selectClause = `
     od.Warranty,
     od.TelmacoWarranty,
     o.OfferDate,
+    o.OfferDeadlineDate,
+    o.Probability,
     od.CreatedOn,
     od.ModifiedOn
 `;
