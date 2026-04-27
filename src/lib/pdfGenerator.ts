@@ -185,6 +185,7 @@ const PRICE_COLUMNS = new Set<PdfProductColumn>(['listPrice', 'totalList', 'disc
 const COLORS = {
 primaryText: '#222222',
 secondaryText: '#6B7280',
+optionText: '#555555',
 lightBg: '#F5F5F5',
 border: '#E5E5E5',
 accentRed: '#C62828',
@@ -1008,7 +1009,10 @@ function buildItemsTable(
           };
           if (dyn.fontSize) cell.fontSize = dyn.fontSize;
           if (dyn.lineHeight) cell.lineHeight = dyn.lineHeight;
-          if (row.isOption) cell.italics = true;
+          if (row.isOption) {
+            cell.italics = true;
+            cell.color = COLORS.optionText;
+          }
           return cell;
         }
 
@@ -1026,7 +1030,10 @@ function buildItemsTable(
           baseCell.alignment = 'right';
           baseCell.fontFeatures = ['tnum'];
         }
-        if (row.isOption) baseCell.italics = true;
+        if (row.isOption) {
+          baseCell.italics = true;
+          baseCell.color = COLORS.optionText;
+        }
 
         if ((col === 'type' || col === 'modelNumber') && str(row.webLink) && value) {
           const hasPartNumber = !!str(row.partNumber);
@@ -1050,7 +1057,7 @@ function buildItemsTable(
   let itemRowOrdinal = 0;
   for (let rowIndex = 1; rowIndex < body.length; rowIndex += 1) {
     const kind = body[rowIndex]?.[0]?.rowKind;
-    if (kind !== 'item') continue;
+    if (kind !== 'item' && kind !== 'option') continue;
     itemRowOrdinal += 1;
     if (itemRowOrdinal % 2 === 0) zebraRows.add(rowIndex);
   }
@@ -1100,8 +1107,7 @@ function buildItemsTable(
 
       fillColor: (i: number, node: PdfTableNode) => {
         const kind = node.table.body[i]?.[0]?.rowKind;
-        if (kind === 'option') return '#f3e8ff';
-        if (kind !== 'item') return null;
+        if (kind !== 'item' && kind !== 'option') return null;
         return zebraRows.has(i) ? COLORS.zebraRowBg : null;
       },
     },
