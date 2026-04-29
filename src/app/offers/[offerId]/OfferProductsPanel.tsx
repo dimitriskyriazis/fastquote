@@ -165,6 +165,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   refreshToken = 0,
   showRequestedColumns = true,
   tableLayout = 'wReq',
+  pricingPolicyName = null,
   hideTotals = false,
   initialSelectedOfferDetailIds,
   initialViewportScrollTop = null,
@@ -2432,6 +2433,7 @@ const requestedColumnDefsMap = useMemo(
       ModelNumberCell,
       RequestedItemNoCell,
       offerCurrencySymbol: offerCurrencyName ?? '€',
+      pricingPolicyName,
     }), [
     actualNumericCellClass,
     actualNumericCellStyle,
@@ -2450,6 +2452,7 @@ const requestedColumnDefsMap = useMemo(
     savedColumnOrder,
     truncateCellStyle,
     offerCurrencyName,
+    pricingPolicyName,
   ]);
 
   useEffect(() => {
@@ -6197,6 +6200,7 @@ const requestedColumnDefsMap = useMemo(
         if (resolved && event.node && event.data) {
           const derivedFields: Array<keyof typeof resolved> = [
             'CustomerDiscount',
+            'AdditionalCustomerDiscount',
             'TelmacoDiscount',
             'NetUnitPrice',
             'NetCost',

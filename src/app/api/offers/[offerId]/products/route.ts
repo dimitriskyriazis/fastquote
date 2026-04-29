@@ -110,6 +110,7 @@ type ProductRow = {
   Description: string | null;
   Comment: string | null;
   CustomerDiscount: number | null;
+  AdditionalCustomerDiscount: number | null;
   NetUnitPrice: number | null;
   TotalPrice: number | null;
   TotalNet: number | null;
@@ -207,6 +208,7 @@ type DetailUpdateInput = {
   Description?: string | null;
   Quantity?: number | string | null;
   CustomerDiscount?: number | string | null;
+  AdditionalCustomerDiscount?: number | string | null;
   TelmacoDiscount?: number | string | null;
   NetUnitPrice?: number | string | null;
   NetCostOtherCurrency?: number | string | null;
@@ -278,6 +280,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Description: 'od.ProductDescription',
   Comment: 'od.[Comment]',
   CustomerDiscount: 'od.CustomerDiscount',
+  AdditionalCustomerDiscount: 'od.AdditionalCustomerDiscount',
   NetUnitPrice: 'od.NetUnitPrice',
   TotalPrice: 'od.TotalPrice',
   TotalNet: 'od.TotalNet',
@@ -368,6 +371,17 @@ const normalizePercentValue = (value: unknown, { allowNegative = false }: { allo
   }
   if (num == null) return null;
   if (!allowNegative && num < 0) return null;
+  return num;
+};
+
+// Discount columns (CustomerDiscount, AdditionalCustomerDiscount, TelmacoDiscount)
+// must lie in [-100, 100]. Returns null for non-numeric input. Out-of-range values
+// are clamped rather than rejected so that paste/import flows don't drop the row.
+const normalizeDiscountValue = (value: unknown): number | null => {
+  const num = normalizePercentValue(value, { allowNegative: true });
+  if (num == null) return null;
+  if (num > 100) return 100;
+  if (num < -100) return -100;
   return num;
 };
 
@@ -1289,7 +1303,7 @@ export async function POST(
     ];
     // Always include OtherCurrencyName + OtherCurrencyID so the client can drive
     // auto-show of the cost-other-currency columns even when the user has hidden them.
-    const extraFields: string[] = ['OtherCurrencyID', 'OtherCurrencyName'];
+    const extraFields: string[] = ['OtherCurrencyID', 'OtherCurrencyName', 'AdditionalCustomerDiscount'];
     const selectedFields = Array.from(new Set([...requiredFields, ...requestedFields, ...extraFields]))
       .filter((field) => Boolean(SELECT_FIELD_EXPRESSIONS[field]));
 
@@ -1652,6 +1666,7 @@ export async function PATCH(
         const hasDescription = entry ? Object.prototype.hasOwnProperty.call(entry, 'Description') : false;
         const hasQuantity = entry ? Object.prototype.hasOwnProperty.call(entry, 'Quantity') : false;
         const hasCustomerDiscount = entry ? Object.prototype.hasOwnProperty.call(entry, 'CustomerDiscount') : false;
+        const hasAdditionalCustomerDiscount = entry ? Object.prototype.hasOwnProperty.call(entry, 'AdditionalCustomerDiscount') : false;
         const hasTelmacoDiscount = entry ? Object.prototype.hasOwnProperty.call(entry, 'TelmacoDiscount') : false;
         const hasNetUnitPrice = entry ? Object.prototype.hasOwnProperty.call(entry, 'NetUnitPrice') : false;
         const hasNetCostOtherCurrency = entry ? Object.prototype.hasOwnProperty.call(entry, 'NetCostOtherCurrency') : false;
@@ -1696,7 +1711,7 @@ export async function PATCH(
         const hasInstallation = entry ? Object.prototype.hasOwnProperty.call(entry, 'Installation') : false;
         const hasElInstalation = entry ? Object.prototype.hasOwnProperty.call(entry, 'ElInstalation') : false;
         const hasCommissioning = entry ? Object.prototype.hasOwnProperty.call(entry, 'Commissioning') : false;
-        const hasPricingFields = hasCustomerDiscount || hasTelmacoDiscount || hasNetUnitPrice || hasNetCost || hasMargin
+        const hasPricingFields = hasCustomerDiscount || hasAdditionalCustomerDiscount || hasTelmacoDiscount || hasNetUnitPrice || hasNetCost || hasMargin
           || hasNetCostOtherCurrency || hasOtherCurrencyID || hasCurrencyCostModifier;
         if (
           !hasProductDescription
@@ -1777,10 +1792,13 @@ export async function PATCH(
         }
 
         const customerDiscount = hasCustomerDiscount
-          ? normalizePercentValue(entry?.CustomerDiscount ?? null, { allowNegative: true })
+          ? normalizeDiscountValue(entry?.CustomerDiscount ?? null)
+          : null;
+        const additionalCustomerDiscount = hasAdditionalCustomerDiscount
+          ? normalizeDiscountValue(entry?.AdditionalCustomerDiscount ?? null)
           : null;
         const telmacoDiscount = hasTelmacoDiscount
-          ? normalizePercentValue(entry?.TelmacoDiscount ?? null, { allowNegative: true })
+          ? normalizeDiscountValue(entry?.TelmacoDiscount ?? null)
           : null;
         const netUnitPrice = hasNetUnitPrice ? normalizeMoneyValue(entry?.NetUnitPrice ?? null) : null;
         const netCostOtherCurrency = hasNetCostOtherCurrency ? normalizeMoneyValue(entry?.NetCostOtherCurrency ?? null) : null;
@@ -1801,6 +1819,7 @@ export async function PATCH(
 
         if (hasPricingFields) {
           const invalidPricing = (hasCustomerDiscount && customerDiscount == null)
+            || (hasAdditionalCustomerDiscount && additionalCustomerDiscount == null)
             || (hasTelmacoDiscount && telmacoDiscount == null)
             || (hasNetUnitPrice && netUnitPrice == null)
             || (hasNetCostOtherCurrency && netCostOtherCurrency == null)
@@ -1826,6 +1845,7 @@ export async function PATCH(
           hasDelivery,
           hasQuantity,
           hasCustomerDiscount,
+          hasAdditionalCustomerDiscount,
           hasTelmacoDiscount,
           hasNetUnitPrice,
           hasNetCostOtherCurrency,
@@ -1846,6 +1866,7 @@ export async function PATCH(
           hasRequestedDescription3,
           hasRequestedQuantity,
           customerDiscount,
+          additionalCustomerDiscount,
           telmacoDiscount,
           netUnitPrice,
           netCostOtherCurrency,
@@ -1894,6 +1915,7 @@ export async function PATCH(
         hasDelivery: boolean;
         hasQuantity: boolean;
         hasCustomerDiscount: boolean;
+        hasAdditionalCustomerDiscount: boolean;
         hasTelmacoDiscount: boolean;
         hasNetUnitPrice: boolean;
         hasNetCostOtherCurrency: boolean;
@@ -1914,6 +1936,7 @@ export async function PATCH(
         hasRequestedDescription3: boolean;
         hasRequestedQuantity: boolean;
         customerDiscount: number | null;
+        additionalCustomerDiscount: number | null;
         telmacoDiscount: number | null;
         netUnitPrice: number | null;
         netCostOtherCurrency: number | null;
@@ -1964,6 +1987,7 @@ export async function PATCH(
     const resolvedRows: Array<{
       OfferDetailID: number;
       CustomerDiscount: number | null;
+      AdditionalCustomerDiscount: number | null;
       TelmacoDiscount: number | null;
       NetUnitPrice: number | null;
       NetCost: number | null;
@@ -2005,6 +2029,7 @@ export async function PATCH(
         Quantity: number | null;
         ListPrice: number | null;
         CustomerDiscount: number | null;
+        AdditionalCustomerDiscount: number | null;
         TelmacoDiscount: number | null;
         NetUnitPrice: number | null;
         NetCostOtherCurrency: number | null;
@@ -2026,6 +2051,7 @@ export async function PATCH(
           od.Quantity,
           od.ListPrice,
           od.CustomerDiscount,
+          od.AdditionalCustomerDiscount,
           od.TelmacoDiscount,
           od.NetUnitPrice,
           od.NetCostOtherCurrency,
@@ -2049,6 +2075,7 @@ export async function PATCH(
         Quantity: number | null;
         ListPrice: number | null;
         CustomerDiscount: number | null;
+        AdditionalCustomerDiscount: number | null;
         TelmacoDiscount: number | null;
         NetUnitPrice: number | null;
         NetCostOtherCurrency: number | null;
@@ -2072,6 +2099,7 @@ export async function PATCH(
         Quantity: number | null;
         HasQuantity: boolean;
         CustomerDiscount: number | null;
+        AdditionalCustomerDiscount: number | null;
         TelmacoDiscount: number | null;
         NetUnitPrice: number | null;
         NetCostOtherCurrency: number | null;
@@ -2158,8 +2186,9 @@ export async function PATCH(
           ? entry.Quantity
           : normalizeQuantityValue(current.Quantity ?? null);
         const safeQuantity = quantity == null ? 0 : quantity;
-        const pricingProvided = entry.hasListPrice || entry.hasCustomerDiscount || entry.hasTelmacoDiscount
-          || entry.hasNetUnitPrice || entry.hasNetCost || entry.hasMargin || costFieldsProvided;
+        const pricingProvided = entry.hasListPrice || entry.hasCustomerDiscount || entry.hasAdditionalCustomerDiscount
+          || entry.hasTelmacoDiscount || entry.hasNetUnitPrice || entry.hasNetCost || entry.hasMargin
+          || costFieldsProvided;
         const isCommentRow = Boolean(current.IsComment);
 
         let resolvedPricing: ResolvedPricing | null = null;
@@ -2184,10 +2213,13 @@ export async function PATCH(
               listPrice: fallbackListPrice,
               customerDiscount: entry.hasCustomerDiscount
                 ? entry.customerDiscount
-                : normalizePercentValue(current.CustomerDiscount ?? null, { allowNegative: true }),
+                : normalizeDiscountValue(current.CustomerDiscount ?? null),
+              additionalCustomerDiscount: entry.hasAdditionalCustomerDiscount
+                ? entry.additionalCustomerDiscount
+                : normalizeDiscountValue(current.AdditionalCustomerDiscount ?? null),
               telmacoDiscount: entry.hasTelmacoDiscount
                 ? entry.telmacoDiscount
-                : normalizePercentValue(current.TelmacoDiscount ?? null, { allowNegative: true }),
+                : normalizeDiscountValue(current.TelmacoDiscount ?? null),
               netUnitPrice: entry.hasNetUnitPrice
                 ? entry.netUnitPrice
                 : normalizeMoneyValue(current.NetUnitPrice ?? null),
@@ -2198,6 +2230,7 @@ export async function PATCH(
               provided: {
                 listPrice: entry.hasListPrice,
                 customerDiscount: entry.hasCustomerDiscount,
+                additionalCustomerDiscount: entry.hasAdditionalCustomerDiscount,
                 telmacoDiscount: entry.hasTelmacoDiscount,
                 netUnitPrice: entry.hasNetUnitPrice,
                 netCost: entry.hasNetCost || costFieldsProvided,
@@ -2215,6 +2248,7 @@ export async function PATCH(
               );
               resolvedPricing = {
                 customerDiscount: commentInput.customerDiscount,
+                additionalCustomerDiscount: commentInput.additionalCustomerDiscount ?? null,
                 telmacoDiscount: commentInput.telmacoDiscount,
                 netUnitPrice: derived.netUnitPrice,
                 netCost: derived.netCost,
@@ -2231,10 +2265,13 @@ export async function PATCH(
               listPrice: fallbackListPrice,
               customerDiscount: entry.hasCustomerDiscount
                 ? entry.customerDiscount
-                : normalizePercentValue(current.CustomerDiscount ?? null, { allowNegative: true }),
+                : normalizeDiscountValue(current.CustomerDiscount ?? null),
+              additionalCustomerDiscount: entry.hasAdditionalCustomerDiscount
+                ? entry.additionalCustomerDiscount
+                : normalizeDiscountValue(current.AdditionalCustomerDiscount ?? null),
               telmacoDiscount: entry.hasTelmacoDiscount
                 ? entry.telmacoDiscount
-                : normalizePercentValue(current.TelmacoDiscount ?? null, { allowNegative: true }),
+                : normalizeDiscountValue(current.TelmacoDiscount ?? null),
               netUnitPrice: entry.hasNetUnitPrice
                 ? entry.netUnitPrice
                 : normalizeMoneyValue(current.NetUnitPrice ?? null),
@@ -2245,6 +2282,7 @@ export async function PATCH(
               provided: {
                 listPrice: entry.hasListPrice,
                 customerDiscount: entry.hasCustomerDiscount,
+                additionalCustomerDiscount: entry.hasAdditionalCustomerDiscount,
                 telmacoDiscount: entry.hasTelmacoDiscount,
                 netUnitPrice: entry.hasNetUnitPrice,
                 netCost: entry.hasNetCost || costFieldsProvided,
@@ -2262,6 +2300,7 @@ export async function PATCH(
               );
               resolvedPricing = {
                 customerDiscount: input.customerDiscount,
+                additionalCustomerDiscount: input.additionalCustomerDiscount ?? null,
                 telmacoDiscount: input.telmacoDiscount,
                 netUnitPrice: derived.netUnitPrice,
                 netCost: derived.netCost,
@@ -2271,8 +2310,9 @@ export async function PATCH(
           }
         } else {
           resolvedPricing = {
-            customerDiscount: normalizePercentValue(current.CustomerDiscount ?? null, { allowNegative: true }),
-            telmacoDiscount: normalizePercentValue(current.TelmacoDiscount ?? null, { allowNegative: true }),
+            customerDiscount: normalizeDiscountValue(current.CustomerDiscount ?? null),
+            additionalCustomerDiscount: normalizeDiscountValue(current.AdditionalCustomerDiscount ?? null),
+            telmacoDiscount: normalizeDiscountValue(current.TelmacoDiscount ?? null),
             netUnitPrice: normalizeMoneyValue(current.NetUnitPrice ?? null),
             netCost: normalizeMoneyValue(current.NetCost ?? null),
             margin: normalizePercentValue(current.Margin ?? null, { allowNegative: true }),
@@ -2288,6 +2328,7 @@ export async function PATCH(
               resolvedPricing.netCost,
               resolvedPricing.customerDiscount,
               resolvedPricing.telmacoDiscount,
+              resolvedPricing.additionalCustomerDiscount ?? null,
             )
           : null;
         const listPriceForTotals = listPriceCandidate ?? derivedListPrice ?? fallbackListPrice;
@@ -2311,6 +2352,7 @@ export async function PATCH(
           Quantity: entry.hasQuantity ? entry.Quantity : current.Quantity ?? safeQuantity,
           HasQuantity: entry.hasQuantity,
           CustomerDiscount: resolvedPricing.customerDiscount,
+          AdditionalCustomerDiscount: resolvedPricing.additionalCustomerDiscount ?? null,
           TelmacoDiscount: resolvedPricing.telmacoDiscount,
           NetUnitPrice: netPrice,
           NetCostOtherCurrency: resolvedNetCostOtherCurrency,
@@ -2377,6 +2419,7 @@ export async function PATCH(
         resolvedRows.push({
           OfferDetailID: row.OfferDetailID,
           CustomerDiscount: row.CustomerDiscount,
+          AdditionalCustomerDiscount: row.AdditionalCustomerDiscount,
           TelmacoDiscount: row.TelmacoDiscount,
           NetUnitPrice: row.NetUnitPrice,
           NetCost: row.NetCost,
@@ -2394,7 +2437,7 @@ export async function PATCH(
       });
 
       const decimalType = getDecimalType();
-      const UPDATE_PARAMS_PER_ROW = 62;
+      const UPDATE_PARAMS_PER_ROW = 63;
       const UPDATE_BASE_PARAMS = 2;
       const updateChunkSize = Math.max(1, Math.floor((2100 - UPDATE_BASE_PARAMS) / UPDATE_PARAMS_PER_ROW));
 
@@ -2418,6 +2461,7 @@ export async function PATCH(
         const quantityParam = `quantity_${rowIdx}`;
         const hasQuantityParam = `hasQuantity_${rowIdx}`;
         const customerDiscountParam = `customerDiscount_${rowIdx}`;
+        const additionalCustomerDiscountParam = `additionalCustomerDiscount_${rowIdx}`;
         const telmacoDiscountParam = `telmacoDiscount_${rowIdx}`;
         const netUnitPriceParam = `netUnitPrice_${rowIdx}`;
         const netCostOtherCurrencyParam = `netCostOtherCurrency_${rowIdx}`;
@@ -2478,6 +2522,7 @@ export async function PATCH(
         request.input(quantityParam, decimalType, row.Quantity);
         request.input(hasQuantityParam, sql.Bit, row.HasQuantity ? 1 : 0);
         request.input(customerDiscountParam, decimalType, row.CustomerDiscount);
+        request.input(additionalCustomerDiscountParam, decimalType, row.AdditionalCustomerDiscount);
         request.input(telmacoDiscountParam, decimalType, row.TelmacoDiscount);
         request.input(netUnitPriceParam, decimalType, row.NetUnitPrice);
         request.input(netCostOtherCurrencyParam, decimalType, row.NetCostOtherCurrency);
@@ -2556,7 +2601,7 @@ export async function PATCH(
         request.input(hasElInstalationParam, sql.Bit, row.HasElInstalation ? 1 : 0);
         request.input(commissioningParam, decimalType, row.HasCommissioning ? row.Commissioning : null);
         request.input(hasCommissioningParam, sql.Bit, row.HasCommissioning ? 1 : 0);
-        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam}, @${isOptionParam}, @${hasIsOptionParam}, @${partNumberParam}, @${hasPartNumberParam}, @${modelNumberParam}, @${hasModelNumberParam}, @${installationParam}, @${hasInstallationParam}, @${elInstalationParam}, @${hasElInstalationParam}, @${commissioningParam}, @${hasCommissioningParam})`);
+        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${additionalCustomerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam}, @${isOptionParam}, @${hasIsOptionParam}, @${partNumberParam}, @${hasPartNumberParam}, @${modelNumberParam}, @${hasModelNumberParam}, @${installationParam}, @${hasInstallationParam}, @${elInstalationParam}, @${hasElInstalationParam}, @${commissioningParam}, @${hasCommissioningParam})`);
       });
 
       const query = `
@@ -2571,6 +2616,7 @@ export async function PATCH(
           Quantity,
           HasQuantity,
           CustomerDiscount,
+          AdditionalCustomerDiscount,
           TelmacoDiscount,
           NetUnitPrice,
           NetCostOtherCurrency,
@@ -2636,6 +2682,7 @@ export async function PATCH(
             Quantity,
             HasQuantity,
             CustomerDiscount,
+            AdditionalCustomerDiscount,
             TelmacoDiscount,
             NetUnitPrice,
             NetCostOtherCurrency,
@@ -2696,6 +2743,7 @@ export async function PATCH(
             od.Delivery = CASE WHEN PendingUpdates.HasDelivery = 1 THEN PendingUpdates.Delivery ELSE od.Delivery END,
             od.Quantity = CASE WHEN PendingUpdates.HasQuantity = 1 THEN PendingUpdates.Quantity ELSE od.Quantity END,
             od.CustomerDiscount = PendingUpdates.CustomerDiscount,
+            od.AdditionalCustomerDiscount = PendingUpdates.AdditionalCustomerDiscount,
             od.TelmacoDiscount = PendingUpdates.TelmacoDiscount,
             od.NetUnitPrice = PendingUpdates.NetUnitPrice,
             od.NetCostOtherCurrency = CASE WHEN PendingUpdates.HasNetCostOtherCurrency = 1 THEN PendingUpdates.NetCostOtherCurrency ELSE od.NetCostOtherCurrency END,
@@ -2744,6 +2792,7 @@ export async function PATCH(
     if (resolvedRows.length > 0 && affected > 0) {
       const broadcastFields = [
         'CustomerDiscount',
+        'AdditionalCustomerDiscount',
         'TelmacoDiscount',
         'NetUnitPrice',
         'NetCost',
@@ -2807,6 +2856,7 @@ export async function PATCH(
         if (entry.hasDelivery) addChange('Delivery', entry.Delivery);
         if (entry.hasQuantity) addChange('Quantity', entry.Quantity);
         if (entry.hasCustomerDiscount) addChange('CustomerDiscount', entry.customerDiscount);
+        if (entry.hasAdditionalCustomerDiscount) addChange('AdditionalCustomerDiscount', entry.additionalCustomerDiscount);
         if (entry.hasTelmacoDiscount) addChange('TelmacoDiscount', entry.telmacoDiscount);
         if (entry.hasNetUnitPrice) addChange('NetUnitPrice', entry.netUnitPrice);
         if (entry.hasNetCostOtherCurrency) addChange('NetCostOtherCurrency', entry.netCostOtherCurrency);

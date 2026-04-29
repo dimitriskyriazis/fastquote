@@ -10,6 +10,7 @@ export type OfferProductsPanelProps = {
   refreshToken?: number;
   showRequestedColumns?: boolean;
   tableLayout?: 'cust' | 'wCost' | 'wReq';
+  pricingPolicyName?: string | null;
   hideTotals?: boolean;
   initialSelectedOfferDetailIds?: number[];
   initialViewportScrollTop?: number | null;

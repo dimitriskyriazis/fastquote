@@ -11,6 +11,7 @@ type OfferHeaderInfo = {
   customerName: string | null;
   isStandardPackage: boolean;
   createdByUserId: string | null;
+  pricingPolicyName: string | null;
 };
 
 async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
@@ -20,6 +21,7 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
     CustomerName: string | null;
     IsStandardPackage: number | boolean | null;
     CreatedBy: number | string | null;
+    PricingPolicyName: string | null;
   };
   try {
     const pool = await getPool();
@@ -31,9 +33,11 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
         o.Description,
         c.Name AS CustomerName,
         o.IsStandardPackage,
-        o.CreatedBy
+        o.CreatedBy,
+        pp.Name AS PricingPolicyName
       FROM dbo.Offer AS o
       LEFT JOIN dbo.Customers AS c ON c.ID = o.CustomerID
+      LEFT JOIN dbo.PricingPolicies AS pp ON pp.ID = o.PricingPolicyID
       WHERE o.ID = @offerId
     `);
     const row = result.recordset?.[0] ?? null;
@@ -43,6 +47,7 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
       customerName: row?.CustomerName?.trim() || null,
       isStandardPackage: row?.IsStandardPackage === true || row?.IsStandardPackage === 1,
       createdByUserId: row?.CreatedBy != null ? String(row.CreatedBy) : null,
+      pricingPolicyName: row?.PricingPolicyName?.trim() || null,
     };
   } catch (err) {
     console.error('Failed to load offer title for products page', err);
@@ -52,6 +57,7 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
       customerName: null,
       isStandardPackage: false,
       createdByUserId: null,
+      pricingPolicyName: null,
     };
   }
 }
@@ -69,6 +75,7 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
         customerName: null,
         isStandardPackage: false,
         createdByUserId: null,
+        pricingPolicyName: null,
       };
   const offerTitle = offerHeader.title;
   const offerDescription = offerHeader.description;
@@ -91,6 +98,7 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
       headingBottomText={headingBottomText}
       isStandardPackage={isStandardPackage}
       offerCreatedByUserId={offerHeader.createdByUserId}
+      pricingPolicyName={offerHeader.pricingPolicyName}
     />
   );
 }

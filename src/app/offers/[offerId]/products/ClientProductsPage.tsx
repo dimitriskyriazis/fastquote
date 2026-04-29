@@ -34,6 +34,7 @@ type Props = {
   headingBottomText?: string | null;
   isStandardPackage: boolean;
   offerCreatedByUserId?: string | null;
+  pricingPolicyName?: string | null;
 };
 
 type AddActionType = 'product' | 'category' | 'printable-comment' | 'non-printable-comment';
@@ -117,6 +118,7 @@ export default function ClientProductsPage({
   headingBottomText,
   isStandardPackage,
   offerCreatedByUserId,
+  pricingPolicyName,
 }: Props) {
   const { userId } = useAuditUser();
   const normalizedHeadingTop = typeof headingTopText === 'string' ? headingTopText.trim() : '';
@@ -1230,6 +1232,7 @@ export default function ClientProductsPage({
               showRequestedColumns={isStandardPackage ? false : showRequestedColumns}
               standardPackageMode={isStandardPackage}
               tableLayout={tableLayout}
+              pricingPolicyName={pricingPolicyName}
               hideTotals={isStandardPackage || showAddProductModal}
               initialSelectedOfferDetailIds={savedSelectionIds}
               initialViewportScrollTop={initialProductsViewportScrollTop}

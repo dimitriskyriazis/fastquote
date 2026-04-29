@@ -1792,6 +1792,7 @@ export const totalPriceCellClassRules = {
 
 export const PRICING_FIELD_LABELS: Record<string, string> = {
   CustomerDiscount: 'Customer Discount',
+  AdditionalCustomerDiscount: 'Add. Customer Discount',
   NetUnitPrice: 'Net Unit Price',
   TelmacoDiscount: 'Telmaco Discount',
   NetCostOtherCurrency: 'Cost (Other Currency)',

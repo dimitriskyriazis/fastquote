@@ -208,6 +208,20 @@ export type ProductColumnDefsDeps = {
   ModelNumberCell: (params: ICellRendererParams<Record<string, unknown>>) => React.ReactNode;
   RequestedItemNoCell: (params: ICellRendererParams<Record<string, unknown>>) => React.ReactNode;
   offerCurrencySymbol: string;
+  pricingPolicyName?: string | null;
+};
+
+// Discount columns (CustomerDiscount, AdditionalCustomerDiscount,
+// TelmacoDiscount) accept values in [-100, 100]; out-of-range numerics clamp to
+// the bound, non-numeric input reverts to the previous value.
+const parseDiscountValue = (params: { newValue: unknown; oldValue: unknown }) => {
+  const raw = params.newValue;
+  if (raw == null || (typeof raw === 'string' && raw.trim() === '')) return null;
+  const num = typeof raw === 'number' ? raw : Number.parseFloat(String(raw));
+  if (!Number.isFinite(num)) return params.oldValue;
+  if (num > 100) return 100;
+  if (num < -100) return -100;
+  return num;
 };
 
 export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
@@ -229,7 +243,9 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
     ModelNumberCell,
     RequestedItemNoCell,
     offerCurrencySymbol,
+    pricingPolicyName,
   } = deps;
+  const additionalDiscountVisibleByDefault = pricingPolicyName === 'AVC4';
 
   const offerCurrencyFormatter = buildCurrencyFormatter(offerCurrencySymbol);
 
@@ -580,6 +596,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
+      valueParser: parseDiscountValue,
       valueFormatter: (params) => {
         if (!isOfferProductCommentOrProduct(params.data ?? null)) return '';
         return percentageFormatter(params);
@@ -587,6 +604,23 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       cellStyle: actualNumericCellStyle,
       cellClass: actualNumericCellClass,
       width: 150
+    },
+    {
+      field: 'AdditionalCustomerDiscount',
+      headerName: 'Add. Customer Discount',
+      hide: !additionalDiscountVisibleByDefault,
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
+      valueParser: parseDiscountValue,
+      valueFormatter: (params) => {
+        if (!isOfferProductCommentOrProduct(params.data ?? null)) return '';
+        return percentageFormatter(params);
+      },
+      cellStyle: actualNumericCellStyle,
+      cellClass: actualNumericCellClass,
+      width: 170,
     },
     {
       field: 'NetUnitPrice',
@@ -629,6 +663,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
+      valueParser: parseDiscountValue,
       valueFormatter: percentageFormatter,
       cellClass: [...actualNumericCellClass, styles.redDataCell],
       cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
