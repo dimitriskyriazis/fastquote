@@ -1711,6 +1711,7 @@ export const OFFER_PRODUCTS_EXPORT_FIELDS = [
   'Description',
   'Quantity',
   'ListPrice',
+  'AdditionalCustomerDiscount',
   'Comment',
   'Delivery',
   'IsPrintable',

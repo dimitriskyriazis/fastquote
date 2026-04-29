@@ -52,6 +52,7 @@ export type OfferProductsTemplateExportRow = {
   descriptionType: string;
   qty: number | '';
   unitPrice: number | '';
+  additionalDiscount: number | '';
   delayForDelivery: string;
   comments: string;
   skipRow?: boolean;
@@ -66,6 +67,7 @@ export type OfferExportRow = {
   Description: string | null;
   Quantity: number | null;
   ListPrice: number | null;
+  AdditionalCustomerDiscount: number | null;
   Delivery: string | null;
   Comment: string | null;
   IsPrintable?: boolean | null;

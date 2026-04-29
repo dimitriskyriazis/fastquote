@@ -3682,6 +3682,7 @@ const requestedColumnDefsMap = useMemo(
       const descriptionType = [model, description].filter((part) => part.length > 0).join(' ').trim();
       const qty = coerceNumber(row.Quantity);
       const listPrice = coerceNumber(row.ListPrice);
+      const additionalDiscount = coerceNumber(row.AdditionalCustomerDiscount);
       const qtyForExport = qty != null && !Object.is(qty, 0) ? qty : null;
       const deliveryRaw = row.Delivery == null ? '' : String(row.Delivery).trim();
       const deliveryValue = deliveryRaw.length > 0 ? deliveryRaw : 'unknown';
@@ -3703,6 +3704,7 @@ const requestedColumnDefsMap = useMemo(
         descriptionType,
         qty: qtyForExport ?? '',
         unitPrice: listPrice ?? '',
+        additionalDiscount: additionalDiscount ?? '',
         delayForDelivery: deliveryValue,
         comments: row.Comment?.toString() ?? '',
         ...(isUnmatchedProduct ? { skipRow: true } : undefined),

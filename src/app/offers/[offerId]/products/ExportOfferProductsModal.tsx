@@ -31,6 +31,7 @@ type ExportFieldKey =
   | 'descriptionType'
   | 'qty'
   | 'unitPrice'
+  | 'additionalDiscount'
   | 'delayForDelivery'
   | 'comments';
 
@@ -71,6 +72,7 @@ const EXPORT_FIELDS: ExportFieldConfig[] = [
   { key: 'descriptionType', label: 'Description / Type', keywords: ['description / type', 'description', 'type', 'model', 'details'] },
   { key: 'qty', label: 'Qty', keywords: ['qty', 'quantity', 'pcs', 'pieces'] },
   { key: 'unitPrice', label: 'Unit price (RRP / Euro)', keywords: ['unit price', 'rrp', 'price', 'net unit price', 'euro'] },
+  { key: 'additionalDiscount', label: 'Extra Discount Contractor', keywords: ['extra discount contractor', 'extra discount', 'additional discount', 'contractor discount', 'acd'] },
   { key: 'comments', label: 'Comments', keywords: ['comments', 'comment', 'notes', 'remarks'] },
 ];
 
@@ -292,7 +294,7 @@ const padExportRowsForAlignment = (
     } else {
       padded.push({
         no: n, productReference: '', manufacturer: '', descriptionType: '',
-        qty: '', unitPrice: '', delayForDelivery: '', comments: '', skipRow: true,
+        qty: '', unitPrice: '', additionalDiscount: '', delayForDelivery: '', comments: '', skipRow: true,
       });
     }
   }
@@ -316,6 +318,8 @@ const resolveFieldValue = (
       return row.qty === '' ? null : row.qty;
     case 'unitPrice':
       return row.unitPrice === '' ? null : row.unitPrice;
+    case 'additionalDiscount':
+      return row.additionalDiscount === '' ? null : row.additionalDiscount / 100;
     case 'comments':
       return row.comments;
     default:
