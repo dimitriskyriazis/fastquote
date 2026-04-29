@@ -451,6 +451,16 @@ export function logRequest(req: NextRequest, endpoint: string): void {
     return;
   }
 
+  // Skip body inspection for multipart uploads: the body is binary (e.g. an
+  // Excel file), not JSON, and reading it via a clone races with the route
+  // handler's own req.formData() call on the teed stream — causing the
+  // multipart parser to fail with "Failed to parse body as FormData."
+  const contentType = req.headers.get('content-type') ?? '';
+  if (contentType.toLowerCase().includes('multipart/form-data')) {
+    logger.info(buildDescriptiveMessage(req.method, requestPath), baseContext);
+    return;
+  }
+
   let requestForAudit: Request;
   try {
     requestForAudit = req.clone();
