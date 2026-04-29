@@ -68,6 +68,12 @@ type CreateDraftOfferRequestBody = {
   resolvedCustomer?: { TRDR: number; CODE: string | null; NAME: string | null };
   missingBrands?: string[];
   matchResults?: MatchResultsState;
+  manualSearch?: {
+    partOrModel?: string | null;
+    description?: string | null;
+    brandName?: string | null;
+    topN?: number;
+  };
   categorizationSummary?: {
     categoriesUpdated: number;
     subcategoriesUpdated: number;
@@ -115,6 +121,8 @@ type WizardStep =
   | 'update-product-category'
   | 'check-brands'
   | 'match-products'
+  | 'manual-search-product'
+  | 'list-brands'
   | 'prepare-summary'
   | 'execute';
 
@@ -1204,6 +1212,161 @@ async function handleMatchProducts(
   });
 }
 
+async function handleManualSearchProduct(
+  ctx: OfferContext,
+  body: CreateDraftOfferRequestBody,
+): Promise<NextResponse> {
+  const { erpPool, offerId, requestId } = ctx;
+  const rawPartOrModel = (body.manualSearch?.partOrModel ?? '').trim();
+  const rawDescription = (body.manualSearch?.description ?? '').trim();
+  const rawBrand = (body.manualSearch?.brandName ?? '').trim();
+
+  const pomCleared = rawPartOrModel ? clearPartModelNumberUpper(rawPartOrModel) : '';
+  const descUpper = rawDescription ? rawDescription.toUpperCase() : '';
+
+  if (pomCleared.length < 2 && descUpper.length < 2) {
+    return NextResponse.json(
+      { ok: false, error: 'Enter a Part / Model number or a Description (at least 2 characters)' },
+      { status: 400 },
+    );
+  }
+
+  logger.info('wizard manual-search-product start', {
+    requestId, offerId, rawPartOrModel, rawDescription, rawBrand, pomCleared,
+  });
+
+  try {
+    let matches: ErpProductMatch[] = [];
+
+    // Single substring LIKE search:
+    //   • Part / Model input → cleaned LIKE against CODE2 only
+    //   • Description input  → upper LIKE against NAME1
+    // Column-side cleaning mirrors the REPLACE chain of
+    // [tlm].[_mtrlFuzzySearchByCode2] so behavior is predictable.
+    if (pomCleared.length >= 2 || descUpper.length >= 2) {
+      const req = erpPool.request();
+      const cleanedCol = (col: string): string => {
+        let expr = col;
+        const replacements: Array<[string, string]> = [
+          ["'-'", "''"],
+          ["' '", "''"],
+          ["'_'", "''"],
+          ["'.'", "''"],
+          ["'/'", "''"],
+          ["','", "''"],
+          ["'('", "''"],
+          ["')'", "''"],
+          ["'\"'", "''"],
+          ["''''", "''"],
+          ["'&'", "''"],
+          ["'+'", "''"],
+          ["NCHAR(0x2013)", "''"],
+          ["NCHAR(0x2014)", "''"],
+        ];
+        for (const [from, to] of replacements) {
+          expr = `REPLACE(${expr}, ${from}, ${to})`;
+        }
+        return `UPPER(${expr})`;
+      };
+
+      const inputClauses: string[] = [];
+      if (pomCleared.length >= 2) {
+        const code2Expr = cleanedCol("ISNULL(mt.CODE2, '')");
+        req.input('lkPom', sql.NVarChar(200), `%${pomCleared}%`);
+        inputClauses.push(`${code2Expr} LIKE @lkPom`);
+      }
+      if (descUpper.length >= 2) {
+        req.input('lkDesc', sql.NVarChar(400), `%${descUpper}%`);
+        inputClauses.push(`UPPER(ISNULL(mt.NAME1, '')) LIKE @lkDesc`);
+      }
+
+      req.input('topNlike', sql.Int, 200);
+      const sqlText = `
+        SELECT TOP (@topNlike)
+          mt.MTRL, mt.CODE, mt.CODE1, mt.CODE2, mt.NAME1
+        FROM dbo.MTRL mt
+        WHERE mt.COMPANY = 1
+          AND mt.ISACTIVE = 1
+          AND (mt.CODE IS NULL OR UPPER(mt.CODE) NOT LIKE 'XD%')
+          AND ${inputClauses.join(' AND ')}
+        ORDER BY LEN(ISNULL(mt.CODE2, '')), mt.NAME1
+      `;
+      const likeRes = await req.query<ErpProductMatch>(sqlText);
+      matches = likeRes.recordset ?? [];
+    }
+
+    // Enrich with brand name (mirrors the same JOIN used in match-products)
+    if (matches.length > 0) {
+      const ids = Array.from(new Set(matches.map(m => m.MTRL)));
+      const ph = ids.map((_, i) => `@b${i}`).join(', ');
+      const brandReq = erpPool.request();
+      ids.forEach((id, i) => brandReq.input(`b${i}`, sql.Int, id));
+      const brandRes = await brandReq.query<{ MTRL: number; BRANDNAME: string | null }>(
+        `SELECT mt.MTRL, mf.NAME AS BRANDNAME
+         FROM dbo.MTRL mt
+         LEFT JOIN dbo.MTRMANFCTR mf ON mt.MTRMANFCTR = mf.MTRMANFCTR
+         WHERE mt.MTRL IN (${ph})`,
+      );
+      const brandMap = new Map((brandRes.recordset ?? []).map(r => [r.MTRL, r.BRANDNAME]));
+      matches = matches.map(m => ({ ...m, BRANDNAME: brandMap.get(m.MTRL) ?? null }));
+    }
+
+    // Apply brand filter (case-insensitive substring match on the enriched brand)
+    if (rawBrand && matches.length > 0) {
+      const brandUpper = rawBrand.toUpperCase();
+      matches = matches.filter(m =>
+        (m.BRANDNAME ?? '').toUpperCase().includes(brandUpper),
+      );
+    }
+
+    logger.info('wizard manual-search-product done', {
+      requestId, offerId, resultCount: matches.length,
+    });
+
+    return NextResponse.json({
+      ok: true, step: 'manual-search-product', matches,
+    });
+  } catch (err) {
+    logger.warn(
+      'wizard manual-search-product failed',
+      { requestId, offerId, rawPartOrModel, rawDescription },
+      err instanceof Error ? err : undefined,
+    );
+    return NextResponse.json(
+      { ok: false, error: 'Search failed. Please try again.' },
+      { status: 500 },
+    );
+  }
+}
+
+async function handleListBrands(
+  ctx: OfferContext,
+): Promise<NextResponse> {
+  const { erpPool, requestId, offerId } = ctx;
+  try {
+    const res = await erpPool.request().query<{ MTRMANFCTR: number; NAME: string | null }>(
+      `SELECT MTRMANFCTR, NAME
+       FROM dbo.MTRMANFCTR
+       WHERE NAME IS NOT NULL AND LTRIM(RTRIM(NAME)) <> ''
+       ORDER BY NAME`,
+    );
+    const brands = (res.recordset ?? [])
+      .map(r => ({ MTRMANFCTR: r.MTRMANFCTR, name: (r.NAME ?? '').trim() }))
+      .filter(b => b.name.length > 0);
+    return NextResponse.json({ ok: true, step: 'list-brands', brands });
+  } catch (err) {
+    logger.warn(
+      'wizard list-brands failed',
+      { requestId, offerId },
+      err instanceof Error ? err : undefined,
+    );
+    return NextResponse.json(
+      { ok: false, error: 'Failed to load brands' },
+      { status: 500 },
+    );
+  }
+}
+
 async function handlePrepareSummary(
   ctx: OfferContext,
   body: CreateDraftOfferRequestBody,
@@ -1630,6 +1793,10 @@ export async function POST(
           return await handleCheckBrands(ctx);
         case 'match-products':
           return await handleMatchProducts(ctx, body);
+        case 'manual-search-product':
+          return await handleManualSearchProduct(ctx, body);
+        case 'list-brands':
+          return await handleListBrands(ctx);
         case 'prepare-summary':
           return await handlePrepareSummary(ctx, body);
         case 'execute':

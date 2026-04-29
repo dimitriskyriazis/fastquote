@@ -335,3 +335,194 @@
   border-radius: 6px;
   text-align: center;
 }
+
+/* ── Manual Soft1 search modal ─────────────────────────────────────────── */
+
+.manualSearchBody {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.manualFieldsGrid {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr 1fr;
+  gap: 12px;
+  align-items: end;
+}
+
+.manualField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.manualFieldLabel {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.manualInput {
+  width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #ffffff;
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 0.88rem;
+  line-height: 1.3;
+  color: #0f172a;
+  font-weight: 500;
+  box-sizing: border-box;
+}
+
+.manualInput:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+.manualToolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.manualSearchButton {
+  padding: 6px 18px;
+  font-size: 0.85rem;
+  border-radius: 10px;
+  border: 1px solid #1d4ed8;
+  background: #1d4ed8;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.manualSearchButton:hover:not(:disabled) {
+  background: #1e40af;
+}
+
+.manualSearchButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.manualHint {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.manualHintRight {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  margin-left: auto;
+}
+
+.manualResultsCard {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.manualResultsScroll {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.manualResultsEmpty {
+  padding: 24px;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.88rem;
+}
+
+.manualResultRow {
+  cursor: pointer;
+}
+
+.manualResultRow:hover td {
+  background: #f1f5f9;
+}
+
+.manualResultRowSelected td {
+  background: #dbeafe !important;
+  font-weight: 600;
+}
+
+.manualFooterCount {
+  font-size: 0.75rem;
+  color: #64748b;
+  padding: 0 2px;
+}
+
+.manualContextChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 0.82rem;
+  color: #334155;
+}
+
+.manualContextChips strong {
+  color: #475569;
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+/* Combobox (filterable dropdown) */
+
+.comboWrapper {
+  position: relative;
+}
+
+.comboList {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+  display: flex;
+  flex-direction: column;
+}
+
+.comboOption {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 8px 12px;
+  font-size: 0.88rem;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.comboOption:hover,
+.comboOption:focus {
+  background: #e5efff;
+  outline: none;
+}
+
+.comboOptionEmpty {
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  color: #94a3b8;
+}

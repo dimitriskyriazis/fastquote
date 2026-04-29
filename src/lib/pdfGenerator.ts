@@ -905,7 +905,7 @@ function buildItemsTable(
 
   for (const row of data.products) {
     if (row.isCategory) {
-      const categoryText = [str(row.treeOrdering), str(row.description)].filter(Boolean).join(' ');
+      const categoryText = [str(row.treeOrdering), str(row.description)].filter(Boolean).join('     ');
       const categoryKey = str(row.treeOrdering);
       const fallbackNetAmount = categoryKey ? categoryNetTotalsMap.get(categoryKey) : null;
       const categoryNetAmountValue =

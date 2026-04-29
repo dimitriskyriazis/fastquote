@@ -150,6 +150,9 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   const [nearMatchBrands, setNearMatchBrands] = useState<Array<{ fastquoteName: string; matches: Array<{ erpName: string; MTRMANFCTR: number }> }>>([]);
   const [brandDecisions, setBrandDecisions] = useState<Map<string, 'create' | number>>(new Map());
   const [brandsCheckComplete, setBrandsCheckComplete] = useState(false);
+  // fastquote brand name → canonical Soft1 brand { erpName, MTRMANFCTR }, captured
+  // when the user picks a near-match in step 2 (Brands).
+  const [resolvedBrandMap, setResolvedBrandMap] = useState<Map<string, { erpName: string; MTRMANFCTR: number }>>(new Map());
 
   // Step 4: Product matching
   const [autoMatched, setAutoMatched] = useState<AutoMatchedProduct[]>([]);
@@ -159,6 +162,21 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   const [confirmedCreates, setConfirmedCreates] = useState<number[]>([]);
   const [matchComplete, setMatchComplete] = useState(false);
   const [showMatchHint, setShowMatchHint] = useState(false);
+
+  // Manual Soft1 search modal (for unmatched products)
+  type ErpMatch = ProductNeedsSelection['matches'][number];
+  const [manualSearchProduct, setManualSearchProduct] = useState<ProductNeedsSelection | null>(null);
+  const [manualSearchPomQuery, setManualSearchPomQuery] = useState('');
+  const [manualSearchDescQuery, setManualSearchDescQuery] = useState('');
+  const [manualSearchBrandQuery, setManualSearchBrandQuery] = useState('');
+  const [manualSearchResults, setManualSearchResults] = useState<ErpMatch[]>([]);
+  const [manualSearchSelectedMtrl, setManualSearchSelectedMtrl] = useState<number | null>(null);
+  const [manualSearchLoading, setManualSearchLoading] = useState(false);
+  const [manualSearchError, setManualSearchError] = useState<string | null>(null);
+  const [manualSearchTouched, setManualSearchTouched] = useState(false);
+  const [erpBrandList, setErpBrandList] = useState<Array<{ MTRMANFCTR: number; name: string }>>([]);
+  const [erpBrandsLoaded, setErpBrandsLoaded] = useState(false);
+  const [brandComboOpen, setBrandComboOpen] = useState(false);
 
   // Step 4: Summary
   const [summary, setSummary] = useState<SummaryData | null>(null);
@@ -192,6 +210,116 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       setIsLoading(false);
     }
   }, [offerId]);
+
+  // ── Manual Soft1 search ──────────────────────────────────────────────────
+
+  const runManualSearch = useCallback(async (
+    partOrModel: string | null,
+    description: string | null,
+    brandName: string | null,
+  ) => {
+    setManualSearchLoading(true);
+    setManualSearchError(null);
+    setManualSearchSelectedMtrl(null);
+    try {
+      const response = await fetch(`/api/offers/${encodeURIComponent(offerId)}/create-draft-order-soft1`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          step: 'manual-search-product',
+          manualSearch: { partOrModel, description, brandName, topN: 50 },
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? `Search failed (${response.status})`);
+      }
+      setManualSearchResults((payload.matches ?? []) as ErpMatch[]);
+    } catch (err) {
+      setManualSearchError(err instanceof Error ? err.message : 'Search failed');
+      setManualSearchResults([]);
+    } finally {
+      setManualSearchLoading(false);
+      setManualSearchTouched(true);
+    }
+  }, [offerId]);
+
+  const ensureErpBrandsLoaded = useCallback(async () => {
+    if (erpBrandsLoaded) return;
+    try {
+      const response = await fetch(`/api/offers/${encodeURIComponent(offerId)}/create-draft-order-soft1`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ step: 'list-brands' }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (response.ok && payload?.ok) {
+        setErpBrandList((payload.brands ?? []) as Array<{ MTRMANFCTR: number; name: string }>);
+      }
+    } catch {
+      // Non-fatal — Brand input will still work as a free-text filter.
+    } finally {
+      setErpBrandsLoaded(true);
+    }
+  }, [erpBrandsLoaded, offerId]);
+
+  const openManualSearch = useCallback((ns: ProductNeedsSelection) => {
+    const pom = (ns.partNumberActual ?? ns.modelNumberActual ?? '').trim();
+    const fastquoteBrand = (ns.brandName ?? '').trim();
+    // If the Brands step resolved this fastquote brand to a canonical Soft1
+    // brand, auto-select that. Otherwise try a case-insensitive match in the
+    // already-loaded brand list. Otherwise fall back to the raw fastquote name
+    // (an effect below normalizes once the brand list finishes loading).
+    const resolved = fastquoteBrand ? resolvedBrandMap.get(fastquoteBrand) : undefined;
+    let brand = resolved?.erpName ?? fastquoteBrand;
+    if (!resolved && fastquoteBrand && erpBrandList.length > 0) {
+      const lower = fastquoteBrand.toLowerCase();
+      const ci = erpBrandList.find(b => b.name.toLowerCase() === lower);
+      if (ci) brand = ci.name;
+    }
+    setManualSearchProduct(ns);
+    setManualSearchPomQuery(pom);
+    setManualSearchDescQuery('');
+    setManualSearchBrandQuery(brand);
+    setBrandComboOpen(false);
+    setManualSearchResults([]);
+    setManualSearchSelectedMtrl(null);
+    setManualSearchError(null);
+    setManualSearchTouched(false);
+    void ensureErpBrandsLoaded();
+    if (pom.length >= 2) {
+      void runManualSearch(pom || null, null, brand || null);
+    }
+  }, [runManualSearch, ensureErpBrandsLoaded, resolvedBrandMap, erpBrandList]);
+
+  const closeManualSearch = useCallback(() => {
+    setManualSearchProduct(null);
+    setManualSearchPomQuery('');
+    setManualSearchDescQuery('');
+    setManualSearchBrandQuery('');
+    setManualSearchResults([]);
+    setManualSearchSelectedMtrl(null);
+    setManualSearchError(null);
+    setManualSearchTouched(false);
+  }, []);
+
+  const applyManualSearchSelection = useCallback(() => {
+    if (!manualSearchProduct || manualSearchSelectedMtrl == null) return;
+    const picked = manualSearchResults.find(m => m.MTRL === manualSearchSelectedMtrl);
+    if (!picked) return;
+    const productId = manualSearchProduct.productId;
+    setNeedsSelection(prev => prev.map(ns => {
+      if (ns.productId !== productId) return ns;
+      const alreadyHas = ns.matches.some(m => m.MTRL === picked.MTRL);
+      return alreadyHas ? ns : { ...ns, matches: [picked, ...ns.matches] };
+    }));
+    setUserSelections(prev => {
+      const next = new Map(prev);
+      next.set(productId, { MTRL: picked.MTRL, CODE: picked.CODE });
+      return next;
+    });
+    closeManualSearch();
+  }, [manualSearchProduct, manualSearchSelectedMtrl, manualSearchResults, closeManualSearch]);
 
   // ── Step runners ─────────────────────────────────────────────────────────
 
@@ -333,6 +461,21 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     setExecutionResult(result);
   }, [callStep, resolvedCustomer, missingBrands, autoMatched, confirmedCreates, userSelections, skipped, categorizedProducts]);
 
+  // ── Manual-search Brand normalization ────────────────────────────────────
+  // When the Soft1 brand list finishes loading, normalize the Brand input to
+  // the canonical Soft1 spelling (case-insensitive match) so the field reads
+  // as a real selected brand instead of free text.
+  useEffect(() => {
+    if (!manualSearchProduct || erpBrandList.length === 0) return;
+    const current = manualSearchBrandQuery.trim();
+    if (!current) return;
+    const exact = erpBrandList.find(b => b.name === current);
+    if (exact) return;
+    const lower = current.toLowerCase();
+    const ci = erpBrandList.find(b => b.name.toLowerCase() === lower);
+    if (ci) setManualSearchBrandQuery(ci.name);
+  }, [manualSearchProduct, erpBrandList, manualSearchBrandQuery]);
+
   // ── Auto-run step on mount / step change ─────────────────────────────────
 
   useEffect(() => {
@@ -390,10 +533,16 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       // Resolve near-match brand decisions before moving to match-products
       const newExisting = [...existingBrands];
       const newMissing = [...missingBrands];
+      const newResolved = new Map(resolvedBrandMap);
       for (const nm of nearMatchBrands) {
         const decision = brandDecisions.get(nm.fastquoteName);
         if (typeof decision === 'number') {
-          // User picked a specific ERP match
+          // User picked a specific ERP match — record the canonical Soft1 brand
+          // so we can auto-select it in downstream steps (e.g. manual search).
+          const picked = nm.matches.find(m => m.MTRMANFCTR === decision);
+          if (picked) {
+            newResolved.set(nm.fastquoteName, { erpName: picked.erpName, MTRMANFCTR: picked.MTRMANFCTR });
+          }
           newExisting.push(nm.fastquoteName);
         } else {
           newMissing.push(nm.fastquoteName);
@@ -401,6 +550,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       }
       setExistingBrands(newExisting);
       setMissingBrands(newMissing);
+      setResolvedBrandMap(newResolved);
       setNearMatchBrands([]);
     }
 
@@ -432,7 +582,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     }
 
     setCurrentStepIndex(i => i + 1);
-  }, [currentStep, needsSelection, userSelections, autoMatched, nearMatchBrands, brandDecisions, existingBrands, missingBrands, onClose]);
+  }, [currentStep, needsSelection, userSelections, autoMatched, nearMatchBrands, brandDecisions, existingBrands, missingBrands, resolvedBrandMap, onClose]);
 
   const handleRetry = useCallback(() => {
     setError(null);
@@ -569,21 +719,6 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
               </label>
             ))}
           </div>
-          <button
-            type="button"
-            className={lookupStyles.confirmButton}
-            style={{ alignSelf: 'flex-end', marginTop: '8px' }}
-            onClick={() => {
-              if (!selectedCustomer) return;
-              runResolveCustomer({
-                customerSelection: { TRDR: selectedCustomer.TRDR, CODE: selectedCustomer.CODE },
-                customerConfirmed: true,
-              });
-            }}
-            disabled={!selectedCustomer || isLoading}
-          >
-            {isLoading ? 'Confirming...' : 'Confirm Selection'}
-          </button>
         </>
       );
     }
@@ -1062,6 +1197,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                     <th>Part No</th>
                     <th>Brand</th>
                     <th>Description</th>
+                    <th style={{ width: '140px' }}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1073,6 +1209,24 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                         <td>{label}</td>
                         <td>{ns.brandName ?? '—'}</td>
                         <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '500px' }} title={desc}>{desc}</td>
+                        <td>
+                          <button
+                            type="button"
+                            onClick={() => openManualSearch(ns)}
+                            style={{
+                              padding: '4px 10px',
+                              fontSize: '0.75rem',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              border: '1px solid #1d4ed8',
+                              background: '#fff',
+                              color: '#1d4ed8',
+                              fontWeight: 600,
+                            }}
+                          >
+                            Search Soft1
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1315,13 +1469,26 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     }
   };
 
-  // Don't show Continue button when waiting for user input in customer step
+  // Footer Continue is disabled only when user has not yet provided the input
+  // the customer step needs. Once a customer is picked / a code is typed, the
+  // footer button drives resolution (no separate inline confirm button).
   const waitingForCustomerInput = (
-    currentStep.id === 'resolve-customer' && !resolvedCustomer && (customerNeedsSelection.length > 0 || !!customerNeedsConfirmation || customerNeedsCode)
+    currentStep.id === 'resolve-customer' && !resolvedCustomer && (
+      (customerNeedsSelection.length > 0 && !selectedCustomer) ||
+      (customerNeedsCode && !customerCodeInput.trim())
+    )
+  );
+
+  const customerInputReady = (
+    currentStep.id === 'resolve-customer' && !resolvedCustomer && (
+      (customerNeedsSelection.length > 0 && !!selectedCustomer) ||
+      !!customerNeedsConfirmation ||
+      (customerNeedsCode && !!customerCodeInput.trim())
+    )
   );
 
   // Determine if the confirm button should be disabled
-  const confirmDisabled = isLoading || waitingForCustomerInput || (!canContinue() && !error);
+  const confirmDisabled = isLoading || waitingForCustomerInput || (!customerInputReady && !canContinue() && !error);
 
   const safeHandleConfirm = useCallback(() => {
     if (confirmDisabled) {
@@ -1331,30 +1498,260 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       }
       return;
     }
+    // Footer Continue resolves customer input when actionable
+    if (currentStep.id === 'resolve-customer' && !resolvedCustomer) {
+      if (customerNeedsSelection.length > 0 && selectedCustomer) {
+        runResolveCustomer({
+          customerSelection: { TRDR: selectedCustomer.TRDR, CODE: selectedCustomer.CODE },
+          customerConfirmed: true,
+        });
+        return;
+      }
+      if (customerNeedsConfirmation) {
+        runResolveCustomer({
+          customerSelection: { TRDR: customerNeedsConfirmation.TRDR, CODE: customerNeedsConfirmation.CODE },
+          customerConfirmed: true,
+        });
+        return;
+      }
+      if (customerNeedsCode && customerCodeInput.trim()) {
+        runResolveCustomer({ customerCode: customerCodeInput.trim() });
+        return;
+      }
+    }
     setShowMatchHint(false);
     handleConfirm();
-  }, [confirmDisabled, handleConfirm, currentStep.id, matchComplete, isLoading, error]);
+  }, [
+    confirmDisabled, handleConfirm, currentStep.id, matchComplete, isLoading, error,
+    resolvedCustomer, customerNeedsSelection, selectedCustomer,
+    customerNeedsConfirmation, customerNeedsCode, customerCodeInput,
+    runResolveCustomer,
+  ]);
 
   return (
-    <LookupModal
-      open={open}
-      title="Create Draft Order in Soft1"
-      onClose={() => onClose(false)}
-      onConfirm={safeHandleConfirm}
-      confirmLabel={getConfirmLabel()}
-      cancelLabel={currentStep.id === 'execute' && executionResult ? 'Close' : 'Cancel'}
-      saving={isLoading}
-      footerHint={showMatchHint && needsSelection.filter(ns => !userSelections.has(ns.productId)).length > 0
-        ? `Confirm creation for the above (${needsSelection.filter(ns => !userSelections.has(ns.productId)).length}) products before continuing`
-        : undefined}
-      cardClassName={lookupStyles.cardWide}
-      cardStyle={{ width: 'min(1500px, calc(100% - 32px))', maxWidth: '95vw', maxHeight: '85vh' }}
-    >
-      {stepBar}
-      <div className={styles.stepContent}>
-        {error && !isLoading && <div className={styles.errorBox}>{error}</div>}
-        {renderStepContent()}
-      </div>
-    </LookupModal>
+    <>
+      <LookupModal
+        open={open}
+        title="Create Draft Order in Soft1"
+        onClose={() => onClose(false)}
+        onConfirm={safeHandleConfirm}
+        confirmLabel={getConfirmLabel()}
+        cancelLabel={currentStep.id === 'execute' && executionResult ? 'Close' : 'Cancel'}
+        saving={isLoading}
+        footerHint={showMatchHint && needsSelection.filter(ns => !userSelections.has(ns.productId)).length > 0
+          ? `Confirm creation for the above (${needsSelection.filter(ns => !userSelections.has(ns.productId)).length}) products before continuing`
+          : undefined}
+        cardClassName={lookupStyles.cardWide}
+        cardStyle={{ width: 'min(1500px, calc(100% - 32px))', maxWidth: '95vw', maxHeight: '85vh' }}
+      >
+        {stepBar}
+        <div className={styles.stepContent}>
+          {error && !isLoading && <div className={styles.errorBox}>{error}</div>}
+          {renderStepContent()}
+        </div>
+      </LookupModal>
+
+      {manualSearchProduct && (
+        <LookupModal
+          open={true}
+          title={`Search Soft1: ${productLabel(manualSearchProduct.partNumberActual, manualSearchProduct.modelNumberActual, manualSearchProduct.productId)}`}
+          onClose={closeManualSearch}
+          onConfirm={applyManualSearchSelection}
+          confirmLabel="Use this match"
+          saving={false}
+          error={manualSearchError}
+          cardStyle={{ width: 'min(1100px, calc(100% - 32px))', maxWidth: '92vw', maxHeight: '80vh' }}
+        >
+          <div className={styles.manualSearchBody}>
+            {(() => {
+              const pomTrim = manualSearchPomQuery.trim();
+              const descTrim = manualSearchDescQuery.trim();
+              const brandTrim = manualSearchBrandQuery.trim();
+              const canSearch = !manualSearchLoading && (pomTrim.length >= 2 || descTrim.length >= 2);
+              const triggerSearch = () => {
+                if (!canSearch) return;
+                setBrandComboOpen(false);
+                void runManualSearch(pomTrim || null, descTrim || null, brandTrim || null);
+              };
+              const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+                if (e.key === 'Enter') { e.preventDefault(); triggerSearch(); }
+              };
+              const filteredBrands = brandTrim
+                ? erpBrandList.filter(b => b.name.toLowerCase().includes(brandTrim.toLowerCase())).slice(0, 100)
+                : erpBrandList.slice(0, 100);
+              const ctxDesc = manualSearchProduct.description?.trim();
+              return (
+                <>
+                  {(manualSearchProduct.brandName || manualSearchProduct.partNumberActual || ctxDesc) && (
+                    <div className={styles.manualContextChips}>
+                      {manualSearchProduct.brandName && (
+                        <span><strong>Brand:</strong>{manualSearchProduct.brandName}</span>
+                      )}
+                      {manualSearchProduct.partNumberActual && (
+                        <span><strong>Part No:</strong>{manualSearchProduct.partNumberActual}</span>
+                      )}
+                      {ctxDesc && (
+                        <span title={ctxDesc} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '600px' }}>
+                          <strong>Desc:</strong>{ctxDesc}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  <div className={styles.manualFieldsGrid}>
+                    <div className={styles.manualField}>
+                      <span className={styles.manualFieldLabel}>Brand</span>
+                      <div className={styles.comboWrapper}>
+                        <input
+                          type="text"
+                          autoComplete="off"
+                          className={styles.manualInput}
+                          value={manualSearchBrandQuery}
+                          onChange={e => {
+                            setManualSearchBrandQuery(e.target.value);
+                            setBrandComboOpen(true);
+                          }}
+                          onFocus={() => {
+                            void ensureErpBrandsLoaded();
+                            // Don't auto-open the dropdown if the brand is
+                            // already an exact Soft1 brand (i.e. selected).
+                            const isCanonical = erpBrandList.some(b => b.name === manualSearchBrandQuery);
+                            if (!isCanonical) setBrandComboOpen(true);
+                          }}
+                          onBlur={() => { window.setTimeout(() => setBrandComboOpen(false), 150); }}
+                          onKeyDown={e => {
+                            if (e.key === 'Escape') { setBrandComboOpen(false); return; }
+                            if (e.key === 'Enter' && brandComboOpen && filteredBrands.length > 0) {
+                              e.preventDefault();
+                              setManualSearchBrandQuery(filteredBrands[0].name);
+                              setBrandComboOpen(false);
+                              return;
+                            }
+                            onKey(e);
+                          }}
+                          placeholder={erpBrandsLoaded ? 'Type to filter Soft1 brands...' : 'Loading brands...'}
+                        />
+                        {brandComboOpen && erpBrandsLoaded && (
+                          <div className={styles.comboList} role="listbox">
+                            {filteredBrands.length === 0 ? (
+                              <div className={styles.comboOptionEmpty}>No matching brands</div>
+                            ) : (
+                              filteredBrands.map(b => (
+                                <button
+                                  key={b.MTRMANFCTR}
+                                  type="button"
+                                  className={styles.comboOption}
+                                  onMouseDown={e => e.preventDefault()}
+                                  onClick={() => {
+                                    setManualSearchBrandQuery(b.name);
+                                    setBrandComboOpen(false);
+                                  }}
+                                >
+                                  {b.name}
+                                </button>
+                              ))
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className={styles.manualField}>
+                      <span className={styles.manualFieldLabel}>Part / Model No</span>
+                      <input
+                        type="text"
+                        autoComplete="off"
+                        className={styles.manualInput}
+                        value={manualSearchPomQuery}
+                        onChange={e => setManualSearchPomQuery(e.target.value)}
+                        onKeyDown={onKey}
+                        placeholder="e.g. 48-4319 or MRB-M-X400-C-DXS5"
+                        autoFocus
+                      />
+                    </div>
+
+                    <div className={styles.manualField}>
+                      <span className={styles.manualFieldLabel}>Description</span>
+                      <input
+                        type="text"
+                        autoComplete="off"
+                        className={styles.manualInput}
+                        value={manualSearchDescQuery}
+                        onChange={e => setManualSearchDescQuery(e.target.value)}
+                        onKeyDown={onKey}
+                        placeholder="Keywords from the product name"
+                      />
+                    </div>
+                  </div>
+
+                  <div className={styles.manualToolbar}>
+                    <button
+                      type="button"
+                      className={styles.manualSearchButton}
+                      disabled={!canSearch}
+                      onClick={triggerSearch}
+                    >
+                      {manualSearchLoading ? 'Searching...' : 'Search Soft1'}
+                    </button>
+                    <span className={styles.manualHint}>
+                      Smart match — dashes, spaces, dots, slashes and case are ignored.
+                    </span>
+                    <span className={styles.manualHintRight}>Press Enter in any field to search</span>
+                  </div>
+                </>
+              );
+            })()}
+
+            <div className={styles.manualResultsCard}>
+              <div className={styles.manualResultsScroll}>
+                {manualSearchLoading ? (
+                  <div className={styles.manualResultsEmpty}>Searching Soft1...</div>
+                ) : manualSearchResults.length === 0 ? (
+                  <div className={styles.manualResultsEmpty}>
+                    {manualSearchTouched
+                      ? 'No results — try a different value or shorten the input.'
+                      : 'Enter a Part/Model number or a Description and press Search.'}
+                  </div>
+                ) : (
+                  <table className={styles.table} style={{ width: '100%' }}>
+                    <thead>
+                      <tr>
+                        <th>Brand</th>
+                        <th>CODE2</th>
+                        <th>CODE</th>
+                        <th>Name</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {manualSearchResults.map(r => {
+                        const selected = r.MTRL === manualSearchSelectedMtrl;
+                        return (
+                          <tr
+                            key={r.MTRL}
+                            className={`${styles.manualResultRow} ${selected ? styles.manualResultRowSelected : ''}`}
+                            onClick={() => setManualSearchSelectedMtrl(r.MTRL)}
+                          >
+                            <td>{r.BRANDNAME ?? '—'}</td>
+                            <td>{r.CODE2 ?? '—'}</td>
+                            <td>{r.CODE ?? '—'}</td>
+                            <td title={r.NAME1 ?? ''}>{r.NAME1 ?? '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+
+            <div className={styles.manualFooterCount}>
+              {manualSearchResults.length > 0
+                ? `${manualSearchResults.length} result(s). Click a row to select, then "Use this match".`
+                : ''}
+            </div>
+          </div>
+        </LookupModal>
+      )}
+    </>
   );
 }

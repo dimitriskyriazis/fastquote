@@ -628,7 +628,6 @@ export default function OffersClient() {
     { field: 'ERPProjectCode', headerName: 'ERP Project Code', filter: 'agTextColumnFilter' },
     { field: 'ERPFWCProjectShortName', headerName: 'ERP FWC Project', filter: 'agTextColumnFilter' },
     { field: 'CustomerName', headerName: 'Customer Name', filter: 'agTextColumnFilter', enableRowGroup: true },
-    { field: 'CustomerID', headerName: 'Customer ID', filter: 'agNumberColumnFilter', type: 'numericColumn', hide: true },
     {
       field: 'Description',
       headerName: 'Description',

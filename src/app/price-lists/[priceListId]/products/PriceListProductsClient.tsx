@@ -247,11 +247,6 @@ export default function PriceListProductsClient({
         },
       },
       {
-        field: "PriceListItemID",
-        hide: true,
-        suppressColumnsToolPanel: true,
-      },
-      {
         field: "Description",
         headerName: "Product Description",
         filter: "agTextColumnFilter",

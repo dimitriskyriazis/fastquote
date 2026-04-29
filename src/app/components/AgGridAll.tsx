@@ -2440,7 +2440,7 @@ export default function AgGridAll({
         api.applyColumnState({
           state: [],
           applyOrder: false,
-          defaultState: { hide: null, pinned: null },
+          defaultState: { pinned: null },
         });
       } catch { /* noop */ }
       columnStateLoadedRef.current = true;
@@ -2505,7 +2505,7 @@ export default function AgGridAll({
             return aOrder - bOrder;
           })
           .map(({ entry }) => entry);
-        api.applyColumnState({ state: ordered, applyOrder: true, defaultState: { hide: null, pinned: null } });
+        api.applyColumnState({ state: ordered, applyOrder: true, defaultState: { pinned: null } });
         const orderedColIds = persisted
           .filter((entry) => typeof entry.order === 'number' && Number.isFinite(entry.order))
           .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
@@ -2531,7 +2531,7 @@ export default function AgGridAll({
       }
 
       // Apply properties first (without order)
-      api.applyColumnState({ state: stateToApply, applyOrder: false, defaultState: { hide: null, pinned: null } });
+      api.applyColumnState({ state: stateToApply, applyOrder: false, defaultState: { pinned: null } });
       // Force selection column back to its defined width after state restore
       if (rowSelection === 'multiple') {
         api.applyColumnState({

@@ -94,14 +94,6 @@ export default function CustomersClient() {
   const columnDefs = useMemo<ColDef[]>(
     () => [
       {
-        field: "CustomerID",
-        headerName: "ID",
-        filter: "agNumberColumnFilter",
-        editable: false,
-        width: 100,
-        hide: true,
-      },
-      {
         field: "CustomerName",
         headerName: "Customer Name",
         filter: "agTextColumnFilter",
