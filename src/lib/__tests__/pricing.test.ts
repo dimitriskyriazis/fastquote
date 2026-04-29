@@ -573,5 +573,41 @@ describe('resolvePricing — single-field edit cascade', () => {
       expect(r.netUnitPrice).toBe(900);
       expect(r.netCost).toBe(800);
     });
+
+    it('preserves NetCost when only TC is populated (user set cost, then list price)', () => {
+      // Repro: user types NetCost=100 first, then ListPrice=200. Stale post-insert
+      // discount defaults (CD=TD=0) must not overwrite the just-entered cost.
+      const input: PricingInput = {
+        listPrice: 200,
+        customerDiscount: 0,
+        telmacoDiscount: 0,
+        netUnitPrice: null,
+        netCost: 100,
+        margin: null,
+        provided: { ...noProvided, listPrice: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netCost).toBe(100);          // preserved
+      expect(r.telmacoDiscount).toBe(50);   // implied from held cost
+      expect(r.netUnitPrice).toBe(200);     // derived from CD=0
+      expect(r.customerDiscount).toBe(0);   // unchanged
+    });
+
+    it('preserves NetUnitPrice when only NP is populated', () => {
+      const input: PricingInput = {
+        listPrice: 200,
+        customerDiscount: 0,
+        telmacoDiscount: 0,
+        netUnitPrice: 150,
+        netCost: null,
+        margin: null,
+        provided: { ...noProvided, listPrice: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(150);     // preserved
+      expect(r.customerDiscount).toBe(25);  // implied from held price
+      expect(r.netCost).toBe(200);          // derived from TD=0
+      expect(r.telmacoDiscount).toBe(0);    // unchanged
+    });
   });
 });

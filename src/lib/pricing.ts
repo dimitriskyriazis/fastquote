@@ -263,17 +263,25 @@ const resolveSingleFieldEdit = (input: PricingInput): ResolvedPricing | null => 
   // ListPrice edit: hold discounts (CD + ACD), recompute NP and TC.
   if (p.listPrice) {
     if (!hasValidLp) return null;
-    // If NP and TC are already populated (stale discount defaults common after insert)
-    // prefer holding the prices and deriving the implied discounts. Otherwise recompute
-    // prices from the discounts.
-    if (np != null && tc != null) {
-      // Hold ACD; CD = totalImpliedDiscount - ACD.
+    // Stale-default guard: post-insert rows have CD=TD=0, so blindly recomputing
+    // NP/TC from the discounts would clobber any value the user already typed
+    // into NetCost or NetUnitPrice. Hold whichever side the user has populated
+    // and derive the implied discount; only recompute the side that is still null.
+    if (np != null || tc != null) {
+      const newNp = np != null
+        ? np
+        : (cd != null ? roundTo(lp * (1 - percentageToFactor(cd + acdValue))) : null);
+      const newTc = tc != null
+        ? tc
+        : (td != null ? roundTo(lp * (1 - percentageToFactor(td))) : null);
+      const newCd = np != null ? roundTo((1 - np / lp) * 100 - acdValue) : cd;
+      const newTd = tc != null ? roundTo((1 - tc / lp) * 100) : td;
       return {
-        customerDiscount: roundTo((1 - np / lp) * 100 - acdValue),
-        telmacoDiscount: roundTo((1 - tc / lp) * 100),
-        netUnitPrice: np,
-        netCost: tc,
-        margin: deriveMarginPercent(np, tc),
+        customerDiscount: newCd,
+        telmacoDiscount: newTd,
+        netUnitPrice: newNp,
+        netCost: newTc,
+        margin: deriveMarginPercent(newNp, newTc),
         additionalCustomerDiscount: acd,
       };
     }
