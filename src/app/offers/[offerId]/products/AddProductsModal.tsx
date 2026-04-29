@@ -196,7 +196,6 @@ const ProductsGridPanel = React.memo(function ProductsGridPanel({
           getRowClass={getProductRowClass}
           columnStateNamespace="add-products-modal-v2"
           applyColumnStateOrder={true}
-          maintainColumnOrder={true}
           disableAutoSize={true}
         />
       </div>

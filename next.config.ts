@@ -3,6 +3,11 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // Raise the 10MB middleware/proxy body buffer so large price-list Excel
+  // uploads reach /api/price-lists/import intact.
+  experimental: {
+    proxyClientMaxBodySize: '500mb',
+  },
   async headers() {
     return [
       {

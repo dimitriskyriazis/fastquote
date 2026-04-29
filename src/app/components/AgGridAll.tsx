@@ -1269,7 +1269,7 @@ export default function AgGridAll({
   enableColumnStatePersistence = true,
   autoPersistColumnState = true,
   applyColumnStateOrder = false,
-  maintainColumnOrder = false,
+  maintainColumnOrder = true,
   columnStateNamespace = '',
   onResponse,
   disableAutoSize = false,

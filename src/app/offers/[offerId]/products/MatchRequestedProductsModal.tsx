@@ -1575,7 +1575,6 @@ export default function MatchRequestedProductsModal({
                 allowRowClickSelection
                 columnStateNamespace="match-requested-products-v3"
                 applyColumnStateOrder={true}
-                maintainColumnOrder={true}
                 disableAutoSize={true}
                 getContextMenuItems={handleContextMenuItems}
                 suppressNoRowsOverlay={

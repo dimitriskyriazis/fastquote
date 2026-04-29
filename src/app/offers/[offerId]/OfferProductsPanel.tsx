@@ -7309,7 +7309,6 @@ const requestedColumnDefsMap = useMemo(
             enableColumnStatePersistence
             autoPersistColumnState={false}
             applyColumnStateOrder
-            maintainColumnOrder
             columnStateNamespace={columnStateNamespace}
             onTotalsChange={handleTotalsChange}
             onResponse={handleGridResponse}
