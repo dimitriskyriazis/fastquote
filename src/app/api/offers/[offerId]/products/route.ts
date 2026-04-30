@@ -396,14 +396,18 @@ const normalizeIntValue = (value: unknown): number | null => {
   return null;
 };
 
-const normalizeMoneyValue = (value: unknown): number | null => {
+const normalizeMoneyValue = (
+  value: unknown,
+  { allowNegative = false }: { allowNegative?: boolean } = {},
+): number | null => {
   if (value == null) return null;
-  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+  const accept = (n: number) => Number.isFinite(n) && (allowNegative || n >= 0);
+  if (typeof value === 'number' && accept(value)) return value;
   if (typeof value === 'string') {
     const trimmed = value.trim();
     if (!trimmed) return null;
     const parsed = Number.parseFloat(trimmed);
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+    return accept(parsed) ? parsed : null;
   }
   return null;
 };
@@ -1800,13 +1804,13 @@ export async function PATCH(
         const telmacoDiscount = hasTelmacoDiscount
           ? normalizeDiscountValue(entry?.TelmacoDiscount ?? null)
           : null;
-        const netUnitPrice = hasNetUnitPrice ? normalizeMoneyValue(entry?.NetUnitPrice ?? null) : null;
-        const netCostOtherCurrency = hasNetCostOtherCurrency ? normalizeMoneyValue(entry?.NetCostOtherCurrency ?? null) : null;
+        const netUnitPrice = hasNetUnitPrice ? normalizeMoneyValue(entry?.NetUnitPrice ?? null, { allowNegative: true }) : null;
+        const netCostOtherCurrency = hasNetCostOtherCurrency ? normalizeMoneyValue(entry?.NetCostOtherCurrency ?? null, { allowNegative: true }) : null;
         const otherCurrencyId = hasOtherCurrencyID ? normalizeIntValue(entry?.OtherCurrencyID ?? null) : null;
         const currencyCostModifier = hasCurrencyCostModifier ? normalizePositiveMoneyValue(entry?.CurrencyCostModifier ?? null) : null;
-        const netCost = hasNetCost ? normalizeMoneyValue(entry?.NetCost ?? null) : null;
+        const netCost = hasNetCost ? normalizeMoneyValue(entry?.NetCost ?? null, { allowNegative: true }) : null;
         const margin = hasMargin ? normalizePercentValue(entry?.Margin ?? null, { allowNegative: true }) : null;
-        const listPrice = hasListPrice ? normalizeMoneyValue(entry?.ListPrice ?? null) : null;
+        const listPrice = hasListPrice ? normalizeMoneyValue(entry?.ListPrice ?? null, { allowNegative: true }) : null;
         const isCategoryValue = hasIsCategory ? normalizeBoolean(entry?.IsCategory ?? null) : null;
         const isPrintableValue = hasIsPrintable ? normalizeBoolean(entry?.IsPrintable ?? null) : null;
         const isCommentValue = hasIsComment ? normalizeBoolean(entry?.IsComment ?? null) : null;
@@ -2166,7 +2170,7 @@ export async function PATCH(
         const costFieldsProvided = entry.hasNetCostOtherCurrency || entry.hasOtherCurrencyID || entry.hasCurrencyCostModifier;
         const resolvedNetCostOtherCurrency = entry.hasNetCostOtherCurrency
           ? entry.netCostOtherCurrency
-          : normalizeMoneyValue(current.NetCostOtherCurrency ?? null);
+          : normalizeMoneyValue(current.NetCostOtherCurrency ?? null, { allowNegative: true });
         const resolvedOtherCurrencyId = entry.hasOtherCurrencyID
           ? entry.otherCurrencyId
           : normalizeIntValue(current.OtherCurrencyID ?? null);
@@ -2180,7 +2184,7 @@ export async function PATCH(
 
         const listPriceCandidate = entry.hasListPrice
           ? entry.listPrice
-          : normalizeMoneyValue(current.ListPrice);
+          : normalizeMoneyValue(current.ListPrice, { allowNegative: true });
         const fallbackListPrice = listPriceCandidate ?? computedNetCostFromOther ?? null;
         const quantity = entry.hasQuantity
           ? entry.Quantity
@@ -2208,7 +2212,7 @@ export async function PATCH(
               ? entry.netCost
               : costFieldsProvided && computedNetCostFromOther != null
                 ? computedNetCostFromOther
-                : normalizeMoneyValue(current.NetCost ?? null);
+                : normalizeMoneyValue(current.NetCost ?? null, { allowNegative: true });
             const commentInput: PricingInput = {
               listPrice: fallbackListPrice,
               customerDiscount: entry.hasCustomerDiscount
@@ -2222,7 +2226,7 @@ export async function PATCH(
                 : normalizeDiscountValue(current.TelmacoDiscount ?? null),
               netUnitPrice: entry.hasNetUnitPrice
                 ? entry.netUnitPrice
-                : normalizeMoneyValue(current.NetUnitPrice ?? null),
+                : normalizeMoneyValue(current.NetUnitPrice ?? null, { allowNegative: true }),
               netCost: nextNetCost,
               margin: entry.hasMargin
                 ? entry.margin
@@ -2260,7 +2264,7 @@ export async function PATCH(
               ? entry.netCost
               : costFieldsProvided && computedNetCostFromOther != null
                 ? computedNetCostFromOther
-                : normalizeMoneyValue(current.NetCost ?? null);
+                : normalizeMoneyValue(current.NetCost ?? null, { allowNegative: true });
             const input: PricingInput = {
               listPrice: fallbackListPrice,
               customerDiscount: entry.hasCustomerDiscount
@@ -2274,7 +2278,7 @@ export async function PATCH(
                 : normalizeDiscountValue(current.TelmacoDiscount ?? null),
               netUnitPrice: entry.hasNetUnitPrice
                 ? entry.netUnitPrice
-                : normalizeMoneyValue(current.NetUnitPrice ?? null),
+                : normalizeMoneyValue(current.NetUnitPrice ?? null, { allowNegative: true }),
               netCost: nextNetCost,
               margin: entry.hasMargin
                 ? entry.margin
@@ -2313,8 +2317,8 @@ export async function PATCH(
             customerDiscount: normalizeDiscountValue(current.CustomerDiscount ?? null),
             additionalCustomerDiscount: normalizeDiscountValue(current.AdditionalCustomerDiscount ?? null),
             telmacoDiscount: normalizeDiscountValue(current.TelmacoDiscount ?? null),
-            netUnitPrice: normalizeMoneyValue(current.NetUnitPrice ?? null),
-            netCost: normalizeMoneyValue(current.NetCost ?? null),
+            netUnitPrice: normalizeMoneyValue(current.NetUnitPrice ?? null, { allowNegative: true }),
+            netCost: normalizeMoneyValue(current.NetCost ?? null, { allowNegative: true }),
             margin: normalizePercentValue(current.Margin ?? null, { allowNegative: true }),
           };
         }
