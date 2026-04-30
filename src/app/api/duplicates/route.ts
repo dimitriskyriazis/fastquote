@@ -246,17 +246,34 @@ export async function POST(req: NextRequest) {
         const cleared = clearedPart;
         const request = pool.request()
           .input("partNumber", sql.NVarChar(255), cleared);
-        let partQuery = `SELECT TOP 10 p.ID, p.PartNumber, p.ModelNumber, p.Description FROM dbo.Products p WHERE (${stripXBetweenDigitsSql('p.PartNumberCleared')} = @partNumber OR ${stripXBetweenDigitsSql('p.LegacyPartNoCleaned')} = @partNumber)`;
+        let partQuery = `SELECT TOP 10 p.ID, p.PartNumber, p.ModelNumber, p.Description,
+            CASE WHEN ${stripXBetweenDigitsSql('p.PartNumberCleared')} = @partNumber OR ${stripXBetweenDigitsSql('p.LegacyPartNoCleaned')} = @partNumber THEN 1 ELSE 0 END AS MatchedPart,
+            CASE WHEN ${stripXBetweenDigitsSql('p.ModelNumberCleared')} = @partNumber THEN 1 ELSE 0 END AS MatchedModel
+          FROM dbo.Products p WHERE (${stripXBetweenDigitsSql('p.PartNumberCleared')} = @partNumber OR ${stripXBetweenDigitsSql('p.LegacyPartNoCleaned')} = @partNumber OR ${stripXBetweenDigitsSql('p.ModelNumberCleared')} = @partNumber)`;
         if (brandId) {
           request.input("brandId", sql.Int, brandId);
           partQuery += ` AND p.BrandID = @brandId`;
         }
-        const result = await request.query<{ ID: number; PartNumber: string | null; ModelNumber: string | null; Description: string | null }>(partQuery);
-        if (result.recordset.length > 0) {
+        const result = await request.query<{ ID: number; PartNumber: string | null; ModelNumber: string | null; Description: string | null; MatchedPart: number; MatchedModel: number }>(partQuery);
+        const samePart = result.recordset.filter((r) => r.MatchedPart === 1);
+        const crossModel = result.recordset.filter((r) => r.MatchedPart !== 1 && r.MatchedModel === 1);
+        if (samePart.length > 0) {
           warnings.push({
             type: "partNumber",
             label: "Same Part Number",
-            matches: result.recordset.map((r) => ({
+            matches: samePart.map((r) => ({
+              id: r.ID,
+              name: r.Description || `Product #${r.ID}`,
+              partNumber: r.PartNumber,
+              modelNumber: r.ModelNumber,
+            })),
+          });
+        }
+        if (crossModel.length > 0) {
+          warnings.push({
+            type: "partNumberAsModel",
+            label: "Part Number entered matches existing Model Number",
+            matches: crossModel.map((r) => ({
               id: r.ID,
               name: r.Description || `Product #${r.ID}`,
               partNumber: r.PartNumber,
@@ -271,17 +288,34 @@ export async function POST(req: NextRequest) {
         const cleared = clearedModel;
         const request = pool.request()
           .input("modelNumber", sql.NVarChar(255), cleared);
-        let modelQuery = `SELECT TOP 10 p.ID, p.PartNumber, p.ModelNumber, p.Description FROM dbo.Products p WHERE ${stripXBetweenDigitsSql('p.ModelNumberCleared')} = @modelNumber`;
+        let modelQuery = `SELECT TOP 10 p.ID, p.PartNumber, p.ModelNumber, p.Description,
+            CASE WHEN ${stripXBetweenDigitsSql('p.ModelNumberCleared')} = @modelNumber THEN 1 ELSE 0 END AS MatchedModel,
+            CASE WHEN ${stripXBetweenDigitsSql('p.PartNumberCleared')} = @modelNumber OR ${stripXBetweenDigitsSql('p.LegacyPartNoCleaned')} = @modelNumber THEN 1 ELSE 0 END AS MatchedPart
+          FROM dbo.Products p WHERE (${stripXBetweenDigitsSql('p.ModelNumberCleared')} = @modelNumber OR ${stripXBetweenDigitsSql('p.PartNumberCleared')} = @modelNumber OR ${stripXBetweenDigitsSql('p.LegacyPartNoCleaned')} = @modelNumber)`;
         if (brandId) {
           request.input("brandId", sql.Int, brandId);
           modelQuery += ` AND p.BrandID = @brandId`;
         }
-        const result = await request.query<{ ID: number; PartNumber: string | null; ModelNumber: string | null; Description: string | null }>(modelQuery);
-        if (result.recordset.length > 0) {
+        const result = await request.query<{ ID: number; PartNumber: string | null; ModelNumber: string | null; Description: string | null; MatchedModel: number; MatchedPart: number }>(modelQuery);
+        const sameModel = result.recordset.filter((r) => r.MatchedModel === 1);
+        const crossPart = result.recordset.filter((r) => r.MatchedModel !== 1 && r.MatchedPart === 1);
+        if (sameModel.length > 0) {
           warnings.push({
             type: "modelNumber",
             label: "Same Model Number",
-            matches: result.recordset.map((r) => ({
+            matches: sameModel.map((r) => ({
+              id: r.ID,
+              name: r.Description || `Product #${r.ID}`,
+              partNumber: r.PartNumber,
+              modelNumber: r.ModelNumber,
+            })),
+          });
+        }
+        if (crossPart.length > 0) {
+          warnings.push({
+            type: "modelNumberAsPart",
+            label: "Model Number entered matches existing Part Number",
+            matches: crossPart.map((r) => ({
               id: r.ID,
               name: r.Description || `Product #${r.ID}`,
               partNumber: r.PartNumber,
