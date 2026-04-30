@@ -1566,6 +1566,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           || colId === 'ag-Grid-AutoColumn'
           || colId === ''
           || cell.classList.contains('ag-selection-checkbox')
+          || cell.classList.contains('offer-products-grid__cell--pricelist-active')
+          || cell.classList.contains('offer-products-grid__cell--pricelist-expiring')
+          || cell.classList.contains('offer-products-grid__cell--pricelist-expired')
+          || cell.classList.contains('offer-products-grid__cell--negative-margin')
           || cell.querySelector('.ag-selection-checkbox, .ag-row-drag, .ag-drag-handle')
         ) continue;
         (cell as HTMLElement).style.setProperty('background-color', '#bfdbfe', 'important');

@@ -540,14 +540,31 @@
   opacity: 0 !important;
 }
 
-.gridShell :global(.ag-cell.ag-range-selected),
-.gridShell :global(.ag-cell.ag-cell-range-selected),
-.gridShell :global(.ag-cell.ag-range-single-cell),
-.gridShell :global(.ag-cell.ag-range-selected:hover),
-.gridShell :global(.ag-cell.ag-cell-range-selected:hover),
-.gridShell :global(.ag-cell.ag-range-single-cell:hover) {
+.gridShell :global(.ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+.gridShell :global(.ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+.gridShell :global(.ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+.gridShell :global(.ag-cell.ag-range-selected:hover:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+.gridShell :global(.ag-cell.ag-cell-range-selected:hover:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+.gridShell :global(.ag-cell.ag-range-single-cell:hover:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)) {
   cursor: default !important;
   background-color: transparent !important;
+}
+
+/* Pricelist/negative-margin range-selected cells: keep cursor default but
+   skip background-color override — semantic colours are owned by other rules. */
+.gridShell :global(.ag-cell.ag-range-selected.offer-products-grid__cell--pricelist-active),
+.gridShell :global(.ag-cell.ag-cell-range-selected.offer-products-grid__cell--pricelist-active),
+.gridShell :global(.ag-cell.ag-range-single-cell.offer-products-grid__cell--pricelist-active),
+.gridShell :global(.ag-cell.ag-range-selected.offer-products-grid__cell--pricelist-expiring),
+.gridShell :global(.ag-cell.ag-cell-range-selected.offer-products-grid__cell--pricelist-expiring),
+.gridShell :global(.ag-cell.ag-range-single-cell.offer-products-grid__cell--pricelist-expiring),
+.gridShell :global(.ag-cell.ag-range-selected.offer-products-grid__cell--pricelist-expired),
+.gridShell :global(.ag-cell.ag-cell-range-selected.offer-products-grid__cell--pricelist-expired),
+.gridShell :global(.ag-cell.ag-range-single-cell.offer-products-grid__cell--pricelist-expired),
+.gridShell :global(.ag-cell.ag-range-selected.offer-products-grid__cell--negative-margin),
+.gridShell :global(.ag-cell.ag-cell-range-selected.offer-products-grid__cell--negative-margin),
+.gridShell :global(.ag-cell.ag-range-single-cell.offer-products-grid__cell--negative-margin) {
+  cursor: default !important;
 }
 
 /* For offer-products-grid, preserve row-specific cell colors when range-selected.
@@ -556,18 +573,19 @@
    the row's hover colour paint across range cells (no white "hole" inside
    the selection on hover). The range outline is drawn separately by AG Grid
    on top. */
-/* Product rows: white */
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row-hover):not(:hover) .ag-cell.ag-cell-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-single-cell) {
+/* Product rows: white. Excludes pricelist/negative-margin so semantic colours stay. */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row-hover):not(:hover) .ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)) {
   cursor: default !important;
   background-color: #ffffff !important; /* Keep product row color */
 }
 
-/* Option rows: light purple — keep row color when cells are range-selected */
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row-hover):not(:hover) .ag-cell.ag-cell-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-single-cell) {
+/* Option rows: light purple — keep row color when cells are range-selected.
+   Excludes pricelist/negative-margin so semantic colours stay. */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row-hover):not(:hover) .ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)) {
   cursor: default !important;
   background-color: #e9d8fd !important; /* Keep option row color */
 }
@@ -614,28 +632,29 @@
    white background shows through, leaving a "white hole" inside the hover
    stripe. Higher specificity than the range rules above (matching :hover /
    .ag-row-hover plus an extra row state selector). */
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-cell-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-single-cell),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-cell-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-single-cell),
-:global(.offer-products-grid) .gridShell :global(.ag-row:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category):not(.offer-row--option):not(.ag-row-pinned):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category):not(.offer-row--option):not(.ag-row-pinned):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-cell-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category):not(.offer-row--option):not(.ag-row-pinned):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-single-cell),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category):not(.offer-row--option):not(.ag-row-pinned):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category):not(.offer-row--option):not(.ag-row-pinned):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-cell-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category):not(.offer-row--option):not(.ag-row-pinned):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-single-cell) {
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category):not(.offer-row--option):not(.ag-row-pinned):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category):not(.offer-row--option):not(.ag-row-pinned):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category):not(.offer-row--option):not(.ag-row-pinned):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category):not(.offer-row--option):not(.ag-row-pinned):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category):not(.offer-row--option):not(.ag-row-pinned):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--category):not(.offer-row--option):not(.ag-row-pinned):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)) {
   background-color: #f5f5f5 !important;
 }
 
-/* Option rows: keep purple hover colour on range-selected cells (no white "hole") */
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-cell-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-single-cell),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-cell-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-single-cell) {
+/* Option rows: keep purple hover colour on range-selected cells (no white "hole").
+   Excludes pricelist/negative-margin so their semantic colours stay. */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--negative-margin)) {
   background-color: #d6c5fa !important;
 }
 
@@ -820,6 +839,39 @@
    the cell stays on its row colour, and only the range outline marks the
    selection. Hovering or selecting the row therefore can't visually mutate the
    range cells either. */
+
+/* FORCE pricelist/negative-margin cell colours to win against any other rule
+   when the cell is range-selected, regardless of row state (hover, selected,
+   range-selected, focus, etc.). Maximum specificity via stacked global class
+   selectors so these always beat row-state hover/selection paints. */
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-active.offer-products-grid__cell--pricelist-active.ag-range-selected),
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-active.offer-products-grid__cell--pricelist-active.ag-cell-range-selected),
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-active.offer-products-grid__cell--pricelist-active.ag-range-single-cell),
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-active.offer-products-grid__cell--pricelist-active.ag-cell-range-single-cell) {
+  background-color: #b7ffcf !important;
+}
+
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-expiring.offer-products-grid__cell--pricelist-expiring.ag-range-selected),
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-expiring.offer-products-grid__cell--pricelist-expiring.ag-cell-range-selected),
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-expiring.offer-products-grid__cell--pricelist-expiring.ag-range-single-cell),
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-expiring.offer-products-grid__cell--pricelist-expiring.ag-cell-range-single-cell) {
+  background-color: #fff8a5 !important;
+}
+
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-expired.offer-products-grid__cell--pricelist-expired.ag-range-selected),
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-expired.offer-products-grid__cell--pricelist-expired.ag-cell-range-selected),
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-expired.offer-products-grid__cell--pricelist-expired.ag-range-single-cell),
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-expired.offer-products-grid__cell--pricelist-expired.ag-cell-range-single-cell) {
+  background-color: #ffcfcf !important;
+}
+
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--negative-margin.offer-products-grid__cell--negative-margin.ag-range-selected),
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--negative-margin.offer-products-grid__cell--negative-margin.ag-cell-range-selected),
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--negative-margin.offer-products-grid__cell--negative-margin.ag-range-single-cell),
+:global(.offer-products-grid.offer-products-grid.offer-products-grid .ag-cell.offer-products-grid__cell--negative-margin.offer-products-grid__cell--negative-margin.ag-cell-range-single-cell) {
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
+}
 
 .gridShell[data-suppress-sidebar="true"] :global(.ag-side-bar),
 .gridShell[data-suppress-sidebar="true"] :global(.ag-side-panel) {
