@@ -56,6 +56,55 @@ export default function CreateDraftOfferButton({ offerId, orderSignedDate, class
         return;
       }
     }
+
+    try {
+      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/priced-comments`, {
+        cache: 'no-store',
+      });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          ok: boolean;
+          comments?: Array<{
+            treeOrdering: number | null;
+            description: string | null;
+            quantity: number | null;
+            netUnitPrice: number | null;
+            totalPrice: number | null;
+          }>;
+        };
+        const priced = data.ok ? data.comments ?? [] : [];
+        if (priced.length > 0) {
+          const fmtMoney = (n: number | null) =>
+            n == null ? '—' : n.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const fmtQty = (n: number | null) =>
+            n == null ? '—' : Number.isInteger(n) ? String(n) : n.toLocaleString('el-GR');
+          const pricedConfirmed = await showConfirmDialog({
+            title: 'Comments with pricing detected',
+            message:
+              'The following comment lines have a price set. Comments are NOT sent to Soft1 — their pricing will be ignored in the draft order. Continue anyway?',
+            confirmLabel: 'Continue',
+            cancelLabel: 'Cancel',
+            tone: 'danger',
+            details: {
+              columns: ['#', 'Description', 'Qty', 'Net Unit Price', 'Total Price'],
+              rows: priced.map((c) => [
+                c.treeOrdering != null ? String(c.treeOrdering) : '—',
+                c.description ?? '—',
+                fmtQty(c.quantity),
+                fmtMoney(c.netUnitPrice),
+                fmtMoney(c.totalPrice),
+              ]),
+            },
+          });
+          if (!pricedConfirmed) {
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      console.error('priced-comments precheck failed', err);
+    }
+
     const confirmed = await showConfirmDialog({
       title: 'Warning!',
       message:
@@ -67,7 +116,7 @@ export default function CreateDraftOfferButton({ offerId, orderSignedDate, class
     if (confirmed) {
       setWizardOpen(true);
     }
-  }, [currentOrderSignedDate]);
+  }, [currentOrderSignedDate, offerId]);
 
   const handleWizardClose = useCallback(() => {
     setWizardOpen(false);
