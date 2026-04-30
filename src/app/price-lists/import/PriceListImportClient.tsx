@@ -338,7 +338,7 @@ type SheetMapping = {
   selection: Partial<Record<HeaderColumnKey, number | null>>;
   rowCount: number;
   enabled: boolean;
-  previewRows: Record<number, string>[];
+  previewRows: Record<number, unknown>[];
 };
 
 type PreviewColumn = {
@@ -615,13 +615,6 @@ const scoreDataBelow = (rows: unknown[][], headerIdx: number): number => {
   return bonus;
 };
 
-const stringifyCellValue = (value: unknown): string => {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return "";
-};
-
 /** Check if a row contains any cell that looks like a long sentence (metadata/title). */
 const hasLongTextCell = (row: unknown[]): boolean =>
   row.some((cell) => {
@@ -746,7 +739,13 @@ const autoSelectUniqueSuggestions = (
   return selection;
 };
 
-const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: number, enabled: boolean): SheetMapping => {
+const analyzeSheet = (
+  sheetName: string,
+  rows: unknown[][],
+  rawRows: unknown[][],
+  fallbackIndex: number,
+  enabled: boolean,
+): SheetMapping => {
   const detection = detectHeaderRow(rows);
   // For multi-row headers use the merged row as column source; data starts after all header rows.
   const headerRow = detection.mergedRow ?? (Array.isArray(rows[detection.index]) ? rows[detection.index] : []);
@@ -761,12 +760,18 @@ const analyzeSheet = (sheetName: string, rows: unknown[][], fallbackIndex: numbe
     .slice(dataStartIndex)
     .filter((row) => Array.isArray(row) && row.some(hasCellValue));
   const rowCount = nonEmptyDataRows.length;
-  const previewRows = nonEmptyDataRows
+  // Pull preview rows from the raw-typed sheet so we can keep numeric cells as
+  // numbers (and re-format them per the user's decimal choice) while exposing
+  // text cells literally — that surfaces mixed-format columns to the user.
+  const rawDataRows = rawRows
+    .slice(dataStartIndex)
+    .filter((row) => Array.isArray(row) && row.some(hasCellValue));
+  const previewRows = rawDataRows
     .slice(0, 20)
     .map((row) => {
-      const preview: Record<number, string> = {};
+      const preview: Record<number, unknown> = {};
       row.forEach((cell, colIdx) => {
-        preview[colIdx] = stringifyCellValue(cell);
+        preview[colIdx] = cell;
       });
       return preview;
     });
@@ -789,8 +794,9 @@ const analyzeWorkbook = (workbook: XLSXTypes.WorkBook, xlsx: XlsxModule): SheetM
     const sheet = workbook.Sheets?.[sheetName];
     if (!sheet) continue;
     const rows = xlsx.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
-    if (!Array.isArray(rows)) continue;
-    sheets.push(analyzeSheet(sheetName, rows, sheets.length, sheets.length === 0));
+    const rawRows = xlsx.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: true });
+    if (!Array.isArray(rows) || !Array.isArray(rawRows)) continue;
+    sheets.push(analyzeSheet(sheetName, rows, rawRows, sheets.length, sheets.length === 0));
   }
   return sheets;
 };
@@ -1680,15 +1686,38 @@ export default function PriceListImportClient({
     }).filter((col): col is PreviewColumn => Boolean(col));
   }, [activeSheet]);
 
-  const displayPreviewRows = useMemo<Record<number, string>[]>(() => {
+  const displayPreviewRows = useMemo<Record<number, unknown>[]>(() => {
     if (!activeSheet) return [];
     const partCol = activeSheet.selection.partNumber;
     const priceCol = activeSheet.selection.listPrice;
     const rows = activeSheet.previewRows;
     if (partCol == null || priceCol == null) return rows.slice(0, 3);
-    const isFilled = (value: string | undefined) => typeof value === "string" && value.trim().length > 0;
+    const isFilled = (value: unknown) => {
+      if (value === null || value === undefined) return false;
+      if (typeof value === "string") return value.trim().length > 0;
+      if (typeof value === "number") return Number.isFinite(value);
+      return true;
+    };
     return rows.filter((row) => isFilled(row[partCol]) && isFilled(row[priceCol])).slice(0, 3);
   }, [activeSheet]);
+
+  const formatPreviewCell = useCallback(
+    (value: unknown): string => {
+      if (value === null || value === undefined) return "";
+      if (typeof value === "string") return value;
+      if (typeof value === "boolean") return String(value);
+      if (typeof value === "number" && Number.isFinite(value)) {
+        const isInteger = Number.isInteger(value);
+        const formatted = isInteger ? value.toFixed(0) : value.toString();
+        if (values.decimalFormat === "commaDecimal") {
+          return formatted.replace(".", ",");
+        }
+        return formatted;
+      }
+      return "";
+    },
+    [values.decimalFormat],
+  );
 
   const handleSheetChange = useCallback((nextIndex: number) => {
     setFileValidation((prev) => {
@@ -2738,7 +2767,7 @@ export default function PriceListImportClient({
                                                 key={`${rowIndex}-${column.key}`}
                                                 className={column.isListPrice ? styles.previewListPrice : ""}
                                               >
-                                                {row[column.columnIndex] ?? ""}
+                                                {formatPreviewCell(row[column.columnIndex])}
                                               </td>
                                             ))}
                                           </tr>

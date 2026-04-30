@@ -1499,12 +1499,23 @@ async function handleExecute(
     productsLinked: Array<{ productId: number; mtrl: number; code: string }>;
     project: { id: number; code: string; isNew: boolean } | null;
     order: { findocId: number; finCode: string } | null;
+    orderLines: Array<{
+      position: number | null;
+      code: string;
+      description: string | null;
+      qty: number;
+      price: number;
+      lineval: number;
+      cost: number | null;
+      warrantyMonths: number | null;
+    }>;
   } = {
     brandsCreated: [],
     productsCreated: [],
     productsLinked: [],
     project: null,
     order: null,
+    orderLines: [],
   };
 
   // 1. Create missing brands
@@ -1610,25 +1621,37 @@ async function handleExecute(
       Warranty: number | null;
       ERPID: number | null;
       ERPCode: string | null;
+      Description: string | null;
     }>(`
-      SELECT od.TreeOrdering, od.ProductID, od.Quantity, od.NetUnitPrice, od.NetCost, od.Warranty, p.ERPID, p.ERPCode
+      SELECT od.TreeOrdering, od.ProductID, od.Quantity, od.NetUnitPrice, od.NetCost, od.Warranty, p.ERPID, p.ERPCode, p.Description
       FROM dbo.OfferDetails od
       INNER JOIN dbo.Products p ON od.ProductID = p.ID
       WHERE od.OfferID = @offerId AND od.ProductID IS NOT NULL AND p.ERPID IS NOT NULL
     `);
 
     const lines = (linesRes.recordset ?? []).sort((a, b) => (a.TreeOrdering ?? 0) - (b.TreeOrdering ?? 0));
-    const orderLines: OrderLineForCreation[] = lines
-      .filter(l => l.ERPID != null && l.ERPCode != null && l.Quantity != null && l.Quantity > 0 && l.NetUnitPrice != null && l.NetUnitPrice >= 0)
-      .map(l => ({
-        erpId: l.ERPID!,
-        erpCode: l.ERPCode!,
-        qty: Number(l.Quantity),
-        price: Number(l.NetUnitPrice),
-        netCost: l.NetCost != null ? Number(l.NetCost) : null,
-        warrantyMonths: l.Warranty != null ? Number(l.Warranty) * 12 : null,
-        position: l.TreeOrdering != null ? Number(l.TreeOrdering) : null,
-      }));
+    const eligibleLines = lines.filter(
+      l => l.ERPID != null && l.ERPCode != null && l.Quantity != null && l.Quantity > 0 && l.NetUnitPrice != null && l.NetUnitPrice >= 0,
+    );
+    const orderLines: OrderLineForCreation[] = eligibleLines.map(l => ({
+      erpId: l.ERPID!,
+      erpCode: l.ERPCode!,
+      qty: Number(l.Quantity),
+      price: Number(l.NetUnitPrice),
+      netCost: l.NetCost != null ? Number(l.NetCost) : null,
+      warrantyMonths: l.Warranty != null ? Number(l.Warranty) * 12 : null,
+      position: l.TreeOrdering != null ? Number(l.TreeOrdering) : null,
+    }));
+    results.orderLines = eligibleLines.map(l => ({
+      position: l.TreeOrdering != null ? Number(l.TreeOrdering) : null,
+      code: l.ERPCode!,
+      description: l.Description,
+      qty: Number(l.Quantity),
+      price: Number(l.NetUnitPrice),
+      lineval: Number(l.Quantity) * Number(l.NetUnitPrice),
+      cost: l.NetCost != null ? Number(l.NetCost) : null,
+      warrantyMonths: l.Warranty != null ? Number(l.Warranty) * 12 : null,
+    }));
 
     const orderInfo = await createOrderWithLines({
       offerId,

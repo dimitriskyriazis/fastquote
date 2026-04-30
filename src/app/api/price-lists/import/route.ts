@@ -225,22 +225,41 @@ const normalizeHeaderValue = (value: unknown): string | null => {
 };
 
 const formatNumericPortion = (numericPortion: string, format: PriceListDecimalFormat) => {
-  if (format === "dotDecimal") {
-    return numericPortion.replace(/,/g, "");
-  }
-  if (format === "commaDecimal") {
-    return numericPortion.replace(/\./g, "").replace(/,/g, ".");
-  }
   const commaCount = (numericPortion.match(/,/g) || []).length;
   const dotCount = (numericPortion.match(/\./g) || []).length;
+  const lastComma = numericPortion.lastIndexOf(",");
+  const lastDot = numericPortion.lastIndexOf(".");
+
+  // When both separators exist, the right-most one is unambiguously the decimal.
+  // Trust this signal over the user's hint — Excel files frequently mix storage
+  // formats (real numbers vs. text cells) so the hint can't be applied row-by-row.
   if (commaCount > 0 && dotCount > 0) {
-    // Infer decimal separator from the right-most separator.
-    const lastComma = numericPortion.lastIndexOf(",");
-    const lastDot = numericPortion.lastIndexOf(".");
     if (lastComma > lastDot) {
       return numericPortion.replace(/\./g, "").replace(/,/g, ".");
     }
     return numericPortion.replace(/,/g, "");
+  }
+
+  // Single-separator decimal heuristic: a real thousands separator always has
+  // exactly 3 trailing digits, so 1-2 trailing digits must be a decimal mark
+  // even when the user picked the opposite locale.
+  const looksLikeSingleDecimal = (separatorIdx: number, count: number) => {
+    if (count !== 1) return false;
+    const trailing = numericPortion.length - separatorIdx - 1;
+    return trailing >= 1 && trailing <= 2;
+  };
+
+  if (format === "dotDecimal") {
+    if (commaCount > 0 && dotCount === 0 && looksLikeSingleDecimal(lastComma, commaCount)) {
+      return numericPortion.replace(",", ".");
+    }
+    return numericPortion.replace(/,/g, "");
+  }
+  if (format === "commaDecimal") {
+    if (dotCount > 0 && commaCount === 0 && looksLikeSingleDecimal(lastDot, dotCount)) {
+      return numericPortion;
+    }
+    return numericPortion.replace(/\./g, "").replace(/,/g, ".");
   }
   if (commaCount > 0 && dotCount === 0) {
     return numericPortion.replace(/,/g, ".");

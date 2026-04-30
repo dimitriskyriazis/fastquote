@@ -52,6 +52,11 @@ export async function GET(req: NextRequest) {
       categoriesUpdated: 5,
       subcategoriesUpdated: 4,
       typesUpdated: 3,
+      orderLines: [
+        { position: 1, code: 'TEST.001', description: 'Δοκιμαστικό προϊόν Α', qty: 2, price: 855, lineval: 1710, cost: 600, warrantyMonths: 24 },
+        { position: 2, code: 'TEST.002', description: 'Δοκιμαστικό προϊόν Β με μεγαλύτερη περιγραφή', qty: 1, price: 500, lineval: 500, cost: 350, warrantyMonths: 12 },
+        { position: 3, code: 'TEST.003', description: 'Δοκιμαστικό προϊόν Γ', qty: 5, price: 102.43, lineval: 512.15, cost: null, warrantyMonths: null },
+      ],
     },
     overrideRecipientEmail: overrideTo?.trim() || null,
   });

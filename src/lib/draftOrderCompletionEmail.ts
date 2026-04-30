@@ -26,7 +26,24 @@ export type DraftOrderCompletionResults = {
     subCategoryName: string | null;
     typeName: string | null;
   }>;
+  orderLines?: Array<{
+    position: number | null;
+    code: string;
+    description: string | null;
+    qty: number;
+    price: number;
+    lineval: number;
+    cost: number | null;
+    warrantyMonths: number | null;
+  }>;
 };
+
+const moneyFmt = new Intl.NumberFormat('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const qtyFmt = new Intl.NumberFormat('el-GR', { minimumFractionDigits: 0, maximumFractionDigits: 4 });
+
+const formatMoney = (v: number | null | undefined): string =>
+  v == null || !Number.isFinite(v) ? '—' : `${moneyFmt.format(v)} €`;
+const formatQty = (v: number): string => qtyFmt.format(v);
 
 type Recipient = {
   email: string;
@@ -162,6 +179,53 @@ function renderEmail(
   const newProductsHtml = renderCatList('Κατηγοριοποίηση νέων ειδών:', newProductsCats);
   const existingProductsHtml = renderCatList('Κατηγοριοποίηση υπαρχόντων ειδών:', existingProductsCats);
 
+  const orderLines = results.orderLines ?? [];
+  const orderLinesTotal = orderLines.reduce((sum, l) => sum + l.lineval, 0);
+
+  const orderLinesHtml = orderLines.length > 0
+    ? `
+      <p style="margin-top: 16px;"><strong>Γραμμές προπαραγγελίας:</strong></p>
+      <table style="border-collapse: collapse; font-size: 0.9rem; width: 100%; max-width: 900px;">
+        <thead>
+          <tr style="background: #f3f4f6;">
+            <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: left;">#</th>
+            <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: left;">Κωδικός</th>
+            <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: left;">Περιγραφή</th>
+            <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Ποσότητα</th>
+            <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Τιμή</th>
+            <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Αξία γραμμής</th>
+            <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Κόστος</th>
+            <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Εγγύηση (μήνες)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${orderLines
+            .map((l, idx) => {
+              const pos = l.position != null ? l.position : idx + 1;
+              return `<tr>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${pos}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.code)}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.description ?? '—')}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatQty(l.qty)}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatMoney(l.price)}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatMoney(l.lineval)}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatMoney(l.cost)}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${l.warrantyMonths != null ? l.warrantyMonths : '—'}</td>
+              </tr>`;
+            })
+            .join('')}
+        </tbody>
+        <tfoot>
+          <tr style="background: #f9fafb; font-weight: 600;">
+            <td colspan="5" style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Σύνολο αξίας γραμμών:</td>
+            <td style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">${formatMoney(orderLinesTotal)}</td>
+            <td colspan="2" style="border: 1px solid #d1d5db; padding: 6px 8px;"></td>
+          </tr>
+        </tfoot>
+      </table>
+    `
+    : '';
+
   const html = `
     <div style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.5;">
       <p>${greeting}</p>
@@ -174,6 +238,7 @@ function renderEmail(
       ${actionsHtml}
       ${newProductsHtml}
       ${existingProductsHtml}
+      ${orderLinesHtml}
       <p style="color: #6b7280; font-size: 0.85rem; margin-top: 24px;">Αυτό το email στάλθηκε αυτόματα από το FastQuote.</p>
     </div>
   `;
@@ -193,6 +258,20 @@ function renderEmail(
       : []),
     ...(existingProductsCats.length > 0
       ? ['', 'Κατηγοριοποίηση υπαρχόντων ειδών:', ...existingProductsCats.map(p => `- ${p.label}: ${formatCatLine(p)}`)]
+      : []),
+    ...(orderLines.length > 0
+      ? [
+          '',
+          'Γραμμές προπαραγγελίας:',
+          ...orderLines.map((l, idx) => {
+            const pos = l.position != null ? l.position : idx + 1;
+            const cost = l.cost != null ? formatMoney(l.cost) : '—';
+            const warranty = l.warrantyMonths != null ? `${l.warrantyMonths}m` : '—';
+            const desc = l.description ?? '—';
+            return `${pos}. ${l.code} — ${desc} | qty ${formatQty(l.qty)} | price ${formatMoney(l.price)} | lineval ${formatMoney(l.lineval)} | cost ${cost} | warranty ${warranty}`;
+          }),
+          `Σύνολο αξίας γραμμών: ${formatMoney(orderLinesTotal)}`,
+        ]
       : []),
     '',
     'Αυτό το email στάλθηκε αυτόματα από το FastQuote.',
