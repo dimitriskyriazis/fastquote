@@ -297,7 +297,7 @@ const hasPayloadValues = (row: PayloadRow) => {
 };
 
 const getSheetDataRows = (sheet: SheetMapping) => {
-  const startIndex = sheet.includeHeaderRow ? sheet.headerRowIndex + 1 : sheet.headerRowIndex;
+  const startIndex = sheet.includeHeaderRow ? sheet.headerRowIndex + 1 : 0;
   return sheet.rawRows.slice(startIndex);
 };
 

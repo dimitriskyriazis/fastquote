@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 
 // Bump this constant ONLY when you deliberately want to force-clear all users' localStorage.
-const STORAGE_SCHEMA_VERSION = '3';
+const STORAGE_SCHEMA_VERSION = '4';
 
 export default function StorageVersionManager() {
   useEffect(() => {
