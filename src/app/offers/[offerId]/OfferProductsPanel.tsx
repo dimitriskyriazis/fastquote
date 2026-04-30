@@ -307,6 +307,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
     [offerId],
   );
+  const updatePricesEndpoint = useMemo(
+    () => `/api/offers/${encodeURIComponent(offerId)}/products/update-prices`,
+    [offerId],
+  );
   const assignRequestedRowToProduct = useCallback(
     async (
       requestedRowId: number,
@@ -3389,6 +3393,90 @@ const requestedColumnDefsMap = useMemo(
     });
   }, [dataEndpoint]);
 
+  // Refresh selected non-requested product rows from product master:
+  // pulls Description / PartNumber / ModelNumber / BrandName from /api/products/[id],
+  // PATCHes the offer detail, then runs update-prices to reset ListPrice/discounts.
+  const refreshOfferProductsFromMaster = useCallback(async (
+    nodes: RowNode<Record<string, unknown>>[],
+  ): Promise<number> => {
+    if (nodes.length === 0) return 0;
+
+    const updates: Array<Record<string, unknown>> = [];
+    const idsToRefreshPrices: number[] = [];
+
+    for (const node of nodes) {
+      const data = node?.data ?? null;
+      if (!data) continue;
+      const offerDetailId = normalizeOfferDetailId(
+        (data as { OfferDetailID?: unknown }).OfferDetailID ?? null,
+      );
+      const productIdRaw = (data as { ProductID?: unknown }).ProductID;
+      const productId = typeof productIdRaw === 'number'
+        ? productIdRaw
+        : Number(productIdRaw);
+      if (offerDetailId == null || !Number.isFinite(productId) || productId <= 0) continue;
+
+      const productMeta = await fetchProductSummary(productId);
+      if (!productMeta) continue;
+
+      updates.push({
+        OfferDetailID: offerDetailId,
+        Description: productMeta.Description ?? null,
+        PartNumber: productMeta.PartNumber ?? null,
+        ModelNumber: productMeta.ModelNumber ?? null,
+      });
+      idsToRefreshPrices.push(offerDetailId);
+
+      promoteNodeToProduct(
+        node,
+        productMeta,
+        productMeta.PartNumber ?? null,
+        productMeta.ModelNumber ?? null,
+        productMeta.BrandName ?? null,
+        productMeta.Description ?? null,
+      );
+    }
+
+    if (updates.length === 0) return 0;
+
+    try {
+      const patchRes = await fetch(resolvedEndpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates }),
+      });
+      const patchPayload = (await patchRes.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!patchRes.ok || !patchPayload?.ok) {
+        throw new Error(patchPayload?.error ?? `Failed to refresh product details (status ${patchRes.status})`);
+      }
+    } catch (err) {
+      console.error('Failed to refresh offer products from master', err);
+      showToastMessage(
+        err instanceof Error ? err.message : 'Unable to refresh product details. Please try again.',
+        'error',
+      );
+      return 0;
+    }
+
+    if (idsToRefreshPrices.length > 0) {
+      try {
+        const priceRes = await fetch(updatePricesEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ offerDetailIds: idsToRefreshPrices }),
+        });
+        const pricePayload = (await priceRes.json().catch(() => null)) as { ok?: boolean } | null;
+        if (!priceRes.ok || !pricePayload?.ok) {
+          console.warn('update-prices request failed during refresh-from-master');
+        }
+      } catch (err) {
+        console.warn('Failed to update prices during refresh-from-master', err);
+      }
+    }
+
+    return updates.length;
+  }, [resolvedEndpoint, updatePricesEndpoint, promoteNodeToProduct]);
+
   const populateOfferBusyRef = useRef(false);
   const populateOffer = useCallback(async () => {
     if (populateOfferBusyRef.current) return;
@@ -3407,9 +3495,35 @@ const requestedColumnDefsMap = useMemo(
         isSelectAllActive = Boolean(state && 'selectAll' in state && Boolean((state as { selectAll?: boolean }).selectAll));
       }
 
+      // A row is "requested-eligible" when it should flow through populateRequestedRowsToOffer:
+      // either an actual requested row, or one with requested pseudo-fields and no product yet.
+      // Rows with requested pseudo-fields that already have a product go through the refresh branch.
+      const isRequestedEligible = (data: Record<string, unknown> | null | undefined) => {
+        if (!data) return false;
+        if (isRequestedRow(data)) return true;
+        if (hasRequestedPseudoFields(data)) {
+          const productIdRaw = (data as { ProductID?: unknown }).ProductID;
+          const productId = typeof productIdRaw === 'number' ? productIdRaw : Number(productIdRaw);
+          return !Number.isFinite(productId) || productId <= 0;
+        }
+        return false;
+      };
+
+      // Refresh-from-master candidate: row already linked to a product master.
+      // We only act on these when explicitly selected — never as part of select-all auto-fallback.
+      const isRefreshableProductNode = (data: Record<string, unknown> | null | undefined) => {
+        if (!data) return false;
+        if (isRequestedRow(data)) return false;
+        const productIdRaw = (data as { ProductID?: unknown }).ProductID;
+        const productId = typeof productIdRaw === 'number' ? productIdRaw : Number(productIdRaw);
+        return Number.isFinite(productId) && productId > 0;
+      };
+
       let requestedNodes: Array<RowNode<Record<string, unknown>>> = [];
       let selectedRequestedNodes: Array<RowNode<Record<string, unknown>>> = [];
       let allRequestedNodes: Array<RowNode<Record<string, unknown>>> = [];
+      let selectedRefreshNodes: Array<RowNode<Record<string, unknown>>> = [];
+      let hasExplicitSelection = false;
 
       if (isSelectAllActive) {
         // When select-all is active, fetch ALL rows from server since
@@ -3419,8 +3533,9 @@ const requestedColumnDefsMap = useMemo(
           const allRows = await fetchAllFilteredRows();
           const wrapAsNode = (data: Record<string, unknown>) => ({ data, setSelected: () => {} } as unknown as RowNode<Record<string, unknown>>);
           const allWrapped = allRows.map(wrapAsNode);
-          selectedRequestedNodes = allWrapped.filter((node) => isRequestedRow(node.data) || hasRequestedPseudoFields(node.data));
+          selectedRequestedNodes = allWrapped.filter((node) => isRequestedEligible(node.data));
           allRequestedNodes = selectedRequestedNodes;
+          hasExplicitSelection = selectedRequestedNodes.length > 0;
         } catch (err) {
           console.error('Failed to fetch all rows for populate', err);
           showToastMessage(
@@ -3435,7 +3550,11 @@ const requestedColumnDefsMap = useMemo(
           const selected = typeof api.getSelectedNodes === 'function'
             ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
             : [];
-          selectedRequestedNodes = selected.filter((node) => isRequestedRow(node?.data ?? null) || hasRequestedPseudoFields(node?.data ?? null));
+          hasExplicitSelection = selected.length > 0;
+          selectedRequestedNodes = selected.filter((node) => isRequestedEligible(node?.data ?? null));
+          // Selected product rows already linked to a product master — refresh them from master.
+          const requestedSet = new Set(selectedRequestedNodes);
+          selectedRefreshNodes = selected.filter((node) => !requestedSet.has(node) && isRefreshableProductNode(node?.data ?? null));
         } catch {
           /* noop */
         }
@@ -3444,7 +3563,7 @@ const requestedColumnDefsMap = useMemo(
           if (typeof api.forEachNode === 'function') {
             const allRequested: Array<RowNode<Record<string, unknown>>> = [];
             api.forEachNode((node) => {
-              if (isRequestedRow(node?.data ?? null) || hasRequestedPseudoFields(node?.data ?? null)) {
+              if (isRequestedEligible(node?.data ?? null)) {
                 allRequested.push(node as RowNode<Record<string, unknown>>);
               }
             });
@@ -3455,16 +3574,20 @@ const requestedColumnDefsMap = useMemo(
         }
       }
 
-      requestedNodes = selectedRequestedNodes.length > 0 ? selectedRequestedNodes : allRequestedNodes;
+      // Auto-fallback to all requested rows ONLY when the user hasn't explicitly selected anything
+      // (otherwise we'd silently process rows the user didn't intend to touch).
+      requestedNodes = hasExplicitSelection ? selectedRequestedNodes : allRequestedNodes;
 
-      if (requestedNodes.length === 0) {
+      if (requestedNodes.length === 0 && selectedRefreshNodes.length === 0) {
         showToastMessage('No rows with requested data found to populate.', 'info');
         return;
       }
 
       const allRequestedCount = allRequestedNodes.length;
       const selectedRequestedCount = selectedRequestedNodes.length;
-      const shouldWarnNoSelection = selectedRequestedCount === 0 && allRequestedCount > 0;
+      // Only warn for the requested-rows branch (auto-fallback / all-selected). Refresh nodes
+      // come from explicit selection only and don't trigger the dialog.
+      const shouldWarnNoSelection = !hasExplicitSelection && allRequestedCount > 0;
       const shouldWarnAllSelected = selectedRequestedCount > 0 && selectedRequestedCount === allRequestedCount;
       if (shouldWarnNoSelection || shouldWarnAllSelected) {
         const title = shouldWarnNoSelection
@@ -3482,8 +3605,8 @@ const requestedColumnDefsMap = useMemo(
         if (!confirmed) return;
       }
 
-      // 1. Collect IDs to snapshot before populate
-      const idsToSnapshot = requestedNodes
+      // 1. Collect IDs to snapshot before populate (covers both requested + refresh branches)
+      const idsToSnapshot = [...requestedNodes, ...selectedRefreshNodes]
         .map((node) =>
           normalizeOfferDetailId(
             (node?.data as { OfferDetailID?: unknown })?.OfferDetailID ?? null,
@@ -3512,8 +3635,38 @@ const requestedColumnDefsMap = useMemo(
         }
       }
 
-      // 3. Run populate, suppressing the per-unassign internal undo entry
-      await populateRequestedRowsToOffer(requestedNodes, { skipInternalUndoPush: true });
+      // 3a. Run populate for requested rows (suppressing the per-unassign internal undo entry)
+      if (requestedNodes.length > 0) {
+        await populateRequestedRowsToOffer(requestedNodes, { skipInternalUndoPush: true });
+      }
+
+      // 3b. Refresh non-requested product rows from product master
+      let refreshedCount = 0;
+      if (selectedRefreshNodes.length > 0) {
+        refreshedCount = await refreshOfferProductsFromMaster(selectedRefreshNodes);
+        if (refreshedCount > 0) {
+          refreshOfferProductGrid(null, { purge: true });
+          showToastMessage(
+            `Refreshed ${refreshedCount} product${refreshedCount === 1 ? '' : 's'} from product master.`,
+            'success',
+          );
+        }
+        // Deselect refresh nodes so the row stops looking selected once we're done.
+        selectedRefreshNodes.forEach((node) => {
+          try {
+            node?.setSelected?.(false);
+          } catch {
+            /* noop */
+          }
+        });
+        try {
+          api.deselectAll?.();
+        } catch {
+          /* noop */
+        }
+        setGridRowDeletionContextMenuSelectionSnapshot(api, []);
+        pendingContextMenuSelectionClearRef.current = true;
+      }
 
       // 4. Push ONE atomic undo entry covering the entire populate
       if (snapshotRows.length > 0) {
@@ -3533,7 +3686,7 @@ const requestedColumnDefsMap = useMemo(
     } finally {
       populateOfferBusyRef.current = false;
     }
-  }, [populateRequestedRowsToOffer, fetchAllFilteredRows, addProductsEndpoint, pushUndo, performUndo, refreshOfferProductGrid]);
+  }, [populateRequestedRowsToOffer, fetchAllFilteredRows, addProductsEndpoint, pushUndo, performUndo, refreshOfferProductGrid, refreshOfferProductsFromMaster]);
 
   const fetchExportRows = useCallback(async (): Promise<OfferExportRow[]> => {
     const api = gridApiRef.current;

@@ -2187,6 +2187,7 @@ async function handleAssignProductToRequestedRow(
   );
   const commentRaw = body?.comment ?? (body as { Comment?: unknown })?.Comment ?? null;
   const commentValue = typeof commentRaw === 'string' ? commentRaw.trim() || null : null;
+  const applyToSimilar = body?.applyToSimilar === true;
 
   // Instrumentation: assignment-accuracy metrics from the match-requested
   // modal.  Tagged with "tag: assignment-metrics" in the log context (the
@@ -2241,6 +2242,7 @@ async function handleAssignProductToRequestedRow(
   request.input('__categoryTree', sql.NVarChar(255), categoryTreeOrdering);
   request.input('__modifiedBy', sql.Int, auditUserId);
   request.input('__comment', sql.NVarChar(sql.MAX), commentValue);
+  request.input('__applyToSimilar', sql.Bit, applyToSimilar ? 1 : 0);
 
   const query = `
     DECLARE @pricingPolicyId INT;
@@ -2254,9 +2256,11 @@ async function handleAssignProductToRequestedRow(
     FROM dbo.Offer o
     WHERE o.ID = @__offerId;
 
-    -- Capture the requested fields from the original row so we can also assign
-    -- the same product to any other unassigned rows in this offer with identical
-    -- requested data.
+    -- Capture the requested fields from the original row.  When
+    -- @__applyToSimilar = 1 the UPDATE also assigns the same product to any
+    -- other unassigned rows in this offer with identical requested data;
+    -- otherwise only the row matching @__rowId is updated.  We always count
+    -- matching unassigned rows so the client can prompt the user.
     DECLARE @reqBrand NVARCHAR(MAX);
     DECLARE @reqModel NVARCHAR(MAX);
     DECLARE @reqPart NVARCHAR(MAX);
@@ -2559,7 +2563,8 @@ async function handleAssignProductToRequestedRow(
       AND (
         od.ID = @__rowId
         OR (
-          od.ProductID IS NULL
+          @__applyToSimilar = 1
+          AND od.ProductID IS NULL
           AND ISNULL(od.IsCategory, 0) = 0
           AND ISNULL(od.IsComment, 0) = 0
           AND ISNULL(LTRIM(RTRIM(od.RequestedBrand)),       N'') = ISNULL(LTRIM(RTRIM(@reqBrand)), N'')
@@ -2570,11 +2575,30 @@ async function handleAssignProductToRequestedRow(
           AND ISNULL(LTRIM(RTRIM(od.RequestedDescription3)),N'') = ISNULL(LTRIM(RTRIM(@reqDesc3)), N'')
         )
       );
+
+    -- Count any other unassigned rows in this offer with identical requested
+    -- data so the client can ask the user whether to fill them too.
+    DECLARE @similarUnassignedCount INT = 0;
+    SELECT @similarUnassignedCount = COUNT(*)
+    FROM dbo.OfferDetails od
+    WHERE od.OfferID = @__offerId
+      AND od.ID <> @__rowId
+      AND od.ProductID IS NULL
+      AND ISNULL(od.IsCategory, 0) = 0
+      AND ISNULL(od.IsComment, 0) = 0
+      AND ISNULL(LTRIM(RTRIM(od.RequestedBrand)),       N'') = ISNULL(LTRIM(RTRIM(@reqBrand)), N'')
+      AND ISNULL(LTRIM(RTRIM(od.RequestedModelNo)),     N'') = ISNULL(LTRIM(RTRIM(@reqModel)), N'')
+      AND ISNULL(LTRIM(RTRIM(od.RequestedPartNo)),      N'') = ISNULL(LTRIM(RTRIM(@reqPart)),  N'')
+      AND ISNULL(LTRIM(RTRIM(od.RequestedDescription)), N'') = ISNULL(LTRIM(RTRIM(@reqDesc1)), N'')
+      AND ISNULL(LTRIM(RTRIM(od.RequestedDescription2)),N'') = ISNULL(LTRIM(RTRIM(@reqDesc2)), N'')
+      AND ISNULL(LTRIM(RTRIM(od.RequestedDescription3)),N'') = ISNULL(LTRIM(RTRIM(@reqDesc3)), N'');
+
     SELECT TOP (1)
       urp.OfferDetailID,
       urp.Quantity,
       urp.CustomerDiscount,
-      urp.TelmacoDiscount
+      urp.TelmacoDiscount,
+      @similarUnassignedCount AS SimilarUnassignedCount
     FROM @UpdatedRowPricing urp
     ORDER BY CASE WHEN urp.OfferDetailID = @__rowId THEN 0 ELSE 1 END;
   `;
@@ -2593,17 +2617,23 @@ async function handleAssignProductToRequestedRow(
     Quantity?: number | null;
     CustomerDiscount?: number | null;
     TelmacoDiscount?: number | null;
+    SimilarUnassignedCount?: number | null;
   } | null;
+
+  const similarUnassignedCount = typeof pricingRow?.SimilarUnassignedCount === 'number'
+    ? pricingRow.SimilarUnassignedCount
+    : 0;
 
   realtimeEvents.emit(
     `offer:${offerId}:products`,
     'rows-refresh',
-    { reason: 'assign-requested', requestedRowId, productId, updatedBy: auditUserId ?? null },
+    { reason: 'assign-requested', requestedRowId, productId, applyToSimilar, updatedBy: auditUserId ?? null },
   );
 
   return NextResponse.json({
     ok: true,
     updated: rowsAffected,
+    similarUnassignedCount,
     pricing: pricingRow
       ? {
           offerDetailId: pricingRow.OfferDetailID ?? null,

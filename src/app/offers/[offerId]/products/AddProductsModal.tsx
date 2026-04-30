@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import type { CellValueChangedEvent, ColDef, GridApi, RowClassParams, RowNode } from 'ag-grid-community';
 import styles from './AddProductsModal.module.css';
 import { showToastMessage } from '../../../../lib/toast';
+import { showConfirmDialog } from '../../../../lib/confirm';
 import { priceListStatusClassRules } from '../../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../../lib/localeNumber';
 import { useFarnellSearch, isFarnellRow, type FarnellSearchRow } from '../../../hooks/useFarnellSearch';
@@ -1082,6 +1083,7 @@ export default function AddProductsModal({
             inserted?: number;
             updated?: number;
             insertedOfferDetailIds?: Array<number | string | null>;
+            similarUnassignedCount?: number;
             error?: string;
           }
         | null = null;
@@ -1091,6 +1093,7 @@ export default function AddProductsModal({
           inserted?: number;
           updated?: number;
           insertedOfferDetailIds?: Array<number | string | null>;
+          similarUnassignedCount?: number;
           error?: string;
         } | null;
       } catch {
@@ -1098,6 +1101,68 @@ export default function AddProductsModal({
       }
       if (!res.ok || !data?.ok) {
         throw new Error(data?.error ?? `Failed to add products (status ${res.status})`);
+      }
+      // The first assign-requested call only fills the selected row.  If
+      // there are other unassigned rows in this offer with identical
+      // requested data, ask whether to fill them too — and on a yes,
+      // re-issue with applyToSimilar so the server fills the rest.
+      const similarFilledIds: number[] = [];
+      if (isAssigningRequestedRow && fillRequestedRowId != null) {
+        const similarCount = typeof data.similarUnassignedCount === 'number'
+          ? data.similarUnassignedCount
+          : 0;
+        if (similarCount > 0) {
+          const confirmed = await showConfirmDialog({
+            title: 'Fill similar rows?',
+            message:
+              `There ${similarCount === 1 ? 'is 1 other row' : `are ${similarCount} other rows`} `
+              + 'in this offer with the same requested data. Fill '
+              + `${similarCount === 1 ? 'it' : 'them'} with the same product too?`,
+            confirmLabel: similarCount === 1 ? 'Fill it' : `Fill all ${similarCount}`,
+            cancelLabel: 'Just this row',
+          });
+          if (confirmed) {
+            try {
+              const followupRes = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  ...payload,
+                  applyToSimilar: true,
+                }),
+              });
+              const followupData = (await followupRes.json().catch(() => null)) as {
+                ok?: boolean;
+                error?: string;
+              } | null;
+              if (!followupRes.ok || !followupData?.ok) {
+                showToastMessage('Filled selected row, but could not fill the similar rows.', 'error');
+              } else {
+                // Mark the similar rows as affected so they flash on refresh.
+                // Match by requested fields against currently loaded rows.
+                const anchor = requestedRows.find((r) => r.OfferDetailID === fillRequestedRowId);
+                if (anchor) {
+                  const norm = (v: string | null | undefined) =>
+                    (typeof v === 'string' ? v.trim() : '') ?? '';
+                  for (const r of requestedRows) {
+                    if (r.OfferDetailID === fillRequestedRowId) continue;
+                    if (
+                      norm(r.RequestedBrand) === norm(anchor.RequestedBrand)
+                      && norm(r.RequestedModelNo) === norm(anchor.RequestedModelNo)
+                      && norm(r.RequestedPartNo) === norm(anchor.RequestedPartNo)
+                      && norm(r.RequestedDescription) === norm(anchor.RequestedDescription)
+                      && norm(r.RequestedDescription2) === norm(anchor.RequestedDescription2)
+                    ) {
+                      similarFilledIds.push(r.OfferDetailID);
+                    }
+                  }
+                }
+              }
+            } catch {
+              showToastMessage('Filled selected row, but could not fill the similar rows.', 'error');
+            }
+          }
+        }
       }
       if (!isAssigningRequestedRow) {
         const insertedIds = Array.isArray(data?.insertedOfferDetailIds)
@@ -1161,13 +1226,13 @@ export default function AddProductsModal({
         }
       }
       const addedCount = isAssigningRequestedRow
-        ? 1
+        ? 1 + similarFilledIds.length
         : typeof data.inserted === 'number'
           ? data.inserted
           : productPayload.length;
       // Collect all affected row IDs for flash effect
       const affectedIds: number[] = isAssigningRequestedRow && fillRequestedRowId != null
-        ? [fillRequestedRowId]
+        ? [fillRequestedRowId, ...similarFilledIds]
         : (Array.isArray(data?.insertedOfferDetailIds)
           ? data.insertedOfferDetailIds
               .map((v: number | string | null) => typeof v === 'number' ? Math.trunc(v) : typeof v === 'string' ? Number.parseInt(v, 10) : NaN)
@@ -1220,7 +1285,11 @@ export default function AddProductsModal({
         }
       }
       showToastMessage(
-        isAssigningRequestedRow ? 'Row filled' : 'Products added',
+        isAssigningRequestedRow
+          ? (similarFilledIds.length > 0
+              ? `Row filled (+${similarFilledIds.length} similar row${similarFilledIds.length === 1 ? '' : 's'})`
+              : 'Row filled')
+          : 'Products added',
         'success',
       );
       onAdded(addedCount, affectedIds);
@@ -1245,6 +1314,7 @@ export default function AddProductsModal({
     offerId,
     placementAnchor,
     placementMode,
+    requestedRows,
     selectedCategory?.OfferDetailID,
     selectedProducts,
     selectedRequestedRowId,
