@@ -67,6 +67,7 @@ type CreateDraftOfferRequestBody = {
   // Accumulated wizard state (passed forward by frontend)
   resolvedCustomer?: { TRDR: number; CODE: string | null; NAME: string | null };
   missingBrands?: string[];
+  brandResolutions?: Array<{ fastquoteName: string; erpName: string; MTRMANFCTR: number }>;
   matchResults?: MatchResultsState;
   manualSearch?: {
     partOrModel?: string | null;
@@ -1001,6 +1002,8 @@ async function handleCheckBrands(
     const checkRes = await checkReq.query<{ MTRMANFCTR: number }>(`
       SELECT TOP (1) MTRMANFCTR FROM dbo.MTRMANFCTR
       WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
+        AND CODE IS NOT NULL
+        AND LTRIM(RTRIM(CODE)) <> ''
       ORDER BY MTRMANFCTR
     `);
     if (checkRes.recordset?.[0]) {
@@ -1486,6 +1489,11 @@ async function handleExecute(
   const resolvedCustomer = body.resolvedCustomer;
   const matchResults = body.matchResults;
   const missingBrands = body.missingBrands ?? [];
+  const brandResolutionMap = new Map(
+    (body.brandResolutions ?? []).map((r) => [r.fastquoteName.trim(), r.erpName.trim()]),
+  );
+  const resolveBrandName = (fastquoteName: string): string =>
+    brandResolutionMap.get(fastquoteName.trim()) ?? fastquoteName;
 
   if (!resolvedCustomer) {
     return NextResponse.json({ ok: false, error: 'Missing resolved customer' }, { status: 400 });
@@ -1526,6 +1534,8 @@ async function handleExecute(
     const checkRes = await checkReq.query<{ MTRMANFCTR: number }>(`
       SELECT TOP (1) MTRMANFCTR FROM dbo.MTRMANFCTR
       WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
+        AND CODE IS NOT NULL
+        AND LTRIM(RTRIM(CODE)) <> ''
       ORDER BY MTRMANFCTR
     `);
     if (!checkRes.recordset?.[0]) {
@@ -1579,7 +1589,7 @@ async function handleExecute(
           modelNumber: product.ModelNumber,
           partNumber: product.PartNumber,
           brandId: product.BrandID,
-          brandName: product.BrandName!,
+          brandName: resolveBrandName(product.BrandName!),
           categoryId: product.CategoryID!,
           subCategoryId: product.SubCategoryID,
           typeId: product.TypeID,
@@ -2178,6 +2188,8 @@ export async function POST(
           SELECT TOP (1) MTRMANFCTR
           FROM dbo.MTRMANFCTR
           WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
+            AND CODE IS NOT NULL
+            AND LTRIM(RTRIM(CODE)) <> ''
           ORDER BY MTRMANFCTR
         `);
         if (!checkResult.recordset?.[0]) {

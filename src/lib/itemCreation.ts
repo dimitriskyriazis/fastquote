@@ -75,6 +75,8 @@ export async function generateNewErpCode(
     SELECT TOP (1) CODE
     FROM dbo.MTRMANFCTR
     WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
+      AND CODE IS NOT NULL
+      AND LTRIM(RTRIM(CODE)) <> ''
     ORDER BY MTRMANFCTR
   `);
   const brandCode = brandResult.recordset?.[0]?.CODE;

@@ -451,15 +451,23 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       newProducts: newProductsCategorization,
       existingProducts: existingProductsCategorization,
     };
+    const brandResolutions = Array.from(resolvedBrandMap.entries()).map(
+      ([fastquoteName, info]) => ({
+        fastquoteName,
+        erpName: info.erpName,
+        MTRMANFCTR: info.MTRMANFCTR,
+      }),
+    );
     const result = await callStep('execute', {
       resolvedCustomer,
       missingBrands,
+      brandResolutions,
       matchResults,
       categorizationSummary,
     });
     if (!result) return;
     setExecutionResult(result);
-  }, [callStep, resolvedCustomer, missingBrands, autoMatched, confirmedCreates, userSelections, skipped, categorizedProducts]);
+  }, [callStep, resolvedCustomer, missingBrands, resolvedBrandMap, autoMatched, confirmedCreates, userSelections, skipped, categorizedProducts]);
 
   // ── Manual-search Brand normalization ────────────────────────────────────
   // When the Soft1 brand list finishes loading, normalize the Brand input to
