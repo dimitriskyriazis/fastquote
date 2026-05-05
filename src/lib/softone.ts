@@ -110,6 +110,7 @@ export type SetItemEntry = {
   code1?: string;
   code2?: string;
   name: string;
+  name1?: string;
   mtrunit: number;
   vat: number;
   mtracn: number;

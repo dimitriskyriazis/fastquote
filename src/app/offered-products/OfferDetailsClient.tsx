@@ -108,6 +108,13 @@ export default function OfferDetailsClient() {
       minWidth: 180,
     },
     {
+      field: 'ERPFWCProjectShortName',
+      headerName: 'ERP FWC Project',
+      filter: 'agTextColumnFilter',
+      enableRowGroup: true,
+      width: 150,
+    },
+    {
       field: 'OfferDescription',
       headerName: 'Offer Description',
       filter: 'agTextColumnFilter',
@@ -454,6 +461,7 @@ export default function OfferDetailsClient() {
               rowSelection="multiple"
               rowMultiSelectWithClick
               rowDeselection
+              enablePivotMode
               onCellValueChanged={handleCellValueChanged}
               getContextMenuItems={getContextMenuItems}
             />

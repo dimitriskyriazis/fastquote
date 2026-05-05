@@ -16,6 +16,9 @@ function mapBusinessUnit(bu: 'AVS' | 'TVS'): string {
 
 /**
  * Resolves the ERP MTRMANFCTR numeric ID from the brand name.
+ * Filters on CODE IS NOT NULL to match the brand-existence check elsewhere
+ * in the pipeline (avoids picking up stale records with empty CODE that
+ * Soft1 treats as invalid manufacturers).
  * Returns the ID as a string, or undefined if not found.
  */
 async function resolveErpManufacturerId(
@@ -28,6 +31,8 @@ async function resolveErpManufacturerId(
     SELECT TOP (1) MTRMANFCTR
     FROM dbo.MTRMANFCTR
     WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
+      AND CODE IS NOT NULL
+      AND LTRIM(RTRIM(CODE)) <> ''
     ORDER BY MTRMANFCTR
   `);
   const id = result.recordset?.[0]?.MTRMANFCTR;
@@ -169,8 +174,16 @@ export async function createItemViaWebService(
     BrandName: params.brandName,
   });
 
-  // Resolve ERP manufacturer ID from brand name
+  // Resolve ERP manufacturer ID from brand name. Throw if not found so we
+  // never create an item without a manufacturer — earlier silent fall-through
+  // produced items with empty MTRMANFCTR that had to be fixed by hand.
   const mtrmanfctr = await resolveErpManufacturerId(erpPool, params.brandName);
+  if (!mtrmanfctr) {
+    throw new Error(
+      `Cannot resolve ERP manufacturer for brand "${params.brandName}". ` +
+      `Ensure the brand exists in MTRMANFCTR with a non-empty CODE.`,
+    );
+  }
 
   // SoftOne's CCCCLCATEG / CCCCLSUBCATEG / CCCCLTYPE fields expect numeric IDs,
   // not CODE strings. FastQuote ProductCategories / ProductSubCategories /
@@ -202,6 +215,7 @@ export async function createItemViaWebService(
     code: newCode,
     code2: params.partNumber ?? undefined,
     name: itemName,
+    name1: itemName,
     mtrunit: 1,
     vat: 1410,
     mtracn: 0,
@@ -218,8 +232,9 @@ export async function createItemViaWebService(
     code: newCode,
     code2: params.partNumber ?? null,
     name: itemName,
+    name1: itemName,
     businessUnit: params.businessUnit,
-    mtrmanfctr: mtrmanfctr ?? null,
+    mtrmanfctr,
     categoryValue,
     subCategoryValue,
     typeValue,

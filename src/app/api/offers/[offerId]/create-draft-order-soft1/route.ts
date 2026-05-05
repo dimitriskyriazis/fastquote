@@ -415,6 +415,8 @@ async function fetchOfferProducts(
     CategoryID: number | null;
     SubCategoryID: number | null;
     TypeID: number | null;
+    ERPID: number | null;
+    ERPCode: string | null;
   }>(`
     SELECT DISTINCT
       p.ID AS ProductID,
@@ -427,7 +429,9 @@ async function fetchOfferProducts(
       p.BrandID,
       p.CategoryID,
       p.SubCategoryID,
-      p.TypeID
+      p.TypeID,
+      p.ERPID,
+      p.ERPCode
     FROM dbo.OfferDetails od
     INNER JOIN dbo.Products p ON od.ProductID = p.ID
     LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
@@ -1510,6 +1514,8 @@ async function handleExecute(
     orderLines: Array<{
       position: number | null;
       code: string;
+      brandName: string | null;
+      partNumber: string | null;
       description: string | null;
       qty: number;
       price: number;
@@ -1574,11 +1580,30 @@ async function handleExecute(
       results.productsLinked.push({ productId: sel.productId, mtrl: sel.MTRL, code: sel.CODE ?? '' });
     }
 
-    // Create new products in ERP
+    // Create new products in ERP. Dedupe by productId so a doubled entry in
+    // the wizard payload can never produce two MTRL rows for the same product.
+    const seenCreateIds = new Set<number>();
     for (const item of matchResults.userConfirmedCreate) {
+      if (seenCreateIds.has(item.productId)) {
+        logger.warn('wizard execute skip duplicate userConfirmedCreate entry', { requestId, productId: item.productId });
+        continue;
+      }
+      seenCreateIds.add(item.productId);
+
       const product = productMap.get(item.productId);
       if (!product || !product.Description || !product.BrandID || !product.SubCategoryID || !product.TypeID) {
         logger.warn('wizard execute skip product creation - missing fields', { requestId, productId: item.productId });
+        continue;
+      }
+
+      // Idempotency: if the product already has ERPID/ERPCode (e.g. created
+      // by an earlier wizard run that the user retried), reuse it and just
+      // record it as linked instead of creating a second MTRL row.
+      if (product.ERPID && product.ERPCode) {
+        logger.info('wizard execute product already linked, skipping create', {
+          requestId, productId: item.productId, erpId: product.ERPID, erpCode: product.ERPCode,
+        });
+        results.productsLinked.push({ productId: product.ProductID, mtrl: product.ERPID, code: product.ERPCode });
         continue;
       }
 
@@ -1632,10 +1657,14 @@ async function handleExecute(
       ERPID: number | null;
       ERPCode: string | null;
       Description: string | null;
+      PartNumber: string | null;
+      BrandName: string | null;
     }>(`
-      SELECT od.TreeOrdering, od.ProductID, od.Quantity, od.NetUnitPrice, od.NetCost, od.Warranty, p.ERPID, p.ERPCode, p.Description
+      SELECT od.TreeOrdering, od.ProductID, od.Quantity, od.NetUnitPrice, od.NetCost, od.Warranty,
+             p.ERPID, p.ERPCode, p.Description, p.PartNumber, b.Name AS BrandName
       FROM dbo.OfferDetails od
       INNER JOIN dbo.Products p ON od.ProductID = p.ID
+      LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
       WHERE od.OfferID = @offerId AND od.ProductID IS NOT NULL AND p.ERPID IS NOT NULL
     `);
 
@@ -1655,6 +1684,8 @@ async function handleExecute(
     results.orderLines = eligibleLines.map(l => ({
       position: l.TreeOrdering != null ? Number(l.TreeOrdering) : null,
       code: l.ERPCode!,
+      brandName: l.BrandName,
+      partNumber: l.PartNumber,
       description: l.Description,
       qty: Number(l.Quantity),
       price: Number(l.NetUnitPrice),
@@ -2009,6 +2040,8 @@ export async function POST(
       CategoryID: number | null;
       SubCategoryID: number | null;
       TypeID: number | null;
+      ERPID: number | null;
+      ERPCode: string | null;
     }>(`
       SELECT DISTINCT
         p.ID AS ProductID,
@@ -2021,7 +2054,9 @@ export async function POST(
         p.BrandID,
         p.CategoryID,
         p.SubCategoryID,
-        p.TypeID
+        p.TypeID,
+        p.ERPID,
+        p.ERPCode
       FROM dbo.OfferDetails od
       INNER JOIN dbo.Products p ON od.ProductID = p.ID
       LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
@@ -2246,6 +2281,17 @@ export async function POST(
       );
 
       for (const product of products) {
+        // Idempotency: a product already linked to a Soft1 MTRL must never
+        // trigger a second search/create. Without this guard a retry of the
+        // create-draft-order flow produced a duplicate MTRL row for the
+        // same product on the same FINDOC.
+        if (product.ERPID && product.ERPCode) {
+          logger.info('create-draft-order-soft1 product already linked, skipping', {
+            requestId, offerId: normalizedId, productId: product.ProductID,
+            erpId: product.ERPID, erpCode: product.ERPCode,
+          });
+          continue;
+        }
         const selection = selectionMap.get(product.ProductID);
         if (selection) {
           logger.info('create-draft-order-soft1 DB update (selection)', {
@@ -2729,6 +2775,15 @@ export async function POST(
     // No selections provided - search for all products
     const successfullyUpdatedIds: number[] = [];
     for (const product of products) {
+      // Idempotency: skip products already linked to a Soft1 MTRL so a retry
+      // never creates a duplicate item for the same product.
+      if (product.ERPID && product.ERPCode) {
+        logger.info('create-draft-order-soft1 product already linked, skipping (no-selections path)', {
+          requestId, offerId: normalizedId, productId: product.ProductID,
+          erpId: product.ERPID, erpCode: product.ERPCode,
+        });
+        continue;
+      }
       try {
         const erpRequest = erpPool.request();
         erpRequest.input('PartNo', sql.NVarChar(200), product.PartNumberCleared);

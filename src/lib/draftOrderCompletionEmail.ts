@@ -29,6 +29,8 @@ export type DraftOrderCompletionResults = {
   orderLines?: Array<{
     position: number | null;
     code: string;
+    brandName: string | null;
+    partNumber: string | null;
     description: string | null;
     qty: number;
     price: number;
@@ -185,11 +187,13 @@ function renderEmail(
   const orderLinesHtml = orderLines.length > 0
     ? `
       <p style="margin-top: 16px;"><strong>Γραμμές προπαραγγελίας:</strong></p>
-      <table style="border-collapse: collapse; font-size: 0.9rem; width: 100%; max-width: 900px;">
+      <table style="border-collapse: collapse; font-size: 0.9rem; width: 100%; max-width: 1100px;">
         <thead>
           <tr style="background: #f3f4f6;">
             <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: left;">#</th>
             <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: left;">Κωδικός</th>
+            <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: left;">Brand</th>
+            <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: left;">Part No</th>
             <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: left;">Περιγραφή</th>
             <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Ποσότητα</th>
             <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Τιμή</th>
@@ -205,6 +209,8 @@ function renderEmail(
               return `<tr>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${pos}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.code)}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.brandName ?? '—')}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.partNumber ?? '—')}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.description ?? '—')}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatQty(l.qty)}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatMoney(l.price)}</td>
@@ -217,7 +223,7 @@ function renderEmail(
         </tbody>
         <tfoot>
           <tr style="background: #f9fafb; font-weight: 600;">
-            <td colspan="5" style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Σύνολο αξίας γραμμών:</td>
+            <td colspan="7" style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Σύνολο αξίας γραμμών:</td>
             <td style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">${formatMoney(orderLinesTotal)}</td>
             <td colspan="2" style="border: 1px solid #d1d5db; padding: 6px 8px;"></td>
           </tr>
@@ -268,7 +274,9 @@ function renderEmail(
             const cost = l.cost != null ? formatMoney(l.cost) : '—';
             const warranty = l.warrantyMonths != null ? `${l.warrantyMonths}m` : '—';
             const desc = l.description ?? '—';
-            return `${pos}. ${l.code} — ${desc} | qty ${formatQty(l.qty)} | price ${formatMoney(l.price)} | lineval ${formatMoney(l.lineval)} | cost ${cost} | warranty ${warranty}`;
+            const brand = l.brandName ?? '—';
+            const part = l.partNumber ?? '—';
+            return `${pos}. ${l.code} — ${brand} | ${part} | ${desc} | qty ${formatQty(l.qty)} | price ${formatMoney(l.price)} | lineval ${formatMoney(l.lineval)} | cost ${cost} | warranty ${warranty}`;
           }),
           `Σύνολο αξίας γραμμών: ${formatMoney(orderLinesTotal)}`,
         ]

@@ -31,6 +31,7 @@ type OfferDetailRow = {
   OfferStatus: string | null;
   CustomerName: string | null;
   CustomerGroup: string | null;
+  ERPFWCProjectShortName: string | null;
   PartNumber: string | null;
   ModelNumber: string | null;
   BrandName: string | null;
@@ -72,6 +73,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferStatus: 'os.Name',
   CustomerName: 'c.Name',
   CustomerGroup: 'cg.Name',
+  ERPFWCProjectShortName: 'fwc.ShortName',
   PartNumber: 'od.PartNumber',
   ModelNumber: 'od.ModelNumber',
   BrandName: 'b.Name',
@@ -112,6 +114,8 @@ const ALLOWED_ROW_GROUP_FIELDS = new Set([
   'OfferStatus',
   'BrandName',
   'OfferID',
+  'ERPFWCProjectShortName',
+  'Origin',
 ]);
 
 type GroupField = {
@@ -231,6 +235,7 @@ const selectClause = `
     os.Name AS OfferStatus,
     c.Name AS CustomerName,
     cg.Name AS CustomerGroup,
+    fwc.ShortName AS ERPFWCProjectShortName,
     od.PartNumber,
     od.ModelNumber,
     b.Name AS BrandName,
@@ -269,6 +274,7 @@ const fromClause = `
     LEFT JOIN dbo.OfferStatus os ON o.StatusID = os.ID
     LEFT JOIN dbo.Currencies oc ON od.OtherCurrencyID = oc.ID
     LEFT JOIN dbo.Products p ON od.ProductID = p.ID
+    LEFT JOIN dbo.FWCs fwc ON fwc.ID = o.ERPFWCProjectID
 `;
 
 const baseFilter = `
