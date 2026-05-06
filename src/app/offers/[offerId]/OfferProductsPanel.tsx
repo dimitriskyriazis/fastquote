@@ -7569,6 +7569,7 @@ const requestedColumnDefsMap = useMemo(
             rowMultiSelectWithClick
             rowDeselection
             useAgGridRowDrag
+            pushUndo={pushUndo}
             suppressColumnVirtualisation={false}
             cacheBlockSize={100}
             rowBuffer={5}

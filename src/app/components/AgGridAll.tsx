@@ -578,6 +578,10 @@ type Props = {
   columnStateNamespace?: string;
   onResponse?: (response: GridResponse | null) => void;
   onRowsMoved?: (api: GridApi<RowData>) => void;
+  /** When provided and `useAgGridRowDrag` is on, a successful drag-and-drop
+   *  reorder pushes an undo entry that restores the moved rows to their
+   *  pre-drag location. */
+  pushUndo?: (entry: { label: string; undo: () => Promise<void> }) => void;
   rowDeselection?: boolean;
   disableAutoSize?: boolean;
   performanceMode?: boolean;
@@ -1247,6 +1251,7 @@ export default function AgGridAll({
   onSelectionChanged: externalSelectionChangedHandler,
   onRowDoubleClicked: externalRowDoubleClickHandler,
   onRowsMoved,
+  pushUndo,
   rowGroupPanelShow = 'always',
   suppressRowGroup = false,
   getRowClass,
@@ -4396,9 +4401,123 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       sourceIds: sourceIds.length > 1 ? sourceIds : undefined,
     };
 
+    // Snapshot each source's pre-drag location so we can build an undo entry.
+    // For each source we record its original parentPath and an anchor neighbor
+    // (a non-dragged row immediately before or after it). The anchor is what
+    // lets the undo reorder land the row back in the same slot even after the
+    // grid refreshes.
+    type RestoreSnapshot = {
+      sourceId: string;
+      parentPath: string[];
+      position: 'before' | 'after';
+      beforeId: string | null;
+      afterId: string | null;
+    };
+    const draggedIdSet = new Set(sourceIds);
+    const pathsEqual = (a: string[], b: string[]) =>
+      a.length === b.length && a.every((seg, i) => seg === b[i]);
+    const restoreSnapshots: RestoreSnapshot[] = [];
+    for (const node of orderedNodes) {
+      const id = node.id;
+      if (typeof id !== 'string' || id.length === 0) continue;
+      const originalParentPath = getParentPath(getRowPath(node));
+      const idx = typeof node.rowIndex === 'number' ? node.rowIndex : -1;
+      // Find anchors that are SIBLINGS (same parentPath) of the source and
+      // are not themselves being dragged. The server's reorder action keys
+      // off siblings of `parentPath`, so a non-sibling anchor would silently
+      // fall back to end-of-list.
+      let anchorBefore: IRowNode<RowData> | null = null;
+      let anchorAfter: IRowNode<RowData> | null = null;
+      if (idx >= 0) {
+        for (let i = idx - 1; i >= 0; i -= 1) {
+          const candidate = api.getDisplayedRowAtIndex(i) ?? null;
+          const cId = candidate?.id;
+          if (!candidate || typeof cId !== 'string' || cId.length === 0) continue;
+          const cParent = getParentPath(getRowPath(candidate));
+          if (!pathsEqual(cParent, originalParentPath)) {
+            // Once we leave the sibling group going backward, no earlier row
+            // can be a sibling either — stop.
+            if (cParent.length < originalParentPath.length) break;
+            continue;
+          }
+          if (draggedIdSet.has(cId)) continue;
+          anchorBefore = candidate;
+          break;
+        }
+        for (let i = idx + 1; ; i += 1) {
+          const candidate = api.getDisplayedRowAtIndex(i) ?? null;
+          if (!candidate) break;
+          const cId = candidate.id;
+          if (typeof cId !== 'string' || cId.length === 0) continue;
+          const cParent = getParentPath(getRowPath(candidate));
+          if (!pathsEqual(cParent, originalParentPath)) {
+            if (cParent.length < originalParentPath.length) break;
+            continue;
+          }
+          if (draggedIdSet.has(cId)) continue;
+          anchorAfter = candidate;
+          break;
+        }
+      }
+      if (anchorBefore?.id) {
+        restoreSnapshots.push({
+          sourceId: id,
+          parentPath: originalParentPath,
+          position: 'after',
+          beforeId: anchorBefore.id,
+          afterId: null,
+        });
+      } else if (anchorAfter?.id) {
+        restoreSnapshots.push({
+          sourceId: id,
+          parentPath: originalParentPath,
+          position: 'before',
+          beforeId: null,
+          afterId: anchorAfter.id,
+        });
+      } else {
+        restoreSnapshots.push({
+          sourceId: id,
+          parentPath: originalParentPath,
+          position: 'after',
+          beforeId: null,
+          afterId: null,
+        });
+      }
+    }
+
     const executeReorder = async () => {
       try {
         await reorderRowOnServer(reorderContext);
+        if (typeof pushUndo === 'function' && restoreSnapshots.length > 0) {
+          const snapshotsForUndo = restoreSnapshots.slice();
+          pushUndo({
+            label: snapshotsForUndo.length > 1 ? 'Reorder rows' : 'Reorder row',
+            undo: async () => {
+              // Replay restores in reverse so each row lands relative to its
+              // (still-stable) non-dragged anchor without colliding with other
+              // restores yet to run.
+              for (let i = snapshotsForUndo.length - 1; i >= 0; i -= 1) {
+                const snap = snapshotsForUndo[i];
+                await reorderRowOnServer({
+                  sourceId: snap.sourceId,
+                  parentPath: snap.parentPath,
+                  position: snap.position,
+                  beforeId: snap.beforeId,
+                  afterId: snap.afterId,
+                });
+              }
+              const restoreApi = gridApiRef.current ?? gridRef.current?.api ?? null;
+              if (restoreApi) {
+                const viewport = getViewportElement();
+                if (viewport) {
+                  pendingScrollRestoreTopRef.current = viewport.scrollTop;
+                }
+                refreshServerSideData(restoreApi, { purge: false });
+              }
+            },
+          });
+        }
         const viewport = getViewportElement();
         if (viewport) {
           pendingScrollRestoreTopRef.current = viewport.scrollTop;
@@ -4425,8 +4544,11 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     clearDropIndicator,
     clearDragGhostDom,
     deriveDropTargetContext,
+    getParentPath,
+    getRowPath,
     getViewportElement,
     onRowsMoved,
+    pushUndo,
     reorderRowOnServer,
     useAgGridRowDrag,
   ]);
