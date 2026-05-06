@@ -8,6 +8,7 @@ export interface ClipboardRow {
   productId: number | null;
   isCategory: boolean;
   isComment: boolean;
+  isOption: boolean;
   isPrintable: boolean | null;
   treeOrdering: string;
   brandName: string | null;
@@ -19,6 +20,7 @@ export interface ClipboardRow {
   netUnitPrice: number | null;
   listPrice: number | null;
   customerDiscount: number | null;
+  additionalCustomerDiscount: number | null;
   telmacoDiscount: number | null;
   netCost: number | null;
   netCostOtherCurrency: number | null;
@@ -26,6 +28,9 @@ export interface ClipboardRow {
   grossProfit: number | null;
   comment: string | null;
   delivery: string | null;
+  installation: number | null;
+  elInstalation: number | null;
+  commissioning: number | null;
   warranty: number | null;
   telmacoWarranty: number | null;
   otherCurrencyId: number | null;
@@ -132,6 +137,7 @@ export function mapRowToClipboardRow(row: Record<string, unknown>): ClipboardRow
     productId: coerceInt(row.ProductID),
     isCategory: coerceBool(row.IsCategory),
     isComment: coerceBool(row.IsComment),
+    isOption: coerceBool(row.IsOption),
     isPrintable: coerceNullableBool(row.IsPrintable),
     treeOrdering: coerceString(row.TreeOrdering) ?? '',
     brandName: coerceString(row.BrandName),
@@ -143,6 +149,7 @@ export function mapRowToClipboardRow(row: Record<string, unknown>): ClipboardRow
     netUnitPrice: coerceNumber(row.NetUnitPrice),
     listPrice: coerceNumber(row.ListPrice),
     customerDiscount: coerceNumber(row.CustomerDiscount),
+    additionalCustomerDiscount: coerceNumber(row.AdditionalCustomerDiscount),
     telmacoDiscount: coerceNumber(row.TelmacoDiscount),
     netCost: coerceNumber(row.NetCost),
     netCostOtherCurrency: coerceNumber(row.NetCostOtherCurrency),
@@ -150,6 +157,9 @@ export function mapRowToClipboardRow(row: Record<string, unknown>): ClipboardRow
     grossProfit: coerceNumber(row.GrossProfit),
     comment: coerceString(row.Comment),
     delivery: coerceString(row.Delivery),
+    installation: coerceNumber(row.Installation),
+    elInstalation: coerceNumber(row.ElInstalation),
+    commissioning: coerceNumber(row.Commissioning),
     warranty: coerceInt(row.Warranty),
     telmacoWarranty: coerceInt(row.TelmacoWarranty),
     otherCurrencyId: coerceInt(row.OtherCurrencyID),

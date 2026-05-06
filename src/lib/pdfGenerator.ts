@@ -506,7 +506,7 @@ function buildCompactHeader(data: OfferPdfData, L: Labels, lang: PdfLang, orient
           [
             {
               table: {
-                widths: [54, '*'],
+                widths: ['auto', '*'],
                 body:
                   leftInfo.length > 0
                     ? leftInfo.map((row) => [
@@ -515,18 +515,32 @@ function buildCompactHeader(data: OfferPdfData, L: Labels, lang: PdfLang, orient
                       ])
                     : [[{ text: '', ...compactStyle }, { text: '', ...compactValue }]],
               },
-              layout: 'noBorders',
+              layout: {
+                hLineWidth: () => 0,
+                vLineWidth: () => 0,
+                paddingLeft: (i: number) => (i === 0 ? 0 : 2),
+                paddingRight: (i: number) => (i === 0 ? 2 : 0),
+                paddingTop: () => 0.5,
+                paddingBottom: () => 0.5,
+              },
               margin: [4, 2, 4, 2],
             },
             {
               table: {
-                widths: [66, '*'],
+                widths: ['auto', '*'],
                 body: rightInfo.map((row) => [
                   { text: row.label, ...compactStyle },
                   { text: row.value, ...compactValue },
                 ]),
               },
-              layout: 'noBorders',
+              layout: {
+                hLineWidth: () => 0,
+                vLineWidth: () => 0,
+                paddingLeft: (i: number) => (i === 0 ? 0 : 2),
+                paddingRight: (i: number) => (i === 0 ? 2 : 0),
+                paddingTop: () => 0.5,
+                paddingBottom: () => 0.5,
+              },
               margin: [4, 2, 4, 2],
             },
           ],
@@ -626,7 +640,7 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
           [
             {
               table: {
-                widths: [74, '*'],
+                widths: ['auto', '*'],
                 body:
                   leftInfo.length > 0
                     ? leftInfo.map((row) => [
@@ -635,18 +649,32 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
                       ])
                     : [[{ text: '', style: 'metaLabel' }, { text: '', style: 'metaValue' }]],
               },
-              layout: 'noBorders',
+              layout: {
+                hLineWidth: () => 0,
+                vLineWidth: () => 0,
+                paddingLeft: (i: number) => (i === 0 ? 0 : 2),
+                paddingRight: (i: number) => (i === 0 ? 2 : 0),
+                paddingTop: () => 1,
+                paddingBottom: () => 1,
+              },
               margin: [6, 4, 6, 4],
             },
             {
               table: {
-                widths: [88, '*'],
+                widths: ['auto', '*'],
                 body: rightInfo.map((row) => [
                   { text: row.label, style: 'metaLabel' },
                   { text: row.value, style: 'metaValue' },
                 ]),
               },
-              layout: 'noBorders',
+              layout: {
+                hLineWidth: () => 0,
+                vLineWidth: () => 0,
+                paddingLeft: (i: number) => (i === 0 ? 0 : 2),
+                paddingRight: (i: number) => (i === 0 ? 2 : 0),
+                paddingTop: () => 1,
+                paddingBottom: () => 1,
+              },
               margin: [6, 4, 6, 4],
             },
           ],

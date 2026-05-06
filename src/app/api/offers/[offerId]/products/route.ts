@@ -235,6 +235,8 @@ type DetailUpdateInput = {
   Installation?: number | string | null;
   ElInstalation?: number | string | null;
   Commissioning?: number | string | null;
+  Warranty?: number | string | null;
+  TelmacoWarranty?: number | string | null;
 };
 
 type DetailUpdateRequest = {
@@ -1715,6 +1717,8 @@ export async function PATCH(
         const hasInstallation = entry ? Object.prototype.hasOwnProperty.call(entry, 'Installation') : false;
         const hasElInstalation = entry ? Object.prototype.hasOwnProperty.call(entry, 'ElInstalation') : false;
         const hasCommissioning = entry ? Object.prototype.hasOwnProperty.call(entry, 'Commissioning') : false;
+        const hasWarranty = entry ? Object.prototype.hasOwnProperty.call(entry, 'Warranty') : false;
+        const hasTelmacoWarranty = entry ? Object.prototype.hasOwnProperty.call(entry, 'TelmacoWarranty') : false;
         const hasPricingFields = hasCustomerDiscount || hasAdditionalCustomerDiscount || hasTelmacoDiscount || hasNetUnitPrice || hasNetCost || hasMargin
           || hasNetCostOtherCurrency || hasOtherCurrencyID || hasCurrencyCostModifier;
         if (
@@ -1743,6 +1747,8 @@ export async function PATCH(
           && !hasInstallation
           && !hasElInstalation
           && !hasCommissioning
+          && !hasWarranty
+          && !hasTelmacoWarranty
         ) {
           return null;
         }
@@ -1820,6 +1826,8 @@ export async function PATCH(
         const installation = hasInstallation ? normalizeMoneyValue(entry?.Installation ?? null) : null;
         const elInstalation = hasElInstalation ? normalizeMoneyValue(entry?.ElInstalation ?? null) : null;
         const commissioning = hasCommissioning ? normalizeMoneyValue(entry?.Commissioning ?? null) : null;
+        const warranty = hasWarranty ? normalizeMoneyValue(entry?.Warranty ?? null) : null;
+        const telmacoWarranty = hasTelmacoWarranty ? normalizeMoneyValue(entry?.TelmacoWarranty ?? null) : null;
 
         if (hasPricingFields) {
           const invalidPricing = (hasCustomerDiscount && customerDiscount == null)
@@ -1906,6 +1914,10 @@ export async function PATCH(
           ElInstalation: elInstalation,
           hasCommissioning,
           Commissioning: commissioning,
+          hasWarranty,
+          Warranty: warranty,
+          hasTelmacoWarranty,
+          TelmacoWarranty: telmacoWarranty,
         };
       })
       .filter((entry): entry is {
@@ -1974,6 +1986,10 @@ export async function PATCH(
         ElInstalation: number | null;
         hasCommissioning: boolean;
         Commissioning: number | null;
+        hasWarranty: boolean;
+        Warranty: number | null;
+        hasTelmacoWarranty: boolean;
+        TelmacoWarranty: number | null;
       } => Boolean(entry));
 
     if (normalizedUpdates.length === 0) {
@@ -2157,6 +2173,10 @@ export async function PATCH(
         HasElInstalation: boolean;
         Commissioning: number | null;
         HasCommissioning: boolean;
+        Warranty: number | null;
+        HasWarranty: boolean;
+        TelmacoWarranty: number | null;
+        HasTelmacoWarranty: boolean;
       }> = [];
       const errors: string[] = [];
 
@@ -2410,6 +2430,10 @@ export async function PATCH(
           HasElInstalation: entry.hasElInstalation,
           Commissioning: entry.hasCommissioning ? entry.Commissioning : null,
           HasCommissioning: entry.hasCommissioning,
+          Warranty: entry.hasWarranty ? entry.Warranty : null,
+          HasWarranty: entry.hasWarranty,
+          TelmacoWarranty: entry.hasTelmacoWarranty ? entry.TelmacoWarranty : null,
+          HasTelmacoWarranty: entry.hasTelmacoWarranty,
         });
       });
 
@@ -2441,7 +2465,7 @@ export async function PATCH(
       });
 
       const decimalType = getDecimalType();
-      const UPDATE_PARAMS_PER_ROW = 63;
+      const UPDATE_PARAMS_PER_ROW = 67;
       const UPDATE_BASE_PARAMS = 2;
       const updateChunkSize = Math.max(1, Math.floor((2100 - UPDATE_BASE_PARAMS) / UPDATE_PARAMS_PER_ROW));
 
@@ -2605,7 +2629,15 @@ export async function PATCH(
         request.input(hasElInstalationParam, sql.Bit, row.HasElInstalation ? 1 : 0);
         request.input(commissioningParam, decimalType, row.HasCommissioning ? row.Commissioning : null);
         request.input(hasCommissioningParam, sql.Bit, row.HasCommissioning ? 1 : 0);
-        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${additionalCustomerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam}, @${isOptionParam}, @${hasIsOptionParam}, @${partNumberParam}, @${hasPartNumberParam}, @${modelNumberParam}, @${hasModelNumberParam}, @${installationParam}, @${hasInstallationParam}, @${elInstalationParam}, @${hasElInstalationParam}, @${commissioningParam}, @${hasCommissioningParam})`);
+        const warrantyParam = `warranty_${rowIdx}`;
+        const hasWarrantyParam = `hasWarranty_${rowIdx}`;
+        const telmacoWarrantyParam = `telmacoWarranty_${rowIdx}`;
+        const hasTelmacoWarrantyParam = `hasTelmacoWarranty_${rowIdx}`;
+        request.input(warrantyParam, decimalType, row.HasWarranty ? row.Warranty : null);
+        request.input(hasWarrantyParam, sql.Bit, row.HasWarranty ? 1 : 0);
+        request.input(telmacoWarrantyParam, decimalType, row.HasTelmacoWarranty ? row.TelmacoWarranty : null);
+        request.input(hasTelmacoWarrantyParam, sql.Bit, row.HasTelmacoWarranty ? 1 : 0);
+        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${additionalCustomerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam}, @${isOptionParam}, @${hasIsOptionParam}, @${partNumberParam}, @${hasPartNumberParam}, @${modelNumberParam}, @${hasModelNumberParam}, @${installationParam}, @${hasInstallationParam}, @${elInstalationParam}, @${hasElInstalationParam}, @${commissioningParam}, @${hasCommissioningParam}, @${warrantyParam}, @${hasWarrantyParam}, @${telmacoWarrantyParam}, @${hasTelmacoWarrantyParam})`);
       });
 
       const query = `
@@ -2672,7 +2704,11 @@ export async function PATCH(
           ElInstalation,
           HasElInstalation,
           Commissioning,
-          HasCommissioning
+          HasCommissioning,
+          Warranty,
+          HasWarranty,
+          TelmacoWarranty,
+          HasTelmacoWarranty
         ) AS (
           SELECT *
           FROM (VALUES ${valueClauses.join(', ')}) AS v (
@@ -2738,7 +2774,11 @@ export async function PATCH(
             ElInstalation,
             HasElInstalation,
             Commissioning,
-            HasCommissioning
+            HasCommissioning,
+            Warranty,
+            HasWarranty,
+            TelmacoWarranty,
+            HasTelmacoWarranty
           )
         )
         UPDATE od
@@ -2778,6 +2818,8 @@ export async function PATCH(
             od.Installation = CASE WHEN PendingUpdates.HasInstallation = 1 THEN PendingUpdates.Installation ELSE od.Installation END,
             od.ElInstalation = CASE WHEN PendingUpdates.HasElInstalation = 1 THEN PendingUpdates.ElInstalation ELSE od.ElInstalation END,
             od.Commissioning = CASE WHEN PendingUpdates.HasCommissioning = 1 THEN PendingUpdates.Commissioning ELSE od.Commissioning END,
+            od.Warranty = CASE WHEN PendingUpdates.HasWarranty = 1 THEN PendingUpdates.Warranty ELSE od.Warranty END,
+            od.TelmacoWarranty = CASE WHEN PendingUpdates.HasTelmacoWarranty = 1 THEN PendingUpdates.TelmacoWarranty ELSE od.TelmacoWarranty END,
             od.ModifiedOn = SYSUTCDATETIME(),
             od.ModifiedBy = @__modifiedBy
         FROM dbo.OfferDetails od
@@ -2827,10 +2869,12 @@ export async function PATCH(
 
     if (affected > 0) {
       for (const entry of normalizedUpdates) {
-        const hourFields: Array<{ has: boolean; field: 'Installation' | 'ElInstalation' | 'Commissioning'; value: number | null }> = [
+        const hourFields: Array<{ has: boolean; field: 'Installation' | 'ElInstalation' | 'Commissioning' | 'Warranty' | 'TelmacoWarranty'; value: number | null }> = [
           { has: entry.hasInstallation, field: 'Installation', value: entry.Installation },
           { has: entry.hasElInstalation, field: 'ElInstalation', value: entry.ElInstalation },
           { has: entry.hasCommissioning, field: 'Commissioning', value: entry.Commissioning },
+          { has: entry.hasWarranty, field: 'Warranty', value: entry.Warranty },
+          { has: entry.hasTelmacoWarranty, field: 'TelmacoWarranty', value: entry.TelmacoWarranty },
         ];
         for (const { has, field, value } of hourFields) {
           if (!has) continue;
@@ -2886,6 +2930,8 @@ export async function PATCH(
         if (entry.hasInstallation) addChange('Installation', entry.Installation);
         if (entry.hasElInstalation) addChange('ElInstalation', entry.ElInstalation);
         if (entry.hasCommissioning) addChange('Commissioning', entry.Commissioning);
+        if (entry.hasWarranty) addChange('Warranty', entry.Warranty);
+        if (entry.hasTelmacoWarranty) addChange('TelmacoWarranty', entry.TelmacoWarranty);
       });
       if (changes.length > 0) {
         logEditAuditDetails({

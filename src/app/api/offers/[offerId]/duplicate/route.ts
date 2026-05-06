@@ -111,7 +111,7 @@ DECLARE @SourceDetails TABLE (
   Installation DECIMAL(18,4) NULL,
   ElInstalation DECIMAL(18,4) NULL,
   Commissioning DECIMAL(18,4) NULL,
-  Delivery DECIMAL(18,4) NULL,
+  Delivery NVARCHAR(255) NULL,
   Comment NVARCHAR(MAX) NULL,
   ListPrice DECIMAL(18,4) NULL,
   TelmacoDiscount DECIMAL(18,4) NULL,

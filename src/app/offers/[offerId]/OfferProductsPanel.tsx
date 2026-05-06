@@ -6656,6 +6656,92 @@ const requestedColumnDefsMap = useMemo(
     }
   }, [resolvedEndpoint, pushUndo, performUndo]);
 
+  const handleWarrantyFieldEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    const editedField = event.colDef.field;
+    if (editedField !== 'Warranty' && editedField !== 'TelmacoWarranty') return;
+    const source = (event as { source?: string }).source;
+    if (source === 'api') return;
+    if (shouldSkipRealtimeCellEdit(event)) return;
+    if (!isOfferProductCommentOrProduct(event.data)) {
+      try { event.node?.setDataValue?.(editedField, event.oldValue ?? null); } catch { /* noop */ }
+      return;
+    }
+    const normalizedOldValue = coerceNumber(event.oldValue);
+    const newRaw = event.newValue;
+    const isClearing = newRaw == null || (typeof newRaw === 'string' && newRaw.trim() === '');
+    let normalizedNewValue: number | null;
+    if (isClearing) {
+      normalizedNewValue = null;
+    } else {
+      const parsed = coerceNumber(newRaw);
+      if (parsed == null || parsed < 0) {
+        showToastMessage('Please enter a valid warranty value (zero or more).', 'error');
+        try { event.node?.setDataValue?.(editedField, normalizedOldValue ?? null); } catch { /* noop */ }
+        return;
+      }
+      normalizedNewValue = parsed;
+    }
+    if (
+      (normalizedOldValue == null && normalizedNewValue == null)
+      || (normalizedOldValue != null && normalizedNewValue != null && Object.is(normalizedOldValue, normalizedNewValue))
+    ) {
+      return;
+    }
+    const offerDetailId = normalizeOfferDetailId((event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null);
+    if (offerDetailId == null) {
+      showToastMessage('Unable to update value. Missing record identifier.', 'error');
+      try { event.node?.setDataValue?.(editedField, normalizedOldValue ?? null); } catch { /* noop */ }
+      return;
+    }
+    const revertValue = () => {
+      try { event.node?.setDataValue?.(editedField, normalizedOldValue ?? null); } catch { /* noop */ }
+    };
+    const runUpdate = async () => {
+      try {
+        const res = await fetch(resolvedEndpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: [{ OfferDetailID: offerDetailId, [editedField]: normalizedNewValue }],
+          }),
+        });
+        let payload: { ok?: boolean; error?: string } | null = null;
+        try { payload = (await res.json()) as { ok?: boolean; error?: string } | null; } catch { payload = null; }
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update value (status ${res.status})`);
+        }
+        const capturedOld = normalizedOldValue;
+        const capturedField = editedField;
+        const capturedDetailId = offerDetailId;
+        pushUndo({
+          label: `${editedField} updated`,
+          undo: async () => {
+            const undoRes = await fetch(resolvedEndpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, [capturedField]: capturedOld }] }),
+            });
+            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+            try { event.node?.setDataValue(capturedField, capturedOld); } catch { /* noop */ }
+            event.api?.refreshServerSide?.({ purge: false });
+          },
+        });
+        showToastMessage(`${editedField} updated`, 'success', 5500, {
+          label: 'Undo',
+          onClick: () => performUndo(),
+        });
+      } catch (err) {
+        console.error(`Failed to update ${editedField}`, err);
+        showToastMessage(`Unable to update: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
+        revertValue();
+        event.api?.stopEditing?.();
+        event.api?.clearFocusedCell?.();
+      }
+    };
+    void runUpdate();
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
+
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const wasProgrammatic = isProgrammaticCellEdit(event);
     handleDescriptionEdit(event);
@@ -6667,8 +6753,9 @@ const requestedColumnDefsMap = useMemo(
     handlePartModelNumberEdit(event);
     handleOriginEdit(event);
     handleHoursFieldEdit(event);
+    handleWarrantyFieldEdit(event);
     void propagateChangeToDuplicates(event, wasProgrammatic);
-  }, [isProgrammaticCellEdit, handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit, handleOriginEdit, handleHoursFieldEdit, propagateChangeToDuplicates]);
+  }, [isProgrammaticCellEdit, handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit, handleOriginEdit, handleHoursFieldEdit, handleWarrantyFieldEdit, propagateChangeToDuplicates]);
 
   const offerCurrencySymbol = offerCurrencyName ?? '€';
   const withCurrency = (formatted: string) =>
