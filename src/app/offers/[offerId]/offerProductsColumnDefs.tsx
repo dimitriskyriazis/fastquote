@@ -217,8 +217,8 @@ export type ProductColumnDefsDeps = {
 const parseDiscountValue = (params: { newValue: unknown; oldValue: unknown }) => {
   const raw = params.newValue;
   if (raw == null || (typeof raw === 'string' && raw.trim() === '')) return null;
-  const num = typeof raw === 'number' ? raw : Number.parseFloat(String(raw));
-  if (!Number.isFinite(num)) return params.oldValue;
+  const num = coerceNumber(raw);
+  if (num == null) return params.oldValue;
   if (num > 100) return 100;
   if (num < -100) return -100;
   return num;
