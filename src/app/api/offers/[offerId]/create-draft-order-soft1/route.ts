@@ -555,6 +555,17 @@ async function resolveOrCreateProject(
   let finalErpProjectId = ctx.erpProjectId;
   let finalErpProjectCode = ctx.erpProjectCode;
 
+  // If we have a code but no ID, resolve the ID from Soft1 by code
+  if ((!finalErpProjectId || finalErpProjectId <= 0) && finalErpProjectCode) {
+    const lookupReq = ctx.erpPool.request();
+    lookupReq.input('CODE', sql.NVarChar(25), finalErpProjectCode);
+    const lookupRes = await lookupReq.query<{ PRJC: number | null }>(`SELECT TOP 1 PRJC FROM dbo.PRJC WHERE CODE = @CODE`);
+    const resolvedId = lookupRes.recordset?.[0]?.PRJC ?? null;
+    if (resolvedId) {
+      finalErpProjectId = resolvedId;
+    }
+  }
+
   if (finalErpProjectId && finalErpProjectId > 0) {
     let codeToValidate = finalErpProjectCode;
     if (!codeToValidate) {
@@ -1391,20 +1402,29 @@ async function handlePrepareSummary(
   let projectStatus: 'existing' | 'will-create' = 'will-create';
   let projectCode: string | null = ctx.erpProjectCode;
 
+  logger.info('wizard prepare-summary project check', {
+    requestId,
+    offerId,
+    erpProjectId: ctx.erpProjectId,
+    erpProjectCode: ctx.erpProjectCode,
+  });
+
   if (ctx.erpProjectId && ctx.erpProjectId > 0) {
-    let codeToValidate = ctx.erpProjectCode;
-    if (!codeToValidate) {
+    projectStatus = 'existing';
+    if (!projectCode) {
       const projReq = erpPool.request();
       projReq.input('PRJC', sql.Int, ctx.erpProjectId);
       const projRes = await projReq.query<{ CODE: string | null }>(`SELECT CODE FROM dbo.PRJC WHERE PRJC = @PRJC`);
-      codeToValidate = projRes.recordset?.[0]?.CODE ?? null;
+      projectCode = projRes.recordset?.[0]?.CODE ?? null;
     }
-    if (codeToValidate) {
-      const validation = await findProject(ctx.erpProjectId, codeToValidate);
-      if (validation.statusCode === PROJECT_FIND_STATUS.OK) {
-        projectStatus = 'existing';
-        projectCode = codeToValidate;
-      }
+  } else if (ctx.erpProjectCode) {
+    // Have a code but no ID — look up the project in Soft1 by code
+    const projReq = erpPool.request();
+    projReq.input('CODE', sql.NVarChar(25), ctx.erpProjectCode);
+    const projRes = await projReq.query<{ PRJC: number | null }>(`SELECT TOP 1 PRJC FROM dbo.PRJC WHERE CODE = @CODE`);
+    if (projRes.recordset?.[0]?.PRJC) {
+      projectStatus = 'existing';
+      projectCode = ctx.erpProjectCode;
     }
   }
 
