@@ -940,7 +940,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
 
     if (!brandsCheckComplete) return null;
 
-    if (missingBrands.length === 0 && existingBrands.length === 0) {
+    if (missingBrands.length === 0 && existingBrands.length === 0 && nearMatchBrands.length === 0) {
       return (
         <div className={`${styles.card} ${styles.cardGreen}`}>
           <p className={styles.sectionTitle} style={{ color: '#166534' }}>No brands to check</p>

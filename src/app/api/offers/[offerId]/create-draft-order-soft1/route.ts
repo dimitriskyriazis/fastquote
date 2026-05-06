@@ -7,7 +7,7 @@ import { createProjectFromIntegration } from '../../../../../lib/projectCreation
 import { createOrderWithLines } from '../../../../../lib/orderCreation';
 import type { OrderLineForCreation } from '../../../../../lib/orderCreation';
 import { createItemInErp } from '../../../../../lib/itemCreation';
-import { createManufacturerInErp } from '../../../../../lib/itemCreationWS';
+import { createManufacturerInErp, findBrandInErp } from '../../../../../lib/itemCreationWS';
 import { getRequestId } from '../../../../../lib/requestId';
 import { logger } from '../../../../../lib/logger';
 import { requirePermission } from '../../../../../lib/authz';
@@ -1011,19 +1011,19 @@ async function handleCheckBrands(
   const nearMatchBrands: Array<{ fastquoteName: string; matches: Array<{ erpName: string; MTRMANFCTR: number }> }> = [];
 
   for (const brandName of uniqueBrandNames) {
-    // 1. Try exact match (trimmed, case-insensitive)
-    const checkReq = erpPool.request();
-    checkReq.input('brandName', sql.NVarChar(128), brandName);
-    const checkRes = await checkReq.query<{ MTRMANFCTR: number }>(`
-      SELECT TOP (1) MTRMANFCTR FROM dbo.MTRMANFCTR
-      WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
-        AND CODE IS NOT NULL
-        AND LTRIM(RTRIM(CODE)) <> ''
-      ORDER BY MTRMANFCTR
-    `);
-    if (checkRes.recordset?.[0]) {
-      existingBrands.push(brandName);
-      continue;
+    // 1. Try exact match via tlm._mtrlFindBrand. Proc throws 53101 on
+    // ambiguous matches — treat that like "needs user resolution" and fall
+    // through to the fuzzy block, which surfaces candidates in the wizard.
+    try {
+      const exact = await findBrandInErp(erpPool, brandName);
+      if (exact.found > 0 && exact.brandId != null) {
+        existingBrands.push(brandName);
+        continue;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('ambiguous')) throw err;
+      logger.info('wizard check-brands ambiguous, falling back to fuzzy', { requestId, offerId, brandName });
     }
 
     // 2. Try fuzzy match — strip spaces/special chars, check both directions, accent-insensitive
@@ -1554,17 +1554,18 @@ async function handleExecute(
 
   // 1. Create missing brands
   for (const brandName of missingBrands) {
-    // Idempotency: check if brand was already created
-    const checkReq = erpPool.request();
-    checkReq.input('brandName', sql.NVarChar(128), brandName);
-    const checkRes = await checkReq.query<{ MTRMANFCTR: number }>(`
-      SELECT TOP (1) MTRMANFCTR FROM dbo.MTRMANFCTR
-      WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
-        AND CODE IS NOT NULL
-        AND LTRIM(RTRIM(CODE)) <> ''
-      ORDER BY MTRMANFCTR
-    `);
-    if (!checkRes.recordset?.[0]) {
+    // Idempotency: check if brand was already created. Ambiguous (53101)
+    // means it exists multiple times — don't create another.
+    let alreadyExists = false;
+    try {
+      const existing = await findBrandInErp(erpPool, brandName);
+      alreadyExists = existing.found > 0 && existing.brandId != null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('ambiguous')) throw err;
+      alreadyExists = true;
+    }
+    if (!alreadyExists) {
       const created = await createManufacturerInErp(erpPool, brandName);
       logger.info('wizard execute brand created', { requestId, offerId, brandName, mtrmanfctrId: created.mtrmanfctrId });
     }
@@ -2237,18 +2238,15 @@ export async function POST(
     if (uniqueBrandNames.length > 0) {
       const missingBrands: string[] = [];
       for (const brandName of uniqueBrandNames) {
-        const checkRequest = erpPool.request();
-        checkRequest.input('brandName', sql.NVarChar(128), brandName);
-        const checkResult = await checkRequest.query<{ MTRMANFCTR: number }>(`
-          SELECT TOP (1) MTRMANFCTR
-          FROM dbo.MTRMANFCTR
-          WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
-            AND CODE IS NOT NULL
-            AND LTRIM(RTRIM(CODE)) <> ''
-          ORDER BY MTRMANFCTR
-        `);
-        if (!checkResult.recordset?.[0]) {
-          missingBrands.push(brandName);
+        try {
+          const existing = await findBrandInErp(erpPool, brandName);
+          if (existing.found === 0 || existing.brandId == null) {
+            missingBrands.push(brandName);
+          }
+        } catch (err) {
+          // Ambiguous (53101) means brand exists with duplicates — not missing.
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!msg.includes('ambiguous')) throw err;
         }
       }
 

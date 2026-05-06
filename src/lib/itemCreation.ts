@@ -1,6 +1,6 @@
 import sql from 'mssql';
 import { getPool, getErpPool } from './sql';
-import { createItemViaWebService } from './itemCreationWS';
+import { createItemViaWebService, findBrandInErp } from './itemCreationWS';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -68,18 +68,8 @@ export async function generateNewErpCode(
   }
   const typeFirstLetter = typeName.trim().charAt(0).toUpperCase();
 
-  // 3. Match Brand Name with ERP MTRMANFCTR.NAME (case-insensitive) and get CODE
-  const brandRequest = erpPool.request();
-  brandRequest.input('brandName', sql.NVarChar(128), product.BrandName.trim());
-  const brandResult = await brandRequest.query<{ CODE: string | null }>(`
-    SELECT TOP (1) CODE
-    FROM dbo.MTRMANFCTR
-    WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
-      AND CODE IS NOT NULL
-      AND LTRIM(RTRIM(CODE)) <> ''
-    ORDER BY MTRMANFCTR
-  `);
-  const brandCode = brandResult.recordset?.[0]?.CODE;
+  // 3. Match Brand Name with ERP MTRMANFCTR via tlm._mtrlFindBrand and get CODE
+  const { brandCode } = await findBrandInErp(erpPool, product.BrandName);
   if (!brandCode) {
     throw new Error(`Brand Code not found in ERP for brand name: ${product.BrandName}`);
   }

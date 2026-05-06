@@ -15,28 +15,40 @@ function mapBusinessUnit(bu: 'AVS' | 'TVS'): string {
 }
 
 /**
- * Resolves the ERP MTRMANFCTR numeric ID from the brand name.
- * Filters on CODE IS NOT NULL to match the brand-existence check elsewhere
- * in the pipeline (avoids picking up stale records with empty CODE that
- * Soft1 treats as invalid manufacturers).
- * Returns the ID as a string, or undefined if not found.
+ * Looks up a brand in Soft1 via tlm._mtrlFindBrand. Returns FoundCount and the
+ * resolved BrandId / BrandCode (null when not found). The proc throws on
+ * ambiguous matches (53101) and on empty input (53100).
  */
+export async function findBrandInErp(
+  erpPool: Awaited<ReturnType<typeof getErpPool>>,
+  brandName: string,
+): Promise<{ found: number; brandId: number | null; brandCode: string | null }> {
+  const trimmed = brandName.trim();
+  if (!trimmed) return { found: 0, brandId: null, brandCode: null };
+  const request = erpPool.request();
+  request.input('BrandName', sql.VarChar(50), trimmed);
+  const result = await request.query<{ FoundCount: number; BrandId: number | null; BrandCode: string | null }>(`
+    DECLARE @BrandId INT, @BrandCode VARCHAR(10), @FoundCount INT;
+    EXEC [tlm].[_mtrlFindBrand]
+      @BrandName = @BrandName,
+      @BrandId = @BrandId OUTPUT,
+      @BrandCode = @BrandCode OUTPUT,
+      @FoundCount = @FoundCount OUTPUT;
+  `);
+  const row = result.recordset?.[0];
+  return {
+    found: row?.FoundCount ?? 0,
+    brandId: row?.BrandId ?? null,
+    brandCode: row?.BrandCode ?? null,
+  };
+}
+
 async function resolveErpManufacturerId(
   erpPool: Awaited<ReturnType<typeof getErpPool>>,
   brandName: string,
 ): Promise<string | undefined> {
-  const request = erpPool.request();
-  request.input('brandName', sql.NVarChar(128), brandName.trim());
-  const result = await request.query<{ MTRMANFCTR: number }>(`
-    SELECT TOP (1) MTRMANFCTR
-    FROM dbo.MTRMANFCTR
-    WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
-      AND CODE IS NOT NULL
-      AND LTRIM(RTRIM(CODE)) <> ''
-    ORDER BY MTRMANFCTR
-  `);
-  const id = result.recordset?.[0]?.MTRMANFCTR;
-  return id != null ? String(id) : undefined;
+  const { brandId } = await findBrandInErp(erpPool, brandName);
+  return brandId != null ? String(brandId) : undefined;
 }
 
 /**
