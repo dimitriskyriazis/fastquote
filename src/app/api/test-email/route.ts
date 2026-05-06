@@ -40,6 +40,7 @@ export async function GET(req: NextRequest) {
     userId: auth.userId,
     offerId: 99999,
     offerDescription: 'TEST — Δοκιμαστική προσφορά',
+    customerName: 'TEST CUSTOMER Α.Ε.',
     results: {
       brandsCreated: ['TestBrand1', 'TestBrand2'],
       productsCreated: [{ productId: 1, mtrl: 50001, code: 'TEST.001' }],

@@ -106,11 +106,14 @@ function renderEmail(
   _recipient: Recipient,
   offerId: number,
   offerDescription: string,
+  customerName: string | null | undefined,
   results: DraftOrderCompletionResults,
 ): { subject: string; html: string; text: string } {
   const greeting = 'Γεια σας,';
   const orderCode = results.order?.finCode ?? '—';
   const projectCode = results.project?.code ?? '—';
+  const customerLabel = customerName?.trim() || '—';
+  const projectDescription = offerDescription?.trim() || '—';
   const projectCodeLabel = results.project?.isNew ? 'Κωδικός νέου έργου:' : 'Κωδικός έργου:';
 
   const pl = (count: number, singular: string, plural: string) => (count === 1 ? singular : plural);
@@ -239,6 +242,8 @@ function renderEmail(
       <table style="border-collapse: collapse; margin: 12px 0;">
         <tr><td style="padding: 4px 12px 4px 0;"><strong>Κωδικός προπαραγγελίας:</strong></td><td style="padding: 4px 0;">${escapeHtml(orderCode)}</td></tr>
         <tr><td style="padding: 4px 12px 4px 0;"><strong>${projectCodeLabel}</strong></td><td style="padding: 4px 0;">${escapeHtml(projectCode)}</td></tr>
+        <tr><td style="padding: 4px 12px 4px 0;"><strong>Πελάτης:</strong></td><td style="padding: 4px 0;">${escapeHtml(customerLabel)}</td></tr>
+        <tr><td style="padding: 4px 12px 4px 0;"><strong>Περιγραφή έργου:</strong></td><td style="padding: 4px 0;">${escapeHtml(projectDescription)}</td></tr>
       </table>
       <p><strong>Ενέργειες που εκτελέστηκαν:</strong></p>
       ${actionsHtml}
@@ -256,6 +261,8 @@ function renderEmail(
     '',
     `Κωδικός προπαραγγελίας: ${orderCode}`,
     `${projectCodeLabel} ${projectCode}`,
+    `Πελάτης: ${customerLabel}`,
+    `Περιγραφή έργου: ${projectDescription}`,
     '',
     'Ενέργειες που εκτελέστηκαν:',
     ...(actions.length > 0 ? actions.map(a => `- ${a}`) : ['- (καμία)']),
@@ -292,6 +299,7 @@ export async function sendDraftOrderCompletionEmail(params: {
   userId: string;
   offerId: number;
   offerDescription: string;
+  customerName?: string | null;
   results: DraftOrderCompletionResults;
   requestId?: string;
   overrideRecipientEmail?: string | null;
@@ -317,7 +325,13 @@ export async function sendDraftOrderCompletionEmail(params: {
     ccSet.delete(toAddress.toLowerCase());
     const cc = Array.from(ccSet);
 
-    const { subject, html, text } = renderEmail(templateRecipient, params.offerId, params.offerDescription, params.results);
+    const { subject, html, text } = renderEmail(
+      templateRecipient,
+      params.offerId,
+      params.offerDescription,
+      params.customerName,
+      params.results,
+    );
     const result = await sendEmail({ to: toAddress, cc, subject, html, text });
     if (!result.sent) {
       logger.warn('draft-order email: not sent', { to: toAddress, cc, reason: result.skipped, requestId: params.requestId });

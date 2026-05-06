@@ -1738,6 +1738,7 @@ async function handleExecute(
       userId: ctx.userId,
       offerId,
       offerDescription: ctx.offerDescription,
+      customerName: resolvedCustomer.NAME ?? ctx.customerName,
       businessUnit: ctx.businessUnit,
       results: {
         ...results,
