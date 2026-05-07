@@ -1413,6 +1413,8 @@ export default function AgGridAll({
 
   const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const pendingScrollRestoreTopRef = useRef<number | null>(null);
+  const pendingWindowScrollYRef = useRef<number | null>(null);
+  const pendingAncestorScrollRef = useRef<{ el: HTMLElement; top: number } | null>(null);
   const columnSaveTimerRef = useRef<number | null>(null);
   const columnStateLoadedRef = useRef(false);
   const filterStateLoadedRef = useRef(false);
@@ -3901,6 +3903,52 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     return shell.querySelector<HTMLElement>('.ag-center-cols-viewport, .ag-body-viewport') ?? null;
   }, []);
 
+  const getScrollableAncestor = useCallback((): HTMLElement | null => {
+    const shell = shellRef.current;
+    if (!shell || typeof window === 'undefined') return null;
+    let el: HTMLElement | null = shell.parentElement;
+    while (el && el !== document.body && el !== document.documentElement) {
+      const style = window.getComputedStyle(el);
+      const oy = style.overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) {
+        return el;
+      }
+      el = el.parentElement;
+    }
+    return null;
+  }, []);
+
+  const captureScrollState = useCallback(() => {
+    const viewport = getViewportElement();
+    const viewportTop = viewport ? viewport.scrollTop : null;
+    if (viewportTop != null) {
+      pendingScrollRestoreTopRef.current = viewportTop;
+    }
+    const winY = typeof window !== 'undefined' ? window.scrollY : null;
+    if (winY != null) {
+      pendingWindowScrollYRef.current = winY;
+    }
+    const ancestor = getScrollableAncestor();
+    const ancestorTop = ancestor ? ancestor.scrollTop : null;
+    if (ancestor && ancestorTop != null) {
+      pendingAncestorScrollRef.current = { el: ancestor, top: ancestorTop };
+    }
+    // Immediate restore burst — fights AG Grid's synchronous post-drop scroll
+    // shifts that fire before the model update / our deferred restore.
+    if (typeof window === 'undefined') return;
+    const restoreNow = () => {
+      if (viewport && viewportTop != null) viewport.scrollTop = viewportTop;
+      if (winY != null) window.scrollTo({ top: winY, behavior: 'auto' });
+      if (ancestor && ancestorTop != null) ancestor.scrollTop = ancestorTop;
+    };
+    const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : ((cb: () => void) => setTimeout(cb, 0));
+    raf(restoreNow);
+    raf(() => raf(restoreNow));
+    setTimeout(restoreNow, 0);
+    setTimeout(restoreNow, 16);
+    setTimeout(restoreNow, 50);
+  }, [getViewportElement, getScrollableAncestor]);
+
   const handleSortChanged = useCallback((event: SortChangedEvent<RowData>) => {
     if (!firstDataRenderedRef.current) return;
     const source = (event as SortChangedEvent<RowData> & { source?: string }).source;
@@ -4003,6 +4051,26 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
           setTimeout(restore, 0);
         }
       }
+    }
+    const restoreWindowY = pendingWindowScrollYRef.current;
+    if (restoreWindowY != null && typeof window !== 'undefined') {
+      pendingWindowScrollYRef.current = null;
+      const restoreWin = () => window.scrollTo({ top: restoreWindowY, behavior: 'auto' });
+      const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : ((cb: () => void) => setTimeout(cb, 0));
+      raf(restoreWin);
+      raf(() => raf(restoreWin));
+      setTimeout(restoreWin, 50);
+      setTimeout(restoreWin, 150);
+    }
+    const ancestorSnap = pendingAncestorScrollRef.current;
+    if (ancestorSnap) {
+      pendingAncestorScrollRef.current = null;
+      const restoreAnc = () => { ancestorSnap.el.scrollTop = ancestorSnap.top; };
+      const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : ((cb: () => void) => setTimeout(cb, 0));
+      raf(restoreAnc);
+      raf(() => raf(restoreAnc));
+      setTimeout(restoreAnc, 50);
+      setTimeout(restoreAnc, 150);
     }
   }, [
     getViewportElement,
@@ -4355,6 +4423,10 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
   );
 
   const handleRowDragEnd = useCallback((event: RowDragEndEvent<RowData>) => {
+    // Capture scroll state immediately, before AG Grid's own post-drop focus
+    // restoration (which can scrollIntoView the dropped row and shift the
+    // window/parent scroll) has a chance to run.
+    captureScrollState();
     lastDragNodeRef.current = null;
     clearDropIndicator();
     clearDragGhostDom();
@@ -4509,35 +4581,27 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
               }
               const restoreApi = gridApiRef.current ?? gridRef.current?.api ?? null;
               if (restoreApi) {
-                const viewport = getViewportElement();
-                if (viewport) {
-                  pendingScrollRestoreTopRef.current = viewport.scrollTop;
-                }
-                // purge: true so the row-position cascade (descendants,
-                // shifted siblings) is re-fetched fresh, not patched on top
-                // of stale cached values.
-                refreshServerSideData(restoreApi, { purge: true });
+                captureScrollState();
+                // purge: false to keep existing rows visible during refresh
+                // and avoid the white flash. Stale neighbor TreeOrdering values
+                // settle once their blocks reload.
+                refreshServerSideData(restoreApi, { purge: false });
               }
             },
           });
         }
-        const viewport = getViewportElement();
-        if (viewport) {
-          pendingScrollRestoreTopRef.current = viewport.scrollTop;
-        }
-        // purge: true so the cascade of new TreeOrdering values produced by
-        // the server reorder (source + descendants + shifted siblings) is
-        // pulled fresh, not painted over partial cached blocks.
-        refreshServerSideData(api, { purge: true });
+        // Scroll state was already captured at handleRowDragEnd entry. purge:
+        // false keeps existing rows visible during refresh to avoid the white
+        // flash; neighbor TreeOrdering blocks settle once they reload.
+        refreshServerSideData(api, { purge: false });
         scheduleDeselectAllRows(api);
       } catch (err) {
         console.error('Failed to reorder rows', err);
-        showToastMessage('Unable to reorder rows. Refreshing data™??', 'error');
-        const viewport = getViewportElement();
-        if (viewport) {
-          pendingScrollRestoreTopRef.current = viewport.scrollTop;
-        }
-        refreshServerSideData(api, { purge: true });
+        const message = err instanceof Error && err.message
+          ? err.message
+          : 'Unable to reorder rows.';
+        showToastMessage(message, 'error');
+        refreshServerSideData(api, { purge: false });
         scheduleDeselectAllRows(api);
       }
     };
@@ -4547,6 +4611,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       onRowsMoved(api);
     }
   }, [
+    captureScrollState,
     clearDropIndicator,
     clearDragGhostDom,
     deriveDropTargetContext,

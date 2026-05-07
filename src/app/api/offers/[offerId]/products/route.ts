@@ -623,12 +623,36 @@ async function handleReorderRow(
   };
   roots.forEach(buildMaps);
 
-  const sourceNodes: TreeOrderingNode[] = normalizedSourceIds
+  const rawSourceNodes: TreeOrderingNode[] = normalizedSourceIds
     .map((id) => nodesById.get(id))
     .filter((node): node is TreeOrderingNode => Boolean(node));
-  if (sourceNodes.length === 0) {
+  if (rawSourceNodes.length === 0) {
     return NextResponse.json({ ok: false, error: 'Source row not found' }, { status: 404 });
   }
+
+  // Reject mixed selections: if the user selected a row together with any
+  // of its descendants, the move is ambiguous — should the descendants
+  // come along inside the parent's subtree (yes, they always do) or stay
+  // where they were? Rather than guess, refuse the drop and let the user
+  // either drag the parent alone (children come automatically) or drag
+  // descendants without the parent.
+  const rawSourceSet = new Set(rawSourceNodes);
+  for (const node of rawSourceNodes) {
+    let ancestor = node.parent;
+    while (ancestor) {
+      if (rawSourceSet.has(ancestor)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: 'Cannot move a category together with some of its products. Drag the category by itself (its products come along automatically) or drag the products without the category.',
+          },
+          { status: 400 },
+        );
+      }
+      ancestor = ancestor.parent;
+    }
+  }
+  const sourceNodes = rawSourceNodes;
 
   const parentKey = parentPath.length > 0 ? formatTreeOrderingPath(parentPath) : '';
   const targetParentNode = parentKey ? nodesByPath.get(parentKey) ?? null : null;
@@ -688,11 +712,12 @@ async function handleReorderRow(
   for (const node of sourceNodes) {
     siblings.splice(currentIndex, 0, node);
     node.parent = targetParentNode;
-    // Clear the last path segment so buildSegmentList assigns a fresh number
-    // instead of preserving the stale auto-generated one
-    if (node.path.length > 0) {
-      node.path = [...node.path.slice(0, -1), '0'];
-    }
+    // Replace the moved node's path with target-parent + sentinel "0".
+    // Just clearing the last segment isn't enough when the move changes
+    // depth (e.g. dragging a depth-4 row onto a depth-1 category): the
+    // old deeper segments would remain, causing buildSegmentList to read
+    // a stale segment at the new parent's depth and produce duplicates.
+    node.path = [...parentPath, '0'];
     currentIndex += 1;
   }
 

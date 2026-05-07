@@ -1252,6 +1252,10 @@ export function planStartingItemNoShift(
   return { ok: true, updates };
 }
 
+// Map key = OfferDetailID (as string). Keying by OfferDetailID instead of
+// TreeOrdering means rows with duplicate raw paths each get their own
+// disambiguated display value — so corrupted offers with two rows at "6.4"
+// don't collapse to a single overwritten entry.
 export function computeDisplayOrderingMap(
   rows: Record<string, unknown>[],
   options: { manualMode?: boolean } = {},
@@ -1271,6 +1275,11 @@ export function computeDisplayOrderingMap(
   const rootStart = getCurrentStartingItemNo(sorted) ?? 1;
 
   const result = new Map<string, string>();
+  // Track the most recent display path assigned for each raw TreeOrdering
+  // path, so a child can find its parent's NEW display key. With duplicate
+  // raw parents this is necessarily ambiguous — children attach to whichever
+  // duplicate parent rendered last in sorted order.
+  const lastDisplayByActualKey = new Map<string, string>();
   // Display numbering is recomputed by counting visible siblings encountered
   // under each parent. This collapses gaps in the raw TreeOrdering left by
   // deletes/reorders, non-contiguous additions, and skipped non-printable
@@ -1278,6 +1287,8 @@ export function computeDisplayOrderingMap(
   const visibleCountByParent = new Map<string, number>();
 
   for (const row of sorted) {
+    const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+    if (id == null) continue;
     const actualKey = String(row.TreeOrdering ?? '').trim();
     if (!actualKey) continue;
     const path = parseTreeOrderingPath(actualKey);
@@ -1292,12 +1303,15 @@ export function computeDisplayOrderingMap(
     const nextIndex = (visibleCountByParent.get(actualParentKey) ?? 0) + 1;
     visibleCountByParent.set(actualParentKey, nextIndex);
     const isRoot = path.length === 1;
-    const parentDisplayKey = isRoot ? '' : (result.get(actualParentKey) ?? actualParentKey);
+    const parentDisplayKey = isRoot
+      ? ''
+      : (lastDisplayByActualKey.get(actualParentKey) ?? actualParentKey);
     const segmentValue = isRoot ? rootStart + nextIndex - 1 : nextIndex;
     const displayKey = parentDisplayKey
       ? `${parentDisplayKey}.${segmentValue}`
       : String(segmentValue);
-    result.set(actualKey, displayKey);
+    result.set(String(id), displayKey);
+    lastDisplayByActualKey.set(actualKey, displayKey);
   }
 
   return result;

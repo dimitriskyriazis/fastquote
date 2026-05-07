@@ -26,28 +26,41 @@ const category = (treeOrdering: string, extra: Row = {}): Row => ({
 });
 
 const printableComment = (treeOrdering: string): Row => ({
+  OfferDetailID: newId(),
   TreeOrdering: treeOrdering,
   IsComment: 1,
   IsPrintable: 1,
 });
 
 const nonPrintableComment = (treeOrdering: string): Row => ({
+  OfferDetailID: newId(),
   TreeOrdering: treeOrdering,
   IsComment: 1,
   IsPrintable: 0,
 });
 
 const requestedProduct = (treeOrdering: string): Row => ({
+  OfferDetailID: newId(),
   TreeOrdering: treeOrdering,
   RequestedPartNo: 'REQ-' + treeOrdering,
   __isRequestedRow: 1,
 });
 
+// The display map is keyed by OfferDetailID (so duplicate-path rows each
+// get their own entry); look up by ID, not by TreeOrdering.
 const display = (rows: Row[]) => {
   const map = computeDisplayOrderingMap(rows);
   return rows
-    .filter((r) => r.TreeOrdering != null && map.has(String(r.TreeOrdering)))
-    .map((r) => [r.TreeOrdering, map.get(String(r.TreeOrdering))] as const);
+    .filter((r) => r.TreeOrdering != null && map.has(String(r.OfferDetailID)))
+    .map((r) => [r.TreeOrdering, map.get(String(r.OfferDetailID))] as const);
+};
+
+// Test helper: look up a row's display value via its TreeOrdering. With
+// duplicate paths returns the first match — tests that use this don't
+// exercise duplicate-path scenarios.
+const byTree = (rows: Row[], map: Map<string, string>, tree: string) => {
+  const row = rows.find((r) => String(r.TreeOrdering) === tree);
+  return row ? map.get(String(row.OfferDetailID)) : undefined;
 };
 
 describe('computeDisplayOrderingMap', () => {
@@ -227,10 +240,10 @@ describe('computeDisplayOrderingMap', () => {
     const map = computeDisplayOrderingMap(rows);
     // rootStart = 6 (lowest stored root). Sentinel sorts before "1"
     // numerically, so it becomes the first child under 6.1.
-    expect(map.get('6.3.0')).toBe('6.1.1');
-    expect(map.get('6.3.1')).toBe('6.1.2');
-    expect(map.get('6.3.2')).toBe('6.1.3');
-    expect(map.get('6.3.3')).toBe('6.1.4');
+    expect(byTree(rows, map, '6.3.0')).toBe('6.1.1');
+    expect(byTree(rows, map, '6.3.1')).toBe('6.1.2');
+    expect(byTree(rows, map, '6.3.2')).toBe('6.1.3');
+    expect(byTree(rows, map, '6.3.3')).toBe('6.1.4');
   });
 
   it('handles a deep 4-level tree', () => {
@@ -269,12 +282,12 @@ describe('computeDisplayOrderingMap', () => {
       product('6.3.2'),
     ];
     const map = computeDisplayOrderingMap(rows);
-    expect(map.get('6')).toBe('6');
-    expect(map.get('6.2')).toBe('6.1');
-    expect(map.get('6.2.8')).toBe('6.1.1');
-    expect(map.get('6.3')).toBe('6.2');
-    expect(map.get('6.3.1')).toBe('6.2.1');
-    expect(map.get('6.3.2')).toBe('6.2.2');
+    expect(byTree(rows, map, '6')).toBe('6');
+    expect(byTree(rows, map, '6.2')).toBe('6.1');
+    expect(byTree(rows, map, '6.2.8')).toBe('6.1.1');
+    expect(byTree(rows, map, '6.3')).toBe('6.2');
+    expect(byTree(rows, map, '6.3.1')).toBe('6.2.1');
+    expect(byTree(rows, map, '6.3.2')).toBe('6.2.2');
   });
 
   it('renumbers a heavily edited offer (many deletes + inserts) cleanly', () => {
@@ -285,7 +298,7 @@ describe('computeDisplayOrderingMap', () => {
     rawSegments.forEach((seg) => rows.push(product(`1.${seg}`)));
     const map = computeDisplayOrderingMap(rows);
     rawSegments.forEach((seg, idx) => {
-      expect(map.get(`1.${seg}`)).toBe(`1.${idx + 1}`);
+      expect(byTree(rows, map, `1.${seg}`)).toBe(`1.${idx + 1}`);
     });
   });
 
@@ -311,9 +324,9 @@ describe('computeDisplayOrderingMap', () => {
     // still gets a number; nothing under it is in the display map.
     const rows = [category('1'), category('2'), product('3')];
     const map = computeDisplayOrderingMap(rows);
-    expect(map.get('1')).toBe('1');
-    expect(map.get('2')).toBe('2');
-    expect(map.get('3')).toBe('3');
+    expect(byTree(rows, map, '1')).toBe('1');
+    expect(byTree(rows, map, '2')).toBe('2');
+    expect(byTree(rows, map, '3')).toBe('3');
   });
 
   it('starts root numbering from the lowest stored root segment', () => {
@@ -369,14 +382,15 @@ describe('computeDisplayOrderingMap', () => {
       product('2'),
     ];
     const map = computeDisplayOrderingMap(rows);
-    expect(map.get('1')).toBe('1');
-    expect(map.get('2')).toBe('2');
+    expect(byTree(rows, map, '1')).toBe('1');
+    expect(byTree(rows, map, '2')).toBe('2');
     expect(map.size).toBe(2);
   });
 
   it('handles a single root row (preserves its raw segment)', () => {
-    const map = computeDisplayOrderingMap([product('5')]);
-    expect(map.get('5')).toBe('5');
+    const rows = [product('5')];
+    const map = computeDisplayOrderingMap(rows);
+    expect(byTree(rows, map, '5')).toBe('5');
   });
 
   it('handles a moved-out subtree (category demoted to sibling)', () => {
@@ -417,17 +431,17 @@ describe('computeDisplayOrderingMap', () => {
       const rows = [category('6'), category('6.2'), product('6.2.8')];
       const map = computeDisplayOrderingMap(rows, { manualMode: true });
       // No mapping means the renderer shows the raw value.
-      expect(map.get('6')).toBeUndefined();
-      expect(map.get('6.2')).toBeUndefined();
-      expect(map.get('6.2.8')).toBeUndefined();
+      expect(byTree(rows, map, '6')).toBeUndefined();
+      expect(byTree(rows, map, '6.2')).toBeUndefined();
+      expect(byTree(rows, map, '6.2.8')).toBeUndefined();
     });
 
     it('still renumbers in auto mode (manualMode: false explicit)', () => {
       const rows = [product('1'), product('4'), product('5')];
       const map = computeDisplayOrderingMap(rows, { manualMode: false });
-      expect(map.get('1')).toBe('1');
-      expect(map.get('4')).toBe('2');
-      expect(map.get('5')).toBe('3');
+      expect(byTree(rows, map, '1')).toBe('1');
+      expect(byTree(rows, map, '4')).toBe('2');
+      expect(byTree(rows, map, '5')).toBe('3');
     });
   });
 

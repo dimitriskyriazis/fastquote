@@ -2189,9 +2189,14 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     if (rowType === 'non-printable-comment') {
       display = '';
     } else {
-      const actualKey = rawValue != null ? String(rawValue).trim() : '';
-      display = actualKey
-        ? (displayOrderingMapRef.current.get(actualKey) ?? formatDisplayTreeOrdering(rawValue))
+      // Display map is keyed by OfferDetailID so rows that share the same
+      // raw TreeOrdering (corrupted offers) each render their own number.
+      const offerDetailId = normalizeOfferDetailId(
+        (rowData as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null,
+      );
+      const idKey = offerDetailId != null ? String(offerDetailId) : '';
+      display = idKey
+        ? (displayOrderingMapRef.current.get(idKey) ?? formatDisplayTreeOrdering(rawValue))
         : formatDisplayTreeOrdering(rawValue);
       if (display && isOfferProductOption(rowData)) {
         display = `${display}O`;
