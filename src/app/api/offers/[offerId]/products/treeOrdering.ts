@@ -163,17 +163,36 @@ const buildSegmentList = (
   nodes: TreeOrderingNode[],
   depth: number,
   forceRenumber: boolean,
+  rootStart: number,
 ): string[] => {
-  // With forceRenumber, always assign 1..N so gaps (e.g. from a deletion)
-  // close up. Otherwise preserve each node's existing segment unless the
-  // sibling group carries a renumber sentinel: reorder/insert flag rows
-  // that should pick up a fresh number by rewriting their last segment to
-  // "0", so bespoke numbering like a root "6" survives unrelated edits.
-  if (forceRenumber) return nodes.map((_, idx) => String(idx + 1));
+  // With forceRenumber, assign sequentially so gaps (e.g. from a deletion)
+  // close up. At root level we count up from `rootStart` so a user-applied
+  // "Starting Item No" survives unrelated edits like deletes; sub-levels
+  // always count from 1.
+  // Otherwise preserve each node's existing segment unless the sibling group
+  // carries a renumber sentinel: reorder/insert flag rows rewrite their last
+  // segment to "0", so bespoke numbering like a root "6" survives.
+  if (forceRenumber) {
+    const start = depth === 0 ? rootStart : 1;
+    return nodes.map((_, idx) => String(idx + start));
+  }
   const existing = nodes.map((n) => (n.path.length > depth ? n.path[depth] : '0'));
   const hasSentinel = existing.some((seg) => seg === '0' || seg === '');
   if (!hasSentinel) return existing;
-  return nodes.map((_, idx) => String(idx + 1));
+  const start = depth === 0 ? rootStart : 1;
+  return nodes.map((_, idx) => String(idx + start));
+};
+
+const computeRootStart = (roots: TreeOrderingNode[]): number => {
+  let min: number | null = null;
+  for (const root of roots) {
+    if (root.id === VIRTUAL_NODE_ID) continue;
+    const seg = root.path[0];
+    const parsed = Number(seg);
+    if (!Number.isFinite(parsed) || parsed < 1) continue;
+    if (min == null || parsed < min) min = parsed;
+  }
+  return min ?? 1;
 };
 
 export const collectResequencedUpdates = (
@@ -181,9 +200,10 @@ export const collectResequencedUpdates = (
   options: { forceRenumber?: boolean } = {},
 ): TreeOrderingUpdateInput[] => {
   const forceRenumber = options.forceRenumber === true;
+  const rootStart = computeRootStart(roots);
   const updates: TreeOrderingUpdateInput[] = [];
   const assign = (nodes: TreeOrderingNode[], parentPath: string[]) => {
-    const segments = buildSegmentList(nodes, parentPath.length, forceRenumber);
+    const segments = buildSegmentList(nodes, parentPath.length, forceRenumber, rootStart);
     nodes.forEach((node, idx) => {
       const nextPath = [...parentPath, segments[idx]];
       if (node.id !== VIRTUAL_NODE_ID && !pathsEqual(node.path, nextPath)) {

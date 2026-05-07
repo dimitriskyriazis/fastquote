@@ -4060,7 +4060,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     if (viewport) {
       pendingScrollRestoreTopRef.current = viewport.scrollTop;
     }
-    requestRefresh(() => refreshServerSideData(api));
+    requestRefresh(() => refreshServerSideData(api, { purge: false }));
   }, [refreshToken, requestRefresh, getViewportElement]);
 
   // TREE ORDERING - Persistence & Server Reordering
@@ -4513,7 +4513,10 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
                 if (viewport) {
                   pendingScrollRestoreTopRef.current = viewport.scrollTop;
                 }
-                refreshServerSideData(restoreApi, { purge: false });
+                // purge: true so the row-position cascade (descendants,
+                // shifted siblings) is re-fetched fresh, not patched on top
+                // of stale cached values.
+                refreshServerSideData(restoreApi, { purge: true });
               }
             },
           });
@@ -4522,7 +4525,10 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
         if (viewport) {
           pendingScrollRestoreTopRef.current = viewport.scrollTop;
         }
-        refreshServerSideData(api, { purge: false });
+        // purge: true so the cascade of new TreeOrdering values produced by
+        // the server reorder (source + descendants + shifted siblings) is
+        // pulled fresh, not painted over partial cached blocks.
+        refreshServerSideData(api, { purge: true });
         scheduleDeselectAllRows(api);
       } catch (err) {
         console.error('Failed to reorder rows', err);
@@ -4531,7 +4537,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
         if (viewport) {
           pendingScrollRestoreTopRef.current = viewport.scrollTop;
         }
-        refreshServerSideData(api, { purge: false });
+        refreshServerSideData(api, { purge: true });
         scheduleDeselectAllRows(api);
       }
     };

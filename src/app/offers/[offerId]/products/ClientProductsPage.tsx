@@ -12,6 +12,7 @@ const OfferProductsPanel = dynamic(
   { ssr: false, loading: () => <div style={{ padding: '2rem', opacity: 0.5 }}>Loading products…</div> },
 );
 import { showToastMessage } from '../../../../lib/toast';
+import { showConfirmDialog } from '../../../../lib/confirm';
 import { addRecentOffer } from '../../../lib/recentOffers';
 import { useAuditUser } from '../../../components/AuditUserProvider';
 import layoutStyles from '../../offersDetail.module.css';
@@ -158,10 +159,14 @@ export default function ClientProductsPage({
   ]);
 
   const [manualMode, setManualMode] = useState(false);
+  const [startingItemNo, setStartingItemNo] = useState<number>(1);
+  const [startingItemNoInput, setStartingItemNoInput] = useState<string>('1');
+  const [startingItemNoApplying, setStartingItemNoApplying] = useState(false);
   const [pendingAction, setPendingAction] = useState<CreatableActionType | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
   const [isPopulatingOffer, setIsPopulatingOffer] = useState(false);
+  const [isUpdatingProductData, setIsUpdatingProductData] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
   const [savedSelectionIds, setSavedSelectionIds] = useState<number[]>([]);
@@ -225,6 +230,50 @@ export default function ClientProductsPage({
   const forceReapplyRequestedColumnsVisibility = useCallback(() => {
     offerProductsPanelRef.current?.forceReapplyRequestedColumnsVisibility?.();
   }, []);
+
+  const startingItemNoCommitInFlightRef = useRef(false);
+  const commitStartingItemNo = useCallback(async () => {
+    if (startingItemNoCommitInFlightRef.current) return;
+    const parsed = Number.parseInt(startingItemNoInput.trim(), 10);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      showToastMessage('Starting Item No must be a whole number ≥ 1.', 'error');
+      setStartingItemNoInput(String(startingItemNo));
+      return;
+    }
+    if (parsed === startingItemNo) return;
+    const handle = offerProductsPanelRef.current;
+    if (!handle?.applyStartingItemNoShift) return;
+    startingItemNoCommitInFlightRef.current = true;
+    try {
+      const delta = parsed - startingItemNo;
+      const confirmed = await showConfirmDialog({
+        title: 'Shift all Item Numbers?',
+        message: `This will change the starting Item No from ${startingItemNo} to ${parsed} (${delta > 0 ? '+' : ''}${delta}). Every root row and its descendants will be renumbered.`,
+        confirmLabel: 'Shift',
+        cancelLabel: 'Cancel',
+        tone: 'danger',
+      });
+      if (!confirmed) {
+        setStartingItemNoInput(String(startingItemNo));
+        return;
+      }
+      setStartingItemNoApplying(true);
+      try {
+        const result = await handle.applyStartingItemNoShift(parsed);
+        if (result.ok) {
+          setStartingItemNo(parsed);
+          setStartingItemNoInput(String(parsed));
+          setRefreshToken((prev) => prev + 1);
+        } else {
+          setStartingItemNoInput(String(startingItemNo));
+        }
+      } finally {
+        setStartingItemNoApplying(false);
+      }
+    } finally {
+      startingItemNoCommitInFlightRef.current = false;
+    }
+  }, [startingItemNo, startingItemNoInput]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -776,6 +825,43 @@ export default function ClientProductsPage({
   const handleUpdatePrices = useCallback(async () => {
     if (isUpdatingPrices) return;
     const selectedOfferDetailIds = await offerProductsPanelRef.current?.getSelectedOfferDetailIdsForPriceUpdate?.() ?? [];
+
+    let willUpdate: number | null = null;
+    try {
+      const previewRes = await fetch(updatePricesEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ offerDetailIds: selectedOfferDetailIds, dryRun: true }),
+      });
+      const previewPayload = (await previewRes.json().catch(() => null)) as
+        | { ok?: boolean; willUpdate?: number } | null;
+      if (previewRes.ok && previewPayload?.ok && typeof previewPayload.willUpdate === 'number') {
+        willUpdate = previewPayload.willUpdate;
+      }
+    } catch (err) {
+      console.warn('Failed to preview price update count', err);
+    }
+
+    const scopeLabel = selectedOfferDetailIds.length > 0 ? 'selected ' : '';
+    const message = willUpdate == null
+      ? `Update prices for the ${scopeLabel}rows? Rows without a matching pricelist will keep their existing prices.`
+      : willUpdate === 0
+        ? `No ${scopeLabel}rows have prices available from pricelists or Farnell. Nothing will be updated.`
+        : `${willUpdate} ${scopeLabel}row${willUpdate === 1 ? '' : 's'} will have prices updated. Rows without a matching pricelist will keep their existing prices.`;
+
+    if (willUpdate === 0) {
+      showToastMessage(message, 'info', 6000);
+      return;
+    }
+
+    const confirmed = await showConfirmDialog({
+      title: 'Update Prices',
+      message,
+      confirmLabel: 'Update',
+      cancelLabel: 'Cancel',
+    });
+    if (!confirmed) return;
+
     setIsUpdatingPrices(true);
     try {
       const response = await fetch(updatePricesEndpoint, {
@@ -831,6 +917,21 @@ export default function ClientProductsPage({
       setIsPopulatingOffer(false);
     }
   }, [isPopulatingOffer]);
+
+  const handleUpdateProductData = useCallback(async () => {
+    if (isUpdatingProductData) return;
+    const panel = offerProductsPanelRef.current;
+    if (!panel) {
+      showToastMessage('Products grid is not ready yet.', 'error');
+      return;
+    }
+    setIsUpdatingProductData(true);
+    try {
+      await panel.updateProductData();
+    } finally {
+      setIsUpdatingProductData(false);
+    }
+  }, [isUpdatingProductData]);
 
   const handleOpenExportModal = useCallback(() => {
     setShowExportModal(true);
@@ -1029,11 +1130,11 @@ export default function ClientProductsPage({
         <>
           <button
             type="button"
-            className={`${toolbarStyles.button} ${toolbarStyles.buttonPopulateOffer} page-header-button`}
-            onClick={handlePopulateOffer}
-            disabled={isPopulatingOffer}
+            className={`${toolbarStyles.button} ${toolbarStyles.buttonUpdateProductData} page-header-button`}
+            onClick={handleUpdateProductData}
+            disabled={isUpdatingProductData}
           >
-            {isPopulatingOffer ? 'Populating...' : 'Populate Offer'}
+            {isUpdatingProductData ? 'Updating...' : 'Update Product Data'}
           </button>
           <button
             type="button"
@@ -1065,6 +1166,16 @@ export default function ClientProductsPage({
 
   const addButtonGroup = (
     <div className={toolbarStyles.addButtons}>
+      {!isStandardPackage && !pivotView ? (
+        <button
+          type="button"
+          className={`${toolbarStyles.button} ${toolbarStyles.buttonPopulateOffer} page-header-button`}
+          onClick={handlePopulateOffer}
+          disabled={isPopulatingOffer}
+        >
+          {isPopulatingOffer ? 'Populating...' : 'Populate Offer'}
+        </button>
+      ) : null}
       {addPrimaryButtons.map((action) => {
         const disabled = pendingAction != null;
         const variantClass = buttonVariantClass[action.key];
@@ -1178,6 +1289,7 @@ export default function ClientProductsPage({
           Manual Mode
         </button>
       )}
+      {pivotToggleButton}
     </div>
   );
 
@@ -1192,21 +1304,46 @@ export default function ClientProductsPage({
     </button>
   ) : null;
 
+  const startingItemNoControl = pivotView || !manualMode ? null : (
+    <label className={toolbarStyles.startingItemNo}>
+      Starting Item No
+      <input
+        type="number"
+        min={1}
+        step={1}
+        value={startingItemNoInput}
+        disabled={startingItemNoApplying}
+        className={toolbarStyles.startingItemNoInput}
+        onChange={(e) => setStartingItemNoInput(e.target.value)}
+        onBlur={() => { void commitStartingItemNo(); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            (e.target as HTMLInputElement).blur();
+          } else if (e.key === 'Escape') {
+            setStartingItemNoInput(String(startingItemNo));
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+      />
+    </label>
+  );
+
   const secondaryHeaderLeftActions = isStandardPackage ? (
     <div className={toolbarStyles.leftRequestedRow}>
       {undoButton}
+      {startingItemNoControl}
     </div>
   ) : (
     <div className={toolbarStyles.leftRequestedRow}>
       {undoButton}
       {addRequestedButton}
       {layoutSelect}
-      {pivotToggleButton}
+      {startingItemNoControl}
     </div>
   );
   const pivotSecondaryHeaderLeftActions = (
     <div className={toolbarStyles.leftRequestedRow}>
-      {pivotToggleButton}
       {pivotLayoutSelect}
     </div>
   );
@@ -1243,6 +1380,11 @@ export default function ClientProductsPage({
               onMainGridSelectionChanged={handleMainGridSelectionChanged}
               onRequestInsertProduct={handleRequestInsertProduct}
               showInsertLineOnHover={showAddProductModal || detachedWindowOpen}
+              onStartingItemNoChanged={(current) => {
+                const next = current ?? 1;
+                setStartingItemNo(next);
+                setStartingItemNoInput(String(next));
+              }}
             />
           </div>
           {showAddProductModal ? (

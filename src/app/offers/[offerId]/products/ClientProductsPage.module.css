@@ -120,6 +120,54 @@
   pointer-events: auto;
 }
 
+.startingItemNo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 14px;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  border-radius: 999px;
+  background-color: #f8fafc;
+  font-size: 13px;
+  font-weight: 500;
+  color: #0f172a;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.startingItemNoInput {
+  width: 64px;
+  padding: 6px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+  border-radius: 8px;
+  background-color: #ffffff;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.startingItemNoInput::-webkit-outer-spin-button,
+.startingItemNoInput::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}
+
+.startingItemNoInput:focus {
+  border-color: rgba(59, 130, 246, 0.65);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+
+.startingItemNoInput:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .button:hover {
   box-shadow: 0 6px 14px rgba(15, 23, 42, 0.12);
   transform: translateY(-1px);
@@ -154,6 +202,12 @@
   border-color: rgba(0, 167, 189, 0.4);
   position: relative;
   z-index: 1;
+}
+
+.buttonUpdateProductData {
+  background-color: #c6e7ff;
+  color: #000000;
+  border-color: rgba(14, 109, 233, 0.4);
 }
 
 .buttonExport {

@@ -545,7 +545,6 @@ describe('server-contract shape guards', () => {
 
 describe('isUnknownBrand', () => {
   it('recognises common "I don\'t know" markers', () => {
-    expect(isUnknownBrand('idk')).toBe(true);
     expect(isUnknownBrand('Unknown')).toBe(true);
     expect(isUnknownBrand('N/A')).toBe(true);
     expect(isUnknownBrand('n/a')).toBe(true);

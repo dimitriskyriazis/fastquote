@@ -21,10 +21,12 @@ export type OfferProductsPanelProps = {
   onMainGridSelectionChanged?: (selectedRow: { offerDetailId: number; treeOrdering: string; label: string; isRequested: boolean; parentPath: number[]; requestedBrand?: string | null; requestedPartNo?: string | null; requestedModelNo?: string | null; requestedDescription?: string | null } | null) => void;
   onRequestInsertProduct?: (anchor: { offerDetailId: number; parentPath: number[]; label: string; treeOrdering: string; isRequested: boolean }) => void;
   showInsertLineOnHover?: boolean;
+  onStartingItemNoChanged?: (current: number | null) => void;
 };
 
 export type OfferProductsPanelHandle = {
   populateOffer: () => Promise<void>;
+  updateProductData: () => Promise<void>;
   getTemplateExportRows: () => Promise<OfferProductsTemplateExportRow[]>;
   getAddInsertionAnchor: () => { offerDetailId: number; parentPath: number[]; label: string; treeOrdering: string; isRequested: boolean } | null;
   getSelectedOfferDetailIdsForPriceUpdate: () => Promise<number[]>;
@@ -43,6 +45,8 @@ export type OfferProductsPanelHandle = {
   flashRows: (offerDetailIds: number[]) => void;
   getLastClickedRowId: () => number | null;
   clearSelectedRowHighlight: () => void;
+  getStartingItemNo: () => Promise<number>;
+  applyStartingItemNoShift: (newStart: number) => Promise<{ ok: boolean; error?: string }>;
 };
 
 export type OfferProductsTemplateExportRow = {

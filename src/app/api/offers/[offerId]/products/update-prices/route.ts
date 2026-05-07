@@ -215,7 +215,7 @@ export async function POST(
     const auth = await requirePermission(req, "editOffers");
     if (!auth.ok) return auth.response;
 
-    const body = (await req.json().catch(() => null)) as { offerDetailIds?: unknown } | null;
+    const body = (await req.json().catch(() => null)) as { offerDetailIds?: unknown; dryRun?: unknown } | null;
     const selectedOfferDetailIds = Array.isArray(body?.offerDetailIds)
       ? Array.from(
           new Set(
@@ -225,6 +225,7 @@ export async function POST(
           ),
         )
       : [];
+    const dryRun = body?.dryRun === true;
 
     const { offerId: offerIdParam } = await params;
     const normalizedId = normalizeOfferId(
@@ -239,6 +240,38 @@ export async function POST(
 
     const pool = await getPool();
     const auditUserId = normalizeStringValue(resolveAuditUserId(req)) ?? null;
+
+    if (dryRun) {
+      const countRequest = pool.request();
+      countRequest.input('offerId', sql.Int, normalizedId);
+      const dryFilterSql = selectedOfferDetailIds.length > 0
+        ? ` AND od.ID IN (${selectedOfferDetailIds.map((_, idx) => `@dryId${idx}`).join(', ')})`
+        : '';
+      selectedOfferDetailIds.forEach((id, idx) => {
+        countRequest.input(`dryId${idx}`, sql.Int, id);
+      });
+      const countResult = await countRequest.query<{ willUpdate: number }>(`
+        SELECT COUNT(*) AS willUpdate
+        FROM dbo.OfferDetails od
+        WHERE od.OfferID = @offerId
+          AND od.ProductID IS NOT NULL
+          ${dryFilterSql}
+          AND (
+            EXISTS (
+              SELECT 1 FROM dbo.Brands fb
+              WHERE fb.ID = od.BrandID
+                AND LTRIM(RTRIM(fb.Name)) = 'Farnell'
+            )
+            OR EXISTS (
+              SELECT 1 FROM dbo.PriceListItems pli
+              INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID AND pl.Enabled = 1
+              WHERE pli.ProductID = od.ProductID
+            )
+          );
+      `);
+      const willUpdate = Number(countResult.recordset?.[0]?.willUpdate ?? 0);
+      return NextResponse.json({ ok: true, dryRun: true, willUpdate });
+    }
 
     // Step 1: Update Farnell-brand rows via live API
     const farnellUpdated = await updateFarnellPrices(
@@ -557,7 +590,8 @@ export async function POST(
             )
           END AS ComputedNetCost
       ) computed
-      WHERE od.ProductID IS NOT NULL${selectedDetailsFilterSql}${excludeFarnellSql};
+      WHERE od.ProductID IS NOT NULL
+        AND price.ListPrice IS NOT NULL${selectedDetailsFilterSql}${excludeFarnellSql};
       SELECT
         @@ROWCOUNT AS updated,
         (

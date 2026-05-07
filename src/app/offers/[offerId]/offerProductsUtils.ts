@@ -207,7 +207,6 @@ export function expandWithSynonyms(tokens: string[]): string[] {
 }
 
 const UNKNOWN_BRAND_MARKERS = new Set([
-  'idk',
   'unknown',
   'n/a',
   'na',
@@ -1094,16 +1093,189 @@ export const parseTreeOrderingPath = (value: unknown): number[] => {
 
 export const buildTreeOrderingKey = (segments: number[]) => segments.join('.');
 
-export function computeDisplayOrderingMap(rows: Record<string, unknown>[]): Map<string, string> {
+export type TreeOrderingEditUpdate = {
+  OfferDetailID: number;
+  TreeOrdering: string;
+};
+
+export type TreeOrderingEditResult =
+  | { ok: true; updates: TreeOrderingEditUpdate[] }
+  | { ok: false; error: string };
+
+const TREE_ORDERING_VALUE_PATTERN = /^\d+(\.\d+)*$/;
+
+const normalizePath = (value: unknown): string => String(value ?? '').trim();
+
+// Plans the row-level updates needed when a manual-mode user edits a row's
+// TreeOrdering. Pure: no mutation, no I/O. Caller persists the returned
+// updates and refreshes the grid.
+//
+// Behavior:
+// - The edited row's TreeOrdering changes to `newTreeOrdering`.
+// - Every descendant (TreeOrdering starting with `oldPath + "."`) gets its
+//   prefix rewritten to `newTreeOrdering`.
+// - If any other row (outside the moved subtree) already has a TreeOrdering
+//   that would collide with one of the new paths, the edit is rejected.
+export function planTreeOrderingEdit(
+  rows: Record<string, unknown>[],
+  targetOfferDetailId: number,
+  newTreeOrderingRaw: string,
+): TreeOrderingEditResult {
+  const newTreeOrdering = normalizePath(newTreeOrderingRaw);
+  if (!newTreeOrdering) {
+    return { ok: false, error: 'Item No cannot be empty.' };
+  }
+  if (!TREE_ORDERING_VALUE_PATTERN.test(newTreeOrdering)) {
+    return { ok: false, error: 'Item No must be digits separated by dots (e.g. 1.2.3).' };
+  }
+
+  const target = rows.find((row) => normalizeOfferDetailId(
+    (row as { OfferDetailID?: unknown }).OfferDetailID ?? null,
+  ) === targetOfferDetailId);
+  if (!target) {
+    return { ok: false, error: 'Could not find the row to update.' };
+  }
+
+  const oldPath = normalizePath(target.TreeOrdering);
+  if (!oldPath) {
+    return { ok: false, error: 'The row has no current Item No to change.' };
+  }
+  if (oldPath === newTreeOrdering) {
+    return { ok: true, updates: [] };
+  }
+
+  // The moved subtree is the target plus everything whose TreeOrdering starts
+  // with `oldPath + "."`. Build the rewrite mapping (oldPath → newPath).
+  const rewriteMap = new Map<string, string>();
+  rewriteMap.set(oldPath, newTreeOrdering);
+  const oldPrefix = `${oldPath}.`;
+  const newPrefix = `${newTreeOrdering}.`;
+
+  for (const row of rows) {
+    const path = normalizePath(row.TreeOrdering);
+    if (!path || path === oldPath) continue;
+    if (path.startsWith(oldPrefix)) {
+      rewriteMap.set(path, newPrefix + path.slice(oldPrefix.length));
+    }
+  }
+
+  // Collision check: any row outside the moved subtree whose path matches a
+  // rewritten new path blocks the edit. Compare by OfferDetailID so we don't
+  // count the same row.
+  const newPathsFromRewrite = new Set(rewriteMap.values());
+  const movedIds = new Set<number>();
+  for (const row of rows) {
+    const path = normalizePath(row.TreeOrdering);
+    if (!path) continue;
+    if (rewriteMap.has(path)) {
+      const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+      if (id != null) movedIds.add(id);
+    }
+  }
+  for (const row of rows) {
+    const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+    if (id == null || movedIds.has(id)) continue;
+    const path = normalizePath(row.TreeOrdering);
+    if (!path) continue;
+    if (newPathsFromRewrite.has(path)) {
+      return {
+        ok: false,
+        error: `Item No "${path}" is already in use. Move that row first, then try again.`,
+      };
+    }
+  }
+
+  const updates: TreeOrderingEditUpdate[] = [];
+  for (const row of rows) {
+    const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+    if (id == null) continue;
+    const path = normalizePath(row.TreeOrdering);
+    const next = rewriteMap.get(path);
+    if (next != null && next !== path) {
+      updates.push({ OfferDetailID: id, TreeOrdering: next });
+    }
+  }
+  return { ok: true, updates };
+}
+
+// Lowest visible root segment across all rows. Used to seed the
+// "Starting Item No" input and to compute the offset on commit. Non-printable
+// comments are skipped because the user can't see them in the grid, so they
+// would mismatch the user's mental model of where numbering starts. Returns
+// null when there are no visible rows with a parseable TreeOrdering.
+export function getCurrentStartingItemNo(rows: Record<string, unknown>[]): number | null {
+  let min: number | null = null;
+  for (const row of rows) {
+    if (resolveOfferProductRowType(row) === 'non-printable-comment') continue;
+    const path = parseTreeOrderingPath(normalizePath(row.TreeOrdering));
+    if (path.length === 0) continue;
+    const root = path[0];
+    if (!Number.isFinite(root)) continue;
+    if (min == null || root < min) min = root;
+  }
+  return min;
+}
+
+// Plans the row updates for shifting every root segment by
+// (newStart - currentStart). Children follow because their path's first
+// segment also shifts. Pure: caller persists the returned updates.
+export function planStartingItemNoShift(
+  rows: Record<string, unknown>[],
+  newStart: number,
+): TreeOrderingEditResult {
+  if (!Number.isInteger(newStart) || newStart < 1) {
+    return { ok: false, error: 'Starting Item No must be a whole number ≥ 1.' };
+  }
+  const currentStart = getCurrentStartingItemNo(rows);
+  if (currentStart == null) {
+    return { ok: true, updates: [] };
+  }
+  const delta = newStart - currentStart;
+  if (delta === 0) return { ok: true, updates: [] };
+
+  const updates: TreeOrderingEditUpdate[] = [];
+  for (const row of rows) {
+    const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+    if (id == null) continue;
+    const path = parseTreeOrderingPath(normalizePath(row.TreeOrdering));
+    if (path.length === 0) continue;
+    const nextRoot = path[0] + delta;
+    if (nextRoot < 1) {
+      return {
+        ok: false,
+        error: `Cannot shift: row "${row.TreeOrdering}" would land at a non-positive Item No.`,
+      };
+    }
+    const nextPath = [nextRoot, ...path.slice(1)].join('.');
+    updates.push({ OfferDetailID: id, TreeOrdering: nextPath });
+  }
+  return { ok: true, updates };
+}
+
+export function computeDisplayOrderingMap(
+  rows: Record<string, unknown>[],
+  options: { manualMode?: boolean } = {},
+): Map<string, string> {
+  // In manual mode the user is in charge of the Item No values: return an
+  // empty map so the renderer falls back to the raw TreeOrdering verbatim.
+  // No auto-renumbering, no gap-closing.
+  if (options.manualMode) return new Map();
+
   const sorted = rows
     .filter((row): row is Record<string, unknown> => row != null && row.TreeOrdering != null)
     .sort((a, b) => compareTreeOrderingValues(a.TreeOrdering, b.TreeOrdering));
 
+  // Root-level numbering starts from the lowest visible root segment so a
+  // user-applied "Starting Item No" shift survives in auto mode. Sub-levels
+  // always renumber from 1 within each parent.
+  const rootStart = getCurrentStartingItemNo(sorted) ?? 1;
+
   const result = new Map<string, string>();
-  // Non-printable comments are skipped from display, but they still occupy a
-  // sibling slot in the raw TreeOrdering. Track how many have been skipped per
-  // parent so later siblings aren't inflated by their presence.
-  const skippedByParent = new Map<string, number>();
+  // Display numbering is recomputed by counting visible siblings encountered
+  // under each parent. This collapses gaps in the raw TreeOrdering left by
+  // deletes/reorders, non-contiguous additions, and skipped non-printable
+  // comments — all of which would otherwise leak into the user-visible item no.
+  const visibleCountByParent = new Map<string, number>();
 
   for (const row of sorted) {
     const actualKey = String(row.TreeOrdering ?? '').trim();
@@ -1114,14 +1286,17 @@ export function computeDisplayOrderingMap(rows: Record<string, unknown>[]): Map<
     const actualParentKey = path.slice(0, -1).join('.');
 
     if (resolveOfferProductRowType(row) === 'non-printable-comment') {
-      skippedByParent.set(actualParentKey, (skippedByParent.get(actualParentKey) ?? 0) + 1);
       continue;
     }
 
-    const lastSegment = path[path.length - 1];
-    const adjustedSegment = lastSegment - (skippedByParent.get(actualParentKey) ?? 0);
-    const parentDisplayKey = path.length === 1 ? '' : (result.get(actualParentKey) ?? actualParentKey);
-    const displayKey = parentDisplayKey ? `${parentDisplayKey}.${adjustedSegment}` : String(adjustedSegment);
+    const nextIndex = (visibleCountByParent.get(actualParentKey) ?? 0) + 1;
+    visibleCountByParent.set(actualParentKey, nextIndex);
+    const isRoot = path.length === 1;
+    const parentDisplayKey = isRoot ? '' : (result.get(actualParentKey) ?? actualParentKey);
+    const segmentValue = isRoot ? rootStart + nextIndex - 1 : nextIndex;
+    const displayKey = parentDisplayKey
+      ? `${parentDisplayKey}.${segmentValue}`
+      : String(segmentValue);
     result.set(actualKey, displayKey);
   }
 

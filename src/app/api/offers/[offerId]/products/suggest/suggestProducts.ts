@@ -68,11 +68,11 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
   // so multi-brand requests match any listed brand. "&" is preserved because
   // brand names use it (e.g. "d&b audiotechnik").
   //
-  // Placeholders like "unknown", "n/a", "not set", "idk", "tbd", "any", "-"
+  // Placeholders like "unknown", "n/a", "not set", "tbd", "any", "-"
   // mean the user doesn't know the brand — fall back to searching all brands.
   const brandPlaceholders = new Set([
     'unknown', 'n/a', 'na', 'notset', 'nonset', 'none', 'nil', 'null',
-    'idk', 'tbd', 'tba', 'any', 'all', 'various', 'unspecified', '?', '-', '--',
+    'tbd', 'tba', 'any', 'all', 'various', 'unspecified', '?', '-', '--',
   ]);
   const isBrandPlaceholder = (s: string) =>
     brandPlaceholders.has(s.trim().toLowerCase().replace(/\s+/g, ''));

@@ -103,6 +103,9 @@ import {
   parseTreeOrderingPath,
   buildTreeOrderingKey,
   computeDisplayOrderingMap,
+  planTreeOrderingEdit,
+  planStartingItemNoShift,
+  getCurrentStartingItemNo,
   normalizeOfferDetailId,
   resolveRowLabel,
   resolveOfferProductTypeLabel,
@@ -176,6 +179,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   onMainGridSelectionChanged,
   onRequestInsertProduct,
   showInsertLineOnHover = false,
+  onStartingItemNoChanged,
 }: Props, ref) => {
   const router = useRouter();
   const { userId, roles } = useAuditUser();
@@ -795,8 +799,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     });
     displayOrderingMapRef.current = computeDisplayOrderingMap(
       Array.from(allRowsForDisplayRef.current.values()),
+      { manualMode },
     );
-  }, []);
+  }, [manualMode]);
   const formatDisplayTreeOrdering = useCallback((value: unknown) => {
     if (value == null) return '';
     const trimmed = String(value).trim();
@@ -1072,12 +1077,30 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       return next;
     });
     setCategoryChildrenKnown(true);
-    const newDisplayMap = computeDisplayOrderingMap(rows);
+    const newDisplayMap = computeDisplayOrderingMap(rows, { manualMode });
     displayOrderingMapRef.current = newDisplayMap;
     if (api && !api.isDestroyed?.()) {
       api.refreshCells({ columns: ['TreeOrdering'], force: true });
     }
-  }, []);
+  }, [manualMode]);
+
+  useEffect(() => {
+    // Toggling manualMode flips the display between raw values and 1..N
+    // renumbering — rebuild the cached map and repaint Item No cells.
+    displayOrderingMapRef.current = computeDisplayOrderingMap(
+      Array.from(allRowsForDisplayRef.current.values()),
+      { manualMode },
+    );
+    if (manualMode) {
+      // Manual mode disables collapse; expand everything so users can see and
+      // edit every Item No.
+      setCollapsedCategoryPaths((prev) => (prev.size === 0 ? prev : new Set()));
+    }
+    const api = gridApiRef.current;
+    if (api && !api.isDestroyed?.()) {
+      api.refreshCells({ columns: ['TreeOrdering'], force: true });
+    }
+  }, [manualMode]);
   const categoryAncestorsUpdateQueuedRef = useRef(false);
   const scheduleCategoryAncestorsUpdate = useCallback(() => {
     if (categoryAncestorsUpdateQueuedRef.current) return;
@@ -1341,6 +1364,14 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const shouldResetRoots = response?.request?.startRow === 0;
     rebuildTreeOrderingRootMap(response?.rows as Array<Record<string, unknown>> | undefined, shouldResetRoots);
     rebuildDisplayOrderingMap(response?.rows as Array<Record<string, unknown>> | undefined, shouldResetRoots);
+    if (shouldResetRoots && onStartingItemNoChanged) {
+      // Server returns rows sorted by TreeOrdering, so the first page's
+      // lowest root is the offer's current Starting Item No.
+      const startingItemNo = getCurrentStartingItemNo(
+        (response?.rows ?? []) as Array<Record<string, unknown>>,
+      );
+      onStartingItemNoChanged(startingItemNo);
+    }
     const preserveWReqVisibility = showRequestedColumns && tableLayout === 'wReq';
     const isFirstPage = (response?.request?.startRow ?? 0) === 0;
     if (preserveWReqVisibility) {
@@ -1494,6 +1525,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   }, [
     applyRequestedVisibilityToGrid,
     applyRequestedColumnVisibility,
+    onStartingItemNoChanged,
     paintFlashCells,
     rebuildDisplayOrderingMap,
     rebuildTreeOrderingRootMap,
@@ -2043,6 +2075,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   }, [getGridViewportElement, scheduleCategoryAncestorsUpdate, tryRestoreInitialViewportScroll]);
 
   const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
+    if (manualMode) return; // Manual mode: collapse is disabled to keep numbering stable.
     if (!isOfferProductCategory(row)) return;
     if (!hasCategoryChildren(row)) return;
     collapseSkipUntilRef.current = Date.now() + 200;
@@ -2060,7 +2093,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       }
       return next;
     });
-  }, [hasCategoryChildren]);
+  }, [hasCategoryChildren, manualMode]);
   toggleCategoryCollapsedRef.current = toggleCategoryCollapsed;
 
   const pendingFlashIdsRef = useRef<Set<number> | null>(null);
@@ -2125,9 +2158,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     formatDisplayTreeOrdering(rawValue); // side-effect: keep treeOrderingRootMapRef updated
     const rowData = params.data ?? null;
     const isCategory = isOfferProductCategory(rowData);
-    const shouldShowIndicator = isCategory;
-    const hasChildren = isCategory && hasCategoryChildrenForRenderer(rowData);
-    const collapsed = isCategory && isCategoryRowCollapsedForRenderer(rowData);
+    // Manual mode disables collapse, so hide the chevron entirely.
+    const shouldShowIndicator = isCategory && !manualMode;
+    const hasChildren = shouldShowIndicator && hasCategoryChildrenForRenderer(rowData);
+    const collapsed = shouldShowIndicator && isCategoryRowCollapsedForRenderer(rowData);
     const indicator = shouldShowIndicator
       ? hasChildren
         ? (collapsed ? '▸' : '▾')
@@ -2179,7 +2213,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         <span className={styles.treeOrderingText}>{display}</span>
       </span>
     );
-  }, [formatDisplayTreeOrdering, hasCategoryChildrenForRenderer, isCategoryRowCollapsedForRenderer]);
+  }, [formatDisplayTreeOrdering, hasCategoryChildrenForRenderer, isCategoryRowCollapsedForRenderer, manualMode]);
 
 const RequestedItemNoCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
   const value = params.value;
@@ -2629,7 +2663,7 @@ const requestedColumnDefsMap = useMemo(
         confirmCancelLabel: ({ typeLabel }) => `Keep ${typeLabel}`,
         successToastMessage: 'Row deleted',
         failureToastMessage: 'Unable to delete row. Please try again.',
-        refreshHandler: (api) => refreshOfferProductGrid(api, { purge: true }),
+        refreshHandler: (api) => refreshOfferProductGrid(api, { purge: false }),
         canDelete: (count) => {
           return checkDeletePermissionForClient(roles, count, 'offerProducts', 'editOffers', { isCreator: isOfferCreator });
         },
@@ -3509,20 +3543,9 @@ const requestedColumnDefsMap = useMemo(
         return false;
       };
 
-      // Refresh-from-master candidate: row already linked to a product master.
-      // We only act on these when explicitly selected — never as part of select-all auto-fallback.
-      const isRefreshableProductNode = (data: Record<string, unknown> | null | undefined) => {
-        if (!data) return false;
-        if (isRequestedRow(data)) return false;
-        const productIdRaw = (data as { ProductID?: unknown }).ProductID;
-        const productId = typeof productIdRaw === 'number' ? productIdRaw : Number(productIdRaw);
-        return Number.isFinite(productId) && productId > 0;
-      };
-
       let requestedNodes: Array<RowNode<Record<string, unknown>>> = [];
       let selectedRequestedNodes: Array<RowNode<Record<string, unknown>>> = [];
       let allRequestedNodes: Array<RowNode<Record<string, unknown>>> = [];
-      let selectedRefreshNodes: Array<RowNode<Record<string, unknown>>> = [];
       let hasExplicitSelection = false;
 
       if (isSelectAllActive) {
@@ -3552,9 +3575,6 @@ const requestedColumnDefsMap = useMemo(
             : [];
           hasExplicitSelection = selected.length > 0;
           selectedRequestedNodes = selected.filter((node) => isRequestedEligible(node?.data ?? null));
-          // Selected product rows already linked to a product master — refresh them from master.
-          const requestedSet = new Set(selectedRequestedNodes);
-          selectedRefreshNodes = selected.filter((node) => !requestedSet.has(node) && isRefreshableProductNode(node?.data ?? null));
         } catch {
           /* noop */
         }
@@ -3578,15 +3598,13 @@ const requestedColumnDefsMap = useMemo(
       // (otherwise we'd silently process rows the user didn't intend to touch).
       requestedNodes = hasExplicitSelection ? selectedRequestedNodes : allRequestedNodes;
 
-      if (requestedNodes.length === 0 && selectedRefreshNodes.length === 0) {
+      if (requestedNodes.length === 0) {
         showToastMessage('No rows with requested data found to populate.', 'info');
         return;
       }
 
       const allRequestedCount = allRequestedNodes.length;
       const selectedRequestedCount = selectedRequestedNodes.length;
-      // Only warn for the requested-rows branch (auto-fallback / all-selected). Refresh nodes
-      // come from explicit selection only and don't trigger the dialog.
       const shouldWarnNoSelection = !hasExplicitSelection && allRequestedCount > 0;
       const shouldWarnAllSelected = selectedRequestedCount > 0 && selectedRequestedCount === allRequestedCount;
       if (shouldWarnNoSelection || shouldWarnAllSelected) {
@@ -3605,8 +3623,8 @@ const requestedColumnDefsMap = useMemo(
         if (!confirmed) return;
       }
 
-      // 1. Collect IDs to snapshot before populate (covers both requested + refresh branches)
-      const idsToSnapshot = [...requestedNodes, ...selectedRefreshNodes]
+      // 1. Collect IDs to snapshot before populate
+      const idsToSnapshot = requestedNodes
         .map((node) =>
           normalizeOfferDetailId(
             (node?.data as { OfferDetailID?: unknown })?.OfferDetailID ?? null,
@@ -3635,37 +3653,9 @@ const requestedColumnDefsMap = useMemo(
         }
       }
 
-      // 3a. Run populate for requested rows (suppressing the per-unassign internal undo entry)
+      // 3. Run populate for requested rows (suppressing the per-unassign internal undo entry)
       if (requestedNodes.length > 0) {
         await populateRequestedRowsToOffer(requestedNodes, { skipInternalUndoPush: true });
-      }
-
-      // 3b. Refresh non-requested product rows from product master
-      let refreshedCount = 0;
-      if (selectedRefreshNodes.length > 0) {
-        refreshedCount = await refreshOfferProductsFromMaster(selectedRefreshNodes);
-        if (refreshedCount > 0) {
-          refreshOfferProductGrid(null, { purge: true });
-          showToastMessage(
-            `Refreshed ${refreshedCount} product${refreshedCount === 1 ? '' : 's'} from product master.`,
-            'success',
-          );
-        }
-        // Deselect refresh nodes so the row stops looking selected once we're done.
-        selectedRefreshNodes.forEach((node) => {
-          try {
-            node?.setSelected?.(false);
-          } catch {
-            /* noop */
-          }
-        });
-        try {
-          api.deselectAll?.();
-        } catch {
-          /* noop */
-        }
-        setGridRowDeletionContextMenuSelectionSnapshot(api, []);
-        pendingContextMenuSelectionClearRef.current = true;
       }
 
       // 4. Push ONE atomic undo entry covering the entire populate
@@ -3686,7 +3676,154 @@ const requestedColumnDefsMap = useMemo(
     } finally {
       populateOfferBusyRef.current = false;
     }
-  }, [populateRequestedRowsToOffer, fetchAllFilteredRows, addProductsEndpoint, pushUndo, performUndo, refreshOfferProductGrid, refreshOfferProductsFromMaster]);
+  }, [populateRequestedRowsToOffer, fetchAllFilteredRows, addProductsEndpoint, pushUndo, performUndo, refreshOfferProductGrid]);
+
+  const updateProductDataBusyRef = useRef(false);
+  const updateProductData = useCallback(async () => {
+    if (updateProductDataBusyRef.current) return;
+    updateProductDataBusyRef.current = true;
+    try {
+      const api = gridApiRef.current;
+      if (!api || api.isDestroyed?.()) {
+        showToastMessage('Grid is not ready yet.', 'error');
+        return;
+      }
+
+      const isProductLinkedRow = (data: Record<string, unknown> | null | undefined) => {
+        if (!data) return false;
+        const productIdRaw = (data as { ProductID?: unknown }).ProductID;
+        const productId = typeof productIdRaw === 'number' ? productIdRaw : Number(productIdRaw);
+        return Number.isFinite(productId) && productId > 0;
+      };
+
+      let isSelectAllActive = false;
+      if (typeof api.getServerSideSelectionState === 'function') {
+        const state = api.getServerSideSelectionState();
+        isSelectAllActive = Boolean(state && 'selectAll' in state && Boolean((state as { selectAll?: boolean }).selectAll));
+      }
+
+      let targetNodes: Array<RowNode<Record<string, unknown>>> = [];
+      let hasExplicitSelection = false;
+
+      if (isSelectAllActive) {
+        try {
+          const allRows = await fetchAllFilteredRows();
+          const wrapAsNode = (data: Record<string, unknown>) => ({ data, setSelected: () => {} } as unknown as RowNode<Record<string, unknown>>);
+          targetNodes = allRows.filter((r) => isProductLinkedRow(r)).map(wrapAsNode);
+          hasExplicitSelection = targetNodes.length > 0;
+        } catch (err) {
+          console.error('Failed to fetch all rows for update product data', err);
+          showToastMessage(
+            err instanceof Error ? err.message : 'Failed to load all rows. Please try again.',
+            'error',
+          );
+          return;
+        }
+      } else {
+        try {
+          const selected = typeof api.getSelectedNodes === 'function'
+            ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
+            : [];
+          hasExplicitSelection = selected.length > 0;
+          targetNodes = selected.filter((node) => isProductLinkedRow(node?.data ?? null));
+        } catch {
+          /* noop */
+        }
+      }
+
+      if (!hasExplicitSelection) {
+        const confirmed = await showConfirmDialog({
+          title: 'Update product data for all rows?',
+          message: 'No rows are selected. Refresh product data (description, part number, model number) and prices from the product master for every row in this offer that is linked to a product?',
+          confirmLabel: 'Update All',
+          cancelLabel: 'Cancel',
+        });
+        if (!confirmed) return;
+        try {
+          if (typeof api.forEachNode === 'function') {
+            const all: Array<RowNode<Record<string, unknown>>> = [];
+            api.forEachNode((node) => {
+              if (isProductLinkedRow(node?.data ?? null)) {
+                all.push(node as RowNode<Record<string, unknown>>);
+              }
+            });
+            targetNodes = all;
+          }
+        } catch {
+          /* noop */
+        }
+      }
+
+      if (targetNodes.length === 0) {
+        showToastMessage('No product-linked rows to update.', 'info');
+        return;
+      }
+
+      const idsToSnapshot = targetNodes
+        .map((node) =>
+          normalizeOfferDetailId(
+            (node?.data as { OfferDetailID?: unknown })?.OfferDetailID ?? null,
+          ),
+        )
+        .filter((id): id is number => id != null);
+
+      let snapshotRows: Record<string, unknown>[] = [];
+      if (idsToSnapshot.length > 0) {
+        try {
+          const snapRes = await fetch(addProductsEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'snapshot-rows', offerDetailIds: idsToSnapshot }),
+          });
+          const snapPayload = (await snapRes.json().catch(() => null)) as
+            | { ok?: boolean; rows?: Record<string, unknown>[] }
+            | null;
+          if (snapRes.ok && snapPayload?.ok && Array.isArray(snapPayload.rows)) {
+            snapshotRows = snapPayload.rows;
+          }
+        } catch (snapErr) {
+          console.error('Failed to snapshot rows before update product data', snapErr);
+        }
+      }
+
+      const refreshedCount = await refreshOfferProductsFromMaster(targetNodes);
+      if (refreshedCount > 0) {
+        refreshOfferProductGrid(null, { purge: true });
+        showToastMessage(
+          `Refreshed ${refreshedCount} product${refreshedCount === 1 ? '' : 's'} from product master.`,
+          'success',
+        );
+      } else {
+        showToastMessage('No product data changes were applied.', 'info');
+      }
+
+      if (hasExplicitSelection) {
+        targetNodes.forEach((node) => {
+          try { node?.setSelected?.(false); } catch { /* noop */ }
+        });
+        try { api.deselectAll?.(); } catch { /* noop */ }
+        setGridRowDeletionContextMenuSelectionSnapshot(api, []);
+        pendingContextMenuSelectionClearRef.current = true;
+      }
+
+      if (snapshotRows.length > 0 && refreshedCount > 0) {
+        const capturedSnapshot = snapshotRows;
+        const capturedAddEndpoint = addProductsEndpoint;
+        pushCellEditUndo(pushUndo, performUndo, 'Update product data', async () => {
+          const undoRes = await fetch(capturedAddEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'restore-rows', rows: capturedSnapshot }),
+          });
+          const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+          if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert update product data');
+          refreshOfferProductGrid(null, { purge: true });
+        });
+      }
+    } finally {
+      updateProductDataBusyRef.current = false;
+    }
+  }, [fetchAllFilteredRows, addProductsEndpoint, pushUndo, performUndo, refreshOfferProductGrid, refreshOfferProductsFromMaster]);
 
   const fetchExportRows = useCallback(async (): Promise<OfferExportRow[]> => {
     const api = gridApiRef.current;
@@ -4048,10 +4185,68 @@ const requestedColumnDefsMap = useMemo(
 
   const setInsertLineVisibleRef = useRef<((visible: boolean, atEnd?: boolean) => void) | null>(null);
 
+  const fetchAllRowsForOrdering = useCallback(async (): Promise<Record<string, unknown>[]> => {
+    const fetchRes = await fetch(resolvedEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        request: { startRow: 0, endRow: 100000, allRows: true },
+        fields: ['OfferDetailID', 'TreeOrdering'],
+      }),
+    });
+    const payload = (await fetchRes.json().catch(() => null)) as
+      | { ok?: boolean; error?: string; rows?: Array<Record<string, unknown>> }
+      | null;
+    if (!fetchRes.ok || !payload?.ok || !Array.isArray(payload.rows)) {
+      throw new Error(payload?.error ?? 'Could not load offer rows.');
+    }
+    return payload.rows;
+  }, [resolvedEndpoint]);
+
+  const getStartingItemNo = useCallback(async (): Promise<number> => {
+    try {
+      const rows = await fetchAllRowsForOrdering();
+      return getCurrentStartingItemNo(rows) ?? 1;
+    } catch {
+      return 1;
+    }
+  }, [fetchAllRowsForOrdering]);
+
+  const applyStartingItemNoShift = useCallback(async (newStart: number): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const rows = await fetchAllRowsForOrdering();
+      const plan = planStartingItemNoShift(rows, newStart);
+      if (!plan.ok) {
+        showToastMessage(plan.error, 'error');
+        return { ok: false, error: plan.error };
+      }
+      if (plan.updates.length === 0) return { ok: true };
+      const res = await fetch(resolvedEndpoint, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates: plan.updates }),
+      });
+      const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !payload?.ok) {
+        const msg = payload?.error ?? `Failed to shift Item No (status ${res.status})`;
+        showToastMessage(msg, 'error');
+        return { ok: false, error: msg };
+      }
+      gridApiRef.current?.refreshServerSide?.({ purge: false });
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to shift Item No.';
+      console.error('applyStartingItemNoShift failed', err);
+      showToastMessage(msg, 'error');
+      return { ok: false, error: msg };
+    }
+  }, [fetchAllRowsForOrdering, resolvedEndpoint]);
+
   useImperativeHandle(
     ref,
     () => ({
       populateOffer,
+      updateProductData,
       getTemplateExportRows,
       getAddInsertionAnchor,
       getSelectedOfferDetailIdsForPriceUpdate,
@@ -4087,8 +4282,10 @@ const requestedColumnDefsMap = useMemo(
         // Don't paint yet — wait for handleGridResponse to signal new data has arrived
       },
       clearSelectedRowHighlight,
+      getStartingItemNo,
+      applyStartingItemNoShift,
     }),
-    [canUndo, clearSelectedRowHighlight, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer, pushUndo],
+    [applyStartingItemNoShift, canUndo, clearSelectedRowHighlight, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getStartingItemNo, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer, updateProductData, pushUndo],
   );
 
 
@@ -6742,6 +6939,71 @@ const requestedColumnDefsMap = useMemo(
     void runUpdate();
   }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
 
+  const handleTreeOrderingEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    if (event.colDef.field !== 'TreeOrdering') return;
+    if (!manualMode) return;
+    const source = (event as { source?: string }).source;
+    if (source === 'api') return;
+    if (shouldSkipRealtimeCellEdit(event)) return;
+
+    const api = event.api;
+    const node = event.node;
+    if (!api || !node) return;
+
+    const offerDetailId = normalizeOfferDetailId(
+      (event.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null,
+    );
+    const oldRaw = typeof event.oldValue === 'string' ? event.oldValue : (event.oldValue == null ? '' : String(event.oldValue));
+    const newRaw = typeof event.newValue === 'string' ? event.newValue.trim() : (event.newValue == null ? '' : String(event.newValue).trim());
+
+    const revert = () => {
+      try { node.setDataValue('TreeOrdering', oldRaw); } catch { /* noop */ }
+    };
+
+    if (offerDetailId == null) {
+      showToastMessage('Unable to update Item No. Missing record identifier.', 'error');
+      revert();
+      return;
+    }
+
+    void (async () => {
+      try {
+        // Server-side row model: only loaded rows are in the grid, so we
+        // can't plan the cascade from forEachNode alone — descendants inside
+        // collapsed categories would be missed. Fetch the full row set first.
+        const allRows = await fetchAllRowsForOrdering();
+        const plan = planTreeOrderingEdit(allRows, offerDetailId, newRaw);
+        if (!plan.ok) {
+          showToastMessage(plan.error, 'error');
+          revert();
+          return;
+        }
+        if (plan.updates.length === 0) return;
+
+        // TreeOrdering uses the dedicated PUT endpoint (the PATCH route does
+        // not accept this field).
+        const res = await fetch(resolvedEndpoint, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates: plan.updates }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error ?? `Failed to update Item No (status ${res.status})`);
+        }
+
+        api.refreshServerSide?.({ purge: false });
+      } catch (err) {
+        console.error('Failed to update Item No', err);
+        showToastMessage(
+          `Unable to update Item No: ${err instanceof Error ? err.message : 'Please try again.'}`,
+          'error',
+        );
+        revert();
+      }
+    })();
+  }, [manualMode, resolvedEndpoint, shouldSkipRealtimeCellEdit, fetchAllRowsForOrdering]);
+
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const wasProgrammatic = isProgrammaticCellEdit(event);
     handleDescriptionEdit(event);
@@ -6754,8 +7016,9 @@ const requestedColumnDefsMap = useMemo(
     handleOriginEdit(event);
     handleHoursFieldEdit(event);
     handleWarrantyFieldEdit(event);
+    handleTreeOrderingEdit(event);
     void propagateChangeToDuplicates(event, wasProgrammatic);
-  }, [isProgrammaticCellEdit, handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit, handleOriginEdit, handleHoursFieldEdit, handleWarrantyFieldEdit, propagateChangeToDuplicates]);
+  }, [isProgrammaticCellEdit, handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit, handleOriginEdit, handleHoursFieldEdit, handleWarrantyFieldEdit, handleTreeOrderingEdit, propagateChangeToDuplicates]);
 
   const offerCurrencySymbol = offerCurrencyName ?? '€';
   const withCurrency = (formatted: string) =>
