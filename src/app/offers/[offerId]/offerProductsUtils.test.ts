@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeDisplayOrderingMap,
+  findDuplicateTreeOrderings,
   getCurrentStartingItemNo,
   planStartingItemNoShift,
   planTreeOrderingEdit,
@@ -92,7 +93,7 @@ describe('computeDisplayOrderingMap', () => {
     ]);
   });
 
-  it('skips non-printable comments without inflating later siblings', () => {
+  it('non-printable comments display as "<prevSibling>C" and don\'t advance the count', () => {
     const rows = [
       product('1'),
       nonPrintableComment('2'),
@@ -101,6 +102,7 @@ describe('computeDisplayOrderingMap', () => {
     ];
     expect(display(rows)).toEqual([
       ['1', '1'],
+      ['2', '1C'],
       ['3', '2'],
       ['4', '3'],
     ]);
@@ -112,6 +114,29 @@ describe('computeDisplayOrderingMap', () => {
       ['1', '1'],
       ['2', '2'],
       ['3', '3'],
+    ]);
+  });
+
+  it('anchors a comment on the immediately preceding visible row, even across parents', () => {
+    // Layout: cat 1, then leaf 1.1 inside it, then cat 2 with leaves 2.1
+    // 2.2, then a non-printable comment at root level. The comment's raw
+    // path makes it a sibling of "1" / "2", but visually it follows "2.2"
+    // — the display should be "2.2C" to match what's right above it.
+    const rows = [
+      category('1'),
+      product('1.1'),
+      category('2'),
+      product('2.1'),
+      product('2.2'),
+      nonPrintableComment('3'),
+    ];
+    expect(display(rows)).toEqual([
+      ['1', '1'],
+      ['1.1', '1.1'],
+      ['2', '2'],
+      ['2.1', '2.1'],
+      ['2.2', '2.2'],
+      ['3', '2.2C'],
     ]);
   });
 
@@ -173,21 +198,23 @@ describe('computeDisplayOrderingMap', () => {
   });
 
   it('handles a deep gap-and-skip combination', () => {
-    // rootStart = 2 (lowest stored root). Roots count up from 2 with gaps
-    // closed; sub-levels still renumber from 1.
+    // rootStart = 2. Non-printable comments display as "<prevSibling>C" and
+    // don't take a sibling slot, so products stay sequential.
     const rows = [
       product('2'),
       nonPrintableComment('3'),
-      category('5'), // gap between roots
-      product('5.2'), // gap inside category
+      category('5'), // real gap (deleted "4") still closes
+      product('5.2'),
       nonPrintableComment('5.3'),
       product('5.5'),
       product('7'),
     ];
     expect(display(rows)).toEqual([
       ['2', '2'],
+      ['3', '2C'],
       ['5', '3'],
       ['5.2', '3.1'],
+      ['5.3', '3.1C'],
       ['5.5', '3.2'],
       ['7', '4'],
     ]);
@@ -302,7 +329,7 @@ describe('computeDisplayOrderingMap', () => {
     });
   });
 
-  it('compresses long runs of non-printable comments without inflating siblings', () => {
+  it('a long run of non-printable comments all anchor on the same prev sibling', () => {
     const rows = [
       product('1'),
       nonPrintableComment('2'),
@@ -314,6 +341,10 @@ describe('computeDisplayOrderingMap', () => {
     ];
     expect(display(rows)).toEqual([
       ['1', '1'],
+      ['2', '1C'],
+      ['3', '1C'],
+      ['4', '1C'],
+      ['5', '1C'],
       ['6', '2'],
       ['7', '3'],
     ]);
@@ -358,10 +389,16 @@ describe('computeDisplayOrderingMap', () => {
       product('2'),
       requestedProduct('5'), // root-level requested with big gap
     ];
+    // Sub-level under "1": 1.1 product → "1.1", 1.2 requested → "1.2",
+    // 1.3 NULL comment → "1.2C" (doesn't take a slot), then real gap from
+    // 1.4 deletion closes → 1.5 → "1.3", 1.6 → "1.4", 1.7 printable
+    // comment counts as a sibling → "1.5".
+    // Root level: real gap between "2" and "5" closes → "5" → "3".
     expect(display(rows)).toEqual([
       ['1', '1'],
       ['1.1', '1.1'],
       ['1.2', '1.2'],
+      ['1.3', '1.2C'],
       ['1.5', '1.3'],
       ['1.6', '1.4'],
       ['1.7', '1.5'],
@@ -416,24 +453,39 @@ describe('computeDisplayOrderingMap', () => {
   });
 
   describe('manual mode', () => {
-    it('returns an empty map so the renderer falls back to raw TreeOrdering', () => {
+    it('shows raw TreeOrdering verbatim — no gap closing, no renumbering', () => {
       const rows = [
         category('6'),
         category('6.3'),
         product('6.3.1'),
-        product('6.3.4'), // raw gap preserved
+        product('6.3.4'), // raw gap preserved in manual
       ];
       const map = computeDisplayOrderingMap(rows, { manualMode: true });
-      expect(map.size).toBe(0);
+      expect(byTree(rows, map, '6')).toBe('6');
+      expect(byTree(rows, map, '6.3')).toBe('6.3');
+      expect(byTree(rows, map, '6.3.1')).toBe('6.3.1');
+      expect(byTree(rows, map, '6.3.4')).toBe('6.3.4');
     });
 
-    it('does not renumber bespoke segments in manual mode', () => {
+    it('preserves bespoke segments instead of renumbering them', () => {
       const rows = [category('6'), category('6.2'), product('6.2.8')];
       const map = computeDisplayOrderingMap(rows, { manualMode: true });
-      // No mapping means the renderer shows the raw value.
-      expect(byTree(rows, map, '6')).toBeUndefined();
-      expect(byTree(rows, map, '6.2')).toBeUndefined();
-      expect(byTree(rows, map, '6.2.8')).toBeUndefined();
+      expect(byTree(rows, map, '6')).toBe('6');
+      expect(byTree(rows, map, '6.2')).toBe('6.2');
+      expect(byTree(rows, map, '6.2.8')).toBe('6.2.8');
+    });
+
+    it('non-printable comments still render with the C suffix in manual mode', () => {
+      const rows = [
+        product('1'),
+        nonPrintableComment('2'),
+        product('3'),
+      ];
+      const map = computeDisplayOrderingMap(rows, { manualMode: true });
+      expect(byTree(rows, map, '1')).toBe('1');
+      expect(byTree(rows, map, '2')).toBe('1C');
+      // Manual: raw value, no compression — product stays at "3" not "2".
+      expect(byTree(rows, map, '3')).toBe('3');
     });
 
     it('still renumbers in auto mode (manualMode: false explicit)', () => {
@@ -516,22 +568,46 @@ describe('planTreeOrderingEdit', () => {
     expect(result).toEqual({ ok: true, updates: [] });
   });
 
-  it('blocks an edit when the new path collides with an existing row', () => {
+  it('does NOT sweep along a duplicate at the same path — only the target moves', () => {
+    // Reproduces the bug where editing one of two rows sharing path "1"
+    // applied to BOTH rows. Setup: 14800 and 14802 both at "1" (the
+    // duplicate state after a manual edit). Editing 14800 → "3" must
+    // change 14800 only; 14802 stays at "1".
+    const dupA = product('1');                  // 14800-equivalent
+    const middle = product('2');                // 14801-equivalent
+    const dupB = product('1');                  // 14802-equivalent
+    const rows = [dupA, middle, dupB];
+    const result = planTreeOrderingEdit(rows, idOf(dupA), '3');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.updates).toEqual([
+      { OfferDetailID: idOf(dupA), TreeOrdering: '3' },
+    ]);
+  });
+
+  it('allows an edit even if the new path collides with an existing row', () => {
+    // Manual mode permits temporary duplicates. The leaving-manual-mode
+    // toggle re-validates and refuses to switch back if any remain.
     const cat = category('1');
     const rows = [cat, product('1.1'), product('2'), product('2.1')];
     const result = planTreeOrderingEdit(rows, idOf(cat), '2');
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatch(/already in use/i);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const byId = new Map(result.updates.map((u) => [u.OfferDetailID, u.TreeOrdering]));
+    // Edited cat now collides with existing root "2".
+    expect(byId.get(idOf(cat))).toBe('2');
+    // Descendant cascaded too — collides with existing "2.1".
+    expect(byId.get(idOf(rows[1]))).toBe('2.1');
   });
 
-  it('blocks when a descendant rewrite collides with an existing row', () => {
+  it('allows a descendant cascade even when it collides', () => {
     // Moving "1" → "3" means children "1.1" → "3.1". An existing "3.1"
-    // outside the moved subtree must block the edit.
+    // outside the moved subtree no longer blocks the edit; the duplicate
+    // is permitted in manual mode and surfaced on toggle-back.
     const cat = category('1');
     const rows = [cat, product('1.1'), product('3'), product('3.1')];
     const result = planTreeOrderingEdit(rows, idOf(cat), '3');
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
   });
 
   it('rejects empty / malformed values', () => {
@@ -668,5 +744,38 @@ describe('planStartingItemNoShift', () => {
     expect(planStartingItemNoShift(rows, -3).ok).toBe(false);
     expect(planStartingItemNoShift(rows, 1.5).ok).toBe(false);
     expect(planStartingItemNoShift(rows, Number.NaN).ok).toBe(false);
+  });
+});
+
+describe('findDuplicateTreeOrderings', () => {
+  it('returns no duplicates for a clean offer', () => {
+    const rows = [product('1'), product('2'), product('2.1')];
+    expect(findDuplicateTreeOrderings(rows)).toEqual([]);
+  });
+
+  it('reports each duplicated path with the colliding rows', () => {
+    const a = product('2');
+    const b = product('2'); // duplicate of a
+    const c = product('1.5');
+    const d = product('1.5'); // duplicate of c
+    const e = product('1.5'); // 3rd occurrence
+    const rows = [a, b, c, d, e, product('3')];
+    const dups = findDuplicateTreeOrderings(rows);
+    expect(dups).toHaveLength(2);
+    const byPath = new Map(dups.map((g) => [g.treeOrdering, g.rows.length]));
+    expect(byPath.get('2')).toBe(2);
+    expect(byPath.get('1.5')).toBe(3);
+  });
+
+  it('ignores rows without TreeOrdering or OfferDetailID', () => {
+    const rows: Row[] = [
+      product('1'),
+      { TreeOrdering: '1' }, // no OfferDetailID — should be ignored
+      { OfferDetailID: 999 }, // no TreeOrdering — should be ignored
+      product('1'), // valid duplicate
+    ];
+    const dups = findDuplicateTreeOrderings(rows);
+    expect(dups).toHaveLength(1);
+    expect(dups[0].rows).toHaveLength(2);
   });
 });

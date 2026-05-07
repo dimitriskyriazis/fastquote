@@ -819,6 +819,12 @@ async function handleCreateRow(
   request.input('__createdBy', sql.Int, createdBy);
   request.input('__modifiedBy', sql.Int, createdBy);
   request.input('__isCategory', sql.Bit, isCategory);
+  // Non-printable comments are stored as a subpath of the row immediately
+  // above them in display order, so they don't take a sibling slot and
+  // don't bump the numbering of the next product. All other row types
+  // (categories, printable comments) still go to the next root segment.
+  const isNonPrintableComment = type === 'non-printable-comment';
+  request.input('__isNonPrintableComment', sql.Bit, isNonPrintableComment ? 1 : 0);
 
   const query = `
     DECLARE @lastRootValue INT =
@@ -835,7 +841,52 @@ async function handleCreateRow(
         FROM dbo.OfferDetails od
         WHERE od.OfferID = @__offerId
       );
-    DECLARE @treeOrdering NVARCHAR(255) = CONVERT(NVARCHAR(255), ISNULL(@lastRootValue, 0) + 1);
+    DECLARE @treeOrdering NVARCHAR(255);
+
+    IF @__isNonPrintableComment = 1
+    BEGIN
+      -- Find the row that currently sorts last (in display order) and
+      -- nest the new comment as one of its children. This is option 2:
+      -- comments live as subpaths of the row above so they don't push
+      -- sibling numbering.
+      DECLARE @anchorTree NVARCHAR(255);
+      SELECT TOP 1 @anchorTree = LTRIM(RTRIM(ISNULL(od.TreeOrdering, '')))
+      FROM dbo.OfferDetails od
+      WHERE od.OfferID = @__offerId
+        AND od.TreeOrdering IS NOT NULL
+        AND LTRIM(RTRIM(od.TreeOrdering)) <> ''
+      ORDER BY ${TREE_ORDERING_SORT_PRIORITY_EXPRESSION} DESC, ${TREE_ORDERING_HIERARCHY_EXPRESSION} DESC, od.TreeOrdering DESC;
+
+      IF @anchorTree IS NULL OR @anchorTree = ''
+      BEGIN
+        -- Empty offer: drop the first comment in at root segment 1.
+        SET @treeOrdering = N'1';
+      END
+      ELSE
+      BEGIN
+        DECLARE @prefix NVARCHAR(260) = CONCAT(@anchorTree, '.');
+        DECLARE @childDepth INT = (LEN(@anchorTree) - LEN(REPLACE(@anchorTree, '.', '')) + 2);
+        DECLARE @maxSub INT;
+        SELECT @maxSub =
+          MAX(TRY_CONVERT(INT,
+            RIGHT(t.TreeOrderingTrimmed, CHARINDEX('.', REVERSE(t.TreeOrderingTrimmed) + '.') - 1)
+          ))
+        FROM (
+          SELECT LTRIM(RTRIM(ISNULL(od.TreeOrdering, ''))) AS TreeOrderingTrimmed
+          FROM dbo.OfferDetails od
+          WHERE od.OfferID = @__offerId
+        ) AS t
+        WHERE t.TreeOrderingTrimmed <> ''
+          AND t.TreeOrderingTrimmed LIKE CONCAT(@prefix, '%')
+          AND (LEN(t.TreeOrderingTrimmed) - LEN(REPLACE(t.TreeOrderingTrimmed, '.', '')) + 1) = @childDepth;
+        SET @treeOrdering = CONCAT(@prefix, ISNULL(@maxSub, 0) + 1);
+      END
+    END
+    ELSE
+    BEGIN
+      SET @treeOrdering = CONVERT(NVARCHAR(255), ISNULL(@lastRootValue, 0) + 1);
+    END;
+
     DECLARE @nextOrdering INT =
       (
         SELECT ISNULL(MAX(ISNULL(od.Ordering, 0)), 0) + 1

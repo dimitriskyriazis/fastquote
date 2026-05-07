@@ -47,6 +47,10 @@ export type OfferProductsPanelHandle = {
   clearSelectedRowHighlight: () => void;
   getStartingItemNo: () => Promise<number>;
   applyStartingItemNoShift: (newStart: number) => Promise<{ ok: boolean; error?: string }>;
+  findItemNoDuplicates: () => Promise<Array<{
+    treeOrdering: string;
+    rows: Array<{ OfferDetailID: number; description: string | null }>;
+  }>>;
 };
 
 export type OfferProductsTemplateExportRow = {

@@ -59,6 +59,7 @@ import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselect
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption } from '../../../lib/offerProductRows';
 import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
+import { captureAndPinScroll } from '../../../lib/scrollPreservation';
 import MatchRequestedProductsModal, {
   type RequestedProductMatchEntry,
 } from './products/MatchRequestedProductsModal';
@@ -106,6 +107,7 @@ import {
   planTreeOrderingEdit,
   planStartingItemNoShift,
   getCurrentStartingItemNo,
+  findDuplicateTreeOrderings,
   normalizeOfferDetailId,
   resolveRowLabel,
   resolveOfferProductTypeLabel,
@@ -184,6 +186,13 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const router = useRouter();
   const { userId, roles } = useAuditUser();
   const isOfferCreator = Boolean(userId && offerCreatedByUserId && String(userId) === String(offerCreatedByUserId));
+  // Mirror manualMode in a ref so cell renderers / column defs can read the
+  // latest value without depending on it. Toggling manualMode then doesn't
+  // invalidate columnDefs (which would force AG-Grid to rebuild every row
+  // and cause the white flash + scroll-to-top).
+  const manualModeRef = useRef(manualMode);
+  useEffect(() => { manualModeRef.current = manualMode; }, [manualMode]);
+  const isManualMode = useCallback(() => manualModeRef.current, []);
   useEffect(() => {
     deferInitialHeavyWorkRef.current = true;
   }, [offerId]);
@@ -791,6 +800,18 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     treeOrderingRootMapRef.current = map;
   }, []);
   const rebuildDisplayOrderingMap = useCallback((rows?: Array<Record<string, unknown>>, reset = false) => {
+    // Preserve the existing Item No display when a filter is active — the
+    // server returns only matching rows, so recomputing would renumber the
+    // visible subset to 1..N and lose the originals.
+    const filterActive = Boolean(gridApiRef.current?.isAnyFilterPresent?.());
+    if (filterActive) {
+      (rows ?? []).forEach((row) => {
+        if (!row) return;
+        const key = String((row as Record<string, unknown>)?.TreeOrdering ?? '').trim();
+        if (key) allRowsForDisplayRef.current.set(key, row as Record<string, unknown>);
+      });
+      return;
+    }
     if (reset) allRowsForDisplayRef.current = new Map();
     (rows ?? []).forEach((row) => {
       if (!row) return;
@@ -1077,8 +1098,14 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       return next;
     });
     setCategoryChildrenKnown(true);
-    const newDisplayMap = computeDisplayOrderingMap(rows, { manualMode });
-    displayOrderingMapRef.current = newDisplayMap;
+    // Preserve the existing Item No display when a filter is active — the
+    // loaded rows are only the filtered subset, so recomputing would renumber
+    // them 1..N and lose the originals.
+    const filterActive = Boolean(api?.isAnyFilterPresent?.());
+    if (!filterActive) {
+      const newDisplayMap = computeDisplayOrderingMap(rows, { manualMode });
+      displayOrderingMapRef.current = newDisplayMap;
+    }
     if (api && !api.isDestroyed?.()) {
       api.refreshCells({ columns: ['TreeOrdering'], force: true });
     }
@@ -1087,18 +1114,26 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   useEffect(() => {
     // Toggling manualMode flips the display between raw values and 1..N
     // renumbering — rebuild the cached map and repaint Item No cells.
+    // We deliberately don't auto-expand collapsed categories on entry
+    // (it would force a load of previously hidden blocks and cause a
+    // white flash). The user can expand manually if they need to edit a
+    // hidden row.
     displayOrderingMapRef.current = computeDisplayOrderingMap(
       Array.from(allRowsForDisplayRef.current.values()),
       { manualMode },
     );
-    if (manualMode) {
-      // Manual mode disables collapse; expand everything so users can see and
-      // edit every Item No.
-      setCollapsedCategoryPaths((prev) => (prev.size === 0 ? prev : new Set()));
-    }
     const api = gridApiRef.current;
     if (api && !api.isDestroyed?.()) {
+      // Re-paint the Item No column for both directions of the toggle.
       api.refreshCells({ columns: ['TreeOrdering'], force: true });
+      // When leaving manual mode, manual edits may have left rows out of
+      // sort order (their stored TreeOrdering changed but the grid still
+      // shows them in their pre-edit positions). Refetch with the cache
+      // intact so AG-Grid re-sorts in place — same smooth animation as
+      // a drag-drop reorder, no white flash.
+      if (!manualMode) {
+        api.refreshServerSide?.({ purge: false });
+      }
     }
   }, [manualMode]);
   const categoryAncestorsUpdateQueuedRef = useRef(false);
@@ -2159,7 +2194,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const rowData = params.data ?? null;
     const isCategory = isOfferProductCategory(rowData);
     // Manual mode disables collapse, so hide the chevron entirely.
-    const shouldShowIndicator = isCategory && !manualMode;
+    // Read from a ref so toggling manualMode doesn't change this callback's
+    // identity (which would invalidate columnDefs).
+    const shouldShowIndicator = isCategory && !manualModeRef.current;
     const hasChildren = shouldShowIndicator && hasCategoryChildrenForRenderer(rowData);
     const collapsed = shouldShowIndicator && isCategoryRowCollapsedForRenderer(rowData);
     const indicator = shouldShowIndicator
@@ -2184,23 +2221,19 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       ? (collapsed ? 'Expand category' : 'Collapse category')
       : 'Category without child entries';
 
-    const rowType = resolveOfferProductRowType(rowData);
-    let display: string;
-    if (rowType === 'non-printable-comment') {
-      display = '';
-    } else {
-      // Display map is keyed by OfferDetailID so rows that share the same
-      // raw TreeOrdering (corrupted offers) each render their own number.
-      const offerDetailId = normalizeOfferDetailId(
-        (rowData as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null,
-      );
-      const idKey = offerDetailId != null ? String(offerDetailId) : '';
-      display = idKey
-        ? (displayOrderingMapRef.current.get(idKey) ?? formatDisplayTreeOrdering(rawValue))
-        : formatDisplayTreeOrdering(rawValue);
-      if (display && isOfferProductOption(rowData)) {
-        display = `${display}O`;
-      }
+    // Display map is keyed by OfferDetailID so rows that share the same
+    // raw TreeOrdering (corrupted offers) each render their own number.
+    // Non-printable comments get a "<prev>C"-style entry from the map in
+    // both modes, so we don't special-case them to empty here.
+    const offerDetailId = normalizeOfferDetailId(
+      (rowData as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null,
+    );
+    const idKey = offerDetailId != null ? String(offerDetailId) : '';
+    let display: string = idKey
+      ? (displayOrderingMapRef.current.get(idKey) ?? formatDisplayTreeOrdering(rawValue))
+      : formatDisplayTreeOrdering(rawValue);
+    if (display && isOfferProductOption(rowData)) {
+      display = `${display}O`;
     }
     return (
       <span className={styles.treeOrderingCell}>
@@ -2218,7 +2251,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         <span className={styles.treeOrderingText}>{display}</span>
       </span>
     );
-  }, [formatDisplayTreeOrdering, hasCategoryChildrenForRenderer, isCategoryRowCollapsedForRenderer, manualMode]);
+  }, [formatDisplayTreeOrdering, hasCategoryChildrenForRenderer, isCategoryRowCollapsedForRenderer]);
 
 const RequestedItemNoCell = useCallback((params: ICellRendererParams<Record<string, unknown>>) => {
   const value = params.value;
@@ -2464,7 +2497,7 @@ const requestedColumnDefsMap = useMemo(
   const productColumnDefsRef = useRef<ColDef[]>([]);
   const productColumnDefs: ColDef[] = useMemo(() => buildProductColumnDefs({
       standardPackageMode,
-      manualMode,
+      isManualMode,
       showRequestedColumns,
       requestedColumnDefsMap,
       requestedCellClassRules,
@@ -2486,7 +2519,7 @@ const requestedColumnDefsMap = useMemo(
     actualNumericCellStyle,
     PartNumberCell,
     ModelNumberCell,
-    manualMode,
+    isManualMode,
     TreeOrderingCell,
     requestedColumnDefsMap,
     RequestedItemNoCell,
@@ -2523,22 +2556,29 @@ const requestedColumnDefsMap = useMemo(
       if (viewport) {
         pendingGridScrollRestoreRef.current = viewport.scrollTop;
       }
-      const requestedPurge = options?.purge ?? false;
-      if (pendingRefreshPurgeRef.current == null) {
-        pendingRefreshPurgeRef.current = requestedPurge;
-      } else {
-        pendingRefreshPurgeRef.current = pendingRefreshPurgeRef.current || requestedPurge;
-      }
+      // Pin window/ancestor scroll across the refresh's layout shifts
+      // (purge in particular shrinks the grid, which the browser uses as
+      // an excuse to clamp window.scrollY to 0). Same approach the row-drag
+      // flow uses; without it, actions like "Set as Requested product" or
+      // any router.refresh()-adjacent flow visibly jump the page to the top.
+      captureAndPinScroll(viewport ?? null);
+      // Always refresh with purge: false. A purged refresh empties the grid
+      // momentarily, which shrinks the rendered area and lets the browser
+      // clamp window.scrollY toward 0 (and causes a white flash). Matches
+      // the row-drag flow — stale neighbour values settle once the SSRM
+      // blocks reload. Callers' purge:true requests are intentionally
+      // ignored; the option is kept on the signature for compatibility.
+      void options?.purge;
+      pendingRefreshPurgeRef.current = false;
       if (!refreshScheduledRef.current) {
         refreshScheduledRef.current = true;
         Promise.resolve().then(() => {
           refreshScheduledRef.current = false;
           const apiForRefresh = gridApiRef.current;
-          const purge = pendingRefreshPurgeRef.current ?? false;
           pendingRefreshPurgeRef.current = null;
           if (!apiForRefresh) return;
           try {
-            apiForRefresh.refreshServerSide?.({ purge });
+            apiForRefresh.refreshServerSide?.({ purge: false });
           } catch (err) {
             console.warn('Failed to refresh grid after row deletion', err);
           }
@@ -4217,6 +4257,29 @@ const requestedColumnDefsMap = useMemo(
     }
   }, [fetchAllRowsForOrdering]);
 
+  const findItemNoDuplicates = useCallback(async () => {
+    try {
+      const fetchRes = await fetch(resolvedEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request: { startRow: 0, endRow: 100000, allRows: true },
+          fields: ['OfferDetailID', 'TreeOrdering', 'ProductDescription', 'Description', 'PartNumber'],
+        }),
+      });
+      const payload = (await fetchRes.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; rows?: Array<Record<string, unknown>> }
+        | null;
+      if (!fetchRes.ok || !payload?.ok || !Array.isArray(payload.rows)) {
+        throw new Error(payload?.error ?? 'Could not load offer rows.');
+      }
+      return findDuplicateTreeOrderings(payload.rows);
+    } catch (err) {
+      console.error('findItemNoDuplicates failed', err);
+      throw err;
+    }
+  }, [resolvedEndpoint]);
+
   const applyStartingItemNoShift = useCallback(async (newStart: number): Promise<{ ok: boolean; error?: string }> => {
     try {
       const rows = await fetchAllRowsForOrdering();
@@ -4289,8 +4352,9 @@ const requestedColumnDefsMap = useMemo(
       clearSelectedRowHighlight,
       getStartingItemNo,
       applyStartingItemNoShift,
+      findItemNoDuplicates,
     }),
-    [applyStartingItemNoShift, canUndo, clearSelectedRowHighlight, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getStartingItemNo, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer, updateProductData, pushUndo],
+    [applyStartingItemNoShift, canUndo, clearSelectedRowHighlight, findItemNoDuplicates, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getStartingItemNo, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer, updateProductData, pushUndo],
   );
 
 
@@ -6997,7 +7061,27 @@ const requestedColumnDefsMap = useMemo(
           throw new Error(payload?.error ?? `Failed to update Item No (status ${res.status})`);
         }
 
-        api.refreshServerSide?.({ purge: false });
+        // Apply updates locally so the grid doesn't have to re-fetch (which
+        // causes the white flash). Only loaded rows get touched here;
+        // descendants inside still-collapsed categories are already correct
+        // on the server and will load with the right value next time the
+        // user expands them.
+        const updateById = new Map(plan.updates.map((u) => [u.OfferDetailID, u.TreeOrdering]));
+        // Suppress the per-row realtime echo for these specific writes so
+        // setDataValue doesn't re-trigger handleTreeOrderingEdit.
+        for (const [updateId, newPath] of updateById) {
+          registerRealtimeCellUpdate(updateId, 'TreeOrdering', newPath);
+        }
+        api.forEachNode?.((n) => {
+          const rowId = normalizeOfferDetailId(
+            (n.data as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null,
+          );
+          if (rowId == null) return;
+          const next = updateById.get(rowId);
+          if (next == null) return;
+          try { n.setDataValue?.('TreeOrdering', next); } catch { /* noop */ }
+        });
+        api.refreshCells?.({ columns: ['TreeOrdering'], force: true });
       } catch (err) {
         console.error('Failed to update Item No', err);
         showToastMessage(
@@ -7007,7 +7091,7 @@ const requestedColumnDefsMap = useMemo(
         revert();
       }
     })();
-  }, [manualMode, resolvedEndpoint, shouldSkipRealtimeCellEdit, fetchAllRowsForOrdering]);
+  }, [manualMode, registerRealtimeCellUpdate, resolvedEndpoint, shouldSkipRealtimeCellEdit, fetchAllRowsForOrdering]);
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const wasProgrammatic = isProgrammaticCellEdit(event);
@@ -7317,6 +7401,10 @@ const requestedColumnDefsMap = useMemo(
     gridApi: gridApiRef.current,
     enabled: true,
     showNotifications: false,
+    // While in manual mode the user is mid-edit and doesn't want rows
+    // shifting under them — apply value updates in place but skip the
+    // resort fetch. The re-sort happens on toggle-back to auto.
+    shouldRefreshOnReorder: () => !manualModeRef.current,
     onBeforeCellUpdate: (info) => {
       registerRealtimeCellUpdate(info.rowId, info.field, info.value);
       if (info.updatedBy != null && String(info.updatedBy) === String(userId)) return;

@@ -36,6 +36,11 @@ type UseRealtimeGridUpdatesOptions = {
   gridApi: GridApi | null;
   enabled?: boolean;
   showNotifications?: boolean; // Default: false - only show toasts for own edits, not real-time updates
+  // When this returns false on a rows-reordered event, the row data is
+  // still updated in place (setDataValue) but AG-Grid is NOT asked to
+  // refresh / re-sort. Used to keep rows stable while the user is
+  // mid-flow (e.g. in manual-edit mode).
+  shouldRefreshOnReorder?: () => boolean;
   onBeforeCellUpdate?: (info: {
     rowId: number;
     field: string;
@@ -92,6 +97,7 @@ export function useRealtimeGridUpdates({
   gridApi,
   enabled = true,
   showNotifications = false, // Default to false - person making edit already gets feedback
+  shouldRefreshOnReorder,
   onBeforeCellUpdate,
   onRowAdded,
   onRowUpdated,
@@ -107,6 +113,7 @@ export function useRealtimeGridUpdates({
   const onRowDeletedRef = useRef(onRowDeleted);
   const onRowsReorderedRef = useRef(onRowsReordered);
   const showNotificationsRef = useRef(showNotifications);
+  const shouldRefreshOnReorderRef = useRef(shouldRefreshOnReorder);
 
   useEffect(() => {
     gridApiRef.current = gridApi;
@@ -116,6 +123,7 @@ export function useRealtimeGridUpdates({
     onRowDeletedRef.current = onRowDeleted;
     onRowsReorderedRef.current = onRowsReordered;
     showNotificationsRef.current = showNotifications;
+    shouldRefreshOnReorderRef.current = shouldRefreshOnReorder;
   });
 
   useEffect(() => {
@@ -223,7 +231,7 @@ export function useRealtimeGridUpdates({
           case 'rows-reordered': {
             const { updates } = event.data;
             if (updates && updates.length > 0) {
-              // Update TreeOrdering values
+              // Update TreeOrdering values in place — no resort triggered.
               updates.forEach(({ OfferDetailID, TreeOrdering }) => {
                 api.forEachNode((node) => {
                   if (node.data?.OfferDetailID === OfferDetailID) {
@@ -232,8 +240,15 @@ export function useRealtimeGridUpdates({
                 });
               });
 
-              // Refresh to apply new order
-              api.refreshServerSide({ purge: false });
+              // Skip the resort fetch when the consumer asks us to (e.g.
+              // user is in manual mode and doesn't want rows shifting
+              // around mid-edit). Other clients still re-sort.
+              const shouldRefresh = shouldRefreshOnReorderRef.current
+                ? shouldRefreshOnReorderRef.current()
+                : true;
+              if (shouldRefresh) {
+                api.refreshServerSide({ purge: false });
+              }
 
               if (showNotifications) {
                 showToastMessage('Row order updated by another user', 'info');

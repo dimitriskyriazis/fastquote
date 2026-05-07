@@ -121,6 +121,7 @@ import { isOfferProductCategory } from '../../lib/offerProductRows';
 import { resolveColumnWidthAssignments, ColumnWidthAssignment } from '../../lib/columnWidthPresets';
 import { useGridUrlState } from '../hooks/useGridUrlState';
 import { parseGridSearchParams } from '../../lib/gridUrlState';
+import { captureAndPinScroll } from '../../lib/scrollPreservation';
 
 // CONSTANTS
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
@@ -1413,6 +1414,7 @@ export default function AgGridAll({
 
   const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const pendingScrollRestoreTopRef = useRef<number | null>(null);
+  const pendingScrollRestoreRowIdRef = useRef<string | null>(null);
   const pendingWindowScrollYRef = useRef<number | null>(null);
   const pendingAncestorScrollRef = useRef<{ el: HTMLElement; top: number } | null>(null);
   const columnSaveTimerRef = useRef<number | null>(null);
@@ -3832,6 +3834,12 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     if (!filterStateRestoringRef.current) {
       const widthSnapshot = captureColumnWidths(event.api);
       pendingFilterWidthRestoreRef.current = widthSnapshot.length > 0 ? widthSnapshot : null;
+      // Pin window/ancestor scroll across the SSRM purge that follows. Without
+      // this, clearing filters (or any filter change that shrinks the grid)
+      // lets the browser clamp window.scrollY toward 0. Use the standalone
+      // helper (rather than the captureScrollState useCallback declared lower
+      // in this component) to avoid a TDZ error in the dep array.
+      captureAndPinScroll(shellRef.current);
     }
 
     const model = event.api.getFilterModel() as Record<string, FilterDescriptor> | null;
@@ -3841,6 +3849,24 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     setHasUserFilters(meaningfulKeys.length > 0);
     setActiveFilterCount(meaningfulKeys.length);
 
+    // Remember the topmost visible row on EVERY filter change so we can scroll
+    // back to it after the SSRM refresh — otherwise the grid snaps to row 0.
+    // (Previously this only fired when transitioning to empty, which missed
+    // individual floating-filter clears.)
+    if (!filterStateRestoringRef.current) {
+      try {
+        const apiAny = event.api as unknown as {
+          getFirstDisplayedRowIndex?: () => number;
+        };
+        const firstIndex = apiAny.getFirstDisplayedRowIndex?.();
+        if (typeof firstIndex === 'number' && firstIndex >= 0) {
+          const node = event.api.getDisplayedRowAtIndex?.(firstIndex);
+          const id = node?.id ?? null;
+          if (id) pendingScrollRestoreRowIdRef.current = id;
+        }
+      } catch { /* noop */ }
+    }
+
     if (!model) {
       // Persist empty filter model when filters are cleared (skip during restoration)
       if (!filterStateRestoringRef.current && filterStateStorageKey) {
@@ -3848,7 +3874,9 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
         gridUrlState.writeFilterModelToUrl(null);
       }
       if (!filterStateRestoringRef.current) {
-        refreshServerSideData(event.api, { purge: true });
+        // purge: false — keeps existing rows visible during refresh so the
+        // grid does not shrink and let the browser clamp window.scrollY to 0.
+        refreshServerSideData(event.api, { purge: false });
       }
       return;
     }
@@ -3860,7 +3888,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
         gridUrlState.writeFilterModelToUrl(null);
       }
       if (!filterStateRestoringRef.current) {
-        refreshServerSideData(event.api, { purge: true });
+        refreshServerSideData(event.api, { purge: false });
       }
       return;
     }
@@ -3893,7 +3921,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       gridUrlState.writeFilterModelToUrl(modelToSave);
     }
     if (!filterStateRestoringRef.current) {
-      refreshServerSideData(event.api, { purge: true });
+      refreshServerSideData(event.api, { purge: false });
     }
   }, [captureColumnWidths, filterStateStorageKey, gridUrlState]);
 
@@ -4032,6 +4060,29 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
         window.requestAnimationFrame(runRestore);
       } else {
         setTimeout(runRestore, 0);
+      }
+    }
+    const restoreRowId = pendingScrollRestoreRowIdRef.current;
+    if (restoreRowId) {
+      const tryScroll = () => {
+        if (event.api.isDestroyed?.()) return false;
+        const node = event.api.getRowNode?.(restoreRowId);
+        if (node && typeof node.rowIndex === 'number' && node.rowIndex >= 0) {
+          try { event.api.ensureNodeVisible(node, 'top'); } catch { /* noop */ }
+          return true;
+        }
+        return false;
+      };
+      if (tryScroll()) {
+        pendingScrollRestoreRowIdRef.current = null;
+      } else {
+        // Row may not be in cache yet (block still loading) or AG Grid may
+        // have just snapped to row 0 after the purge — retry on the next
+        // frame and after the cache catches up.
+        const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : ((cb: () => void) => setTimeout(cb, 0));
+        raf(() => { if (tryScroll()) pendingScrollRestoreRowIdRef.current = null; });
+        setTimeout(() => { if (tryScroll()) pendingScrollRestoreRowIdRef.current = null; }, 50);
+        setTimeout(() => { if (tryScroll()) pendingScrollRestoreRowIdRef.current = null; }, 200);
       }
     }
     const restoreTop = pendingScrollRestoreTopRef.current;
@@ -4778,6 +4829,10 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
   const handleClearUserFilters = useCallback(() => {
     const api = gridApiRef.current ?? gridRef.current?.api ?? null;
     if (!api || api.isDestroyed?.()) return;
+    // Pin scroll BEFORE the filter mutation, since setFilterModel can fire
+    // synchronous side effects (focus shifts, AG-Grid internal scrolls)
+    // that move window.scrollY before handleFilterChanged sees the event.
+    captureAndPinScroll(shellRef.current);
     const current = (api.getFilterModel() as Record<string, unknown> | null) ?? {};
     const next: Record<string, unknown> = {};
     Object.entries(current).forEach(([key, value]) => {

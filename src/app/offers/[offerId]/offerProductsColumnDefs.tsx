@@ -40,7 +40,7 @@ import {
   DESCRIPTION_PASTE_BLOCKLIST,
   type RequestedDisplayFieldKey,
 } from './offerProductsUtils';
-import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
+import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment, resolveOfferProductRowType } from '../../../lib/offerProductRows';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 
 const otherCurrencyAmountFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
@@ -192,7 +192,7 @@ export function buildRequestedColumnDefsMap(
 
 export type ProductColumnDefsDeps = {
   standardPackageMode: boolean;
-  manualMode: boolean;
+  isManualMode: () => boolean;
   showRequestedColumns: boolean;
   requestedColumnDefsMap: Record<RequestedDisplayFieldKey, ColDef>;
   requestedCellClassRules: Record<string, (params: { data?: CellStyle | null }) => boolean>;
@@ -227,7 +227,7 @@ const parseDiscountValue = (params: { newValue: unknown; oldValue: unknown }) =>
 export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
   const {
     standardPackageMode,
-    manualMode,
+    isManualMode,
     showRequestedColumns,
     requestedColumnDefsMap,
     requestedCellClassRules,
@@ -272,7 +272,9 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
         filter: 'agTextColumnFilter',
         type: 'numericColumn',
         comparator: compareTreeOrderingValues,
-        editable: manualMode,
+        editable: (params) =>
+          isManualMode()
+          && resolveOfferProductRowType(params.data ?? null) !== 'non-printable-comment',
         cellRenderer: TreeOrderingCell,
         headerClass: 'ag-right-aligned-header',
         cellClass: [
@@ -283,6 +285,10 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
         ],
         cellStyle: truncateCellStyle,
         valueGetter: ({ data }) => {
+          // Always return the raw TreeOrdering — AG-Grid uses this for
+          // sorting and filtering. The renderer is responsible for the
+          // display (incl. the "C" suffix on non-printable comments and
+          // the "O" suffix on options).
           const row = data as { TreeOrdering?: unknown } | null | undefined;
           const value = row?.TreeOrdering;
           if (value == null) return '';
@@ -397,7 +403,9 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
     filter: 'agTextColumnFilter',
     type: 'numericColumn',
     comparator: compareTreeOrderingValues,
-    editable: manualMode,
+    editable: (params) =>
+      isManualMode()
+      && resolveOfferProductRowType(params.data ?? null) !== 'non-printable-comment',
     cellRenderer: TreeOrderingCell,
     headerClass: 'ag-right-aligned-header',
     cellClass: [
@@ -408,6 +416,9 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
     ],
     cellStyle: truncateCellStyle,
     valueGetter: ({ data }) => {
+      // Always return the raw TreeOrdering — AG-Grid uses this for sorting
+      // and filtering. The renderer handles the display (incl. the "C"
+      // suffix on non-printable comments and "O" on options).
       const row = data as {
         __isRequestedRow?: number | null;
         TreeOrdering?: unknown;

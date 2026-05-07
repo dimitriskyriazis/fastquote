@@ -1144,58 +1144,84 @@ export function planTreeOrderingEdit(
     return { ok: true, updates: [] };
   }
 
-  // The moved subtree is the target plus everything whose TreeOrdering starts
-  // with `oldPath + "."`. Build the rewrite mapping (oldPath → newPath).
-  const rewriteMap = new Map<string, string>();
-  rewriteMap.set(oldPath, newTreeOrdering);
+  // The moved subtree is the target plus everything whose TreeOrdering
+  // starts with `oldPath + "."`. The cascade is path-prefix based, but the
+  // assignment loop below is identity-based for the target row, so a
+  // duplicate at the same path is NOT swept along by the edit.
   const oldPrefix = `${oldPath}.`;
   const newPrefix = `${newTreeOrdering}.`;
 
-  for (const row of rows) {
-    const path = normalizePath(row.TreeOrdering);
-    if (!path || path === oldPath) continue;
-    if (path.startsWith(oldPrefix)) {
-      rewriteMap.set(path, newPrefix + path.slice(oldPrefix.length));
-    }
-  }
-
-  // Collision check: any row outside the moved subtree whose path matches a
-  // rewritten new path blocks the edit. Compare by OfferDetailID so we don't
-  // count the same row.
-  const newPathsFromRewrite = new Set(rewriteMap.values());
-  const movedIds = new Set<number>();
-  for (const row of rows) {
-    const path = normalizePath(row.TreeOrdering);
-    if (!path) continue;
-    if (rewriteMap.has(path)) {
-      const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
-      if (id != null) movedIds.add(id);
-    }
-  }
-  for (const row of rows) {
-    const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
-    if (id == null || movedIds.has(id)) continue;
-    const path = normalizePath(row.TreeOrdering);
-    if (!path) continue;
-    if (newPathsFromRewrite.has(path)) {
-      return {
-        ok: false,
-        error: `Item No "${path}" is already in use. Move that row first, then try again.`,
-      };
-    }
-  }
+  // Manual mode intentionally permits duplicate Item No values: the user
+  // can stage a temporary clash and resolve it later. The "Manual Mode off"
+  // toggle re-validates the whole offer before allowing the switch, so any
+  // surviving duplicates surface as a blocking error there.
 
   const updates: TreeOrderingEditUpdate[] = [];
   for (const row of rows) {
     const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
     if (id == null) continue;
     const path = normalizePath(row.TreeOrdering);
-    const next = rewriteMap.get(path);
-    if (next != null && next !== path) {
-      updates.push({ OfferDetailID: id, TreeOrdering: next });
+
+    // Only the row with matching OfferDetailID gets the new path. Other
+    // rows that happen to share the same raw TreeOrdering (duplicates that
+    // exist transiently in manual mode) MUST NOT be rewritten — that would
+    // turn a single edit into a multi-row change.
+    if (id === targetOfferDetailId) {
+      if (path !== newTreeOrdering) {
+        updates.push({ OfferDetailID: id, TreeOrdering: newTreeOrdering });
+      }
+      continue;
+    }
+
+    // Descendants of the target are still cascaded by path prefix. With
+    // duplicate descendants this is intentionally permissive — every row
+    // whose stored path starts with `oldPath + "."` is treated as a
+    // descendant of the moved subtree.
+    if (path && path !== oldPath && path.startsWith(oldPrefix)) {
+      const next = newPrefix + path.slice(oldPrefix.length);
+      if (next !== path) {
+        updates.push({ OfferDetailID: id, TreeOrdering: next });
+      }
     }
   }
   return { ok: true, updates };
+}
+
+// Find rows that share the same TreeOrdering path within the offer.
+// Returns one entry per duplicated path with the colliding rows. Used by
+// the manual → auto mode toggle to refuse leaving manual mode while the
+// offer still has duplicate Item Nos.
+export type TreeOrderingDuplicateGroup = {
+  treeOrdering: string;
+  rows: Array<{ OfferDetailID: number; description: string | null }>;
+};
+
+export function findDuplicateTreeOrderings(
+  rows: Record<string, unknown>[],
+): TreeOrderingDuplicateGroup[] {
+  const byPath = new Map<string, Array<{ OfferDetailID: number; description: string | null }>>();
+  for (const row of rows) {
+    const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+    if (id == null) continue;
+    const path = normalizePath(row.TreeOrdering);
+    if (!path) continue;
+    const description = (() => {
+      const raw = (row as { Description?: unknown; ProductDescription?: unknown }).ProductDescription
+        ?? (row as { Description?: unknown }).Description
+        ?? null;
+      if (raw == null) return null;
+      return typeof raw === 'string' ? raw : String(raw);
+    })();
+    const bucket = byPath.get(path);
+    if (bucket) bucket.push({ OfferDetailID: id, description });
+    else byPath.set(path, [{ OfferDetailID: id, description }]);
+  }
+  const result: TreeOrderingDuplicateGroup[] = [];
+  for (const [treeOrdering, list] of byPath) {
+    if (list.length > 1) result.push({ treeOrdering, rows: list });
+  }
+  result.sort((a, b) => compareTreeOrderingValues(a.treeOrdering, b.treeOrdering));
+  return result;
 }
 
 // Lowest visible root segment across all rows. Used to seed the
@@ -1256,34 +1282,32 @@ export function planStartingItemNoShift(
 // TreeOrdering means rows with duplicate raw paths each get their own
 // disambiguated display value — so corrupted offers with two rows at "6.4"
 // don't collapse to a single overwritten entry.
+//
+// Display rules:
+// - AUTO mode: products/categories renumber 1..N within each parent (root
+//   level starts at the lowest stored root); non-printable comments render
+//   as "<prev display>C" and don't take a slot.
+// - MANUAL mode: products/categories show their RAW TreeOrdering verbatim
+//   — the user is editing and any auto-shift would be confusing. Editing
+//   one row never alters another row's display. Non-printable comments
+//   still render as "<prev raw>C" so they read naturally without an Item
+//   No of their own. Auto-renumbering kicks in only after the user
+//   leaves manual mode.
 export function computeDisplayOrderingMap(
   rows: Record<string, unknown>[],
   options: { manualMode?: boolean } = {},
 ): Map<string, string> {
-  // In manual mode the user is in charge of the Item No values: return an
-  // empty map so the renderer falls back to the raw TreeOrdering verbatim.
-  // No auto-renumbering, no gap-closing.
-  if (options.manualMode) return new Map();
+  const manualMode = options.manualMode === true;
 
   const sorted = rows
     .filter((row): row is Record<string, unknown> => row != null && row.TreeOrdering != null)
     .sort((a, b) => compareTreeOrderingValues(a.TreeOrdering, b.TreeOrdering));
 
-  // Root-level numbering starts from the lowest visible root segment so a
-  // user-applied "Starting Item No" shift survives in auto mode. Sub-levels
-  // always renumber from 1 within each parent.
   const rootStart = getCurrentStartingItemNo(sorted) ?? 1;
 
   const result = new Map<string, string>();
-  // Track the most recent display path assigned for each raw TreeOrdering
-  // path, so a child can find its parent's NEW display key. With duplicate
-  // raw parents this is necessarily ambiguous — children attach to whichever
-  // duplicate parent rendered last in sorted order.
   const lastDisplayByActualKey = new Map<string, string>();
-  // Display numbering is recomputed by counting visible siblings encountered
-  // under each parent. This collapses gaps in the raw TreeOrdering left by
-  // deletes/reorders, non-contiguous additions, and skipped non-printable
-  // comments — all of which would otherwise leak into the user-visible item no.
+  let lastVisibleDisplay = '';
   const visibleCountByParent = new Map<string, number>();
 
   for (const row of sorted) {
@@ -1295,14 +1319,28 @@ export function computeDisplayOrderingMap(
     if (path.length === 0) continue;
 
     const actualParentKey = path.slice(0, -1).join('.');
+    const isRoot = path.length === 1;
 
     if (resolveOfferProductRowType(row) === 'non-printable-comment') {
+      // Comments anchor on the previous visible row's display. In manual
+      // mode "lastVisibleDisplay" is the previous row's RAW value; in auto
+      // mode it's the renumbered display. Either way the comment reads
+      // naturally as "<rowAbove>C".
+      result.set(String(id), `${lastVisibleDisplay}C`);
+      continue;
+    }
+
+    if (manualMode) {
+      // No auto-renumbering — show the row's raw stored TreeOrdering.
+      // Edits to one row never alter another row's display.
+      result.set(String(id), actualKey);
+      lastDisplayByActualKey.set(actualKey, actualKey);
+      lastVisibleDisplay = actualKey;
       continue;
     }
 
     const nextIndex = (visibleCountByParent.get(actualParentKey) ?? 0) + 1;
     visibleCountByParent.set(actualParentKey, nextIndex);
-    const isRoot = path.length === 1;
     const parentDisplayKey = isRoot
       ? ''
       : (lastDisplayByActualKey.get(actualParentKey) ?? actualParentKey);
@@ -1312,6 +1350,7 @@ export function computeDisplayOrderingMap(
       : String(segmentValue);
     result.set(String(id), displayKey);
     lastDisplayByActualKey.set(actualKey, displayKey);
+    lastVisibleDisplay = displayKey;
   }
 
   return result;

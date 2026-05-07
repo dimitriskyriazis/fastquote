@@ -1284,7 +1284,38 @@ export default function ClientProductsPage({
         <button
           type="button"
           className={manualToggleClass}
-          onClick={() => setManualMode((prev) => !prev)}
+          onClick={() => {
+            void (async () => {
+              if (!manualMode) {
+                setManualMode(true);
+                return;
+              }
+              // Leaving manual mode: refuse if there are duplicate Item Nos.
+              try {
+                const dups = await offerProductsPanelRef.current?.findItemNoDuplicates?.() ?? [];
+                if (dups.length > 0) {
+                  const lines = dups.slice(0, 8).map((g) => {
+                    const ids = g.rows.map((r) => r.OfferDetailID).join(', ');
+                    return `• Item No "${g.treeOrdering}" — used by ${g.rows.length} rows (IDs ${ids})`;
+                  });
+                  const more = dups.length > 8 ? `\n…and ${dups.length - 8} more.` : '';
+                  showToastMessage(
+                    `Cannot leave manual mode — ${dups.length} duplicate Item No${dups.length === 1 ? '' : 's'} need to be resolved first:\n${lines.join('\n')}${more}`,
+                    'error',
+                    12000,
+                  );
+                  return;
+                }
+                setManualMode(false);
+              } catch (err) {
+                console.error('Failed to check for duplicate Item Nos', err);
+                showToastMessage(
+                  'Could not verify Item No uniqueness. Try again.',
+                  'error',
+                );
+              }
+            })();
+          }}
         >
           Manual Mode
         </button>
