@@ -1318,7 +1318,7 @@ export default function AgGridAll({
   onServerRequest,
   serverSideEnableClientSideSort = true,
   cacheBlockSize,
-  rowBuffer = 5,
+  rowBuffer = 20,
   maxBlocksInCache = 10,
   floatingFilter = true,
   onHeaderSelectAllChange,
