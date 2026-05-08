@@ -220,7 +220,7 @@ export const deriveWithoutListPrice = (
  * Cascade table (single edit):
  *   field edited        | price-list row                    | ad-hoc row
  *   --------------------|-----------------------------------|--------------------------
- *   ListPrice           | hold discounts → recompute NP,TC  | same
+ *   ListPrice           | hold NP,TC → recompute CD,TD      | same
  *   CustomerDiscount    | hold LP → recompute NP            | hold NP → LP back-fills downstream
  *   NetUnitPrice        | hold LP → recompute CD            | hold CD → LP back-fills downstream
  *   TelmacoDiscount     | hold LP → recompute TC            | hold TC → LP back-fills downstream
@@ -260,15 +260,22 @@ const resolveSingleFieldEdit = (input: PricingInput): ResolvedPricing | null => 
     return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: newNp, netCost: tc, margin: m, additionalCustomerDiscount: acd };
   }
 
-  // ListPrice edit: hold discounts (CD + TD + ACD), recompute NP and TC.
-  // CustomerDiscount must never change as a side effect of a ListPrice edit.
+  // ListPrice edit: hold absolute prices (NP, TC) when populated; derive the
+  // implied discounts from the new LP. If a price is missing, fall back to
+  // recomputing it from the held discount.
   if (p.listPrice) {
     if (!hasValidLp) return null;
-    const newNp = cd != null ? roundTo(lp * (1 - percentageToFactor(cd + acdValue))) : np;
-    const newTc = td != null ? roundTo(lp * (1 - percentageToFactor(td))) : tc;
+    const newNp = np != null
+      ? np
+      : cd != null ? roundTo(lp * (1 - percentageToFactor(cd + acdValue))) : null;
+    const newTc = tc != null
+      ? tc
+      : td != null ? roundTo(lp * (1 - percentageToFactor(td))) : null;
+    const newCd = newNp != null ? roundTo((1 - newNp / lp) * 100 - acdValue) : cd;
+    const newTd = newTc != null ? roundTo((1 - newTc / lp) * 100) : td;
     return {
-      customerDiscount: cd,
-      telmacoDiscount: td,
+      customerDiscount: newCd,
+      telmacoDiscount: newTd,
       netUnitPrice: newNp,
       netCost: newTc,
       margin: deriveMarginPercent(newNp, newTc),
