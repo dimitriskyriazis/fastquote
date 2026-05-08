@@ -633,6 +633,12 @@ export default function PriceListProductsClient({
         <h1 className={`${layoutStyles.heading} ${layoutStyles.headingCentered}`}>{headingText}</h1>
         <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>
           <Link
+            href={`/price-lists/import?append=${encodeURIComponent(priceListId)}`}
+            className={`${layoutStyles.headerActionButton} page-header-button`}
+          >
+            Append Products
+          </Link>
+          <Link
             href={`/price-lists/${encodeURIComponent(priceListId)}/basicdata`}
             className={`${layoutStyles.headerActionButton} page-header-button`}
           >

@@ -240,12 +240,18 @@ async function fetchPrefillData(priceListId: number): Promise<PrefillData | null
 }
 
 type PageProps = {
-  searchParams: Promise<{ from?: string }>;
+  searchParams: Promise<{ from?: string; append?: string }>;
 };
 
 export default async function PriceListImportPage({ searchParams }: PageProps) {
   const resolvedSearchParams = await searchParams;
-  const fromId = resolvedSearchParams.from ? Number(resolvedSearchParams.from) : null;
+  const appendId = resolvedSearchParams.append ? Number(resolvedSearchParams.append) : null;
+  const appendMode = appendId != null && Number.isInteger(appendId);
+  const fromId = appendMode
+    ? appendId
+    : resolvedSearchParams.from
+      ? Number(resolvedSearchParams.from)
+      : null;
   const prefill = fromId && Number.isInteger(fromId) ? await fetchPrefillData(fromId) : null;
   const pool = await getPool();
 
@@ -313,6 +319,9 @@ export default async function PriceListImportPage({ searchParams }: PageProps) {
       users={users}
       previousPriceLists={previousPriceLists}
       prefill={prefill}
+      appendMode={appendMode}
+      appendToPriceListId={appendMode && appendId != null ? appendId : null}
+      appendToPriceListName={appendMode ? prefill?.name ?? null : null}
     />
   );
 }

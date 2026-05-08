@@ -86,9 +86,9 @@ export function checkDeletePermission(
       if (count > 50) {
         if (!hasCriticalOps)
           return { allowed: false, reason: 'Only developers can delete more than 50 records at once.' };
-      } else if (count > 10) {
+      } else if (count > 25) {
         if (!hasDangerousOps)
-          return { allowed: false, reason: 'Only administrators and developers can delete more than 10 records at once.' };
+          return { allowed: false, reason: 'Only administrators and developers can delete more than 25 records at once.' };
       }
       break;
   }

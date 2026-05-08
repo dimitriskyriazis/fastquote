@@ -22,6 +22,7 @@ import {
   normalizePriceListDecimalFormat,
   type PriceListDecimalFormat,
 } from "../../../../lib/priceListDecimalFormats";
+import { parsePriceValue } from "../../../../lib/parsePriceValue";
 
 export const runtime = "nodejs";
 
@@ -224,60 +225,7 @@ const normalizeHeaderValue = (value: unknown): string | null => {
   return trimmed.replace(/[^\p{L}\p{N}]+/gu, "");
 };
 
-const formatNumericPortion = (numericPortion: string, format: PriceListDecimalFormat) => {
-  const commaCount = (numericPortion.match(/,/g) || []).length;
-  const dotCount = (numericPortion.match(/\./g) || []).length;
-  const lastComma = numericPortion.lastIndexOf(",");
-  const lastDot = numericPortion.lastIndexOf(".");
-
-  // When both separators exist, the right-most one is unambiguously the decimal.
-  // Trust this signal over the user's hint — Excel files frequently mix storage
-  // formats (real numbers vs. text cells) so the hint can't be applied row-by-row.
-  if (commaCount > 0 && dotCount > 0) {
-    if (lastComma > lastDot) {
-      return numericPortion.replace(/\./g, "").replace(/,/g, ".");
-    }
-    return numericPortion.replace(/,/g, "");
-  }
-
-  // Single-separator decimal heuristic: a real thousands separator always has
-  // exactly 3 trailing digits, so 1-2 trailing digits must be a decimal mark
-  // even when the user picked the opposite locale.
-  const looksLikeSingleDecimal = (separatorIdx: number, count: number) => {
-    if (count !== 1) return false;
-    const trailing = numericPortion.length - separatorIdx - 1;
-    return trailing >= 1 && trailing <= 2;
-  };
-
-  if (format === "dotDecimal") {
-    if (commaCount > 0 && dotCount === 0 && looksLikeSingleDecimal(lastComma, commaCount)) {
-      return numericPortion.replace(",", ".");
-    }
-    return numericPortion.replace(/,/g, "");
-  }
-  if (format === "commaDecimal") {
-    if (dotCount > 0 && commaCount === 0 && looksLikeSingleDecimal(lastDot, dotCount)) {
-      return numericPortion;
-    }
-    return numericPortion.replace(/\./g, "").replace(/,/g, ".");
-  }
-  if (commaCount > 0 && dotCount === 0) {
-    return numericPortion.replace(/,/g, ".");
-  }
-  return numericPortion.replace(/,/g, "");
-};
-
-const parsePrice = (value: unknown, format: PriceListDecimalFormat): number | null => {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value !== "string") return null;
-  const raw = value.trim();
-  if (!raw) return null;
-  const numericPortion = raw.replace(/[^\d.,-]/g, "");
-  if (!numericPortion) return null;
-  const normalized = formatNumericPortion(numericPortion, format);
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
-};
+const parsePrice = parsePriceValue;
 
 const normalizeCellString = (value: unknown, maxLength = 1000): string | null => {
   if (typeof value === "string") {
@@ -477,6 +425,7 @@ const findHeaderRow = (rows: unknown[][]) => {
 
 const parseSheetWithMapping = (
   rows: unknown[][],
+  rawRows: unknown[][],
   headerRowIndex: number,
   columnMap: Partial<Record<HeaderColumnKey, number | null>>,
   decimalFormat: PriceListDecimalFormat,
@@ -494,15 +443,30 @@ const parseSheetWithMapping = (
     if (idx == null || typeof idx !== "number" || idx < 0) return null;
     return row[idx] ?? null;
   };
+  // For numeric columns, prefer the raw underlying value (a JS number when Excel
+  // stored a number) — sheetjs's text formatter is locale-blind and corrupts
+  // values like 1000.549 → "1000.549", which our parser can't disambiguate from
+  // a thousands-separated integer.
+  const getRawValue = (rawRow: unknown[] | undefined, key: HeaderColumnKey) => {
+    const idx = columnMap[key];
+    if (idx == null || typeof idx !== "number" || idx < 0) return null;
+    return rawRow?.[idx] ?? null;
+  };
+  const pickPriceSource = (row: unknown[], rawRow: unknown[] | undefined, key: HeaderColumnKey) => {
+    const raw = getRawValue(rawRow, key);
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+    return getValue(row, key);
+  };
 
   for (let rIdx = safeHeaderRowIndex + 1; rIdx < rows.length; rIdx += 1) {
     const row = rows[rIdx];
     if (!Array.isArray(row)) continue;
+    const rawRow = rawRows[rIdx];
     const partNumber = normalizeCellString(getValue(row, "partNumber"), 50);
     const modelNumber = normalizeCellString(getValue(row, "modelNumber"), 50);
     const description = normalizeCellString(getValue(row, "description"), 2000);
-    const listPrice = parsePrice(getValue(row, "listPrice"), decimalFormat);
-    const costPrice = parsePrice(getValue(row, "costPrice"), decimalFormat);
+    const listPrice = parsePrice(pickPriceSource(row, rawRow, "listPrice"), decimalFormat);
+    const costPrice = parsePrice(pickPriceSource(row, rawRow, "costPrice"), decimalFormat);
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
     const legacyPartNumber = normalizeCellString(getValue(row, "legacyPartNumber"), 50);
 
@@ -538,7 +502,12 @@ const parseSheetWithMapping = (
   return parsed;
 };
 
-const parseSheet = (rows: unknown[][], decimalFormat: PriceListDecimalFormat, sheet: XLSX.WorkSheet | null = null): ParsedPriceListRow[] | null => {
+const parseSheet = (
+  rows: unknown[][],
+  rawRows: unknown[][],
+  decimalFormat: PriceListDecimalFormat,
+  sheet: XLSX.WorkSheet | null = null,
+): ParsedPriceListRow[] | null => {
   const header = findHeaderRow(rows);
   if (!header) return null;
   const { headerRowIndex, columnMap } = header;
@@ -549,15 +518,26 @@ const parseSheet = (rows: unknown[][], decimalFormat: PriceListDecimalFormat, sh
     if (idx == null) return null;
     return row[idx] ?? null;
   };
+  const getRawValue = (rawRow: unknown[] | undefined, key: HeaderColumnKey) => {
+    const idx = columnMap[key];
+    if (idx == null) return null;
+    return rawRow?.[idx] ?? null;
+  };
+  const pickPriceSource = (row: unknown[], rawRow: unknown[] | undefined, key: HeaderColumnKey) => {
+    const raw = getRawValue(rawRow, key);
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+    return getValue(row, key);
+  };
 
   for (let rIdx = headerRowIndex + 1; rIdx < rows.length; rIdx += 1) {
     const row = rows[rIdx];
     if (!Array.isArray(row)) continue;
+    const rawRow = rawRows[rIdx];
     const partNumber = normalizeCellString(getValue(row, "partNumber"), 50);
     const modelNumber = normalizeCellString(getValue(row, "modelNumber"), 50);
     const description = normalizeCellString(getValue(row, "description"), 2000);
-    const listPrice = parsePrice(getValue(row, "listPrice"), decimalFormat);
-    const costPrice = parsePrice(getValue(row, "costPrice"), decimalFormat);
+    const listPrice = parsePrice(pickPriceSource(row, rawRow, "listPrice"), decimalFormat);
+    const costPrice = parsePrice(pickPriceSource(row, rawRow, "costPrice"), decimalFormat);
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
     const legacyPartNumber = normalizeCellString(getValue(row, "legacyPartNumber"), 50);
 
@@ -619,12 +599,14 @@ const parseWorkbook = (
           const sheet = wb.Sheets[resolvedName];
           if (sheet) {
             const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
+            const rawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: true });
             const headerRowIndex =
               typeof columnMapping.headerRowIndex === "number" && columnMapping.headerRowIndex >= 0
                 ? columnMapping.headerRowIndex
                 : 0;
             const parsed = parseSheetWithMapping(
               rows,
+              rawRows,
               headerRowIndex,
               columnMapping.columns ?? {},
               decimalFormat,
@@ -643,7 +625,8 @@ const parseWorkbook = (
       const sheet = wb.Sheets[sheetName];
       if (!sheet) continue;
       const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
-      const parsed = parseSheet(rows, decimalFormat, sheet);
+      const rawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: true });
+      const parsed = parseSheet(rows, rawRows, decimalFormat, sheet);
       if (parsed && parsed.length > 0) return parsed;
     }
   } catch (err) {
@@ -932,8 +915,10 @@ export async function POST(req: NextRequest) {
     const countryId = normalizeInt(formData.get("countryId"));
     const validFromDate = normalizeDate(formData.get("validFromDate"));
     const validToDate = normalizeDate(formData.get("validToDate"));
-    const brandId = normalizeInt(formData.get("brandId"));
+    let brandId = normalizeInt(formData.get("brandId"));
     const previousPriceListId = normalizeInt(formData.get("previousPriceListId"));
+    const appendToPriceListId = normalizeInt(formData.get("appendToPriceListId"));
+    const isAppendMode = appendToPriceListId != null;
     const columnMappings = parseColumnMappings(formData.get("columnMappings"));
     const decimalFormat = normalizePriceListDecimalFormat(formData.get("decimalFormat"));
 
@@ -958,19 +943,21 @@ export async function POST(req: NextRequest) {
     const pricingPolicies = parsePricingPolicies(pricingPoliciesRaw);
 
     const errors: string[] = [];
-    if (!name) errors.push("Price list name is required.");
-    if (!brandId) errors.push("Brand is required.");
-    if (pricingPolicies.length === 0) errors.push("At least one pricing policy is required.");
-    if (!responsibleUserId) errors.push("Responsible user is required.");
-    if (!validFromDate) errors.push("Valid from date is required.");
-    if (!validToDate) errors.push("Valid to date is required.");
+    if (!isAppendMode) {
+      if (!name) errors.push("Price list name is required.");
+      if (!brandId) errors.push("Brand is required.");
+      if (pricingPolicies.length === 0) errors.push("At least one pricing policy is required.");
+      if (!responsibleUserId) errors.push("Responsible user is required.");
+      if (!validFromDate) errors.push("Valid from date is required.");
+      if (!validToDate) errors.push("Valid to date is required.");
 
-    if (currencyCostModifier != null && currencyCostModifier <= 0) {
-      errors.push("Currency cost modifier must be greater than 0.");
-    }
+      if (currencyCostModifier != null && currencyCostModifier <= 0) {
+        errors.push("Currency cost modifier must be greater than 0.");
+      }
 
-    if (validFromDate && validToDate && validFromDate > validToDate) {
-      errors.push("Valid from date cannot be after valid to date.");
+      if (validFromDate && validToDate && validFromDate > validToDate) {
+        errors.push("Valid from date cannot be after valid to date.");
+      }
     }
 
     if (errors.length > 0) {
@@ -992,6 +979,50 @@ export async function POST(req: NextRequest) {
 
     const auditUserId = resolveAuditUserId(req);
     const pool = await getPool();
+
+    // In append mode, override brandId from the target pricelist so all downstream
+    // lookups (brand pattern, existing products) operate against the correct brand.
+    // Also load the set of existing ProductIDs in that pricelist so we can skip
+    // duplicates instead of failing on the unique constraint.
+    let appendModeName: string | null = null;
+    const existingPriceListProductIds = new Set<number>();
+    if (isAppendMode && appendToPriceListId != null) {
+      const headerReq = pool.request();
+      headerReq.input("PLId_append", sql.Int, appendToPriceListId);
+      const headerRes = await headerReq.query<{
+        ID: number;
+        Name: string | null;
+        BrandID: number | null;
+      }>(`
+        SELECT ID, Name, BrandID
+        FROM dbo.PriceLists
+        WHERE ID = @PLId_append
+      `);
+      const header = headerRes.recordset?.[0];
+      if (!header) {
+        return NextResponse.json(
+          { ok: false, error: "Target price list not found." },
+          { status: 404 },
+        );
+      }
+      if (header.BrandID == null) {
+        return NextResponse.json(
+          { ok: false, error: "Target price list has no brand assigned." },
+          { status: 400 },
+        );
+      }
+      brandId = header.BrandID;
+      appendModeName = header.Name;
+
+      const itemsReq = pool.request();
+      itemsReq.input("PLId_items", sql.Int, appendToPriceListId);
+      const itemsRes = await itemsReq.query<{ ProductID: number }>(`
+        SELECT ProductID FROM dbo.PriceListItems WHERE PriceListID = @PLId_items
+      `);
+      for (const r of itemsRes.recordset ?? []) {
+        if (r.ProductID != null) existingPriceListProductIds.add(r.ProductID);
+      }
+    }
 
     // Currency is always EUR. Resolve the EUR currency ID from the database and ignore any incoming currencyId.
     const eurLookup = await pool.request().query<{ ID: number; Name: string | null }>(`
@@ -1202,7 +1233,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const { relativePath, fileName, absolutePath } = await saveUploadedFile(buffer, file.name, name);
+    const { relativePath, fileName, absolutePath } = isAppendMode
+      ? { relativePath: null as string | null, fileName: "", absolutePath: "" }
+      : await saveUploadedFile(buffer, file.name, name);
 
     const TransactionCtor = (sql as unknown as {
       Transaction: new (pool: ConnectionPool) => TransactionLike;
@@ -1212,6 +1245,12 @@ export async function POST(req: NextRequest) {
     await transaction.begin();
 
     try {
+      let priceListId: number | null = null;
+
+      if (isAppendMode) {
+        priceListId = appendToPriceListId;
+        if (!priceListId) throw new Error("Missing target price list id for append.");
+      } else {
       const resolvedCurrencyId = eurCurrencyId;
       const resolvedCostCurrencyId = costCurrencyId ?? eurCurrencyId;
       const resolvedCurrencyCostModifier =
@@ -1283,7 +1322,7 @@ export async function POST(req: NextRequest) {
         )
       `);
 
-      const priceListId =
+      priceListId =
         (insertPriceList.recordset?.[0] as { PriceListID?: number } | undefined)?.PriceListID ?? null;
       if (!priceListId) throw new Error("Failed to create price list");
 
@@ -1316,6 +1355,7 @@ export async function POST(req: NextRequest) {
           WHERE ID = @PreviousID
         `);
       }
+      } // end !isAppendMode branch
 
       const createdProducts = new Map<string, number>();
       const seenProducts = new Set<number>();
@@ -1428,6 +1468,18 @@ export async function POST(req: NextRequest) {
             description: row.description,
             listPrice: row.listPrice,
             reason: !productId ? "Could not resolve product" : "Duplicate product in file",
+          });
+          continue;
+        }
+
+        if (isAppendMode && existingPriceListProductIds.has(productId)) {
+          skippedRows += 1;
+          skippedRowDetails.push({
+            partNumber: row.partNumber,
+            modelNumber: row.modelNumber,
+            description: row.description,
+            listPrice: row.listPrice,
+            reason: "Already in price list",
           });
           continue;
         }
@@ -1553,8 +1605,8 @@ export async function POST(req: NextRequest) {
         requestId,
         userId: userIdForLog,
         targetEntity: 'priceListRows',
-        createdRows: [{ id: priceListId, name: name ?? null }],
-        message: 'Price list imported',
+        createdRows: [{ id: priceListId, name: (isAppendMode ? appendModeName : name) ?? null }],
+        message: isAppendMode ? 'Products appended to price list' : 'Price list imported',
         extra: {
           priceListId,
           totalRows: parsedRows.length,
@@ -1582,7 +1634,7 @@ export async function POST(req: NextRequest) {
       });
     } catch (err) {
       await transaction.rollback();
-      await fs.rm(absolutePath, { force: true }).catch(() => {});
+      if (absolutePath) await fs.rm(absolutePath, { force: true }).catch(() => {});
       throw err;
     }
   } catch (err) {

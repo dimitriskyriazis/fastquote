@@ -7928,7 +7928,7 @@ const requestedColumnDefsMap = useMemo(
             pushUndo={pushUndo}
             suppressColumnVirtualisation={false}
             cacheBlockSize={100}
-            rowBuffer={5}
+            rowBuffer={20}
             maxBlocksInCache={5}
             filterServerRow={filterServerRow}
             allowMultiCellDeletion

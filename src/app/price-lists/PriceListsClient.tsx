@@ -203,6 +203,17 @@ export default function PriceListsClient() {
     </span>
   `;
 
+  const appendProductsIcon = `
+    <span class="fastquote-menu-icon" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="12" y1="13" x2="12" y2="19" />
+        <line x1="9" y1="16" x2="15" y2="16" />
+      </svg>
+    </span>
+  `;
+
   const viewOriginalFileIcon = `
     <span class="fastquote-menu-icon" aria-hidden="true">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -258,6 +269,14 @@ export default function PriceListsClient() {
         },
       };
 
+      const appendItem = {
+        name: "Append products",
+        icon: appendProductsIcon,
+        action: () => {
+          router.push(`/price-lists/import?append=${encodeURIComponent(String(priceListId))}`);
+        },
+      };
+
       const filePath = normalizeStringValue(
         (rowData as { FilePath?: unknown } | null)?.FilePath ?? null,
       );
@@ -278,14 +297,16 @@ export default function PriceListsClient() {
       if (isLastDelete) {
         if (viewFileItem) baseItems.splice(baseItems.length - 1, 0, viewFileItem);
         baseItems.splice(baseItems.length - 1, 0, importItem);
+        baseItems.splice(baseItems.length - 1, 0, appendItem);
       } else {
         if (viewFileItem) baseItems.push(viewFileItem);
         baseItems.push(importItem);
+        baseItems.push(appendItem);
       }
 
       return baseItems;
     },
-    [priceListRowDeletion, router, importNewVersionIcon, viewOriginalFileIcon],
+    [priceListRowDeletion, router, importNewVersionIcon, appendProductsIcon, viewOriginalFileIcon],
   );
 
   const pricingPolicyColumns: ColDef[] = useMemo(

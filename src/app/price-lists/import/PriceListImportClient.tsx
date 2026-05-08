@@ -87,6 +87,9 @@ type Props = {
   users: DropdownOption[];
   previousPriceLists: PreviousPriceListOption[];
   prefill?: PrefillData | null;
+  appendMode?: boolean;
+  appendToPriceListId?: number | null;
+  appendToPriceListName?: string | null;
 };
 
 type PricingPolicySelection = {
@@ -902,6 +905,9 @@ export default function PriceListImportClient({
   users,
   previousPriceLists,
   prefill,
+  appendMode = false,
+  appendToPriceListId = null,
+  appendToPriceListName = null,
 }: Props) {
   const router = useRouter();
   const { userId: currentUserId } = useAuditUser();
@@ -930,7 +936,7 @@ export default function PriceListImportClient({
     comments: prefill?.comments ?? "",
     supplierComments: prefill?.supplierComments ?? "",
     previousPriceListId: prefill?.previousPriceListId ?? "",
-    decimalFormat: "dotDecimal",
+    decimalFormat: "commaDecimal",
   };
   });
   const [isRulePickerOpen, setIsRulePickerOpen] = useState(false);
@@ -1829,12 +1835,14 @@ export default function PriceListImportClient({
     }
 
     const missing: string[] = [];
-    REQUIRED_FIELDS.forEach((field) => {
-      const value = values[field];
-      if (typeof value === "string" && !value.trim()) {
-        missing.push(field);
-      }
-    });
+    if (!appendMode) {
+      REQUIRED_FIELDS.forEach((field) => {
+        const value = values[field];
+        if (typeof value === "string" && !value.trim()) {
+          missing.push(field);
+        }
+      });
+    }
 
     if (!file) {
       missing.push("file");
@@ -1865,20 +1873,24 @@ export default function PriceListImportClient({
       return;
     }
 
-    const from = normalizeDate(values.validFromDate);
-    const to = normalizeDate(values.validToDate);
-    if (from && to && from > to) {
-      setError("Valid From date cannot be after Valid To date.");
-      return;
-    }
+    if (!appendMode) {
+      const from = normalizeDate(values.validFromDate);
+      const to = normalizeDate(values.validToDate);
+      if (from && to && from > to) {
+        setError("Valid From date cannot be after Valid To date.");
+        return;
+      }
 
-    if (values.pricingPolicies.length === 0) {
-      setError("Please add at least one pricing policy.");
-      return;
+      if (values.pricingPolicies.length === 0) {
+        setError("Please add at least one pricing policy.");
+        return;
+      }
     }
 
     if (missing.length > 0) {
-      setError("Please complete all required fields and attach the file.");
+      setError(appendMode
+        ? "Please attach a file."
+        : "Please complete all required fields and attach the file.");
       return;
     }
 
@@ -1900,7 +1912,7 @@ export default function PriceListImportClient({
         );
       }
 
-      if (values.pricingPolicies.length === 0) {
+      if (!appendMode && values.pricingPolicies.length === 0) {
         throw new Error("At least one pricing policy is required.");
       }
 
@@ -1922,8 +1934,11 @@ export default function PriceListImportClient({
       formData.append("comments", values.comments);
       formData.append("supplierComments", values.supplierComments);
       formData.append("decimalFormat", values.decimalFormat);
-      if (values.previousPriceListId) {
+      if (values.previousPriceListId && !appendMode) {
         formData.append("previousPriceListId", values.previousPriceListId);
+      }
+      if (appendMode && appendToPriceListId != null) {
+        formData.append("appendToPriceListId", String(appendToPriceListId));
       }
       if (values.hasDuty !== null) {
         formData.append("hasDuty", values.hasDuty ? "1" : "0");
@@ -2166,7 +2181,11 @@ export default function PriceListImportClient({
         <Link href="/price-lists" className={`${layoutStyles.backLink} ${layoutStyles.backLinkAbsolute} page-header-button`}>
           ← Back to price lists
         </Link>
-        <h1 className={layoutStyles.heading}>Import Price List</h1>
+        <h1 className={layoutStyles.heading}>
+          {appendMode
+            ? `Appending products to ${appendToPriceListName?.trim() || `price list #${appendToPriceListId ?? ""}`}`
+            : "Import Price List"}
+        </h1>
       </div>
 
       <section className={styles.card}>
@@ -2178,6 +2197,7 @@ export default function PriceListImportClient({
           data-show-validation={showValidationErrors ? "true" : "false"}
         >
           <div className={styles.formGrid}>
+            {!appendMode && (
             <div className={styles.fieldStack}>
               <div className={styles.sectionHeading}>Price List Details</div>
               <div className={styles.fieldRow}>
@@ -2519,6 +2539,7 @@ export default function PriceListImportClient({
                 </label>
               </div>
             </div>
+            )}
 
           <div className={styles.fieldStack}>
             <div className={styles.sectionHeading}>Upload</div>
@@ -2813,7 +2834,9 @@ export default function PriceListImportClient({
             {error && <div className={styles.error}>{error}</div>}
             <div className={styles.actionsSpacer} />
             <button type="submit" className={`${styles.submitButton} page-header-button`} disabled={submitting}>
-              {submitting ? "Importing…" : "Create Price List"}
+              {submitting
+                ? (appendMode ? "Appending…" : "Importing…")
+                : (appendMode ? "Append Products" : "Create Price List")}
             </button>
           </div>
         </form>
