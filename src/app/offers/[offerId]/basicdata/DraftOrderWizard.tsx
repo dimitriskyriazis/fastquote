@@ -71,6 +71,7 @@ type OrderLine = {
   lineTotal: number;
   position: number | null;
   warrantyYears: number | null;
+  comment: string | null;
 };
 
 type SummaryData = {
@@ -1384,6 +1385,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
               <th className={styles.tableRight}>Price</th>
               <th className={styles.tableRight}>Total</th>
               <th className={styles.tableRight}>Warranty</th>
+              <th>Comment</th>
             </tr>
           </thead>
           <tbody>
@@ -1396,6 +1398,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                 <td className={styles.tableRight}>{formatCurrency(line.price)}</td>
                 <td className={styles.tableRight}>{formatCurrency(line.lineTotal)}</td>
                 <td className={styles.tableRight}>{line.warrantyYears != null ? `${line.warrantyYears}y (${line.warrantyYears * 12}m)` : ''}</td>
+                <td>{line.comment ?? ''}</td>
               </tr>
             ))}
             <tr className={styles.totalRow}>
@@ -1405,6 +1408,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
               <td className={styles.tableRight}><strong>{summary.orderLines.reduce((s, l) => s + l.qty, 0)}</strong></td>
               <td></td>
               <td className={styles.tableRight}><strong>{formatCurrency(summary.totals.totalValue)}</strong></td>
+              <td></td>
               <td></td>
             </tr>
           </tbody>

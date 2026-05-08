@@ -162,6 +162,7 @@ export type SetDocsLineItem = {
   cost?: string;
   warranty?: string; // warranty in months
   position?: string; // Position No. (our line itemno / TreeOrdering)
+  comments?: string; // line comments (OfferDetails.Comment)
 };
 
 export type SetDocsParams = {

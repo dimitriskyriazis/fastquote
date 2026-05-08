@@ -2160,7 +2160,7 @@ export default function PriceListImportClient({
     } finally {
       setSubmitting(false);
     }
-  }, [euroCurrencyId, file, fileValidation, isCostCurrencyEuro, router, values]);
+  }, [appendMode, appendToPriceListId, euroCurrencyId, file, fileValidation, isCostCurrencyEuro, router, values]);
 
   const renderOption = (option: DropdownOption) => (
     <option key={option.value} value={option.value}>

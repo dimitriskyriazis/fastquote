@@ -128,6 +128,39 @@ const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
 const GRID_ROW_HEIGHT = 32;
 const IGNORED_FILTER_COLS = new Set(['Enabled', 'IsParent']);
+
+// Default filter state per guarded col. A guarded col is excluded from the
+// active-filter count only when it matches this default; any deviation
+// (e.g. Enabled=No, Enabled=Yes+No, IsParent=Yes only) counts as active.
+//   { values: [...] } — default is a set filter with these specific values
+//   { mustBeMissing: true } — default is no filter applied at all
+type GuardedDefault = { mustBeMissing: true } | { values: string[] };
+const GUARDED_FILTER_DEFAULTS: Record<string, GuardedDefault> = {
+  Enabled: { values: ['true'] },
+  IsParent: { mustBeMissing: true },
+};
+
+const guardedFilterIsActive = (
+  key: string,
+  model: Record<string, unknown> | null,
+  seen: boolean,
+): boolean => {
+  const def = GUARDED_FILTER_DEFAULTS[key];
+  if (!def) return false;
+  const value = model ? model[key] : undefined;
+  if ('mustBeMissing' in def) {
+    return value !== undefined;
+  }
+  if (value === undefined) {
+    // Missing from model: only treat as active if we've ever seen it (= user
+    // cleared it to "Yes and No"). Otherwise the column simply isn't on this grid.
+    return seen;
+  }
+  const values = (value as { values?: unknown } | null)?.values;
+  if (!Array.isArray(values)) return true;
+  if (values.length !== def.values.length) return true;
+  return !def.values.every((v) => values.includes(v));
+};
 const FILTER_INPUT_SELECTOR = [
   '.ag-floating-filter input:not([type="checkbox"]):not([type="radio"])',
   '.ag-floating-filter textarea',
@@ -1422,6 +1455,10 @@ export default function AgGridAll({
   const filterStateLoadedRef = useRef(false);
   const sortStateLoadedRef = useRef(false);
   const filterStateRestoringRef = useRef(false);
+  // Tracks guarded cols we've ever seen in this grid's filter model. Once seen,
+  // their later absence means the user explicitly cleared them (e.g. set
+  // Enabled to "Yes and No"), which we want to surface as an active filter.
+  const seenGuardedColsRef = useRef<Set<string>>(new Set());
   const sortStateRestoringRef = useRef(false);
   const pendingSortRefreshAfterRestoreRef = useRef(false);
   const pendingFilterWidthRestoreRef = useRef<Array<{ colId: string; width: number }> | null>(null);
@@ -3844,10 +3881,22 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
 
     const model = event.api.getFilterModel() as Record<string, FilterDescriptor> | null;
 
-    // Track whether any user-meaningful filters are active (ignore Enabled/IsParent)
-    const meaningfulKeys = model ? Object.keys(model).filter(k => !IGNORED_FILTER_COLS.has(k)) : [];
-    setHasUserFilters(meaningfulKeys.length > 0);
-    setActiveFilterCount(meaningfulKeys.length);
+    // Track whether any user-meaningful filters are active. Guarded cols
+    // (Enabled/IsParent) only count when deviating from their default state.
+    if (model) {
+      Object.keys(model).forEach((k) => {
+        if (IGNORED_FILTER_COLS.has(k)) seenGuardedColsRef.current.add(k);
+      });
+    }
+    const nonGuardedKeys = model
+      ? Object.keys(model).filter((k) => !IGNORED_FILTER_COLS.has(k))
+      : [];
+    const activeGuarded = Object.keys(GUARDED_FILTER_DEFAULTS).filter((k) =>
+      guardedFilterIsActive(k, model, seenGuardedColsRef.current.has(k)),
+    );
+    const totalActive = nonGuardedKeys.length + activeGuarded.length;
+    setHasUserFilters(totalActive > 0);
+    setActiveFilterCount(totalActive);
 
     // Remember the topmost visible row on EVERY filter change so we can scroll
     // back to it after the SSRM refresh — otherwise the grid snaps to row 0.
@@ -4668,7 +4717,6 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     deriveDropTargetContext,
     getParentPath,
     getRowPath,
-    getViewportElement,
     onRowsMoved,
     pushUndo,
     reorderRowOnServer,
@@ -4833,10 +4881,13 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     // synchronous side effects (focus shifts, AG-Grid internal scrolls)
     // that move window.scrollY before handleFilterChanged sees the event.
     captureAndPinScroll(shellRef.current);
-    const current = (api.getFilterModel() as Record<string, unknown> | null) ?? {};
     const next: Record<string, unknown> = {};
-    Object.entries(current).forEach(([key, value]) => {
-      if (IGNORED_FILTER_COLS.has(key)) next[key] = value;
+    // Restore each guarded col to its default state — drop user filters.
+    Object.entries(GUARDED_FILTER_DEFAULTS).forEach(([key, def]) => {
+      if ('values' in def) {
+        next[key] = { filterType: 'set', values: [...def.values] };
+      }
+      // mustBeMissing → leave out of next entirely
     });
     api.setFilterModel(Object.keys(next).length > 0 ? next : null);
   }, []);

@@ -45,6 +45,7 @@ export async function createOrderViaWebService(
     if (line.netCost != null) item.cost = toErpDecimal(line.netCost);
     if (line.warrantyMonths != null) item.warranty = String(line.warrantyMonths);
     if (line.position != null) item.position = String(line.position);
+    if (line.comment != null && line.comment.trim() !== '') item.comments = line.comment;
     return item;
   });
 

@@ -207,7 +207,7 @@ export async function GET(
           od.RequestedDescription,
           od.RequestedQuantity,
           b.Name AS BrandName,
-          p.ModelNumber,
+          od.ModelNumber,
           p.PartNumber,
           p.WebLink
         FROM dbo.OfferDetails od

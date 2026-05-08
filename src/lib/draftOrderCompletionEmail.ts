@@ -37,6 +37,7 @@ export type DraftOrderCompletionResults = {
     lineval: number;
     cost: number | null;
     warrantyMonths: number | null;
+    comment: string | null;
   }>;
 };
 
@@ -203,6 +204,7 @@ function renderEmail(
             <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Αξία γραμμής</th>
             <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Κόστος</th>
             <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Εγγύηση (μήνες)</th>
+            <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: left;">Σχόλια</th>
           </tr>
         </thead>
         <tbody>
@@ -220,6 +222,7 @@ function renderEmail(
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatMoney(l.lineval)}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatMoney(l.cost)}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${l.warrantyMonths != null ? l.warrantyMonths : '—'}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.comment ?? '—')}</td>
               </tr>`;
             })
             .join('')}
@@ -228,7 +231,7 @@ function renderEmail(
           <tr style="background: #f9fafb; font-weight: 600;">
             <td colspan="7" style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Σύνολο αξίας γραμμών:</td>
             <td style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">${formatMoney(orderLinesTotal)}</td>
-            <td colspan="2" style="border: 1px solid #d1d5db; padding: 6px 8px;"></td>
+            <td colspan="3" style="border: 1px solid #d1d5db; padding: 6px 8px;"></td>
           </tr>
         </tfoot>
       </table>
@@ -283,7 +286,8 @@ function renderEmail(
             const desc = l.description ?? '—';
             const brand = l.brandName ?? '—';
             const part = l.partNumber ?? '—';
-            return `${pos}. ${l.code} — ${brand} | ${part} | ${desc} | qty ${formatQty(l.qty)} | price ${formatMoney(l.price)} | lineval ${formatMoney(l.lineval)} | cost ${cost} | warranty ${warranty}`;
+            const comment = l.comment != null && l.comment.trim() !== '' ? l.comment : '—';
+            return `${pos}. ${l.code} — ${brand} | ${part} | ${desc} | qty ${formatQty(l.qty)} | price ${formatMoney(l.price)} | lineval ${formatMoney(l.lineval)} | cost ${cost} | warranty ${warranty} | comment ${comment}`;
           }),
           `Σύνολο αξίας γραμμών: ${formatMoney(orderLinesTotal)}`,
         ]

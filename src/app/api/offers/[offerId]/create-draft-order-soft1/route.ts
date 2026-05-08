@@ -1438,6 +1438,7 @@ async function handlePrepareSummary(
     NetUnitPrice: number | null;
     NetCost: number | null;
     Warranty: number | null;
+    Comment: string | null;
     ERPID: number | null;
     ERPCode: string | null;
     ProductDescription: string | null;
@@ -1451,6 +1452,7 @@ async function handlePrepareSummary(
       od.NetUnitPrice,
       od.NetCost,
       od.Warranty,
+      od.Comment,
       p.ERPID,
       p.ERPCode,
       p.Description AS ProductDescription,
@@ -1483,6 +1485,7 @@ async function handlePrepareSummary(
       lineTotal: Number(line.Quantity!) * Number(line.NetUnitPrice!),
       position: line.TreeOrdering != null ? Number(line.TreeOrdering) : null,
       warrantyYears: line.Warranty != null ? Number(line.Warranty) : null,
+      comment: line.Comment ?? null,
     }));
 
   const totalValue = orderLines.reduce((sum, l) => sum + l.lineTotal, 0);
@@ -1542,6 +1545,7 @@ async function handleExecute(
       lineval: number;
       cost: number | null;
       warrantyMonths: number | null;
+      comment: string | null;
     }>;
   } = {
     brandsCreated: [],
@@ -1675,13 +1679,14 @@ async function handleExecute(
       NetUnitPrice: number | null;
       NetCost: number | null;
       Warranty: number | null;
+      Comment: string | null;
       ERPID: number | null;
       ERPCode: string | null;
       Description: string | null;
       PartNumber: string | null;
       BrandName: string | null;
     }>(`
-      SELECT od.TreeOrdering, od.ProductID, od.Quantity, od.NetUnitPrice, od.NetCost, od.Warranty,
+      SELECT od.TreeOrdering, od.ProductID, od.Quantity, od.NetUnitPrice, od.NetCost, od.Warranty, od.Comment,
              p.ERPID, p.ERPCode, p.Description, p.PartNumber, b.Name AS BrandName
       FROM dbo.OfferDetails od
       INNER JOIN dbo.Products p ON od.ProductID = p.ID
@@ -1701,6 +1706,7 @@ async function handleExecute(
       netCost: l.NetCost != null ? Number(l.NetCost) : null,
       warrantyMonths: l.Warranty != null ? Number(l.Warranty) * 12 : null,
       position: l.TreeOrdering != null ? Number(l.TreeOrdering) : null,
+      comment: l.Comment ?? null,
     }));
     results.orderLines = eligibleLines.map(l => ({
       position: l.TreeOrdering != null ? Number(l.TreeOrdering) : null,
@@ -1713,6 +1719,7 @@ async function handleExecute(
       lineval: Number(l.Quantity) * Number(l.NetUnitPrice),
       cost: l.NetCost != null ? Number(l.NetCost) : null,
       warrantyMonths: l.Warranty != null ? Number(l.Warranty) * 12 : null,
+      comment: l.Comment ?? null,
     }));
 
     const orderInfo = await createOrderWithLines({
@@ -2699,6 +2706,7 @@ export async function POST(
             NetUnitPrice: number | null;
             NetCost: number | null;
             Warranty: number | null;
+            Comment: string | null;
             ERPID: number | null;
             ERPCode: string | null;
           }>(`
@@ -2709,6 +2717,7 @@ export async function POST(
               od.NetUnitPrice,
               od.NetCost,
               od.Warranty,
+              od.Comment,
               p.ERPID,
               p.ERPCode
             FROM dbo.OfferDetails od
@@ -2742,6 +2751,7 @@ export async function POST(
               netCost: line.NetCost != null ? Number(line.NetCost) : null,
               warrantyMonths: line.Warranty != null ? Number(line.Warranty) * 12 : null,
               position: line.TreeOrdering != null ? Number(line.TreeOrdering) : null,
+              comment: line.Comment ?? null,
             }));
 
           const orderInfo = await createOrderWithLines({
@@ -3155,6 +3165,7 @@ export async function POST(
           NetUnitPrice: number | null;
           NetCost: number | null;
           Warranty: number | null;
+          Comment: string | null;
           ERPID: number | null;
           ERPCode: string | null;
         }>(`
@@ -3165,6 +3176,7 @@ export async function POST(
             od.NetUnitPrice,
             od.NetCost,
             od.Warranty,
+            od.Comment,
             p.ERPID,
             p.ERPCode
           FROM dbo.OfferDetails od
@@ -3198,6 +3210,7 @@ export async function POST(
             netCost: line.NetCost != null ? Number(line.NetCost) : null,
             warrantyMonths: line.Warranty != null ? Number(line.Warranty) * 12 : null,
             position: line.TreeOrdering != null ? Number(line.TreeOrdering) : null,
+            comment: line.Comment ?? null,
           }));
 
         const orderInfo = await createOrderWithLines({

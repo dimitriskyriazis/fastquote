@@ -8,6 +8,7 @@ export type OrderLineForCreation = {
   netCost: number | null;
   warrantyMonths: number | null;
   position: number | null; // our itemno (OfferDetails.TreeOrdering)
+  comment: string | null; // OfferDetails.Comment — sent as line comments
 };
 
 export type CreateOrderWithLinesParams = {
