@@ -41,6 +41,7 @@ export async function createOrderViaWebService(
       qty1: toErpDecimal(line.qty),
       price: toErpDecimal(line.price),
       lineval: toErpDecimal(line.qty * line.price),
+      mtracn: 0,
     };
     if (line.netCost != null) item.cost = toErpDecimal(line.netCost);
     if (line.warrantyMonths != null) item.warranty = String(line.warrantyMonths);

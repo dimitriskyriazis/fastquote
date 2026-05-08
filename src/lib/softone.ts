@@ -163,6 +163,7 @@ export type SetDocsLineItem = {
   warranty?: string; // warranty in months
   position?: string; // Position No. (our line itemno / TreeOrdering)
   comments?: string; // line comments (OfferDetails.Comment)
+  mtracn?: number; // Λογ. Κατηγορία (0 = Εμπόρευμα)
 };
 
 export type SetDocsParams = {
