@@ -166,7 +166,6 @@ export default function ProductsClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialPartNumberFilterRef = useRef((searchParams.get("partNumber") ?? "").trim());
-  const initialDescriptionFilterRef = useRef((searchParams.get("description") ?? "").trim());
   const { roles } = useAuditUser();
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
@@ -768,8 +767,7 @@ export default function ProductsClient() {
       productsApiRef.current = api;
       if (!defaultEnabledFilterAppliedRef.current) {
         const initialPartNumber = initialPartNumberFilterRef.current;
-        const initialDescription = initialDescriptionFilterRef.current;
-        const arrivingFromViewProduct = Boolean(initialPartNumber || initialDescription);
+        const arrivingFromViewProduct = Boolean(initialPartNumber);
         const existingModel = api.getFilterModel() as Record<string, unknown> | null;
         const nextModel: Record<string, unknown> = arrivingFromViewProduct
           ? {}
@@ -783,10 +781,6 @@ export default function ProductsClient() {
         }
         if (initialPartNumber) {
           nextModel.PartNumber = { filterType: "text", type: "equals", filter: initialPartNumber };
-          changed = true;
-        }
-        if (initialDescription) {
-          nextModel.Description = { filterType: "text", type: "contains", filter: initialDescription };
           changed = true;
         }
         if (changed) {

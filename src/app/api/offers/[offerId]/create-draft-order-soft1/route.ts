@@ -1708,16 +1708,37 @@ async function handleExecute(
       position: l.TreeOrdering != null ? Number(l.TreeOrdering) : null,
       comment: l.Comment ?? null,
     }));
+    // Pull the actual Soft1 item names (MTRL.NAME) so the email reflects what
+    // we sent to the ERP — the FastQuote Description may have been truncated
+    // or AI-shortened during item creation.
+    const erpNamesByMtrl = new Map<number, string>();
+    const mtrlIds = Array.from(new Set(eligibleLines.map(l => l.ERPID!).filter(id => id != null)));
+    if (mtrlIds.length > 0) {
+      const namesReq = erpPool.request();
+      const idParams = mtrlIds.map((id, i) => {
+        const p = `mtrl${i}`;
+        namesReq.input(p, sql.Int, id);
+        return `@${p}`;
+      });
+      const namesRes = await namesReq.query<{ MTRL: number; NAME: string | null }>(
+        `SELECT MTRL, NAME FROM MTRL WHERE MTRL IN (${idParams.join(',')})`,
+      );
+      for (const row of namesRes.recordset ?? []) {
+        if (row.NAME) erpNamesByMtrl.set(row.MTRL, row.NAME);
+      }
+    }
+
     results.orderLines = eligibleLines.map(l => ({
       position: l.TreeOrdering != null ? Number(l.TreeOrdering) : null,
       code: l.ERPCode!,
       brandName: l.BrandName,
       partNumber: l.PartNumber,
-      description: l.Description,
+      description: erpNamesByMtrl.get(l.ERPID!) ?? l.Description,
       qty: Number(l.Quantity),
       price: Number(l.NetUnitPrice),
       lineval: Number(l.Quantity) * Number(l.NetUnitPrice),
       cost: l.NetCost != null ? Number(l.NetCost) : null,
+      costTotal: l.NetCost != null ? Number(l.NetCost) * Number(l.Quantity) : null,
       warrantyMonths: l.Warranty != null ? Number(l.Warranty) * 12 : null,
       comment: l.Comment ?? null,
     }));

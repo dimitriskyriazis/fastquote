@@ -36,6 +36,7 @@ export type DraftOrderCompletionResults = {
     price: number;
     lineval: number;
     cost: number | null;
+    costTotal: number | null;
     warrantyMonths: number | null;
     comment: string | null;
   }>;
@@ -187,6 +188,10 @@ function renderEmail(
 
   const orderLines = results.orderLines ?? [];
   const orderLinesTotal = orderLines.reduce((sum, l) => sum + l.lineval, 0);
+  const orderLinesCostTotal = orderLines.reduce(
+    (sum, l) => sum + (l.costTotal != null ? l.costTotal : 0),
+    0,
+  );
 
   const orderLinesHtml = orderLines.length > 0
     ? `
@@ -203,6 +208,7 @@ function renderEmail(
             <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Τιμή</th>
             <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Αξία γραμμής</th>
             <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Κόστος</th>
+            <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Συνολικό κόστος</th>
             <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Εγγύηση (μήνες)</th>
             <th style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: left;">Σχόλια</th>
           </tr>
@@ -221,6 +227,7 @@ function renderEmail(
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatMoney(l.price)}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatMoney(l.lineval)}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatMoney(l.cost)}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatMoney(l.costTotal)}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${l.warrantyMonths != null ? l.warrantyMonths : '—'}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.comment ?? '—')}</td>
               </tr>`;
@@ -229,9 +236,11 @@ function renderEmail(
         </tbody>
         <tfoot>
           <tr style="background: #f9fafb; font-weight: 600;">
-            <td colspan="7" style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Σύνολο αξίας γραμμών:</td>
+            <td colspan="7" style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">Σύνολα:</td>
             <td style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">${formatMoney(orderLinesTotal)}</td>
-            <td colspan="3" style="border: 1px solid #d1d5db; padding: 6px 8px;"></td>
+            <td style="border: 1px solid #d1d5db; padding: 6px 8px;"></td>
+            <td style="border: 1px solid #d1d5db; padding: 6px 8px; text-align: right;">${formatMoney(orderLinesCostTotal)}</td>
+            <td colspan="2" style="border: 1px solid #d1d5db; padding: 6px 8px;"></td>
           </tr>
         </tfoot>
       </table>
@@ -282,14 +291,16 @@ function renderEmail(
           ...orderLines.map((l, idx) => {
             const pos = l.position != null ? l.position : idx + 1;
             const cost = l.cost != null ? formatMoney(l.cost) : '—';
+            const costTotal = l.costTotal != null ? formatMoney(l.costTotal) : '—';
             const warranty = l.warrantyMonths != null ? `${l.warrantyMonths}m` : '—';
             const desc = l.description ?? '—';
             const brand = l.brandName ?? '—';
             const part = l.partNumber ?? '—';
             const comment = l.comment != null && l.comment.trim() !== '' ? l.comment : '—';
-            return `${pos}. ${l.code} — ${brand} | ${part} | ${desc} | qty ${formatQty(l.qty)} | price ${formatMoney(l.price)} | lineval ${formatMoney(l.lineval)} | cost ${cost} | warranty ${warranty} | comment ${comment}`;
+            return `${pos}. ${l.code} — ${brand} | ${part} | ${desc} | qty ${formatQty(l.qty)} | price ${formatMoney(l.price)} | lineval ${formatMoney(l.lineval)} | cost ${cost} | costTotal ${costTotal} | warranty ${warranty} | comment ${comment}`;
           }),
           `Σύνολο αξίας γραμμών: ${formatMoney(orderLinesTotal)}`,
+          `Σύνολο κόστους: ${formatMoney(orderLinesCostTotal)}`,
         ]
       : []),
     '',

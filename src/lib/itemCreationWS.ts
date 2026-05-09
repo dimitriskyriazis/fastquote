@@ -85,7 +85,7 @@ export async function createManufacturerInErp(
   return { mtrmanfctrId: row.MTRMANFCTR_ID, mtrmanfctrCode: row.MTRMANFCTR_CODE };
 }
 
-const MAX_ITEM_NAME_LENGTH = 120;
+const MAX_ITEM_NAME_LENGTH = 128;
 
 /**
  * Shortens a product description using AI so that the full item name
@@ -252,13 +252,43 @@ export async function createItemViaWebService(
     typeValue,
   });
 
-  const result = await client.setItem({ items: [item] });
+  let result;
+  try {
+    result = await client.setItem({ items: [item] });
+  } catch (err) {
+    logger.error('SoftOne WS: setItem failed', {
+      productId: String(params.productId),
+      code: newCode,
+      name: itemName,
+      nameLength: itemName.length,
+      modelNumber: params.modelNumber ?? null,
+      partNumber: params.partNumber ?? null,
+      error: err instanceof Error ? err.message : String(err),
+    }, err instanceof Error ? err : undefined);
+    throw err;
+  }
 
+  const returnedCode = result.Items?.[0]?.Item_code ?? null;
   logger.info('SoftOne WS: setItem result', {
     success: result.success,
     id: String(result.id),
     itemCount: String(result.Items?.length ?? 0),
+    nameLength: itemName.length,
+    sentCode: newCode,
+    returnedCode,
+    codeMismatch: returnedCode != null && returnedCode !== newCode,
+    returnedName: result.Items?.[0]?.Item_name ?? null,
   });
+
+  if (returnedCode != null && returnedCode !== newCode) {
+    logger.warn('SoftOne WS: setItem returned different code than sent — likely matched existing MTRL row', {
+      productId: String(params.productId),
+      sentCode: newCode,
+      returnedCode,
+      partNumber: params.partNumber ?? null,
+      modelNumber: params.modelNumber ?? null,
+    });
+  }
 
   if (!result.Items || result.Items.length === 0) {
     throw new Error(
@@ -268,8 +298,32 @@ export async function createItemViaWebService(
 
   const created = result.Items[0];
 
+  // Verify the MTRL row actually exists in the ERP. Soft1 has been observed to
+  // return a synthetic Item_id from setItem even when the underlying insert was
+  // rolled back by a trigger, leaving FastQuote with a phantom ERPID/ERPCode
+  // that points to nothing. Fail loud so dbo.Products is not corrupted.
+  const verifyReq = erpPool.request();
+  verifyReq.input('Mtrl', sql.Int, created.Item_id);
+  const verifyRes = await verifyReq.query<{ MTRL: number; CODE: string | null }>(
+    'SELECT MTRL, CODE FROM MTRL WHERE MTRL = @Mtrl',
+  );
+  const verifiedRow = verifyRes.recordset?.[0];
+  if (!verifiedRow) {
+    logger.error('SoftOne WS: setItem returned MTRL that does not exist in ERP — likely rolled back by a trigger', {
+      productId: String(params.productId),
+      returnedMtrl: String(created.Item_id),
+      returnedCode: created.Item_code,
+      sentCode: newCode,
+      name: itemName,
+    });
+    throw new Error(
+      `Soft1 setItem returned MTRL ${created.Item_id} (code ${created.Item_code}) but no such row exists in the ERP. ` +
+      `The insert was likely rolled back by a Soft1 trigger. Investigate the item payload before retrying.`,
+    );
+  }
+
   return {
     mtrl: created.Item_id,
-    code: created.Item_code,
+    code: verifiedRow.CODE ?? created.Item_code,
   };
 }
