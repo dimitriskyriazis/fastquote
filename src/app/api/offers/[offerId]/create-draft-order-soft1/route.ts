@@ -138,6 +138,8 @@ type OfferContext = {
   erpCustomerId: number | null;
   customerName: string | null;
   customerTaxId: string | null;
+  contactName: string | null;
+  customerRef: string | null;
   erpProjectId: number | null;
   erpProjectCode: string | null;
   orderSignedDate: string | null;
@@ -642,6 +644,8 @@ async function resolveOrCreateProject(
       implementManager: salesRep,
       designEngineer: salesRep,
       assignDate: ctx.orderSignedDate,
+      custManager: ctx.contactName,
+      orderNum: ctx.customerRef,
     });
 
     // Persist ERP project back to FastQuote Offer
@@ -1474,19 +1478,48 @@ async function handlePrepareSummary(
     for (const m of matchResults.userSelected) resolvedProductIds.add(m.productId);
   }
 
-  const orderLines = allLines
-    .filter(line => line.ProductID != null && resolvedProductIds.has(line.ProductID!) && line.Quantity != null && line.Quantity > 0 && line.NetUnitPrice != null && line.NetUnitPrice >= 0)
-    .map(line => ({
-      productId: line.ProductID,
-      productCode: line.ERPCode ?? '(new)',
-      productName: [line.ModelNumber, line.ProductDescription].filter(Boolean).join(' - ') || 'Unknown',
-      qty: Number(line.Quantity),
-      price: Number(line.NetUnitPrice),
-      lineTotal: Number(line.Quantity!) * Number(line.NetUnitPrice!),
-      position: line.TreeOrdering != null ? Number(line.TreeOrdering) : null,
-      warrantyYears: line.Warranty != null ? Number(line.Warranty) : null,
-      comment: line.Comment ?? null,
-    }));
+  const eligibleLines = allLines.filter(
+    line => line.ProductID != null && resolvedProductIds.has(line.ProductID!) && line.Quantity != null && line.Quantity > 0 && line.NetUnitPrice != null && line.NetUnitPrice >= 0,
+  );
+
+  // Pull actual Soft1 MTRL.NAME for already-linked products so the wizard
+  // summary shows what was/will be in the ERP (same as the email), not the
+  // raw FastQuote description.
+  const erpNamesByMtrl = new Map<number, string>();
+  const mtrlIds = Array.from(new Set(eligibleLines.map(l => l.ERPID).filter((id): id is number => id != null)));
+  if (mtrlIds.length > 0) {
+    const namesReq = ctx.erpPool.request();
+    const idParams = mtrlIds.map((id, i) => {
+      const p = `mtrl${i}`;
+      namesReq.input(p, sql.Int, id);
+      return `@${p}`;
+    });
+    const namesRes = await namesReq.query<{ MTRL: number; NAME: string | null }>(
+      `SELECT MTRL, NAME FROM MTRL WHERE MTRL IN (${idParams.join(',')})`,
+    );
+    for (const row of namesRes.recordset ?? []) {
+      if (row.NAME) erpNamesByMtrl.set(row.MTRL, row.NAME);
+    }
+  }
+
+  const SOFT1_NAME_LIMIT = 128;
+  const buildSoft1Name = (model: string | null, desc: string | null): string => {
+    const prefix = model ? `${model} - ` : '';
+    return (prefix + (desc ?? '')).slice(0, SOFT1_NAME_LIMIT) || 'Unknown';
+  };
+
+  const orderLines = eligibleLines.map(line => ({
+    productId: line.ProductID,
+    productCode: line.ERPCode ?? '(new)',
+    productName: (line.ERPID != null && erpNamesByMtrl.get(line.ERPID))
+      || buildSoft1Name(line.ModelNumber, line.ProductDescription),
+    qty: Number(line.Quantity),
+    price: Number(line.NetUnitPrice),
+    lineTotal: Number(line.Quantity!) * Number(line.NetUnitPrice!),
+    position: line.TreeOrdering != null ? Number(line.TreeOrdering) : null,
+    warrantyYears: line.Warranty != null ? Number(line.Warranty) : null,
+    comment: line.Comment ?? null,
+  }));
 
   const totalValue = orderLines.reduce((sum, l) => sum + l.lineTotal, 0);
 
@@ -1827,6 +1860,9 @@ export async function POST(
       ERPProjectID: number | null;
       ERPProjectCode: string | null;
       OrderSignedDate: Date | string | null;
+      ContactFirstName: string | null;
+      ContactLastName: string | null;
+      CustomerRef: string | null;
     }>(`
       SELECT
         o.Description,
@@ -1837,10 +1873,14 @@ export async function POST(
         c.TaxID AS CustomerTaxID,
         o.ERPProjectID,
         o.ERPProjectCode,
-        o.OrderSignedDate
+        o.OrderSignedDate,
+        ct.FirstName AS ContactFirstName,
+        ct.LastName AS ContactLastName,
+        o.CustomerRef
       FROM dbo.Offer o
       INNER JOIN dbo.Customers c ON o.CustomerID = c.ID
       LEFT JOIN dbo.SalesDivision sd ON o.SalesDivisionID = sd.ID
+      LEFT JOIN dbo.Contacts ct ON o.ContactID = ct.ID
       WHERE o.ID = @offerId
     `);
     const offerRow = offerResult.recordset?.[0] ?? null;
@@ -1853,6 +1893,13 @@ export async function POST(
     const customerTaxId = offerRow?.CustomerTaxID?.trim() || null;
     const erpProjectId = offerRow?.ERPProjectID ?? null;
     const erpProjectCode = offerRow?.ERPProjectCode ?? null;
+    const contactName = (() => {
+      const first = offerRow?.ContactFirstName?.trim() ?? '';
+      const last = offerRow?.ContactLastName?.trim() ?? '';
+      const joined = `${first} ${last}`.trim();
+      return joined || null;
+    })();
+    const customerRef = offerRow?.CustomerRef?.trim() || null;
     const orderSignedDateRaw = offerRow?.OrderSignedDate ?? null;
     const orderSignedDate = (() => {
       if (!orderSignedDateRaw) return null;
@@ -1891,6 +1938,8 @@ export async function POST(
         erpCustomerId,
         customerName,
         customerTaxId,
+        contactName,
+        customerRef,
         erpProjectId,
         erpProjectCode,
         orderSignedDate,
@@ -2689,6 +2738,8 @@ export async function POST(
           implementManager: salesRep2,
           designEngineer: salesRep2,
           assignDate: orderSignedDate,
+          custManager: contactName,
+          orderNum: customerRef,
         });
 
         finalErpProjectId = createdProject.prjcId;
@@ -3148,6 +3199,8 @@ export async function POST(
         implementManager: salesRep3,
         designEngineer: salesRep3,
         assignDate: orderSignedDate,
+        custManager: contactName,
+        orderNum: customerRef,
       });
 
       finalErpProjectId = createdProject.prjcId;

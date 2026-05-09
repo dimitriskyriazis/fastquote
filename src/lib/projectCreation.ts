@@ -21,6 +21,8 @@ export type CreateProjectFromIntegrationParams = {
   implementManager?: string | null; // Sales Person's NameCode → setProject.implementmanager
   designEngineer?: string | null; // Sales Person's NameCode → setProject.designengineer
   assignDate?: string | null; // Offer.OrderSignedDate (YYYY-MM-DD) → setProject.assigndate
+  custManager?: string | null; // Offer contact "First Last" → setProject.custmanager
+  orderNum?: string | null;    // Offer.CustomerRef → setProject.ordernum
 };
 
 export type CreatedProjectInfo = {
