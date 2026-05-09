@@ -1544,6 +1544,7 @@ async function handleExecute(
       price: number;
       lineval: number;
       cost: number | null;
+      costTotal: number | null;
       warrantyMonths: number | null;
       comment: string | null;
     }>;
