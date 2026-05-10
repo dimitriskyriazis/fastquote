@@ -154,9 +154,20 @@ class MultilineTextCellEditor {
   }
 
   afterGuiAttached() {
-    this.eInput.focus();
+    // preventScroll stops the browser from scrolling all ancestors (including
+    // the .ag-cell) to bring the focused textarea into view. Without this, the
+    // cell's scrollLeft gets bumped while editing and the text appears shifted
+    // right after the editor closes.
+    this.eInput.focus({ preventScroll: true });
     this.eInput.select();
     this.eInput.scrollLeft = 0;
+    // Defensive: reset any ancestor scroll that may have already shifted.
+    let el: HTMLElement | null = this.eWrapper.parentElement;
+    while (el) {
+      if (el.scrollLeft) el.scrollLeft = 0;
+      if (el.classList && el.classList.contains('ag-root')) break;
+      el = el.parentElement;
+    }
   }
 
   getValue() {
@@ -172,16 +183,25 @@ class MultilineTextCellEditor {
   }
 
   destroy() {
-    // Reset scroll position of the cell so it shows the left (beginning) of text
-    const cell = this.eWrapper.closest('.ag-cell');
-    if (cell) {
+    // Reset scroll position so cells show the left (beginning) of text after edit.
+    // Capture the cell BEFORE the wrapper is detached, blur the textarea so the
+    // browser stops auto-scrolling to keep the cursor visible, and re-reset on
+    // the next frames since AG Grid swaps the renderer in after destroy().
+    const cell = this.eWrapper.closest('.ag-cell') as HTMLElement | null;
+    try { this.eInput.blur(); } catch {}
+    const reset = () => {
+      if (!cell) return;
       cell.scrollLeft = 0;
       const wrapper = cell.querySelector('.ag-cell-wrapper');
       if (wrapper) (wrapper as HTMLElement).scrollLeft = 0;
       const value = cell.querySelector('.ag-cell-value');
       if (value) (value as HTMLElement).scrollLeft = 0;
-    }
-
+    };
+    reset();
+    requestAnimationFrame(() => {
+      reset();
+      requestAnimationFrame(reset);
+    });
   }
 }
 

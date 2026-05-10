@@ -634,7 +634,7 @@ export default function OffersClient() {
       filter: 'agTextColumnFilter',
       comparator: localeStringComparator,
     },
-    { field: 'offerId', headerName: 'ID', filter: 'agTextColumnFilter', filterParams: { defaultOption: 'contains' }, type: 'numericColumn', width: 70 },
+    { field: 'offerId', headerName: 'ID', filter: 'agTextColumnFilter', filterParams: { defaultOption: 'contains' }, type: 'numericColumn', width: 100 },
     {
       field: 'OfferVersion',
       headerName: 'Offer Version',
