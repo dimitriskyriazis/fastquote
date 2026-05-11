@@ -1139,7 +1139,7 @@ export default function ClientProductsPage({
             onClick={handleUpdateProductData}
             disabled={isUpdatingProductData}
           >
-            {isUpdatingProductData ? 'Updating...' : 'Update Product Data'}
+            {isUpdatingProductData ? 'Updating...' : 'Update Product'}
           </button>
           <button
             type="button"
@@ -1178,7 +1178,7 @@ export default function ClientProductsPage({
           onClick={handlePopulateOffer}
           disabled={isPopulatingOffer}
         >
-          {isPopulatingOffer ? 'Populating...' : 'Populate Offer'}
+          {isPopulatingOffer ? 'Populating...' : 'Populate'}
         </button>
       ) : null}
       {addPrimaryButtons.map((action) => {
