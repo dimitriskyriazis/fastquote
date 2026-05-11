@@ -74,7 +74,7 @@ export const isSensitiveColumn = (colId: string): boolean => {
   return false;
 };
 
-type TextMatchMode = 'contains' | 'equals' | 'startsWith' | 'endsWith' | 'notEqual';
+type TextMatchMode = 'contains' | 'notContains' | 'equals' | 'startsWith' | 'endsWith' | 'notEqual';
 
 export const buildTextMatchPredicate = (
   expression: string,
@@ -90,7 +90,7 @@ export const buildTextMatchPredicate = (
   const params: QueryParam[] = [];
 
   let value = upper;
-  if (mode === 'contains') value = `%${upper}%`;
+  if (mode === 'contains' || mode === 'notContains') value = `%${upper}%`;
   if (mode === 'startsWith') value = `${upper}%`;
   if (mode === 'endsWith') value = `%${upper}`;
 
@@ -108,6 +108,8 @@ export const buildTextMatchPredicate = (
     clause = `${ciExpr} = @${paramKey}`;
   } else if (mode === 'notEqual') {
     clause = `${ciExpr} <> @${paramKey}`;
+  } else if (mode === 'notContains') {
+    clause = `${ciExpr} NOT LIKE @${paramKey}`;
   } else {
     clause = `${ciExpr} LIKE @${paramKey}`;
   }

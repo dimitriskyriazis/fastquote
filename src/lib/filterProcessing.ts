@@ -83,7 +83,7 @@ function processSingleTextCondition(
   if (!val) return { clause: '', params: [] };
 
   const mode = (condition.type ?? 'contains') as
-    'contains' | 'equals' | 'startsWith' | 'endsWith' | 'notEqual';
+    'contains' | 'notContains' | 'equals' | 'startsWith' | 'endsWith' | 'notEqual';
 
   return buildTextMatchPredicate(context.columnExpression, val, {
     paramKey: context.paramBase,
