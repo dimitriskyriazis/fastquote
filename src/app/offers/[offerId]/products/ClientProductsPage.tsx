@@ -560,16 +560,16 @@ export default function ClientProductsPage({
   }, [initialProductsViewportScrollTop, showAddProductModal]);
 
   const manualToggleClass = manualMode
-    ? `${toolbarStyles.manualToggle} ${toolbarStyles.manualToggleActive} page-header-button`
-    : `${toolbarStyles.manualToggle} page-header-button`;
+    ? `${toolbarStyles.button} ${toolbarStyles.manualToggle} ${toolbarStyles.manualToggleActive} page-header-button`
+    : `${toolbarStyles.button} ${toolbarStyles.manualToggle} page-header-button`;
 
   const pivotToggleClass = pivotView
-    ? `${toolbarStyles.pivotToggle} ${toolbarStyles.pivotToggleActive} page-header-button`
-    : `${toolbarStyles.pivotToggle} page-header-button`;
+    ? `${toolbarStyles.button} ${toolbarStyles.pivotToggle} ${toolbarStyles.pivotToggleActive} page-header-button`
+    : `${toolbarStyles.button} ${toolbarStyles.pivotToggle} page-header-button`;
 
   const collapseAllToggleClass = collapseAllCategories
-    ? `${toolbarStyles.collapseAllToggle} ${toolbarStyles.collapseAllToggleActive} page-header-button`
-    : `${toolbarStyles.collapseAllToggle} page-header-button`;
+    ? `${toolbarStyles.button} ${toolbarStyles.collapseAllToggle} ${toolbarStyles.collapseAllToggleActive} page-header-button`
+    : `${toolbarStyles.button} ${toolbarStyles.collapseAllToggle} page-header-button`;
 
   const handleProductsAdded = useCallback((count: number, insertedOfferDetailIds?: number[]) => {
     // Clear placement selection and deselect rows after adding
@@ -1154,7 +1154,7 @@ export default function ClientProductsPage({
             className={`${toolbarStyles.button} ${toolbarStyles.buttonExport} page-header-button`}
             onClick={handleOpenExportModal}
           >
-            Fill AVC4 Offer
+            Fill AVC4
           </button>
         </>
       )}
@@ -1238,7 +1238,7 @@ export default function ClientProductsPage({
       className={`${toolbarStyles.button} ${toolbarStyles.buttonAddRequested} page-header-button`}
       onClick={() => { setTableLayout('wReq'); setShowRequestedModal(true); }}
     >
-      Add Requested Products
+      Add Requested
     </button>
   );
 
@@ -1272,7 +1272,7 @@ export default function ClientProductsPage({
       className={pivotToggleClass}
       onClick={() => setPivotView((prev) => !prev)}
     >
-      Pivot Mode
+      Pivot
     </button>
   );
 
@@ -1283,7 +1283,7 @@ export default function ClientProductsPage({
       onClick={() => setCollapseAllCategories((prev) => !prev)}
       title={collapseAllCategories ? 'Show all rows' : 'Collapse all categories'}
     >
-      {collapseAllCategories ? 'Expand All' : 'Collapse All'}
+      {collapseAllCategories ? 'Expand Categories' : 'Collapse Categories'}
     </button>
   );
 
@@ -1292,9 +1292,11 @@ export default function ClientProductsPage({
       <Link
         href={isStandardPackage ? '/standard-packages' : '/offers'}
         className={`${layoutStyles.backLink} page-header-button`}
+        title={isStandardPackage ? 'Back to standard packages' : 'Back to offers'}
+        aria-label={isStandardPackage ? 'Back to standard packages' : 'Back to offers'}
+        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 12px' }}
       >
-        <span aria-hidden="true">&larr;</span>
-        {isStandardPackage ? 'Back to standard packages' : 'Back to offers'}
+        <span aria-hidden="true" style={{ fontSize: '20px', lineHeight: 1 }}>&larr;</span>
       </Link>
       {pivotView ? null : (
         <button
@@ -1333,11 +1335,10 @@ export default function ClientProductsPage({
             })();
           }}
         >
-          Manual Mode
+          Manual
         </button>
       )}
       {pivotToggleButton}
-      {collapseAllToggleButton}
     </div>
   );
 
@@ -1348,7 +1349,7 @@ export default function ClientProductsPage({
       onClick={() => void offerProductsPanelRef.current?.performUndo()}
       title={undoState.lastLabel ? `Undo: ${undoState.lastLabel}` : 'Undo'}
     >
-      ↩ Undo{undoState.lastLabel ? `: ${undoState.lastLabel}` : ''}
+      ↩ Undo
     </button>
   ) : null;
 
@@ -1380,11 +1381,13 @@ export default function ClientProductsPage({
   const secondaryHeaderLeftActions = isStandardPackage ? (
     <div className={toolbarStyles.leftRequestedRow}>
       {undoButton}
+      {collapseAllToggleButton}
       {startingItemNoControl}
     </div>
   ) : (
     <div className={toolbarStyles.leftRequestedRow}>
       {undoButton}
+      {collapseAllToggleButton}
       {addRequestedButton}
       {layoutSelect}
       {startingItemNoControl}
