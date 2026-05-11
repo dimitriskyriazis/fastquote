@@ -159,6 +159,7 @@ export default function ClientProductsPage({
   ]);
 
   const [manualMode, setManualMode] = useState(false);
+  const [collapseAllCategories, setCollapseAllCategories] = useState(false);
   const [startingItemNo, setStartingItemNo] = useState<number>(1);
   const [startingItemNoInput, setStartingItemNoInput] = useState<string>('1');
   const [startingItemNoApplying, setStartingItemNoApplying] = useState(false);
@@ -565,6 +566,10 @@ export default function ClientProductsPage({
   const pivotToggleClass = pivotView
     ? `${toolbarStyles.pivotToggle} ${toolbarStyles.pivotToggleActive} page-header-button`
     : `${toolbarStyles.pivotToggle} page-header-button`;
+
+  const collapseAllToggleClass = collapseAllCategories
+    ? `${toolbarStyles.collapseAllToggle} ${toolbarStyles.collapseAllToggleActive} page-header-button`
+    : `${toolbarStyles.collapseAllToggle} page-header-button`;
 
   const handleProductsAdded = useCallback((count: number, insertedOfferDetailIds?: number[]) => {
     // Clear placement selection and deselect rows after adding
@@ -1271,6 +1276,17 @@ export default function ClientProductsPage({
     </button>
   );
 
+  const collapseAllToggleButton = pivotView ? null : (
+    <button
+      type="button"
+      className={collapseAllToggleClass}
+      onClick={() => setCollapseAllCategories((prev) => !prev)}
+      title={collapseAllCategories ? 'Show all rows' : 'Collapse all categories'}
+    >
+      {collapseAllCategories ? 'Expand All' : 'Collapse All'}
+    </button>
+  );
+
   const topLeftActions = (
     <div className={toolbarStyles.leftColumn}>
       <Link
@@ -1321,6 +1337,7 @@ export default function ClientProductsPage({
         </button>
       )}
       {pivotToggleButton}
+      {collapseAllToggleButton}
     </div>
   );
 
@@ -1416,6 +1433,8 @@ export default function ClientProductsPage({
                 setStartingItemNo(next);
                 setStartingItemNoInput(String(next));
               }}
+              collapseAllCategories={collapseAllCategories}
+              onCollapseAllSuppressed={() => setCollapseAllCategories(false)}
             />
           </div>
           {showAddProductModal ? (

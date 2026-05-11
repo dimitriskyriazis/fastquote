@@ -423,6 +423,35 @@
   background: #fde047d7;
 }
 
+.collapseAllToggle {
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background: #ffffff;
+  color: #0f172a;
+  transition: background-color 140ms ease, color 140ms ease;
+  /* Force a clickable surface that fills the visual button. flex-shrink: 0
+     keeps the toolbar from squeezing it to text-width; position+z-index
+     puts it above any sibling toolbar element (e.g. the insert-line
+     overlay div) that might be capturing pointer events. */
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 5;
+  pointer-events: auto;
+  min-width: 110px;
+}
+
+/* !important is needed because the global `.page-header-button` class
+   sets `background-color: #ffffff` and can load after this module CSS,
+   leaving the active state's color clipped to only part of the button. */
+.collapseAllToggleActive {
+  background: #bae6fd !important;
+  color: #075985 !important;
+  border-color: rgba(2, 132, 199, 0.6) !important;
+}
+
+.collapseAllToggleActive:hover {
+  background: #7dd3fc !important;
+}
+
 .splitLayout {
   display: flex;
   flex-direction: column;

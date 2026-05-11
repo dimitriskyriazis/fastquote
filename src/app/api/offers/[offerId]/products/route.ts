@@ -1417,7 +1417,35 @@ export async function POST(
           'od.ProductID IS NOT NULL',
         ]
       : [];
-    const whereClauses = [`od.OfferID = @__id`, ...viewClauses, ...clauses];
+    // Hide descendants of categories the client has collapsed. The category
+    // row itself (TreeOrdering == path) is kept; only rows whose path is a
+    // strict descendant (path + '.') are filtered out. Doing this server-side
+    // is the only correct fix because AG Grid SSRM pins each row to its
+    // absolute startRow, so client-side hiding leaves blank slots.
+    // When `collapseAll` is true, hide every descendant outright by
+    // excluding any TreeOrdering that contains a dot — only top-level
+    // rows survive.
+    const collapsedClauses: string[] = [];
+    const collapsedParams: { key: string; value: string | number | boolean }[] = [];
+    const collapseAll = (body as { collapseAll?: unknown })?.collapseAll === true;
+    if (collapseAll) {
+      collapsedClauses.push(`(NULLIF(LTRIM(RTRIM(od.TreeOrdering)), '') IS NULL OR CHARINDEX('.', LTRIM(RTRIM(od.TreeOrdering))) = 0)`);
+    } else {
+      const rawCollapsed = (body as { collapsedCategoryPaths?: unknown })?.collapsedCategoryPaths;
+      if (Array.isArray(rawCollapsed)) {
+        rawCollapsed.forEach((entry, idx) => {
+          if (typeof entry !== 'string') return;
+          const trimmed = entry.trim();
+          // Only accept the well-formed dotted-number form we emit client-side
+          // (e.g. "1", "1.2", "1.2.3") to keep this safe against odd inputs.
+          if (!trimmed || !/^\d+(\.\d+)*$/.test(trimmed)) return;
+          const paramKey = `__collapsed_${idx}`;
+          collapsedClauses.push(`NULLIF(LTRIM(RTRIM(od.TreeOrdering)), '') NOT LIKE @${paramKey}`);
+          collapsedParams.push({ key: paramKey, value: `${trimmed}.%` });
+        });
+      }
+    }
+    const whereClauses = [`od.OfferID = @__id`, ...viewClauses, ...clauses, ...collapsedClauses];
     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
     const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, PRODUCTS_QUICK_FILTER_COLUMNS, undefined, {
       legacyPartNoExpression: 'p.LegacyPartNoCleaned',
@@ -1425,7 +1453,7 @@ export async function POST(
       modelNumberClearedExpression: 'p.ModelNumberCleared',
     });
     const combinedWhereSql = mergeWhereClauses(whereSql, quickFilterClause.clause);
-    const combinedParams = [...filterParams, ...quickFilterClause.params];
+    const combinedParams = [...filterParams, ...quickFilterClause.params, ...collapsedParams];
     const orderSql = buildOrder(gridRequest.sortModel) || `ORDER BY ${TREE_ORDERING_SORT_PRIORITY_EXPRESSION}, TreeOrderingHierarchy, od.TreeOrdering, od.ID`;
     const pagingSql = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 

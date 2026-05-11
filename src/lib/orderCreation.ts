@@ -17,6 +17,7 @@ export type CreateOrderWithLinesParams = {
   customerCode: string;  // alphanumeric CODE from dbo.TRDR.CODE
   projectCode: string | null; // alphanumeric CODE from dbo.PRJC.CODE (e.g. 'COV.0239')
   prjcId: number;
+  salesmanCode: string | null; // Πωλητής (AspNetUsers.NameCode of the offer Approver)
   businessUnit: 'AVS' | 'TVS';
   trdr: number;
   integrationKey: string;

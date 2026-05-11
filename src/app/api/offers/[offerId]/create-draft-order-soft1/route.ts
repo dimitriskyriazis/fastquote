@@ -1704,6 +1704,16 @@ async function handleExecute(
 
   // 4. Create order
   if (erpCustomerId && erpCustomerId > 0) {
+    const salesmanReq = pool.request();
+    salesmanReq.input('offerId', sql.Int, offerId);
+    const salesmanRes = await salesmanReq.query<{ ApprovalNameCode: string | null }>(`
+      SELECT approver.NameCode AS ApprovalNameCode
+      FROM dbo.Offer o
+      LEFT JOIN dbo.AspNetUsers approver ON o.ApprovalUserId = approver.Id
+      WHERE o.ID = @offerId
+    `);
+    const salesmanCodeForOrder = salesmanRes.recordset?.[0]?.ApprovalNameCode ?? null;
+
     const linesReq = pool.request();
     linesReq.input('offerId', sql.Int, offerId);
     const linesRes = await linesReq.query<{
@@ -1783,6 +1793,7 @@ async function handleExecute(
       customerCode: erpCustomerCode ?? String(erpCustomerId),
       projectCode: project.prjcCode,
       prjcId: project.prjcId,
+      salesmanCode: salesmanCodeForOrder,
       businessUnit: ctx.businessUnit,
       trdr: erpCustomerId,
       integrationKey: 'FASTQUOTE_CREATE_FINDOC',
@@ -2769,6 +2780,16 @@ export async function POST(
       // Create customer order (FINDOC) and lines if we have the required data
       if (finalErpProjectId && finalErpProjectId > 0 && erpCustomerId && erpCustomerId > 0) {
         try {
+          const salesmanReq2 = pool.request();
+          salesmanReq2.input('offerId', sql.Int, normalizedId);
+          const salesmanRes2 = await salesmanReq2.query<{ ApprovalNameCode: string | null }>(`
+            SELECT approver.NameCode AS ApprovalNameCode
+            FROM dbo.Offer o
+            LEFT JOIN dbo.AspNetUsers approver ON o.ApprovalUserId = approver.Id
+            WHERE o.ID = @offerId
+          `);
+          const salesmanCodeForOrder = salesmanRes2.recordset?.[0]?.ApprovalNameCode ?? null;
+
           // Load offer details that should become order lines
           const linesRequest = pool.request();
           linesRequest.input('offerId', sql.Int, normalizedId);
@@ -2833,6 +2854,7 @@ export async function POST(
             customerCode: erpCustomerCode ?? String(erpCustomerId),
             projectCode: finalErpProjectCode,
             prjcId: finalErpProjectId,
+            salesmanCode: salesmanCodeForOrder,
             businessUnit,
             trdr: erpCustomerId,
             integrationKey: 'FASTQUOTE_CREATE_FINDOC',
@@ -3230,6 +3252,16 @@ export async function POST(
     // Create customer order (FINDOC) and lines if we have the required data
     if (finalErpProjectId && finalErpProjectId > 0 && erpCustomerId && erpCustomerId > 0) {
       try {
+        const salesmanReq3 = pool.request();
+        salesmanReq3.input('offerId', sql.Int, normalizedId);
+        const salesmanRes3 = await salesmanReq3.query<{ ApprovalNameCode: string | null }>(`
+          SELECT approver.NameCode AS ApprovalNameCode
+          FROM dbo.Offer o
+          LEFT JOIN dbo.AspNetUsers approver ON o.ApprovalUserId = approver.Id
+          WHERE o.ID = @offerId
+        `);
+        const salesmanCodeForOrder = salesmanRes3.recordset?.[0]?.ApprovalNameCode ?? null;
+
         // Load offer details that should become order lines
         const linesRequest = pool.request();
         linesRequest.input('offerId', sql.Int, normalizedId);
@@ -3294,6 +3326,7 @@ export async function POST(
           customerCode: erpCustomerCode ?? String(erpCustomerId),
           projectCode: finalErpProjectCode,
           prjcId: finalErpProjectId,
+          salesmanCode: salesmanCodeForOrder,
           businessUnit,
           trdr: erpCustomerId,
           integrationKey: 'FASTQUOTE_CREATE_FINDOC',

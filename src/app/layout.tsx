@@ -11,6 +11,7 @@ import CaretVisibilityManager from "./components/CaretVisibilityManager";
 import StorageVersionManager from "./components/StorageVersionManager";
 import SpellcheckManager from "./components/SpellcheckManager";
 import CommandPalette from "./components/CommandPalette";
+import ScrollToBottomButton from "./components/ScrollToBottomButton";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -48,6 +49,7 @@ export default async function RootLayout({
             <SideNav initialCollapsed={initialCollapsed} />
             <div className="app-content">{children}</div>
           </div>
+          <ScrollToBottomButton />
         </AuditUserProvider>
       </body>
     </html>

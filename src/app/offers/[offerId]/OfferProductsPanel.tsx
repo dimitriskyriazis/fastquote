@@ -182,6 +182,8 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   onRequestInsertProduct,
   showInsertLineOnHover = false,
   onStartingItemNoChanged,
+  collapseAllCategories = false,
+  onCollapseAllSuppressed,
 }: Props, ref) => {
   const router = useRouter();
   const { userId, roles } = useAuditUser();
@@ -212,9 +214,27 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     () => buildGridColumnStateStorageKey(persistenceEndpoint, userId, columnStateNamespace),
     [columnStateNamespace, persistenceEndpoint, userId],
   );
+  const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() =>
+    readCollapsedCategoryPathsFromCookie(offerId),
+  );
   const standardPackageRequestPayload = useMemo(
-    () => (standardPackageMode ? { fields: [...STANDARD_PACKAGE_PRODUCTS_FIELDS] } : null),
-    [standardPackageMode],
+    () => {
+      // collapseAll dominates: when on, ignore per-category state and have the
+      // server return only top-level rows (anything without a dot in
+      // TreeOrdering). Per-category state is still preserved so toggling
+      // collapseAll off restores the user's previous expansion state.
+      const collapsedArr = !collapseAllCategories && collapsedCategoryPaths.size > 0
+        ? Array.from(collapsedCategoryPaths)
+        : undefined;
+      const extras: Record<string, unknown> = {};
+      if (collapseAllCategories) extras.collapseAll = true;
+      if (collapsedArr) extras.collapsedCategoryPaths = collapsedArr;
+      if (standardPackageMode) {
+        return { fields: [...STANDARD_PACKAGE_PRODUCTS_FIELDS], ...extras };
+      }
+      return Object.keys(extras).length > 0 ? extras : null;
+    },
+    [standardPackageMode, collapsedCategoryPaths, collapseAllCategories],
   );
   const pricingToastDedupRef = useRef<Map<string, number>>(new Map());
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
@@ -711,9 +731,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       }
     })();
   }, [requestedMatchQueue, prefetchExpansion, firstEntryReady]);
-  const [collapsedCategoryPaths, setCollapsedCategoryPaths] = useState<Set<string>>(() =>
-    readCollapsedCategoryPathsFromCookie(offerId),
-  );
   const [categoryPathsWithChildren, setCategoryPathsWithChildren] = useState<Set<string>>(() => new Set());
   const [categoryChildrenKnown, setCategoryChildrenKnown] = useState(false);
   const collapsedCategoryPathsRef = useRef(collapsedCategoryPaths);
@@ -1883,23 +1900,32 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
 
   const isCategoryRowCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!row) return false;
+    if (collapseAllCategories) return true;
     const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
     if (path.length === 0) return false;
     const key = buildTreeOrderingKey(path);
     return key.length > 0 && collapsedCategoryPaths.has(key);
-  }, [collapsedCategoryPaths]);
+  }, [collapsedCategoryPaths, collapseAllCategories]);
 
   const hasCategoryChildren = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!isOfferProductCategory(row)) return false;
     const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
     if (path.length === 0) return false;
+    // Collapse All hides every descendant on the server, so the children
+    // map is empty. Treat all categories as expandable here too — otherwise
+    // toggleCategoryCollapsed's gate blocks the user from turning the
+    // toggle off via the chevron.
+    if (collapseAllCategories) return true;
     const key = buildTreeOrderingKey(path);
     if (!categoryChildrenKnown) return true;
     return key.length > 0 && categoryPathsWithChildren.has(key);
-  }, [categoryChildrenKnown, categoryPathsWithChildren]);
+  }, [categoryChildrenKnown, categoryPathsWithChildren, collapseAllCategories]);
 
+  const collapseAllCategoriesRef = useRef(collapseAllCategories);
+  collapseAllCategoriesRef.current = collapseAllCategories;
   const isCategoryRowCollapsedForRenderer = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (!row) return false;
+    if (collapseAllCategoriesRef.current) return true;
     const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
     if (path.length === 0) return false;
     const key = buildTreeOrderingKey(path);
@@ -1910,28 +1936,15 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     if (!isOfferProductCategory(row)) return false;
     const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
     if (path.length === 0) return false;
+    // While Collapse All is on the server returns no descendants, so the
+    // children map is empty and we'd otherwise hide every chevron — making
+    // the categories look "empty" and unclickable. Optimistically show the
+    // chevron so the user can click to expand and turn the toggle off.
+    if (collapseAllCategoriesRef.current) return true;
     const key = buildTreeOrderingKey(path);
     if (!categoryChildrenKnownRef.current) return true;
     return key.length > 0 && categoryPathsWithChildrenRef.current.has(key);
   }, []);
-
-  const hasCollapsedAncestorInSet = useCallback((path: number[], collapsedSet: Set<string>) => {
-    for (let idx = 1; idx < path.length; idx += 1) {
-      const ancestorKey = buildTreeOrderingKey(path.slice(0, idx));
-      if (ancestorKey && collapsedSet.has(ancestorKey)) {
-        return true;
-      }
-    }
-    return false;
-  }, []);
-
-  const filterServerRow = useCallback((row: Record<string, unknown>) => {
-    const collapsed = collapsedCategoryPathsRef.current;
-    if (collapsed.size === 0) return true;
-    const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
-    if (path.length === 0) return true;
-    return !hasCollapsedAncestorInSet(path, collapsed);
-  }, [hasCollapsedAncestorInSet]);
 
   const determineRowHeight = useCallback((params: { data?: Record<string, unknown> }) => {
     const row = params.data;
@@ -2024,29 +2037,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     }
   }, []);
 
-  const removeCollapsedDescendantsFromGrid = useCallback((collapsedSet: Set<string>) => {
-    const api = gridApiRef.current;
-    if (!api || api.isDestroyed?.()) return;
-    if (collapsedSet.size === 0) return;
-    const rowsToRemove: Array<Record<string, unknown>> = [];
-    api.forEachNode((node) => {
-      const row = node.data ?? null;
-      if (!row) return;
-      const path = parseTreeOrderingPath((row as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
-      if (path.length === 0) return;
-      if (hasCollapsedAncestorInSet(path, collapsedSet)) {
-        rowsToRemove.push(row);
-      }
-    });
-    if (rowsToRemove.length > 0) {
-      try {
-        api.applyServerSideTransaction({ remove: rowsToRemove });
-      } catch {
-        /* noop */
-      }
-    }
-  }, [hasCollapsedAncestorInSet]);
-
   const handleGridModelUpdated = useCallback(() => {
     if (skipModelUpdateRef.current) {
       skipModelUpdateRef.current = false;
@@ -2119,6 +2109,34 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     if (path.length === 0) return;
     const key = buildTreeOrderingKey(path);
     if (!key) return;
+    // While the "Collapse All" toolbar toggle is on every category is
+    // visually collapsed. Clicking expand on a single category should
+    // open only that one — leaving the rest collapsed. So we turn the
+    // toggle off, but first promote every other top-level category that
+    // the grid currently knows about into the per-category collapsed set,
+    // and make sure the clicked one is not in it.
+    if (collapseAllCategories) {
+      const otherTopLevel: string[] = [];
+      const api = gridApiRef.current;
+      if (api && !api.isDestroyed?.()) {
+        api.forEachNode((node) => {
+          const data = node.data;
+          if (!isOfferProductCategory(data)) return;
+          const p = parseTreeOrderingPath((data as { TreeOrdering?: string | null })?.TreeOrdering ?? null);
+          if (p.length !== 1) return;
+          const k = buildTreeOrderingKey(p);
+          if (k && k !== key) otherTopLevel.push(k);
+        });
+      }
+      onCollapseAllSuppressed?.();
+      setCollapsedCategoryPaths((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        for (const k of otherTopLevel) next.add(k);
+        return next;
+      });
+      return;
+    }
     setCollapsedCategoryPaths((prev) => {
       const next = new Set(prev);
       if (next.has(key)) {
@@ -2128,7 +2146,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       }
       return next;
     });
-  }, [hasCategoryChildren, manualMode]);
+  }, [hasCategoryChildren, manualMode, collapseAllCategories, onCollapseAllSuppressed]);
   toggleCategoryCollapsedRef.current = toggleCategoryCollapsed;
 
   const pendingFlashIdsRef = useRef<Set<number> | null>(null);
@@ -2622,6 +2640,7 @@ const requestedColumnDefsMap = useMemo(
   }, [requestedMatchQueue.length, forceReapplyRequestedColumnsVisibility]);
 
   const previousCollapsedPathsRef = useRef<Set<string>>(new Set());
+  const previousCollapseAllRef = useRef<boolean>(false);
   useEffect(() => {
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return;
@@ -2629,28 +2648,44 @@ const requestedColumnDefsMap = useMemo(
     const next = collapsedCategoryPaths;
     const added = Array.from(next).filter((key) => !prev.has(key));
     const removed = Array.from(prev).filter((key) => !next.has(key));
-    if (added.length > 0) {
-      // Remove loaded descendants immediately, then refresh so the grid
-      // re-fetches with the datasource filter active and gets a correct
-      // rowCount (avoids "Loading" placeholders for unloaded blocks).
-      removeCollapsedDescendantsFromGrid(next);
+    const collapseAllChanged = previousCollapseAllRef.current !== collapseAllCategories;
+    // While collapseAll is on, per-category changes don't affect what the
+    // server returns — skip the refresh to avoid churn.
+    const perCategoryAffectsServer = !collapseAllCategories && (added.length > 0 || removed.length > 0);
+    if (collapseAllChanged || perCategoryAffectsServer) {
+      // Server-side filtering: the request payload includes
+      // collapsedCategoryPaths / collapseAll (see request payload memo),
+      // so refreshing causes the API to drop descendant rows entirely
+      // and return a correct rowCount. AG Grid's SSRM pins rows to their
+      // absolute startRow, so client-side hiding cannot work without
+      // leaving blank slots — server-side is the only correct fix.
+      // Capture the current scroll so the model-updated handler can put
+      // the viewport back where the user was after the refresh.
+      // purge: false keeps the old rows visible until the new ones
+      // arrive — no white flash. Safe now that the server returns the
+      // correctly-filtered rowCount; the stale block layout that forced
+      // purge: true before was a client-side-filtering artifact.
+      const viewport = getGridViewportElement();
+      if (viewport) pendingGridScrollRestoreRef.current = viewport.scrollTop;
       api.refreshServerSide?.({ purge: false });
-    }
-    if (removed.length > 0) {
-      api.refreshServerSide?.({ purge: false });
+      // purge:false reuses node instances whose row data didn't change
+      // (e.g. top-level categories that survive both before and after the
+      // collapse). Their cell renderers don't re-run, so the chevron
+      // arrow stays stale. Refresh just the indicator column on category
+      // rows so they pick up the new collapsed/expanded state.
+      try {
+        const categoryNodes: Parameters<Parameters<typeof api.forEachNode>[0]>[0][] = [];
+        api.forEachNode((node) => {
+          if (isOfferProductCategory(node.data)) categoryNodes.push(node);
+        });
+        if (categoryNodes.length > 0) {
+          api.refreshCells({ rowNodes: categoryNodes, force: true });
+        }
+      } catch { /* noop */ }
     }
     previousCollapsedPathsRef.current = new Set(next);
-  }, [collapsedCategoryPaths, removeCollapsedDescendantsFromGrid]);
-
-  useEffect(() => {
-    const api = gridApiRef.current;
-    if (!api || api.isDestroyed?.()) return;
-    try {
-      api.redrawRows();
-    } catch {
-      /* noop */
-    }
-  }, [collapsedCategoryPaths]);
+    previousCollapseAllRef.current = collapseAllCategories;
+  }, [collapsedCategoryPaths, collapseAllCategories, getGridViewportElement]);
 
   useEffect(() => {
     const api = gridApiRef.current;
@@ -7930,7 +7965,6 @@ const requestedColumnDefsMap = useMemo(
             cacheBlockSize={100}
             rowBuffer={20}
             maxBlocksInCache={5}
-            filterServerRow={filterServerRow}
             allowMultiCellDeletion
           />
           <div

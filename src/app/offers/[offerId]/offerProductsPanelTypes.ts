@@ -22,6 +22,8 @@ export type OfferProductsPanelProps = {
   onRequestInsertProduct?: (anchor: { offerDetailId: number; parentPath: number[]; label: string; treeOrdering: string; isRequested: boolean }) => void;
   showInsertLineOnHover?: boolean;
   onStartingItemNoChanged?: (current: number | null) => void;
+  collapseAllCategories?: boolean;
+  onCollapseAllSuppressed?: () => void;
 };
 
 export type OfferProductsPanelHandle = {

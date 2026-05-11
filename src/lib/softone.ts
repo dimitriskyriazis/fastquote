@@ -168,6 +168,8 @@ export type SetDocsLineItem = {
 
 export type SetDocsParams = {
   custcode: string;
+  salesmancode?: string;
+  shipkind?: string;
   projectcode?: string;
   date?: string;
   status?: string;
