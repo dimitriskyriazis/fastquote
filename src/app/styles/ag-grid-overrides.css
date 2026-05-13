@@ -123,6 +123,18 @@
   background-color: #d4d4d4 !important;
 }
 
+/* Shifted anchor row: each cell occupies the row's natural height (total - 32px
+   extension), so it sits at the top with content centered as in a normal row.
+   The bottom 32px of the row stays empty for the insertion band. Works for
+   both single-line (32px base) and multiline (64px+ base) rows. */
+.offer-products-grid .ag-row.offer-row--shifted .ag-cell {
+  height: calc(100% - 32px) !important;
+}
+.offer-products-grid .ag-row.offer-row--shifted .ag-cell .ag-cell-wrapper,
+.offer-products-grid .ag-row.offer-row--shifted .ag-cell-wrapper {
+  height: 100% !important;
+}
+
 .offer-products-grid .ag-row-hover.offer-row--printable-comment .ag-cell {
   background-color: #cfe2f3 !important;
 }

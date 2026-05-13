@@ -1986,7 +1986,17 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   }, []);
 
   const getRowHeight = useCallback(
-    (params: { data?: Record<string, unknown> }) => determineRowHeight(params),
+    (params: { data?: Record<string, unknown> }) => {
+      const base = determineRowHeight(params);
+      const shiftedId = shiftedAnchorIdRef.current;
+      if (shiftedId != null) {
+        const rowId = normalizeOfferDetailId(
+          (params.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null,
+        );
+        if (rowId === shiftedId) return base + DEFAULT_ROW_HEIGHT;
+      }
+      return base;
+    },
     [determineRowHeight],
   );
 
@@ -2214,6 +2224,13 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       if (rowType === 'product' && isOfferProductOption(params.data)) {
         classes.push('offer-row--option');
       }
+    }
+    const shiftedId = shiftedAnchorIdRef.current;
+    if (shiftedId != null) {
+      const rowId = normalizeOfferDetailId(
+        (params.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null,
+      );
+      if (rowId === shiftedId) classes.push('offer-row--shifted');
     }
     if (classes.length === 0) {
       return undefined;
@@ -7780,15 +7797,57 @@ const requestedColumnDefsMap = useMemo(
     };
   }, [getLineWidth]);
 
+  // Walks the grid and applies the correct row height to every node based on
+  // the currently active shifted anchor (shiftedAnchorIdRef.current). Pass any
+  // row IDs that might have just changed so they get redrawn for CSS class
+  // updates.
+  const refreshShiftedRowHeights = useCallback((affectedRowIds: ReadonlyArray<number>) => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    const activeShifted = shiftedAnchorIdRef.current;
+    const affected = new Set(affectedRowIds);
+    const toRedraw: import('ag-grid-community').IRowNode[] = [];
+    let anyHeightChanged = false;
+    api.forEachNode((node) => {
+      const id = normalizeOfferDetailId(
+        (node.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null,
+      );
+      if (id == null) return;
+      const isShifted = activeShifted != null && id === activeShifted;
+      const base = determineRowHeight({ data: node.data as Record<string, unknown> });
+      const target = isShifted ? base + DEFAULT_ROW_HEIGHT : base;
+      const current = node.rowHeight ?? base;
+      if (current !== target) {
+        try {
+          (node as unknown as { setRowHeight: (h: number) => void }).setRowHeight(target);
+          anyHeightChanged = true;
+        } catch { /* noop */ }
+      }
+      if (affected.has(id)) toRedraw.push(node);
+    });
+    if (anyHeightChanged) {
+      try { api.onRowHeightChanged(); } catch { /* noop */ }
+    }
+    if (toRedraw.length > 0) {
+      try { api.redrawRows({ rowNodes: toRedraw }); } catch { /* noop */ }
+    }
+  }, [determineRowHeight]);
+
   const startRowShift = useCallback(() => {
     const data = insertLineDataRef.current;
     if (!data) return;
+    const prev = shiftedAnchorIdRef.current;
     shiftedAnchorIdRef.current = data.offerDetailId;
-  }, []);
+    const affected: number[] = [data.offerDetailId];
+    if (prev != null && prev !== data.offerDetailId) affected.push(prev);
+    refreshShiftedRowHeights(affected);
+  }, [refreshShiftedRowHeights]);
 
   const stopRowShift = useCallback(() => {
+    const prev = shiftedAnchorIdRef.current;
     shiftedAnchorIdRef.current = null;
-  }, []);
+    if (prev != null) refreshShiftedRowHeights([prev]);
+  }, [refreshShiftedRowHeights]);
 
   const handleInsertLineClick = useCallback(() => {
     const data = insertLineDataRef.current;
@@ -7813,6 +7872,34 @@ const requestedColumnDefsMap = useMemo(
       const vp = wrapper?.querySelector('.ag-body-viewport') as HTMLElement | null;
       insertLinePinScrollRef.current = vp?.scrollTop ?? 0;
       startRowShift();
+      // After the shift reflow, the anchor row is +32px taller and rows above
+      // a previously-shifted anchor may have moved up. Recompute the band's
+      // top from the anchor's new DOM rect so it sits in the empty bottom
+      // half of the extended row, not at a stale position.
+      requestAnimationFrame(() => {
+        const apiNow = gridApiRef.current;
+        const wrapperNow = gridWrapperRef.current;
+        if (!apiNow || apiNow.isDestroyed?.() || !wrapperNow) return;
+        const viewport = wrapperNow.querySelector('.ag-body-viewport') as HTMLElement | null;
+        if (!viewport) return;
+        const wrapperRect = wrapperNow.getBoundingClientRect();
+        const rows = viewport.querySelectorAll('.ag-row');
+        for (const row of rows) {
+          const idx = row.getAttribute('row-index');
+          if (idx == null) continue;
+          const node = apiNow.getDisplayedRowAtIndex(Number.parseInt(idx, 10));
+          const rowId = normalizeOfferDetailId((node?.data as { OfferDetailID?: unknown } | null)?.OfferDetailID ?? null);
+          if (rowId === data.offerDetailId) {
+            const rowRect = (row as HTMLElement).getBoundingClientRect();
+            const newTop = rowRect.bottom - wrapperRect.top - DEFAULT_ROW_HEIGHT;
+            pinLine.style.top = `${newTop}px`;
+            insertLinePinTopRef.current = newTop;
+            const vpNow = wrapperNow.querySelector('.ag-body-viewport') as HTMLElement | null;
+            insertLinePinScrollRef.current = vpNow?.scrollTop ?? 0;
+            break;
+          }
+        }
+      });
     }
     onRequestInsertProductRef.current?.(data);
   }, [clearSelectedRowHighlight, getLineWidth, startRowShift]);
