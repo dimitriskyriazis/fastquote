@@ -446,7 +446,7 @@ export default function OfferBasicDataClient({
       const fallback = `Contact ${contact.ContactID}`;
       const fullName =
         contact.FullName?.trim() ||
-        [contact.FirstName, contact.LastName]
+        [contact.LastName, contact.FirstName]
           .map((part) => part?.trim())
           .filter(Boolean)
           .join(' ');
@@ -756,7 +756,7 @@ export default function OfferBasicDataClient({
         if (!contactId) return null;
         const firstName = typeof contact.FirstName === 'string' ? contact.FirstName.trim() : null;
         const lastName = typeof contact.LastName === 'string' ? contact.LastName.trim() : null;
-        const fallbackName = [firstName, lastName].filter(Boolean).join(' ');
+        const fallbackName = [lastName, firstName].filter(Boolean).join(' ');
         return {
           ContactID: contactId,
           FirstName: firstName,

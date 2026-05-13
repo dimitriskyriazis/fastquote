@@ -117,7 +117,7 @@ export default function AddContactModal({
       setSaving(false);
       return;
     }
-    const fullName = `${payload.firstName} ${payload.lastName}`.trim() || `Contact ${result.contactId}`;
+    const fullName = `${payload.lastName} ${payload.firstName}`.trim() || `Contact ${result.contactId}`;
     setSaving(false);
     onCreated(result.contactId, fullName);
     onClose();

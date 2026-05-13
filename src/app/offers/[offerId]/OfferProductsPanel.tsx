@@ -181,6 +181,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   onMainGridSelectionChanged,
   onRequestInsertProduct,
   showInsertLineOnHover = false,
+  extraBottomScrollSpace = false,
   onStartingItemNoChanged,
   collapseAllCategories = false,
   onCollapseAllSuppressed,
@@ -439,6 +440,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [isEnhancingDescriptions, setIsEnhancingDescriptions] = useState(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const gridWrapperRef = useRef<HTMLDivElement | null>(null);
+  const shiftedAnchorIdRef = useRef<number | null>(null);
   const [requestedColumnsReady, setRequestedColumnsReadyFlag] = useState(false);
   const [offerCurrencyName, setOfferCurrencyName] = useState<string | null>(null);
   const [requestedMatchQueue, setRequestedMatchQueue] = useState<RequestedProductMatchEntry[]>([]);
@@ -1687,7 +1689,8 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     }
     const treeOrderingRaw = (row as { TreeOrdering?: unknown }).TreeOrdering ?? null;
     const path = parseTreeOrderingPath(treeOrderingRaw);
-    const treeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
+    const rawTreeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
+    const treeOrdering = displayOrderingMapRef.current.get(String(offerDetailId)) ?? rawTreeOrdering;
     const label = resolveRowLabel(row, '');
     const requested = isRequestedRow(row);
     const strField = (key: string) => {
@@ -2069,10 +2072,34 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           }
         }
       }
+      // If a pin-below-specific-row is pending (set by pinInsertLineBelowRowId
+      // before the row was in the grid), try again now that the model updated.
+      // Give up after a few attempts so we don't spin forever if the row was
+      // filtered out.
+      if (pendingPinBelowIdRef.current != null) {
+        const pendingId = pendingPinBelowIdRef.current;
+        const ok = tryPinInsertLineBelowRowIdRef.current?.(pendingId) ?? false;
+        if (ok) {
+          pendingPinBelowIdRef.current = null;
+          pendingPinBelowAttemptsRef.current = 0;
+        } else {
+          pendingPinBelowAttemptsRef.current += 1;
+          if (pendingPinBelowAttemptsRef.current > 10) {
+            pendingPinBelowIdRef.current = null;
+            pendingPinBelowAttemptsRef.current = 0;
+          }
+        }
+      }
       // When the add-products modal is open and no insertion point is pinned,
       // auto-show the insertion line below the last row so the user sees where
-      // a new product will be appended.
-      if (showInsertLineOnHoverRef.current && !insertLinePinnedRef.current) {
+      // a new product will be appended. Skip if a specific-row pin is pending
+      // — that pin will land below the just-added row and shouldn't be
+      // pre-empted by the at-end fallback.
+      if (
+        showInsertLineOnHoverRef.current
+        && !insertLinePinnedRef.current
+        && pendingPinBelowIdRef.current == null
+      ) {
         setInsertLineVisibleRef.current?.(true, true);
       }
       // AgGridAll hides the floating filter row while the grid is empty; the
@@ -2091,6 +2118,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           if (!showInsertLineOnHoverRef.current) return;
           // Never override a pin that's anchored to a specific row.
           if (insertLinePinnedRef.current && !insertLinePinnedAtEndRef.current) return;
+          // A specific-row pin is queued — let that land instead of pinning
+          // at end (which would race and end up overlapping the new row).
+          if (pendingPinBelowIdRef.current != null) return;
           setInsertLineVisibleRef.current?.(true, true);
         };
         window.setTimeout(repin, 80);
@@ -4106,7 +4136,8 @@ const requestedColumnDefsMap = useMemo(
         const treeOrderingRaw = (row as { TreeOrdering?: unknown } | null)?.TreeOrdering ?? null;
         const path = parseTreeOrderingPath(treeOrderingRaw);
         if (path.length === 0) continue;
-        const treeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
+        const rawTreeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
+        const treeOrdering = displayOrderingMapRef.current.get(String(offerDetailId)) ?? rawTreeOrdering;
         const label = resolveRowLabel(row as Record<string, unknown> | null, '');
         const requested = isRequestedRow(row as Record<string, unknown> | null);
         return { offerDetailId, parentPath: path.slice(0, -1), label, treeOrdering, isRequested: requested };
@@ -4264,6 +4295,8 @@ const requestedColumnDefsMap = useMemo(
     : null;
 
   const setInsertLineVisibleRef = useRef<((visible: boolean, atEnd?: boolean) => void) | null>(null);
+  const tryPinInsertLineBelowRowIdRef = useRef<((offerDetailId: number) => boolean) | null>(null);
+  const pinInsertLineBelowRowIdRef = useRef<((offerDetailId: number) => void) | null>(null);
 
   const fetchAllRowsForOrdering = useCallback(async (): Promise<Record<string, unknown>[]> => {
     const fetchRes = await fetch(resolvedEndpoint, {
@@ -4364,6 +4397,7 @@ const requestedColumnDefsMap = useMemo(
       lastUndoLabel: lastLabel,
       pushUndo,
       setInsertLineVisible: (visible: boolean, atEnd?: boolean) => setInsertLineVisibleRef.current?.(visible, atEnd),
+      pinInsertLineBelowRowId: (offerDetailId: number) => pinInsertLineBelowRowIdRef.current?.(offerDetailId),
       deselectAllRows: () => {
         const api = gridApiRef.current;
         if (api && !api.isDestroyed?.()) {
@@ -4384,12 +4418,73 @@ const requestedColumnDefsMap = useMemo(
         flashPhaseRef.current = 'paint';
         // Don't paint yet — wait for handleGridResponse to signal new data has arrived
       },
+      refreshAfterRowsAdded: () => {
+        const api = gridApiRef.current;
+        if (!api || api.isDestroyed?.()) return;
+        const viewport = getGridViewportElement();
+        if (viewport) {
+          pendingGridScrollRestoreRef.current = viewport.scrollTop;
+        }
+        captureAndPinScroll(viewport ?? null);
+        try {
+          // purge:false keeps old rows visible while AG Grid re-requests the
+          // affected blocks — avoids the white flash that purge:true causes.
+          api.refreshServerSide?.({ purge: false });
+        } catch (err) {
+          console.warn('Failed to refresh grid after products added', err);
+        }
+      },
+      applyAddedRows: (rows: Array<Record<string, unknown>>) => {
+        const api = gridApiRef.current;
+        if (!api || api.isDestroyed?.() || rows.length === 0) return;
+        // Compare "1.2.3" style TreeOrdering values numerically segment-by-segment.
+        const compareTreeOrdering = (a: string, b: string): number => {
+          const aParts = a.split('.').map((p) => { const n = Number.parseInt(p.trim(), 10); return Number.isNaN(n) ? 0 : n; });
+          const bParts = b.split('.').map((p) => { const n = Number.parseInt(p.trim(), 10); return Number.isNaN(n) ? 0 : n; });
+          for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+            const av = aParts[i] ?? 0;
+            const bv = bParts[i] ?? 0;
+            if (av !== bv) return av - bv;
+          }
+          return 0;
+        };
+        const sorted = [...rows].sort((a, b) => compareTreeOrdering(
+          String(a.TreeOrdering ?? ''),
+          String(b.TreeOrdering ?? ''),
+        ));
+        for (const row of sorted) {
+          const targetOrdering = String(row.TreeOrdering ?? '');
+          let insertIndex = -1;
+          let found = false;
+          // Use >= so when the server has resequenced and the new row took
+          // an existing TreeOrdering value, we slot in BEFORE the stale row
+          // (whose label will catch up on the next refresh). Using > would
+          // park the new row after the stale occupant, causing the visible
+          // "appears at N, then jumps to N-1" effect.
+          api.forEachNode((node, index) => {
+            if (found) return;
+            const currentOrdering = String((node.data as { TreeOrdering?: unknown } | undefined)?.TreeOrdering ?? '');
+            if (currentOrdering && compareTreeOrdering(currentOrdering, targetOrdering) >= 0) {
+              insertIndex = index;
+              found = true;
+            }
+          });
+          try {
+            api.applyServerSideTransaction({
+              add: [row],
+              addIndex: insertIndex >= 0 ? insertIndex : undefined,
+            });
+          } catch (err) {
+            console.warn('Failed to apply add transaction for row', row, err);
+          }
+        }
+      },
       clearSelectedRowHighlight,
       getStartingItemNo,
       applyStartingItemNoShift,
       findItemNoDuplicates,
     }),
-    [applyStartingItemNoShift, canUndo, clearSelectedRowHighlight, findItemNoDuplicates, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getStartingItemNo, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer, updateProductData, pushUndo],
+    [applyStartingItemNoShift, canUndo, clearSelectedRowHighlight, findItemNoDuplicates, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getGridViewportElement, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getStartingItemNo, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer, updateProductData, pushUndo],
   );
 
 
@@ -7486,6 +7581,11 @@ const requestedColumnDefsMap = useMemo(
   showInsertLineOnHoverRef.current = showInsertLineOnHover;
   const onRequestInsertProductRef = useRef(onRequestInsertProduct);
   onRequestInsertProductRef.current = onRequestInsertProduct;
+  // Set by pinInsertLineBelowRowId — the row may not be in the grid yet (e.g.
+  // immediately after triggering a refresh), so we retry on each grid model
+  // update until the row appears or the caller cancels.
+  const pendingPinBelowIdRef = useRef<number | null>(null);
+  const pendingPinBelowAttemptsRef = useRef(0);
 
   const getLineWidth = useCallback(() => {
     const wrapper = gridWrapperRef.current;
@@ -7552,7 +7652,8 @@ const requestedColumnDefsMap = useMemo(
                         line.style.display = 'flex';
                         line.style.top = `${lastRowRect.bottom - wrapperRect.top}px`;
                         line.style.width = getLineWidth();
-                        const lastTree = typeof lastTreeRaw === 'string' ? lastTreeRaw.trim() : buildTreeOrderingKey(lastPath);
+                        const lastTreeRawValue = typeof lastTreeRaw === 'string' ? lastTreeRaw.trim() : buildTreeOrderingKey(lastPath);
+                        const lastTree = displayOrderingMapRef.current.get(String(lastId)) ?? lastTreeRawValue;
                         const lastLabel = resolveRowLabel(lastData, '');
                         const lastRequested = isRequestedRow(lastData);
                         insertLineDataRef.current = { offerDetailId: lastId, parentPath: lastPath.slice(0, -1), label: lastLabel, treeOrdering: lastTree, isRequested: lastRequested };
@@ -7592,7 +7693,8 @@ const requestedColumnDefsMap = useMemo(
                     line.style.display = 'flex';
                     line.style.top = `${rowRect.top - wrapperRect.top}px`;
                     line.style.width = getLineWidth();
-                    const prevTree = typeof prevTreeRaw === 'string' ? prevTreeRaw.trim() : buildTreeOrderingKey(prevPath);
+                    const prevTreeRawValue = typeof prevTreeRaw === 'string' ? prevTreeRaw.trim() : buildTreeOrderingKey(prevPath);
+                    const prevTree = displayOrderingMapRef.current.get(String(prevId)) ?? prevTreeRawValue;
                     const prevLabel = resolveRowLabel(prevData, '');
                     const prevRequested = isRequestedRow(prevData);
                     insertLineDataRef.current = { offerDetailId: prevId, parentPath: prevPath.slice(0, -1), label: prevLabel, treeOrdering: prevTree, isRequested: prevRequested };
@@ -7628,7 +7730,8 @@ const requestedColumnDefsMap = useMemo(
       line.style.display = 'flex';
       line.style.top = `${rowRect.bottom - wrapperRect.top}px`;
       line.style.width = getLineWidth();
-      const treeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
+      const rawTreeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
+      const treeOrdering = displayOrderingMapRef.current.get(String(offerDetailId)) ?? rawTreeOrdering;
       const label = resolveRowLabel(rowData, '');
       const requested = isRequestedRow(rowData);
       insertLineDataRef.current = { offerDetailId, parentPath: path.slice(0, -1), label, treeOrdering, isRequested: requested };
@@ -7677,99 +7780,14 @@ const requestedColumnDefsMap = useMemo(
     };
   }, [getLineWidth]);
 
-  const shiftIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const shiftInsertYRef = useRef<number | null>(null);
-
-  const applyRowShift = useCallback(() => {
-    const insertY = shiftInsertYRef.current;
-    if (insertY == null) return;
-    const wrapper = gridWrapperRef.current;
-    if (!wrapper) return;
-    const vp = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
-    if (!vp) return;
-    const gap = 32;
-    const rows = vp.querySelectorAll('.ag-row');
-    const api = gridApiRef.current;
-    if (!api || api.isDestroyed?.()) return;
-    for (const row of rows) {
-      const el = row as HTMLElement;
-      const idx = el.getAttribute('row-index');
-      if (idx == null) continue;
-      const node = api.getDisplayedRowAtIndex(Number.parseInt(idx, 10));
-      const rowTop = node?.rowTop;
-      if (rowTop == null) continue;
-      // Only shift rows at/below the insertion point downward.
-      // Don't shift rows above upward — that pushes the top row
-      // out of the scrollable area.
-      const shift = rowTop >= insertY ? gap : 0;
-      el.style.transform = `translateY(${rowTop + shift}px)`;
-    }
-    // Sync the pinned line position to match the insertY in screen coordinates
-    const pinLine = pinnedLineRef.current;
-    if (pinLine) {
-      const wrapper = gridWrapperRef.current;
-      if (wrapper) {
-        const vpRect = vp.getBoundingClientRect();
-        const wrapperRect = wrapper.getBoundingClientRect();
-        const vpOffset = vpRect.top - wrapperRect.top;
-        // +16 so the 32px highlight bar sits in the gap below the anchor row
-        // (rows below shift down by 32px, rows above stay put)
-        const pinTop = insertY - vp.scrollTop + vpOffset + 16;
-        if (pinTop < vpOffset || pinTop > vpOffset + vpRect.height) {
-          pinLine.style.display = 'none';
-        } else {
-          pinLine.style.display = 'flex';
-          pinLine.style.top = `${pinTop}px`;
-          pinLine.style.width = getLineWidth();
-        }
-      }
-    }
-  }, [getLineWidth]);
-
   const startRowShift = useCallback(() => {
-    // Use the anchor row's rowTop from the grid API as the insertion Y
     const data = insertLineDataRef.current;
     if (!data) return;
-    const api = gridApiRef.current;
-    if (!api || api.isDestroyed?.()) return;
-    // Find the anchor row's rowTop
-    let anchorRowTop: number | null = null;
-    api.forEachNode((node) => {
-      if (anchorRowTop != null) return;
-      const rowId = normalizeOfferDetailId((node.data as { OfferDetailID?: unknown } | null)?.OfferDetailID ?? null);
-      if (rowId === data.offerDetailId) {
-        anchorRowTop = (node.rowTop ?? 0) + (node.rowHeight ?? 32);
-      }
-    });
-    if (anchorRowTop == null) return;
-    shiftInsertYRef.current = anchorRowTop;
-    applyRowShift();
-    if (shiftIntervalRef.current) clearInterval(shiftIntervalRef.current);
-    shiftIntervalRef.current = setInterval(applyRowShift, 80);
-  }, [applyRowShift]);
+    shiftedAnchorIdRef.current = data.offerDetailId;
+  }, []);
 
   const stopRowShift = useCallback(() => {
-    if (shiftIntervalRef.current) {
-      clearInterval(shiftIntervalRef.current);
-      shiftIntervalRef.current = null;
-    }
-    shiftInsertYRef.current = null;
-    // Restore original transforms using grid API
-    const wrapper = gridWrapperRef.current;
-    const vp = wrapper?.querySelector('.ag-body-viewport') as HTMLElement | null;
-    const api = gridApiRef.current;
-    if (vp && api && !api.isDestroyed?.()) {
-      const rows = vp.querySelectorAll('.ag-row');
-      for (const row of rows) {
-        const el = row as HTMLElement;
-        const idx = el.getAttribute('row-index');
-        if (idx == null) continue;
-        const node = api.getDisplayedRowAtIndex(Number.parseInt(idx, 10));
-        if (node?.rowTop != null) {
-          el.style.transform = `translateY(${node.rowTop}px)`;
-        }
-      }
-    }
+    shiftedAnchorIdRef.current = null;
   }, []);
 
   const handleInsertLineClick = useCallback(() => {
@@ -7786,11 +7804,11 @@ const requestedColumnDefsMap = useMemo(
     const hoverLine = insertLineRef.current;
     const pinLine = pinnedLineRef.current;
     if (hoverLine && pinLine) {
-      const topVal = hoverLine.style.top;
-      pinLine.style.top = topVal;
+      const topNum = parseFloat(hoverLine.style.top) || 0;
+      pinLine.style.top = `${topNum}px`;
       pinLine.style.display = 'flex';
       pinLine.style.width = getLineWidth();
-      insertLinePinTopRef.current = parseFloat(topVal) || 0;
+      insertLinePinTopRef.current = topNum;
       const wrapper = gridWrapperRef.current;
       const vp = wrapper?.querySelector('.ag-body-viewport') as HTMLElement | null;
       insertLinePinScrollRef.current = vp?.scrollTop ?? 0;
@@ -7868,10 +7886,11 @@ const requestedColumnDefsMap = useMemo(
                   const treeOrderingRaw = (rowData as { TreeOrdering?: unknown }).TreeOrdering ?? null;
                   const path = parseTreeOrderingPath(treeOrderingRaw);
                   if (lastId != null && path.length > 0) {
-                    const treeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
+                    const rawTreeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
+                    const treeOrdering = displayOrderingMapRef.current.get(String(lastId)) ?? rawTreeOrdering;
                     insertLineDataRef.current = { offerDetailId: lastId, parentPath: path.slice(0, -1), label: resolveRowLabel(rowData, ''), treeOrdering, isRequested: isRequestedRow(rowData) };
                     const wrapperRect = wrapper.getBoundingClientRect();
-                    const topPos = rowRect.bottom - wrapperRect.top + 16;
+                    const topPos = rowRect.bottom - wrapperRect.top;
                     pinLine.style.top = `${topPos}px`;
                     insertLinePinScrollRef.current = viewport.scrollTop;
                     insertLinePinTopRef.current = topPos;
@@ -7921,12 +7940,86 @@ const requestedColumnDefsMap = useMemo(
   }, [getAddInsertionAnchor, getLineWidth, startRowShift, stopRowShift]);
   setInsertLineVisibleRef.current = setInsertLineVisible;
 
+  // Try to pin the line below the row with the given OfferDetailID. If the row
+  // is not yet in the grid (common right after triggering a refresh), schedule
+  // a retry via handleGridModelUpdated.
+  const tryPinInsertLineBelowRowId = useCallback((offerDetailId: number): boolean => {
+    const api = gridApiRef.current;
+    const wrapper = gridWrapperRef.current;
+    const pinLine = pinnedLineRef.current;
+    if (!api || api.isDestroyed?.() || !wrapper || !pinLine) return false;
+    const viewport = wrapper.querySelector('.ag-body-viewport') as HTMLElement | null;
+    if (!viewport) return false;
+    let rowData: Record<string, unknown> | null = null;
+    api.forEachNode((node) => {
+      if (rowData) return;
+      const id = normalizeOfferDetailId(
+        (node.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null,
+      );
+      if (id === offerDetailId) rowData = (node.data as Record<string, unknown> | null) ?? null;
+    });
+    if (!rowData) return false;
+    const treeOrderingRaw = (rowData as { TreeOrdering?: unknown }).TreeOrdering ?? null;
+    const path = parseTreeOrderingPath(treeOrderingRaw);
+    if (path.length === 0) return false;
+    const rowEls = viewport.querySelectorAll('.ag-row');
+    let rowEl: HTMLElement | null = null;
+    for (const r of rowEls) {
+      const idxAttr = r.getAttribute('row-index');
+      if (idxAttr == null) continue;
+      const node = api.getDisplayedRowAtIndex(Number.parseInt(idxAttr, 10));
+      const id = normalizeOfferDetailId(
+        (node?.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null,
+      );
+      if (id === offerDetailId) { rowEl = r as HTMLElement; break; }
+    }
+    if (!rowEl) return false;
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const rowRect = rowEl.getBoundingClientRect();
+    const topPos = rowRect.bottom - wrapperRect.top;
+    const rawTreeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
+    const treeOrdering = displayOrderingMapRef.current.get(String(offerDetailId)) ?? rawTreeOrdering;
+    insertLineDataRef.current = {
+      offerDetailId,
+      parentPath: path.slice(0, -1),
+      label: resolveRowLabel(rowData, ''),
+      treeOrdering,
+      isRequested: isRequestedRow(rowData),
+    };
+    pinLine.style.display = 'flex';
+    pinLine.style.top = `${topPos}px`;
+    pinLine.style.width = getLineWidth();
+    pinLine.className = `${styles.insertLine} ${styles.insertLinePinned}`;
+    insertLinePinnedRef.current = true;
+    insertLinePinnedAtEndRef.current = false;
+    insertLinePinTopRef.current = topPos;
+    insertLinePinScrollRef.current = viewport.scrollTop;
+    insertLinePinnedAtRef.current = Date.now();
+    startRowShift();
+    // Notify parent so it can update placementAnchor and the modal's "Add
+    // below (X)" indicator to match where the line now points.
+    onRequestInsertProductRef.current?.(insertLineDataRef.current);
+    return true;
+  }, [getLineWidth, startRowShift]);
+  tryPinInsertLineBelowRowIdRef.current = tryPinInsertLineBelowRowId;
+
+  const pinInsertLineBelowRowId = useCallback((offerDetailId: number) => {
+    if (tryPinInsertLineBelowRowId(offerDetailId)) {
+      pendingPinBelowIdRef.current = null;
+      pendingPinBelowAttemptsRef.current = 0;
+      return;
+    }
+    pendingPinBelowIdRef.current = offerDetailId;
+    pendingPinBelowAttemptsRef.current = 0;
+  }, [tryPinInsertLineBelowRowId]);
+  pinInsertLineBelowRowIdRef.current = pinInsertLineBelowRowId;
+
 
   return (
     <>
       <div className={styles.panel}>
         <div
-          className={`${styles.gridWrapper} offer-products-grid`}
+          className={`${styles.gridWrapper} offer-products-grid${extraBottomScrollSpace ? ` ${styles.gridWrapperExtraBottom}` : ''}`}
           ref={gridWrapperRef}
           onContextMenu={handleEmptyGridWrapperContextMenu}
         >

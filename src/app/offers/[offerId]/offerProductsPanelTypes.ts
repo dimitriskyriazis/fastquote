@@ -21,6 +21,7 @@ export type OfferProductsPanelProps = {
   onMainGridSelectionChanged?: (selectedRow: { offerDetailId: number; treeOrdering: string; label: string; isRequested: boolean; parentPath: number[]; requestedBrand?: string | null; requestedPartNo?: string | null; requestedModelNo?: string | null; requestedDescription?: string | null } | null) => void;
   onRequestInsertProduct?: (anchor: { offerDetailId: number; parentPath: number[]; label: string; treeOrdering: string; isRequested: boolean }) => void;
   showInsertLineOnHover?: boolean;
+  extraBottomScrollSpace?: boolean;
   onStartingItemNoChanged?: (current: number | null) => void;
   collapseAllCategories?: boolean;
   onCollapseAllSuppressed?: () => void;
@@ -43,8 +44,11 @@ export type OfferProductsPanelHandle = {
   lastUndoLabel: string | undefined;
   pushUndo: (entry: { label: string; undo: () => Promise<void> }) => void;
   setInsertLineVisible: (visible: boolean, atEnd?: boolean) => void;
+  pinInsertLineBelowRowId: (offerDetailId: number) => void;
   deselectAllRows: () => void;
   flashRows: (offerDetailIds: number[]) => void;
+  refreshAfterRowsAdded: () => void;
+  applyAddedRows: (rows: Array<Record<string, unknown>>) => void;
   getLastClickedRowId: () => number | null;
   clearSelectedRowHighlight: () => void;
   getStartingItemNo: () => Promise<number>;

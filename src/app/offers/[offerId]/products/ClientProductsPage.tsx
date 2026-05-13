@@ -572,6 +572,11 @@ export default function ClientProductsPage({
     : `${toolbarStyles.button} ${toolbarStyles.collapseAllToggle} page-header-button`;
 
   const handleProductsAdded = useCallback((count: number, insertedOfferDetailIds?: number[]) => {
+    // Capture before clearing — a placement anchor means the server resequenced
+    // the new row to land below the anchor. The optimistic in-place insert
+    // below can race with that resequence and briefly show the row at its
+    // pre-reorder TreeOrdering (e.g. "11" before "10.6.2"), so we skip it.
+    const hadPlacementAnchor = placementAnchor != null;
     // Clear placement selection and deselect rows after adding
     skipSelectionChangeUntilRef.current = Date.now() + 200;
     setPlacementAnchor(null);
@@ -607,23 +612,73 @@ export default function ClientProductsPage({
         },
       });
     }
-    setRefreshToken((prev) => prev + 1);
-    // Restore scroll positions after grid reloads
-    const restore = () => {
-      if (page) page.scrollTop = pageScrollTop;
-      window.scrollTo({ top: pageScrollY, behavior: 'auto' });
-      if (gridViewport) gridViewport.scrollTop = gridScrollTop;
+    // Fetch the full row data for the newly inserted rows, then splice them
+    // into the grid via applyServerSideTransaction. This mirrors the delete
+    // flow — no purge, no white flash, and avoids AG Grid's purge:false
+    // limitation where row-count deltas aren't picked up until manual refresh.
+    // Stack subsequent adds below the just-inserted row: queue a pin that
+    // re-anchors the insertion line below the last inserted row once the
+    // refresh has rendered it. Without this, the line stays at its old pixel
+    // position (e.g. "below 8.6.7") and visually overlaps the new row.
+    const lastInsertedId = insertedOfferDetailIds && insertedOfferDetailIds.length > 0
+      ? insertedOfferDetailIds[insertedOfferDetailIds.length - 1]
+      : null;
+    if (lastInsertedId != null && (showAddProductModalRef.current || detachedWindowOpenRef.current)) {
+      offerProductsPanelRef.current?.pinInsertLineBelowRowId?.(lastInsertedId);
+    }
+    if (insertedOfferDetailIds && insertedOfferDetailIds.length > 0) {
+      if (hadPlacementAnchor) {
+        // Placement-anchor add: skip the optimistic in-place insert and rely on
+        // a full refresh — the server-side reorder may not yet be visible to a
+        // follow-up fetch, which would render the row at its pre-reorder
+        // TreeOrdering for a frame before snapping into place.
+        setRefreshToken((prev) => prev + 1);
+      } else {
+        const ids = [...insertedOfferDetailIds];
+        void (async () => {
+          try {
+            const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/products`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                request: {
+                  allRows: true,
+                  filterModel: {
+                    OfferDetailID: { filterType: 'set', values: ids },
+                  },
+                },
+              }),
+            });
+            const payload = (await res.json().catch(() => null)) as { ok?: boolean; rows?: Array<Record<string, unknown>> } | null;
+            if (!res.ok || !payload?.ok || !Array.isArray(payload.rows)) return;
+            offerProductsPanelRef.current?.applyAddedRows?.(payload.rows);
+            // Trigger a background refresh so totals get recomputed from the
+            // server. The grid rows themselves are already updated via the
+            // transaction above.
+            setRefreshToken((prev) => prev + 1);
+          } catch (err) {
+            console.warn('Failed to fetch new rows for in-place insert', err);
+          }
+        })();
+      }
+    }
+    // Anchor scroll positions every animation frame for ~500ms. Snapping
+    // pre-paint (via rAF) avoids the one-frame flash that scroll-event
+    // listeners leave behind (events fire after the browser already painted
+    // the scrolled position).
+    const startTs = performance.now();
+    let rafId = 0;
+    const pin = () => {
+      if (page && page.scrollTop !== pageScrollTop) page.scrollTop = pageScrollTop;
+      if (window.scrollY !== pageScrollY) window.scrollTo({ top: pageScrollY, behavior: 'auto' });
+      if (gridViewport && gridViewport.scrollTop !== gridScrollTop) gridViewport.scrollTop = gridScrollTop;
+      if (performance.now() - startTs < 500) {
+        rafId = requestAnimationFrame(pin);
+      }
     };
-    requestAnimationFrame(() => requestAnimationFrame(restore));
-    const t1 = window.setTimeout(restore, 50);
-    const t2 = window.setTimeout(restore, 150);
-    const t3 = window.setTimeout(restore, 350);
-    window.setTimeout(() => {
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
-      window.clearTimeout(t3);
-    }, 400);
-  }, [offerId]);
+    rafId = requestAnimationFrame(pin);
+    window.setTimeout(() => cancelAnimationFrame(rafId), 600);
+  }, [offerId, placementAnchor]);
   const handleGetAddInsertionAnchor = useCallback(
     () => offerProductsPanelRef.current?.getAddInsertionAnchor?.() ?? null,
     [],
@@ -1339,6 +1394,7 @@ export default function ClientProductsPage({
         </button>
       )}
       {pivotToggleButton}
+      {isStandardPackage ? collapseAllToggleButton : null}
     </div>
   );
 
@@ -1381,7 +1437,6 @@ export default function ClientProductsPage({
   const secondaryHeaderLeftActions = isStandardPackage ? (
     <div className={toolbarStyles.leftRequestedRow}>
       {undoButton}
-      {collapseAllToggleButton}
       {startingItemNoControl}
     </div>
   ) : (
@@ -1431,6 +1486,7 @@ export default function ClientProductsPage({
               onMainGridSelectionChanged={handleMainGridSelectionChanged}
               onRequestInsertProduct={handleRequestInsertProduct}
               showInsertLineOnHover={showAddProductModal || detachedWindowOpen}
+              extraBottomScrollSpace={showAddProductModal}
               onStartingItemNoChanged={(current) => {
                 const next = current ?? 1;
                 setStartingItemNo(next);

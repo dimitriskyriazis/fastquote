@@ -15,6 +15,10 @@
   overflow: hidden;
 }
 
+.gridWrapperExtraBottom :global(.ag-body-viewport) {
+  padding-bottom: 240px;
+}
+
 .insertLine {
   position: absolute;
   left: 0;
@@ -40,10 +44,12 @@
   transform: scale(1);
 }
 
-/* Pinned state: row-sized highlight centered at insertion point */
+/* Pinned state: thin highlight line sitting between rows */
 .insertLinePinned .insertLineBar {
-  background: #bfdbfe;
-  height: 32px;
+  background: #2563eb;
+  height: 5px;
+  box-shadow: 0 0 6px rgba(37, 99, 235, 0.45);
+  border-radius: 1px;
 }
 
 .insertLinePinned {

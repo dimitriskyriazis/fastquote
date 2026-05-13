@@ -193,9 +193,9 @@ export async function GET(
         cnt.FirstName,
         cnt.LastName,
         LTRIM(RTRIM(CONCAT(
-          ISNULL(cnt.FirstName, ''),
+          ISNULL(cnt.LastName, ''),
           CASE WHEN cnt.FirstName IS NOT NULL AND cnt.LastName IS NOT NULL THEN ' ' ELSE '' END,
-        ISNULL(cnt.LastName, '')
+        ISNULL(cnt.FirstName, '')
       ))) AS FullName
       FROM dbo.Contacts AS cnt
       WHERE cnt.CustomerID = @customerId
@@ -204,7 +204,7 @@ export async function GET(
 
     const contacts = (result.recordset ?? []).map((contact) => {
       const full = contact.FullName?.trim();
-      const fallback = [contact.FirstName, contact.LastName]
+      const fallback = [contact.LastName, contact.FirstName]
         .map((value) => value?.trim())
         .filter(Boolean)
         .join(" ");

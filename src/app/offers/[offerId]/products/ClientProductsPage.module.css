@@ -40,7 +40,11 @@
 
 .compactHeaderRow :global([class*="PageHeader-module__"][class*="__searchSlot"]) {
   min-height: 28px;
-  margin-left: -10px;
+  margin-left: 10px;
+}
+
+.compactHeaderRow :global([class*="PageHeader-module__"][class*="__topTitle"]) {
+  transform: translateY(25%);
 }
 
 .offerHeaderTopRow {

@@ -2,6 +2,7 @@
   cursor: default !important;
 }
 
+
 /* Keep grab cursor on the offer products row drag handle (avoid default cursor override). */
 .offer-products-grid .ag-cell[col-id="__row_drag__"],
 .offer-products-grid .ag-cell[col-id="__row_drag__"] * {

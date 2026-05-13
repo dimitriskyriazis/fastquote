@@ -13,9 +13,23 @@ function isScrollable(el: Element): el is HTMLElement {
 
 const HIDE_DELAY_MS = 3000;
 
+// Selectors for the two panels that can host this button — order matters: most-specific first.
+const PANEL_SELECTORS = [".offer-products-grid"];
+
+type Anchor = { panel: HTMLElement; selector: string };
+
+function findAnchor(node: HTMLElement): Anchor | null {
+  for (const selector of PANEL_SELECTORS) {
+    const panel = node.closest<HTMLElement>(selector);
+    if (panel) return { panel, selector };
+  }
+  return null;
+}
+
 export default function ScrollToBottomButton() {
   const [visible, setVisible] = useState(false);
-  const targetRef = useRef<HTMLElement | Window | null>(null);
+  const [pos, setPos] = useState<{ right: number; bottom: number }>({ right: 24, bottom: 24 });
+  const anchorRef = useRef<Anchor | null>(null);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -31,34 +45,33 @@ export default function ScrollToBottomButton() {
     };
 
     const evaluate = (target: EventTarget | null) => {
-      let el: HTMLElement | Window | null = null;
-      if (target instanceof Document) {
-        el = window;
-      } else if (target instanceof HTMLElement && isScrollable(target)) {
-        el = target;
-      } else {
-        el = window;
+      if (!(target instanceof HTMLElement) || !isScrollable(target)) {
+        clearHideTimer();
+        setVisible(false);
+        return;
       }
 
-      let scrollTop: number;
-      let scrollHeight: number;
-      let clientHeight: number;
-      if (el === window) {
-        scrollTop = window.scrollY;
-        scrollHeight = document.documentElement.scrollHeight;
-        clientHeight = window.innerHeight;
-      } else {
-        const h = el as HTMLElement;
-        scrollTop = h.scrollTop;
-        scrollHeight = h.scrollHeight;
-        clientHeight = h.clientHeight;
+      const anchor = findAnchor(target);
+      if (!anchor) {
+        clearHideTimer();
+        setVisible(false);
+        return;
       }
+
+      const scrollTop = target.scrollTop;
+      const scrollHeight = target.scrollHeight;
+      const clientHeight = target.clientHeight;
 
       const scrolledDown = scrollTop > THRESHOLD;
       const notAtBottom = scrollTop + clientHeight < scrollHeight - 4;
 
       if (scrolledDown && notAtBottom) {
-        targetRef.current = el;
+        const rect = anchor.panel.getBoundingClientRect();
+        setPos({
+          right: Math.max(8, window.innerWidth - rect.right + 24),
+          bottom: Math.max(8, window.innerHeight - rect.bottom + 24),
+        });
+        anchorRef.current = anchor;
         setVisible(true);
         scheduleHide();
       } else {
@@ -75,12 +88,10 @@ export default function ScrollToBottomButton() {
     };
   }, []);
 
-  const jumpAllToBottom = () => {
-    const BIG = 1e9;
-    window.scrollTo(0, BIG);
-    document.documentElement.scrollTop = BIG;
-    document.body.scrollTop = BIG;
-    document.querySelectorAll<HTMLElement>("*").forEach((node) => {
+  const jumpAnchorToBottom = () => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+    anchor.panel.querySelectorAll<HTMLElement>("*").forEach((node) => {
       if (isScrollable(node)) {
         node.scrollTop = node.scrollHeight;
       }
@@ -88,12 +99,12 @@ export default function ScrollToBottomButton() {
   };
 
   const handleClick = () => {
-    jumpAllToBottom();
+    jumpAnchorToBottom();
     // Re-issue in case content grows from virtualization/lazy-load after the first jump.
-    requestAnimationFrame(jumpAllToBottom);
-    setTimeout(jumpAllToBottom, 100);
-    setTimeout(jumpAllToBottom, 300);
-    setTimeout(jumpAllToBottom, 700);
+    requestAnimationFrame(jumpAnchorToBottom);
+    setTimeout(jumpAnchorToBottom, 100);
+    setTimeout(jumpAnchorToBottom, 300);
+    setTimeout(jumpAnchorToBottom, 700);
   };
 
   if (!visible) return null;
@@ -106,8 +117,8 @@ export default function ScrollToBottomButton() {
       title="Scroll to bottom"
       style={{
         position: "fixed",
-        right: 24,
-        bottom: 24,
+        right: pos.right,
+        bottom: pos.bottom,
         zIndex: 9999,
         display: "inline-flex",
         alignItems: "center",
