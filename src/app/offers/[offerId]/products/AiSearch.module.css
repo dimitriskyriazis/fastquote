@@ -7,16 +7,16 @@
 .promptLabel {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   background: #eff6ff;
   border: 1px solid #bfdbfe;
   border-radius: 999px;
-  padding: 6px 12px;
+  padding: 4px 9px;
 }
 
 .promptLabelText {
   color: #1e40af;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -26,10 +26,10 @@
   background: transparent;
   outline: none;
   color: #0f172a;
-  font-size: 13px;
-  width: 360px;
-  min-width: 260px;
-  max-width: 480px;
+  font-size: 12px;
+  width: 220px;
+  min-width: 160px;
+  max-width: 300px;
 }
 
 .promptInput::placeholder {
@@ -59,10 +59,10 @@
   border: none;
   background: #1e40af;
   color: #ffffff;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: 11px;
   line-height: 1;
   padding: 0;
   cursor: pointer;

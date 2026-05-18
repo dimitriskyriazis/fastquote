@@ -57,7 +57,7 @@ import { pushCellEditUndo } from '../../../lib/undoHelpers';
 import { showConfirmDialog, showMultiChoiceDialog } from '../../../lib/confirm';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselectedRowIds, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
-import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption } from '../../../lib/offerProductRows';
+import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption, isOfferProductService } from '../../../lib/offerProductRows';
 import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
 import { captureAndPinScroll } from '../../../lib/scrollPreservation';
 import MatchRequestedProductsModal, {
@@ -2126,8 +2126,15 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       if (currentRowCount !== prevRowCount && showInsertLineOnHoverRef.current) {
         const repin = () => {
           if (!showInsertLineOnHoverRef.current) return;
-          // Never override a pin that's anchored to a specific row.
-          if (insertLinePinnedRef.current && !insertLinePinnedAtEndRef.current) return;
+          if (insertLinePinnedRef.current && !insertLinePinnedAtEndRef.current) {
+            // Recompute the specific-row pin's position — layout may have shifted
+            // (e.g. filter row appearing when the first product is added to an
+            // empty grid). Don't call setInsertLineVisible here to avoid
+            // overriding the anchor with an at-end fallback.
+            const anchored = insertLineDataRef.current;
+            if (anchored) tryPinInsertLineBelowRowIdRef.current?.(anchored.offerDetailId);
+            return;
+          }
           // A specific-row pin is queued — let that land instead of pinning
           // at end (which would race and end up overlapping the new row).
           if (pendingPinBelowIdRef.current != null) return;
@@ -2206,6 +2213,12 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         break;
       case 'non-printable-comment':
         baseClass = 'offer-row offer-row--nonprintable-comment';
+        break;
+      case 'printable-service':
+        baseClass = 'offer-row offer-row--printable-service';
+        break;
+      case 'non-printable-service':
+        baseClass = 'offer-row offer-row--nonprintable-service';
         break;
       default:
         baseClass = undefined;
@@ -2298,7 +2311,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       ? (displayOrderingMapRef.current.get(idKey) ?? formatDisplayTreeOrdering(rawValue))
       : formatDisplayTreeOrdering(rawValue);
     if (display && isOfferProductOption(rowData)) {
-      display = `${display}O`;
+      display = `${display}o`;
     }
     return (
       <span className={styles.treeOrderingCell}>
@@ -4093,7 +4106,7 @@ const requestedColumnDefsMap = useMemo(
     const displayMap = computeDisplayOrderingMap(rows as unknown as Record<string, unknown>[]);
     const includedRows = rows.filter((row) => {
       const rowType = resolveOfferProductRowType(row as unknown as Record<string, unknown>);
-      return rowType === 'product' || rowType === 'category' || rowType === 'printable-comment';
+      return rowType === 'product' || rowType === 'category' || rowType === 'printable-comment' || rowType === 'printable-service';
     });
 
     return includedRows.map((row) => {
@@ -4101,7 +4114,9 @@ const requestedColumnDefsMap = useMemo(
       const model = (row.ModelNumber ?? '').toString().trim();
       const description = (row.Description ?? '').toString().trim();
       const descriptionType = [model, description].filter((part) => part.length > 0).join(' ').trim();
-      const qty = coerceNumber(row.Quantity);
+      const rawQty = coerceNumber(row.Quantity);
+      const isServLot = row.ServiceType === 'ServLot';
+      const qty = isServLot ? 1 : rawQty;
       const listPrice = coerceNumber(row.ListPrice);
       const additionalDiscount = coerceNumber(row.AdditionalCustomerDiscount);
       const qtyForExport = qty != null && !Object.is(qty, 0) ? qty : null;
@@ -5536,6 +5551,103 @@ const requestedColumnDefsMap = useMemo(
         items.splice(deleteIndexAfterHistory, 0, makeCommentItem);
       } else {
         items.push(makeCommentItem);
+      }
+    }
+
+    // --- "Toggle Service Printable" for service rows (supports multi-selection) ---
+    const serviceTargetNodes = relevantNodes.filter((n) => {
+      const d = n.data;
+      if (!isOfferProductService(d)) return false;
+      const id = normalizeOfferDetailId((d as { OfferDetailID?: unknown })?.OfferDetailID ?? null);
+      return id != null;
+    });
+    if (serviceTargetNodes.length > 0) {
+      const buildToggleServicePrintableAction = (printable: boolean) => async () => {
+        const prevStates = serviceTargetNodes.map((n) => ({
+          node: n,
+          IsPrintable: n.data ? (n.data as { IsPrintable?: unknown }).IsPrintable : null,
+        }));
+        for (const n of serviceTargetNodes) {
+          try {
+            n.setDataValue('IsPrintable', printable);
+          } catch { /* noop */ }
+        }
+        const api = gridApiRef.current;
+        try {
+          api?.refreshCells?.({ rowNodes: serviceTargetNodes as GridRowNode[], force: true });
+        } catch { /* noop */ }
+        try {
+          const updates = serviceTargetNodes.map((n) => ({
+            OfferDetailID: normalizeOfferDetailId((n.data as { OfferDetailID?: unknown })?.OfferDetailID ?? null),
+            IsPrintable: printable,
+          }));
+          const res = await fetch(resolvedEndpoint, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates }),
+          });
+          const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+          if (!res.ok || !payload?.ok) {
+            throw new Error(payload?.error ?? `Unable to update service row (status ${res.status})`);
+          }
+          const label = printable ? 'printable service' : 'non-printable service';
+          const capturedUndoUpdates = prevStates.map((prev) => ({
+            OfferDetailID: normalizeOfferDetailId((prev.node.data as { OfferDetailID?: unknown })?.OfferDetailID ?? null),
+            IsPrintable: prev.IsPrintable,
+          }));
+          pushUndo({
+            label: serviceTargetNodes.length === 1 ? `Set as ${label}` : `${serviceTargetNodes.length} rows set as ${label}`,
+            undo: async () => {
+              const undoRes = await fetch(resolvedEndpoint, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ updates: capturedUndoUpdates }),
+              });
+              const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+              if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+              refreshOfferProductGrid(null, { purge: true });
+            },
+          });
+          showToastMessage(
+            serviceTargetNodes.length === 1
+              ? `Marked as ${label}`
+              : `${serviceTargetNodes.length} rows marked as ${label}`,
+            'success',
+            5500,
+            { label: 'Undo', onClick: () => performUndo() },
+          );
+          try { api?.deselectAll?.(); } catch { /* noop */ }
+          refreshOfferProductGrid(null, { purge: true });
+        } catch (err) {
+          for (const prev of prevStates) {
+            try { prev.node.setDataValue('IsPrintable', prev.IsPrintable ?? null); } catch { /* noop */ }
+          }
+          try {
+            api?.refreshCells?.({ rowNodes: serviceTargetNodes as GridRowNode[], force: true });
+          } catch { /* noop */ }
+          console.error('Failed to update service row', err);
+          showToastMessage('Unable to update service row(s). Please try again.', 'error');
+        }
+      };
+      const serviceCount = serviceTargetNodes.length;
+      const makeServiceToggleItem: MenuItemDef = {
+        name: serviceCount > 1 ? `Set Service Printable (${serviceCount})` : 'Set Service Printable',
+        icon: commentMenuIcon,
+        subMenu: [
+          {
+            name: 'Printable',
+            action: buildToggleServicePrintableAction(true),
+          },
+          {
+            name: 'Non Printable',
+            action: buildToggleServicePrintableAction(false),
+          },
+        ],
+      };
+      if (deleteIndexAfterHistory >= 0) {
+        items.splice(deleteIndexAfterHistory, 0, makeServiceToggleItem);
+      } else {
+        items.push(makeServiceToggleItem);
       }
     }
 

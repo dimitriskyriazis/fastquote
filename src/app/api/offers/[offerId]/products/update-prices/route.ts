@@ -610,8 +610,72 @@ export async function POST(
     const standardUpdated = Number(result.recordset?.[0]?.updated ?? 0);
     const standardUpdatedBrands = parseBrandList(result.recordset?.[0]?.updatedBrandsCsv);
     const failedBrands = parseBrandList(result.recordset?.[0]?.failedBrandsCsv);
+
+    // Step 3: Update service product rows using ServicesLocation-aware pricing
+    const locationLookup = pool.request();
+    locationLookup.input('offerId', sql.Int, normalizedId);
+    const locationResult = await locationLookup.query<{ ServicesLocation: string | null }>(`
+      SELECT TOP (1) ServicesLocation FROM dbo.Offer WHERE ID = @offerId
+    `);
+    const servicesLocation = locationResult.recordset?.[0]?.ServicesLocation ?? null;
+
+    const serviceRequest = pool.request();
+    serviceRequest.input('offerId', sql.Int, normalizedId);
+    serviceRequest.input('modifiedBy', sql.NVarChar(450), auditUserId);
+    serviceRequest.input('svcLocation', sql.NVarChar(10), servicesLocation);
+    const serviceSelectedFilterSql = selectedOfferDetailIds.length > 0
+      ? ` AND od.ID IN (${selectedOfferDetailIds.map((_, idx) => `@svcSelId${idx}`).join(', ')})`
+      : '';
+    selectedOfferDetailIds.forEach((id, idx) => {
+      serviceRequest.input(`svcSelId${idx}`, sql.Int, id);
+    });
+
+    const serviceResult = await serviceRequest.query(`
+      UPDATE od
+      SET
+        od.ListPrice    = src.NewPrice,
+        od.TotalPrice   = CASE WHEN src.NewPrice IS NULL THEN NULL
+                               ELSE ROUND(src.NewPrice * ISNULL(od.Quantity, 1), 4) END,
+        od.NetUnitPrice = CASE WHEN src.NewPrice IS NULL THEN NULL
+                               ELSE ROUND(src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0), 4) END,
+        od.TotalNet     = CASE WHEN src.NewPrice IS NULL THEN NULL
+                               ELSE ROUND(src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0) * ISNULL(od.Quantity, 1), 4) END,
+        od.NetCost      = CASE WHEN src.NewPrice IS NULL THEN NULL
+                               ELSE ROUND(src.NewPrice * (1.0 - ISNULL(od.TelmacoDiscount, 0) / 100.0), 4) END,
+        od.TotalCost    = CASE WHEN src.NewPrice IS NULL THEN NULL
+                               ELSE ROUND(src.NewPrice * (1.0 - ISNULL(od.TelmacoDiscount, 0) / 100.0) * ISNULL(od.Quantity, 1), 4) END,
+        od.GrossProfit  = CASE WHEN src.NewPrice IS NULL OR ISNULL(od.Quantity, 1) = 0 THEN NULL
+                               ELSE ROUND((src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0)
+                                          - src.NewPrice * (1.0 - ISNULL(od.TelmacoDiscount, 0) / 100.0))
+                                         * ISNULL(od.Quantity, 1), 4) END,
+        od.Margin       = CASE WHEN src.NewPrice IS NULL OR src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0) = 0 THEN NULL
+                               ELSE ROUND((1.0 - (src.NewPrice * (1.0 - ISNULL(od.TelmacoDiscount, 0) / 100.0))
+                                               / (src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0))) * 100, 4) END,
+        od.ModifiedOn   = SYSUTCDATETIME(),
+        od.ModifiedBy   = @modifiedBy
+      FROM dbo.OfferDetails od
+      CROSS APPLY (
+        SELECT TOP (1)
+          CASE
+            WHEN @svcLocation = 'GR'    THEN COALESCE(pli.ServicePriceGR,    pli.ListPrice)
+            WHEN @svcLocation = 'outGR' THEN COALESCE(pli.ServicePriceOutGR, pli.ListPrice)
+            ELSE pli.ListPrice
+          END AS NewPrice
+        FROM dbo.PriceListItems pli
+        INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
+        WHERE pli.ProductID = od.ProductID
+          AND ISNULL(pl.IsService, 0) = 1
+          AND pl.Enabled = 1
+        ORDER BY pli.ID DESC
+      ) src
+      WHERE od.OfferID = @offerId
+        AND od.ProductID IS NOT NULL
+        ${serviceSelectedFilterSql};
+    `);
+    const serviceUpdated = serviceResult.rowsAffected?.[0] ?? 0;
+
     const updatedBrands = Array.from(new Set([...farnellUpdated.updatedBrands, ...standardUpdatedBrands]));
-    const totalUpdated = standardUpdated + farnellUpdated.updatedCount;
+    const totalUpdated = standardUpdated + farnellUpdated.updatedCount + serviceUpdated;
     if (totalUpdated > 0) {
       realtimeEvents.emit(
         `offer:${normalizedId}:products`,
@@ -624,6 +688,7 @@ export async function POST(
       updated: totalUpdated,
       updatedBrands,
       failedBrands,
+      serviceUpdated,
     });
   } catch (err) {
     console.error('Failed to update offer prices', err);

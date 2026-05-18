@@ -95,6 +95,8 @@ type ProductRow = {
   IsComment: boolean | null;
   IsCategory: boolean | null;
   IsOption: boolean | null;
+  IsService: boolean | null;
+  ServiceType: string | null;
   Enabled: boolean | number | null;
   CreatedOn: Date | string | null;
   CreatedBy: string | null;
@@ -221,6 +223,7 @@ type DetailUpdateInput = {
   IsPrintable?: boolean | number | string | null;
   IsComment?: boolean | number | string | null;
   IsOption?: boolean | number | string | null;
+  IsService?: boolean | number | string | null;
   RequestedItemNo?: string | null;
   RequestedBrand?: string | null;
   RequestedModelNo?: string | null;
@@ -243,7 +246,7 @@ type DetailUpdateRequest = {
   updates?: DetailUpdateInput[];
 };
 
-type CreateRowType = 'category' | 'printable-comment' | 'non-printable-comment';
+type CreateRowType = 'category' | 'printable-comment' | 'non-printable-comment' | 'printable-service' | 'non-printable-service';
 
 type CreateRowRequest = {
   action?: 'create';
@@ -255,6 +258,8 @@ const CREATE_TYPE_LABELS: Record<CreateRowType, string> = {
   category: 'New Category',
   'printable-comment': 'New Printable Comment',
   'non-printable-comment': 'New Non Printable Comment',
+  'printable-service': 'New Printable Service',
+  'non-printable-service': 'New Non Printable Service',
 };
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
@@ -266,6 +271,8 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   IsComment: 'od.IsComment',
   IsCategory: 'od.IsCategory',
   IsOption: 'od.IsOption',
+  IsService: 'od.IsService',
+  ServiceType: 'od.ServiceType',
   Enabled: 'od.Enabled',
   CreatedOn: 'od.CreatedOn',
   CreatedBy: 'od.CreatedBy',
@@ -448,6 +455,8 @@ const normalizeCreateRowType = (value: unknown): CreateRowType | null => {
   if (normalized === 'category') return 'category';
   if (normalized === 'printable-comment') return 'printable-comment';
   if (normalized === 'non-printable-comment') return 'non-printable-comment';
+  if (normalized === 'printable-service') return 'printable-service';
+  if (normalized === 'non-printable-service') return 'non-printable-service';
   return null;
 };
 
@@ -799,13 +808,15 @@ async function handleCreateRow(
   }
   const fallbackLabel = CREATE_TYPE_LABELS[type] ?? 'New Entry';
   const description = normalizeDescriptionValue(payload?.description ?? null) ?? fallbackLabel;
-  const isComment = type === 'category' ? null : 1;
+  const isServiceRow = type === 'printable-service' || type === 'non-printable-service';
+  const isComment = type === 'category' || isServiceRow ? null : 1;
   const isPrintable = type === 'category'
     ? null
-    : type === 'printable-comment'
+    : (type === 'printable-comment' || type === 'printable-service')
       ? 1
       : 0;
   const isCategory = type === 'category' ? 1 : 0;
+  const isService = isServiceRow ? 1 : null;
   const quantity = 0;
   const createdBy = audit.userId;
 
@@ -814,16 +825,16 @@ async function handleCreateRow(
   request.input('__offerId', sql.Int, offerId);
   request.input('__isComment', isComment);
   request.input('__isPrintable', isPrintable);
+  request.input('__isService', sql.Bit, isService);
   request.input('__description', description);
   request.input('__quantity', quantity);
   request.input('__createdBy', sql.Int, createdBy);
   request.input('__modifiedBy', sql.Int, createdBy);
   request.input('__isCategory', sql.Bit, isCategory);
-  // Non-printable comments are stored as a subpath of the row immediately
+  // Non-printable comments/services are stored as a subpath of the row immediately
   // above them in display order, so they don't take a sibling slot and
-  // don't bump the numbering of the next product. All other row types
-  // (categories, printable comments) still go to the next root segment.
-  const isNonPrintableComment = type === 'non-printable-comment';
+  // don't bump the numbering of the next product.
+  const isNonPrintableComment = type === 'non-printable-comment' || type === 'non-printable-service';
   request.input('__isNonPrintableComment', sql.Bit, isNonPrintableComment ? 1 : 0);
 
   const query = `
@@ -902,6 +913,7 @@ async function handleCreateRow(
       IsPrintable,
       IsComment,
       IsCategory,
+      IsService,
       ProductDescription,
       Quantity,
       CreatedOn,
@@ -914,6 +926,7 @@ async function handleCreateRow(
       INSERTED.TreeOrdering,
       INSERTED.IsComment,
       INSERTED.IsPrintable,
+      INSERTED.IsService,
       INSERTED.ProductDescription
     VALUES (
       @__offerId,
@@ -923,6 +936,7 @@ async function handleCreateRow(
       @__isPrintable,
       @__isComment,
       @__isCategory,
+      @__isService,
       @__description,
       @__quantity,
       SYSUTCDATETIME(),
@@ -937,6 +951,7 @@ async function handleCreateRow(
     TreeOrdering: string | null;
     IsComment: number | null;
     IsPrintable: number | null;
+    IsService: number | null;
     ProductDescription: string | null;
   }>(query);
   const inserted = Array.isArray(result.recordset) ? result.recordset[0] ?? null : null;
@@ -1361,6 +1376,7 @@ export async function POST(
       'IsComment',
       'IsCategory',
       'IsOption',
+      'IsService',
       'Description',
       'ProductDescription',
       'BrandName',
@@ -1789,6 +1805,7 @@ export async function PATCH(
         const hasIsPrintable = entry ? Object.prototype.hasOwnProperty.call(entry, 'IsPrintable') : false;
         const hasIsComment = entry ? Object.prototype.hasOwnProperty.call(entry, 'IsComment') : false;
         const hasIsOption = entry ? Object.prototype.hasOwnProperty.call(entry, 'IsOption') : false;
+        const hasIsService = entry ? Object.prototype.hasOwnProperty.call(entry, 'IsService') : false;
         const hasRequestedItemNo = entry
           ? Object.prototype.hasOwnProperty.call(entry, 'RequestedItemNo')
           : false;
@@ -1837,6 +1854,7 @@ export async function PATCH(
           && !hasIsPrintable
           && !hasIsComment
           && !hasIsOption
+          && !hasIsService
           && !hasRequestedItemNo
           && !hasRequestedBrand
           && !hasRequestedModelNo
@@ -1925,6 +1943,7 @@ export async function PATCH(
         const isPrintableValue = hasIsPrintable ? normalizeBoolean(entry?.IsPrintable ?? null) : null;
         const isCommentValue = hasIsComment ? normalizeBoolean(entry?.IsComment ?? null) : null;
         const isOptionValue = hasIsOption ? normalizeBoolean(entry?.IsOption ?? null) : null;
+        const isServiceValue = hasIsService ? normalizeBoolean((entry as { IsService?: unknown })?.IsService ?? null) : null;
         const partNumber = hasPartNumber ? normalizeRequestedTextValue(entry?.PartNumber ?? null) : null;
         const modelNumber = hasModelNumber ? normalizeRequestedTextValue(entry?.ModelNumber ?? null) : null;
         const installation = hasInstallation ? normalizeMoneyValue(entry?.Installation ?? null) : null;
@@ -1997,6 +2016,8 @@ export async function PATCH(
           IsComment: isCommentValue,
           hasIsOption,
           IsOption: isOptionValue,
+          hasIsService,
+          IsService: isServiceValue,
           requestedItemNo: hasRequestedItemNo
             ? normalizeRequestedItemNoValue(entry?.RequestedItemNo ?? null)
             : null,
@@ -2071,6 +2092,8 @@ export async function PATCH(
         IsComment: boolean | null;
         hasIsOption: boolean;
         IsOption: boolean | null;
+        hasIsService: boolean;
+        IsService: boolean | null;
         requestedItemNo: string | null;
         RequestedBrand: string | null;
         RequestedModelNo: string | null;
@@ -2267,6 +2290,8 @@ export async function PATCH(
         HasIsComment: boolean;
         IsOption: boolean | null;
         HasIsOption: boolean;
+        IsService: boolean | null;
+        HasIsService: boolean;
         PartNumber: string | null;
         HasPartNumber: boolean;
         ModelNumber: string | null;
@@ -2524,6 +2549,8 @@ export async function PATCH(
           HasIsComment: entry.hasIsComment,
           IsOption: entry.hasIsOption ? entry.IsOption : null,
           HasIsOption: entry.hasIsOption,
+          IsService: entry.hasIsService ? entry.IsService : null,
+          HasIsService: entry.hasIsService,
           PartNumber: entry.hasPartNumber ? entry.PartNumber : null,
           HasPartNumber: entry.hasPartNumber,
           ModelNumber: entry.hasModelNumber ? entry.ModelNumber : null,
@@ -2713,6 +2740,14 @@ export async function PATCH(
           row.HasIsOption ? (row.IsOption == null ? null : (row.IsOption ? 1 : 0)) : null,
         );
         request.input(hasIsOptionParam, sql.Bit, row.HasIsOption ? 1 : 0);
+        const isServiceParam = `isService_${rowIdx}`;
+        const hasIsServiceParam = `hasIsService_${rowIdx}`;
+        request.input(
+          isServiceParam,
+          sql.Bit,
+          row.HasIsService ? (row.IsService == null ? null : (row.IsService ? 1 : 0)) : null,
+        );
+        request.input(hasIsServiceParam, sql.Bit, row.HasIsService ? 1 : 0);
         const partNumberParam = `partNumber_${rowIdx}`;
         const hasPartNumberParam = `hasPartNumber_${rowIdx}`;
         const modelNumberParam = `modelNumber_${rowIdx}`;
@@ -2741,7 +2776,7 @@ export async function PATCH(
         request.input(hasWarrantyParam, sql.Bit, row.HasWarranty ? 1 : 0);
         request.input(telmacoWarrantyParam, decimalType, row.HasTelmacoWarranty ? row.TelmacoWarranty : null);
         request.input(hasTelmacoWarrantyParam, sql.Bit, row.HasTelmacoWarranty ? 1 : 0);
-        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${additionalCustomerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam}, @${isOptionParam}, @${hasIsOptionParam}, @${partNumberParam}, @${hasPartNumberParam}, @${modelNumberParam}, @${hasModelNumberParam}, @${installationParam}, @${hasInstallationParam}, @${elInstalationParam}, @${hasElInstalationParam}, @${commissioningParam}, @${hasCommissioningParam}, @${warrantyParam}, @${hasWarrantyParam}, @${telmacoWarrantyParam}, @${hasTelmacoWarrantyParam})`);
+        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${additionalCustomerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam}, @${isOptionParam}, @${hasIsOptionParam}, @${isServiceParam}, @${hasIsServiceParam}, @${partNumberParam}, @${hasPartNumberParam}, @${modelNumberParam}, @${hasModelNumberParam}, @${installationParam}, @${hasInstallationParam}, @${elInstalationParam}, @${hasElInstalationParam}, @${commissioningParam}, @${hasCommissioningParam}, @${warrantyParam}, @${hasWarrantyParam}, @${telmacoWarrantyParam}, @${hasTelmacoWarrantyParam})`);
       });
 
       const query = `
@@ -2799,6 +2834,8 @@ export async function PATCH(
           HasIsComment,
           IsOption,
           HasIsOption,
+          IsService,
+          HasIsService,
           PartNumber,
           HasPartNumber,
           ModelNumber,
@@ -2869,6 +2906,8 @@ export async function PATCH(
             HasIsComment,
             IsOption,
             HasIsOption,
+            IsService,
+            HasIsService,
             PartNumber,
             HasPartNumber,
             ModelNumber,
@@ -2917,6 +2956,7 @@ export async function PATCH(
             od.IsPrintable = CASE WHEN PendingUpdates.HasIsPrintable = 1 THEN PendingUpdates.IsPrintable ELSE od.IsPrintable END,
             od.IsComment = CASE WHEN PendingUpdates.HasIsComment = 1 THEN PendingUpdates.IsComment ELSE od.IsComment END,
             od.IsOption = CASE WHEN PendingUpdates.HasIsOption = 1 THEN PendingUpdates.IsOption ELSE od.IsOption END,
+            od.IsService = CASE WHEN PendingUpdates.HasIsService = 1 THEN PendingUpdates.IsService ELSE od.IsService END,
             od.PartNumber = CASE WHEN PendingUpdates.HasPartNumber = 1 THEN PendingUpdates.PartNumber ELSE od.PartNumber END,
             od.ModelNumber = CASE WHEN PendingUpdates.HasModelNumber = 1 THEN PendingUpdates.ModelNumber ELSE od.ModelNumber END,
             od.Installation = CASE WHEN PendingUpdates.HasInstallation = 1 THEN PendingUpdates.Installation ELSE od.Installation END,

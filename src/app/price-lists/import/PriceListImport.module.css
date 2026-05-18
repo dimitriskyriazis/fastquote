@@ -1,8 +1,5 @@
 .importPage {
   gap: 12px;
-  max-height: calc(100vh - 40px);
-  overflow: auto;
-  padding-right: 6px;
 }
 
 .card {
@@ -11,19 +8,27 @@
   border-radius: 16px;
   padding: 18px;
   box-shadow: 0 12px 30px rgba(32, 32, 32, 0.1);
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .form {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  flex: 1;
+  min-height: 0;
 }
 
 .formGrid {
   display: grid;
-  grid-template-columns: minmax(560px, 2fr) minmax(320px, 1fr);
+  grid-template-columns: 1fr 1fr;
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
 }
 
 .fieldStack {
@@ -35,7 +40,6 @@
   flex-direction: column;
   gap: 12px;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
-  max-height: calc(100vh - 200px);
   overflow-y: auto;
   min-width: 0;
 }
@@ -188,6 +192,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex: 1;
 }
 
 .uploadArea {
@@ -197,8 +202,9 @@
   padding: 18px;
   cursor: pointer;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 14px;
+  flex: 1;
   transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
 }
 
@@ -509,15 +515,19 @@
   color: #6b7280;
 }
 
-.actionsRow {
+.headerActions {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding-top: 6px;
+  gap: 10px;
 }
 
-.actionsSpacer {
-  flex: 1;
+.backLinkCentered {
+  top: 50% !important;
+  transform: translateY(-50%) !important;
 }
 
 .error {
@@ -527,7 +537,7 @@
 
 .submitButton {
   border: 1px solid #111827;
-  background: linear-gradient(135deg, #2e2e2e 0%, #363636 100%);
+  background: linear-gradient(135deg, #585858 0%, #585858 100%);
   color: #ffffff;
   border-radius: 999px;
   padding: 8px 20px;

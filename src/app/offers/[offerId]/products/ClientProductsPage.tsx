@@ -38,7 +38,7 @@ type Props = {
   pricingPolicyName?: string | null;
 };
 
-type AddActionType = 'product' | 'category' | 'printable-comment' | 'non-printable-comment';
+type AddActionType = 'product' | 'category' | 'printable-comment' | 'non-printable-comment' | 'printable-service' | 'non-printable-service';
 type CreatableActionType = Exclude<AddActionType, 'product'>;
 type ProductsTableLayout = 'cust' | 'wCost' | 'wReq';
 type PivotLayout = 'category' | 'brand';
@@ -56,12 +56,16 @@ const addActionLabels: Record<AddActionType, string> = {
   category: 'Add Category',
   'printable-comment': 'Add Printable Comment',
   'non-printable-comment': 'Add Non Printable Comment',
+  'printable-service': 'Add Printable Service',
+  'non-printable-service': 'Add Non Printable Service',
 };
 
 const addActionDescriptionLabels: Record<CreatableActionType, string> = {
   category: 'New Category',
   'printable-comment': 'New Printable Comment',
   'non-printable-comment': 'New Non Printable Comment',
+  'printable-service': 'New Printable Service',
+  'non-printable-service': 'New Non Printable Service',
 };
 
 const addPrimaryButtons: Array<{ key: 'product' | 'category'; label: string }> = [
@@ -74,11 +78,18 @@ const addCommentOptions: Array<{ key: 'printable-comment' | 'non-printable-comme
   { key: 'non-printable-comment', label: 'Non Printable' },
 ];
 
+const addServiceOptions: Array<{ key: 'printable-service' | 'non-printable-service'; label: string }> = [
+  { key: 'printable-service', label: 'Printable' },
+  { key: 'non-printable-service', label: 'Non Printable' },
+];
+
 const buttonVariantClass: Record<AddActionType, string> = {
   product: toolbarStyles.buttonProduct,
   category: toolbarStyles.buttonCategory,
   'printable-comment': toolbarStyles.buttonPrintableComment,
   'non-printable-comment': toolbarStyles.buttonNonPrintableComment,
+  'printable-service': toolbarStyles.buttonService,
+  'non-printable-service': toolbarStyles.buttonService,
 };
 
 const sanitizeStorageSegment = (value: string): string => value.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -170,6 +181,8 @@ export default function ClientProductsPage({
   const [isUpdatingProductData, setIsUpdatingProductData] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
+  const [showAddServiceModal, setShowAddServiceModal] = useState(false);
+  const [addServiceIsPrintable, setAddServiceIsPrintable] = useState(true);
   const [savedSelectionIds, setSavedSelectionIds] = useState<number[]>([]);
   const [showRequestedModal, setShowRequestedModal] = useState(false);
   const [showAddProductFormModal, setShowAddProductFormModal] = useState(false);
@@ -204,6 +217,8 @@ export default function ClientProductsPage({
     category: 0,
     'printable-comment': 0,
     'non-printable-comment': 0,
+    'printable-service': 0,
+    'non-printable-service': 0,
   });
 
   useEffect(() => {
@@ -402,6 +417,7 @@ export default function ClientProductsPage({
       if (requestedId != null) {
         setTableLayout('wReq');
       }
+      setShowAddServiceModal(false);
       setShowAddProductModal(true);
       // If no row is selected, show insertion line at end after layout settles
       const anchor = offerProductsPanelRef.current?.getAddInsertionAnchor?.() ?? null;
@@ -410,6 +426,12 @@ export default function ClientProductsPage({
         setTimeout(show, 300);
         setTimeout(show, 700);
       }
+      return;
+    }
+    if (action === 'printable-service' || action === 'non-printable-service') {
+      setAddServiceIsPrintable(action === 'printable-service');
+      setShowAddProductModal(false);
+      setShowAddServiceModal(true);
       return;
     }
     if (pendingAction) {
@@ -760,6 +782,7 @@ export default function ClientProductsPage({
       try { detachedWindowRef.current?.focus(); } catch { /* noop */ }
       return;
     }
+    setShowAddServiceModal(false);
     setShowAddProductModal(true);
   }, [postToDetached]);
 
@@ -852,6 +875,53 @@ export default function ClientProductsPage({
     window.addEventListener('message', listener);
     return () => window.removeEventListener('message', listener);
   }, [offerId, handleProductsAdded]);
+
+  // On mount: consume any pending reprice signal written by basicdata page.
+  // The flag is written before the PATCH fires, so we schedule a refresh at
+  // least 2s after the change timestamp to ensure any in-flight PATCH has
+  // committed to the DB before the grid re-fetches.
+  useEffect(() => {
+    const key = `fastquote:services-repriced:${offerId}`;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const ts = localStorage.getItem(key);
+      localStorage.removeItem(key);
+      if (ts) {
+        const changeTime = Number(ts);
+        const elapsed = Date.now() - changeTime;
+        if (elapsed < 60_000) {
+          const delay = Math.max(0, 2000 - elapsed);
+          timerId = setTimeout(() => setRefreshToken((prev) => prev + 1), delay);
+        }
+      }
+    } catch { /* noop */ }
+    return () => { if (timerId != null) clearTimeout(timerId); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const bump = () => setRefreshToken((prev) => prev + 1);
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel('fastquote:offer-events');
+      bc.onmessage = (ev: MessageEvent) => {
+        if (
+          ev.data?.type === 'services-location-changed' &&
+          String(ev.data?.offerId) === String(offerId)
+        ) {
+          bump();
+        }
+      };
+    } catch {
+      // BroadcastChannel not available (SSR/old browser) — fall back to same-page event
+    }
+    window.addEventListener('fastquote:services-location-changed', bump);
+    return () => {
+      bc?.close();
+      window.removeEventListener('fastquote:services-location-changed', bump);
+    };
+  }, [offerId]);
+
   const handleCloseRequestedModal = useCallback(() => setShowRequestedModal(false), []);
   const handleOpenAddProductForm = useCallback(() => setShowAddProductFormModal(true), []);
   const handleCloseAddProductForm = useCallback(() => setShowAddProductFormModal(false), []);
@@ -862,10 +932,11 @@ export default function ClientProductsPage({
     setRefreshToken((prev) => prev + 1);
   }, []);
   const showRequestedColumns = tableLayout === 'wReq';
-  const headerRowTopClassName = showAddProductModal
+  const splitModalOpen = showAddProductModal || showAddServiceModal;
+  const headerRowTopClassName = splitModalOpen
     ? `${pageHeaderStyles.headerRowTop} ${toolbarStyles.compactHeaderRow}`
     : `${pageHeaderStyles.headerRowTop} ${toolbarStyles.offerHeaderTopRow}`.trim();
-  const headerRowBottomClassName = showAddProductModal
+  const headerRowBottomClassName = splitModalOpen
     ? `${pageHeaderStyles.headerRowBottom} ${toolbarStyles.compactHeaderRow}`
     : isStandardPackage
       ? `${pageHeaderStyles.headerRowBottom} ${toolbarStyles.standardPackageSpacerRow}`.trim()
@@ -1280,6 +1351,35 @@ export default function ClientProductsPage({
           ))}
         </div>
       </details>
+      <details className={toolbarStyles.commentDropdown}>
+        <summary
+          className={`${toolbarStyles.button} ${toolbarStyles.buttonService} page-header-button`}
+          aria-label="Add service"
+        >
+          Add Service
+        </summary>
+        <div className={toolbarStyles.commentMenu} role="menu" aria-label="Add service options">
+          {addServiceOptions.map((option) => (
+            <button
+              type="button"
+              key={option.key}
+              className={
+                option.key === 'non-printable-service'
+                  ? `${toolbarStyles.commentMenuItem} ${toolbarStyles.serviceMenuItemNonPrintable}`
+                  : `${toolbarStyles.commentMenuItem} ${toolbarStyles.serviceMenuItemPrintable}`
+              }
+              onClick={(event) => {
+                event.currentTarget.closest('details')?.removeAttribute('open');
+                void handleAddAction(option.key);
+              }}
+              disabled={pendingAction != null}
+              role="menuitem"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </details>
     </div>
   );
 
@@ -1353,6 +1453,7 @@ export default function ClientProductsPage({
       >
         <span aria-hidden="true" style={{ fontSize: '20px', lineHeight: 1 }}>&larr;</span>
       </Link>
+      {pivotToggleButton}
       {pivotView ? null : (
         <button
           type="button"
@@ -1393,7 +1494,6 @@ export default function ClientProductsPage({
           Manual
         </button>
       )}
-      {pivotToggleButton}
       {isStandardPackage ? collapseAllToggleButton : null}
     </div>
   );
@@ -1476,7 +1576,7 @@ export default function ClientProductsPage({
               standardPackageMode={isStandardPackage}
               tableLayout={tableLayout}
               pricingPolicyName={pricingPolicyName}
-              hideTotals={isStandardPackage || showAddProductModal}
+              hideTotals={isStandardPackage || splitModalOpen}
               initialSelectedOfferDetailIds={savedSelectionIds}
               initialViewportScrollTop={initialProductsViewportScrollTop}
               onRequestPaste={handleRequestPaste}
@@ -1485,8 +1585,8 @@ export default function ClientProductsPage({
               offerCreatedByUserId={offerCreatedByUserId}
               onMainGridSelectionChanged={handleMainGridSelectionChanged}
               onRequestInsertProduct={handleRequestInsertProduct}
-              showInsertLineOnHover={showAddProductModal || detachedWindowOpen}
-              extraBottomScrollSpace={showAddProductModal}
+              showInsertLineOnHover={splitModalOpen || detachedWindowOpen}
+              extraBottomScrollSpace={splitModalOpen}
               onStartingItemNoChanged={(current) => {
                 const next = current ?? 1;
                 setStartingItemNo(next);
@@ -1496,8 +1596,31 @@ export default function ClientProductsPage({
               onCollapseAllSuppressed={() => setCollapseAllCategories(false)}
             />
           </div>
-          {showAddProductModal ? (
+          {showAddProductModal || showAddServiceModal ? (
             <div className={toolbarStyles.splitRight}>
+              {showAddServiceModal ? (
+                <AddProductsModal
+                  offerId={offerId}
+                  serviceOnly
+                  defaultIsPrintable={addServiceIsPrintable}
+                  onAdded={(inserted, insertedIds) => {
+                    if (inserted > 0) {
+                      if (insertedIds && insertedIds.length > 0) {
+                        offerProductsPanelRef.current?.flashRows?.(insertedIds);
+                      }
+                      setRefreshToken((prev) => prev + 1);
+                    }
+                  }}
+                  onClose={() => {
+                    setShowAddServiceModal(false);
+                    offerProductsPanelRef.current?.setInsertLineVisible?.(false);
+                    offerProductsPanelRef.current?.deselectAllRows?.();
+                  }}
+                  getInsertionAnchor={handleGetAddInsertionAnchor}
+                  splitViewMode
+                  refreshToken={refreshToken}
+                />
+              ) : (
               <AddProductsModal
                 offerId={offerId}
                 onAdded={handleProductsAdded}
@@ -1519,6 +1642,7 @@ export default function ClientProductsPage({
                 getLastClickedRowId={() => offerProductsPanelRef.current?.getLastClickedRowId?.() ?? null}
                 onRequestDetach={handleRequestDetachAddProducts}
               />
+              )}
             </div>
           ) : null}
         </div>

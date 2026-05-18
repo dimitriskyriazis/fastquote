@@ -250,7 +250,6 @@ export function useModalDragResize(options: Options = {}) {
   }, [draggable, resizable, clampOffset, applyTransform]);
 
   // --- Resize handles (handler only reads ref inside pointer event, not during render) ---
-  /* eslint-disable react-hooks/refs */
   const resizeHandles: ReactNode = resizable
     ? HANDLE_DEFS.map((h) =>
         React.createElement('div', {
@@ -261,7 +260,6 @@ export function useModalDragResize(options: Options = {}) {
         }),
       )
     : null;
-  /* eslint-enable react-hooks/refs */
 
   // --- Return values ---
   const cardStyle: CSSProperties =

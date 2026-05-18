@@ -8,6 +8,7 @@ import { logEditAuditDetails, type FieldChange } from '../../../../../lib/mutati
 import type { OfferBasicUpdateField } from '../../../../offers/[offerId]/OfferBasicDataTypes';
 import { requirePermission } from '../../../../../lib/authz';
 import { PROBABILITY_MIN, PROBABILITY_MAX } from '../../../../../lib/constants';
+import { realtimeEvents } from '../../../../../lib/realtimeEvents';
 
 type UpdateInput = {
   field?: OfferBasicUpdateField;
@@ -73,6 +74,7 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   PossibleOrderDate: { column: 'PossibleOrderDate', type: 'date', sqlType: sql.DateTime2 },
   OfferDate: { column: 'OfferDate', type: 'date', sqlType: sql.DateTime2 },
   ProtocolNo: { column: 'ProtocolNo', type: 'number', sqlType: sql.Int },
+  ServicesLocation: { column: 'ServicesLocation', type: 'string', sqlType: sql.NVarChar, length: 10 },
 };
 
 const normalizeValue = (value: unknown, type: FieldType): NormalizedValue => {
@@ -276,6 +278,69 @@ export async function PATCH(
     const result = await request.query(query);
     const rowsAffected = result.rowsAffected?.[0] ?? 0;
 
+    // When ServicesLocation changes, reprice all service product rows in the offer
+    const servicesLocationUpdate = normalizedUpdates.find((u) => u.field === 'ServicesLocation');
+    let repriceRowsAffected = 0;
+    if (servicesLocationUpdate && rowsAffected > 0) {
+      try {
+        const newLocation = servicesLocationUpdate.value;
+        const locationParam = typeof newLocation === 'string' ? newLocation : null;
+        const repriceReq = pool.request();
+        repriceReq.input('__offerId', sql.Int, offerId);
+        repriceReq.input('__newLocation', sql.NVarChar(10), locationParam);
+        const repriceResult = await repriceReq.query(`
+          UPDATE od
+          SET
+            od.ListPrice    = src.NewPrice,
+            od.TotalPrice   = CASE WHEN src.NewPrice IS NULL THEN NULL
+                                   ELSE ROUND(src.NewPrice * ISNULL(od.Quantity, 1), 4) END,
+            od.NetUnitPrice = CASE WHEN src.NewPrice IS NULL THEN NULL
+                                   ELSE ROUND(src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0), 4) END,
+            od.TotalNet     = CASE WHEN src.NewPrice IS NULL THEN NULL
+                                   ELSE ROUND(src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0) * ISNULL(od.Quantity, 1), 4) END,
+            od.NetCost      = CASE WHEN src.NewPrice IS NULL THEN NULL
+                                   ELSE ROUND(src.NewPrice * (1.0 - ISNULL(od.TelmacoDiscount, 0) / 100.0), 4) END,
+            od.TotalCost    = CASE WHEN src.NewPrice IS NULL THEN NULL
+                                   ELSE ROUND(src.NewPrice * (1.0 - ISNULL(od.TelmacoDiscount, 0) / 100.0) * ISNULL(od.Quantity, 1), 4) END,
+            od.GrossProfit  = CASE WHEN src.NewPrice IS NULL OR ISNULL(od.Quantity, 1) = 0 THEN NULL
+                                   ELSE ROUND((src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0)
+                                              - src.NewPrice * (1.0 - ISNULL(od.TelmacoDiscount, 0) / 100.0))
+                                             * ISNULL(od.Quantity, 1), 4) END,
+            od.Margin       = CASE WHEN src.NewPrice IS NULL OR src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0) = 0 THEN NULL
+                                   ELSE ROUND((1.0 - (src.NewPrice * (1.0 - ISNULL(od.TelmacoDiscount, 0) / 100.0))
+                                                   / (src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0))) * 100, 4) END,
+            od.ModifiedOn   = SYSUTCDATETIME()
+          FROM dbo.OfferDetails od
+          CROSS APPLY (
+            SELECT TOP (1)
+              CASE
+                WHEN @__newLocation = 'GR'    THEN COALESCE(pli.ServicePriceGR,    pli.ListPrice)
+                WHEN @__newLocation = 'outGR' THEN COALESCE(pli.ServicePriceOutGR, pli.ListPrice)
+                ELSE pli.ListPrice
+              END AS NewPrice
+            FROM dbo.PriceListItems pli
+            INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
+            WHERE pli.ProductID = od.ProductID
+              AND ISNULL(pl.IsService, 0) = 1
+              AND pl.Enabled = 1
+            ORDER BY pli.ID DESC
+          ) src
+          WHERE od.OfferID = @__offerId
+            AND od.ProductID IS NOT NULL
+        `);
+        repriceRowsAffected = repriceResult.rowsAffected?.[0] ?? 0;
+        if (repriceRowsAffected > 0) {
+          realtimeEvents.emit(
+            `offer:${offerId}:products`,
+            'rows-refresh',
+            { reason: 'services-location-changed', updated: repriceRowsAffected },
+          );
+        }
+      } catch (repriceErr) {
+        console.error('Service reprice failed:', repriceErr);
+      }
+    }
+
     // Log status change to history if status was updated
     if (statusUpdate && typeof statusUpdate.value === 'number') {
       const newStatusID = statusUpdate.value;
@@ -327,7 +392,7 @@ export async function PATCH(
       });
     }
 
-    return NextResponse.json({ ok: true, updated: normalizedUpdates.length, rowsAffected });
+    return NextResponse.json({ ok: true, updated: normalizedUpdates.length, rowsAffected, repriceRowsAffected });
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : 'Server error';

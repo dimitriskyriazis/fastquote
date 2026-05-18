@@ -56,6 +56,7 @@ export type OfferBasicRecord = {
   ModifiedByUserName: string | null;
   ModifiedByFullName: string | null;
   ProtocolNo: number | null;
+  ServicesLocation: string | null;
 };
 
 export type OfferContactInfo = {
@@ -105,4 +106,5 @@ export type OfferBasicUpdateField =
   | 'DeliveryDueDate'
   | 'PossibleOrderDate'
   | 'OfferDate'
-  | 'ProtocolNo';
+  | 'ProtocolNo'
+  | 'ServicesLocation';

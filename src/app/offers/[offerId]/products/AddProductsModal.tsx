@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic';
 import type { CellValueChangedEvent, ColDef, GridApi, RowClassParams, RowNode } from 'ag-grid-community';
 import styles from './AddProductsModal.module.css';
 import { showToastMessage } from '../../../../lib/toast';
-import { showConfirmDialog } from '../../../../lib/confirm';
+import { showConfirmDialog, showMultiChoiceDialog } from '../../../../lib/confirm';
 import { priceListStatusClassRules } from '../../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../../lib/localeNumber';
 import { useFarnellSearch, isFarnellRow, type FarnellSearchRow } from '../../../hooks/useFarnellSearch';
@@ -61,6 +61,8 @@ type Props = {
   onPlacementModeChange?: (mode: 'fill' | 'below') => void;
   getLastClickedRowId?: () => number | null;
   onRequestDetach?: () => void;
+  serviceOnly?: boolean;
+  defaultIsPrintable?: boolean;
 };
 
 type CategoryRow = {
@@ -274,6 +276,8 @@ export default function AddProductsModal({
   onPlacementModeChange,
   getLastClickedRowId: _getLastClickedRowId,
   onRequestDetach,
+  serviceOnly = false,
+  defaultIsPrintable,
 }: Props) {
   void _getLastClickedRowId;
   const [detachMenu, setDetachMenu] = useState<{ x: number; y: number } | null>(null);
@@ -372,6 +376,7 @@ export default function AddProductsModal({
     const smartActive = smartSearchEnabled || promptSubmitted;
     const payload: Record<string, unknown> = {
       action: 'products',
+      ...(serviceOnly ? { serviceOnly: true } : { excludeServices: true }),
     };
     // orFilterColumns OR-combines column filters across BrandName / PartNumber
     // / ModelNumber / Description.  That is what makes expand mode catch
@@ -395,7 +400,7 @@ export default function AddProductsModal({
     // rendered the new product twice (the server row plus the client-side
     // pinned row).  The new product is now shown only as a pinned top row.
     return payload;
-  }, [hiddenFilterTokens, negativeDescriptionTerms, smartSearchEnabled, promptSubmitted]);
+  }, [hiddenFilterTokens, negativeDescriptionTerms, serviceOnly, smartSearchEnabled, promptSubmitted]);
 
   const endpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
@@ -1071,36 +1076,64 @@ export default function AddProductsModal({
             ...(baseCategory != null ? { categoryId: baseCategory } : {}),
             products: productPayload,
             ...(trimmedComment && productPayload.length === 1 ? { comment: trimmedComment } : {}),
+            ...(serviceOnly && defaultIsPrintable !== undefined ? { isPrintable: defaultIsPrintable } : {}),
           };
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      let data:
-        | {
-            ok?: boolean;
-            inserted?: number;
-            updated?: number;
-            insertedOfferDetailIds?: Array<number | string | null>;
-            similarUnassignedCount?: number;
-            error?: string;
-          }
-        | null = null;
+      type AddResponseData = {
+        ok?: boolean;
+        inserted?: number;
+        updated?: number;
+        insertedOfferDetailIds?: Array<number | string | null>;
+        similarUnassignedCount?: number;
+        error?: string;
+        requiresServicesLocation?: boolean;
+      };
+      let data: AddResponseData | null = null;
       try {
-        data = (await res.json()) as {
-          ok?: boolean;
-          inserted?: number;
-          updated?: number;
-          insertedOfferDetailIds?: Array<number | string | null>;
-          similarUnassignedCount?: number;
-          error?: string;
-        } | null;
+        data = (await res.json()) as AddResponseData | null;
       } catch {
         data = null;
       }
       if (!res.ok || !data?.ok) {
-        throw new Error(data?.error ?? `Failed to add products (status ${res.status})`);
+        // If the server says a ServicesLocation is needed, prompt the user
+        if (data?.requiresServicesLocation === true) {
+          const location = await showMultiChoiceDialog({
+            title: 'Services Location Required',
+            message: 'These products are from a service pricelist. Please select the Services Location for this offer:',
+            choices: [
+              { label: 'Ath (Athens)', value: 'Ath' },
+              { label: 'GR (Greece)', value: 'GR' },
+              { label: 'outGR (Outside GR)', value: 'outGR' },
+            ],
+          });
+          if (!location) {
+            setSubmitting(false);
+            return;
+          }
+          // PATCH the offer's ServicesLocation
+          await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates: [{ field: 'ServicesLocation', value: location }] }),
+          });
+          // Retry the add with the location now set
+          const retryRes = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const retryData = (await retryRes.json().catch(() => null)) as AddResponseData | null;
+          if (!retryRes.ok || !retryData?.ok) {
+            throw new Error(retryData?.error ?? `Failed to add products after setting location (status ${retryRes.status})`);
+          }
+          data = retryData;
+        } else {
+          throw new Error(data?.error ?? `Failed to add products (status ${res.status})`);
+        }
       }
       // The first assign-requested call only fills the selected row.  If
       // there are other unassigned rows in this offer with identical
@@ -1308,6 +1341,7 @@ export default function AddProductsModal({
   }, [
     belowItemNo,
     comment,
+    defaultIsPrintable,
     endpoint,
     getInsertionAnchor,
     onAdded,
@@ -1318,6 +1352,7 @@ export default function AddProductsModal({
     selectedCategory?.OfferDetailID,
     selectedProducts,
     selectedRequestedRowId,
+    serviceOnly,
     resolveFarnellProduct,
   ]);
 
@@ -1948,7 +1983,6 @@ export default function AddProductsModal({
     <div className={styles.placementIndicator}>
       <div className={styles.placementTextColumn}>
         <span className={styles.placementText}>Adding product at the end of the list</span>
-        <span className={styles.placementText}>select a row to fill or click between rows to insert there</span>
       </div>
     </div>
   );
@@ -1965,7 +1999,11 @@ export default function AddProductsModal({
         <div className={styles.splitViewCard} onContextMenu={handleModalContextMenu}>
           <div className={styles.header}>
           <div className={styles.headerTopRow}>
-            <div className={styles.title}>Add Products</div>
+            <div className={styles.title}>
+              {serviceOnly
+                ? (defaultIsPrintable ? 'Add Printable Services' : 'Add Non-Printable Services')
+                : 'Add Products'}
+            </div>
             {placementIndicator}
           </div>
           <div className={styles.headerActions}>
@@ -2040,7 +2078,11 @@ export default function AddProductsModal({
       <div className={styles.card} onContextMenu={handleModalContextMenu}>
         <div className={styles.header}>
           <div className={styles.headerTopRow}>
-            <div className={styles.title}>Add Products</div>
+            <div className={styles.title}>
+              {serviceOnly
+                ? (defaultIsPrintable ? 'Add Printable Services' : 'Add Non-Printable Services')
+                : 'Add Products'}
+            </div>
             {placementIndicator}
           </div>
           <div className={styles.headerActions}>

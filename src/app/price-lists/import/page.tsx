@@ -186,6 +186,7 @@ type PriceListPrefillRow = {
   CurrencyCostModifier: number | null;
   CountryId: number | null;
   HasDuty: boolean | number | null;
+  IsService: boolean | number | null;
   ResponsibleUserId: string | null;
   Comments: string | null;
   ValidityComment: string | null;
@@ -203,7 +204,7 @@ async function fetchPrefillData(priceListId: number): Promise<PrefillData | null
     const result = await request.query<PriceListPrefillRow>(`
       SELECT
         ID, Name, BrandID, SupplierID, CurrencyId, CostCurrencyID,
-        CurrencyCostModifier, CountryId, HasDuty, ResponsibleUserId,
+        CurrencyCostModifier, CountryId, HasDuty, IsService, ResponsibleUserId,
         Comments, ValidityComment
       FROM dbo.PriceLists
       WHERE ID = @id
@@ -228,6 +229,7 @@ async function fetchPrefillData(priceListId: number): Promise<PrefillData | null
       currencyCostModifier: row.CurrencyCostModifier != null ? String(row.CurrencyCostModifier) : "1",
       countryId: row.CountryId != null ? String(row.CountryId) : "",
       hasDuty: row.HasDuty === true || row.HasDuty === 1 ? true : row.HasDuty === false || row.HasDuty === 0 ? false : null,
+      isService: row.IsService === true || row.IsService === 1 ? true : row.IsService === false || row.IsService === 0 ? false : null,
       responsibleUserId: row.ResponsibleUserId ?? "",
       comments: row.Comments ?? "",
       supplierComments: row.ValidityComment ?? "",

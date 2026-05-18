@@ -71,6 +71,7 @@ export type PrefillData = {
   currencyCostModifier: string;
   countryId: string;
   hasDuty: boolean | null;
+  isService: boolean | null;
   responsibleUserId: string;
   comments: string;
   supplierComments: string;
@@ -113,6 +114,7 @@ type FormValues = {
   responsibleUserId: string;
   supplierId: string;
   hasDuty: boolean | null;
+  isService: boolean | null;
   costCurrencyId: string;
   currencyCostModifier: string;
   countryId: string;
@@ -124,7 +126,7 @@ type FormValues = {
   decimalFormat: PriceListDecimalFormat;
 };
 
-type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning" | "weblink" | "legacyPartNumber";
+type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning" | "weblink" | "legacyPartNumber" | "servicePriceGR" | "servicePriceOutGR" | "serviceType";
 
 const columnKeywords: Record<HeaderColumnKey, string[]> = {
   partNumber: [
@@ -307,17 +309,43 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "former_part",
     "formerpart",
   ],
+  servicePriceGR: [
+    "servicepricegr",
+    "service price gr",
+    "service gr",
+    "price gr",
+    "τιμή gr",
+    "τιμη gr",
+  ],
+  serviceType: [
+    "servicetype",
+    "service type",
+    "type",
+    "τύπος υπηρεσίας",
+    "τυπος υπηρεσιας",
+  ],
+  servicePriceOutGR: [
+    "servicepriceoutgr",
+    "service price out gr",
+    "service outgr",
+    "price outgr",
+    "τιμή outgr",
+    "τιμη outgr",
+  ],
 };
 
-const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string; required?: boolean }> = [
+const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string; required?: boolean; serviceOnly?: boolean }> = [
   { key: "partNumber", label: "Part Number", required: true },
   { key: "modelNumber", label: "Model Number (optional)", required: false },
   { key: "description", label: "Name / Description (optional)", required: false },
-  { key: "listPrice", label: "List Price", required: true },
+  { key: "listPrice", label: "List Price (Ath price for services)", required: true },
   { key: "costPrice", label: "Cost Price (optional)", required: false },
   { key: "warning", label: "Warning (optional)", required: false },
   { key: "weblink", label: "Weblink (optional)", required: false },
   { key: "legacyPartNumber", label: "Legacy Part Number (optional)", required: false },
+  { key: "servicePriceGR", label: "Service Price GR (optional)", required: false, serviceOnly: true },
+  { key: "servicePriceOutGR", label: "Service Price OutGR (optional)", required: false, serviceOnly: true },
+  { key: "serviceType", label: "Service Type (ServLot/ServPerUnit)", required: false, serviceOnly: true },
 ];
 
 const PREVIEW_COLUMN_KEYS: HeaderColumnKey[] = [
@@ -329,6 +357,9 @@ const PREVIEW_COLUMN_KEYS: HeaderColumnKey[] = [
   "warning",
   "weblink",
   "legacyPartNumber",
+  "servicePriceGR",
+  "servicePriceOutGR",
+  "serviceType",
 ];
 
 type ColumnOption = { index: number; label: string; normalized: string };
@@ -723,6 +754,9 @@ const buildSuggestions = (columns: ColumnOption[]) => {
     warning: makeSuggestions("warning"),
     weblink: makeSuggestions("weblink"),
     legacyPartNumber: makeSuggestions("legacyPartNumber"),
+    servicePriceGR: makeSuggestions("servicePriceGR"),
+    servicePriceOutGR: makeSuggestions("servicePriceOutGR"),
+    serviceType: makeSuggestions("serviceType"),
   };
 };
 
@@ -832,6 +866,9 @@ const evaluateSelection = (sheets: SheetMapping[], activeSheetIndex: number) => 
     warning: selection.warning != null,
     weblink: selection.weblink != null,
     legacyPartNumber: selection.legacyPartNumber != null,
+    servicePriceGR: selection.servicePriceGR != null,
+    servicePriceOutGR: selection.servicePriceOutGR != null,
+    serviceType: selection.serviceType != null,
   };
 
   const status: FileValidation["status"] = validSheets.length > 0 ? "valid" : "invalid";
@@ -928,6 +965,7 @@ export default function PriceListImportClient({
     responsibleUserId: prefill?.responsibleUserId ?? "",
     supplierId: prefill?.supplierId ?? "",
     hasDuty: prefill?.hasDuty ?? false,
+    isService: prefill?.isService ?? false,
     costCurrencyId: prefill?.costCurrencyId || (initialEuro?.value ?? ""),
     currencyCostModifier: prefill?.currencyCostModifier ?? "1",
     countryId: prefill?.countryId ?? "",
@@ -1679,7 +1717,10 @@ export default function PriceListImportClient({
 
   const previewColumns = useMemo<PreviewColumn[]>(() => {
     if (!activeSheet) return [];
-    return PREVIEW_COLUMN_KEYS.map((key) => {
+    const activeKeys = PREVIEW_COLUMN_KEYS.filter((key) =>
+      key !== "servicePriceGR" && key !== "servicePriceOutGR" && key !== "serviceType" || values.isService,
+    );
+    return activeKeys.map((key) => {
       const columnIndex = activeSheet.selection[key];
       if (columnIndex == null) return null;
       const column = activeSheet.columns.find((col) => col.index === columnIndex);
@@ -1690,7 +1731,7 @@ export default function PriceListImportClient({
         isListPrice: key === "listPrice",
       };
     }).filter((col): col is PreviewColumn => Boolean(col));
-  }, [activeSheet]);
+  }, [activeSheet, values.isService]);
 
   const displayPreviewRows = useMemo<Record<number, unknown>[]>(() => {
     if (!activeSheet) return [];
@@ -1923,6 +1964,7 @@ export default function PriceListImportClient({
       formData.append("responsibleUserId", values.responsibleUserId);
       formData.append("supplierId", values.supplierId);
       formData.append("hasDuty", values.hasDuty ? "1" : "0");
+      formData.append("isService", values.isService ? "1" : "0");
       // Currency is always EUR.
       formData.append("currencyId", euroCurrencyId);
       formData.append("costCurrencyId", values.costCurrencyId || euroCurrencyId);
@@ -1943,6 +1985,9 @@ export default function PriceListImportClient({
       if (values.hasDuty !== null) {
         formData.append("hasDuty", values.hasDuty ? "1" : "0");
       }
+      if (values.isService !== null) {
+        formData.append("isService", values.isService ? "1" : "0");
+      }
       formData.append("file", currentFile, currentFile.name);
       const columnMappings = selectedSheets.map((sheet) => ({
         sheetName: sheet.name,
@@ -1956,6 +2001,9 @@ export default function PriceListImportClient({
           warning: sheet.selection.warning ?? null,
           weblink: sheet.selection.weblink ?? null,
           legacyPartNumber: sheet.selection.legacyPartNumber ?? null,
+          servicePriceGR: sheet.selection.servicePriceGR ?? null,
+          servicePriceOutGR: sheet.selection.servicePriceOutGR ?? null,
+          serviceType: sheet.selection.serviceType ?? null,
         },
       }));
       formData.append("columnMappings", JSON.stringify(columnMappings));
@@ -2178,7 +2226,7 @@ export default function PriceListImportClient({
     <>
       <main className={`${layoutStyles.page} ${styles.importPage}`}>
       <div className={`${layoutStyles.headerRow} ${layoutStyles.headerRowCentered}`}>
-        <Link href="/price-lists" className={`${layoutStyles.backLink} ${layoutStyles.backLinkAbsolute} page-header-button`}>
+        <Link href="/price-lists" className={`${layoutStyles.backLink} ${layoutStyles.backLinkAbsolute} ${styles.backLinkCentered} page-header-button`}>
           ← Back to price lists
         </Link>
         <h1 className={layoutStyles.heading}>
@@ -2186,10 +2234,19 @@ export default function PriceListImportClient({
             ? `Appending products to ${appendToPriceListName?.trim() || `price list #${appendToPriceListId ?? ""}`}`
             : "Import Price List"}
         </h1>
+        <div className={styles.headerActions}>
+          {error && <div className={styles.error}>{error}</div>}
+          <button form="price-list-import-form" type="submit" className={`${styles.submitButton} page-header-button`} disabled={submitting}>
+            {submitting
+              ? (appendMode ? "Appending…" : "Importing…")
+              : (appendMode ? "Append Products" : "Create Price List")}
+          </button>
+        </div>
       </div>
 
       <section className={styles.card}>
         <form
+          id="price-list-import-form"
           className={styles.form}
           onSubmit={handleSubmit}
           autoComplete="off"
@@ -2505,20 +2562,6 @@ export default function PriceListImportClient({
 
               <div className={styles.fieldRow}>
                 <label className={styles.field}>
-                  <span className={styles.label}>Previous Version</span>
-                  <select
-                    className={styles.input}
-                    value={values.previousPriceListId}
-                    onChange={(e) => updateField("previousPriceListId", e.target.value)}
-                  >
-                    <option value="">No previous price list</option>
-                    {filteredPreviousPriceLists.map(renderOption)}
-                  </select>
-                  <span className={styles.helpText}>
-                    If selected, the previous price list will be disabled and replaced by this one.
-                  </span>
-                </label>
-                <label className={styles.field}>
                   <span className={styles.label}>Has Duty</span>
                   <select
                     className={styles.input}
@@ -2537,7 +2580,41 @@ export default function PriceListImportClient({
                     <option value="0">No</option>
                   </select>
                 </label>
+                <label className={styles.field}>
+                  <span className={styles.label}>Is Service</span>
+                  <select
+                    className={styles.input}
+                    value={values.isService === null ? "" : values.isService ? "1" : "0"}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "") {
+                        updateField("isService", null);
+                      } else {
+                        updateField("isService", val === "1");
+                      }
+                    }}
+                  >
+                    <option value="">Select</option>
+                    <option value="1">Yes</option>
+                    <option value="0">No</option>
+                  </select>
+                </label>
               </div>
+
+              <label className={styles.field}>
+                <span className={styles.label}>Previous Version</span>
+                <select
+                  className={styles.input}
+                  value={values.previousPriceListId}
+                  onChange={(e) => updateField("previousPriceListId", e.target.value)}
+                >
+                  <option value="">No previous price list</option>
+                  {filteredPreviousPriceLists.map(renderOption)}
+                </select>
+                <span className={styles.helpText}>
+                  If selected, the previous price list will be disabled and replaced by this one.
+                </span>
+              </label>
             </div>
             )}
 
@@ -2702,7 +2779,7 @@ export default function PriceListImportClient({
                               <strong>{activeSheet?.name || "Sheet"}</strong> — Choose columns for the fields below.
                             </div>
                             <div className={styles.mappingGrid}>
-                              {COLUMN_DISPLAY.map((column) => {
+                              {COLUMN_DISPLAY.filter((column) => !column.serviceOnly || values.isService).map((column) => {
                                 const selectionValue =
                                   activeSheet?.selection[column.key] != null
                                     ? String(activeSheet.selection[column.key])
@@ -2802,7 +2879,7 @@ export default function PriceListImportClient({
                           </div>
                         ) : null}
                         <div className={styles.validationColumns}>
-                          {COLUMN_DISPLAY.map((column) => {
+                          {COLUMN_DISPLAY.filter((column) => !column.serviceOnly || values.isService).map((column) => {
                             const found = Boolean(fileValidation.columns[column.key]);
                             const pillState = found
                               ? styles.columnPillGood
@@ -2830,15 +2907,6 @@ export default function PriceListImportClient({
             </div>
           </div>
 
-          <div className={styles.actionsRow}>
-            {error && <div className={styles.error}>{error}</div>}
-            <div className={styles.actionsSpacer} />
-            <button type="submit" className={`${styles.submitButton} page-header-button`} disabled={submitting}>
-              {submitting
-                ? (appendMode ? "Appending…" : "Importing…")
-                : (appendMode ? "Append Products" : "Create Price List")}
-            </button>
-          </div>
         </form>
       </section>
       <AddBrandModal

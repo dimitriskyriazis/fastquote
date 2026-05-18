@@ -269,6 +269,19 @@ const buildFieldDefinitions = (
     options: markets,
   },
   {
+    id: 'servicesLocation',
+    label: 'Services Location',
+    section: 'commercial',
+    recordKey: 'ServicesLocation',
+    updateField: 'ServicesLocation',
+    valueType: 'string',
+    options: [
+      { value: 'Ath', label: 'Ath' },
+      { value: 'GR', label: 'GR' },
+      { value: 'outGR', label: 'outGR' },
+    ],
+  },
+  {
     id: 'division',
     label: 'Sales Division',
     section: 'commercial',
@@ -809,6 +822,11 @@ export default function OfferBasicDataClient({
     } else {
       oldPayloadValue = normalizeValueForApi(oldDisplayValue, def.valueType);
     }
+    if (def.id === 'servicesLocation') {
+      try {
+        localStorage.setItem(`fastquote:services-repriced:${offerId}`, String(Date.now()));
+      } catch { /* noop */ }
+    }
     setPendingFields((prev) => ({ ...prev, [def.id]: true }));
     try {
       const response = await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
@@ -833,6 +851,15 @@ export default function OfferBasicDataClient({
             detail: resolvedDisplayValue || null,
           }),
         );
+      }
+
+      if (def.id === 'servicesLocation') {
+        try {
+          const bc = new BroadcastChannel('fastquote:offer-events');
+          bc.postMessage({ type: 'services-location-changed', offerId });
+          bc.close();
+        } catch { /* noop */ }
+        window.dispatchEvent(new CustomEvent('fastquote:services-location-changed'));
       }
 
       if (def.id === 'offerLanguage' && (resolvedDisplayValue === 'Greek' || resolvedDisplayValue === 'English')) {

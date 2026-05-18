@@ -240,6 +240,15 @@ const buildFieldDefinitions = (
     valueType: 'number',
     options: BOOLEAN_OPTIONS,
   },
+  {
+    id: 'isService',
+    label: 'Is Service',
+    section: 'settings',
+    recordKey: 'IsService',
+    updateField: 'IsService',
+    valueType: 'number',
+    options: BOOLEAN_OPTIONS,
+  },
 ];
 
 

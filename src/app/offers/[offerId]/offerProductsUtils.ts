@@ -6,7 +6,7 @@ import type {
   ValueFormatterParams,
   ValueGetterParams,
 } from 'ag-grid-community';
-import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment } from '../../../lib/offerProductRows';
+import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductService } from '../../../lib/offerProductRows';
 import { priceListStatusClassRules } from '../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 import type { RequestedProductMatchEntry } from './products/MatchRequestedProductsModal';
@@ -1321,12 +1321,17 @@ export function computeDisplayOrderingMap(
     const actualParentKey = path.slice(0, -1).join('.');
     const isRoot = path.length === 1;
 
-    if (resolveOfferProductRowType(row) === 'non-printable-comment') {
+    const rowType = resolveOfferProductRowType(row);
+    if (rowType === 'non-printable-comment') {
       // Comments anchor on the previous visible row's display. In manual
       // mode "lastVisibleDisplay" is the previous row's RAW value; in auto
       // mode it's the renumbered display. Either way the comment reads
       // naturally as "<rowAbove>C".
       result.set(String(id), `${lastVisibleDisplay}C`);
+      continue;
+    }
+    if (rowType === 'non-printable-service') {
+      result.set(String(id), `${lastVisibleDisplay}S`);
       continue;
     }
 
@@ -1891,7 +1896,7 @@ export const buildFarnellPricingPatch = (
 };
 
 export const isOfferProductCommentOrProduct = (row: Record<string, unknown> | null | undefined) =>
-  isOfferProductProduct(row) || isOfferProductComment(row);
+  isOfferProductProduct(row) || isOfferProductComment(row) || isOfferProductService(row);
 
 export const buildCategoryAggregateGetter = (field: 'TotalPrice' | 'TotalNet' | 'TotalCost') => (
   params: ValueGetterParams<Record<string, unknown>, unknown>,
@@ -1946,6 +1951,8 @@ export const OFFER_PRODUCTS_EXPORT_FIELDS = [
   'IsComment',
   'IsCategory',
   'IsOption',
+  'IsService',
+  'ServiceType',
 ] as const;
 
 export const normalizeNoForExport = (value: unknown): string | number => {
@@ -2063,10 +2070,15 @@ export const DESCRIPTION_PASTE_BLOCKLIST = new Set([
   'Add Category',
   'Add Printable Comment',
   'Add Non Printable Comment',
+  'Add Service',
+  'Add Printable Service',
+  'Add Non Printable Service',
   'Add Requested Products',
   'New Category',
   'New Printable Comment',
   'New Non Printable Comment',
+  'New Printable Service',
+  'New Non Printable Service',
   'Printable',
   'Non Printable',
 ]);

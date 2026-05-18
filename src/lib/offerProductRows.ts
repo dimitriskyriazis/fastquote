@@ -5,6 +5,8 @@ export type OfferProductRowType =
   | 'product'
   | 'printable-comment'
   | 'non-printable-comment'
+  | 'printable-service'
+  | 'non-printable-service'
   | 'unknown';
 
 const isTruthy = (value: unknown): boolean => {
@@ -43,16 +45,22 @@ export const resolveOfferProductRowType = (row: OfferProductRow): OfferProductRo
   if (!row || typeof row !== 'object') return 'unknown';
   const printableRaw = (row as { IsPrintable?: unknown }).IsPrintable;
   const commentRaw = (row as { IsComment?: unknown }).IsComment;
+  const serviceRaw = (row as { IsService?: unknown }).IsService;
   const partNumberRaw = (row as { PartNumber?: unknown }).PartNumber;
   const modelNumberRaw = (row as { ModelNumber?: unknown }).ModelNumber;
   const requestedPartRaw = (row as { RequestedPartNo?: unknown }).RequestedPartNo;
   const requestedModelRaw = (row as { RequestedModelNo?: unknown }).RequestedModelNo;
   const categoryRaw = (row as { IsCategory?: unknown }).IsCategory;
 
+  const isService = isTruthy(serviceRaw);
   const isComment = isTruthy(commentRaw);
   const isExplicitlyNotPrintable = isFalsy(printableRaw);
   const isExplicitCategory = isTruthy(categoryRaw);
 
+  if (isService) {
+    if (isExplicitlyNotPrintable) return 'non-printable-service';
+    return 'printable-service';
+  }
   if (isComment) {
     if (isExplicitlyNotPrintable) return 'non-printable-comment';
     return 'printable-comment';
@@ -77,6 +85,11 @@ export const isOfferProductComment = (row: OfferProductRow) => {
   return type === 'printable-comment' || type === 'non-printable-comment';
 };
 
+export const isOfferProductService = (row: OfferProductRow): boolean => {
+  const type = resolveOfferProductRowType(row);
+  return type === 'printable-service' || type === 'non-printable-service';
+};
+
 export const isOfferProductOption = (row: OfferProductRow): boolean => {
   if (!row || typeof row !== 'object') return false;
   return isTruthy((row as { IsOption?: unknown }).IsOption);
@@ -92,6 +105,10 @@ export const describeOfferProductRowType = (type: OfferProductRowType | null | u
       return 'Printable comments';
     case 'non-printable-comment':
       return 'Non printable comments';
+    case 'printable-service':
+      return 'Printable services';
+    case 'non-printable-service':
+      return 'Non printable services';
     default:
       return 'This row type';
   }

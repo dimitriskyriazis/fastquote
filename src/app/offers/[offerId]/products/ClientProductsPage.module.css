@@ -393,6 +393,30 @@
   cursor: not-allowed;
 }
 
+.buttonService {
+  background-color: #fef9c3;
+  color: #713f12;
+  border-color: rgba(113, 63, 18, 0.25);
+}
+
+.serviceMenuItemPrintable {
+  background: #fef9c3;
+  color: #713f12;
+}
+
+.serviceMenuItemNonPrintable {
+  background: #ffedd5;
+  color: #7c2d12;
+}
+
+.serviceMenuItemPrintable:hover {
+  background: #fde68a;
+}
+
+.serviceMenuItemNonPrintable:hover {
+  background: #fed7aa;
+}
+
 .manualToggle {
   border: 1px solid rgba(15, 23, 42, 0.15);
   background: #ffffff;

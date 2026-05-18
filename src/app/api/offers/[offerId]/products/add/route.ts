@@ -1104,6 +1104,11 @@ async function handleProductGrid(
   if (orClauses.length > 0) {
     finalClauses.push(orClauses.length === 1 ? orClauses[0] : `(${orClauses.join(' OR ')})`);
   }
+  if (body?.serviceOnly === true) {
+    finalClauses.push(`EXISTS (SELECT 1 FROM dbo.PriceListItems pli_svc INNER JOIN dbo.PriceLists pl_svc ON pli_svc.PriceListID = pl_svc.ID WHERE pli_svc.ProductID = bp.ProductID AND ISNULL(pl_svc.IsService, 0) = 1 AND pl_svc.Enabled = 1)`);
+  } else if (body?.excludeServices === true) {
+    finalClauses.push(`NOT EXISTS (SELECT 1 FROM dbo.PriceListItems pli_svc INNER JOIN dbo.PriceLists pl_svc ON pli_svc.PriceListID = pl_svc.ID WHERE pli_svc.ProductID = bp.ProductID AND ISNULL(pl_svc.IsService, 0) = 1 AND pl_svc.Enabled = 1)`);
+  }
   const whereSql = finalClauses.length ? `WHERE ${finalClauses.join(' AND ')}` : '';
   const quickFilterColumns = Object.entries(columnExpressions).map(([colId, expression]) => ({
     colId,
@@ -1173,15 +1178,16 @@ async function handleProductGrid(
 
   const pool = await getPool();
 
-  // Look up the offer's pricing policy so we can prefer matching pricelists
+  // Look up the offer's pricing policy and services location
   const policyLookup = pool.request();
   policyLookup.input('__offerId', sql.Int, offerId);
-  const policyResult = await policyLookup.query<{ PricingPolicyID: number | null }>(`
-    SELECT TOP (1) o.PricingPolicyID
+  const policyResult = await policyLookup.query<{ PricingPolicyID: number | null; ServicesLocation: string | null }>(`
+    SELECT TOP (1) o.PricingPolicyID, o.ServicesLocation
     FROM dbo.Offer o
     WHERE o.ID = @__offerId
   `);
   const offerPricingPolicyId = policyResult.recordset?.[0]?.PricingPolicyID ?? null;
+  const offerServicesLocation = policyResult.recordset?.[0]?.ServicesLocation ?? null;
 
   // Stage 1: if the entry has a Part or Model code, try a narrow exact-ish
   // lookup across Part/Model/Description before firing the full smart query.
@@ -1296,7 +1302,13 @@ async function handleProductGrid(
           pli.ID AS PriceListItemID,
           pli.PriceListID,
           pl.Name AS PriceListName,
-          pli.ListPrice,
+          ${body?.serviceOnly === true
+            ? offerServicesLocation === 'GR'
+              ? 'COALESCE(pli.ServicePriceGR, pli.ListPrice)'
+              : offerServicesLocation === 'outGR'
+                ? 'COALESCE(pli.ServicePriceOutGR, pli.ListPrice)'
+                : 'pli.ListPrice'
+            : 'pli.ListPrice'} AS ListPrice,
           pli.CostPrice,
           pl.ValidFromDate AS PriceListValidFromDate,
           pl.ValidToDate AS PriceListValidToDate,
@@ -1306,6 +1318,7 @@ async function handleProductGrid(
           LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @__pricingPolicyId
         WHERE pl.Enabled = 1
           AND pli.ProductID = bp.ProductID
+          ${body?.serviceOnly === true ? 'AND ISNULL(pl.IsService, 0) = 1' : ''}
         ORDER BY
           CASE WHEN plpp.ID IS NOT NULL THEN 0 ELSE 1 END,
           CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
@@ -1482,9 +1495,40 @@ async function handleAddProducts(
   }
   const addCommentRaw = body?.comment ?? (body as { Comment?: unknown })?.Comment ?? null;
   const addCommentValue = typeof addCommentRaw === 'string' && selections.length === 1 ? addCommentRaw.trim() || null : null;
+  const isPrintableRaw = body?.isPrintable;
+  const isPrintableValue = isPrintableRaw === true ? 1 : isPrintableRaw === false ? 0 : null;
 
   try {
   const pool = await getPool();
+
+  // Pre-flight: check if any selected products come from a service pricelist
+  // and the offer has no ServicesLocation set. If so, ask the client to set it first.
+  {
+    const productIds = selections.map((s) => s.productId);
+    const checkReq = pool.request();
+    checkReq.input('__offerId', sql.Int, offerId);
+    productIds.forEach((pid, idx) => checkReq.input(`__pid_${idx}`, sql.Int, pid));
+    const pidList = productIds.map((_, idx) => `@__pid_${idx}`).join(', ');
+    const checkResult = await checkReq.query<{ hasServiceProducts: number; hasLocation: number }>(`
+      SELECT
+        (SELECT CASE WHEN EXISTS (
+          SELECT 1
+          FROM dbo.Products p
+          INNER JOIN dbo.PriceListItems pli ON pli.ProductID = p.ID
+          INNER JOIN dbo.PriceLists pl ON pl.ID = pli.PriceListID AND pl.Enabled = 1 AND ISNULL(pl.IsService, 0) = 1
+          WHERE p.ID IN (${pidList})
+        ) THEN 1 ELSE 0 END) AS hasServiceProducts,
+        (SELECT CASE WHEN ServicesLocation IS NOT NULL THEN 1 ELSE 0 END
+         FROM dbo.Offer WHERE ID = @__offerId) AS hasLocation
+    `);
+    const row = checkResult.recordset?.[0];
+    if (row && row.hasServiceProducts === 1 && row.hasLocation === 0) {
+      return NextResponse.json(
+        { ok: false, requiresServicesLocation: true, error: 'Services Location is required for this offer to add service products.' },
+        { status: 400 },
+      );
+    }
+  }
 
   let parentTreeOrdering: string | null = null;
 
@@ -1518,6 +1562,7 @@ async function handleAddProducts(
   request.input('__createdBy', sql.Int, auditUserId);
   request.input('__modifiedBy', sql.Int, auditUserId);
   request.input('__addComment', sql.NVarChar(sql.MAX), addCommentValue);
+  request.input('__isPrintable', sql.Bit, isPrintableValue);
 
   const valueClauses: string[] = [];
   selections.forEach((entry, idx) => {
@@ -1540,11 +1585,13 @@ async function handleAddProducts(
   DECLARE @pricingPolicyId INT;
   DECLARE @offerCurrencyId INT;
   DECLARE @offerCurrencyModifier DECIMAL(18, 8);
+  DECLARE @servicesLocation NVARCHAR(10);
 
   SELECT
     @pricingPolicyId = o.PricingPolicyID,
     @offerCurrencyId = o.CurrencyID,
-    @offerCurrencyModifier = o.CurrencyModifier
+    @offerCurrencyModifier = o.CurrencyModifier,
+    @servicesLocation = o.ServicesLocation
   FROM dbo.Offer o
   WHERE o.ID = @__offerId;
 
@@ -1648,33 +1695,44 @@ async function handleAddProducts(
     CustomerDiscountPct DECIMAL(18, 4) NOT NULL DEFAULT 0,
     ComputedTelmacoDiscount DECIMAL(18, 4) NOT NULL DEFAULT 0,
     ComputedNetUnitPrice DECIMAL(18, 4) NULL,
-    ComputedNetCost DECIMAL(18, 4) NULL
+    ComputedNetCost DECIMAL(18, 4) NULL,
+    IsService BIT NULL,
+    ServiceType NVARCHAR(20) NULL
   );
 
   -- Step 1: Base product data + best price
   INSERT INTO #PD (
     ProductID, Seq, Description, BrandID, PartNumber, ModelNumber,
     PriceListID, PriceListItemID, ListPrice, CostPrice,
-    OtherCurrencyID, CurrencyCostModifier
+    OtherCurrencyID, CurrencyCostModifier, IsService, ServiceType
   )
   SELECT
     p.ProductID, p.Seq, pr.Description, pr.BrandID, pr.PartNumber, pr.ModelNumber,
     price.PriceListID, price.PriceListItemID, price.ListPrice, price.CostPrice,
-    price.OtherCurrencyID, price.CurrencyCostModifier
+    price.OtherCurrencyID, price.CurrencyCostModifier, price.IsService, price.ServiceType
   FROM #PP p
     INNER JOIN dbo.Products pr ON pr.ID = p.ProductID
     OUTER APPLY (
       SELECT TOP (1)
         pli.ID AS PriceListItemID,
         pli.PriceListID,
-        CASE WHEN pl.CurrencyId = @offerCurrencyId THEN pli.ListPrice
-             ELSE pli.ListPrice * COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1)
+        CASE
+          WHEN ISNULL(COALESCE(pl.IsService, pr.IsService), 0) = 1 THEN
+            CASE @servicesLocation
+              WHEN 'GR'    THEN ISNULL(pli.ServicePriceGR,    pli.ListPrice)
+              WHEN 'outGR' THEN ISNULL(pli.ServicePriceOutGR, pli.ListPrice)
+              ELSE pli.ListPrice
+            END
+          WHEN pl.CurrencyId = @offerCurrencyId THEN pli.ListPrice
+          ELSE pli.ListPrice * COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1)
         END AS ListPrice,
         pli.CostPrice,
         CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @offerCurrencyId THEN NULL
              ELSE COALESCE(pl.CostCurrencyID, pl.CurrencyId) END AS OtherCurrencyID,
         CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @offerCurrencyId THEN NULL
-             ELSE COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1) END AS CurrencyCostModifier
+             ELSE COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1) END AS CurrencyCostModifier,
+        COALESCE(pl.IsService, pr.IsService) AS IsService,
+        COALESCE(pli.ServiceType, pr.ServiceType) AS ServiceType
       FROM dbo.PriceListItems pli
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @pricingPolicyId
@@ -1773,7 +1831,7 @@ async function handleAddProducts(
   -- Step 4: Simple INSERT from pre-computed data (no OUTER APPLYs)
   INSERT INTO dbo.OfferDetails (
     OfferID, ParentOfferDetailID, TreeOrdering, Ordering,
-    IsPrintable, IsComment, IsCategory,
+    IsPrintable, IsComment, IsCategory, IsService, ServiceType,
     ProductID, BrandID, PartNumber, ModelNumber, ProductDescription,
     TelmacoWarranty, Warranty, Quantity,
     ListPrice, NetUnitPrice, TotalPrice, TotalNet,
@@ -1793,7 +1851,7 @@ async function handleAddProducts(
       ELSE CONCAT(@parentTree, '.', @maxChild + ROW_NUMBER() OVER (ORDER BY p.Seq))
     END,
     @nextOrdering + ROW_NUMBER() OVER (ORDER BY p.Seq) - 1,
-    NULL, 0, 0,
+    CASE WHEN p.IsService = 1 THEN @__isPrintable ELSE NULL END, 0, 0, p.IsService, p.ServiceType,
     p.ProductID, p.BrandID, p.PartNumber, p.ModelNumber, p.Description,
     p.TelmacoWarrantyYears,
     p.CustomerWarrantyYears,

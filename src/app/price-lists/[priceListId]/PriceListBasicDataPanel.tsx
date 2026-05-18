@@ -50,6 +50,7 @@ export async function fetchPriceListBasicRecord(priceListId: number) {
         pl.ResponsibleUserId,
         COALESCE(NULLIF(LTRIM(RTRIM(resp.FullName)), ''), resp.UserName) AS ResponsibleUserName,
         pl.HasDuty,
+        pl.IsService,
         NULL AS PricingPolicyID,
         NULL AS PricingPolicyName,
         pl.ModifiedOn,

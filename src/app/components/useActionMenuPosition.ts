@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/set-state-in-effect */
 'use client';
 
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react';

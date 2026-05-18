@@ -29,6 +29,7 @@ export type PriceListBasicRecord = {
   ModifiedByUserId: string | null;
   ModifiedByUserName: string | null;
   ModifiedByFullName: string | null;
+  IsService: boolean | number | null;
 };
 
 export type PriceListDropdownOption = DropdownOption;
@@ -63,4 +64,5 @@ export type PriceListBasicUpdateField =
   | "CurrencyCostModifier"
   | "ResponsibleUserId"
   | "Enabled"
-  | "HasDuty";
+  | "HasDuty"
+  | "IsService";

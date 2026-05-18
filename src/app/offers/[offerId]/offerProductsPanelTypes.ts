@@ -88,4 +88,6 @@ export type OfferExportRow = {
   IsComment?: boolean | null;
   IsCategory?: boolean | null;
   IsOption?: boolean | number | null;
+  IsService?: boolean | number | null;
+  ServiceType?: string | null;
 };

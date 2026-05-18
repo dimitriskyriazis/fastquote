@@ -53,6 +53,7 @@ const FIELD_CONFIG: Record<PriceListBasicUpdateField, FieldConfig> = {
   ResponsibleUserId: { column: "ResponsibleUserId", type: "string", sqlType: sql.NVarChar, length: 450 },
   Enabled: { column: "Enabled", type: "number", sqlType: sql.Bit },
   HasDuty: { column: "HasDuty", type: "number", sqlType: sql.Bit },
+  IsService: { column: "IsService", type: "number", sqlType: sql.Bit },
 };
 
 const normalizeValue = (value: unknown, type: FieldType): NormalizedValue => {

@@ -32,6 +32,9 @@ type ParsedPriceListRow = {
   description: string | null;
   listPrice: number | null;
   costPrice: number | null;
+  servicePriceGR: number | null;
+  servicePriceOutGR: number | null;
+  serviceType: string | null;
   warning: string | null;
   weblink: string | null;
   legacyPartNumber: string | null;
@@ -45,7 +48,7 @@ type ProductRow = {
   Description: string | null;
 };
 
-type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning" | "weblink" | "legacyPartNumber";
+type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "servicePriceGR" | "servicePriceOutGR" | "serviceType" | "warning" | "weblink" | "legacyPartNumber";
 
 type ColumnMapping = {
   sheetName: string | null;
@@ -86,6 +89,18 @@ const HEADER_SYNONYMS: Record<HeaderColumnKey, string[]> = {
     "netprice", "net price", "net",
     "κόστος", "κοστος", "τιμή κόστους", "τιμη κοστους",
     "καθαρή τιμή", "καθαρη τιμη",
+  ],
+  servicePriceGR: [
+    "servicepricegr", "service price gr", "service gr", "price gr",
+    "τιμή gr", "τιμη gr", "List Gre",
+  ],
+  servicePriceOutGR: [
+    "servicepriceoutgr", "service price out gr", "service outgr", "price outgr",
+    "τιμή outgr", "τιμη outgr", "List Outside Gre"
+  ],
+  serviceType: [
+    "servicetype", "service type", "type", "service kind",
+    "τύπος υπηρεσίας", "τυπος υπηρεσιας",
   ],
   warning: [
     "warning", "warn", "note", "remark",
@@ -467,6 +482,10 @@ const parseSheetWithMapping = (
     const description = normalizeCellString(getValue(row, "description"), 2000);
     const listPrice = parsePrice(pickPriceSource(row, rawRow, "listPrice"), decimalFormat);
     const costPrice = parsePrice(pickPriceSource(row, rawRow, "costPrice"), decimalFormat);
+    const servicePriceGR = parsePrice(pickPriceSource(row, rawRow, "servicePriceGR"), decimalFormat);
+    const servicePriceOutGR = parsePrice(pickPriceSource(row, rawRow, "servicePriceOutGR"), decimalFormat);
+    const serviceTypeRaw = normalizeCellString(getValue(row, "serviceType"), 20);
+    const serviceType = serviceTypeRaw === "ServLot" || serviceTypeRaw === "ServPerUnit" ? serviceTypeRaw : null;
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
     const legacyPartNumber = normalizeCellString(getValue(row, "legacyPartNumber"), 50);
 
@@ -493,6 +512,9 @@ const parseSheetWithMapping = (
       description,
       listPrice,
       costPrice,
+      servicePriceGR,
+      servicePriceOutGR,
+      serviceType,
       warning,
       weblink,
       legacyPartNumber,
@@ -538,6 +560,10 @@ const parseSheet = (
     const description = normalizeCellString(getValue(row, "description"), 2000);
     const listPrice = parsePrice(pickPriceSource(row, rawRow, "listPrice"), decimalFormat);
     const costPrice = parsePrice(pickPriceSource(row, rawRow, "costPrice"), decimalFormat);
+    const servicePriceGR = parsePrice(pickPriceSource(row, rawRow, "servicePriceGR"), decimalFormat);
+    const servicePriceOutGR = parsePrice(pickPriceSource(row, rawRow, "servicePriceOutGR"), decimalFormat);
+    const serviceTypeRaw2 = normalizeCellString(getValue(row, "serviceType"), 20);
+    const serviceType = serviceTypeRaw2 === "ServLot" || serviceTypeRaw2 === "ServPerUnit" ? serviceTypeRaw2 : null;
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
     const legacyPartNumber = normalizeCellString(getValue(row, "legacyPartNumber"), 50);
 
@@ -564,6 +590,9 @@ const parseSheet = (
       description,
       listPrice,
       costPrice,
+      servicePriceGR,
+      servicePriceOutGR,
+      serviceType,
       warning,
       weblink,
       legacyPartNumber,
@@ -785,6 +814,8 @@ const createProduct = async (
   row: ParsedPriceListRow,
   brandId: number,
   auditUserId: string | null,
+  isService: boolean | null,
+  serviceType: string | null,
 ) => {
   const partNumberCleared = toClearedPartModel(row.partNumber);
   const modelNumberCleared = toClearedPartModel(row.modelNumber);
@@ -798,6 +829,8 @@ const createProduct = async (
   request.input("LegacyPartNoCleaned", sql.NVarChar(255), null);
   request.input("Description", sql.NVarChar(2000), row.description);
   request.input("WebLink", sql.NVarChar(1000), row.weblink);
+  request.input("IsService", sql.Bit, isService ?? null);
+  request.input("ServiceType", sql.NVarChar(20), serviceType ?? null);
   request.input("CreatedBy", sql.NVarChar(450), auditUserId);
   request.input("ModifiedBy", sql.NVarChar(450), auditUserId);
 
@@ -812,6 +845,8 @@ const createProduct = async (
       LegacyPartNoCleaned,
       Description,
       WebLink,
+      IsService,
+      ServiceType,
       Enabled,
       CreatedOn,
       CreatedBy,
@@ -829,6 +864,8 @@ const createProduct = async (
       @LegacyPartNoCleaned,
       @Description,
       @WebLink,
+      @IsService,
+      @ServiceType,
       1,
       SYSUTCDATETIME(),
       @CreatedBy,
@@ -854,9 +891,14 @@ const insertPriceListItem = async (
   request.input("ProductID", sql.Int, productId);
   const listPrice = row.listPrice == null ? undefined : Number(row.listPrice);
   const costPrice = row.costPrice == null ? undefined : Number(row.costPrice);
+  const servicePriceGR = row.servicePriceGR == null ? undefined : Number(row.servicePriceGR);
+  const servicePriceOutGR = row.servicePriceOutGR == null ? undefined : Number(row.servicePriceOutGR);
   const decimalType = getDecimalType();
   request.input("ListPrice", decimalType, listPrice);
   request.input("CostPrice", decimalType, costPrice);
+  request.input("ServicePriceGR", decimalType, servicePriceGR ?? null);
+  request.input("ServicePriceOutGR", decimalType, servicePriceOutGR ?? null);
+  request.input("ServiceType", sql.NVarChar(20), row.serviceType ?? null);
   request.input("Warning", sql.NVarChar(1000), row.warning);
   request.input("CreatedBy", sql.NVarChar(450), auditUserId);
   request.input("ModifiedBy", sql.NVarChar(450), auditUserId);
@@ -867,6 +909,9 @@ const insertPriceListItem = async (
       ProductID,
       ListPrice,
       CostPrice,
+      ServicePriceGR,
+      ServicePriceOutGR,
+      ServiceType,
       Warning,
       Enabled,
       CreatedOn,
@@ -879,6 +924,9 @@ const insertPriceListItem = async (
       @ProductID,
       @ListPrice,
       @CostPrice,
+      @ServicePriceGR,
+      @ServicePriceOutGR,
+      @ServiceType,
       @Warning,
       1,
       SYSUTCDATETIME(),
@@ -910,6 +958,7 @@ export async function POST(req: NextRequest) {
     const responsibleUserId = normalizeUserId(formData.get("responsibleUserId"));
     const supplierId = normalizeInt(formData.get("supplierId"));
     const hasDuty = normalizeBool(formData.get("hasDuty"));
+    const isService = normalizeBool(formData.get("isService"));
     const costCurrencyId = normalizeInt(formData.get("costCurrencyId"));
     const currencyCostModifier = normalizeDecimal(formData.get("currencyCostModifier"));
     const countryId = normalizeInt(formData.get("countryId"));
@@ -1264,6 +1313,7 @@ export async function POST(req: NextRequest) {
       priceListRequest.input("ResponsibleUserId", sql.NVarChar(450), responsibleUserId);
       priceListRequest.input("SupplierID", sql.Int, supplierId);
       priceListRequest.input("HasDuty", sql.Bit, hasDuty ?? false);
+      priceListRequest.input("IsService", sql.Bit, isService ?? false);
       priceListRequest.input("CurrencyId", sql.Int, resolvedCurrencyId);
       priceListRequest.input("CostCurrencyID", sql.Int, resolvedCostCurrencyId);
       priceListRequest.input("CurrencyCostModifier", getDecimalType(), resolvedCurrencyCostModifier);
@@ -1283,6 +1333,7 @@ export async function POST(req: NextRequest) {
           ResponsibleUserId,
           SupplierID,
           HasDuty,
+          IsService,
           CurrencyId,
           CostCurrencyID,
           CurrencyCostModifier,
@@ -1306,6 +1357,7 @@ export async function POST(req: NextRequest) {
           @ResponsibleUserId,
           @SupplierID,
           @HasDuty,
+          @IsService,
           @CurrencyId,
           @CostCurrencyID,
           @CurrencyCostModifier,
@@ -1450,7 +1502,7 @@ export async function POST(req: NextRequest) {
         }
 
         if (!productId) {
-          productId = await createProduct(transaction, row, brandId!, auditUserId);
+          productId = await createProduct(transaction, row, brandId!, auditUserId, isService ?? null, row.serviceType);
           createdProductCount += 1;
           newProductDetails.push({
             partNumber: row.partNumber,

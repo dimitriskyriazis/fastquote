@@ -74,7 +74,8 @@ async function fetchOfferBasicRecord(offerId: number) {
         o.ModifiedOn,
         modified.FullName AS ModifiedByFullName,
         modified.UserName AS ModifiedByUserName,
-        o.ProtocolNo
+        o.ProtocolNo,
+        o.ServicesLocation
       FROM dbo.Offer AS o
       LEFT JOIN dbo.Customers AS c ON o.CustomerID = c.ID
       LEFT JOIN dbo.OfferStatus AS os ON o.StatusID = os.ID
