@@ -30,6 +30,10 @@ const TERM_FIELD_LABELS: Record<string, string> = {
   offerValidity: 'Offer Validity',
 };
 
+const OFFER_FIELD_LABELS: Record<string, string> = {
+  offerDate: 'Offer Date',
+};
+
 const menuItemStyle: React.CSSProperties = {
   display: 'block',
   width: '100%',
@@ -126,19 +130,31 @@ export default function ExportPdfButton({ offerId, className }: Props) {
         return;
       }
       const data = await res.json();
+      const isMissing = (v: unknown) => v == null || (typeof v === 'string' && v.trim().length === 0);
+
       const terms = data.terms ?? {};
-      const isMissing = (v: unknown) => typeof v !== 'string' || v.trim().length === 0;
-      const missing: string[] = [];
-      if (isMissing(terms.paymentTerms)) missing.push('paymentTerms');
-      if (isMissing(terms.deliveryTime)) missing.push('deliveryTime');
-      if (isMissing(terms.offerValidity)) missing.push('offerValidity');
-      if (missing.length > 0) {
-        const labels = missing.map((id) => TERM_FIELD_LABELS[id]).join(', ');
+      const missingTerms: string[] = [];
+      if (isMissing(terms.paymentTerms)) missingTerms.push('paymentTerms');
+      if (isMissing(terms.deliveryTime)) missingTerms.push('deliveryTime');
+      if (isMissing(terms.offerValidity)) missingTerms.push('offerValidity');
+
+      const offerDateMissing = isMissing(data.offerDate);
+      const hasAnyMissing = offerDateMissing || missingTerms.length > 0;
+
+      if (offerDateMissing) {
+        window.dispatchEvent(new CustomEvent('fastquote:highlight-offer-date-missing'));
+      }
+      if (missingTerms.length > 0) {
         window.dispatchEvent(
-          new CustomEvent('fastquote:highlight-pdf-terms-missing', { detail: missing }),
+          new CustomEvent('fastquote:highlight-pdf-terms-missing', { detail: missingTerms }),
         );
+      }
+      if (hasAnyMissing) {
+        const allLabels: string[] = [];
+        if (offerDateMissing) allLabels.push(OFFER_FIELD_LABELS.offerDate);
+        for (const id of missingTerms) allLabels.push(TERM_FIELD_LABELS[id]!);
         showToastMessage(
-          `Cannot generate PDF. Please fill in the following fields on the offer's Basic Data page: ${labels}.`,
+          `Cannot generate PDF. Please fill in: ${allLabels.join(', ')}.`,
           'error',
         );
         return;

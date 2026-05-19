@@ -431,12 +431,19 @@ export default function OfferBasicDataClient({
   const [isAddContactOpen, setIsAddContactOpen] = useState(false);
   const contactRefreshTokenRef = useRef(0);
   const [highlightOrderSignedMissing, setHighlightOrderSignedMissing] = useState(false);
+  const [highlightOfferDateMissing, setHighlightOfferDateMissing] = useState(false);
   const [highlightedPdfTermFields, setHighlightedPdfTermFields] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     const handler = () => setHighlightOrderSignedMissing(true);
     window.addEventListener('fastquote:highlight-order-signed-missing', handler);
     return () => window.removeEventListener('fastquote:highlight-order-signed-missing', handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = () => setHighlightOfferDateMissing(true);
+    window.addEventListener('fastquote:highlight-offer-date-missing', handler);
+    return () => window.removeEventListener('fastquote:highlight-offer-date-missing', handler);
   }, []);
 
   useEffect(() => {
@@ -1346,7 +1353,8 @@ export default function OfferBasicDataClient({
     if (def.inputType === 'date' || def.valueType === 'date') {
       const dateValue = values[def.id] ?? '';
       const isMissingRequired =
-        def.id === 'orderSigned' && highlightOrderSignedMissing && !dateValue;
+        (def.id === 'orderSigned' && highlightOrderSignedMissing && !dateValue) ||
+        (def.id === 'offerDate' && highlightOfferDateMissing && !dateValue);
       return (
         <UKDatePicker
           value={dateValue}

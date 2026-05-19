@@ -212,8 +212,8 @@ const COMPANY = {
 const PAGE_MARGINS: Record<PdfOrientation, [number, number, number, number]> = {
   // Top margin must be larger than the running header height,
   // otherwise table headers render too close to (or under) the header line.
-  portrait: [56, 64, 56, 48],
-  landscape: [50, 60, 50, 44],
+  portrait: [40, 60, 40, 36],
+  landscape: [36, 56, 36, 32],
 };
 
 const COVER_LOGO_FIT: Record<PdfOrientation, [number, number]> = {
@@ -432,7 +432,7 @@ function buildDescriptionCell(
       { text: baseText },
       {
         text: extraLines.join('\n'),
-        fontSize: 6.0,
+        fontSize: 7.0,
         color: COLORS.secondaryText,
         margin: [0, 1, 0, 0],
       },
@@ -467,8 +467,8 @@ function buildCompactHeader(data: OfferPdfData, L: Labels, lang: PdfLang, orient
     ...(salesEmail ? [{ label: L.responsibleEmail, value: salesEmail }] : []),
   ];
 
-  const compactStyle = { fontSize: 7.5, color: COLORS.secondaryText };
-  const compactValue = { fontSize: 8, color: COLORS.primaryText, bold: true };
+  const labelStyle = { fontSize: 7.5, color: COLORS.secondaryText, bold: false };
+  const compactValue = { fontSize: 8.5, color: COLORS.primaryText, bold: true };
 
   return [
     {
@@ -477,9 +477,9 @@ function buildCompactHeader(data: OfferPdfData, L: Labels, lang: PdfLang, orient
         {
           width: '*',
           stack: [
-            { text: `${companyName}  |  ${companyAddress}`, ...compactStyle, alignment: 'right' },
-            { text: `${companyPhone} | ${COMPANY.email} | ${COMPANY.website}`, ...compactStyle, alignment: 'right', margin: [0, 1, 0, 0] },
-            { text: taxLine, ...compactStyle, alignment: 'right', margin: [0, 1, 0, 0] },
+            { text: `${companyName}  |  ${companyAddress}`, ...labelStyle, alignment: 'right' },
+            { text: `${companyPhone} | ${COMPANY.email} | ${COMPANY.website}`, ...labelStyle, alignment: 'right', margin: [0, 1, 0, 0] },
+            { text: taxLine, ...labelStyle, alignment: 'right', margin: [0, 1, 0, 0] },
           ],
         },
       ],
@@ -510,38 +510,38 @@ function buildCompactHeader(data: OfferPdfData, L: Labels, lang: PdfLang, orient
                 body:
                   leftInfo.length > 0
                     ? leftInfo.map((row) => [
-                        { text: row.label, ...compactStyle },
+                        { text: `${row.label}:`, ...labelStyle },
                         { text: row.value, ...compactValue },
                       ])
-                    : [[{ text: '', ...compactStyle }, { text: '', ...compactValue }]],
+                    : [[{ text: '', ...labelStyle }, { text: '', ...compactValue }]],
               },
               layout: {
                 hLineWidth: () => 0,
                 vLineWidth: () => 0,
-                paddingLeft: (i: number) => (i === 0 ? 0 : 2),
-                paddingRight: (i: number) => (i === 0 ? 2 : 0),
-                paddingTop: () => 0.5,
-                paddingBottom: () => 0.5,
+                paddingLeft: (i: number) => (i === 0 ? 0 : 6),
+                paddingRight: (i: number) => (i === 0 ? 4 : 0),
+                paddingTop: () => 2,
+                paddingBottom: () => 2,
               },
-              margin: [4, 2, 4, 2],
+              margin: [6, 4, 6, 4],
             },
             {
               table: {
                 widths: ['auto', '*'],
                 body: rightInfo.map((row) => [
-                  { text: row.label, ...compactStyle },
+                  { text: `${row.label}:`, ...labelStyle },
                   { text: row.value, ...compactValue },
                 ]),
               },
               layout: {
                 hLineWidth: () => 0,
                 vLineWidth: () => 0,
-                paddingLeft: (i: number) => (i === 0 ? 0 : 2),
-                paddingRight: (i: number) => (i === 0 ? 2 : 0),
-                paddingTop: () => 0.5,
-                paddingBottom: () => 0.5,
+                paddingLeft: (i: number) => (i === 0 ? 0 : 6),
+                paddingRight: (i: number) => (i === 0 ? 4 : 0),
+                paddingTop: () => 2,
+                paddingBottom: () => 2,
               },
-              margin: [4, 2, 4, 2],
+              margin: [6, 4, 6, 4],
             },
           ],
         ],
@@ -550,10 +550,10 @@ function buildCompactHeader(data: OfferPdfData, L: Labels, lang: PdfLang, orient
         fillColor: () => COLORS.lightBg,
         hLineWidth: () => 0,
         vLineWidth: () => 0,
-        paddingLeft: () => 6,
-        paddingRight: () => 6,
-        paddingTop: () => 4,
-        paddingBottom: () => 4,
+        paddingLeft: () => 8,
+        paddingRight: () => 8,
+        paddingTop: () => 6,
+        paddingBottom: () => 6,
       },
     },
   ];
@@ -644,7 +644,7 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
                 body:
                   leftInfo.length > 0
                     ? leftInfo.map((row) => [
-                        { text: row.label, style: 'metaLabel' },
+                        { text: `${row.label}:`, style: 'metaLabel' },
                         { text: row.value, style: 'metaValue' },
                       ])
                     : [[{ text: '', style: 'metaLabel' }, { text: '', style: 'metaValue' }]],
@@ -652,30 +652,30 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
               layout: {
                 hLineWidth: () => 0,
                 vLineWidth: () => 0,
-                paddingLeft: (i: number) => (i === 0 ? 0 : 2),
-                paddingRight: (i: number) => (i === 0 ? 2 : 0),
-                paddingTop: () => 1,
-                paddingBottom: () => 1,
+                paddingLeft: (i: number) => (i === 0 ? 0 : 8),
+                paddingRight: (i: number) => (i === 0 ? 4 : 0),
+                paddingTop: () => 2.5,
+                paddingBottom: () => 2.5,
               },
-              margin: [6, 4, 6, 4],
+              margin: [8, 6, 8, 6],
             },
             {
               table: {
                 widths: ['auto', '*'],
                 body: rightInfo.map((row) => [
-                  { text: row.label, style: 'metaLabel' },
+                  { text: `${row.label}:`, style: 'metaLabel' },
                   { text: row.value, style: 'metaValue' },
                 ]),
               },
               layout: {
                 hLineWidth: () => 0,
                 vLineWidth: () => 0,
-                paddingLeft: (i: number) => (i === 0 ? 0 : 2),
-                paddingRight: (i: number) => (i === 0 ? 2 : 0),
-                paddingTop: () => 1,
-                paddingBottom: () => 1,
+                paddingLeft: (i: number) => (i === 0 ? 0 : 8),
+                paddingRight: (i: number) => (i === 0 ? 4 : 0),
+                paddingTop: () => 2.5,
+                paddingBottom: () => 2.5,
               },
-              margin: [6, 4, 6, 4],
+              margin: [8, 6, 8, 6],
             },
           ],
         ],
@@ -684,10 +684,10 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
         fillColor: () => COLORS.lightBg,
         hLineWidth: () => 0,
         vLineWidth: () => 0,
-        paddingLeft: () => 12,
-        paddingRight: () => 12,
-        paddingTop: () => 12,
-        paddingBottom: () => 12,
+        paddingLeft: () => 14,
+        paddingRight: () => 14,
+        paddingTop: () => 14,
+        paddingBottom: () => 14,
       },
       pageBreak: 'after',
     },
@@ -837,19 +837,8 @@ function columnValue(row: OfferProductRow, column: PdfProductColumn, L?: Labels)
 
 function dynamicCellFont(
   column: PdfProductColumn,
-  value: string,
 ): { style: 'cell' | 'cellTight'; fontSize?: number; lineHeight?: number } {
-  if (column !== 'type' && column !== 'modelNumber' && column !== 'description') return { style: 'cell' };
-  const len = value.length;
-
-  if (column === 'description') {
-    if (len > 90) return { style: 'cellTight', fontSize: 6.0, lineHeight: 1.22 };
-    if (len > 55) return { style: 'cellTight', lineHeight: 1.24 };
-    return { style: 'cell', lineHeight: 1.28 };
-  }
-
-  if (len > 90) return { style: 'cellTight', fontSize: 6.0, lineHeight: 1.1 };
-  if (len > 55) return { style: 'cellTight', lineHeight: 1.12 };
+  if (column === 'description') return { style: 'cell', lineHeight: 1.28 };
   return { style: 'cell', lineHeight: 1.15 };
 }
 
@@ -1027,7 +1016,7 @@ function buildItemsTable(
         // Description supports compact sub-lines when comment/delivery columns are hidden.
         if (col === 'description') {
           const base = columnValue(row, col, L);
-          const dyn = dynamicCellFont(col, base);
+          const dyn = dynamicCellFont(col);
           const descCell = buildDescriptionCell(row, base, selectedColumns);
 
           const cell: PdfCell = {
@@ -1045,7 +1034,7 @@ function buildItemsTable(
         }
 
         const value = hidePrices && priceColumns.has(col) ? '' : columnValue(row, col, L);
-        const dyn = dynamicCellFont(col, value);
+        const dyn = dynamicCellFont(col);
 
         const baseCell: PdfCell = {
           text: value,
@@ -1117,8 +1106,8 @@ function buildItemsTable(
       },
       vLineColor: () => COLORS.border,
 
-      paddingLeft: () => 3,
-      paddingRight: () => 3,
+      paddingLeft: () => 5,
+      paddingRight: () => 5,
 
       paddingTop: (i: number, node: PdfTableNode) => {
         const kind = node.table.body[i]?.[0]?.rowKind;
@@ -1514,20 +1503,20 @@ export async function generateOfferPdf(
 
     styles: {
       titleCover: { fontSize: orientation === 'portrait' ? 28 : 32, bold: true, color: COLORS.primaryText },
-      h2: { fontSize: 10, bold: true, color: COLORS.primaryText },
-      metaLabel: { fontSize: 9, color: COLORS.secondaryText },
-      metaValue: { fontSize: 10, color: COLORS.primaryText, bold: true },
+      h2: { fontSize: 10.0, bold: true, color: COLORS.primaryText },
+      metaLabel: { fontSize: 9.0, color: COLORS.secondaryText },
+      metaValue: { fontSize: 10.0, color: COLORS.primaryText, bold: true },
       body: { fontSize: 8.5, color: COLORS.primaryText },
-      tableHeader: { fontSize: 7.2, bold: true, color: COLORS.primaryText },
-      cell: { fontSize: 6.5, color: COLORS.primaryText },
-      cellTight: { fontSize: 6.2, color: COLORS.primaryText },
-      secondary: { fontSize: 9, color: COLORS.secondaryText },
-      foot: { fontSize: 8, color: COLORS.secondaryText },
+      tableHeader: { fontSize: 9.0, bold: true, color: COLORS.primaryText },
+      cell: { fontSize: 8.5, color: COLORS.primaryText },
+      cellTight: { fontSize: 8.0, color: COLORS.primaryText },
+      secondary: { fontSize: 9.0, color: COLORS.secondaryText },
+      foot: { fontSize: 8.0, color: COLORS.secondaryText },
     },
 
     defaultStyle: {
       font: 'Inter',
-      fontSize: 10,
+      fontSize: 10.0,
       color: COLORS.primaryText,
     },
   };

@@ -62,6 +62,7 @@ export async function GET(
         DeliveryTime: string | null;
         OfferValidity: string | null;
         InstallationSchedule: string | null;
+        OfferDate: string | null;
       }>(`
         SELECT
           PrintProducts,
@@ -72,7 +73,8 @@ export async function GET(
           PaymentTerms,
           DeliveryTime,
           OfferValidity,
-          InstallationSchedule
+          InstallationSchedule,
+          OfferDate
         FROM dbo.Offer
         WHERE ID = @offerId
       `);
@@ -87,6 +89,7 @@ export async function GET(
       printSubCategories: row ? (!!row.PrintSubCategories ? 1 : 0) : 0,
       printCategories: row ? (!!row.PrintCategories ? 1 : 0) : 0,
       offerLanguage: row?.OfferLanguage ?? null,
+      offerDate: row?.OfferDate ?? null,
       terms: {
         paymentTerms: row?.PaymentTerms ?? null,
         deliveryTime: row?.DeliveryTime ?? null,
