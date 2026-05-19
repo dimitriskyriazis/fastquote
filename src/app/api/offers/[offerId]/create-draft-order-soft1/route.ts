@@ -1823,6 +1823,34 @@ async function handleExecute(
       },
       requestId,
     });
+
+    // Update offer status to "Official Offer Sent"
+    try {
+      const statusRow = await pool.request()
+        .query<{ ID: number }>(`SELECT TOP 1 ID FROM dbo.OfferStatus WHERE Name = 'Official Offer Sent'`);
+      const newStatusId = statusRow.recordset[0]?.ID;
+      if (newStatusId != null) {
+        const currentRow = await pool.request()
+          .input('__offerId', sql.Int, offerId)
+          .query<{ StatusID: number | null }>(`SELECT StatusID FROM dbo.Offer WHERE ID = @__offerId`);
+        const currentStatusId = currentRow.recordset[0]?.StatusID ?? null;
+
+        if (currentStatusId !== newStatusId) {
+          const updateReq = pool.request();
+          updateReq.input('__offerId', sql.Int, offerId);
+          updateReq.input('__statusId', sql.Int, newStatusId);
+          if (ctx.userId) updateReq.input('__userId', sql.NVarChar(450), ctx.userId);
+          await updateReq.query(`
+            UPDATE dbo.Offer SET StatusID = @__statusId, ModifiedOn = SYSUTCDATETIME() WHERE ID = @__offerId;
+            INSERT INTO dbo.OfferStatusHistory (OfferID, StatusID, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, Enabled)
+            VALUES (@__offerId, @__statusId, SYSUTCDATETIME(), ${ctx.userId ? '@__userId' : 'NULL'}, SYSUTCDATETIME(), ${ctx.userId ? '@__userId' : 'NULL'}, 1)
+          `);
+          logger.info('wizard execute offer status updated to Official Offer Sent', { requestId, offerId, newStatusId });
+        }
+      }
+    } catch (statusErr) {
+      logger.error('wizard execute failed to update offer status', { requestId, offerId }, statusErr instanceof Error ? statusErr : undefined);
+    }
   }
 
   return NextResponse.json({ ok: true, step: 'execute', ...results });

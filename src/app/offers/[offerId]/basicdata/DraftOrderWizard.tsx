@@ -163,6 +163,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   const [confirmedCreates, setConfirmedCreates] = useState<number[]>([]);
   const [matchComplete, setMatchComplete] = useState(false);
   const [showMatchHint, setShowMatchHint] = useState(false);
+  const [showCategorizeHint, setShowCategorizeHint] = useState(false);
 
   // Manual Soft1 search modal (for unmatched products)
   type ErpMatch = ProductNeedsSelection['matches'][number];
@@ -514,8 +515,19 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     switch (currentStep.id) {
       case 'resolve-customer':
         return resolvedCustomer !== null;
-      case 'categorize-products':
-        return categorizeComplete;
+      case 'categorize-products': {
+        if (!categorizeComplete) return false;
+        const newProductIds = new Set<number>([
+          ...confirmedCreates,
+          ...Array.from(userSelections.entries())
+            .filter(([, match]) => match.MTRL === CREATE_NEW_SENTINEL)
+            .map(([id]) => id),
+        ]);
+        return Array.from(newProductIds).every(id => {
+          const p = categorizedProducts.find(cp => cp.productId === id);
+          return p && p.description && p.brandName && p.subCategoryId && p.typeId;
+        });
+      }
       case 'check-brands':
         return brandsCheckComplete && nearMatchBrands.every(nm => brandDecisions.has(nm.fastquoteName));
       case 'match-products':
@@ -1508,6 +1520,9 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       if (currentStep.id === 'match-products' && matchComplete && !isLoading && !error) {
         setShowMatchHint(true);
       }
+      if (currentStep.id === 'categorize-products' && categorizeComplete && !isLoading && !error) {
+        setShowCategorizeHint(true);
+      }
       return;
     }
     // Footer Continue resolves customer input when actionable
@@ -1532,9 +1547,10 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       }
     }
     setShowMatchHint(false);
+    setShowCategorizeHint(false);
     handleConfirm();
   }, [
-    confirmDisabled, handleConfirm, currentStep.id, matchComplete, isLoading, error,
+    confirmDisabled, handleConfirm, currentStep.id, matchComplete, categorizeComplete, isLoading, error,
     resolvedCustomer, customerNeedsSelection, selectedCustomer,
     customerNeedsConfirmation, customerNeedsCode, customerCodeInput,
     runResolveCustomer,
@@ -1550,9 +1566,27 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
         confirmLabel={getConfirmLabel()}
         cancelLabel={currentStep.id === 'execute' && executionResult ? 'Close' : 'Cancel'}
         saving={isLoading}
-        footerHint={showMatchHint && needsSelection.filter(ns => !userSelections.has(ns.productId)).length > 0
-          ? `Confirm creation for the above (${needsSelection.filter(ns => !userSelections.has(ns.productId)).length}) products before continuing`
-          : undefined}
+        footerHint={(() => {
+          if (showMatchHint && needsSelection.filter(ns => !userSelections.has(ns.productId)).length > 0) {
+            return `Confirm creation for the above (${needsSelection.filter(ns => !userSelections.has(ns.productId)).length}) products before continuing`;
+          }
+          if (showCategorizeHint) {
+            const newProductIds = new Set<number>([
+              ...confirmedCreates,
+              ...Array.from(userSelections.entries())
+                .filter(([, match]) => match.MTRL === CREATE_NEW_SENTINEL)
+                .map(([id]) => id),
+            ]);
+            const incomplete = Array.from(newProductIds).filter(id => {
+              const p = categorizedProducts.find(cp => cp.productId === id);
+              return !p || !p.description || !p.brandName || !p.subCategoryId || !p.typeId;
+            });
+            if (incomplete.length > 0) {
+              return `${incomplete.length} product${incomplete.length > 1 ? 's are' : ' is'} missing SubCategory or Type — fill in all fields before continuing`;
+            }
+          }
+          return undefined;
+        })()}
         cardClassName={lookupStyles.cardWide}
         cardStyle={{ width: 'min(1500px, calc(100% - 32px))', maxWidth: '95vw', maxHeight: '85vh' }}
       >

@@ -599,7 +599,7 @@ export async function POST(req: NextRequest) {
                 name: product.Description,
                 mtrunit: 1,
                 vat: 1410,
-                mtracn: 0,
+                mtracn: '0',
                 mtrcategory: 1,
               }],
             },

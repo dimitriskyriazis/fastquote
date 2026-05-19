@@ -70,7 +70,7 @@ async function loadRecipient(userId: string): Promise<Recipient | null> {
   return { email, fullName: row.FullNameGR?.trim() || row.FullName?.trim() || null };
 }
 
-const STATIC_CC_EMAILS = ['neworder@telmaco.gr', 'procurement@telmaco.gr'];
+const STATIC_CC_EMAILS = ['neworder@telmaco.gr', 'procurement@telmaco.gr', 'dim.kyriazis@telmaco.gr'];
 const BUSINESS_UNIT_ADMIN_EMAILS: Record<'AVS' | 'TVS', string> = {
   AVS: 'avsadmin@telmaco.gr',
   TVS: 'tvsadmin@telmaco.gr',

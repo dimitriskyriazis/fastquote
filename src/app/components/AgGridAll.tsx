@@ -127,7 +127,7 @@ import { captureAndPinScroll } from '../../lib/scrollPreservation';
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
 const GRID_ROW_HEIGHT = 32;
-const IGNORED_FILTER_COLS = new Set(['Enabled', 'IsParent']);
+const IGNORED_FILTER_COLS = new Set(['Enabled', 'CustomerEnabled', 'IsParent']);
 
 // Default filter state per guarded col. A guarded col is excluded from the
 // active-filter count only when it matches this default; any deviation
@@ -137,6 +137,7 @@ const IGNORED_FILTER_COLS = new Set(['Enabled', 'IsParent']);
 type GuardedDefault = { mustBeMissing: true } | { values: string[] };
 const GUARDED_FILTER_DEFAULTS: Record<string, GuardedDefault> = {
   Enabled: { values: ['true'] },
+  CustomerEnabled: { values: ['true'] },
   IsParent: { mustBeMissing: true },
 };
 
@@ -1196,6 +1197,7 @@ const refreshServerSideData = (api?: GridApi<RowData>, opts?: { purge?: boolean 
 
 const GUARDED_SET_FILTERS = new Map<string, string[]>([
   ['Enabled', ['true', 'false']],
+  ['CustomerEnabled', ['true', 'false']],
   ['IsParent', ['true', 'false']],
 ]);
 

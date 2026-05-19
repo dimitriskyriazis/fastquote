@@ -305,7 +305,6 @@ export default function AddProductsModal({
   const requestedRowsFetchIdRef = useRef(0);
   const requestedRowsCacheRef = useRef<Record<string, RequestedRow[]>>({});
   const pendingSelectionProductIdRef = useRef<number | null>(null);
-  const pendingFilterClearRef = useRef(false);
   const categoryRowClickHandlerRef = useRef<((event: { node?: RowNode }) => void) | null>(null);
   const initialRequestedRowConsumedRef = useRef(false);
 
@@ -1331,7 +1330,6 @@ export default function AddProductsModal({
       setPinnedNewProductRow(null);
       setComment('');
       try { productsApiRef.current?.deselectAll?.(); } catch { /* noop */ }
-      pendingFilterClearRef.current = true;
     } catch (err) {
       console.error('Failed to add products to offer', err);
       showToastMessage('Unable to add products. Please try again.', 'error');
@@ -1548,10 +1546,6 @@ export default function AddProductsModal({
   useEffect(() => {
     if (refreshToken == null) return;
     refreshCategoryGrid();
-    if (pendingFilterClearRef.current) {
-      pendingFilterClearRef.current = false;
-      try { productsApiRef.current?.setFilterModel?.(null); } catch { /* noop */ }
-    }
     refreshProductsGrid();
     void fetchRequestedRows(selectedCategoryIdRef.current, { force: true });
   }, [refreshToken, refreshCategoryGrid, refreshProductsGrid, fetchRequestedRows]);

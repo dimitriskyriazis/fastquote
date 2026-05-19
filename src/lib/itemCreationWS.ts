@@ -230,7 +230,7 @@ export async function createItemViaWebService(
     name1: itemName,
     mtrunit: 1,
     vat: 1410,
-    mtracn: 0,
+    mtracn: '0',
     mtrcategory: 1,
     mtrmanfctr,
     busunits: mapBusinessUnit(params.businessUnit),

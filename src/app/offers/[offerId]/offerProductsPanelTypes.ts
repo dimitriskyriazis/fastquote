@@ -44,7 +44,8 @@ export type OfferProductsPanelHandle = {
   lastUndoLabel: string | undefined;
   pushUndo: (entry: { label: string; undo: () => Promise<void> }) => void;
   setInsertLineVisible: (visible: boolean, atEnd?: boolean) => void;
-  pinInsertLineBelowRowId: (offerDetailId: number) => void;
+  pinInsertLineBelowRowId: (offerDetailId: number, notifyParent?: boolean) => void;
+  hasPendingInsertLinePin: () => boolean;
   deselectAllRows: () => void;
   flashRows: (offerDetailIds: number[]) => void;
   refreshAfterRowsAdded: () => void;

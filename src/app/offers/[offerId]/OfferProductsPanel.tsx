@@ -1313,6 +1313,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
 
   const flashIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const flashPhaseRef = useRef<'paint' | 'fade' | null>(null);
+  // Tracks the exact DOM cell elements painted by paintFlashCells so stopFlash
+  // can clean them up even if AG Grid recycled those elements for a different row.
+  const paintedFlashCellsRef = useRef<Set<HTMLElement>>(new Set());
 
   const paintFlashCells = useCallback(() => {
     const flashIds = pendingFlashIdsRef.current;
@@ -1344,6 +1347,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
             if (flashPhaseRef.current === 'paint') {
               el.style.setProperty('background-color', '#d4f3ff', 'important');
               el.style.removeProperty('transition');
+              paintedFlashCellsRef.current.add(el);
             }
           }
         }
@@ -1357,39 +1361,22 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       flashIntervalRef.current = null;
     }
     flashPhaseRef.current = null;
-    // Apply fade-out to all currently highlighted cells
-    const wrapper = gridWrapperRef.current;
-    if (!wrapper) return;
-    const flashIds = pendingFlashIdsRef.current;
     pendingFlashIdsRef.current = null;
-    if (!flashIds) return;
-    const api = gridApiRef.current;
-    if (!api || api.isDestroyed?.()) return;
-    const agRows = wrapper.querySelectorAll('.ag-row');
-    const seen = new Set<string>();
-    for (const agRow of agRows) {
-      const idx = agRow.getAttribute('row-index');
-      if (idx == null || seen.has(idx)) continue;
-      seen.add(idx);
-      const node = api.getDisplayedRowAtIndex(Number.parseInt(idx, 10));
-      const rowId = normalizeOfferDetailId((node?.data as { OfferDetailID?: unknown } | null)?.OfferDetailID ?? null);
-      if (rowId != null && flashIds.has(rowId)) {
-        const allRowEls = wrapper.querySelectorAll(`.ag-row[row-index="${idx}"]`);
-        for (const rowEl of allRowEls) {
-          const cells = (rowEl as HTMLElement).querySelectorAll(':scope > .ag-cell');
-          for (const cell of cells) {
-            const el = cell as HTMLElement;
-            el.style.setProperty('transition', 'background-color 2s ease-out', 'important');
-            el.style.removeProperty('background-color');
-          }
-          setTimeout(() => {
-            for (const cell of cells) {
-              (cell as HTMLElement).style.removeProperty('transition');
-            }
-          }, 2200);
-        }
-      }
+    // Fade out every cell that was explicitly painted, identified by the DOM
+    // element reference rather than row-index. This is necessary because AG Grid
+    // recycles .ag-row elements during purge:false refreshes — a painted element
+    // may now belong to a different row, so scanning by OfferDetailID would miss it.
+    const cells = [...paintedFlashCellsRef.current];
+    paintedFlashCellsRef.current.clear();
+    for (const el of cells) {
+      el.style.setProperty('transition', 'background-color 2s ease-out', 'important');
+      el.style.removeProperty('background-color');
     }
+    setTimeout(() => {
+      for (const el of cells) {
+        el.style.removeProperty('transition');
+      }
+    }, 2200);
   }, []);
 
   const handleGridResponse = useCallback((response: GridResponse | null) => {
@@ -2088,7 +2075,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       // filtered out.
       if (pendingPinBelowIdRef.current != null) {
         const pendingId = pendingPinBelowIdRef.current;
-        const ok = tryPinInsertLineBelowRowIdRef.current?.(pendingId) ?? false;
+        const ok = tryPinInsertLineBelowRowIdRef.current?.(pendingId, pendingPinShouldNotifyRef.current) ?? false;
         if (ok) {
           pendingPinBelowIdRef.current = null;
           pendingPinBelowAttemptsRef.current = 0;
@@ -4327,8 +4314,8 @@ const requestedColumnDefsMap = useMemo(
     : null;
 
   const setInsertLineVisibleRef = useRef<((visible: boolean, atEnd?: boolean) => void) | null>(null);
-  const tryPinInsertLineBelowRowIdRef = useRef<((offerDetailId: number) => boolean) | null>(null);
-  const pinInsertLineBelowRowIdRef = useRef<((offerDetailId: number) => void) | null>(null);
+  const tryPinInsertLineBelowRowIdRef = useRef<((offerDetailId: number, notifyParent?: boolean) => boolean) | null>(null);
+  const pinInsertLineBelowRowIdRef = useRef<((offerDetailId: number, notifyParent?: boolean) => void) | null>(null);
 
   const fetchAllRowsForOrdering = useCallback(async (): Promise<Record<string, unknown>[]> => {
     const fetchRes = await fetch(resolvedEndpoint, {
@@ -4430,6 +4417,7 @@ const requestedColumnDefsMap = useMemo(
       pushUndo,
       setInsertLineVisible: (visible: boolean, atEnd?: boolean) => setInsertLineVisibleRef.current?.(visible, atEnd),
       pinInsertLineBelowRowId: (offerDetailId: number) => pinInsertLineBelowRowIdRef.current?.(offerDetailId),
+      hasPendingInsertLinePin: () => pendingPinBelowIdRef.current != null,
       deselectAllRows: () => {
         const api = gridApiRef.current;
         if (api && !api.isDestroyed?.()) {
@@ -4446,6 +4434,7 @@ const requestedColumnDefsMap = useMemo(
           clearInterval(flashIntervalRef.current);
           flashIntervalRef.current = null;
         }
+        paintedFlashCellsRef.current.clear();
         pendingFlashIdsRef.current = new Set(offerDetailIds);
         flashPhaseRef.current = 'paint';
         // Don't paint yet — wait for handleGridResponse to signal new data has arrived
@@ -7041,7 +7030,7 @@ const requestedColumnDefsMap = useMemo(
     const field = event.colDef.field;
     if (!field || !PROPAGATABLE_FIELD_LABELS[field]) return;
     const source = (event as { source?: string }).source;
-    if (source === 'api') return;
+    if (source === 'api' || source === 'paste') return;
     if (wasProgrammaticAtDispatch) return;
     if (!isOfferProductProduct(event.data)) return;
 
@@ -7715,6 +7704,7 @@ const requestedColumnDefsMap = useMemo(
   // update until the row appears or the caller cancels.
   const pendingPinBelowIdRef = useRef<number | null>(null);
   const pendingPinBelowAttemptsRef = useRef(0);
+  const pendingPinShouldNotifyRef = useRef(false);
 
   const getLineWidth = useCallback(() => {
     const wrapper = gridWrapperRef.current;
@@ -8026,6 +8016,7 @@ const requestedColumnDefsMap = useMemo(
       const anchor = atEnd ? null : getAddInsertionAnchor();
       let positioned = false;
       let positionedAtEnd = false;
+      let shouldShift = false;
       const api = gridApiRef.current;
       const wrapper = gridWrapperRef.current;
       if (anchor) {
@@ -8048,13 +8039,14 @@ const requestedColumnDefsMap = useMemo(
                 pinLine.style.top = `${topPos}px`;
                 insertLinePinTopRef.current = topPos;
                 positioned = true;
+                shouldShift = true;
                 break;
               }
             }
           }
         }
       } else if (insertLineDataRef.current) {
-        // Prior pinned position exists (e.g. from an insertion line click) — keep it
+        // Prior pinned position exists (e.g. from pinInsertLineBelowRowId after add) — keep it as-is
         positioned = true;
       } else if (api && wrapper && !api.isDestroyed?.()) {
         // No selection and no prior pin — show below the last row only if it's visible
@@ -8117,7 +8109,7 @@ const requestedColumnDefsMap = useMemo(
         pinLine.className = `${styles.insertLine} ${styles.insertLinePinned}`;
         pinLine.style.display = 'flex';
         pinLine.style.width = getLineWidth();
-        if (!positionedAtEnd) startRowShift();
+        if (shouldShift) startRowShift();
       } else if (atEnd) {
         // Asked to pin at end but the grid has no rows to anchor against —
         // hide any prior pin so a stale line doesn't linger after the grid
@@ -8142,7 +8134,7 @@ const requestedColumnDefsMap = useMemo(
   // Try to pin the line below the row with the given OfferDetailID. If the row
   // is not yet in the grid (common right after triggering a refresh), schedule
   // a retry via handleGridModelUpdated.
-  const tryPinInsertLineBelowRowId = useCallback((offerDetailId: number): boolean => {
+  const tryPinInsertLineBelowRowId = useCallback((offerDetailId: number, notifyParent = true): boolean => {
     const api = gridApiRef.current;
     const wrapper = gridWrapperRef.current;
     const pinLine = pinnedLineRef.current;
@@ -8194,16 +8186,18 @@ const requestedColumnDefsMap = useMemo(
     insertLinePinTopRef.current = topPos;
     insertLinePinScrollRef.current = viewport.scrollTop;
     insertLinePinnedAtRef.current = Date.now();
-    startRowShift();
     // Notify parent so it can update placementAnchor and the modal's "Add
-    // below (X)" indicator to match where the line now points.
-    onRequestInsertProductRef.current?.(insertLineDataRef.current);
+    // below (X)" indicator to match where the line now points. Only do this
+    // when the caller requested it — for at-end adds (notifyParent=false) we
+    // must not set a new placementAnchor or subsequent adds will use it.
+    if (notifyParent) onRequestInsertProductRef.current?.(insertLineDataRef.current);
     return true;
-  }, [getLineWidth, startRowShift]);
+  }, [getLineWidth]);
   tryPinInsertLineBelowRowIdRef.current = tryPinInsertLineBelowRowId;
 
-  const pinInsertLineBelowRowId = useCallback((offerDetailId: number) => {
-    if (tryPinInsertLineBelowRowId(offerDetailId)) {
+  const pinInsertLineBelowRowId = useCallback((offerDetailId: number, notifyParent = false) => {
+    pendingPinShouldNotifyRef.current = notifyParent;
+    if (tryPinInsertLineBelowRowId(offerDetailId, notifyParent)) {
       pendingPinBelowIdRef.current = null;
       pendingPinBelowAttemptsRef.current = 0;
       return;

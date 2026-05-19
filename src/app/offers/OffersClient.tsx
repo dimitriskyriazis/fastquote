@@ -803,7 +803,7 @@ export default function OffersClient() {
                 onClear={handleClearCustomerFilter}
               />
             ) : null}
-            <div className={styles.gridFrame}>
+            <div className={`${styles.gridFrame} offer-products-grid`}>
               <AgGridAll
                 endpoint="/api/offers"
                 columnDefs={columnDefs}

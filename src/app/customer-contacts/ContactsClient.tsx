@@ -670,7 +670,6 @@ export default function ContactsClient({
           },
         },
         width: 150,
-        hide: true,
       },
       {
         field: "Enabled",

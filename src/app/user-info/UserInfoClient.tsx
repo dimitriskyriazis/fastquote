@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { showToastMessage } from '../../lib/toast';
 import { useUndoStack } from '../hooks/useUndoStack';
 import { pushCellEditUndo } from '../../lib/undoHelpers';
+import { useAutoSaveTimer } from '../hooks/useAutoSaveTimer';
 import styles from './UserInfo.module.css';
 
 type UserData = {
@@ -19,26 +20,26 @@ type UserData = {
 };
 
 type FieldDef = {
-  key: string;
+  id: string;
   label: string;
   editable: boolean;
-  apiField?: string;
+  updateField?: string;
   type?: 'text' | 'select';
 };
 
 const READONLY_FIELDS: FieldDef[] = [
-  { key: 'userName', label: 'User Name', editable: false },
-  { key: 'nameCode', label: 'Name Code', editable: false },
-  { key: 'email', label: 'Email', editable: false },
-  { key: 'salesDivision', label: 'Sales Division', editable: false },
-  { key: 'salesSeniority', label: 'Sales Seniority', editable: false },
-  { key: 'roles', label: 'Roles', editable: false },
+  { id: 'userName', label: 'User Name', editable: false },
+  { id: 'nameCode', label: 'Name Code', editable: false },
+  { id: 'email', label: 'Email', editable: false },
+  { id: 'salesDivision', label: 'Sales Division', editable: false },
+  { id: 'salesSeniority', label: 'Sales Seniority', editable: false },
+  { id: 'roles', label: 'Roles', editable: false },
 ];
 
 const EDITABLE_FIELDS: FieldDef[] = [
-  { key: 'fullName', label: 'Full Name', editable: true, apiField: 'FullName' },
-  { key: 'fullNameGR', label: 'Full Name GR', editable: true, apiField: 'FullNameGR' },
-  { key: 'signTitle', label: 'Sign Title', editable: true, apiField: 'SignTitle' },
+  { id: 'fullName', label: 'Full Name', editable: true, updateField: 'FullName' },
+  { id: 'fullNameGR', label: 'Full Name GR', editable: true, updateField: 'FullNameGR' },
+  { id: 'signTitle', label: 'Sign Title', editable: true, updateField: 'SignTitle' },
 ];
 
 export default function UserInfoClient() {
@@ -82,79 +83,93 @@ export default function UserInfoClient() {
   }, []);
 
   const saveField = useCallback(async (def: FieldDef, rawValue: string) => {
-    if (!def.apiField) return;
-    const oldValue = savedValuesRef.current[def.key] ?? '';
-    setPendingFields((prev) => ({ ...prev, [def.key]: true }));
+    if (!def.updateField) return;
+    const oldValue = savedValuesRef.current[def.id] ?? '';
+    setPendingFields((prev) => ({ ...prev, [def.id]: true }));
     try {
       const res = await fetch('/api/user-info', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ updates: [{ field: def.apiField, value: rawValue }] }),
+        body: JSON.stringify({ updates: [{ field: def.updateField, value: rawValue }] }),
       });
       const payload = await res.json();
       if (!res.ok || !payload?.ok) {
         throw new Error(payload?.error ?? `Failed to update ${def.label}`);
       }
-      savedValuesRef.current = { ...savedValuesRef.current, [def.key]: rawValue };
+      savedValuesRef.current = { ...savedValuesRef.current, [def.id]: rawValue };
       const capturedOldValue = oldValue;
       pushCellEditUndo(pushUndo, performUndo, def.label, async () => {
         const undoRes = await fetch('/api/user-info', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ updates: [{ field: def.apiField, value: capturedOldValue }] }),
+          body: JSON.stringify({ updates: [{ field: def.updateField, value: capturedOldValue }] }),
         });
         const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
         if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
-        setValues((prev) => ({ ...prev, [def.key]: capturedOldValue }));
-        savedValuesRef.current = { ...savedValuesRef.current, [def.key]: capturedOldValue };
+        setValues((prev) => ({ ...prev, [def.id]: capturedOldValue }));
+        savedValuesRef.current = { ...savedValuesRef.current, [def.id]: capturedOldValue };
       });
     } catch (err) {
-      setValues((prev) => ({ ...prev, [def.key]: savedValuesRef.current[def.key] }));
+      setValues((prev) => ({ ...prev, [def.id]: savedValuesRef.current[def.id] }));
       showToastMessage(
         err instanceof Error ? err.message : `Unable to update ${def.label}`,
         'error',
       );
     } finally {
-      setPendingFields((prev) => ({ ...prev, [def.key]: false }));
+      setPendingFields((prev) => ({ ...prev, [def.id]: false }));
     }
   }, [pushUndo, performUndo]);
 
+  const { scheduleAutoSave, cancelAutoSave } = useAutoSaveTimer({
+    values,
+    savedValuesRef,
+    fieldDefinitions: EDITABLE_FIELDS,
+    saveField,
+  });
+
   const handleBlur = useCallback(
     (def: FieldDef) => {
-      if (!def.editable || !def.apiField) return;
-      const current = values[def.key] ?? '';
-      if (current === savedValuesRef.current[def.key]) return;
+      if (!def.editable || !def.updateField) return;
+      cancelAutoSave(def.id);
+      const current = values[def.id] ?? '';
+      if (current === savedValuesRef.current[def.id]) return;
       void saveField(def, current);
     },
-    [saveField, values],
+    [saveField, cancelAutoSave, values],
   );
 
   const handleChange = useCallback(
     (def: FieldDef, newValue: string) => {
-      setValues((prev) => ({ ...prev, [def.key]: newValue }));
+      setValues((prev) => ({ ...prev, [def.id]: newValue }));
       if (def.type === 'select') {
-        const current = savedValuesRef.current[def.key] ?? '';
+        const current = savedValuesRef.current[def.id] ?? '';
         if (newValue !== current) {
           void saveField(def, newValue);
         }
+        return;
+      }
+      if (newValue !== (savedValuesRef.current[def.id] ?? '')) {
+        scheduleAutoSave(def.id);
+      } else {
+        cancelAutoSave(def.id);
       }
     },
-    [saveField],
+    [saveField, scheduleAutoSave, cancelAutoSave],
   );
 
   const getReadonlyValue = (def: FieldDef): string => {
     if (!userData) return '';
-    if (def.key === 'roles') return userData.roles.join(', ');
-    if (def.key === 'userName') return userData.userName;
-    if (def.key === 'nameCode') return userData.nameCode;
-    if (def.key === 'email') return userData.email;
-    if (def.key === 'salesDivision') return userData.salesDivision;
-    if (def.key === 'salesSeniority') return userData.salesSeniority;
+    if (def.id === 'roles') return userData.roles.join(', ');
+    if (def.id === 'userName') return userData.userName;
+    if (def.id === 'nameCode') return userData.nameCode;
+    if (def.id === 'email') return userData.email;
+    if (def.id === 'salesDivision') return userData.salesDivision;
+    if (def.id === 'salesSeniority') return userData.salesSeniority;
     return '';
   };
 
   const renderReadonlyField = (def: FieldDef) => (
-    <div key={def.key} className={styles.fieldBlock}>
+    <div key={def.id} className={styles.fieldBlock}>
       <label className={styles.fieldLabel}>{def.label}</label>
       <div className={styles.fieldReadonly}>
         {getReadonlyValue(def) || '\u2014'}
@@ -163,16 +178,16 @@ export default function UserInfoClient() {
   );
 
   const renderEditableField = (def: FieldDef) => {
-    const isPending = pendingFields[def.key];
+    const isPending = pendingFields[def.id];
     const controlClass = `${styles.fieldControl}${isPending ? ` ${styles.fieldControlPending}` : ''}`;
 
     if (def.type === 'select') {
       return (
-        <div key={def.key} className={styles.fieldBlock}>
+        <div key={def.id} className={styles.fieldBlock}>
           <label className={styles.fieldLabel}>{def.label}</label>
           <select
             className={controlClass}
-            value={values[def.key] ?? ''}
+            value={values[def.id] ?? ''}
             onChange={(e) => handleChange(def, e.target.value)}
           >
             <option value="">{'\u2014'}</option>
@@ -185,12 +200,12 @@ export default function UserInfoClient() {
     }
 
     return (
-      <div key={def.key} className={styles.fieldBlock}>
+      <div key={def.id} className={styles.fieldBlock}>
         <label className={styles.fieldLabel}>{def.label}</label>
         <input
           type="text"
           className={controlClass}
-          value={values[def.key] ?? ''}
+          value={values[def.id] ?? ''}
           onChange={(e) => handleChange(def, e.target.value)}
           onBlur={() => handleBlur(def)}
         />

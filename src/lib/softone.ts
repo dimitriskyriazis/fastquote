@@ -113,7 +113,7 @@ export type SetItemEntry = {
   name1?: string;
   mtrunit: number;
   vat: number;
-  mtracn: number;
+  mtracn: number | string;
   mtrcategory: number;
   mtrmanfctr?: string;
   busunits?: string;
@@ -163,7 +163,7 @@ export type SetDocsLineItem = {
   warranty?: string; // warranty in months
   position?: string; // Position No. (our line itemno / TreeOrdering)
   comments?: string; // line comments (OfferDetails.Comment)
-  mtracn?: number; // Λογ. Κατηγορία (0 = Εμπόρευμα)
+  mtracn?: number | string; // Λογ. Κατηγορία (0 = Εμπόρευμα) — send as string "0" since numeric 0 is ignored by WS
 };
 
 export type SetDocsParams = {

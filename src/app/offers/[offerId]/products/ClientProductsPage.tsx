@@ -646,7 +646,7 @@ export default function ClientProductsPage({
       ? insertedOfferDetailIds[insertedOfferDetailIds.length - 1]
       : null;
     if (lastInsertedId != null && (showAddProductModalRef.current || detachedWindowOpenRef.current)) {
-      offerProductsPanelRef.current?.pinInsertLineBelowRowId?.(lastInsertedId);
+      offerProductsPanelRef.current?.pinInsertLineBelowRowId?.(lastInsertedId, hadPlacementAnchor);
     }
     if (insertedOfferDetailIds && insertedOfferDetailIds.length > 0) {
       if (hadPlacementAnchor) {
@@ -750,7 +750,12 @@ export default function ClientProductsPage({
       setPlacementAnchor(null);
       // When the add modal is open and no row is selected, show the insertion
       // line below the last row so the user sees where the product will go.
-      if (showAddProductModalRef.current || detachedWindowOpenRef.current) {
+      // Skip if a row-specific pin is pending (from a recent add) — the pin
+      // will position the line correctly once the row lands in the DOM.
+      if (
+        (showAddProductModalRef.current || detachedWindowOpenRef.current) &&
+        !offerProductsPanelRef.current?.hasPendingInsertLinePin?.()
+      ) {
         offerProductsPanelRef.current?.setInsertLineVisible?.(true, true);
       }
       if (detachedWindowOpenRef.current) {
