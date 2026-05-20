@@ -75,6 +75,8 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   OfferDate: { column: 'OfferDate', type: 'date', sqlType: sql.DateTime2 },
   ProtocolNo: { column: 'ProtocolNo', type: 'number', sqlType: sql.Int },
   ServicesLocation: { column: 'ServicesLocation', type: 'string', sqlType: sql.NVarChar, length: 10 },
+  PricingSellAnchor: { column: 'PricingSellAnchor', type: 'string', sqlType: sql.NVarChar, length: 20 },
+  PricingHoldMarginOnCost: { column: 'PricingHoldMarginOnCost', type: 'number', sqlType: sql.Bit },
 };
 
 const normalizeValue = (value: unknown, type: FieldType): NormalizedValue => {

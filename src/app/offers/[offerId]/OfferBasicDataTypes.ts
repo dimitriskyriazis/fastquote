@@ -57,6 +57,8 @@ export type OfferBasicRecord = {
   ModifiedByFullName: string | null;
   ProtocolNo: number | null;
   ServicesLocation: string | null;
+  PricingSellAnchor: string | null;
+  PricingHoldMarginOnCost: boolean | null;
 };
 
 export type OfferContactInfo = {
@@ -107,4 +109,6 @@ export type OfferBasicUpdateField =
   | 'PossibleOrderDate'
   | 'OfferDate'
   | 'ProtocolNo'
-  | 'ServicesLocation';
+  | 'ServicesLocation'
+  | 'PricingSellAnchor'
+  | 'PricingHoldMarginOnCost';

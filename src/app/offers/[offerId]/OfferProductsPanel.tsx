@@ -185,6 +185,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   onStartingItemNoChanged,
   collapseAllCategories = false,
   onCollapseAllSuppressed,
+  offerPricingSellAnchor = null,
+  offerPricingHoldMarginOnCost = false,
+  onOfferPricingHoldMarginOnCostChange: _onOfferPricingHoldMarginOnCostChange,
 }: Props, ref) => {
   const router = useRouter();
   const { userId, roles } = useAuditUser();
@@ -195,6 +198,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   // and cause the white flash + scroll-to-top).
   const manualModeRef = useRef(manualMode);
   useEffect(() => { manualModeRef.current = manualMode; }, [manualMode]);
+  const offerPricingSellAnchorRef = useRef(offerPricingSellAnchor);
+  useEffect(() => { offerPricingSellAnchorRef.current = offerPricingSellAnchor; }, [offerPricingSellAnchor]);
+  const offerPricingHoldMarginOnCostRef = useRef(offerPricingHoldMarginOnCost);
+  useEffect(() => { offerPricingHoldMarginOnCostRef.current = offerPricingHoldMarginOnCost; }, [offerPricingHoldMarginOnCost]);
   const isManualMode = useCallback(() => manualModeRef.current, []);
   useEffect(() => {
     deferInitialHeavyWorkRef.current = true;
@@ -2310,8 +2317,47 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     if (display && isOfferProductOption(rowData)) {
       display = `${display}o`;
     }
+    const rowPricingSellAnchor = typeof (rowData as { PricingSellAnchor?: unknown } | null | undefined)?.PricingSellAnchor === 'string'
+      ? (rowData as { PricingSellAnchor?: string }).PricingSellAnchor ?? null
+      : null;
+    const rowHoldMarginRaw = (rowData as { PricingHoldMarginOnCost?: unknown } | null | undefined)?.PricingHoldMarginOnCost;
+    const rowHoldMarginExplicit = rowHoldMarginRaw === true || rowHoldMarginRaw === 1 ? true
+      : rowHoldMarginRaw === false || rowHoldMarginRaw === 0 ? false
+      : null; // null = not set, uses offer default
+    // Compare row setting against offer defaults (read from refs, no dep on offer state)
+    const normalizeAnchor = (v: string | null | undefined) => v === 'netUnitPrice' ? 'netUnitPrice' : 'customerDiscount';
+    const offerAnchor = normalizeAnchor(offerPricingSellAnchorRef.current);
+    const rowAnchorDiffers = !isCategory && rowPricingSellAnchor != null
+      && normalizeAnchor(rowPricingSellAnchor) !== offerAnchor;
+    const rowHoldMarginDiffers = !isCategory && rowHoldMarginExplicit != null
+      && rowHoldMarginExplicit !== offerPricingHoldMarginOnCostRef.current;
+    const hasRowPricingOverride = rowAnchorDiffers || rowHoldMarginDiffers;
+    const pricingOverrideParts: string[] = [];
+    if (rowAnchorDiffers) pricingOverrideParts.push(rowPricingSellAnchor === 'netUnitPrice' ? 'Hold Net Unit Price' : 'Hold Customer Discount');
+    if (rowHoldMarginDiffers && rowHoldMarginExplicit) pricingOverrideParts.push('Hold Margin on Cost');
+    const pricingOverrideTitle = pricingOverrideParts.length > 0
+      ? `Row override: ${pricingOverrideParts.join(', ')} (right-click → Pricing mode to change)`
+      : '';
+
     return (
       <span className={styles.treeOrderingCell}>
+        {hasRowPricingOverride && (
+          <span
+            title={pricingOverrideTitle}
+            style={{
+              marginRight: 4,
+              fontSize: '1em',
+              fontWeight: 600,
+              color: '#ea580c',
+              userSelect: 'none',
+              cursor: 'default',
+              lineHeight: 1,
+            }}
+            aria-label={pricingOverrideTitle}
+          >
+            €
+          </span>
+        )}
         {indicator && (
           <button
             type="button"
@@ -5807,6 +5853,214 @@ const requestedColumnDefsMap = useMemo(
       }
     }
 
+    // --- Pricing mode submenu (all non-category, non-comment rows) ---
+    {
+      const pricingTargetNodes = relevantNodes.filter(
+        (n) => !isOfferProductCategory(n.data) && !isOfferProductComment(n.data),
+      );
+      const pricingDetailIds = pricingTargetNodes
+        .map((n) => normalizeOfferDetailId((n.data as { OfferDetailID?: unknown }).OfferDetailID ?? null))
+        .filter((id): id is number => id !== null);
+
+      if (pricingDetailIds.length > 0) {
+        // Detect the current per-row anchor so we can show a checkmark on the active option
+        const firstRowAnchor = typeof (pricingTargetNodes[0]?.data as { PricingSellAnchor?: unknown } | undefined)?.PricingSellAnchor === 'string'
+          ? (pricingTargetNodes[0]!.data as { PricingSellAnchor?: string }).PricingSellAnchor ?? null
+          : null;
+        const allSameAnchor = pricingTargetNodes.every((n) => {
+          const a = typeof (n.data as { PricingSellAnchor?: unknown })?.PricingSellAnchor === 'string'
+            ? (n.data as { PricingSellAnchor?: string }).PricingSellAnchor ?? null
+            : null;
+          return a === firstRowAnchor;
+        });
+        const shownAnchor = allSameAnchor ? firstRowAnchor : '__mixed__';
+
+        const contextMenuApi = params.api ?? null;
+
+        // Effective anchor = row override if consistent, else offer default
+        const normalizeAnchorValue = (v: string | null | undefined) =>
+          v === 'netUnitPrice' ? 'netUnitPrice' : 'customerDiscount';
+        const offerAnchorDefault = normalizeAnchorValue(offerPricingSellAnchor);
+        const effectiveAnchor = shownAnchor !== '__mixed__' && shownAnchor !== null
+          ? normalizeAnchorValue(shownAnchor)
+          : offerAnchorDefault;
+
+        const makePricingModeItem = (
+          label: string,
+          value: string | null,
+        ): MenuItemDef => ({
+          name: (value !== null && effectiveAnchor === value) ? `✓ ${label}` : label,
+          action: async () => {
+            try {
+              const updates = pricingDetailIds.map((id) => ({
+                OfferDetailID: id,
+                PricingSellAnchor: value,
+              }));
+              const res = await fetch(resolvedEndpoint, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ updates }),
+              });
+              const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+              if (!res.ok || !payload?.ok) {
+                throw new Error(payload?.error ?? `Failed to set pricing mode (status ${res.status})`);
+              }
+              // Update data + force-refresh TreeOrdering cells so indicator appears immediately
+              pricingTargetNodes.forEach((n) => {
+                try { (n as RowNode<Record<string, unknown>>).setData({ ...(n.data ?? {}), PricingSellAnchor: value }); } catch { /* noop */ }
+              });
+              try {
+                contextMenuApi?.refreshCells({
+                  rowNodes: pricingTargetNodes as IRowNode[],
+                  columns: ['TreeOrdering'],
+                  force: true,
+                });
+              } catch { /* noop */ }
+              const modeLabel = value === null ? 'offer default' : value === 'customerDiscount' ? 'Customer Discount' : 'Net Unit Price';
+              showToastMessage(
+                pricingDetailIds.length === 1
+                  ? `Pricing mode set to ${modeLabel}`
+                  : `Pricing mode set to ${modeLabel} for ${pricingDetailIds.length} rows`,
+                'success',
+              );
+            } catch (err) {
+              console.error('Failed to set pricing mode', err);
+              showToastMessage(
+                err instanceof Error ? err.message : 'Unable to set pricing mode. Please try again.',
+                'error',
+              );
+            }
+          },
+        });
+
+        const firstRowHoldMargin = (pricingTargetNodes[0]?.data as { PricingHoldMarginOnCost?: unknown } | undefined)?.PricingHoldMarginOnCost;
+        const firstRowHoldMarginBool = firstRowHoldMargin === true || firstRowHoldMargin === 1;
+        const allSameHoldMargin = pricingTargetNodes.every((n) => {
+          const v = (n.data as { PricingHoldMarginOnCost?: unknown })?.PricingHoldMarginOnCost;
+          return (v === true || v === 1) === firstRowHoldMarginBool;
+        });
+        const shownHoldMargin = allSameHoldMargin ? firstRowHoldMarginBool : null; // null = mixed
+        const nextHoldMargin = shownHoldMargin === true ? false : true;
+        const effectiveHoldMargin = shownHoldMargin !== null ? shownHoldMargin : offerPricingHoldMarginOnCost;
+        const holdMarginLabel = effectiveHoldMargin ? '✓ Hold Margin on Cost' : 'Hold Margin on Cost';
+
+        // Determine if any selected row has a meaningful override (differs from offer default)
+        const anyAnchorOverride = pricingTargetNodes.some((n) => {
+          const a = (n.data as { PricingSellAnchor?: unknown })?.PricingSellAnchor;
+          return typeof a === 'string' && normalizeAnchorValue(a) !== offerAnchorDefault;
+        });
+        const anyHoldMarginOverride = pricingTargetNodes.some((n) => {
+          const v = (n.data as { PricingHoldMarginOnCost?: unknown })?.PricingHoldMarginOnCost;
+          const explicit = v === true || v === 1 ? true : v === false || v === 0 ? false : null;
+          return explicit !== null && explicit !== offerPricingHoldMarginOnCost;
+        });
+        const anyRowHasOverride = anyAnchorOverride || anyHoldMarginOverride;
+
+        const holdMarginItem: MenuItemDef = {
+          name: holdMarginLabel,
+          action: async () => {
+            try {
+              const updates = pricingDetailIds.map((id) => ({
+                OfferDetailID: id,
+                PricingHoldMarginOnCost: nextHoldMargin,
+              }));
+              const res = await fetch(resolvedEndpoint, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ updates }),
+              });
+              const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+              if (!res.ok || !payload?.ok) {
+                throw new Error(payload?.error ?? `Failed to set Hold Margin on Cost (status ${res.status})`);
+              }
+              pricingTargetNodes.forEach((n) => {
+                try { (n as RowNode<Record<string, unknown>>).setData({ ...(n.data ?? {}), PricingHoldMarginOnCost: nextHoldMargin }); } catch { /* noop */ }
+              });
+              try {
+                contextMenuApi?.refreshCells({
+                  rowNodes: pricingTargetNodes as IRowNode[],
+                  columns: ['TreeOrdering'],
+                  force: true,
+                });
+              } catch { /* noop */ }
+              showToastMessage(
+                nextHoldMargin
+                  ? `Hold Margin on Cost enabled for ${pricingDetailIds.length === 1 ? 'row' : `${pricingDetailIds.length} rows`}`
+                  : `Hold Margin on Cost disabled for ${pricingDetailIds.length === 1 ? 'row' : `${pricingDetailIds.length} rows`}`,
+                'success',
+              );
+            } catch (err) {
+              console.error('Failed to set Hold Margin on Cost', err);
+              showToastMessage(
+                err instanceof Error ? err.message : 'Unable to set Hold Margin on Cost. Please try again.',
+                'error',
+              );
+            }
+          },
+        };
+
+        const useOfferDefaultItem: MenuItemDef = {
+          name: 'Use offer default',
+          action: async () => {
+            try {
+              const updates = pricingDetailIds.map((id) => ({
+                OfferDetailID: id,
+                PricingSellAnchor: null,
+                PricingHoldMarginOnCost: null,
+              }));
+              const res = await fetch(resolvedEndpoint, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ updates }),
+              });
+              const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+              if (!res.ok || !payload?.ok) {
+                throw new Error(payload?.error ?? `Failed to reset pricing mode (status ${res.status})`);
+              }
+              pricingTargetNodes.forEach((n) => {
+                try { (n as RowNode<Record<string, unknown>>).setData({ ...(n.data ?? {}), PricingSellAnchor: null, PricingHoldMarginOnCost: null }); } catch { /* noop */ }
+              });
+              try {
+                contextMenuApi?.refreshCells({
+                  rowNodes: pricingTargetNodes as IRowNode[],
+                  columns: ['TreeOrdering'],
+                  force: true,
+                });
+              } catch { /* noop */ }
+              showToastMessage(
+                pricingDetailIds.length === 1 ? 'Row reset to offer default' : `${pricingDetailIds.length} rows reset to offer default`,
+                'success',
+              );
+            } catch (err) {
+              console.error('Failed to reset pricing mode', err);
+              showToastMessage(
+                err instanceof Error ? err.message : 'Unable to reset pricing mode. Please try again.',
+                'error',
+              );
+            }
+          },
+        };
+
+        const subMenuItems: Array<MenuItemDef | string> = [
+          makePricingModeItem('Hold Net Unit Price', 'netUnitPrice'),
+          makePricingModeItem('Hold Customer Discount', 'customerDiscount'),
+          'separator' as unknown as MenuItemDef,
+          holdMarginItem,
+        ];
+        if (anyRowHasOverride) {
+          subMenuItems.unshift('separator' as unknown as MenuItemDef);
+          subMenuItems.unshift(useOfferDefaultItem);
+        }
+
+        const pricingModeSubmenu: MenuItemDef = {
+          name: 'Pricing mode',
+          subMenu: subMenuItems,
+        };
+        const deleteIdx = findDeleteMenuItemIndex(items);
+        items.splice(deleteIdx >= 0 ? deleteIdx : items.length, 0, pricingModeSubmenu);
+      }
+    }
+
     // --- AI features submenu (web links + enhance description, product rows only) ---
     const selectedNodes = getContextMenuSelectionSnapshot(params.api ?? null);
     const targetNodes = selectedNodes.length > 0 ? selectedNodes : (params.node ? [params.node] : []);
@@ -6098,6 +6352,8 @@ const requestedColumnDefsMap = useMemo(
     onRequestPaste,
     onRequestAddStandardPackage,
     standardPackageMode,
+    offerPricingSellAnchor,
+    offerPricingHoldMarginOnCost,
   ]);
 
   const handleEmptyGridWrapperContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {

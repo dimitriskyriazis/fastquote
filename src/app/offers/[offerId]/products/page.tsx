@@ -12,6 +12,8 @@ type OfferHeaderInfo = {
   isStandardPackage: boolean;
   createdByUserId: string | null;
   pricingPolicyName: string | null;
+  pricingSellAnchor: string | null;
+  pricingHoldMarginOnCost: boolean;
 };
 
 async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
@@ -22,6 +24,8 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
     IsStandardPackage: number | boolean | null;
     CreatedBy: number | string | null;
     PricingPolicyName: string | null;
+    PricingSellAnchor: string | null;
+    PricingHoldMarginOnCost: boolean | number | null;
   };
   try {
     const pool = await getPool();
@@ -34,7 +38,9 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
         c.Name AS CustomerName,
         o.IsStandardPackage,
         o.CreatedBy,
-        pp.Name AS PricingPolicyName
+        pp.Name AS PricingPolicyName,
+        o.PricingSellAnchor,
+        o.PricingHoldMarginOnCost
       FROM dbo.Offer AS o
       LEFT JOIN dbo.Customers AS c ON c.ID = o.CustomerID
       LEFT JOIN dbo.PricingPolicies AS pp ON pp.ID = o.PricingPolicyID
@@ -48,6 +54,8 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
       isStandardPackage: row?.IsStandardPackage === true || row?.IsStandardPackage === 1,
       createdByUserId: row?.CreatedBy != null ? String(row.CreatedBy) : null,
       pricingPolicyName: row?.PricingPolicyName?.trim() || null,
+      pricingSellAnchor: row?.PricingSellAnchor ?? null,
+      pricingHoldMarginOnCost: row?.PricingHoldMarginOnCost === true || row?.PricingHoldMarginOnCost === 1,
     };
   } catch (err) {
     console.error('Failed to load offer title for products page', err);
@@ -58,6 +66,8 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
       isStandardPackage: false,
       createdByUserId: null,
       pricingPolicyName: null,
+      pricingSellAnchor: null,
+      pricingHoldMarginOnCost: false,
     };
   }
 }
@@ -76,6 +86,8 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
         isStandardPackage: false,
         createdByUserId: null,
         pricingPolicyName: null,
+        pricingSellAnchor: null,
+        pricingHoldMarginOnCost: false,
       };
   const offerTitle = offerHeader.title;
   const offerDescription = offerHeader.description;
@@ -99,6 +111,8 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
       isStandardPackage={isStandardPackage}
       offerCreatedByUserId={offerHeader.createdByUserId}
       pricingPolicyName={offerHeader.pricingPolicyName}
+      initialPricingSellAnchor={offerHeader.pricingSellAnchor}
+      initialPricingHoldMarginOnCost={offerHeader.pricingHoldMarginOnCost}
     />
   );
 }

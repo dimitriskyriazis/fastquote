@@ -28,6 +28,8 @@ const AddProductModal = dynamic(() => import('../../../products/AddProductModal'
 const AddProductsModal = dynamic(() => import('./AddProductsModal'), { ssr: false });
 const PasteProductsDialog = dynamic(() => import('./PasteProductsDialog'), { ssr: false });
 const LookupModal = dynamic(() => import('../../../components/LookupModal'), { ssr: false });
+type SellAnchor = 'netUnitPrice' | 'customerDiscount' | 'margin';
+
 type Props = {
   offerId: string;
   headingText: string;
@@ -36,6 +38,8 @@ type Props = {
   isStandardPackage: boolean;
   offerCreatedByUserId?: string | null;
   pricingPolicyName?: string | null;
+  initialPricingSellAnchor?: string | null;
+  initialPricingHoldMarginOnCost?: boolean;
 };
 
 type AddActionType = 'product' | 'category' | 'printable-comment' | 'non-printable-comment' | 'printable-service' | 'non-printable-service';
@@ -123,6 +127,12 @@ const normalizeBrandList = (value: unknown): string[] => {
   );
 };
 
+const SELL_ANCHOR_LABELS: Record<SellAnchor, string> = {
+  netUnitPrice: 'Net Unit Price',
+  customerDiscount: 'Customer Discount',
+  margin: 'Margin',
+};
+
 export default function ClientProductsPage({
   offerId,
   headingText,
@@ -131,6 +141,8 @@ export default function ClientProductsPage({
   isStandardPackage,
   offerCreatedByUserId,
   pricingPolicyName,
+  initialPricingSellAnchor,
+  initialPricingHoldMarginOnCost = false,
 }: Props) {
   const { userId } = useAuditUser();
   const normalizedHeadingTop = typeof headingTopText === 'string' ? headingTopText.trim() : '';
@@ -201,6 +213,28 @@ export default function ClientProductsPage({
   const [addingStandardPackage, setAddingStandardPackage] = useState(false);
   const [addStandardPackageError, setAddStandardPackageError] = useState<string | null>(null);
   const [undoState, setUndoState] = useState<{ canUndo: boolean; lastLabel: string | undefined }>({ canUndo: false, lastLabel: undefined });
+  const normalizeSellAnchor = (v: string | null | undefined): SellAnchor =>
+    v === 'netUnitPrice' || v === 'margin' ? 'netUnitPrice' : 'customerDiscount';
+  const [pricingSellAnchor, setPricingSellAnchor] = useState<SellAnchor>(() => normalizeSellAnchor(initialPricingSellAnchor));
+  const [pricingHoldMarginOnCost, setPricingHoldMarginOnCost] = useState(initialPricingHoldMarginOnCost);
+  const [pricingMenuOpen, setPricingMenuOpen] = useState(false);
+  const pricingMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const savePricingMode = useCallback(async (sellAnchor: SellAnchor, holdMargin: boolean) => {
+    try {
+      await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          updates: [
+            { field: 'PricingSellAnchor', value: sellAnchor === 'customerDiscount' ? null : sellAnchor },
+            { field: 'PricingHoldMarginOnCost', value: holdMargin ? 1 : 0 },
+          ],
+        }),
+      });
+    } catch (err) {
+      console.error('Failed to save pricing mode', err);
+    }
+  }, [offerId]);
   const [placementAnchor, setPlacementAnchor] = useState<{ label: string; treeOrdering: string; isRequested: boolean; offerDetailId?: number; parentPath?: number[]; requestedBrand?: string | null; requestedPartNo?: string | null; requestedModelNo?: string | null; requestedDescription?: string | null } | null>(null);
   const [defaultPlacementMode, setDefaultPlacementMode] = useState<'fill' | 'below'>('fill');
   const offerProductsPanelRef = useRef<OfferProductsPanelHandle | null>(null);
@@ -1500,6 +1534,89 @@ export default function ClientProductsPage({
         </button>
       )}
       {isStandardPackage ? collapseAllToggleButton : null}
+      {!isStandardPackage && (
+        <details
+          ref={pricingMenuRef}
+          className={toolbarStyles.commentDropdown}
+          open={pricingMenuOpen}
+          onToggle={(e) => setPricingMenuOpen((e.target as HTMLDetailsElement).open)}
+        >
+          <summary
+            className={[
+              toolbarStyles.button,
+              toolbarStyles.buttonUpdatePrices,
+              'page-header-button',
+            ].join(' ')}
+            style={{ cursor: 'pointer', userSelect: 'none' }}
+          >
+            {`${SELL_ANCHOR_LABELS[pricingSellAnchor]}${pricingHoldMarginOnCost ? ' · Hold Margin' : ''}`}
+          </summary>
+          <div className={toolbarStyles.commentMenu} style={{ minWidth: 260, right: 0, left: 'auto' }}>
+            <div style={{ padding: '4px 8px 6px', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#475569' }}>
+              Pricing Behaviour
+            </div>
+            <div style={{ padding: '2px 4px 6px', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>
+              When List Price changes, hold:
+            </div>
+            {(['netUnitPrice', 'customerDiscount'] as SellAnchor[]).map((anchor) => (
+              <button
+                key={anchor}
+                type="button"
+                className={toolbarStyles.commentMenuItem}
+                style={{
+                  background: pricingSellAnchor === anchor ? '#e0f2fe' : '#f8fafc',
+                  color: pricingSellAnchor === anchor ? '#0c4a6e' : '#0f172a',
+                  borderColor: pricingSellAnchor === anchor ? 'rgba(7,89,133,0.3)' : 'rgba(15,23,42,0.1)',
+                  fontWeight: pricingSellAnchor === anchor ? 600 : 400,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+                onClick={() => {
+                  setPricingSellAnchor(anchor);
+                  void savePricingMode(anchor, pricingHoldMarginOnCost);
+                  if (pricingMenuRef.current) pricingMenuRef.current.open = false;
+                  setPricingMenuOpen(false);
+                }}
+              >
+                <span style={{ width: 14, textAlign: 'center' }}>{pricingSellAnchor === anchor ? '✓' : ''}</span>
+                {SELL_ANCHOR_LABELS[anchor]}
+              </button>
+            ))}
+            <div style={{ margin: '6px 4px 2px', borderTop: '1px solid #e2e8f0' }} />
+            <div style={{ padding: '4px 4px 2px', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>
+              When Net Cost changes:
+            </div>
+            <button
+              type="button"
+              className={toolbarStyles.commentMenuItem}
+              style={{
+                background: '#f8fafc',
+                color: '#0f172a',
+                borderColor: 'rgba(15,23,42,0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+              onClick={() => {
+                const next = !pricingHoldMarginOnCost;
+                setPricingHoldMarginOnCost(next);
+                void savePricingMode(pricingSellAnchor, next);
+                if (pricingMenuRef.current) pricingMenuRef.current.open = false;
+                setPricingMenuOpen(false);
+              }}
+            >
+              <input
+                type="checkbox"
+                readOnly
+                checked={pricingHoldMarginOnCost}
+                style={{ accentColor: '#0c4a6e', pointerEvents: 'none', width: 14, height: 14 }}
+              />
+              Hold Margin
+            </button>
+          </div>
+        </details>
+      )}
     </div>
   );
 
@@ -1599,6 +1716,12 @@ export default function ClientProductsPage({
               }}
               collapseAllCategories={collapseAllCategories}
               onCollapseAllSuppressed={() => setCollapseAllCategories(false)}
+              offerPricingSellAnchor={pricingSellAnchor}
+              offerPricingHoldMarginOnCost={pricingHoldMarginOnCost}
+              onOfferPricingHoldMarginOnCostChange={(next) => {
+                setPricingHoldMarginOnCost(next);
+                void savePricingMode(pricingSellAnchor, next);
+              }}
             />
           </div>
           {showAddProductModal || showAddServiceModal ? (

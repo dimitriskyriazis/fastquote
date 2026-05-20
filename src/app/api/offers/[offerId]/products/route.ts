@@ -149,6 +149,8 @@ type ProductRow = {
   RequestedQuantity: number | null;
   __isRequestedRow?: number | bigint | null;
   __requestedItemOrdinal?: string | null;
+  PricingSellAnchor?: string | null;
+  PricingHoldMarginOnCost?: boolean | null;
 };
 
 type RequestedFieldKey =
@@ -240,6 +242,8 @@ type DetailUpdateInput = {
   Commissioning?: number | string | null;
   Warranty?: number | string | null;
   TelmacoWarranty?: number | string | null;
+  PricingSellAnchor?: string | null;
+  PricingHoldMarginOnCost?: boolean | null;
 };
 
 type DetailUpdateRequest = {
@@ -1510,7 +1514,9 @@ export async function POST(
           MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription,
           MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription2)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription2,
           MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription3,
-          MAX(CASE WHEN od.RequestedQuantity IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedQuantity
+          MAX(CASE WHEN od.RequestedQuantity IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedQuantity,
+          od.PricingSellAnchor,
+          od.PricingHoldMarginOnCost
         FROM dbo.OfferDetails od
           OUTER APPLY (
             SELECT TOP 1 cat_inner.ProductDescription
@@ -1840,6 +1846,8 @@ export async function PATCH(
         const hasCommissioning = entry ? Object.prototype.hasOwnProperty.call(entry, 'Commissioning') : false;
         const hasWarranty = entry ? Object.prototype.hasOwnProperty.call(entry, 'Warranty') : false;
         const hasTelmacoWarranty = entry ? Object.prototype.hasOwnProperty.call(entry, 'TelmacoWarranty') : false;
+        const hasPricingSellAnchor = entry ? Object.prototype.hasOwnProperty.call(entry, 'PricingSellAnchor') : false;
+        const hasPricingHoldMarginOnCost = entry ? Object.prototype.hasOwnProperty.call(entry, 'PricingHoldMarginOnCost') : false;
         const hasPricingFields = hasCustomerDiscount || hasAdditionalCustomerDiscount || hasTelmacoDiscount || hasNetUnitPrice || hasNetCost || hasMargin
           || hasNetCostOtherCurrency || hasOtherCurrencyID || hasCurrencyCostModifier;
         if (
@@ -1871,6 +1879,8 @@ export async function PATCH(
           && !hasCommissioning
           && !hasWarranty
           && !hasTelmacoWarranty
+          && !hasPricingSellAnchor
+          && !hasPricingHoldMarginOnCost
         ) {
           return null;
         }
@@ -2043,6 +2053,14 @@ export async function PATCH(
           Warranty: warranty,
           hasTelmacoWarranty,
           TelmacoWarranty: telmacoWarranty,
+          hasPricingSellAnchor,
+          PricingSellAnchor: hasPricingSellAnchor
+            ? (typeof entry?.PricingSellAnchor === 'string' ? entry.PricingSellAnchor.trim() || null : null)
+            : undefined,
+          hasPricingHoldMarginOnCost,
+          PricingHoldMarginOnCost: hasPricingHoldMarginOnCost
+            ? (entry?.PricingHoldMarginOnCost ? true : entry?.PricingHoldMarginOnCost === false ? false : null)
+            : undefined,
         };
       })
       .filter((entry): entry is {
@@ -2117,6 +2135,10 @@ export async function PATCH(
         Warranty: number | null;
         hasTelmacoWarranty: boolean;
         TelmacoWarranty: number | null;
+        hasPricingSellAnchor: boolean;
+        PricingSellAnchor: string | null | undefined;
+        hasPricingHoldMarginOnCost: boolean;
+        PricingHoldMarginOnCost: boolean | null | undefined;
       } => Boolean(entry));
 
     if (normalizedUpdates.length === 0) {
@@ -2139,6 +2161,18 @@ export async function PATCH(
     }
 
     const pool = await getPool();
+
+    // Fetch offer-level pricing behaviour defaults once for the entire PATCH.
+    const offerDefaultsRes = await pool.request()
+      .input('__offerIdDefaults', sql.Int, offerId)
+      .query<{ PricingSellAnchor: string | null; PricingHoldMarginOnCost: boolean | null }>(`
+        SELECT PricingSellAnchor, PricingHoldMarginOnCost
+        FROM dbo.Offer WHERE ID = @__offerIdDefaults
+      `);
+    const offerDefaults = offerDefaultsRes.recordset?.[0] ?? null;
+    const offerSellAnchor = offerDefaults?.PricingSellAnchor ?? null;
+    const offerHoldMarginOnCost = offerDefaults?.PricingHoldMarginOnCost ?? false;
+
     const chunkSize = 400;
     let affected = 0;
     const resolvedRows: Array<{
@@ -2194,6 +2228,8 @@ export async function PATCH(
         CurrencyCostModifier: number | null;
         NetCost: number | null;
         Margin: number | null;
+        PricingSellAnchor: string | null;
+        PricingHoldMarginOnCost: boolean | null;
       }>(`
         SELECT
         od.ProductID,
@@ -2215,7 +2251,9 @@ export async function PATCH(
           od.OtherCurrencyID,
           od.CurrencyCostModifier,
           od.NetCost,
-          od.Margin
+          od.Margin,
+          od.PricingSellAnchor,
+          od.PricingHoldMarginOnCost
         FROM dbo.OfferDetails od
         WHERE od.OfferID = @__offerId
           AND od.ID IN (${idParams.join(', ')})
@@ -2240,6 +2278,8 @@ export async function PATCH(
         CurrencyCostModifier: number | null;
         NetCost: number | null;
         Margin: number | null;
+        PricingSellAnchor: string | null;
+        PricingHoldMarginOnCost: boolean | null;
       }>();
       (currentRowsRes.recordset ?? []).forEach((row) => {
         currentById.set(row.OfferDetailID, row);
@@ -2316,6 +2356,10 @@ export async function PATCH(
         HasWarranty: boolean;
         TelmacoWarranty: number | null;
         HasTelmacoWarranty: boolean;
+        PricingSellAnchor: string | null | undefined;
+        HasPricingSellAnchor: boolean;
+        PricingHoldMarginOnCost: boolean | null | undefined;
+        HasPricingHoldMarginOnCost: boolean;
       }> = [];
       const errors: string[] = [];
 
@@ -2325,6 +2369,17 @@ export async function PATCH(
           errors.push('Offer detail not found for update.');
           return;
         }
+
+        // Resolve pricing behaviour: row override → offer default → built-in default.
+        const effectiveSellAnchor = (entry.hasPricingSellAnchor ? entry.PricingSellAnchor : null)
+          ?? current.PricingSellAnchor
+          ?? offerSellAnchor
+          ?? 'customerDiscount';
+        const effectiveHoldMarginOnCost =
+          (entry.hasPricingHoldMarginOnCost ? entry.PricingHoldMarginOnCost : null)
+          ?? current.PricingHoldMarginOnCost
+          ?? offerHoldMarginOnCost
+          ?? false;
 
         const costFieldsProvided = entry.hasNetCostOtherCurrency || entry.hasOtherCurrencyID || entry.hasCurrencyCostModifier;
         const resolvedNetCostOtherCurrency = entry.hasNetCostOtherCurrency
@@ -2399,6 +2454,8 @@ export async function PATCH(
                 netCost: entry.hasNetCost || costFieldsProvided,
                 margin: entry.hasMargin,
               },
+              sellAnchor: effectiveSellAnchor as import('../../../../../lib/pricing').SellAnchor,
+              holdMarginOnCostChange: effectiveHoldMarginOnCost,
             };
 
             resolvedPricing = resolvePricing(commentInput);
@@ -2451,6 +2508,8 @@ export async function PATCH(
                 netCost: entry.hasNetCost || costFieldsProvided,
                 margin: entry.hasMargin,
               },
+              sellAnchor: effectiveSellAnchor as import('../../../../../lib/pricing').SellAnchor,
+              holdMarginOnCostChange: effectiveHoldMarginOnCost,
             };
 
             resolvedPricing = resolvePricing(input);
@@ -2575,6 +2634,10 @@ export async function PATCH(
           HasWarranty: entry.hasWarranty,
           TelmacoWarranty: entry.hasTelmacoWarranty ? entry.TelmacoWarranty : null,
           HasTelmacoWarranty: entry.hasTelmacoWarranty,
+          PricingSellAnchor: entry.hasPricingSellAnchor ? (entry.PricingSellAnchor ?? null) : undefined,
+          HasPricingSellAnchor: entry.hasPricingSellAnchor,
+          PricingHoldMarginOnCost: entry.hasPricingHoldMarginOnCost ? (entry.PricingHoldMarginOnCost ?? null) : undefined,
+          HasPricingHoldMarginOnCost: entry.hasPricingHoldMarginOnCost,
         });
       });
 
@@ -2794,7 +2857,15 @@ export async function PATCH(
         request.input(hasWarrantyParam, sql.Bit, row.HasWarranty ? 1 : 0);
         request.input(telmacoWarrantyParam, decimalType, row.HasTelmacoWarranty ? row.TelmacoWarranty : null);
         request.input(hasTelmacoWarrantyParam, sql.Bit, row.HasTelmacoWarranty ? 1 : 0);
-        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${additionalCustomerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam}, @${isOptionParam}, @${hasIsOptionParam}, @${isServiceParam}, @${hasIsServiceParam}, @${partNumberParam}, @${hasPartNumberParam}, @${modelNumberParam}, @${hasModelNumberParam}, @${installationParam}, @${hasInstallationParam}, @${elInstalationParam}, @${hasElInstalationParam}, @${commissioningParam}, @${hasCommissioningParam}, @${warrantyParam}, @${hasWarrantyParam}, @${telmacoWarrantyParam}, @${hasTelmacoWarrantyParam})`);
+        const pricingSellAnchorParam = `pricingSellAnchor_${rowIdx}`;
+        const hasPricingSellAnchorParam = `hasPricingSellAnchor_${rowIdx}`;
+        request.input(pricingSellAnchorParam, sql.NVarChar(20), row.HasPricingSellAnchor ? (row.PricingSellAnchor ?? null) : null);
+        request.input(hasPricingSellAnchorParam, sql.Bit, row.HasPricingSellAnchor ? 1 : 0);
+        const pricingHoldMarginOnCostParam = `pricingHoldMarginOnCost_${rowIdx}`;
+        const hasPricingHoldMarginOnCostParam = `hasPricingHoldMarginOnCost_${rowIdx}`;
+        request.input(pricingHoldMarginOnCostParam, sql.Bit, row.HasPricingHoldMarginOnCost ? (row.PricingHoldMarginOnCost != null ? (row.PricingHoldMarginOnCost ? 1 : 0) : null) : null);
+        request.input(hasPricingHoldMarginOnCostParam, sql.Bit, row.HasPricingHoldMarginOnCost ? 1 : 0);
+        valueClauses.push(`(@${idParam}, @${productDescriptionParam}, @${hasProductDescriptionParam}, @${commentParam}, @${hasCommentParam}, @${deliveryParam}, @${hasDeliveryParam}, @${quantityParam}, @${hasQuantityParam}, @${customerDiscountParam}, @${additionalCustomerDiscountParam}, @${telmacoDiscountParam}, @${netUnitPriceParam}, @${netCostOtherCurrencyParam}, @${hasNetCostOtherCurrencyParam}, @${otherCurrencyIdParam}, @${hasOtherCurrencyIdParam}, @${currencyCostModifierParam}, @${hasCurrencyCostModifierParam}, @${netCostParam}, @${marginParam}, @${totalPriceParam}, @${totalNetParam}, @${totalCostParam}, @${grossProfitParam}, @${listPriceParam}, @${hasListPriceParam}, @${requestedItemNoParam}, @${hasRequestedItemNoParam}, @${requestedBrandParam}, @${hasRequestedBrandParam}, @${requestedModelNoParam}, @${hasRequestedModelNoParam}, @${requestedPartNoParam}, @${hasRequestedPartNoParam}, @${requestedWebLinkParam}, @${hasRequestedWebLinkParam}, @${requestedDescriptionParam}, @${hasRequestedDescriptionParam}, @${requestedDescription2Param}, @${hasRequestedDescription2Param}, @${requestedDescription3Param}, @${hasRequestedDescription3Param}, @${requestedQuantityParam}, @${hasRequestedQuantityParam}, @${isCategoryParam}, @${hasIsCategoryParam}, @${isPrintableParam}, @${hasIsPrintableParam}, @${isCommentParam}, @${hasIsCommentParam}, @${isOptionParam}, @${hasIsOptionParam}, @${isServiceParam}, @${hasIsServiceParam}, @${partNumberParam}, @${hasPartNumberParam}, @${modelNumberParam}, @${hasModelNumberParam}, @${installationParam}, @${hasInstallationParam}, @${elInstalationParam}, @${hasElInstalationParam}, @${commissioningParam}, @${hasCommissioningParam}, @${warrantyParam}, @${hasWarrantyParam}, @${telmacoWarrantyParam}, @${hasTelmacoWarrantyParam}, @${pricingSellAnchorParam}, @${hasPricingSellAnchorParam}, @${pricingHoldMarginOnCostParam}, @${hasPricingHoldMarginOnCostParam})`);
       });
 
       const query = `
@@ -2867,7 +2938,11 @@ export async function PATCH(
           Warranty,
           HasWarranty,
           TelmacoWarranty,
-          HasTelmacoWarranty
+          HasTelmacoWarranty,
+          PricingSellAnchor,
+          HasPricingSellAnchor,
+          PricingHoldMarginOnCost,
+          HasPricingHoldMarginOnCost
         ) AS (
           SELECT *
           FROM (VALUES ${valueClauses.join(', ')}) AS v (
@@ -2939,7 +3014,11 @@ export async function PATCH(
             Warranty,
             HasWarranty,
             TelmacoWarranty,
-            HasTelmacoWarranty
+            HasTelmacoWarranty,
+            PricingSellAnchor,
+            HasPricingSellAnchor,
+            PricingHoldMarginOnCost,
+            HasPricingHoldMarginOnCost
           )
         )
         UPDATE od
@@ -2982,6 +3061,8 @@ export async function PATCH(
             od.Commissioning = CASE WHEN PendingUpdates.HasCommissioning = 1 THEN PendingUpdates.Commissioning ELSE od.Commissioning END,
             od.Warranty = CASE WHEN PendingUpdates.HasWarranty = 1 THEN PendingUpdates.Warranty ELSE od.Warranty END,
             od.TelmacoWarranty = CASE WHEN PendingUpdates.HasTelmacoWarranty = 1 THEN PendingUpdates.TelmacoWarranty ELSE od.TelmacoWarranty END,
+            od.PricingSellAnchor = CASE WHEN PendingUpdates.HasPricingSellAnchor = 1 THEN PendingUpdates.PricingSellAnchor ELSE od.PricingSellAnchor END,
+            od.PricingHoldMarginOnCost = CASE WHEN PendingUpdates.HasPricingHoldMarginOnCost = 1 THEN PendingUpdates.PricingHoldMarginOnCost ELSE od.PricingHoldMarginOnCost END,
             od.ModifiedOn = SYSUTCDATETIME(),
             od.ModifiedBy = @__modifiedBy
         FROM dbo.OfferDetails od

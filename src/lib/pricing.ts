@@ -20,6 +20,12 @@ export type PricingSnapshot = {
   additionalCustomerDiscount?: number | null;
 };
 
+// How the sell side cascades when List Price is edited (single-field edit only).
+//   'netUnitPrice'      → hold NP, recompute CD  (default / current behaviour)
+//   'customerDiscount'  → hold CD, recompute NP
+//   'margin'            → hold Margin+TC, recompute NP then CD
+export type SellAnchor = 'netUnitPrice' | 'customerDiscount' | 'margin';
+
 export type PricingInput = PricingSnapshot & {
   provided: {
     listPrice: boolean;
@@ -30,6 +36,9 @@ export type PricingInput = PricingSnapshot & {
     margin: boolean;
     additionalCustomerDiscount?: boolean;
   };
+  // Offer/row-level pricing behaviour overrides.
+  sellAnchor?: SellAnchor | null;
+  holdMarginOnCostChange?: boolean | null;
 };
 
 export type ResolvedPricing = {
@@ -239,6 +248,8 @@ const resolveSingleFieldEdit = (input: PricingInput): ResolvedPricing | null => 
   const lp = input.listPrice;
   const p = input.provided;
   const hasValidLp = lp != null && Number.isFinite(lp) && !Object.is(lp, 0);
+  const sellAnchor: SellAnchor = input.sellAnchor ?? 'netUnitPrice';
+  const holdMarginOnCostChange = input.holdMarginOnCostChange ?? false;
 
   // Margin edit: hold NetCost, recompute NetUnitPrice, then cascade discounts.
   if (p.margin) {
@@ -260,11 +271,54 @@ const resolveSingleFieldEdit = (input: PricingInput): ResolvedPricing | null => 
     return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: newNp, netCost: tc, margin: m, additionalCustomerDiscount: acd };
   }
 
-  // ListPrice edit: hold absolute prices (NP, TC) when populated; derive the
-  // implied discounts from the new LP. If a price is missing, fall back to
-  // recomputing it from the held discount.
+  // ListPrice edit — cascade depends on sellAnchor:
+  //   'netUnitPrice'     → hold NP (and TC), recompute CD+TD  (default)
+  //   'customerDiscount' → hold CD (and TD), recompute NP+TC
+  //   'margin'           → hold Margin+TC, recompute NP then CD
   if (p.listPrice) {
     if (!hasValidLp) return null;
+
+    if (sellAnchor === 'customerDiscount') {
+      // Hold CD → recompute NP from LP × (1 - effectiveCD).
+      const effectiveCd = (cd ?? 0) + acdValue;
+      const newNp = cd != null
+        ? roundTo(lp * (1 - percentageToFactor(effectiveCd)))
+        : np;
+      const newTc = td != null
+        ? roundTo(lp * (1 - percentageToFactor(td)))
+        : tc;
+      return {
+        customerDiscount: cd,
+        telmacoDiscount: td,
+        netUnitPrice: newNp,
+        netCost: newTc,
+        margin: deriveMarginPercent(newNp, newTc),
+        additionalCustomerDiscount: acd,
+      };
+    }
+
+    if (sellAnchor === 'margin') {
+      // Hold Margin + TC → recompute NP = TC / (1 - M%), then CD.
+      if (m != null && tc != null) {
+        const marginFactor = 1 - percentageToFactor(m);
+        if (marginFactor > 0) {
+          const newNp = roundTo(tc / marginFactor);
+          const newCd = roundTo((1 - newNp / lp) * 100 - acdValue);
+          const newTd = roundTo((1 - tc / lp) * 100);
+          return {
+            customerDiscount: newCd,
+            telmacoDiscount: newTd,
+            netUnitPrice: newNp,
+            netCost: tc,
+            margin: m,
+            additionalCustomerDiscount: acd,
+          };
+        }
+      }
+      // Fall through to netUnitPrice anchor if margin/TC not available.
+    }
+
+    // Default: 'netUnitPrice' — hold absolute NP+TC, recompute discounts.
     const newNp = np != null
       ? np
       : cd != null ? roundTo(lp * (1 - percentageToFactor(cd + acdValue))) : null;
@@ -319,12 +373,30 @@ const resolveSingleFieldEdit = (input: PricingInput): ResolvedPricing | null => 
     return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: np, netCost: tc, margin: deriveMarginPercent(np, tc), additionalCustomerDiscount: acd };
   }
 
-  // NetCost edit (mirror of NP; ACD does not affect cost side).
+  // NetCost edit — cascade depends on holdMarginOnCostChange:
+  //   false (default) → TD recalcs, NP stays, Margin adjusts (show the impact)
+  //   true            → Margin holds, NP floats up to protect it
   if (p.netCost) {
     if (tc == null) return null;
     if (hasValidLp) {
       const newTd = roundTo((1 - tc / lp) * 100);
+      if (holdMarginOnCostChange && m != null) {
+        // Hold margin → recompute NP = TC / (1 - M%), then CD.
+        const marginFactor = 1 - percentageToFactor(m);
+        if (marginFactor > 0) {
+          const newNp = roundTo(tc / marginFactor);
+          const newCd = roundTo((1 - newNp / lp) * 100 - acdValue);
+          return { customerDiscount: newCd, telmacoDiscount: newTd, netUnitPrice: newNp, netCost: tc, margin: m, additionalCustomerDiscount: acd };
+        }
+      }
       return { customerDiscount: cd, telmacoDiscount: newTd, netUnitPrice: np, netCost: tc, margin: deriveMarginPercent(np, tc), additionalCustomerDiscount: acd };
+    }
+    if (holdMarginOnCostChange && m != null) {
+      const marginFactor = 1 - percentageToFactor(m);
+      if (marginFactor > 0) {
+        const newNp = roundTo(tc / marginFactor);
+        return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: newNp, netCost: tc, margin: m, additionalCustomerDiscount: acd };
+      }
     }
     return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: np, netCost: tc, margin: deriveMarginPercent(np, tc), additionalCustomerDiscount: acd };
   }

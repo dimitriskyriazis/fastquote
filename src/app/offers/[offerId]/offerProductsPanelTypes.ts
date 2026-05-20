@@ -25,6 +25,9 @@ export type OfferProductsPanelProps = {
   onStartingItemNoChanged?: (current: number | null) => void;
   collapseAllCategories?: boolean;
   onCollapseAllSuppressed?: () => void;
+  offerPricingSellAnchor?: string | null;
+  offerPricingHoldMarginOnCost?: boolean;
+  onOfferPricingHoldMarginOnCostChange?: (next: boolean) => void;
 };
 
 export type OfferProductsPanelHandle = {
