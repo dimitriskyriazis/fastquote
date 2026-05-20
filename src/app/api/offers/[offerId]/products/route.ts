@@ -2128,6 +2128,16 @@ export async function PATCH(
       return NextResponse.json({ ok: false, error: errorMessage }, { status: 400 });
     }
 
+    if (normalizedUpdates.length > ALL_ROWS_LIMIT) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Too many rows to update at once (${normalizedUpdates.length}). Maximum is ${ALL_ROWS_LIMIT}.`,
+        },
+        { status: 413 },
+      );
+    }
+
     const pool = await getPool();
     const chunkSize = 400;
     let affected = 0;
@@ -2596,13 +2606,21 @@ export async function PATCH(
       });
 
       const decimalType = getDecimalType();
-      const UPDATE_PARAMS_PER_ROW = 67;
-      const UPDATE_BASE_PARAMS = 2;
-      const updateChunkSize = Math.max(1, Math.floor((2100 - UPDATE_BASE_PARAMS) / UPDATE_PARAMS_PER_ROW));
+      // Chunk size is derived at runtime by measuring the actual number of
+      // parameters added for one row after the first batch executes.
+      // This is self-correcting: adding new fields never requires updating
+      // a constant — the next request will automatically use a smaller chunk.
+      const SQL_MAX_PARAMS = 2100;
+      const UPDATE_BASE_PARAMS = 2; // __offerId + __modifiedBy
+      let measuredParamsPerRow = 0; // 0 = not yet measured; first batch is 1 row
+      let updateIdx = 0;
 
-      for (let updateIdx = 0; updateIdx < pendingRows.length; updateIdx += updateChunkSize) {
+      while (updateIdx < pendingRows.length) {
+        const updateChunkSize = measuredParamsPerRow > 0
+          ? Math.max(1, Math.floor((SQL_MAX_PARAMS - UPDATE_BASE_PARAMS) / measuredParamsPerRow))
+          : 1; // first batch: process a single row to measure actual params-per-row
       const updateChunk = pendingRows.slice(updateIdx, updateIdx + updateChunkSize);
-      if (updateChunk.length === 0) continue;
+      if (updateChunk.length === 0) break;
 
       const request = pool.request();
       request.input('__offerId', sql.Int, offerId);
@@ -2971,8 +2989,18 @@ export async function PATCH(
         WHERE od.OfferID = @__offerId;
       `;
 
+      // Measure actual params-per-row from the first batch (which is always
+      // exactly 1 row). mssql stores all bound parameters in request.parameters.
+      if (measuredParamsPerRow === 0) {
+        const totalBound = Object.keys(
+          (request as unknown as { parameters: Record<string, unknown> }).parameters
+        ).length;
+        measuredParamsPerRow = totalBound - UPDATE_BASE_PARAMS;
+      }
+
       const result = await request.query(query);
       affected += result.rowsAffected?.[0] ?? 0;
+      updateIdx += updateChunk.length;
       } // end updateChunk loop
     }
 

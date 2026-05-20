@@ -2069,6 +2069,16 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           }
         }
       }
+      // Force-refresh all cells when auxiliary row data changed (e.g. WebLink
+      // after "Add web links") but the cell's field value didn't change.
+      // AG Grid normally skips re-running cell renderers in that case.
+      if (pendingForceRefreshCellsRef.current) {
+        pendingForceRefreshCellsRef.current = false;
+        const api = gridApiRef.current;
+        if (api && !api.isDestroyed?.()) {
+          api.refreshCells({ force: true });
+        }
+      }
       // If a pin-below-specific-row is pending (set by pinInsertLineBelowRowId
       // before the row was in the grid), try again now that the model updated.
       // Give up after a few attempts so we don't spin forever if the row was
@@ -2609,6 +2619,10 @@ const requestedColumnDefsMap = useMemo(
   productColumnDefsRef.current = productColumnDefs;
 
   const pendingGridScrollRestoreRef = useRef<number | null>(null);
+  // When true, the next model-updated RAF will call refreshCells({ force: true })
+  // to re-render cells whose field value didn't change but whose auxiliary row
+  // data did (e.g. WebLink updated by the "Add web links" action).
+  const pendingForceRefreshCellsRef = useRef(false);
 
   const refreshOfferProductGrid = useCallback((api: GridApi<Record<string, unknown>> | null, options?: { refresh?: boolean; purge?: boolean; redraw?: boolean }) => {
     const targetApi = api ?? gridApiRef.current;
@@ -5901,6 +5915,11 @@ const requestedColumnDefsMap = useMemo(
                 ? `Updated ${data.updatedCount} web link(s), ${data.failedCount} could not be found.`
                 : `Updated ${data.updatedCount} web link(s).`;
               showToastMessage(msg, 'success');
+              // Mark that the next model-updated cycle should force-refresh cells:
+              // WebLink changed in the DB but PartNumber/ModelNumber (the cell
+              // field values) didn't, so AG Grid would otherwise skip re-rendering
+              // those cells and the new hyperlinks wouldn't appear until a hard reload.
+              pendingForceRefreshCellsRef.current = true;
               refreshOfferProductGrid(null, { purge: true });
               router.refresh();
             } else {

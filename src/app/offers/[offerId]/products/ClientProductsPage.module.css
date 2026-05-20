@@ -250,6 +250,12 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
+  /* Sit above the grid overlay that visually overlaps the bottom header row
+     (the row has margin-bottom: -8px which lets the grid cover its last ~8px).
+     Same fix applied to .collapseAllToggle for the same reason. */
+  position: relative;
+  z-index: 5;
+  pointer-events: auto;
 }
 
 .layoutSelect:hover {
