@@ -432,7 +432,7 @@ function buildDescriptionCell(
       { text: baseText },
       {
         text: extraLines.join('\n'),
-        fontSize: 7.0,
+        fontSize: 6.8,
         color: COLORS.secondaryText,
         margin: [0, 1, 0, 0],
       },
@@ -467,8 +467,8 @@ function buildCompactHeader(data: OfferPdfData, L: Labels, lang: PdfLang, orient
     ...(salesEmail ? [{ label: L.responsibleEmail, value: salesEmail }] : []),
   ];
 
-  const labelStyle = { fontSize: 7.5, color: COLORS.secondaryText, bold: false };
-  const compactValue = { fontSize: 8.5, color: COLORS.primaryText, bold: true };
+  const labelStyle = { fontSize: 7.3, color: COLORS.secondaryText, bold: false };
+  const compactValue = { fontSize: 8.3, color: COLORS.primaryText, bold: true };
 
   return [
     {
@@ -952,7 +952,7 @@ function buildItemsTable(
         fillColor: COLORS.categoryBg,
         border: [false, false, false, false],
         bold: true,
-        fontSize: 8.2,
+        fontSize: 8.0,
         color: COLORS.primaryText,
       };
       const n = selectedColumns.length;
@@ -1194,8 +1194,8 @@ function buildTotalsAndTerms(
     if (!t) return { text: '', margin: [0, 3, 0, 3] };
     return {
       text: [
-        { text: `${t.label}: `, fontSize: 8.5, color: COLORS.secondaryText },
-        { text: t.value, fontSize: 8.5, bold: true, color: COLORS.primaryText },
+        { text: `${t.label}: `, fontSize: 8.3, color: COLORS.secondaryText },
+        { text: t.value, fontSize: 8.3, bold: true, color: COLORS.primaryText },
       ],
       margin: [0, 3, 0, 3],
     };
@@ -1209,8 +1209,8 @@ function buildTotalsAndTerms(
   const totalsBlocks: unknown[] = [];
   const termsBlocks: unknown[] = [];
 
-  const summaryRowStyle = { fontSize: 8.5, color: COLORS.primaryText };
-  const finalPriceStyle = { fontSize: 9.5, bold: true, color: COLORS.primaryText };
+  const summaryRowStyle = { fontSize: 8.3, color: COLORS.primaryText };
+  const finalPriceStyle = { fontSize: 9.3, bold: true, color: COLORS.primaryText };
   const baseRows: PdfCell[][] = showDiscountSummary
     ? [
         [
@@ -1269,8 +1269,8 @@ function buildTotalsAndTerms(
                 [
                   {
                     stack: [
-                      { text: L.discountNoteTitle, fontSize: 7.5, color: COLORS.secondaryText, bold: true },
-                      { text: discountNote, fontSize: 8.5, color: COLORS.primaryText, margin: [0, 4, 0, 0] },
+                      { text: L.discountNoteTitle, fontSize: 7.3, color: COLORS.secondaryText, bold: true },
+                      { text: discountNote, fontSize: 8.3, color: COLORS.primaryText, margin: [0, 4, 0, 0] },
                     ],
                   },
                 ],
@@ -1503,20 +1503,20 @@ export async function generateOfferPdf(
 
     styles: {
       titleCover: { fontSize: orientation === 'portrait' ? 28 : 32, bold: true, color: COLORS.primaryText },
-      h2: { fontSize: 10.0, bold: true, color: COLORS.primaryText },
-      metaLabel: { fontSize: 9.0, color: COLORS.secondaryText },
-      metaValue: { fontSize: 10.0, color: COLORS.primaryText, bold: true },
-      body: { fontSize: 8.5, color: COLORS.primaryText },
-      tableHeader: { fontSize: 9.0, bold: true, color: COLORS.primaryText },
-      cell: { fontSize: 8.5, color: COLORS.primaryText },
-      cellTight: { fontSize: 8.0, color: COLORS.primaryText },
-      secondary: { fontSize: 9.0, color: COLORS.secondaryText },
-      foot: { fontSize: 8.0, color: COLORS.secondaryText },
+      h2: { fontSize: 9.8, bold: true, color: COLORS.primaryText },
+      metaLabel: { fontSize: 8.8, color: COLORS.secondaryText },
+      metaValue: { fontSize: 9.8, color: COLORS.primaryText, bold: true },
+      body: { fontSize: 8.3, color: COLORS.primaryText },
+      tableHeader: { fontSize: 8.8, bold: true, color: COLORS.primaryText },
+      cell: { fontSize: 8.3, color: COLORS.primaryText },
+      cellTight: { fontSize: 7.8, color: COLORS.primaryText },
+      secondary: { fontSize: 8.8, color: COLORS.secondaryText },
+      foot: { fontSize: 7.8, color: COLORS.secondaryText },
     },
 
     defaultStyle: {
       font: 'Inter',
-      fontSize: 10.0,
+      fontSize: 9.8,
       color: COLORS.primaryText,
     },
   };
