@@ -46,6 +46,9 @@ const productHistoryMenuIcon = `
   </span>
 `;
 
+const productDetailsMenuIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>';
+const brandDetailsMenuIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>';
+
 const addWebLinkMenuIcon = `
   <span class="fastquote-menu-icon" aria-hidden="true">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
@@ -442,6 +445,16 @@ export default function ProductsClient() {
         return items;
       }
 
+      const detailsItem: MenuItemDef = {
+        name: "View product details",
+        icon: productDetailsMenuIcon,
+        action: () => {
+          openLinkInNewTab(
+            `/products/${encodeURIComponent(String(productId))}/details`,
+          );
+        },
+      };
+
       const historyItem: MenuItemDef = {
         name: "View product history",
         icon: productHistoryMenuIcon,
@@ -455,6 +468,22 @@ export default function ProductsClient() {
         },
       };
 
+      const rawBrandId = (rowData as { BrandID?: unknown }).BrandID;
+      const brandId = typeof rawBrandId === 'number'
+        ? rawBrandId
+        : typeof rawBrandId === 'string'
+          ? Number.parseInt(rawBrandId, 10)
+          : null;
+      const brandDetailsItem: MenuItemDef | null = (brandId != null && Number.isInteger(brandId) && brandId > 0)
+        ? {
+            name: 'View brand details',
+            icon: brandDetailsMenuIcon,
+            action: () => {
+              openLinkInNewTab(`/brands/${encodeURIComponent(String(brandId))}/details`);
+            },
+          }
+        : null;
+
       const deleteIndex = items.findIndex(
         (item) =>
           typeof item === "object" &&
@@ -462,10 +491,12 @@ export default function ProductsClient() {
           typeof (item as MenuItemDef).name === "string" &&
           (item as MenuItemDef).name.trim().toLowerCase().startsWith("delete"),
       );
+      const newItems: Array<MenuItemDef | string> = [detailsItem, historyItem];
+      if (brandDetailsItem) newItems.push(brandDetailsItem);
       if (deleteIndex >= 0) {
-        items.splice(deleteIndex, 0, historyItem);
+        items.splice(deleteIndex, 0, ...newItems);
       } else {
-        items.push(historyItem);
+        items.push(...newItems);
       }
 
       const isSelectAllActive = params.api && typeof params.api.getServerSideSelectionState === "function"

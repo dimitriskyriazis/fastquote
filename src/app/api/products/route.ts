@@ -391,6 +391,7 @@ export async function POST(req: NextRequest) {
       SELECT
         COUNT_BIG(1) OVER () AS __totalCount,
         dbo.Products.ID AS ProductID,
+        dbo.Brands.ID AS BrandID,
         dbo.Brands.Name AS Brand,
         dbo.Products.ModelNumber,
         dbo.Products.PartNumber,

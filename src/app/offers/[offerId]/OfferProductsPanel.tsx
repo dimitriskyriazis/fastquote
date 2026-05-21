@@ -21,6 +21,7 @@ import type {
 } from 'ag-grid-community';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
+import { openLinkInNewTab } from '../../../lib/navigation';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 import styles from './OfferProductsPanel.module.css';
 import type {
@@ -81,6 +82,8 @@ import {
   addStandardPackageMenuIcon,
   createNewProductMenuIcon,
   viewProductMenuIcon,
+  viewProductDetailsMenuIcon,
+  viewBrandDetailsMenuIcon,
 } from './offerProductsIcons';
 import type {
   GridRowNode,
@@ -1652,6 +1655,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           || cell.classList.contains('offer-products-grid__cell--pricelist-active')
           || cell.classList.contains('offer-products-grid__cell--pricelist-expiring')
           || cell.classList.contains('offer-products-grid__cell--pricelist-expired')
+          || cell.classList.contains('offer-products-grid__cell--pricelist-lp-edited')
           || cell.classList.contains('offer-products-grid__cell--negative-margin')
           || cell.querySelector('.ag-selection-checkbox, .ag-row-drag, .ag-drag-handle')
         ) continue;
@@ -5061,36 +5065,6 @@ const requestedColumnDefsMap = useMemo(
     const requestedLookup = buildRequestedLookupInfo(rowData);
     const hasRequestedLookupFields = Boolean(requestedLookup.partNumber || requestedLookup.modelNumber);
     const canViewHistory = Boolean(resolvedProductId) || hasRequestedLookupFields;
-    if (canViewHistory) {
-      const qs = new URLSearchParams();
-      qs.set('backHref', `/offers/${encodeURIComponent(offerId)}/products`);
-      qs.set('backLabel', `offer ${offerId}`);
-
-      const historyItem: MenuItemDef = {
-        name: "View Product's History",
-        icon: productHistoryMenuIcon,
-        action: async () => {
-          let targetProductId = resolvedProductId;
-          if (!targetProductId) {
-            const fetchedId = await resolveProductIdFromRequestedInfo(requestedLookup);
-            if (!fetchedId) {
-              showToastMessage('Unable to find a product for the requested entry.', 'error');
-              return;
-            }
-            targetProductId = fetchedId;
-          }
-          router.push(`/products/${encodeURIComponent(String(targetProductId))}/history?${qs.toString()}`);
-        },
-      };
-
-      const deleteIndex = findDeleteMenuItemIndex(items);
-
-      if (deleteIndex >= 0) {
-        items.splice(deleteIndex, 0, historyItem);
-      } else {
-        items.push(historyItem);
-      }
-    }
 
     const viewProductPartNumber = normalizeRequestedLookupValue(
       (rowData as { PartNumber?: unknown }).PartNumber ??
@@ -5102,7 +5076,9 @@ const requestedColumnDefsMap = useMemo(
     );
     const rowIsProductLike =
       isOfferProductProduct(rowData) || hasRequestedLookupIdentifiers(rowData);
-    if (rowIsProductLike && (viewProductPartNumber || viewProductDescription)) {
+
+    // Build "View Product" submenu with Details + History + PriceList
+    if (rowIsProductLike && (viewProductPartNumber || viewProductDescription || canViewHistory)) {
       const viewProductQs = new URLSearchParams();
       if (viewProductPartNumber) viewProductQs.set('partNumber', viewProductPartNumber);
       if (viewProductDescription) viewProductQs.set('description', viewProductDescription);
@@ -5119,42 +5095,103 @@ const requestedColumnDefsMap = useMemo(
         parsedPriceListId > 0
           ? parsedPriceListId
           : null;
-      const viewProductSubItems: MenuItemDef[] = [
-        {
-          name: 'View Product in Products page',
-          icon: viewProductMenuIcon,
-          action: () => {
-            router.push(`/products?${viewProductQs.toString()}`);
-          },
+
+      const viewProductSubItems: MenuItemDef[] = [];
+
+      // View Product Details
+      viewProductSubItems.push({
+        name: 'View Product Details',
+        icon: viewProductDetailsMenuIcon,
+        action: async () => {
+          let targetProductId = resolvedProductId;
+          if (!targetProductId) {
+            const fetchedId = await resolveProductIdFromRequestedInfo(requestedLookup);
+            if (!fetchedId) {
+              showToastMessage('Unable to find a product for the requested entry.', 'error');
+              return;
+            }
+            targetProductId = fetchedId;
+          }
+          openLinkInNewTab(`/products/${encodeURIComponent(String(targetProductId))}/details`);
         },
-      ];
+      });
+
+      // View Product History
+      if (canViewHistory) {
+        const qs = new URLSearchParams();
+        qs.set('backHref', `/offers/${encodeURIComponent(offerId)}/products`);
+        qs.set('backLabel', `offer ${offerId}`);
+        viewProductSubItems.push({
+          name: "View Product's History",
+          icon: productHistoryMenuIcon,
+          action: async () => {
+            let targetProductId = resolvedProductId;
+            if (!targetProductId) {
+              const fetchedId = await resolveProductIdFromRequestedInfo(requestedLookup);
+              if (!fetchedId) {
+                showToastMessage('Unable to find a product for the requested entry.', 'error');
+                return;
+              }
+              targetProductId = fetchedId;
+            }
+            openLinkInNewTab(`/products/${encodeURIComponent(String(targetProductId))}/history?${qs.toString()}`);
+          },
+        });
+      }
+
+      // View Product in PriceList
       if (resolvedPriceListId != null) {
         viewProductSubItems.push({
           name: 'View Product in PriceList',
           icon: viewProductMenuIcon,
           action: () => {
-            router.push(
+            openLinkInNewTab(
               `/price-lists/${encodeURIComponent(String(resolvedPriceListId))}/products?${viewProductQs.toString()}`,
             );
           },
         });
       }
+
       const viewProductItem: MenuItemDef = {
         name: 'View Product',
         icon: viewProductMenuIcon,
         subMenu: viewProductSubItems,
       };
-      const historyIdx = items.findIndex(
-        (item) => typeof item === 'object' && item != null && (item as MenuItemDef).name === "View Product's History",
-      );
-      if (historyIdx >= 0) {
-        items.splice(historyIdx, 0, viewProductItem);
+
+      const deleteIndex = findDeleteMenuItemIndex(items);
+      if (deleteIndex >= 0) {
+        items.splice(deleteIndex, 0, viewProductItem);
       } else {
-        const fallbackIdx = findDeleteMenuItemIndex(items);
-        if (fallbackIdx >= 0) {
-          items.splice(fallbackIdx, 0, viewProductItem);
+        items.push(viewProductItem);
+      }
+
+      // View Brand Details (below "View Product")
+      const rawBrandId = (rowData as { BrandID?: unknown }).BrandID;
+      const parsedBrandId =
+        typeof rawBrandId === 'number'
+          ? rawBrandId
+          : typeof rawBrandId === 'string'
+            ? Number.parseInt(rawBrandId, 10)
+            : null;
+      const resolvedBrandId =
+        typeof parsedBrandId === 'number' && Number.isInteger(parsedBrandId) && parsedBrandId > 0
+          ? parsedBrandId
+          : null;
+      if (resolvedBrandId != null) {
+        const brandDetailsItem: MenuItemDef = {
+          name: 'View Brand Details',
+          icon: viewBrandDetailsMenuIcon,
+          action: () => {
+            openLinkInNewTab(`/brands/${encodeURIComponent(String(resolvedBrandId))}/details`);
+          },
+        };
+        const viewProductIdx = items.findIndex(
+          (item) => typeof item === 'object' && item != null && (item as MenuItemDef).name === 'View Product',
+        );
+        if (viewProductIdx >= 0) {
+          items.splice(viewProductIdx + 1, 0, brandDetailsItem);
         } else {
-          items.push(viewProductItem);
+          items.push(brandDetailsItem);
         }
       }
     }
@@ -7130,6 +7167,14 @@ const requestedColumnDefsMap = useMemo(
     const oldRowTotalsSnapshot = isOfferProductCommentOrProduct(event.data)
       ? snapshotRowTotals(event.data as Record<string, unknown>)
       : null;
+
+    // Optimistically re-apply cellClassRules on the edited cell so colour changes
+    // (e.g. pricelist-lp-edited beige) are visible immediately.  ag-Grid does not
+    // automatically re-evaluate cellClassRules when a value changes — it only does
+    // so when refreshCells({ force: true }) is called explicitly.
+    try {
+      event.api?.refreshCells({ rowNodes: [event.node!], columns: [field], force: true });
+    } catch { /* noop */ }
 
     const runUpdate = async () => {
       try {

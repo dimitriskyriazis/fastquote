@@ -50,13 +50,16 @@
 .offerHeaderTopRow {
   margin-bottom: -10px;
   position: relative;
-  z-index: 10;
+  z-index: 300;
 }
 
 .offerHeaderBottomRow {
   margin-top: -2px;
   position: relative;
-  z-index: 1;
+  /* High enough for the Add Comment / Add Service dropdowns to paint over the
+     AG Grid sticky header (which sits at z-index ~1). Must stay below
+     offerHeaderTopRow (300) so the top row wins in the shared 10px overlap band. */
+  z-index: 200;
 }
 
 .standardPackageSpacerRow {
@@ -89,12 +92,12 @@
 }
 
 .offerHeadingTop {
-  font-size: 30px;
+  font-size: 24px;
   font-weight: 500;
 }
 
 .offerHeadingBottom {
-  font-size: 30px;
+  font-size: 24px;
   font-weight: 500;
 }
 
@@ -109,8 +112,8 @@
 .button {
   border: 1px solid rgba(15, 23, 42, 0.15);
   border-radius: 999px;
-  padding: 7px 16px;
-  font-size: 13px;
+  padding: 5px 12px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1.2;
   letter-spacing: normal;
@@ -239,8 +242,8 @@
 .layoutSelect {
   border: 1px solid rgba(15, 23, 42, 0.15);
   border-radius: 999px;
-  padding: 7px 16px;
-  font-size: 13px;
+  padding: 5px 12px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1.2;
   letter-spacing: normal;

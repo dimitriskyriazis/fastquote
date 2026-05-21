@@ -14,6 +14,7 @@ import PageHeader from '../components/PageHeader';
 import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
 import { formatDateTime } from '../lib/formatDateTime';
 import { showToastMessage } from '../../lib/toast';
+import { openLinkInNewTab } from '../../lib/navigation';
 import styles from './OfferDetailsClient.module.css';
 
 const viewInOfferMenuIcon = `
@@ -21,6 +22,18 @@ const viewInOfferMenuIcon = `
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
       <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12Z" />
       <circle cx="12" cy="12" r="3" />
+    </svg>
+  </span>
+`;
+
+const viewProductDetailsMenuIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>';
+const viewBrandDetailsMenuIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>';
+
+const viewPriceListMenuIcon = `
+  <span class="fastquote-menu-icon" aria-hidden="true">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="5" y="2" width="14" height="20" rx="2" />
+      <path d="M9 7h6M9 11h6M9 15h4" />
     </svg>
   </span>
 `;
@@ -431,20 +444,87 @@ export default function OfferDetailsClient() {
 
   const getContextMenuItems = useCallback(
     (params: GetContextMenuItemsParams<Record<string, unknown>>) => {
+      const rowData = params.node?.data as Record<string, unknown> | null | undefined;
       const offerId = normalizeOfferId(
-        (params.node?.data as { OfferID?: unknown } | null | undefined)?.OfferID ?? null,
+        (rowData as { OfferID?: unknown } | null | undefined)?.OfferID ?? null,
       );
       if (offerId == null) {
         return ['export'];
       }
-      const viewItem: MenuItemDef<Record<string, unknown>> = {
+
+      const items: Array<MenuItemDef<Record<string, unknown>> | string> = [];
+
+      // View product details
+      const productId = normalizeProductId(
+        (rowData as { ProductID?: unknown } | null | undefined)?.ProductID ?? null,
+      );
+      if (productId != null) {
+        items.push({
+          name: 'View Product Details',
+          icon: viewProductDetailsMenuIcon,
+          action: () => {
+            openLinkInNewTab(`/products/${encodeURIComponent(String(productId))}/details`);
+          },
+        });
+      }
+
+      // View brand details
+      const rawBrandId = (rowData as { BrandID?: unknown } | null | undefined)?.BrandID ?? null;
+      const brandId = typeof rawBrandId === 'number'
+        ? rawBrandId
+        : typeof rawBrandId === 'string'
+          ? Number.parseInt(rawBrandId, 10)
+          : null;
+      if (brandId != null && Number.isInteger(brandId) && brandId > 0) {
+        items.push({
+          name: 'View Brand Details',
+          icon: viewBrandDetailsMenuIcon,
+          action: () => {
+            openLinkInNewTab(`/brands/${encodeURIComponent(String(brandId))}/details`);
+          },
+        });
+      }
+
+      // View product in price list
+      const rawPriceListId = (rowData as { PriceListID?: unknown } | null | undefined)?.PriceListID ?? null;
+      const priceListId = typeof rawPriceListId === 'number'
+        ? rawPriceListId
+        : typeof rawPriceListId === 'string'
+          ? Number.parseInt(rawPriceListId, 10)
+          : null;
+      if (priceListId != null && Number.isInteger(priceListId) && priceListId > 0) {
+        const qs = new URLSearchParams();
+        const partNumber = typeof (rowData as { PartNumber?: unknown })?.PartNumber === 'string'
+          ? String((rowData as { PartNumber?: unknown }).PartNumber).trim()
+          : '';
+        const description = typeof (rowData as { ProductDescription?: unknown })?.ProductDescription === 'string'
+          ? String((rowData as { ProductDescription?: unknown }).ProductDescription).trim()
+          : '';
+        if (partNumber) qs.set('partNumber', partNumber);
+        if (description) qs.set('description', description);
+        const qsStr = qs.toString();
+        items.push({
+          name: 'View Product in Price List',
+          icon: viewPriceListMenuIcon,
+          action: () => {
+            openLinkInNewTab(
+              `/price-lists/${encodeURIComponent(String(priceListId))}/products${qsStr ? `?${qsStr}` : ''}`,
+            );
+          },
+        });
+      }
+
+      // View in offer
+      items.push({
         name: 'View in Offer',
         icon: viewInOfferMenuIcon,
         action: () => {
           router.push(`/offers/${encodeURIComponent(String(offerId))}/products`);
         },
-      };
-      return [viewItem, 'separator', 'export'];
+      });
+
+      items.push('separator', 'export');
+      return items;
     },
     [router],
   );

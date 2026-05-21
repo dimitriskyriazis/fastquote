@@ -24,6 +24,8 @@ type GridRequest = {
 type OfferDetailRow = {
   OfferDetailID: number | null;
   ProductID: number | null;
+  PriceListID: number | null;
+  BrandID: number | null;
   OfferID: number | null;
   OfferTitle: string | null;
   OfferDescription: string | null;
@@ -66,6 +68,8 @@ type OfferDetailRowWithCount = OfferDetailRow & { __totalCount: number | bigint 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferDetailID: 'od.ID',
   ProductID: 'od.ProductID',
+  PriceListID: 'od.PriceListID',
+  BrandID: 'od.BrandID',
   OfferID: 'od.OfferID',
   OfferTitle: 'o.Title',
   OfferDescription: 'o.Description',
@@ -242,6 +246,8 @@ const selectClause = `
     p.Origin AS Origin,
     od.ProductDescription,
     od.Quantity,
+    od.PriceListID,
+    od.BrandID,
     od.ListPrice,
     od.CustomerDiscount,
     od.NetUnitPrice,

@@ -612,6 +612,12 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
         if (!isOfferProductCommentOrProduct(params.data ?? null)) return '';
         return percentageFormatter(params);
       },
+      cellClassRules: {
+        'offer-products-grid__cell--negative-margin': (params) => {
+          const value = coerceNumber(params.value ?? (params.data as { CustomerDiscount?: unknown } | null | undefined)?.CustomerDiscount ?? null);
+          return value != null && value < 0;
+        },
+      },
       cellStyle: actualNumericCellStyle,
       cellClass: actualNumericCellClass,
       width: 150
@@ -677,6 +683,12 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueParser: parseDiscountValue,
       valueFormatter: percentageFormatter,
+      cellClassRules: {
+        'offer-products-grid__cell--negative-margin': (params) => {
+          const value = coerceNumber(params.value ?? (params.data as { TelmacoDiscount?: unknown } | null | undefined)?.TelmacoDiscount ?? null);
+          return value != null && value < 0;
+        },
+      },
       cellClass: [...actualNumericCellClass, styles.redDataCell],
       cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
     },

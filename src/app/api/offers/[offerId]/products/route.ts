@@ -151,6 +151,7 @@ type ProductRow = {
   __requestedItemOrdinal?: string | null;
   PricingSellAnchor?: string | null;
   PricingHoldMarginOnCost?: boolean | null;
+  PriceListItemListPrice?: number | null;
 };
 
 type RequestedFieldKey =
@@ -268,6 +269,7 @@ const CREATE_TYPE_LABELS: Record<CreateRowType, string> = {
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferDetailID: 'od.ID',
+  ProductID: 'od.ProductID',
   ParentOfferDetailID: 'od.ParentOfferDetailID',
   Ordering: 'od.Ordering',
   TreeOrdering: 'od.TreeOrdering',
@@ -1375,6 +1377,7 @@ export async function POST(
       'OfferDetailID',
       'ParentOfferDetailID',
       'ProductID',
+      'BrandID',
       'TreeOrdering',
       'IsPrintable',
       'IsComment',
@@ -1398,6 +1401,7 @@ export async function POST(
       'RequestedDescription3',
       'RequestedQuantity',
       'PriceListID',
+      'PriceListItemID',
       'PriceListEnabled',
       'PriceListValidFromDate',
       'PriceListValidToDate',
@@ -1516,7 +1520,12 @@ export async function POST(
           MAX(CASE WHEN NULLIF(LTRIM(RTRIM(od.RequestedDescription3)), '') IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedDescription3,
           MAX(CASE WHEN od.RequestedQuantity IS NOT NULL THEN 1 ELSE 0 END) OVER () AS __hasRequestedQuantity,
           od.PricingSellAnchor,
-          od.PricingHoldMarginOnCost
+          od.PricingHoldMarginOnCost,
+          CASE
+            WHEN od.PriceListItemID IS NULL THEN NULL
+            WHEN pl.CurrencyId IS NULL OR pl.CurrencyId = o.CurrencyID THEN pli.ListPrice
+            ELSE pli.ListPrice * COALESCE(o.CurrencyModifier, pl.CurrencyCostModifier, 1)
+          END AS PriceListItemListPrice
         FROM dbo.OfferDetails od
           OUTER APPLY (
             SELECT TOP 1 cat_inner.ProductDescription
@@ -1529,6 +1538,7 @@ export async function POST(
           LEFT OUTER JOIN dbo.Brands b ON od.BrandID = b.ID
           LEFT OUTER JOIN dbo.[Offer] o ON od.OfferID = o.ID
           LEFT OUTER JOIN dbo.PriceLists pl ON od.PriceListID = pl.ID
+          LEFT OUTER JOIN dbo.PriceListItems pli ON od.PriceListItemID = pli.ID
           LEFT OUTER JOIN dbo.Currencies oc ON od.OtherCurrencyID = oc.ID
         ${combinedWhereSql}
           ${orderSql}

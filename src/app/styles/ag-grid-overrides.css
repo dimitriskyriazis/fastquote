@@ -449,6 +449,22 @@
   background-color: #e7afaf !important; /* Slightly darker version of #ffcfcf for hover */
 }
 
+/* LP-edited (beige): darker beige when row is selected */
+.offer-products-grid .ag-row.offer-row--product.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-lp-edited,
+.offer-products-grid .ag-row.offer-row--product.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-lp-edited,
+.offer-products-grid .ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-lp-edited,
+.offer-products-grid .ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category) .ag-cell.offer-products-grid__cell--pricelist-lp-edited {
+  background-color: #d9c4a0 !important; /* Darker version of #f5e6c8 */
+}
+
+/* LP-edited: slightly darker beige on hover */
+.offer-products-grid .ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-lp-edited,
+.offer-products-grid .ag-row-hover.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-lp-edited,
+.offer-products-grid .ag-row:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-grid__cell--pricelist-lp-edited,
+.offer-products-grid .ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-lp-edited {
+  background-color: #ead9b8 !important; /* Slightly darker version of #f5e6c8 for hover */
+}
+
 .offer-products-grid .offer-row--printable-comment .ag-cell {
   background-color: #e0f2fe !important;
 }
@@ -622,6 +638,13 @@
 
 .offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-expired {
   background-color: #ffcfcf !important;
+  font-weight: 400 !important;
+  color: inherit !important;
+}
+
+/* Pricelist list price edited: beige background — row has a pricelist but LP was manually changed */
+.offer-products-grid .ag-cell.offer-products-grid__cell--pricelist-lp-edited {
+  background-color: #f5e6c8 !important;
   font-weight: 400 !important;
   color: inherit !important;
 }

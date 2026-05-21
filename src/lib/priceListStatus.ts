@@ -5,6 +5,9 @@ export type PriceListRow = {
   PriceListEnabled?: unknown;
   PriceListValidFromDate?: unknown;
   PriceListValidToDate?: unknown;
+  PriceListItemID?: unknown;
+  ListPrice?: unknown;
+  PriceListItemListPrice?: unknown;
 } | null | undefined;
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -68,6 +71,29 @@ export const resolvePriceListStatus = (row: PriceListRow): PriceListStatus => {
   return 'active';
 };
 
+const LIST_PRICE_EDIT_TOLERANCE = 0.005;
+
+const parseFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') return null;
+    const parsed = parseFloat(trimmed);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
+export const isPriceListListPriceEdited = (row: PriceListRow): boolean => {
+  if (!row || typeof row !== 'object') return false;
+  const priceListItemId = normalizeInteger((row as { PriceListItemID?: unknown })?.PriceListItemID ?? null);
+  if (priceListItemId == null) return false;
+  const listPrice = parseFiniteNumber((row as { ListPrice?: unknown })?.ListPrice ?? null);
+  const plListPrice = parseFiniteNumber((row as { PriceListItemListPrice?: unknown })?.PriceListItemListPrice ?? null);
+  if (listPrice == null || plListPrice == null) return false;
+  return Math.abs(listPrice - plListPrice) > LIST_PRICE_EDIT_TOLERANCE;
+};
+
 export const priceListStatusClassRules = (rowAccessor?: (params: { data?: Record<string, unknown> | null }) => PriceListRow) => {
   const resolveRow = rowAccessor
     ? (params: { data?: Record<string, unknown> | null }) => rowAccessor(params)
@@ -80,5 +106,7 @@ export const priceListStatusClassRules = (rowAccessor?: (params: { data?: Record
       resolvePriceListStatus(resolveRow(params)) === 'expiring',
     'offer-products-grid__cell--pricelist-expired': (params: { data?: Record<string, unknown> | null }) =>
       resolvePriceListStatus(resolveRow(params)) === 'expired',
+    'offer-products-grid__cell--pricelist-lp-edited': (params: { data?: Record<string, unknown> | null }) =>
+      isPriceListListPriceEdited(resolveRow(params)),
   };
 };

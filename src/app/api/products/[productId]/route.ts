@@ -98,18 +98,43 @@ export async function GET(
       PartNumber: string | null;
       ModelNumber: string | null;
       LegacyPartNo: string | null;
-      BrandName: string | null;
+      ERPCode: string | null;
       Description: string | null;
+      WebLink: string | null;
+      Origin: string | null;
+      Enabled: boolean | null;
+      BrandID: number | null;
+      BrandName: string | null;
+      CategoryID: number | null;
+      CategoryName: string | null;
+      SubCategoryID: number | null;
+      SubCategoryName: string | null;
+      TypeID: number | null;
+      TypeName: string | null;
     }>(`
       SELECT
         p.ID AS ProductID,
         NULLIF(LTRIM(RTRIM(p.PartNumber)), '') AS PartNumber,
         NULLIF(LTRIM(RTRIM(p.ModelNumber)), '') AS ModelNumber,
         NULLIF(LTRIM(RTRIM(p.LegacyPartNo)), '') AS LegacyPartNo,
+        NULLIF(LTRIM(RTRIM(p.ERPCode)), '') AS ERPCode,
+        NULLIF(LTRIM(RTRIM(p.Description)), '') AS Description,
+        NULLIF(LTRIM(RTRIM(p.WebLink)), '') AS WebLink,
+        NULLIF(LTRIM(RTRIM(p.Origin)), '') AS Origin,
+        CAST(p.Enabled AS BIT) AS Enabled,
+        p.BrandID,
         NULLIF(LTRIM(RTRIM(b.Name)), '') AS BrandName,
-        NULLIF(LTRIM(RTRIM(p.Description)), '') AS Description
+        p.CategoryID,
+        NULLIF(LTRIM(RTRIM(pc.Name)), '') AS CategoryName,
+        p.SubCategoryID,
+        NULLIF(LTRIM(RTRIM(psc.Name)), '') AS SubCategoryName,
+        p.TypeID,
+        NULLIF(LTRIM(RTRIM(pt.Name)), '') AS TypeName
       FROM dbo.Products p
       LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
+      LEFT JOIN dbo.ProductCategories pc ON p.CategoryID = pc.ID
+      LEFT JOIN dbo.ProductSubCategories psc ON p.SubCategoryID = psc.ID
+      LEFT JOIN dbo.ProductTypes pt ON p.TypeID = pt.ID
       WHERE p.ID = @productId
     `);
     
