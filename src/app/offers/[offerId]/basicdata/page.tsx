@@ -6,6 +6,7 @@ import ViewStatusHistoryButton from './ViewStatusHistoryButton';
 import ExportPdfButton from './ExportPdfButton';
 import CreateNewVersionButton from './CreateNewVersionButton';
 import CopyOfferButton from './CopyOfferButton';
+import FillAVC4Button from './FillAVC4Button';
 import { getPool } from '../../../../lib/sql';
 import styles from '../../offersDetail.module.css';
 
@@ -52,26 +53,34 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
           />
         </div>
         <h1 className={`${styles.heading} ${styles.headingCentered}`}>{headingText}</h1>
-        <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
-          <CreateDraftOfferButton
-            offerId={decodedId}
-            orderSignedDate={orderSignedDate}
-            className={`${styles.headerActionButton} page-header-button`}
-          />
-          <ViewStatusHistoryButton
-            offerId={decodedId}
-            className={`${styles.headerActionButton} page-header-button`}
-          />
-          <ExportPdfButton
-            offerId={decodedId}
-            className={`${styles.headerActionButton} page-header-button`}
-          />
-          <Link
-            href={`/offers/${encodeURIComponent(decodedId)}/products`}
-            className={`${styles.headerActionButton} page-header-button`}
-          >
-            View Products
-          </Link>
+        <div className={`${styles.headerSide} ${styles.headerSideEnd}`} style={{ flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <CreateDraftOfferButton
+              offerId={decodedId}
+              orderSignedDate={orderSignedDate}
+              className={`${styles.headerActionButton} page-header-button`}
+            />
+            <ViewStatusHistoryButton
+              offerId={decodedId}
+              className={`${styles.headerActionButton} page-header-button`}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <ExportPdfButton
+              offerId={decodedId}
+              className={`${styles.headerActionButton} page-header-button`}
+            />
+            <FillAVC4Button
+              offerId={decodedId}
+              className={`${styles.headerActionButton} page-header-button`}
+            />
+            <Link
+              href={`/offers/${encodeURIComponent(decodedId)}/products`}
+              className={`${styles.headerActionButton} page-header-button`}
+            >
+              View Products
+            </Link>
+          </div>
         </div>
       </div>
       <div className={styles.pageBody}>

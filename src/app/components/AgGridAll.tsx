@@ -3504,11 +3504,18 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
             : readPersistedFilterModel(filterStateStorageKey);
           filterStateLoadedRef.current = true;
           if (persisted && Object.keys(persisted).length > 0) {
-            filterStateRestoringRef.current = true;
-            e.api.setFilterModel(persisted);
-            setTimeout(() => {
-              filterStateRestoringRef.current = false;
-            }, 0);
+            // Strip colIds that aren't registered yet to avoid AG Grid warning #62.
+            const knownColIds = new Set(e.api.getColumns()?.map(c => c.getColId()) ?? []);
+            const safeModel = Object.fromEntries(
+              Object.entries(persisted).filter(([colId]) => knownColIds.has(colId))
+            ) as Record<string, FilterDescriptor>;
+            if (Object.keys(safeModel).length > 0) {
+              filterStateRestoringRef.current = true;
+              e.api.setFilterModel(safeModel);
+              setTimeout(() => {
+                filterStateRestoringRef.current = false;
+              }, 0);
+            }
           }
         }
         if (!sortStateLoadedRef.current && sortStateStorageKey) {

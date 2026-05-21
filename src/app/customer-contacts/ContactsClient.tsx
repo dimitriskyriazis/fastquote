@@ -550,10 +550,11 @@ export default function ContactsClient({
       const existingModel = api.getFilterModel() as Record<string, unknown> | null;
       const nextModel = existingModel && typeof existingModel === "object" ? { ...existingModel } : {};
       if (!("Enabled" in nextModel) && nameFilter.length === 0 && !hasColumnNameFilters) {
+        const hasCustomerEnabledCol = !!api.getColumn("CustomerEnabled");
         api.setFilterModel({
           ...nextModel,
           Enabled: { filterType: "set", values: ["true"] },
-          CustomerEnabled: { filterType: "set", values: ["true"] },
+          ...(hasCustomerEnabledCol ? { CustomerEnabled: { filterType: "set", values: ["true"] } } : {}),
         });
       }
       defaultEnabledFilterAppliedRef.current = true;

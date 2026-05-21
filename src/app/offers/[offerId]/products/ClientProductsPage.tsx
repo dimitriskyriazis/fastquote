@@ -23,7 +23,6 @@ import { mapRowToClipboardRow, readClipboard } from './productClipboard';
 
 const OfferProductsPivotPanel = dynamic(() => import('./OfferProductsPivotPanel'), { ssr: false });
 const AddRequestedProductsModal = dynamic(() => import('./AddRequestedProductsModal'), { ssr: false });
-const ExportOfferProductsModal = dynamic(() => import('./ExportOfferProductsModal'), { ssr: false });
 const AddProductModal = dynamic(() => import('../../../products/AddProductModal'), { ssr: false });
 const AddProductsModal = dynamic(() => import('./AddProductsModal'), { ssr: false });
 const PasteProductsDialog = dynamic(() => import('./PasteProductsDialog'), { ssr: false });
@@ -191,7 +190,6 @@ export default function ClientProductsPage({
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
   const [isPopulatingOffer, setIsPopulatingOffer] = useState(false);
   const [isUpdatingProductData, setIsUpdatingProductData] = useState(false);
-  const [showExportModal, setShowExportModal] = useState(false);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
   const [showAddServiceModal, setShowAddServiceModal] = useState(false);
   const [addServiceIsPrintable, setAddServiceIsPrintable] = useState(true);
@@ -1103,22 +1101,6 @@ export default function ClientProductsPage({
     }
   }, [isUpdatingProductData]);
 
-  const handleOpenExportModal = useCallback(() => {
-    setShowExportModal(true);
-  }, []);
-
-  const handleCloseExportModal = useCallback(() => {
-    setShowExportModal(false);
-  }, []);
-
-  const handleRequestTemplateExportRows = useCallback(async () => {
-    const panel = offerProductsPanelRef.current;
-    if (!panel) {
-      throw new Error('Products grid is not ready yet.');
-    }
-    return panel.getTemplateExportRows();
-  }, []);
-
   const handleRequestPaste = useCallback((anchorOfferDetailId: number | null, anchorTreeOrdering: string | null) => {
     if (anchorOfferDetailId != null && anchorTreeOrdering) {
       setPasteAnchor({ offerDetailId: anchorOfferDetailId, treeOrdering: anchorTreeOrdering });
@@ -1294,6 +1276,94 @@ export default function ClientProductsPage({
     }
   }, [offerId, pasteAnchor]);
 
+  const pricingMenuDetails = (
+    <details
+      ref={pricingMenuRef}
+      className={toolbarStyles.commentDropdown}
+      open={pricingMenuOpen}
+      onToggle={(e) => setPricingMenuOpen((e.target as HTMLDetailsElement).open)}
+    >
+      <summary
+        className={[
+          toolbarStyles.button,
+          toolbarStyles.buttonUpdatePrices,
+          'page-header-button',
+        ].join(' ')}
+        style={{ cursor: 'pointer', userSelect: 'none', background: 'white', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+      >
+        <span style={{ color: '#1565c0', fontWeight: 700 }}>{SELL_ANCHOR_LABELS[pricingSellAnchor]}</span>
+        <span style={{ color: '#9e9e9e', fontWeight: 400 }}>·</span>
+        <span style={{ color: '#c62828', fontWeight: 700 }}>{pricingHoldMarginOnCost ? 'Margin' : 'Net Unit Price'}</span>
+      </summary>
+      <div className={toolbarStyles.commentMenu} style={{ minWidth: 260, right: 0, left: 'auto' }}>
+        <div style={{ padding: '4px 8px 6px', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#475569' }}>
+          Pricing Behaviour
+        </div>
+        <div style={{ padding: '2px 4px 6px', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>
+          When List Price changes, hold:
+        </div>
+        {(['netUnitPrice', 'customerDiscount'] as SellAnchor[]).map((anchor) => (
+          <button
+            key={anchor}
+            type="button"
+            className={toolbarStyles.commentMenuItem}
+            style={{
+              background: pricingSellAnchor === anchor ? '#e0f2fe' : '#f8fafc',
+              color: pricingSellAnchor === anchor ? '#0c4a6e' : '#0f172a',
+              borderColor: pricingSellAnchor === anchor ? 'rgba(7,89,133,0.3)' : 'rgba(15,23,42,0.1)',
+              fontWeight: pricingSellAnchor === anchor ? 600 : 400,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+            onClick={() => {
+              setPricingSellAnchor(anchor);
+              void savePricingMode(anchor, pricingHoldMarginOnCost);
+              if (pricingMenuRef.current) pricingMenuRef.current.open = false;
+              setPricingMenuOpen(false);
+            }}
+          >
+            <span style={{ width: 14, textAlign: 'center' }}>{pricingSellAnchor === anchor ? '✓' : ''}</span>
+            {SELL_ANCHOR_LABELS[anchor]}
+          </button>
+        ))}
+        <div style={{ margin: '6px 4px 2px', borderTop: '1px solid #e2e8f0' }} />
+        <div style={{ padding: '4px 4px 2px', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>
+          When Net Cost changes, hold:
+        </div>
+        {([false, true] as const).map((holdMargin) => {
+          const label = holdMargin ? 'Margin' : 'Net Unit Price';
+          const active = pricingHoldMarginOnCost === holdMargin;
+          return (
+            <button
+              key={String(holdMargin)}
+              type="button"
+              className={toolbarStyles.commentMenuItem}
+              style={{
+                background: active ? '#e0f2fe' : '#f8fafc',
+                color: active ? '#0c4a6e' : '#0f172a',
+                borderColor: active ? 'rgba(7,89,133,0.3)' : 'rgba(15,23,42,0.1)',
+                fontWeight: active ? 600 : 400,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+              onClick={() => {
+                setPricingHoldMarginOnCost(holdMargin);
+                void savePricingMode(pricingSellAnchor, holdMargin);
+                if (pricingMenuRef.current) pricingMenuRef.current.open = false;
+                setPricingMenuOpen(false);
+              }}
+            >
+              <span style={{ width: 14, textAlign: 'center' }}>{active ? '✓' : ''}</span>
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    </details>
+  );
+
   const headerRightControls = (
     <div className={toolbarStyles.topControls}>
       {pivotView || isStandardPackage ? null : (
@@ -1314,15 +1384,9 @@ export default function ClientProductsPage({
           >
             {isUpdatingPrices ? 'Updating prices...' : 'Update Prices'}
           </button>
-          <button
-            type="button"
-            className={`${toolbarStyles.button} ${toolbarStyles.buttonExport} page-header-button`}
-            onClick={handleOpenExportModal}
-          >
-            Fill AVC4
-          </button>
         </>
       )}
+      {isStandardPackage ? null : pricingMenuDetails}
       {isStandardPackage ? null : (
         <Link
           href={`/offers/${encodeURIComponent(offerId)}/basicdata`}
@@ -1534,89 +1598,6 @@ export default function ClientProductsPage({
         </button>
       )}
       {isStandardPackage ? collapseAllToggleButton : null}
-      {!isStandardPackage && (
-        <details
-          ref={pricingMenuRef}
-          className={toolbarStyles.commentDropdown}
-          open={pricingMenuOpen}
-          onToggle={(e) => setPricingMenuOpen((e.target as HTMLDetailsElement).open)}
-        >
-          <summary
-            className={[
-              toolbarStyles.button,
-              toolbarStyles.buttonUpdatePrices,
-              'page-header-button',
-            ].join(' ')}
-            style={{ cursor: 'pointer', userSelect: 'none' }}
-          >
-            {`${SELL_ANCHOR_LABELS[pricingSellAnchor]}${pricingHoldMarginOnCost ? ' · Hold Margin' : ''}`}
-          </summary>
-          <div className={toolbarStyles.commentMenu} style={{ minWidth: 260, right: 0, left: 'auto' }}>
-            <div style={{ padding: '4px 8px 6px', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#475569' }}>
-              Pricing Behaviour
-            </div>
-            <div style={{ padding: '2px 4px 6px', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>
-              When List Price changes, hold:
-            </div>
-            {(['netUnitPrice', 'customerDiscount'] as SellAnchor[]).map((anchor) => (
-              <button
-                key={anchor}
-                type="button"
-                className={toolbarStyles.commentMenuItem}
-                style={{
-                  background: pricingSellAnchor === anchor ? '#e0f2fe' : '#f8fafc',
-                  color: pricingSellAnchor === anchor ? '#0c4a6e' : '#0f172a',
-                  borderColor: pricingSellAnchor === anchor ? 'rgba(7,89,133,0.3)' : 'rgba(15,23,42,0.1)',
-                  fontWeight: pricingSellAnchor === anchor ? 600 : 400,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-                onClick={() => {
-                  setPricingSellAnchor(anchor);
-                  void savePricingMode(anchor, pricingHoldMarginOnCost);
-                  if (pricingMenuRef.current) pricingMenuRef.current.open = false;
-                  setPricingMenuOpen(false);
-                }}
-              >
-                <span style={{ width: 14, textAlign: 'center' }}>{pricingSellAnchor === anchor ? '✓' : ''}</span>
-                {SELL_ANCHOR_LABELS[anchor]}
-              </button>
-            ))}
-            <div style={{ margin: '6px 4px 2px', borderTop: '1px solid #e2e8f0' }} />
-            <div style={{ padding: '4px 4px 2px', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>
-              When Net Cost changes:
-            </div>
-            <button
-              type="button"
-              className={toolbarStyles.commentMenuItem}
-              style={{
-                background: '#f8fafc',
-                color: '#0f172a',
-                borderColor: 'rgba(15,23,42,0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}
-              onClick={() => {
-                const next = !pricingHoldMarginOnCost;
-                setPricingHoldMarginOnCost(next);
-                void savePricingMode(pricingSellAnchor, next);
-                if (pricingMenuRef.current) pricingMenuRef.current.open = false;
-                setPricingMenuOpen(false);
-              }}
-            >
-              <input
-                type="checkbox"
-                readOnly
-                checked={pricingHoldMarginOnCost}
-                style={{ accentColor: '#0c4a6e', pointerEvents: 'none', width: 14, height: 14 }}
-              />
-              Hold Margin
-            </button>
-          </div>
-        </details>
-      )}
     </div>
   );
 
@@ -1786,12 +1767,6 @@ export default function ClientProductsPage({
           offerId={offerId}
           onClose={handleCloseRequestedModal}
           onImported={handleRequestedImported}
-        />
-      ) : null}
-      {showExportModal ? (
-        <ExportOfferProductsModal
-          onClose={handleCloseExportModal}
-          onRequestRows={handleRequestTemplateExportRows}
         />
       ) : null}
       {showPasteDialog ? (

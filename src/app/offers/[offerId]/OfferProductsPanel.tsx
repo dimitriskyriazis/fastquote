@@ -187,7 +187,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   onCollapseAllSuppressed,
   offerPricingSellAnchor = null,
   offerPricingHoldMarginOnCost = false,
-  onOfferPricingHoldMarginOnCostChange: _onOfferPricingHoldMarginOnCostChange,
 }: Props, ref) => {
   const router = useRouter();
   const { userId, roles } = useAuditUser();
@@ -5933,16 +5932,18 @@ const requestedColumnDefsMap = useMemo(
           },
         });
 
+        // Resolve a raw PricingHoldMarginOnCost cell value:
+        // explicit true/false → use it; null/undefined → inherit offer default
+        const resolveHoldMargin = (v: unknown): boolean =>
+          v === true || v === 1 ? true : v === false || v === 0 ? false : offerPricingHoldMarginOnCost;
+
         const firstRowHoldMargin = (pricingTargetNodes[0]?.data as { PricingHoldMarginOnCost?: unknown } | undefined)?.PricingHoldMarginOnCost;
-        const firstRowHoldMarginBool = firstRowHoldMargin === true || firstRowHoldMargin === 1;
+        const firstRowHoldMarginResolved = resolveHoldMargin(firstRowHoldMargin);
         const allSameHoldMargin = pricingTargetNodes.every((n) => {
           const v = (n.data as { PricingHoldMarginOnCost?: unknown })?.PricingHoldMarginOnCost;
-          return (v === true || v === 1) === firstRowHoldMarginBool;
+          return resolveHoldMargin(v) === firstRowHoldMarginResolved;
         });
-        const shownHoldMargin = allSameHoldMargin ? firstRowHoldMarginBool : null; // null = mixed
-        const nextHoldMargin = shownHoldMargin === true ? false : true;
-        const effectiveHoldMargin = shownHoldMargin !== null ? shownHoldMargin : offerPricingHoldMarginOnCost;
-        const holdMarginLabel = effectiveHoldMargin ? '✓ Hold Margin on Cost' : 'Hold Margin on Cost';
+        const effectiveHoldMargin = allSameHoldMargin ? firstRowHoldMarginResolved : offerPricingHoldMarginOnCost;
 
         // Determine if any selected row has a meaningful override (differs from offer default)
         const anyAnchorOverride = pricingTargetNodes.some((n) => {
@@ -5956,13 +5957,13 @@ const requestedColumnDefsMap = useMemo(
         });
         const anyRowHasOverride = anyAnchorOverride || anyHoldMarginOverride;
 
-        const holdMarginItem: MenuItemDef = {
-          name: holdMarginLabel,
+        const makeHoldCostItem = (label: string, holdMargin: boolean): MenuItemDef => ({
+          name: effectiveHoldMargin === holdMargin ? `✓ ${label}` : label,
           action: async () => {
             try {
               const updates = pricingDetailIds.map((id) => ({
                 OfferDetailID: id,
-                PricingHoldMarginOnCost: nextHoldMargin,
+                PricingHoldMarginOnCost: holdMargin,
               }));
               const res = await fetch(resolvedEndpoint, {
                 method: 'PATCH',
@@ -5974,7 +5975,7 @@ const requestedColumnDefsMap = useMemo(
                 throw new Error(payload?.error ?? `Failed to set Hold Margin on Cost (status ${res.status})`);
               }
               pricingTargetNodes.forEach((n) => {
-                try { (n as RowNode<Record<string, unknown>>).setData({ ...(n.data ?? {}), PricingHoldMarginOnCost: nextHoldMargin }); } catch { /* noop */ }
+                try { (n as RowNode<Record<string, unknown>>).setData({ ...(n.data ?? {}), PricingHoldMarginOnCost: holdMargin }); } catch { /* noop */ }
               });
               try {
                 contextMenuApi?.refreshCells({
@@ -5984,9 +5985,9 @@ const requestedColumnDefsMap = useMemo(
                 });
               } catch { /* noop */ }
               showToastMessage(
-                nextHoldMargin
+                holdMargin
                   ? `Hold Margin on Cost enabled for ${pricingDetailIds.length === 1 ? 'row' : `${pricingDetailIds.length} rows`}`
-                  : `Hold Margin on Cost disabled for ${pricingDetailIds.length === 1 ? 'row' : `${pricingDetailIds.length} rows`}`,
+                  : `Hold Net Unit Price on Cost enabled for ${pricingDetailIds.length === 1 ? 'row' : `${pricingDetailIds.length} rows`}`,
                 'success',
               );
             } catch (err) {
@@ -5997,7 +5998,7 @@ const requestedColumnDefsMap = useMemo(
               );
             }
           },
-        };
+        });
 
         const useOfferDefaultItem: MenuItemDef = {
           name: 'Use offer default',
@@ -6042,14 +6043,17 @@ const requestedColumnDefsMap = useMemo(
         };
 
         const subMenuItems: Array<MenuItemDef | string> = [
-          makePricingModeItem('Hold Net Unit Price', 'netUnitPrice'),
-          makePricingModeItem('Hold Customer Discount', 'customerDiscount'),
+          { name: 'When List Price changes, hold:', disabled: true } as MenuItemDef,
+          makePricingModeItem('Net Unit Price', 'netUnitPrice'),
+          makePricingModeItem('Customer Discount', 'customerDiscount'),
           'separator' as unknown as MenuItemDef,
-          holdMarginItem,
+          { name: 'When Net Cost changes, hold:', disabled: true } as MenuItemDef,
+          makeHoldCostItem('Net Unit Price', false),
+          makeHoldCostItem('Margin', true),
         ];
         if (anyRowHasOverride) {
-          subMenuItems.unshift('separator' as unknown as MenuItemDef);
-          subMenuItems.unshift(useOfferDefaultItem);
+          subMenuItems.push('separator' as unknown as MenuItemDef);
+          subMenuItems.push(useOfferDefaultItem);
         }
 
         const pricingModeSubmenu: MenuItemDef = {
