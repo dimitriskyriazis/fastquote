@@ -32,6 +32,7 @@ import {
 import { getUserNumberLocale, parseLocaleNumber } from "../../../lib/localeNumber";
 import { matchesCountrySearch } from "../../../lib/countryAliases";
 import { useAuditUser } from "../../components/AuditUserProvider";
+import { useFormDraft } from "../../hooks/useFormDraft";
 
 type XlsxModule = typeof import("xlsx");
 
@@ -950,7 +951,10 @@ export default function PriceListImportClient({
   const { userId: currentUserId } = useAuditUser();
   const euroCurrencyLabel = "€";
 
-  const [values, setValues] = useState<FormValues>(() => {
+  // Stable initial values — computed once (like a useState lazy initializer).
+  // useRef gives us a stable reference without any dependency-array concerns.
+  const initialValuesRef = useRef<FormValues | null>(null);
+  if (initialValuesRef.current === null) {
     const initialEuro =
       currencies.find((c) => (c.label ?? "").trim() === "€") ??
       currencies.find((c) => (c.label ?? "").toLowerCase().includes("eur")) ??
@@ -958,25 +962,35 @@ export default function PriceListImportClient({
     const initialPolicies: PricingPolicySelection[] = prefill?.pricingPolicyIds
       ? prefill.pricingPolicyIds.map((id) => ({ pricingPolicyId: id, pricingPolicyRuleId: null }))
       : [];
-    return {
-    name: prefill?.name ?? "",
-    brandId: prefill?.brandId ?? "",
-    pricingPolicies: initialPolicies,
-    responsibleUserId: prefill?.responsibleUserId ?? "",
-    supplierId: prefill?.supplierId ?? "",
-    hasDuty: prefill?.hasDuty ?? false,
-    isService: prefill?.isService ?? false,
-    costCurrencyId: prefill?.costCurrencyId || (initialEuro?.value ?? ""),
-    currencyCostModifier: prefill?.currencyCostModifier ?? "1",
-    countryId: prefill?.countryId ?? "",
-    validFromDate: new Date().toISOString().slice(0, 10),
-    validToDate: "",
-    comments: prefill?.comments ?? "",
-    supplierComments: prefill?.supplierComments ?? "",
-    previousPriceListId: prefill?.previousPriceListId ?? "",
-    decimalFormat: "commaDecimal",
-  };
-  });
+    initialValuesRef.current = {
+      name: prefill?.name ?? "",
+      brandId: prefill?.brandId ?? "",
+      pricingPolicies: initialPolicies,
+      responsibleUserId: prefill?.responsibleUserId ?? "",
+      supplierId: prefill?.supplierId ?? "",
+      hasDuty: prefill?.hasDuty ?? false,
+      isService: prefill?.isService ?? false,
+      costCurrencyId: prefill?.costCurrencyId || (initialEuro?.value ?? ""),
+      currencyCostModifier: prefill?.currencyCostModifier ?? "1",
+      countryId: prefill?.countryId ?? "",
+      validFromDate: new Date().toISOString().slice(0, 10),
+      validToDate: "",
+      comments: prefill?.comments ?? "",
+      supplierComments: prefill?.supplierComments ?? "",
+      previousPriceListId: prefill?.previousPriceListId ?? "",
+      decimalFormat: "commaDecimal",
+    };
+  }
+  const initialValues = initialValuesRef.current;
+
+  const [values, setValues] = useState<FormValues>(initialValues);
+
+  // Draft save/restore (disabled in append mode — it's a short targeted action).
+  const { hasDraft, restoredValues, saveDraft: saveDraftValues, clearDraft } = useFormDraft<FormValues>(
+    'price-list-import',
+    initialValues,
+    appendMode ? null : currentUserId,
+  );
   const [isRulePickerOpen, setIsRulePickerOpen] = useState(false);
   const [policyPickerSelection, setPolicyPickerSelection] = useState<Set<number>>(
     () => new Set(prefill?.pricingPolicyIds ?? []),
@@ -1102,6 +1116,32 @@ export default function PriceListImportClient({
       setValues((prev) => ({ ...prev, responsibleUserId: currentUserId }));
     }
   }, [currentUserId, values.responsibleUserId]);
+
+  // Restore draft on mount (non-append mode only)
+  useEffect(() => {
+    if (appendMode || !hasDraft || !restoredValues) return;
+    setValues(restoredValues);
+    // Restore display text for typeahead fields
+    const brandMatch = brands.find((b) => b.value === restoredValues.brandId);
+    if (brandMatch) setBrandText(brandMatch.label);
+    const countryMatch = countries.find((c) => c.value === restoredValues.countryId);
+    if (countryMatch) setCountryText(countryMatch.label);
+    showToastMessage('Draft restored', 'info', 5500, {
+      label: 'Discard',
+      onClick: () => {
+        clearDraft();
+        setValues(initialValues);
+        setBrandText(prefill?.brandId ? (brands.find((b) => b.value === prefill.brandId)?.label ?? '') : '');
+        setCountryText(prefill?.countryId ? (countries.find((c) => c.value === prefill.countryId)?.label ?? '') : '');
+      },
+    });
+  }, [hasDraft, restoredValues]); // eslint-disable-line react-hooks/exhaustive-deps -- run once on restore
+
+  // Auto-save draft whenever form values change (non-append mode)
+  useEffect(() => {
+    if (appendMode) return;
+    saveDraftValues(values);
+  }, [values, saveDraftValues, appendMode]);
 
   const euroCurrencyId = useMemo(() => {
     const match =
@@ -2170,6 +2210,9 @@ export default function PriceListImportClient({
         (typedPayload.newProducts && typedPayload.newProducts.length > 0) ||
         (typedPayload.skippedRowDetails && typedPayload.skippedRowDetails.length > 0);
 
+      // Import succeeded — clear saved draft so it doesn't restore on next visit.
+      clearDraft();
+
       if (hasSummaryData) {
         const targetId =
           typedPayload.priceListId != null ? String(typedPayload.priceListId) : null;
@@ -2208,7 +2251,7 @@ export default function PriceListImportClient({
     } finally {
       setSubmitting(false);
     }
-  }, [appendMode, appendToPriceListId, euroCurrencyId, file, fileValidation, isCostCurrencyEuro, router, values]);
+  }, [appendMode, appendToPriceListId, clearDraft, euroCurrencyId, file, fileValidation, isCostCurrencyEuro, router, values]);
 
   const renderOption = (option: DropdownOption) => (
     <option key={option.value} value={option.value}>
