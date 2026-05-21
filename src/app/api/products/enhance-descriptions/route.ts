@@ -64,7 +64,6 @@ type EnhanceResult = {
   oldDescription: string | null;
   oldOfferDescription?: string | null;
   newDescription: string | null;
-  extractedModelNumber?: string | null;
   status: "updated" | "skipped" | "error";
 };
 
@@ -224,19 +223,7 @@ export async function POST(req: NextRequest) {
           };
         }
 
-        // Step 1: If the ModelNumber field value appears at the start of the description,
-        // strip it before sending to AI — it's already captured in the ModelNumber field.
-        // e.g. ModelNumber="Z 26 MT", Description="Z 26 MT - Shock absorber..." → send "Shock absorber..."
-        let descriptionForAI = description;
-        if (modelNumber && description.toLowerCase().startsWith(modelNumber.toLowerCase())) {
-          const rest = description.slice(modelNumber.length).replace(/^\s*[-–]\s*/, "").trim();
-          if (rest.length > 0) {
-            descriptionForAI = rest;
-            console.log(`[enhance-desc] product ${product.ID}: stripped ModelNumber "${modelNumber}" from start of description`);
-          }
-        }
-
-        // Step 2: Serper search for web context
+        // Step 1: Serper search for web context
         let webSnippets = "";
         try {
           const searchTerms = [brand, modelNumber || partNumber, "product specifications"]
@@ -257,7 +244,6 @@ export async function POST(req: NextRequest) {
         // Step 3: OpenAI enhancement
         await openaiSemaphore.acquire();
         let enhanced: string;
-        let extractedModelNumber: string | null = null;
         try {
           const categoryInfo = [category, subCategory].filter(Boolean).join(" > ");
           const res = await openai.responses.create({
@@ -267,34 +253,30 @@ export async function POST(req: NextRequest) {
               {
                 role: "system",
                 content: [
-                  "Rewrite product descriptions for a B2B AV equipment catalog.",
+                  "Rewrite product descriptions for a B2B AV equipment catalog. Output ONLY the description, nothing else.",
                   "",
-                  'Output ONLY valid JSON with two fields: { "description": "...", "modelNumber": "..." }',
-                  'If no model number is found in the description, omit "modelNumber" or set it to null.',
-                  "",
-                  "FORMAT for description: Comma-separated key specs in a single line (or bullet list for complex kits). No full sentences. No filler words.",
+                  "FORMAT: Comma-separated key specs in a single line (or bullet list for complex kits). No full sentences. No filler words.",
                   "",
                   "NEVER DO:",
                   "- Add disclaimers or 'verify with manufacturer' notes",
-                  "- Repeat part/article/model numbers in the description (extract them to modelNumber instead)",
                   "- Add label prefixes like 'Type:' or 'Lens type:'",
                   "- Use marketing/filler words (high-performance, seamless, cutting-edge, robust, innovative, designed for, optimized for)",
                   "- Explain what a spec means (e.g. 'for clear projection in confined spaces')",
                   "- Add info not in the input or web context",
-                  "",
-                  "MODEL NUMBER EXTRACTION:",
-                  "- If the current description contains a model/part number that is NOT already in the Model field, extract it into modelNumber.",
-                  "- If the Model field already has a value, set modelNumber to null.",
+                  "- Remove or change any model/part number that appears at the start of the description — keep it exactly as-is, including any ' - ' separator that follows it",
                   "",
                   "EXAMPLES:",
-                  'IN: G LENS (0.65-0.75:1) | Brand: Barco | Model: N/A',
-                  'OUT: { "description": "Short-throw zoom lens, 0.65-0.75:1 throw ratio, WUXGA resolution.", "modelNumber": null }',
+                  "IN: Z 48 Older style clamping action shockmount for all variants of U 67, U 77, U 87, M 269 | Brand: Sennheiser",
+                  "OUT: Z 48 Clamping shockmount, compatible with U 67, U 77, U 87, M 269.",
                   "",
-                  'IN: Touch screen for ALB15HDMR. | Brand: Albiral | Model: N/A',
-                  'OUT: { "description": "15\\" touch screen, USB interface, resistive touch.", "modelNumber": "ALB15HDMR" }',
+                  "IN: Z 48 - Older style clamping action shockmount for all variants of U 67, U 77, U 87, M 269 | Brand: Sennheiser",
+                  "OUT: Z 48 - Clamping shockmount, compatible with U 67, U 77, U 87, M 269.",
                   "",
-                  'IN: Digital 4 channel access point transceiver, Europe version 1880-1900 MHz... | Brand: Televic | Model: N/A',
-                  'OUT: { "description": "Digital 4 channel access point transceiver, Europe version 1880-1900 MHz...", "modelNumber": null }',
+                  "IN: G LENS (0.65-0.75:1) | Brand: Barco",
+                  "OUT: Short-throw zoom lens, 0.65-0.75:1 throw ratio, WUXGA resolution.",
+                  "",
+                  "IN: Digital 4 channel access point transceiver, Europe version 1880-1900 MHz... | Brand: Televic",
+                  "OUT: (return unchanged — already good)",
                 ].join("\n"),
               },
               {
@@ -304,7 +286,7 @@ export async function POST(req: NextRequest) {
                   `Model: ${modelNumber || "N/A"}`,
                   `Part Number: ${partNumber || "N/A"}`,
                   categoryInfo ? `Category: ${categoryInfo}` : "",
-                  `Current Description: ${descriptionForAI || "None"}`,
+                  `Current Description: ${description || "None"}`,
                   webSnippets ? `\nWeb context:\n${webSnippets}` : "",
                 ]
                   .filter((line) => line !== "")
@@ -314,21 +296,7 @@ export async function POST(req: NextRequest) {
             stream: false,
           });
 
-          const rawText = res.output_text?.trim() ?? "";
-          // Parse JSON response; fall back to treating whole text as description
-          try {
-            // Strip possible markdown code fences
-            const jsonText = rawText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
-            const parsed = JSON.parse(jsonText) as { description?: string; modelNumber?: string | null };
-            enhanced = parsed.description?.trim() ?? "";
-            // Only use extracted model number if the product has no ModelNumber already
-            if (!modelNumber && parsed.modelNumber && typeof parsed.modelNumber === "string") {
-              extractedModelNumber = parsed.modelNumber.trim() || null;
-            }
-          } catch {
-            // If JSON parse fails, use raw text as description
-            enhanced = rawText;
-          }
+          enhanced = res.output_text?.trim() ?? "";
         } finally {
           openaiSemaphore.release();
         }
@@ -355,26 +323,13 @@ export async function POST(req: NextRequest) {
         updateReq.input("ProductID", sql.Int, product.ID);
         updateReq.input("Description", sql.NVarChar(2000), newDescription);
         updateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
-        if (extractedModelNumber) {
-          updateReq.input("ModelNumber", sql.NVarChar(500), extractedModelNumber.slice(0, 500));
-          await updateReq.query(`
-            UPDATE dbo.Products
-            SET Description = @Description,
-                ModelNumber = @ModelNumber,
-                ModifiedOn = SYSUTCDATETIME(),
-                ModifiedBy = @ModifiedBy
-            WHERE ID = @ProductID
-          `);
-          console.log(`[enhance-desc] product ${product.ID}: extracted ModelNumber → "${extractedModelNumber}"`);
-        } else {
-          await updateReq.query(`
-            UPDATE dbo.Products
-            SET Description = @Description,
-                ModifiedOn = SYSUTCDATETIME(),
-                ModifiedBy = @ModifiedBy
-            WHERE ID = @ProductID
-          `);
-        }
+        await updateReq.query(`
+          UPDATE dbo.Products
+          SET Description = @Description,
+              ModifiedOn = SYSUTCDATETIME(),
+              ModifiedBy = @ModifiedBy
+          WHERE ID = @ProductID
+        `);
 
         // Step 4: Update dbo.OfferDetails if applicable
         let oldOfferDescription: string | null | undefined = undefined;
@@ -403,7 +358,6 @@ export async function POST(req: NextRequest) {
           oldDescription: product.Description,
           oldOfferDescription,
           newDescription,
-          extractedModelNumber: extractedModelNumber ?? null,
           status: "updated",
         };
       }),
