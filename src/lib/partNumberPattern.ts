@@ -3,12 +3,17 @@
 // Pattern syntax:
 //   %  -> single digit (0-9) placeholder
 //   #  -> single letter (A-Z, case-insensitive) placeholder
+//   *  -> one or more characters of any kind (variable-length wildcard)
 //   anything else (e.g. ".", "-", letters in a suffix) -> literal character
 //
 // Example for Rittal:
 //   suffix:   "-RT"
 //   pattern1: "%%%%.%%%-RT"   (e.g. 1234.567-RT)
 //   pattern2: "##.%%%%.%%%-RT" (e.g. AB.1234.567-RT)
+//
+// Example for free-form + suffix only:
+//   suffix:   "-XX"
+//   pattern1: "*-XX"          (e.g. ABC123-XX, 1234.567-XX — any body)
 //
 // applyBrandPattern() accepts a part number that may already be canonical, may
 // be missing the suffix, or may be missing the literal separators (and/or both),
@@ -25,7 +30,8 @@ export type PartNumberPatternResult =
 
 const DIGIT_PLACEHOLDER = "%";
 const LETTER_PLACEHOLDER = "#";
-const PLACEHOLDER_CHARS = new Set([DIGIT_PLACEHOLDER, LETTER_PLACEHOLDER]);
+const WILDCARD_PLACEHOLDER = "*";
+const PLACEHOLDER_CHARS = new Set([DIGIT_PLACEHOLDER, LETTER_PLACEHOLDER, WILDCARD_PLACEHOLDER]);
 
 const escapeForRegex = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -33,6 +39,7 @@ const escapeForRegex = (value: string): string =>
 const placeholderClass = (ch: string): string => {
   if (ch === DIGIT_PLACEHOLDER) return "\\d";
   if (ch === LETTER_PLACEHOLDER) return "[A-Za-z]";
+  if (ch === WILDCARD_PLACEHOLDER) return ".+";
   return escapeForRegex(ch);
 };
 
@@ -53,7 +60,40 @@ const placeholderCount = (pattern: string): number => {
   return count;
 };
 
+const hasWildcard = (pattern: string): boolean => pattern.includes(WILDCARD_PLACEHOLDER);
+
 const formatTokensAgainstPattern = (tokens: string, pattern: string): string | null => {
+  if (hasWildcard(pattern)) {
+    // Wildcard patterns: * consumes all remaining tokens; fixed placeholders must still match.
+    const fixedCount = [...pattern].filter(
+      (ch) => PLACEHOLDER_CHARS.has(ch) && ch !== WILDCARD_PLACEHOLDER,
+    ).length;
+    if (tokens.length < fixedCount + 1) return null; // need at least 1 char for *
+    let out = "";
+    let cursor = 0;
+    for (const ch of pattern) {
+      if (!PLACEHOLDER_CHARS.has(ch)) { out += ch; continue; }
+      if (ch === WILDCARD_PLACEHOLDER) {
+        // consume everything not claimed by fixed placeholders after this point
+        const fixedAfter = [...pattern.slice(pattern.indexOf(ch) + 1)].filter(
+          (c) => PLACEHOLDER_CHARS.has(c) && c !== WILDCARD_PLACEHOLDER,
+        ).length;
+        const consumeUntil = tokens.length - fixedAfter;
+        out += tokens.slice(cursor, consumeUntil);
+        cursor = consumeUntil;
+        continue;
+      }
+      const token = tokens[cursor++];
+      if (ch === DIGIT_PLACEHOLDER) {
+        if (!/\d/.test(token)) return null;
+      } else {
+        if (!/[A-Za-z]/.test(token)) return null;
+      }
+      out += token;
+    }
+    return cursor === tokens.length ? out : null;
+  }
+
   if (tokens.length !== placeholderCount(pattern)) return null;
   let out = "";
   let cursor = 0;
@@ -159,6 +199,8 @@ export const formatPatternExample = (pattern: string): string => {
     } else if (ch === LETTER_PLACEHOLDER) {
       out += String.fromCharCode(letterCode);
       letterCode = letterCode >= "Z".charCodeAt(0) ? "A".charCodeAt(0) : letterCode + 1;
+    } else if (ch === WILDCARD_PLACEHOLDER) {
+      out += "12345";
     } else {
       out += ch;
     }
