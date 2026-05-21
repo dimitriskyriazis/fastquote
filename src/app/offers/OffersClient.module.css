@@ -58,6 +58,32 @@
   box-shadow: 0 4px 10px rgba(15, 23, 42, 0.1);
 }
 
+.myOffersButton {
+  border: 1px solid #bfdbfe;
+  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
+  color: #1e40af;
+  box-shadow: 0 4px 10px rgba(30, 64, 175, 0.08);
+}
+
+.myOffersButton:hover,
+.myOffersButton:focus-visible {
+  background: linear-gradient(180deg, #dbeafe 0%, #bfdbfe 100%);
+  outline: none;
+}
+
+.myOffersButtonActive {
+  border: 1px solid #3b82f6;
+  background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.25);
+}
+
+.myOffersButtonActive:hover,
+.myOffersButtonActive:focus-visible {
+  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+  outline: none;
+}
+
 .loading {
   flex: 1;
   min-height: 0;

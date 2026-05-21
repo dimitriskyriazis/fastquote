@@ -4892,7 +4892,9 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     captureAndPinScroll(shellRef.current);
     const next: Record<string, unknown> = {};
     // Restore each guarded col to its default state — drop user filters.
+    // Skip cols that don't exist in the current grid to avoid AG Grid warning #62.
     Object.entries(GUARDED_FILTER_DEFAULTS).forEach(([key, def]) => {
+      if (!api.getColumn(key)) return;
       if ('values' in def) {
         next[key] = { filterType: 'set', values: [...def.values] };
       }

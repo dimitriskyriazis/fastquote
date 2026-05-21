@@ -151,7 +151,7 @@ export default function OffersClient() {
   const searchParams = useSearchParams();
   const routerRef = useRef(router);
   routerRef.current = router;
-  const { roles, userId } = useAuditUser();
+  const { roles, userId, selectedUser } = useAuditUser();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const initialSalesPersonRef = useRef((searchParams.get('salesPerson') ?? '').trim());
   const initialCustomerIdRef = useRef((searchParams.get('customerId') ?? '').trim());
@@ -164,6 +164,9 @@ export default function OffersClient() {
   expandedVersionGroupsRef.current = expandedVersionGroups;
   const [statusHistoryModalOpen, setStatusHistoryModalOpen] = useState(false);
   const [statusHistoryOfferId, setStatusHistoryOfferId] = useState<number | null>(null);
+  const [myOffersFilterActive, setMyOffersFilterActive] = useState(false);
+  const selectedUserRef = useRef(selectedUser);
+  selectedUserRef.current = selectedUser;
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     if (!api) return;
@@ -242,6 +245,26 @@ export default function OffersClient() {
   const handleCreateOfferClick = useCallback(() => {
     routerRef.current.push('/offers/create');
   }, []);
+
+  const handleViewMyOffersClick = useCallback(() => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    const userLabel = selectedUser?.label ?? '';
+    if (!userLabel) return;
+    const current = (api.getFilterModel() as Record<string, unknown> | null) ?? {};
+    if (myOffersFilterActive) {
+      const next = { ...current };
+      delete next.SalesPerson;
+      api.setFilterModel(next);
+      setMyOffersFilterActive(false);
+    } else {
+      api.setFilterModel({
+        ...current,
+        SalesPerson: { filterType: 'text', type: 'contains', filter: userLabel },
+      });
+      setMyOffersFilterActive(true);
+    }
+  }, [selectedUser, myOffersFilterActive]);
   const toggleVersionGroup = useCallback((groupId: number | null) => {
     if (!groupId) return;
     const api = gridApiRef.current;
@@ -296,6 +319,19 @@ export default function OffersClient() {
 
   const handleModelUpdated = useCallback((api: GridApi<Record<string, unknown>>) => {
     restorePendingColumnState(api);
+    // Sync the "Filter my offers" button state with the actual grid filter model.
+    // If the SalesPerson filter was cleared externally (e.g. via column header X),
+    // reset the button to its inactive state.
+    const userLabel = selectedUserRef.current?.label ?? '';
+    if (userLabel) {
+      const model = api.getFilterModel() as Record<string, unknown> | null;
+      const salesPersonFilter = model?.SalesPerson as { filter?: string } | undefined;
+      const isActive = Boolean(
+        salesPersonFilter?.filter &&
+        salesPersonFilter.filter === userLabel,
+      );
+      setMyOffersFilterActive((prev) => (prev !== isActive ? isActive : prev));
+    }
   }, [restorePendingColumnState]);
   const handleCreateNewVersion = useCallback(async (offerId: number | null) => {
     if (offerId == null) return;
@@ -786,6 +822,16 @@ export default function OffersClient() {
           title="Offers"
           rightActions={
             <div className={styles.headerActions}>
+              {selectedUser?.label ? (
+                <button
+                  type="button"
+                  className={`${myOffersFilterActive ? styles.myOffersButtonActive : styles.myOffersButton} page-header-button`}
+                  onClick={handleViewMyOffersClick}
+                  title={myOffersFilterActive ? 'Clear my offers filter' : `Filter offers for ${selectedUser.label}`}
+                >
+                  Filter my offers
+                </button>
+              ) : null}
               <button
                 type="button"
                 className={`${styles.primaryButton} page-header-button`}
