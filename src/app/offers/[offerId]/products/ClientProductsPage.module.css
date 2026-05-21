@@ -49,10 +49,14 @@
 
 .offerHeaderTopRow {
   margin-bottom: -10px;
+  position: relative;
+  z-index: 10;
 }
 
 .offerHeaderBottomRow {
   margin-top: -2px;
+  position: relative;
+  z-index: 1;
 }
 
 .standardPackageSpacerRow {
