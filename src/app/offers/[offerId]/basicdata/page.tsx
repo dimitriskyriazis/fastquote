@@ -38,19 +38,23 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
   return (
     <main className={styles.page}>
       <div className={styles.headerRow}>
-        <div id="undo-portal" className={`${styles.headerSide} ${styles.headerSideStart}`}>
-          <Link href="/offers" className={`${styles.backLink} page-header-button`}>
-            <span aria-hidden="true">←</span>
-            Back to offers
-          </Link>
-          <CreateNewVersionButton
-            offerId={decodedId}
-            className={`${styles.headerActionButton} page-header-button`}
-          />
-          <CopyOfferButton
-            offerId={decodedId}
-            className={`${styles.headerActionButton} page-header-button`}
-          />
+        <div className={`${styles.headerSide} ${styles.headerSideStart}`} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
+          <div id="undo-portal" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Link href="/offers" className={`${styles.backLink} page-header-button`}>
+              <span aria-hidden="true">←</span>
+              Back to offers
+            </Link>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <CreateNewVersionButton
+              offerId={decodedId}
+              className={`${styles.headerActionButton} page-header-button`}
+            />
+            <CopyOfferButton
+              offerId={decodedId}
+              className={`${styles.headerActionButton} page-header-button`}
+            />
+          </div>
         </div>
         <h1 className={`${styles.heading} ${styles.headingCentered}`}>{headingText}</h1>
         <div className={`${styles.headerSide} ${styles.headerSideEnd}`} style={{ flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
