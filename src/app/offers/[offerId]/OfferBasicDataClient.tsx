@@ -52,6 +52,7 @@ type SectionKey = 'general' | 'info' | 'commercial' | 'code' | 'dates';
 type FieldDefinition = {
   id: string;
   label: string;
+  labelNote?: string;
   section: SectionKey;
   recordKey: keyof OfferBasicRecord;
   updateField?: OfferBasicUpdateField;
@@ -175,7 +176,8 @@ const buildFieldDefinitions = (
   showCurrencyModifier: boolean,
 ): FieldDefinition[] => [
   { id: 'title', label: 'Title', section: 'general', recordKey: 'Title', updateField: 'Title' },
-  { id: 'description', label: 'Description', section: 'general', recordKey: 'Description', updateField: 'Description' },
+  { id: 'offerDescription', label: 'Offer Description', labelNote: 'PRINTED ON PDF', section: 'general', recordKey: 'OfferDescription', updateField: 'OfferDescription' },
+  { id: 'description', label: 'Telmaco Description', section: 'general', recordKey: 'Description', updateField: 'Description', multiline: true },
   { id: 'paymentTerms', label: 'Payment Terms', section: 'general', recordKey: 'PaymentTerms', updateField: 'PaymentTerms', multiline: true },
   { id: 'install', label: 'Installation Schedule', section: 'general', recordKey: 'InstallationSchedule', updateField: 'InstallationSchedule', multiline: true },
   { id: 'closingNote', label: 'Closing Note', section: 'general', recordKey: 'OfferNotesClosing', updateField: 'OfferNotesClosing', multiline: true },
@@ -1439,8 +1441,8 @@ export default function OfferBasicDataClient({
   }, {});
 
   const generalRowLayout: string[][] = [
-    ['title', 'description', 'customer', 'deliveryTime', 'offerValidity', 'status'],
-    ['paymentTerms', 'install', 'introNote', 'closingNote', 'discountNote'],
+    ['title', 'offerDescription', 'customer', 'deliveryTime', 'offerValidity', 'status'],
+    ['description', 'paymentTerms', 'install', 'introNote', 'closingNote', 'discountNote'],
   ];
 
   const generalRows = generalRowLayout
@@ -1475,6 +1477,7 @@ export default function OfferBasicDataClient({
                   <div key={field.id} className={styles.field}>
                     <label className={styles.fieldLabel} htmlFor={`offer-field-${field.id}`}>
                       {field.label}
+                      {field.labelNote ? ` (${field.labelNote})` : null}
                     </label>
                     <div
                       onContextMenu={(event) => {

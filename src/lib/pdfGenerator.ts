@@ -14,6 +14,7 @@ export type OfferPdfData = {
   offerDate: string | null;
   title: string | null;
   description: string | null;
+  offerDescription?: string | null;
   salesDivisionName: string | null;
   offerContact: string | null;
   customer: {
@@ -621,6 +622,18 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
     {
       stack: [
         { text: coverTitle, style: 'titleCover', alignment: 'center' },
+        ...(str(data.offerDescription)
+          ? [
+              {
+                text: str(data.offerDescription),
+                fontSize: isLandscape ? 24 : 22,
+                bold: true,
+                color: COLORS.primaryText,
+                alignment: 'center',
+                margin: [0, 12, 0, 0],
+              },
+            ]
+          : []),
         {
           text: meta.customerName || ' ',
           fontSize: isLandscape ? 20 : 18,
@@ -1485,6 +1498,16 @@ export async function generateOfferPdf(
       ...(smallOffer
         ? buildCompactHeader(data, L, lang, orientation, logo)
         : buildCoverPage(data, L, lang, orientation, logo, equipmentList)),
+      ...(smallOffer && str(data.offerDescription)
+        ? [
+            {
+              text: str(data.offerDescription),
+              fontSize: 10,
+              color: COLORS.secondaryText,
+              margin: [0, 0, 0, 8],
+            },
+          ]
+        : []),
       ...openingNote,
       itemsTable,
       ...totalsAndTerms.totals,

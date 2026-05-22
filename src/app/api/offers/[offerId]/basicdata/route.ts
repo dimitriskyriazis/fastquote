@@ -43,6 +43,7 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   CreatedBy: { column: 'CreatedBy', type: 'string', sqlType: sql.NVarChar, length: 450 },
   Title: { column: 'Title', type: 'string', sqlType: sql.NVarChar, length: 512 },
   Description: { column: 'Description', type: 'string', sqlType: sql.NVarChar, length: 2000 },
+  OfferDescription: { column: 'OfferDescription', type: 'string', sqlType: sql.NVarChar, length: 2000 },
   PaymentTerms: { column: 'PaymentTerms', type: 'string', sqlType: sql.NVarChar, length: 500 },
   InstallationSchedule: { column: 'InstallationSchedule', type: 'string', sqlType: sql.NVarChar, length: 500 },
   OfferNotesClosing: { column: 'OfferNotesClosing', type: 'string', sqlType: sql.NVarChar, length: 2000 },

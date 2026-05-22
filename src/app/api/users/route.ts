@@ -18,6 +18,26 @@ type ColumnCheckRow = {
 
 export async function GET(req: NextRequest) {
   logRequest(req, '/api/users');
+
+  // DEV_MOCK_USERS: JSON array of users for local dev without a DB.
+  // Set in .env.local only — never in production.
+  const devMockRaw = process.env.DEV_MOCK_USERS;
+  if (devMockRaw) {
+    try {
+      const mockUsers = JSON.parse(devMockRaw) as Array<{
+        id: number;
+        fullName?: string | null;
+        userName?: string | null;
+        windowsUserName?: string | null;
+        roles?: string[];
+        salesSeniorityName?: string | null;
+      }>;
+      return NextResponse.json({ ok: true, users: mockUsers });
+    } catch {
+      return NextResponse.json({ ok: false, error: 'DEV_MOCK_USERS is not valid JSON' }, { status: 500 });
+    }
+  }
+
   try {
     const pool = await getPool();
     const columnCheck = await pool.request().query<ColumnCheckRow>(`

@@ -22,6 +22,7 @@ async function fetchOfferBasicRecord(offerId: number) {
         o.SalesDivisionID,
         o.Title,
         o.Description,
+        o.OfferDescription,
         o.PaymentTerms,
         o.InstallationSchedule,
         o.OfferNotesClosing,

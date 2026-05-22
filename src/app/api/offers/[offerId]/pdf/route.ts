@@ -11,6 +11,7 @@ type OfferHeaderRow = {
   ID: number;
   Title: string | null;
   Description: string | null;
+  OfferDescription: string | null;
   OfferDate: Date | string | null;
   PaymentTerms: string | null;
   DeliveryTime: string | null;
@@ -110,6 +111,7 @@ export async function GET(
           o.ID,
           o.Title,
           o.Description,
+          o.OfferDescription,
           o.OfferDate,
           o.PaymentTerms,
           o.DeliveryTime,
@@ -286,6 +288,7 @@ export async function GET(
       offerDate: offerDateStr,
       title: header.Title,
       description: header.Description,
+      offerDescription: header.OfferDescription,
       salesDivisionName: header.SalesDivisionName,
       offerContact: header.OfferContact,
       customer: {

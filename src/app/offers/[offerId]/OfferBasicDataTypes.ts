@@ -13,6 +13,7 @@ export type OfferBasicRecord = {
   CurrencyName: string | null;
   Title: string | null;
   Description: string | null;
+  OfferDescription: string | null;
   PaymentTerms: string | null;
   InstallationSchedule: string | null;
   OfferNotesClosing: string | null;
@@ -78,6 +79,7 @@ export type OfferBasicUpdateField =
   | 'CreatedBy'
   | 'Title'
   | 'Description'
+  | 'OfferDescription'
   | 'PaymentTerms'
   | 'InstallationSchedule'
   | 'OfferNotesClosing'

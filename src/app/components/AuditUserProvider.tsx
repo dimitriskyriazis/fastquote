@@ -170,6 +170,15 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     // (or after the cookie has been cleared), avoiding repeated login prompts.
     if (userId) return;
 
+    // Dev shortcut: auto-login as a fixed user when NEXT_PUBLIC_DEV_AUTO_USER_ID is set.
+    // This env var is only defined in .env.local and never in production.
+    const devAutoId = process.env.NEXT_PUBLIC_DEV_AUTO_USER_ID;
+    if (devAutoId) {
+      writeCookieValue(devAutoId);
+      setUserId(devAutoId);
+      return;
+    }
+
     windowsAuthAttemptedRef.value = true;
     void (async () => {
       const result = await tryResolveViaWindowsAuth();

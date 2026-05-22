@@ -666,7 +666,7 @@ export default function OffersClient() {
     { field: 'CustomerName', headerName: 'Customer Name', filter: 'agTextColumnFilter', enableRowGroup: true },
     {
       field: 'Description',
-      headerName: 'Description',
+      headerName: 'Telmaco Description',
       filter: 'agTextColumnFilter',
       comparator: localeStringComparator,
     },
