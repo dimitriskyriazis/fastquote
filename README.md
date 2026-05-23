@@ -26,11 +26,9 @@ FastQuote is a Next.js application for managing commercial offers, pricing, and 
 - **Database:** Microsoft SQL Server via `mssql` with optional Windows auth (`msnodesqlv8`)
 - **Data Grids:** AG Grid Enterprise
 - **Styling:** CSS Modules
-- **Validation:** Zod
 - **PDF Generation:** pdfmake
 - **Spreadsheets:** xlsx
-- **Date Handling:** date-fns
-- **AI Integration:** OpenAI API (product suggestions and description enhancement)
+- **AI Integration:** OpenAI API (product suggestions, weblink finder and description enhancement)
 - **External APIs:** Farnell component lookup, Serper search
 - **Rate Limiting:** rate-limiter-flexible
 - **Authentication:** Session-based with HMAC-SHA256 signed cookies
