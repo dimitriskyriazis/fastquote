@@ -30,6 +30,8 @@ export type PriceListBasicRecord = {
   ModifiedByUserName: string | null;
   ModifiedByFullName: string | null;
   IsService: boolean | number | null;
+  CreatedByUserId: string | null;
+  CreatedByDisplayName: string | null;
 };
 
 export type PriceListDropdownOption = DropdownOption;

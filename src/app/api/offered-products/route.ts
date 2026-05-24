@@ -33,9 +33,12 @@ type OfferDetailRow = {
   OfferStatus: string | null;
   CustomerName: string | null;
   CustomerGroup: string | null;
+  SalesDivision: string | null;
+  SalesMarket: string | null;
   ERPFWCProjectShortName: string | null;
   PartNumber: string | null;
   ModelNumber: string | null;
+  ERPCode: string | null;
   BrandName: string | null;
   Origin: string | null;
   ProductDescription: string | null;
@@ -77,9 +80,12 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferStatus: 'os.Name',
   CustomerName: 'c.Name',
   CustomerGroup: 'cg.Name',
+  SalesDivision: 'sd.Name',
+  SalesMarket: 'mkt.Name',
   ERPFWCProjectShortName: 'fwc.ShortName',
   PartNumber: 'od.PartNumber',
   ModelNumber: 'od.ModelNumber',
+  ERPCode: 'p.ERPCode',
   BrandName: 'b.Name',
   Origin: 'p.Origin',
   ProductDescription: 'od.ProductDescription',
@@ -115,6 +121,8 @@ const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, exp
 const ALLOWED_ROW_GROUP_FIELDS = new Set([
   'CustomerName',
   'CustomerGroup',
+  'SalesDivision',
+  'SalesMarket',
   'OfferStatus',
   'BrandName',
   'OfferID',
@@ -239,9 +247,12 @@ const selectClause = `
     os.Name AS OfferStatus,
     c.Name AS CustomerName,
     cg.Name AS CustomerGroup,
+    sd.Name AS SalesDivision,
+    mkt.Name AS SalesMarket,
     fwc.ShortName AS ERPFWCProjectShortName,
     od.PartNumber,
     od.ModelNumber,
+    p.ERPCode AS ERPCode,
     b.Name AS BrandName,
     p.Origin AS Origin,
     od.ProductDescription,
@@ -281,6 +292,8 @@ const fromClause = `
     LEFT JOIN dbo.Currencies oc ON od.OtherCurrencyID = oc.ID
     LEFT JOIN dbo.Products p ON od.ProductID = p.ID
     LEFT JOIN dbo.FWCs fwc ON fwc.ID = o.ERPFWCProjectID
+    LEFT JOIN dbo.SalesDivision sd ON sd.ID = o.SalesDivisionID
+    LEFT JOIN dbo.Markets mkt ON mkt.ID = o.MarketID
 `;
 
 const baseFilter = `
@@ -341,7 +354,15 @@ export async function POST(req: NextRequest) {
       const groupSql = `
         SELECT
           ${groupExpr} AS [${groupField}],
-          COUNT(1) AS __childCount
+          COUNT(1) AS __childCount,
+          SUM(od.Quantity)           AS Quantity,
+          SUM(od.TotalPrice)         AS TotalPrice,
+          SUM(od.TotalNet)           AS TotalNet,
+          SUM(od.TotalCost)          AS TotalCost,
+          SUM(od.GrossProfit)        AS GrossProfit,
+          AVG(od.CustomerDiscount)   AS CustomerDiscount,
+          AVG(od.TelmacoDiscount)    AS TelmacoDiscount,
+          AVG(od.Margin)             AS Margin
         ${fromClause}
         ${groupWhere}
         GROUP BY ${groupExpr}

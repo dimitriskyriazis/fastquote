@@ -223,6 +223,13 @@ const buildFieldDefinitions = (
     resolveValue: (rec) => rec.ResponsibleUserId ?? '',
   },
   {
+    id: 'createdBy',
+    label: 'Created By',
+    section: 'associations',
+    recordKey: 'CreatedByDisplayName',
+    readOnly: true,
+  },
+  {
     id: 'enabled',
     label: 'Enabled',
     section: 'settings',

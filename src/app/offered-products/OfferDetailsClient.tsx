@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import type {
   CellValueChangedEvent,
   ColDef,
   GetContextMenuItemsParams,
+  GridApi,
   IRowNode,
   MenuItemDef,
 } from 'ag-grid-community';
@@ -37,6 +38,36 @@ const viewPriceListMenuIcon = `
     </svg>
   </span>
 `;
+
+type MarketOption = { market: string; division: string };
+
+type GroupOptions = {
+  brands: string[];
+  salesDivisions: string[];
+  markets: MarketOption[];
+  fwcProjects: string[];
+};
+
+type GroupFilters = {
+  BrandName: string;
+  SalesDivision: string;
+  SalesMarket: string;
+  ERPFWCProjectShortName: string;
+};
+
+const EMPTY_FILTERS: GroupFilters = {
+  BrandName: '',
+  SalesDivision: '',
+  SalesMarket: '',
+  ERPFWCProjectShortName: '',
+};
+
+const FILTER_TO_COLUMN: Record<keyof GroupFilters, string> = {
+  BrandName: 'BrandName',
+  SalesDivision: 'SalesDivision',
+  SalesMarket: 'SalesMarket',
+  ERPFWCProjectShortName: 'ERPFWCProjectShortName',
+};
 
 const normalizeOfferId = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
@@ -69,6 +100,11 @@ const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
       Loading grid…
     </div>
   ),
+});
+
+const AgGridSummary = dynamic(() => import('./OfferedProductsSummaryGrid'), {
+  ssr: false,
+  loading: () => <div className={styles.loading}>Loading summary…</div>,
 });
 
 const formatDateDMY = (value: unknown): string => {
@@ -104,6 +140,124 @@ const redCellStyle = { color: '#dc2626' } as const;
 
 export default function OfferDetailsClient() {
   const router = useRouter();
+  const gridApiRef = useRef<GridApi | null>(null);
+  const [groupMode, setGroupMode] = useState(false);
+  const [options, setOptions] = useState<GroupOptions>({ brands: [], salesDivisions: [], markets: [], fwcProjects: [] });
+  const [filters, setFilters] = useState<GroupFilters>(EMPTY_FILTERS);
+  const [brandSearch, setBrandSearch] = useState('');
+  const [showBrandList, setShowBrandList] = useState(false);
+
+  // Fetch dropdown options once
+  useEffect(() => {
+    void fetch('/api/offered-products/options')
+      .then(r => r.json())
+      .then((data: { ok?: boolean; brands?: string[]; salesDivisions?: string[]; markets?: MarketOption[]; fwcProjects?: string[] }) => {
+        if (data.ok) {
+          setOptions({
+            brands: data.brands ?? [],
+            salesDivisions: data.salesDivisions ?? [],
+            markets: data.markets ?? [],
+            fwcProjects: data.fwcProjects ?? [],
+          });
+        }
+      })
+      .catch(() => { /* silent */ });
+  }, []);
+
+  const handleGridReady = useCallback((api: GridApi) => {
+    gridApiRef.current = api;
+  }, []);
+
+  // Apply filters whenever filters or mode changes (no row grouping — just flat filtered rows)
+  useEffect(() => {
+    const api = gridApiRef.current;
+    if (!api) return;
+
+    const currentModel = api.getFilterModel() as Record<string, unknown>;
+    const newModel: Record<string, unknown> = { ...currentModel };
+
+    // Remove all group-dimension filters first
+    Object.values(FILTER_TO_COLUMN).forEach(colId => delete newModel[colId]);
+
+    if (groupMode) {
+      // Re-add only selected values
+      (Object.entries(filters) as [keyof GroupFilters, string][]).forEach(([key, val]) => {
+        if (val) {
+          newModel[FILTER_TO_COLUMN[key]] = { filterType: 'text', type: 'equals', filter: val };
+        }
+      });
+    }
+
+    api.setFilterModel(newModel);
+  }, [groupMode, filters]);
+
+  const toggleGroupMode = useCallback(() => {
+    setGroupMode(prev => {
+      if (prev) setFilters(EMPTY_FILTERS); // clear on close
+      return !prev;
+    });
+  }, []);
+
+  const handleFilterChange = useCallback((key: keyof GroupFilters, value: string) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  // ── Summary / Totals mode ──────────────────────────────────────────────────
+  const [summaryMode, setSummaryMode] = useState(false);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryData, setSummaryData] = useState<{ statuses: string[]; rows: Record<string, unknown>[] } | null>(null);
+
+  const fetchSummary = useCallback((currentFilters: GroupFilters) => {
+    setSummaryLoading(true);
+    const qs = new URLSearchParams();
+    if (currentFilters.BrandName)              qs.set('brand',    currentFilters.BrandName);
+    if (currentFilters.SalesDivision)          qs.set('division', currentFilters.SalesDivision);
+    if (currentFilters.SalesMarket)            qs.set('market',   currentFilters.SalesMarket);
+    if (currentFilters.ERPFWCProjectShortName) qs.set('fwc',      currentFilters.ERPFWCProjectShortName);
+    void fetch(`/api/offered-products/summary${qs.toString() ? `?${qs}` : ''}`)
+      .then(r => r.json())
+      .then((data: { ok?: boolean; statuses?: string[]; rows?: Record<string, unknown>[] }) => {
+        if (data.ok) setSummaryData({ statuses: data.statuses ?? [], rows: data.rows ?? [] });
+      })
+      .catch(() => { /* silent */ })
+      .finally(() => setSummaryLoading(false));
+  }, []);
+
+  const toggleSummaryMode = useCallback(() => {
+    setSummaryMode(prev => {
+      if (!prev) fetchSummary(filters);
+      return !prev;
+    });
+  }, [fetchSummary, filters]);
+
+  // Re-fetch summary when filters change while summary is open
+  useEffect(() => {
+    if (summaryMode) fetchSummary(filters);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters, summaryMode]);
+
+  const summaryColDefs = useMemo((): ColDef[] => {
+    if (!summaryData) return [];
+    return [
+      { field: 'PartNumber',         headerName: 'Part Number',         minWidth: 160, pinned: 'left' as const },
+      { field: 'ProductDescription', headerName: 'Product Description', minWidth: 220, pinned: 'left' as const },
+      { field: 'CustomerName',       headerName: 'Customer',            minWidth: 200 },
+      ...summaryData.statuses.map(s => ({
+        field: s,
+        headerName: s,
+        type: 'numericColumn' as const,
+        width: 160,
+        valueFormatter: (p: { value: unknown }) => (p.value == null || Number(p.value) === 0 ? '' : String(p.value)),
+      })),
+      {
+        field: 'GrandTotal',
+        headerName: 'Grand Total',
+        type: 'numericColumn' as const,
+        width: 130,
+        cellStyle: { fontWeight: 600 },
+      },
+    ];
+  }, [summaryData]);
 
   const columnDefs: ColDef[] = useMemo(() => [
     {
@@ -132,6 +286,20 @@ export default function OfferDetailsClient() {
       headerName: 'Offer Description',
       filter: 'agTextColumnFilter',
       minWidth: 180,
+    },
+    {
+      field: 'SalesDivision',
+      headerName: 'Sales Division',
+      filter: 'agTextColumnFilter',
+      enableRowGroup: true,
+      width: 140,
+    },
+    {
+      field: 'SalesMarket',
+      headerName: 'Market',
+      filter: 'agTextColumnFilter',
+      enableRowGroup: true,
+      width: 130,
     },
     {
       field: 'OfferVersion',
@@ -187,6 +355,13 @@ export default function OfferDetailsClient() {
       hide: true,
     },
     {
+      field: 'BrandName',
+      headerName: 'Brand',
+      filter: 'agTextColumnFilter',
+      enableRowGroup: true,
+      width: 130,
+    },
+    {
       field: 'PartNumber',
       headerName: 'Part Number',
       filter: 'agTextColumnFilter',
@@ -199,10 +374,9 @@ export default function OfferDetailsClient() {
       minWidth: 140,
     },
     {
-      field: 'BrandName',
-      headerName: 'Brand',
+      field: 'ERPCode',
+      headerName: 'ERP Code',
       filter: 'agTextColumnFilter',
-      enableRowGroup: true,
       width: 130,
     },
     {
@@ -216,6 +390,7 @@ export default function OfferDetailsClient() {
       headerName: 'Qty',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      aggFunc: 'sum',
       width: 90,
     },
     {
@@ -231,6 +406,7 @@ export default function OfferDetailsClient() {
       headerName: 'Total Price',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      aggFunc: 'sum',
       valueFormatter: (params) => formatNumber(params.value),
       width: 120,
     },
@@ -239,6 +415,7 @@ export default function OfferDetailsClient() {
       headerName: 'Cust. Discount',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      aggFunc: 'avg',
       valueFormatter: (params) => formatPercent(params.value),
       width: 130,
     },
@@ -255,6 +432,7 @@ export default function OfferDetailsClient() {
       headerName: 'Total Net',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      aggFunc: 'sum',
       valueFormatter: (params) => formatNumber(params.value),
       width: 120,
     },
@@ -286,6 +464,7 @@ export default function OfferDetailsClient() {
       headerName: 'Telmaco Discount',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      aggFunc: 'avg',
       valueFormatter: (params) => formatPercent(params.value),
       cellStyle: redCellStyle,
       width: 140,
@@ -339,6 +518,7 @@ export default function OfferDetailsClient() {
       headerName: 'Total Cost',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      aggFunc: 'sum',
       valueFormatter: (params) => formatNumber(params.value),
       cellStyle: redCellStyle,
       width: 120,
@@ -348,6 +528,7 @@ export default function OfferDetailsClient() {
       headerName: 'Margin',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      aggFunc: 'avg',
       valueFormatter: (params) => formatPercent(params.value),
       cellStyle: redCellStyle,
       width: 110,
@@ -357,6 +538,7 @@ export default function OfferDetailsClient() {
       headerName: 'Gross Profit',
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
+      aggFunc: 'sum',
       valueFormatter: (params) => formatNumber(params.value),
       cellStyle: redCellStyle,
       width: 120,
@@ -529,23 +711,169 @@ export default function OfferDetailsClient() {
     [router],
   );
 
+  // Markets filtered by selected division
+  const filteredMarkets = filters.SalesDivision
+    ? options.markets.filter(m => m.division === filters.SalesDivision)
+    : options.markets;
+
+  // Filtered brand suggestions
+  const brandSuggestions = brandSearch.trim()
+    ? options.brands.filter(b => b.toLowerCase().includes(brandSearch.toLowerCase()))
+    : options.brands;
+
+  const pivotModeButton = (
+    <button
+      type="button"
+      className={`${groupMode ? styles.groupBtnActive : styles.groupBtn} page-header-button`}
+      onClick={toggleGroupMode}
+    >
+      Pivot Mode
+    </button>
+  );
+
+  const headerActions = groupMode ? (
+    <div className={styles.headerActions}>
+      {/* Brand — custom combobox */}
+      <div className={styles.brandCombo}>
+        <input
+          autoComplete="off"
+          className={`${styles.groupSelect} page-header-button`}
+          placeholder="Brand: All"
+          value={brandSearch}
+          style={{ width: 160, paddingRight: 10 }}
+          aria-label="Brand"
+          onChange={e => {
+            setBrandSearch(e.target.value);
+            setShowBrandList(true);
+            // clear filter while typing; set when user picks from list
+            handleFilterChange('BrandName', '');
+          }}
+          onFocus={() => setShowBrandList(true)}
+          onBlur={() => {
+            // slight delay so click on option registers first
+            setTimeout(() => {
+              setShowBrandList(false);
+              // if text doesn't match a brand exactly, clear it
+              const match = options.brands.find(b => b.toLowerCase() === brandSearch.toLowerCase());
+              if (!match) {
+                setBrandSearch('');
+                handleFilterChange('BrandName', '');
+              } else {
+                setBrandSearch(match);
+                handleFilterChange('BrandName', match);
+              }
+            }, 150);
+          }}
+          onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
+            if (e.key === 'Enter' && brandSuggestions.length > 0) {
+              const pick = brandSuggestions[0];
+              setBrandSearch(pick);
+              handleFilterChange('BrandName', pick);
+              setShowBrandList(false);
+            } else if (e.key === 'Escape') {
+              setShowBrandList(false);
+            }
+          }}
+        />
+        {showBrandList && brandSuggestions.length > 0 && (
+          <div className={styles.brandList}>
+            {brandSuggestions.map(v => (
+              <button
+                key={v}
+                type="button"
+                className={styles.brandOption}
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => {
+                  setBrandSearch(v);
+                  handleFilterChange('BrandName', v);
+                  setShowBrandList(false);
+                }}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <select
+        className={`${styles.groupSelect} page-header-button`}
+        value={filters.SalesDivision}
+        onChange={e => {
+          handleFilterChange('SalesDivision', e.target.value);
+          // Clear market when division changes
+          handleFilterChange('SalesMarket', '');
+        }}
+        aria-label="Sales Division"
+      >
+        <option value="">Division: All</option>
+        {options.salesDivisions.map(v => <option key={v} value={v}>{v}</option>)}
+      </select>
+
+      <select
+        className={`${styles.groupSelect} page-header-button`}
+        value={filters.SalesMarket}
+        onChange={e => handleFilterChange('SalesMarket', e.target.value)}
+        aria-label="Market"
+      >
+        <option value="">Market: All</option>
+        {filteredMarkets.map(m => (
+          <option key={`${m.market}|${m.division}`} value={m.market}>
+            {m.division ? `${m.market} - ${m.division}` : m.market}
+          </option>
+        ))}
+      </select>
+
+      <select
+        className={`${styles.groupSelect} page-header-button`}
+        value={filters.ERPFWCProjectShortName}
+        onChange={e => handleFilterChange('ERPFWCProjectShortName', e.target.value)}
+        aria-label="FWC Project"
+      >
+        <option value="">FWC: All</option>
+        {options.fwcProjects.map(v => <option key={v} value={v}>{v}</option>)}
+      </select>
+
+      <button
+        type="button"
+        className={`${summaryMode ? styles.totalsBtnActive : styles.totalsBtn} page-header-button`}
+        onClick={toggleSummaryMode}
+      >
+        {summaryLoading ? 'Loading…' : 'Totals'}
+      </button>
+    </div>
+  ) : null;
+
   return (
     <main className={styles.page}>
-      <PageHeader title="Offered Products">
+      <PageHeader title="Offered Products" afterSearchActions={pivotModeButton} rightActions={headerActions}>
         <GridQuickSearchProvider>
-          <div className={styles.gridFrame}>
+          <div className={styles.gridFrame} style={summaryMode ? { display: 'none' } : undefined}>
             <AgGridAll
               endpoint="/api/offered-products"
               columnDefs={columnDefs}
-              rowGroupPanelShow="always"
+              rowGroupPanelShow="never"
               rowSelection="multiple"
               rowMultiSelectWithClick
               rowDeselection
-              enablePivotMode
+              onGridReady={handleGridReady}
               onCellValueChanged={handleCellValueChanged}
               getContextMenuItems={getContextMenuItems}
             />
           </div>
+          {summaryMode && (
+            <div className={styles.gridFrame}>
+              {summaryLoading || !summaryData ? (
+                <div className={styles.loading}>Loading summary…</div>
+              ) : (
+                <AgGridSummary
+                  columnDefs={summaryColDefs}
+                  rowData={summaryData.rows}
+                  defaultColDef={{ resizable: true, sortable: true }}
+                />
+              )}
+            </div>
+          )}
         </GridQuickSearchProvider>
       </PageHeader>
     </main>

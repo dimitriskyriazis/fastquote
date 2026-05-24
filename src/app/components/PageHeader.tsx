@@ -8,6 +8,7 @@ export const PageHeaderContext = createContext<HTMLDivElement | null>(null);
 type PageHeaderProps = PropsWithChildren<{
   title: React.ReactNode;
   leftActions?: React.ReactNode;
+  afterSearchActions?: React.ReactNode;
   rightActions?: React.ReactNode;
   className?: string;
   headingClassName?: string;
@@ -17,6 +18,7 @@ type PageHeaderProps = PropsWithChildren<{
 export default function PageHeader({
   title,
   leftActions,
+  afterSearchActions,
   rightActions,
   children,
   className,
@@ -36,6 +38,7 @@ export default function PageHeader({
         <div className={`${styles.headerSide} ${styles.headerSideLeft}`}>
           {leftActions}
           <div ref={handleSlotRef} className={styles.searchSlot} />
+          {afterSearchActions}
         </div>
         {hideTitle ? null : <h1 className={headingClasses}>{title}</h1>}
         <div className={`${styles.headerSide} ${styles.headerSideRight}`}>{rightActions}</div>

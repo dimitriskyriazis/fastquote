@@ -56,7 +56,9 @@ export async function fetchPriceListBasicRecord(priceListId: number) {
         pl.ModifiedOn,
         pl.ModifiedBy AS ModifiedByUserId,
         modified.UserName AS ModifiedByUserName,
-        modified.FullName AS ModifiedByFullName
+        modified.FullName AS ModifiedByFullName,
+        pl.CreatedBy AS CreatedByUserId,
+        COALESCE(NULLIF(LTRIM(RTRIM(created.FullName)), ''), NULLIF(LTRIM(RTRIM(created.UserName)), ''), CAST(pl.CreatedBy AS NVARCHAR(450))) AS CreatedByDisplayName
       FROM dbo.PriceLists AS pl
       LEFT JOIN dbo.Brands AS b ON pl.BrandID = b.ID
       LEFT JOIN dbo.Countries AS c ON pl.CountryId = c.ID
@@ -65,6 +67,7 @@ export async function fetchPriceListBasicRecord(priceListId: number) {
       LEFT JOIN dbo.Currencies AS costCur ON pl.CostCurrencyID = costCur.ID
       LEFT JOIN dbo.AspNetUsers AS resp ON pl.ResponsibleUserId = resp.Id
       LEFT JOIN dbo.AspNetUsers AS modified ON pl.ModifiedBy = modified.Id
+      LEFT JOIN dbo.AspNetUsers AS created ON pl.CreatedBy = created.Id
       WHERE pl.ID = @priceListId
     `);
     return result.recordset?.[0] ?? null;
