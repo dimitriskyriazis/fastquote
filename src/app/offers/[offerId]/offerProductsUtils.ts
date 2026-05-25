@@ -6,7 +6,7 @@ import type {
   ValueFormatterParams,
   ValueGetterParams,
 } from 'ag-grid-community';
-import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductService } from '../../../lib/offerProductRows';
+import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductService, isOfferProductOption } from '../../../lib/offerProductRows';
 import { priceListStatusClassRules } from '../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 import type { RequestedProductMatchEntry } from './products/MatchRequestedProductsModal';
@@ -1973,6 +1973,9 @@ export const buildCategoryAggregateGetter = (field: 'TotalPrice' | 'TotalNet' | 
     if (!node?.data || node === params.node) return;
     const candidateData = node.data as Record<string, unknown>;
     if (!isOfferProductCommentOrProduct(candidateData)) return;
+    // Option rows are excluded from category totals — they are optional items
+    // and should not inflate the category or offer totals.
+    if (isOfferProductOption(candidateData)) return;
     const candidatePath = parseTreeOrderingPath((candidateData as { TreeOrdering?: string | null }).TreeOrdering);
     if (candidatePath.length <= path.length) return;
     const isDescendant = path.every((segment, idx) => candidatePath[idx] === segment);

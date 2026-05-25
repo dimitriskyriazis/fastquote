@@ -792,7 +792,7 @@ function shouldShowPrices(row: OfferProductRow, printSettings: PdfPrintSettings 
   return printSettings.printProducts;
 }
 
-function columnValue(row: OfferProductRow, column: PdfProductColumn, L?: Labels): string {
+function columnValue(row: OfferProductRow, column: PdfProductColumn): string {
   switch (column) {
     case 'no': {
       return str(row.treeOrdering);
@@ -1027,7 +1027,7 @@ function buildItemsTable(
       selectedColumns.map((col) => {
         // Description supports compact sub-lines when comment/delivery columns are hidden.
         if (col === 'description') {
-          const base = columnValue(row, col, L);
+          const base = columnValue(row, col);
           const dyn = dynamicCellFont(col);
           const descCell = buildDescriptionCell(row, base, selectedColumns);
 
@@ -1061,7 +1061,7 @@ function buildItemsTable(
           return optionCell;
         }
 
-        const value = hidePrices && priceColumns.has(col) ? '' : columnValue(row, col, L);
+        const value = hidePrices && priceColumns.has(col) ? '' : columnValue(row, col);
         const dyn = dynamicCellFont(col);
 
         const baseCell: PdfCell = {

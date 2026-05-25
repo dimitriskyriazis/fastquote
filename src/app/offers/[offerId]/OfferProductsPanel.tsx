@@ -7956,6 +7956,9 @@ const requestedColumnDefsMap = useMemo(
       let recomputedTotal = 0;
       for (const row of rows) {
         if (!isOfferProductProduct(row)) continue;
+        // Option rows are excluded from rescaling — they are optional items
+        // whose prices should not change when the offer total is adjusted.
+        if (isOfferProductOption(row)) continue;
         const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
         if (id == null) continue;
         const net = coerceNumber((row as { NetUnitPrice?: unknown }).NetUnitPrice);
