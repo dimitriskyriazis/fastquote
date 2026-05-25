@@ -257,6 +257,8 @@ export async function POST(req: NextRequest) {
                   "",
                   "FORMAT: Comma-separated key specs in a single line (or bullet list for complex kits). No full sentences. No filler words.",
                   "",
+                  "MODEL NUMBER RULE (critical — read carefully): Check whether the model number appears in the Current Description. If it does NOT appear there, do NOT write it anywhere in the output — not at the start, not in the middle, not at the end. The Model and Part Number fields are provided only so you can look up specs; they must never be copied into the output description unless they were already present in the Current Description.",
+                  "",
                   "NEVER DO:",
                   "- Add disclaimers or 'verify with manufacturer' notes",
                   "- Add label prefixes like 'Type:' or 'Lens type:'",
@@ -264,33 +266,51 @@ export async function POST(req: NextRequest) {
                   "- Explain what a spec means (e.g. 'for clear projection in confined spaces')",
                   "- Add info not in the input or web context",
                   "- Remove or change any model/part number that appears at the start of the description — keep it exactly as-is, including any ' - ' separator that follows it",
+                  "- Add the model number or part number anywhere in the output if it does not already appear in the current description",
                   "",
                   "EXAMPLES:",
-                  "IN: Z 48 Older style clamping action shockmount for all variants of U 67, U 77, U 87, M 269 | Brand: Sennheiser",
+                  "IN: Z 48 Older style clamping action shockmount for all variants of U 67, U 77, U 87, M 269 | Brand: Sennheiser | Part Number: Z48",
                   "OUT: Z 48 Clamping shockmount, compatible with U 67, U 77, U 87, M 269.",
+                  "(Z 48 was already in the description — kept as-is)",
                   "",
-                  "IN: Z 48 - Older style clamping action shockmount for all variants of U 67, U 77, U 87, M 269 | Brand: Sennheiser",
+                  "IN: Z 48 - Older style clamping action shockmount for all variants of U 67, U 77, U 87, M 269 | Brand: Sennheiser | Part Number: Z48",
                   "OUT: Z 48 - Clamping shockmount, compatible with U 67, U 77, U 87, M 269.",
+                  "(Z 48 was already in the description — kept as-is)",
                   "",
-                  "IN: G LENS (0.65-0.75:1) | Brand: Barco",
+                  "IN: Short-throw zoom lens | Brand: Barco | Part Number: R9832753",
                   "OUT: Short-throw zoom lens, 0.65-0.75:1 throw ratio, WUXGA resolution.",
+                  "(R9832753 was NOT in the description — do NOT add it)",
+                  "",
+                  "IN: G LENS (0.65-0.75:1) | Brand: Barco | Part Number: R9832753",
+                  "OUT: Short-throw zoom lens, 0.65-0.75:1 throw ratio, WUXGA resolution.",
+                  "(R9832753 was NOT in the description — do NOT add it)",
                   "",
                   "IN: Digital 4 channel access point transceiver, Europe version 1880-1900 MHz... | Brand: Televic",
                   "OUT: (return unchanged — already good)",
+                  "",
+                  "IN: Pole mount bracket, single/dual loudspeakers | Brand: Biamp | Model: PMB-2RR | Part Number: 910-01230",
+                  "OUT: Pole mount bracket, single/dual loudspeakers, pan-tilt, hot-dipped galvanized steel, stainless steel fasteners, aluminum clamp.",
+                  "(PMB-2RR was NOT in the Current Description — do NOT add it anywhere in the output)",
                 ].join("\n"),
               },
               {
                 role: "user",
-                content: [
-                  `Brand: ${brand || "Unknown"}`,
-                  `Model: ${modelNumber || "N/A"}`,
-                  `Part Number: ${partNumber || "N/A"}`,
-                  categoryInfo ? `Category: ${categoryInfo}` : "",
-                  `Current Description: ${description || "None"}`,
-                  webSnippets ? `\nWeb context:\n${webSnippets}` : "",
-                ]
-                  .filter((line) => line !== "")
-                  .join("\n"),
+                content: (() => {
+                  // Only include model/part number in the prompt if they already appear
+                  // in the current description — otherwise the AI copies them into the output.
+                  const modelInDesc = modelNumber && description.toLowerCase().includes(modelNumber.toLowerCase());
+                  const partInDesc = partNumber && description.toLowerCase().includes(partNumber.toLowerCase());
+                  return [
+                    `Brand: ${brand || "Unknown"}`,
+                    modelInDesc ? `Model: ${modelNumber}` : "",
+                    partInDesc ? `Part Number: ${partNumber}` : "",
+                    categoryInfo ? `Category: ${categoryInfo}` : "",
+                    `Current Description: ${description || "None"}`,
+                    webSnippets ? `\nWeb context:\n${webSnippets}` : "",
+                  ]
+                    .filter((line) => line !== "")
+                    .join("\n");
+                })(),
               },
             ],
             stream: false,
@@ -299,6 +319,35 @@ export async function POST(req: NextRequest) {
           enhanced = res.output_text?.trim() ?? "";
         } finally {
           openaiSemaphore.release();
+        }
+
+        // Post-process: if model/part number was NOT in the current visible description,
+        // strip it from the AI output — the AI picks them up from web context snippets.
+        // When in offer mode, use the OfferDetails.ProductDescription as the baseline
+        // (what the user actually sees), because Products.Description may already contain
+        // the model number from a previous enhance run and would cause a false "it was
+        // already there" match.
+        if (enhanced) {
+          const offerDesc = offerDetailId && offerDescriptions
+            ? (offerDescriptions.get(offerDetailId) ?? null)
+            : null;
+          // Use whichever baseline is more conservative: if EITHER source lacks the
+          // token, treat it as absent and strip it.
+          const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const tokenAbsent = (token: string): boolean => {
+            if (!token) return false;
+            const t = token.toLowerCase();
+            const inProduct = description.toLowerCase().includes(t);
+            const inOffer = offerDesc !== null ? offerDesc.toLowerCase().includes(t) : inProduct;
+            // Only keep it if it appears in BOTH — if either baseline lacks it, strip it
+            return !(inProduct && inOffer);
+          };
+          const stripToken = (token: string, text: string): string => {
+            if (!tokenAbsent(token)) return text;
+            return text.replace(new RegExp(escapeRegex(token) + "\\s*[-–—]?\\s*", "gi"), "").trim();
+          };
+          enhanced = stripToken(modelNumber, enhanced);
+          enhanced = stripToken(partNumber, enhanced);
         }
 
         if (!enhanced) {

@@ -82,6 +82,8 @@ export default function CreateDraftOfferButton({ offerId, orderSignedDate, class
             title: 'Comments with pricing detected',
             message:
               'The following comment lines have a price set. Comments are NOT sent to Soft1 — their pricing will be ignored in the draft order. Continue anyway?',
+            messageHtml:
+              'The following comment lines have a price set. Comments are <strong>NOT</strong> sent to Soft1 — their pricing will be ignored in the draft order. Continue anyway?',
             confirmLabel: 'Continue',
             cancelLabel: 'Cancel',
             tone: 'danger',
@@ -103,6 +105,56 @@ export default function CreateDraftOfferButton({ offerId, orderSignedDate, class
       }
     } catch (err) {
       console.error('priced-comments precheck failed', err);
+    }
+
+    try {
+      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/priced-services`, {
+        cache: 'no-store',
+      });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          ok: boolean;
+          services?: Array<{
+            treeOrdering: number | null;
+            description: string | null;
+            quantity: number | null;
+            netUnitPrice: number | null;
+            totalPrice: number | null;
+          }>;
+        };
+        const priced = data.ok ? data.services ?? [] : [];
+        if (priced.length > 0) {
+          const fmtMoney = (n: number | null) =>
+            n == null ? '—' : n.toLocaleString('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const fmtQty = (n: number | null) =>
+            n == null ? '—' : Number.isInteger(n) ? String(n) : n.toLocaleString('el-GR');
+          const pricedConfirmed = await showConfirmDialog({
+            title: 'Services with pricing detected',
+            message:
+              'The following service lines have a price set. Services are NOT sent to Soft1 — their pricing will be ignored in the draft order. Continue anyway?',
+            messageHtml:
+              'The following service lines have a price set. Services are <strong>NOT</strong> sent to Soft1 — their pricing will be ignored in the draft order. Continue anyway?',
+            confirmLabel: 'Continue',
+            cancelLabel: 'Cancel',
+            tone: 'danger',
+            details: {
+              columns: ['#', 'Description', 'Qty', 'Net Unit Price', 'Total Price'],
+              rows: priced.map((s) => [
+                s.treeOrdering != null ? String(s.treeOrdering) : '—',
+                s.description ?? '—',
+                fmtQty(s.quantity),
+                fmtMoney(s.netUnitPrice),
+                fmtMoney(s.totalPrice),
+              ]),
+            },
+          });
+          if (!pricedConfirmed) {
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      console.error('priced-services precheck failed', err);
     }
 
     const confirmed = await showConfirmDialog({

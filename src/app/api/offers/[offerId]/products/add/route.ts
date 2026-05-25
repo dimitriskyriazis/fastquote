@@ -772,17 +772,34 @@ async function handleProductGrid(
       | { filter?: unknown; conditions?: Array<{ filter?: unknown }> }
       | undefined;
     if (!brand) return fm;
+    // Normalize and validate brand filter values.  Single-character normalized
+    // values (e.g. "d" from a bad "d&b" routing) produce LIKE '%d%' which
+    // matches virtually every catalog row — drop them entirely.
     const normalizeCond = (c: { filter?: unknown }) => {
       if (typeof c?.filter === 'string') {
-        return { ...c, filter: normalizeBrandForMatch(c.filter) };
+        const normalized = normalizeBrandForMatch(c.filter);
+        const alphanumeric = normalized.replace(/[^a-z0-9]/g, '');
+        if (alphanumeric.length < 2) return null; // signal to drop
+        return { ...c, filter: normalized };
       }
       return c;
     };
     const next: Record<string, unknown> = { ...fm };
     if (Array.isArray(brand.conditions)) {
-      next.BrandName = { ...brand, conditions: brand.conditions.map(normalizeCond) };
+      const validConds = brand.conditions.map(normalizeCond).filter(Boolean);
+      if (validConds.length === 0) {
+        delete next.BrandName; // all conditions were single-char → drop filter
+      } else {
+        next.BrandName = { ...brand, conditions: validConds };
+      }
     } else if (typeof brand.filter === 'string') {
-      next.BrandName = { ...brand, filter: normalizeBrandForMatch(brand.filter) };
+      const normalized = normalizeBrandForMatch(brand.filter);
+      const alphanumeric = normalized.replace(/[^a-z0-9]/g, '');
+      if (alphanumeric.length < 2) {
+        delete next.BrandName; // single-char → drop filter
+      } else {
+        next.BrandName = { ...brand, filter: normalized };
+      }
     }
     return next as typeof gridRequest.filterModel;
   })();
@@ -946,6 +963,10 @@ async function handleProductGrid(
         let value = token.filter.trim();
         if (!value) return;
         if (value.length > HIDDEN_TOKEN_MAX_LEN) return;
+        // Skip single-character tokens — LIKE '%d%' matches virtually every
+        // row and contributes only noise to scoring.  Two characters is still
+        // broad but acceptable for short brand abbreviations like "JL".
+        if (value.length < 2) return;
         // Brand hidden tokens go through the same normalization as the
         // visible brand chip — strip spaces/case so "TVOne" matches "TV
         // one" on both sides of the LIKE.
@@ -1230,7 +1251,7 @@ async function handleProductGrid(
           model: stage1Model,
           matched: mapped.length,
         }));
-        return NextResponse.json({ ok: true, rows: mapped, rowCount });
+        return NextResponse.json({ ok: true, rows: mapped, rowCount, request: gridRequest });
       }
     }
   }
@@ -1444,7 +1465,7 @@ async function handleProductGrid(
     ? offset + mappedRows.length
     : offset + mappedRows.length + 1;
 
-  return NextResponse.json({ ok: true, rows: mappedRows, rowCount });
+  return NextResponse.json({ ok: true, rows: mappedRows, rowCount, request: gridRequest });
 }
 
 type ProductSelection = { productId: number; sequence: number };

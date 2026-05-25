@@ -12,6 +12,7 @@ const READ_ONLY_POST_ENDPOINTS = new Set<string>([
   '/api/me',
   '/api/marketing/contact-groups',
   '/api/marketing/mails',
+  '/api/offered-products',
   '/api/offers',
   '/api/offers/batch-summary',
   '/api/price-lists',

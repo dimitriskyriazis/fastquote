@@ -624,10 +624,26 @@ export function buildRequestedFilterState(input: {
   visibleModel: Record<string, FuzzyTextFilter> | null;
   hiddenTokens: HiddenFilterTokens | null;
 } {
+  // Sanitize: reject single-character brand/part/model values that are LLM
+  // parsing artifacts (e.g. brand:"d" when the user typed "d&b speaker").
+  // A LIKE '%d%' predicate matches virtually every brand name and produces
+  // noise.  Strip non-alphanumeric chars and require at least 2 to remain.
+  const rejectShortValue = (v: string | null | undefined): string | null => {
+    if (!v) return null;
+    return v.replace(/[^a-z0-9]/gi, '').length >= 2 ? v : null;
+  };
+  // Rebuild input with sanitized brand (create a new local to avoid mutating)
+  const safeInput = {
+    ...input,
+    requestedBrand: rejectShortValue(input.requestedBrand),
+    requestedPartNumber: rejectShortValue(input.requestedPartNumber),
+    requestedModelNumber: rejectShortValue(input.requestedModelNumber),
+  };
+
   const filters: Record<string, FuzzyTextFilter> = {};
   const hidden: HiddenFilterTokens = {};
 
-  const descriptions = input.requestedDescriptions ?? [];
+  const descriptions = safeInput.requestedDescriptions ?? [];
   // Use the first description (desc1) as the visible primary — matches prior
   // behavior for both single-description and desc1/2/3 callers.
   const primaryDescription = descriptions.length > 0 && typeof descriptions[0] === 'string'
@@ -638,8 +654,8 @@ export function buildRequestedFilterState(input: {
 
   splitBrandFilterWithTiering(
     filters, hidden,
-    buildFuzzyContainsFilter(input.requestedBrand, { mode: 'brand' }),
-    input.requestedBrand ?? null,
+    buildFuzzyContainsFilter(safeInput.requestedBrand, { mode: 'brand' }),
+    safeInput.requestedBrand ?? null,
   );
   // Demote prose-looking values out of Part/Model code fields.  An entry
   // like "oGx Frame" in the Part Number column is really description text
@@ -648,13 +664,13 @@ export function buildRequestedFilterState(input: {
   // which is exactly the Skaarhoj/oGx failure mode.  In that case we skip
   // the visible chip + hidden tokens on Part/Model and reroute the phrase
   // into Description instead so the signal isn't lost.
-  const partLooksLikeProse = looksLikeProse(input.requestedPartNumber);
-  const modelLooksLikeProse = looksLikeProse(input.requestedModelNumber);
+  const partLooksLikeProse = looksLikeProse(safeInput.requestedPartNumber);
+  const modelLooksLikeProse = looksLikeProse(safeInput.requestedModelNumber);
   if (!partLooksLikeProse) {
     splitCompoundIntoVisibleAndHidden(
       filters, hidden, 'PartNumber',
-      buildFuzzyContainsFilter(input.requestedPartNumber, { mode: 'partNumber' }),
-      input.requestedPartNumber ?? null,
+      buildFuzzyContainsFilter(safeInput.requestedPartNumber, { mode: 'partNumber' }),
+      safeInput.requestedPartNumber ?? null,
       VISIBLE_CODE_WEIGHT,
       HIDDEN_CODE_WEIGHT,
     );
@@ -662,16 +678,16 @@ export function buildRequestedFilterState(input: {
   if (!modelLooksLikeProse) {
     splitCompoundIntoVisibleAndHidden(
       filters, hidden, 'ModelNumber',
-      buildFuzzyContainsFilter(input.requestedModelNumber, { mode: 'partNumber' }),
-      input.requestedModelNumber ?? null,
+      buildFuzzyContainsFilter(safeInput.requestedModelNumber, { mode: 'partNumber' }),
+      safeInput.requestedModelNumber ?? null,
       VISIBLE_CODE_WEIGHT,
       HIDDEN_CODE_WEIGHT,
     );
   }
 
-  const partTrimmed = typeof input.requestedPartNumber === 'string' ? input.requestedPartNumber.trim() : '';
-  const modelTrimmed = typeof input.requestedModelNumber === 'string' ? input.requestedModelNumber.trim() : '';
-  const brandTrimmed = typeof input.requestedBrand === 'string' ? input.requestedBrand.trim() : '';
+  const partTrimmed = typeof safeInput.requestedPartNumber === 'string' ? safeInput.requestedPartNumber.trim() : '';
+  const modelTrimmed = typeof safeInput.requestedModelNumber === 'string' ? safeInput.requestedModelNumber.trim() : '';
+  const brandTrimmed = typeof safeInput.requestedBrand === 'string' ? safeInput.requestedBrand.trim() : '';
   if (partTrimmed) addHiddenTokens(filters, hidden, 'Description', [{ filter: partTrimmed, weight: 1 }]);
   if (modelTrimmed) addHiddenTokens(filters, hidden, 'Description', [{ filter: modelTrimmed, weight: 1 }]);
   if (brandTrimmed && !isUnknownBrand(brandTrimmed)) {
@@ -801,32 +817,65 @@ export function buildPromptFilterState(
   visibleModel: Record<string, FuzzyTextFilter>;
   hiddenTokens: HiddenFilterTokens | null;
 } {
-  if (routed && (
-    routed.brand
-    || routed.partNumber
-    || routed.modelNumber
-    || routed.description
-    || routed.priceMin != null
-    || routed.priceMax != null
+  // Sanitize routed fields — reject single-character brand/part/model values
+  // that are LLM parsing artifacts (e.g. brand:"d" for a "d&b speaker" query).
+  // These create LIKE '%d%' predicates that match virtually every catalog row.
+  const sanitizeRoutedValue = (v: string | null | undefined): string | null => {
+    if (!v) return null;
+    const alphanum = v.replace(/[^a-z0-9]/gi, '');
+    return alphanum.length >= 2 ? v : null;
+  };
+  const cleanRouted = routed ? {
+    ...routed,
+    brand: sanitizeRoutedValue(routed.brand),
+    partNumber: sanitizeRoutedValue(routed.partNumber),
+    modelNumber: sanitizeRoutedValue(routed.modelNumber),
+  } : null;
+
+  if (cleanRouted && (
+    cleanRouted.brand
+    || cleanRouted.partNumber
+    || cleanRouted.modelNumber
+    || cleanRouted.description
+    || cleanRouted.priceMin != null
+    || cleanRouted.priceMax != null
   )) {
     const { visibleModel, hiddenTokens } = buildRequestedFilterState({
-      requestedBrand: routed.brand,
-      requestedPartNumber: routed.partNumber,
-      requestedModelNumber: routed.modelNumber,
-      requestedDescriptions: routed.description ? [routed.description] : [],
+      requestedBrand: cleanRouted.brand,
+      requestedPartNumber: cleanRouted.partNumber,
+      requestedModelNumber: cleanRouted.modelNumber,
+      requestedDescriptions: cleanRouted.description ? [cleanRouted.description] : [],
       prefetchedExpansion: expansions,
     });
     const filters: Record<string, FuzzyTextFilter> = { ...(visibleModel ?? {}) };
     // Price range → ListPrice number filter.  AG Grid's server-side filter
     // processor picks up the standard number-filter shape so no custom
     // server code is needed.
-    const priceFilter = buildListPriceFilter(routed.priceMin, routed.priceMax);
+    const priceFilter = buildListPriceFilter(cleanRouted.priceMin, cleanRouted.priceMax);
     if (priceFilter) {
       (filters as unknown as Record<string, unknown>).ListPrice = priceFilter;
     }
+    // Cross-score: always weight description expansion tokens against BrandName.
+    // When routing extracts a brand (e.g. "barco") correctly, description
+    // tokens like "QDX" or "d&b audiotechnik" give an extra boost to rows
+    // whose BrandName also matches — putting true brand matches above rows
+    // that merely mention the brand in their Description body.  Crucially,
+    // this also handles cases where routing returns a junk single-char brand
+    // (e.g. "d" for "d&b") that gets sanitized away in buildRequestedFilterState:
+    // the description tokens ("d&b audiotechnik") still land in BrandName
+    // scoring and lift real d&b audiotechnik rows to the top.
+    let finalHidden = hiddenTokens;
+    if (expansions.description && expansions.description.length > 0) {
+      const updatedHidden: HiddenFilterTokens = {};
+      Object.entries(finalHidden ?? {}).forEach(([k, v]) => { updatedHidden[k] = [...v]; });
+      addHiddenTokens(filters, updatedHidden, 'BrandName',
+        expansions.description.map((t) => ({ filter: t, weight: 2 })),
+      );
+      finalHidden = Object.keys(updatedHidden).length > 0 ? updatedHidden : null;
+    }
     return {
       visibleModel: filters,
-      hiddenTokens,
+      hiddenTokens: finalHidden,
     };
   }
 
@@ -851,6 +900,15 @@ export function buildPromptFilterState(
   addHiddenTokens(filters, hidden, 'PartNumber', expansions.partNumber);
   addHiddenTokens(filters, hidden, 'ModelNumber', expansions.modelNumber);
   addHiddenTokens(filters, hidden, 'Description', expansions.description);
+  // Cross-score: also weight description expansion tokens against BrandName
+  // so brand-matching rows rank above rows that merely mention the brand
+  // in their description text (handles the case where the AI places a brand
+  // name such as "barco" into description tokens instead of brand tokens).
+  if (expansions.description && expansions.description.length > 0) {
+    addHiddenTokens(filters, hidden, 'BrandName',
+      expansions.description.map((t) => ({ filter: t, weight: 2 })),
+    );
+  }
   return {
     visibleModel: filters,
     hiddenTokens: Object.keys(hidden).length > 0 ? hidden : null,

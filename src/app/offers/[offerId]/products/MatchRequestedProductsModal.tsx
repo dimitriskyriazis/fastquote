@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import dynamic from 'next/dynamic';
 import type { CellClickedEvent, ColDef, GetContextMenuItemsParams, GridApi, MenuItemDef, RowClassParams, RowDoubleClickedEvent, RowNode, RowStyle } from 'ag-grid-community';
 import { PageHeaderContext } from '../../../components/PageHeader';
@@ -399,9 +400,20 @@ export default function MatchRequestedProductsModal({
   useEffect(() => {
     hiddenTokensInitialFireRef.current = true;
   }, [entry.offerDetailId]);
+  // Set to true by runExpand / handleClearAIPrompt after they call
+  // api.setFilterModel() directly (via flushSync).  The effect below skips
+  // its own refreshServerSide call when this flag is true.
+  const skipNextRefreshRef = useRef(false);
   useEffect(() => {
     if (hiddenTokensInitialFireRef.current) {
       hiddenTokensInitialFireRef.current = false;
+      return;
+    }
+    // Prompt-submit and clear paths call api.setFilterModel() themselves
+    // (after flushSync) which already triggers the grid refresh.  Skip the
+    // redundant refreshServerSide so we don't double-fetch.
+    if (skipNextRefreshRef.current) {
+      skipNextRefreshRef.current = false;
       return;
     }
     // Drop both caches before refreshing so AG Grid can't briefly serve a
@@ -978,12 +990,20 @@ export default function MatchRequestedProductsModal({
         // columns (brand / part / model / description), folding AI expansion
         // tokens into the hidden sidecar.
         const { visibleModel, hiddenTokens } = buildPromptFilterState(promptText, expansions, routed);
-        setOverrideHiddenTokens(hiddenTokens);
+        // Commit state synchronously so AgGridAll's requestPayload ref is
+        // updated BEFORE api.setFilterModel() triggers the first data request
+        // (same fix as AddProductsModal).  markProgrammaticFilterChange()
+        // increments the suppression counter before the filter-changed event
+        // fires so the listener treats this change as programmatic.
+        markProgrammaticFilterChange();
+        flushSync(() => {
+          setOverrideHiddenTokens(hiddenTokens);
+          setPromptSubmitted(true);
+        });
+        skipNextRefreshRef.current = true;
         try {
-          markProgrammaticFilterChange();
-          api.setFilterModel(visibleModel);
+          (api as unknown as { setFilterModel?: (m: unknown) => void }).setFilterModel?.(visibleModel);
         } catch { /* noop */ }
-        setPromptSubmitted(true);
         return;
       }
       // Silent auto-expand: merge into whatever filter is already there.
@@ -1075,20 +1095,26 @@ export default function MatchRequestedProductsModal({
   // returns to the requested-row-driven filter state that was active before
   // the prompt submission.
   const handleClearAIPrompt = useCallback(() => {
-    setPromptText('');
-    setPromptSubmitted(false);
-    setOverrideHiddenTokens(null);
-    setNoSuggestionsFound(false);
+    // Commit state synchronously first so AgGridAll's requestPayload ref
+    // switches to plain-mode BEFORE api.setFilterModel() triggers the fetch
+    // (same fix as AddProductsModal).  markProgrammaticFilterChange()
+    // increments the suppression counter before the filter-changed event
+    // fires so the listener treats this change as programmatic.
+    markProgrammaticFilterChange();
+    flushSync(() => {
+      setPromptText('');
+      setPromptSubmitted(false);
+      setOverrideHiddenTokens(null);
+      setNoSuggestionsFound(false);
+      setUserTouchedFilters(false);
+    });
     lastSemanticSigRef.current = '';
     hasAppliedRequestedFiltersRef.current = false;
-    setUserTouchedFilters(false);
     const api = productsApiRef.current;
     if (api) {
-      // Fall back to the requested-row's filter model (the state the user
-      // was in before they typed the prompt).
+      skipNextRefreshRef.current = true;
       try {
-        markProgrammaticFilterChange();
-        api.setFilterModel(requestedFilterModel ?? null);
+        (api as unknown as { setFilterModel?: (m: unknown) => void }).setFilterModel?.(requestedFilterModel ?? null);
       } catch { /* noop */ }
       hasAppliedRequestedFiltersRef.current = true;
     }

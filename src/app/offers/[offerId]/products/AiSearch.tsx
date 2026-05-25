@@ -64,7 +64,7 @@ export function AiSearchPromptPill({
         type="text"
         className={styles.promptInput}
         value={promptText}
-        placeholder="Barco projector around 10000"
+        placeholder="Barco Lens"
         onChange={(e) => onPromptTextChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {

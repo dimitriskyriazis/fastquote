@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import dynamic from 'next/dynamic';
 import type { CellValueChangedEvent, ColDef, GridApi, RowClassParams, RowNode } from 'ag-grid-community';
 import styles from './AddProductsModal.module.css';
@@ -335,6 +335,10 @@ export default function AddProductsModal({
   const semanticExpandTimerRef = useRef<number | null>(null);
   const semanticExpandAbortRef = useRef<AbortController | null>(null);
   const lastSemanticSigRef = useRef<string>('');
+  // Single-retry timer: when the expand endpoint times out (OpenAI still
+  // running), this fires ~1.5s later to re-check — by then the cache is
+  // warm and the second call returns the full AI expansion immediately.
+  const expandRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Comment modal state — keeps the header clean.  Draft is a scratch buffer
   // so cancelling doesn't wipe a saved comment.
@@ -602,7 +606,6 @@ export default function AddProductsModal({
       const expansions = data.expansions ?? {};
       const routed = data.routed ?? null;
       const negatives = Array.isArray(expansions.negativeDescription) ? expansions.negativeDescription : [];
-      setNegativeDescriptionTerms(negatives.length > 0 ? negatives : null);
       const api = productsApiRef.current;
       if (!api) return;
 
@@ -613,15 +616,47 @@ export default function AddProductsModal({
         // expansion tokens into the hidden sidecar.  Falls back to a single
         // Description chip if the AI didn't classify.
         const { visibleModel, hiddenTokens } = buildPromptFilterState(promptText, expansions, routed);
-        setHiddenFilterTokens(hiddenTokens);
+        // Commit state synchronously so AgGridAll re-renders and its
+        // requestPayload ref is updated BEFORE api.setFilterModel() triggers
+        // the grid's first data request.  Without flushSync the ref still
+        // holds the plain-mode payload at the moment of the first fetch,
+        // returning wrong/no results; a second correcting fetch fires only
+        // once React's async batch commits — users see "nothing happened".
+        flushSync(() => {
+          setNegativeDescriptionTerms(negatives.length > 0 ? negatives : null);
+          setHiddenFilterTokens(hiddenTokens);
+          // Lock the grid + prompt UI until the user clicks the clear (✕)
+          // button — tells them at a glance that AI search is driving results.
+          setPromptSubmitted(true);
+        });
+        skipNextRefreshRef.current = true; // setFilterModel triggers the fetch
         try { api.setFilterModel(visibleModel); } catch { /* noop */ }
-        // Lock the grid + prompt UI until the user clicks the clear (✕)
-        // button — tells them at a glance that AI search is driving results.
-        setPromptSubmitted(true);
+
+        // If expansion was empty (OpenAI timed out on the first cold call),
+        // the background inflight request is still running and will populate
+        // the server-side cache within ~1-2s.  Schedule a silent retry so we
+        // pick up the cached result without requiring the user to search again.
+        const totalPromptTokens =
+          (expansions.brand?.length ?? 0)
+          + (expansions.partNumber?.length ?? 0)
+          + (expansions.modelNumber?.length ?? 0)
+          + (expansions.description?.length ?? 0);
+        if (totalPromptTokens === 0) {
+          if (expandRetryTimerRef.current != null) {
+            clearTimeout(expandRetryTimerRef.current);
+          }
+          expandRetryTimerRef.current = setTimeout(() => {
+            expandRetryTimerRef.current = null;
+            // Silent retry — merges tokens into existing hidden payload and
+            // triggers refreshServerSide without resetting the visible filter.
+            void runExpand({ prompt: promptText, silent: true });
+          }, 1500);
+        }
         return;
       }
 
       // Silent auto-expand — merge AI tokens into the existing hidden payload.
+      setNegativeDescriptionTerms(negatives.length > 0 ? negatives : null);
       const totalTokens =
         (expansions.brand?.length ?? 0)
         + (expansions.partNumber?.length ?? 0)
@@ -649,13 +684,22 @@ export default function AddProductsModal({
   // tokens and semantic candidates, and resets the grid's filter model so
   // the user is back to plain keyword browsing.
   const handleClearAIPrompt = useCallback(() => {
-    setPromptText('');
-    setPromptSubmitted(false);
-    setHiddenFilterTokens(null);
-    setNoSuggestionsFound(false);
+    // Commit all state synchronously first so AgGridAll's requestPayload ref
+    // switches to plain-mode BEFORE api.setFilterModel(null) triggers the
+    // grid's data request.  Without flushSync the request fires with the
+    // stale smart-mode payload (orFilterColumns + hidden tokens + no visible
+    // filter), which can return 0 rows before a second correcting fetch.
+    flushSync(() => {
+      setPromptText('');
+      setPromptSubmitted(false);
+      setHiddenFilterTokens(null);
+      setNegativeDescriptionTerms(null);
+      setNoSuggestionsFound(false);
+    });
     lastSemanticSigRef.current = '';
     const api = productsApiRef.current;
     if (api) {
+      skipNextRefreshRef.current = true; // setFilterModel triggers the fetch
       try { api.setFilterModel(null); } catch { /* noop */ }
     }
   }, []);
@@ -1378,9 +1422,21 @@ export default function AddProductsModal({
   // mount: the initial tokens are already folded into the opening query,
   // and refreshing immediately just double-fetches.
   const hiddenTokensInitialFireRef = useRef(true);
+  // Set to true by runExpand / handleClearAIPrompt after they call
+  // api.setFilterModel() directly (via flushSync).  The effect below skips
+  // its own refreshServerSide call when this flag is true, preventing a
+  // redundant second data fetch.
+  const skipNextRefreshRef = useRef(false);
   useEffect(() => {
     if (hiddenTokensInitialFireRef.current) {
       hiddenTokensInitialFireRef.current = false;
+      return;
+    }
+    // Prompt-submit and clear paths call api.setFilterModel() themselves
+    // (after flushSync) which already triggers the grid refresh.  Skip the
+    // redundant refreshServerSide so we don't double-fetch.
+    if (skipNextRefreshRef.current) {
+      skipNextRefreshRef.current = false;
       return;
     }
     const api = productsApiRef.current as (GridApi & { refreshServerSide?: (p?: { purge?: boolean }) => void; isDestroyed?: () => boolean }) | null;
@@ -1566,6 +1622,11 @@ export default function AddProductsModal({
   // filters falls back to pure keyword matching.  Refs declared near the
   // state block so the clear handler can reset them.
   const triggerSemanticFromFilters = useCallback((api: GridApi) => {
+    // Cancel any pending retry — a new filter change supersedes it.
+    if (expandRetryTimerRef.current != null) {
+      clearTimeout(expandRetryTimerRef.current);
+      expandRetryTimerRef.current = null;
+    }
     // Skip while a prompt-driven search is active — the prompt owns the
     // filter and hidden-token state; we must not overwrite it.
     if (promptSubmittedRef.current) return;
@@ -1629,6 +1690,24 @@ export default function AddProductsModal({
         // match literal text and miss the family-name/synonym recall that
         // the "Search (AI)" prompt path already gets.
         const expansions = data.expansions ?? {};
+        const totalExpansionTokens =
+          (expansions.brand?.length ?? 0)
+          + (expansions.partNumber?.length ?? 0)
+          + (expansions.modelNumber?.length ?? 0)
+          + (expansions.description?.length ?? 0);
+        // When the expand endpoint timed out (OpenAI still running in the
+        // background), schedule a single retry so the grid refreshes
+        // automatically once the cache is warm — usually within 1–2s.
+        if (totalExpansionTokens === 0 && !controller.signal.aborted) {
+          expandRetryTimerRef.current = setTimeout(() => {
+            expandRetryTimerRef.current = null;
+            // Reset the sig so triggerSemanticFromFilters won't skip due to
+            // "same input already processed" guard.
+            lastSemanticSigRef.current = '';
+            triggerSemanticFromFilters(api);
+          }, 1500);
+          return;
+        }
         const { hiddenTokens } = buildRequestedFilterState({
           requestedBrand,
           requestedPartNumber,
@@ -1685,6 +1764,9 @@ export default function AddProductsModal({
   useEffect(() => () => {
     if (semanticExpandTimerRef.current != null) {
       window.clearTimeout(semanticExpandTimerRef.current);
+    }
+    if (expandRetryTimerRef.current != null) {
+      clearTimeout(expandRetryTimerRef.current);
     }
     semanticExpandAbortRef.current?.abort();
   }, []);
@@ -1773,6 +1855,11 @@ export default function AddProductsModal({
     trySelectPendingProduct(api as ProductsGridApi);
     attachFilterListener(api);
     attachFarnellCellClickListener(api);
+    // Always reset column filters when the modal opens so any filters
+    // persisted from a previous session (via columnStateNamespace) don't bleed
+    // into the new search.  The placement-anchor effect will re-apply the
+    // correct requested-row filters immediately after mount if needed.
+    try { api.setFilterModel(null); } catch { /* noop */ }
   }, [ensureProductSort, trySelectPendingProduct, attachFilterListener, attachFarnellCellClickListener]);
 
   const handleProductsGridModelUpdated = useCallback(() => {

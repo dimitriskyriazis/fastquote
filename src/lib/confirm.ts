@@ -88,6 +88,8 @@ export type ConfirmDialogDetail = {
 export type ConfirmDialogOptions = {
   title?: string;
   message: string;
+  /** Optional HTML-formatted version of message (use only with trusted, hardcoded strings). */
+  messageHtml?: string;
   confirmLabel?: string;
   cancelLabel?: string;
   tone?: 'default' | 'danger';
@@ -97,6 +99,7 @@ export type ConfirmDialogOptions = {
 export const showConfirmDialog = async ({
   title,
   message,
+  messageHtml,
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   tone = 'default',
@@ -125,7 +128,11 @@ export const showConfirmDialog = async ({
 
     const messageEl = document.createElement('p');
     messageEl.className = 'fastquote-confirm-message';
-    messageEl.textContent = message;
+    if (messageHtml) {
+      messageEl.innerHTML = messageHtml;
+    } else {
+      messageEl.textContent = message;
+    }
     dialog.appendChild(messageEl);
 
     if (details && details.rows.length > 0) {

@@ -153,6 +153,7 @@ Rules:
   - priceMin: number (raw integer/float, no currency symbol) or null — lower bound of the price range.
   - priceMax: number (raw integer/float, no currency symbol) or null — upper bound of the price range.
 - String routed values (brand / part / model / description) should be verbatim substrings of the user query (preserving casing). Put each fragment in exactly ONE slot.
+- IMPORTANT: Preserve special characters in brand names — e.g. for "d&b speaker" the brand is "d&b" (NOT "d" alone). For "L-Acoustics subwoofer" the brand is "L-Acoustics". Never truncate a brand name at punctuation.
 
 ### Price parsing rules
 - "around 5000", "~5000", "about 5000", "approximately 5000 €", "close to 5000": priceMin ≈ 0.8 × value, priceMax ≈ 1.2 × value (so "around 5000" → priceMin 4000, priceMax 6000).
@@ -186,12 +187,18 @@ const buildUserPrompt = (input: ExpandInput) => {
 };
 
 // Extract one routing field.  Empty / whitespace / "null" / "none" → null.
+// Also rejects single-character values — they are almost always LLM parsing
+// artifacts (e.g. brand: "d" when the user typed "d&b") and would create
+// LIKE '%d%' predicates that match virtually every catalog row.
 const sanitizeRoutedField = (value: unknown): string | null => {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
   const lower = trimmed.toLowerCase();
   if (lower === 'null' || lower === 'none' || lower === 'n/a') return null;
+  // Strip to only alphanumeric chars and check if anything meaningful remains
+  const alphanumeric = trimmed.replace(/[^a-z0-9]/gi, '');
+  if (alphanumeric.length < 2) return null;
   return trimmed;
 };
 
@@ -329,7 +336,10 @@ export async function POST(
     const cached = getCached(cacheKey);
     if (cached) {
       expansions = cached.expansions;
-      routed = cached.routed;
+      // Re-sanitize routing from cache so that stale entries with bad values
+      // (e.g. brand:"d" parsed before the single-char guard was added) don't
+      // slip through.  sanitizeRouted is cheap and idempotent.
+      routed = cached.routed ? sanitizeRouted(cached.routed) : null;
     } else {
       // Kick off chat completion in the BACKGROUND and race it against a
       // timeout.  Synonym expansion from gpt-4o-mini is nice-to-have —
@@ -388,11 +398,14 @@ export async function POST(
       };
       const existingInflight = expandInflight.get(cacheKey);
       const chatPromise = existingInflight ?? startChatInflight();
-      // Wait at most 600ms (prompt mode) / 300ms (structured auto-expand)
-      // for the chat call.  Structured auto-expand fires on every entry
-      // in bulk, so the short timeout + eventual caching means later calls
-      // for the same input (modal reopen, rerank, etc.) see the synonyms.
-      const chatTimeoutMs = isPrompt ? 600 : 300;
+      // Wait at most 4000ms (prompt mode) / 300ms (structured auto-expand)
+      // for the chat call.  Prompt mode is user-initiated (they clicked →)
+      // so they can tolerate a 3-4s wait in exchange for correct AI routing
+      // on the very first search.  4000ms covers the p95 latency for gpt-4o
+      // (typically 2-3s but occasionally up to ~3.5s under load).  Structured
+      // auto-expand fires on every entry in bulk, so the short timeout +
+      // client-side retry handles it.
+      const chatTimeoutMs = isPrompt ? 4000 : 300;
       const raced = await Promise.race([
         chatPromise,
         new Promise<null>((resolve) => setTimeout(() => resolve(null), chatTimeoutMs)),

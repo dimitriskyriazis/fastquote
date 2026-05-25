@@ -4152,6 +4152,65 @@ const requestedColumnDefsMap = useMemo(
     ));
   }, [dataEndpoint]);
 
+  /**
+   * Fetches all filtered rows that are actual products (not comments, categories, or services)
+   * and returns them as {productId, offerDetailId} pairs — both values from the SAME row, so
+   * there is no index-mismatch risk. Used by the AI features (enhance description, etc.)
+   * when select-all is active.
+   */
+  const fetchAllFilteredProductPairs = useCallback(async (): Promise<Array<{ productId: number; offerDetailId: number }>> => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) {
+      throw new Error('Grid is not ready yet.');
+    }
+    const filterModel = api.getFilterModel?.() ?? {};
+    const sortModel = api.getColumnState?.()
+      ?.filter((col) => col.sort === 'asc' || col.sort === 'desc')
+      .map((col) => ({ colId: col.colId, sort: col.sort as 'asc' | 'desc' })) ?? [];
+    const quickFilterText = typeof lastServerRequestRef.current?.quickFilterText === 'string'
+      ? lastServerRequestRef.current.quickFilterText
+      : null;
+    const request: Record<string, unknown> = {
+      startRow: 0,
+      endRow: 1000,
+      allRows: true,
+      filterModel,
+      sortModel,
+    };
+    if (quickFilterText && quickFilterText.trim().length > 0) {
+      request.quickFilterText = quickFilterText.trim();
+    }
+
+    const response = await fetch(dataEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        request,
+        fields: ['ProductID', 'OfferDetailID', 'IsComment', 'IsService', 'IsCategory'],
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | { ok?: boolean; error?: string; rows?: Array<Record<string, unknown>> }
+      | null;
+    if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
+      throw new Error(payload?.error ?? `Failed to load selected rows (status ${response.status})`);
+    }
+    const deselectedIds = getServerSideDeselectedRowIds(api);
+    return payload.rows
+      .filter((row) => {
+        // Only actual product rows — skip comments, categories, services
+        if (!isOfferProductProduct(row)) return false;
+        const odId = normalizeOfferDetailId((row as { OfferDetailID?: unknown })?.OfferDetailID ?? null);
+        if (odId == null) return false;
+        if (deselectedIds.size > 0 && deselectedIds.has(String(odId))) return false;
+        return true;
+      })
+      .map((row) => ({
+        productId: normalizeProductId((row as { ProductID?: unknown })?.ProductID ?? null) as number,
+        offerDetailId: normalizeOfferDetailId((row as { OfferDetailID?: unknown })?.OfferDetailID ?? null) as number,
+      }));
+  }, [dataEndpoint]);
+
   const buildTemplateExportRows = useCallback((rows: OfferExportRow[]): OfferProductsTemplateExportRow[] => {
     const displayMap = computeDisplayOrderingMap(rows as unknown as Record<string, unknown>[]);
     const includedRows = rows.filter((row) => {
@@ -6105,7 +6164,13 @@ const requestedColumnDefsMap = useMemo(
     // --- AI features submenu (web links + enhance description, product rows only) ---
     const selectedNodes = getContextMenuSelectionSnapshot(params.api ?? null);
     const targetNodes = selectedNodes.length > 0 ? selectedNodes : (params.node ? [params.node] : []);
-    const targetProductNodes = targetNodes.filter((n) => isOfferProductProduct(n.data));
+    // AI features only operate on actual product rows — always ignore comments, categories, services
+    const targetProductNodes = targetNodes.filter((n) =>
+      isOfferProductProduct(n.data) &&
+      !isOfferProductComment(n.data) &&
+      !isOfferProductCategory(n.data) &&
+      !isOfferProductService(n.data),
+    );
     const targetProducts = targetProductNodes.map((n) => n.data).filter(Boolean) as Record<string, unknown>[];
     const targetIds = targetProducts
       .map((p) => {
@@ -6272,12 +6337,10 @@ const requestedColumnDefsMap = useMemo(
             });
             if (!confirmed) return;
             try {
-              const allProductIds = await fetchAllFilteredOfferProductIds();
-              const allDetailIds = await fetchAllFilteredOfferDetailIds();
-              idsToProcess = allProductIds.map((pid, i) => ({
-                productId: pid,
-                offerDetailId: allDetailIds[i] ?? 0,
-              })).filter((x) => x.offerDetailId > 0);
+              // Use fetchAllFilteredProductPairs so productId+offerDetailId come from the
+              // SAME row — avoids the index-mismatch bug of zipping two separate arrays.
+              // Also inherently skips comments, categories, and services.
+              idsToProcess = await fetchAllFilteredProductPairs();
             } catch (err) {
               showToastMessage(
                 err instanceof Error ? err.message : 'Failed to resolve selected products.',
@@ -6377,6 +6440,7 @@ const requestedColumnDefsMap = useMemo(
   }, [
     fetchAllFilteredOfferDetailIds,
     fetchAllFilteredOfferProductIds,
+    fetchAllFilteredProductPairs,
     isAddingWebLinks,
     isEnhancingDescriptions,
     pushUndo,
@@ -7432,13 +7496,13 @@ const requestedColumnDefsMap = useMemo(
     // parse — sending the raw "5,5" string would let the server's parseFloat truncate
     // at the comma and round to 5. For string fields (Description/Comment/Delivery),
     // pass the settled string through as-is.
-    const intendedNumeric = coerceNumber(intendedValue);
-    const settledNumeric = coerceNumber(settledValue);
-    const newPatchValue: unknown = intendedNumeric != null
-      ? intendedNumeric
-      : settledNumeric != null
-        ? settledNumeric
-        : settledValue;
+    // IMPORTANT: do NOT apply coerceNumber to string fields. A description like
+    // "CLICKSHARE HUB PRO EU WITH 2 BUTTONS" would strip to "2" and coerce to the
+    // number 2, overwriting sibling rows with that number instead of the full text.
+    const isStringField = field === 'Description' || field === 'ProductDescription' || field === 'Comment' || field === 'Delivery';
+    const newPatchValue: unknown = isStringField
+      ? settledValue
+      : (coerceNumber(intendedValue) ?? coerceNumber(settledValue) ?? settledValue);
 
     const labelText = PROPAGATABLE_FIELD_LABELS[field];
     const confirmed = await showConfirmDialog({
