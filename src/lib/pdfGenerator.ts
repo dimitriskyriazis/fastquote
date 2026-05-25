@@ -92,7 +92,7 @@ const LABELS = {
     responsible: 'Αρμόδιος',
     responsibleEmail: 'Email',
     colNo: 'Α/Α',
-    optionTag: 'Επιλογή',
+    optionTag: 'Option',
     colQty: 'Τεμ',
     colBrand: 'Οίκος',
     colType: 'Κωδικός',
@@ -186,7 +186,7 @@ const PRICE_COLUMNS = new Set<PdfProductColumn>(['listPrice', 'totalList', 'disc
 const COLORS = {
 primaryText: '#222222',
 secondaryText: '#6B7280',
-optionText: '#555555',
+optionText: '#1B3A6B',
 lightBg: '#F5F5F5',
 border: '#E5E5E5',
 accentRed: '#C62828',
@@ -254,7 +254,7 @@ const BASE_WIDTHS: Record<PdfOrientation, Record<PdfProductColumn, number | '*'>
     total: 52,
     listPrice: 52,
     totalList: 52,
-    discount: 38,
+    discount: 43,
     warranty: 44,
     origin: 62,
     comment: 58,
@@ -276,7 +276,7 @@ const BASE_WIDTHS: Record<PdfOrientation, Record<PdfProductColumn, number | '*'>
     total: 58,
     listPrice: 58,
     totalList: 58,
-    discount: 44,
+    discount: 49,
     warranty: 50,
     origin: 70,
     comment: 64,
@@ -326,8 +326,8 @@ function formatCurrency(n: number | null | undefined): string {
 }
 
 function formatPercent(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return '';
-  return n.toFixed(1);
+  if (n == null || !Number.isFinite(n) || n === 0) return '';
+  return n.toFixed(1).replace('.', ',');
 }
 
 function fixObviousTypos(text: string): string {
@@ -795,13 +795,7 @@ function shouldShowPrices(row: OfferProductRow, printSettings: PdfPrintSettings 
 function columnValue(row: OfferProductRow, column: PdfProductColumn, L?: Labels): string {
   switch (column) {
     case 'no': {
-      const base = str(row.treeOrdering);
-      if (!base) return base;
-      if (row.isOption) {
-        const label = L?.optionTag ?? 'Option';
-        return `${base} (${label})`;
-      }
-      return base;
+      return str(row.treeOrdering);
     }
     case 'qty': {
       if (row.isComment && (row.quantity == null || row.quantity === 0)) return '';
@@ -886,7 +880,8 @@ function buildCategoryTotalsMap(
   resolveAmount: (row: OfferProductRow) => number,
 ): Map<string, number> {
   const categories = products.filter((p) => p.isCategory && str(p.treeOrdering));
-  const detailRows = products.filter((p) => !p.isCategory && str(p.treeOrdering));
+  // Options are excluded from category totals — they are shown separately as optional items
+  const detailRows = products.filter((p) => !p.isCategory && !p.isOption && str(p.treeOrdering));
 
   const totals = new Map<string, number>();
 
@@ -928,6 +923,7 @@ function buildItemsTable(
     text: tableHeaderLabel(col, L),
     style: 'tableHeader',
     alignment: numericCols.has(col) ? 'right' : 'left',
+    noWrap: col === 'discount',
     rowKind: 'header',
   }));
 
@@ -954,10 +950,10 @@ function buildItemsTable(
       const totalNetIdx = selectedColumns.indexOf('total');
 
       const amountByIdx = new Map<number, number>();
-      if (showCategoryPrices && showCategoryTotalList && totalListIdx !== -1 && categoryListAmountValue != null) {
+      if (showCategoryPrices && showCategoryTotalList && totalListIdx !== -1 && categoryListAmountValue != null && categoryListAmountValue > 0) {
         amountByIdx.set(totalListIdx, categoryListAmountValue);
       }
-      if (showCategoryPrices && showCategoryTotalNet && totalNetIdx !== -1 && categoryNetAmountValue != null) {
+      if (showCategoryPrices && showCategoryTotalNet && totalNetIdx !== -1 && categoryNetAmountValue != null && categoryNetAmountValue > 0) {
         amountByIdx.set(totalNetIdx, categoryNetAmountValue);
       }
 
@@ -1022,7 +1018,10 @@ function buildItemsTable(
       continue;
     }
 
-    const hidePrices = !shouldShowPrices(row, printSettings);
+    // Options always show prices regardless of printProducts setting — they are
+    // optional items and their prices must always be visible so the customer can
+    // see what each option costs.
+    const hidePrices = !shouldShowPrices(row, printSettings) && !row.isOption;
 
     body.push(
       selectedColumns.map((col) => {
@@ -1046,13 +1045,29 @@ function buildItemsTable(
           return cell;
         }
 
+        // For option rows, show only the word "Option" in totalList and total
+        // columns — no price amount, just the label so the customer can identify it.
+        if (row.isOption && (col === 'totalList' || col === 'total')) {
+          const dyn = dynamicCellFont(col);
+          const optionCell: PdfCell = {
+            text: L.optionTag,
+            style: dyn.style,
+            italics: true,
+            color: COLORS.optionText,
+            alignment: 'right',
+            noWrap: true,
+          };
+          if (col === selectedColumns[0]) optionCell.rowKind = 'option';
+          return optionCell;
+        }
+
         const value = hidePrices && priceColumns.has(col) ? '' : columnValue(row, col, L);
         const dyn = dynamicCellFont(col);
 
         const baseCell: PdfCell = {
           text: value,
           style: dyn.style,
-          noWrap: (numericCols.has(col) || col === 'no') && !(col === 'no' && row.isOption),
+          noWrap: numericCols.has(col) || col === 'no',
         };
         if (dyn.fontSize) baseCell.fontSize = dyn.fontSize;
         if (dyn.lineHeight) baseCell.lineHeight = dyn.lineHeight;
