@@ -2092,6 +2092,8 @@ export default function PriceListImportClient({
           listPrice: number | null;
           reason: string;
         }>;
+        allCapsProductIds?: number[];
+        allCapsDescriptionCount?: number;
       };
       const raw = await response.text().catch(() => "");
       const typedPayload: ImportResponse | null = (() => {
@@ -2201,6 +2203,51 @@ export default function PriceListImportClient({
             }
           } catch {
             showToastMessage("Failed to update model numbers.");
+          }
+        }
+      }
+
+      // Prompt user to fix ALL CAPS descriptions detected in the import
+      const allCapsProductIds = typedPayload.allCapsProductIds;
+      const allCapsCount = typedPayload.allCapsDescriptionCount ?? 0;
+      if (allCapsProductIds && allCapsProductIds.length > 0 && allCapsCount >= 2) {
+        const confirmed = await showConfirmDialog({
+          title: "Capitalisation Issues Detected",
+          message: `${allCapsCount} imported product${allCapsCount !== 1 ? "s" : ""} appear to have badly-capitalised descriptions (e.g. "CLICKSHARE HUB PRO EU WITH 2 BUTTONS" or "CLICKSHARE BAR CB Core EU WITH 1 BUTTON"). Would you like to use AI to fix the capitalisation for all of them?`,
+          confirmLabel: "Yes, fix capitalisation",
+          cancelLabel: "Skip",
+        });
+        if (confirmed) {
+          const dismissCapsFix = showToastMessage("Fixing capitalisation…", "info", 300000);
+          try {
+            // API handles up to 5000 per call; one call covers almost any real price list
+            const BATCH_SIZE = 5000;
+            let totalFixed = 0;
+            let batchError: string | null = null;
+            for (let i = 0; i < allCapsProductIds.length; i += BATCH_SIZE) {
+              const batch = allCapsProductIds.slice(i, i + BATCH_SIZE);
+              const capsRes = await fetch("/api/products/fix-capitalisation", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ productIds: batch }),
+              });
+              const capsData = await capsRes.json().catch(() => null);
+              if (capsRes.ok && capsData?.ok) {
+                totalFixed += capsData.updatedCount ?? 0;
+              } else {
+                batchError = capsData?.error || "Failed to fix capitalisation.";
+                break;
+              }
+            }
+            dismissCapsFix();
+            if (batchError) {
+              showToastMessage(batchError);
+            } else {
+              showToastMessage(`Fixed capitalisation for ${totalFixed} description(s).`);
+            }
+          } catch {
+            dismissCapsFix();
+            showToastMessage("Failed to fix capitalisation.");
           }
         }
       }

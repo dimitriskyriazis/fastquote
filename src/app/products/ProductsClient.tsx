@@ -165,6 +165,8 @@ const enhanceDescriptionMenuIcon = `
   </span>
 `;
 
+const fixCapitalisationMenuIcon = enhanceDescriptionMenuIcon;
+
 export default function ProductsClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -174,6 +176,7 @@ export default function ProductsClient() {
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
   const [isAddingWebLinks, setIsAddingWebLinks] = useState(false);
   const [isEnhancingDescriptions, setIsEnhancingDescriptions] = useState(false);
+  const [isFixingCapitalisation, setIsFixingCapitalisation] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
   const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null);
   const [lookups, setLookups] = useState<ProductLookups | null>(null);
@@ -718,11 +721,115 @@ export default function ProductsClient() {
 
         const enhanceInsertAt = deleteIndex >= 0 ? deleteIndex : items.length;
         items.splice(enhanceInsertAt, 0, enhanceDescItem);
+
+        // --- Fix Capitalisation item ---
+        const fixCapItem: MenuItemDef = {
+          name: isSelectAllActive
+            ? "Fix capitalisation (all filtered)"
+            : targetIds.length > 1
+              ? `Fix capitalisation (${targetIds.length})`
+              : "Fix capitalisation",
+          icon: fixCapitalisationMenuIcon,
+          disabled: isFixingCapitalisation,
+          action: async () => {
+            let idsToProcess: number[] = [];
+            if (isSelectAllActive) {
+              const confirmed = await showConfirmDialog({
+                title: "Fix capitalisation for all filtered products",
+                message: "This will update the capitalisation of descriptions for the filtered rows. Continue?",
+                confirmLabel: "Continue",
+                cancelLabel: "Cancel",
+              });
+              if (!confirmed) return;
+              try {
+                idsToProcess = await fetchAllFilteredProductIds();
+              } catch (err) {
+                showToastMessage(
+                  err instanceof Error ? err.message : "Failed to resolve selected products.",
+                  "error",
+                );
+                return;
+              }
+            } else {
+              idsToProcess = [...targetIds];
+            }
+
+            if (idsToProcess.length === 0) {
+              showToastMessage("No products selected for capitalisation fix.", "info");
+              return;
+            }
+            if (idsToProcess.length > 200) {
+              showToastMessage("Cannot process more than 200 products at once. Please filter first.", "error");
+              return;
+            }
+
+            setIsFixingCapitalisation(true);
+            const dismissLoadingToast = showToastMessage("Fixing capitalisation…", "info", 120000);
+            try {
+              const res = await fetch("/api/products/fix-capitalisation", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ productIds: idsToProcess }),
+              });
+              const data = (await res.json()) as {
+                ok: boolean;
+                updatedCount?: number;
+                failedCount?: number;
+                results?: Array<{
+                  productId: number;
+                  oldDescription: string | null;
+                  newDescription: string | null;
+                  status: string;
+                }>;
+                error?: string;
+              };
+              dismissLoadingToast();
+              if (data.ok) {
+                const msg = data.failedCount
+                  ? `Fixed capitalisation for ${data.updatedCount} description(s), ${data.failedCount} could not be updated.`
+                  : `Fixed capitalisation for ${data.updatedCount} description(s).`;
+                showToastMessage(msg, "success");
+                productsApiRef.current?.refreshServerSide({ purge: true });
+                router.refresh();
+
+                const updatedResults = (data.results ?? []).filter((r) => r.status === "updated");
+                if (updatedResults.length > 0) {
+                  pushUndo({
+                    label: `Fix capitalisation (${updatedResults.length})`,
+                    undo: async () => {
+                      await fetch("/api/products/fix-capitalisation", {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          items: updatedResults.map((r) => ({
+                            productId: r.productId,
+                            description: r.oldDescription ?? "",
+                          })),
+                        }),
+                      });
+                      productsApiRef.current?.refreshServerSide({ purge: true });
+                      router.refresh();
+                    },
+                  });
+                }
+              } else {
+                showToastMessage(data.error ?? "Failed to fix capitalisation. Please try again.", "error");
+              }
+            } catch {
+              dismissLoadingToast();
+              showToastMessage("Failed to fix capitalisation. Please try again.", "error");
+            } finally {
+              setIsFixingCapitalisation(false);
+            }
+          },
+        };
+
+        items.splice(enhanceInsertAt + 1, 0, fixCapItem);
       }
 
       return items;
     },
-    [fetchAllFilteredProductIds, isAddingWebLinks, isEnhancingDescriptions, pushUndo, productRowDeletion, router],
+    [fetchAllFilteredProductIds, isAddingWebLinks, isEnhancingDescriptions, isFixingCapitalisation, pushUndo, productRowDeletion, router],
   );
 
   const openAddProduct = useCallback(() => {

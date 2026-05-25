@@ -1414,6 +1414,8 @@ export async function POST(req: NextRequest) {
       let createdProductCount = 0;
       let matchedProductCount = 0;
       let skippedRows = 0;
+      // Track descriptions of processed products for all-caps detection
+      const processedProductDescriptions: Array<{ productId: number; description: string | null }> = [];
       const descriptionMismatches: { productId: number; partNumber: string; oldDescription: string; newDescription: string }[] = [];
       const modelNumberMismatches: { productId: number; partNumber: string; oldModelNumber: string; newModelNumber: string }[] = [];
       const newProductDetails: Array<{
@@ -1647,6 +1649,14 @@ export async function POST(req: NextRequest) {
 
         await insertPriceListItem(transaction, priceListId, productId, row, auditUserId);
         seenProducts.add(productId);
+
+        // Track this product's effective description for all-caps detection
+        // For new products: use the imported description (that's what was just saved)
+        // For existing products: use the existing description (we didn't change it)
+        const effectiveDescription = isExistingProduct
+          ? (existingProduct?.Description ?? null)
+          : row.description;
+        processedProductDescriptions.push({ productId, description: effectiveDescription });
       }
 
       await transaction.commit();
@@ -1669,6 +1679,40 @@ export async function POST(req: NextRequest) {
         },
       });
 
+      // Detect badly-capitalised descriptions.
+      //
+      // Strategy: look for alphabetic word tokens (punctuation/digits stripped) that are
+      // ≥5 characters long AND fully uppercase.  Short tokens (≤4 chars) are skipped so
+      // common acronyms such as HDMI, USB, EU, LED, SDI don't trigger false positives.
+      // A single matching token is enough — "CLICKSHARE USB-C Cable" has one (CLICKSHARE)
+      // and should be fixed just as much as a fully-uppercase line.
+      //
+      // We also catch "mostly caps" lines like "CLICKSHARE BAR CB Core EU WITH 1 BUTTON"
+      // where a previous partial fix left some words in title case: the remaining long
+      // all-caps tokens still trigger detection.
+      //
+      // We surface the prompt whenever ≥2 descriptions are flagged (low bar — the user
+      // can always say No, and missing badly-capitalised entries is more annoying than
+      // a prompt the user declines).
+      const isLikelyBadlyCapitalised = (desc: string | null | undefined): boolean => {
+        if (!desc) return false;
+        // Split on whitespace and common separators, then strip non-alpha chars from each token
+        const tokens = desc
+          .split(/[\s|\/,;()\[\]]+/)
+          .map((t) => t.replace(/[^a-zA-Z]/g, ""))
+          .filter((t) => t.length >= 5);
+        // Flag if any token ≥5 purely-alphabetic chars is fully uppercase
+        return tokens.some((t) => t === t.toUpperCase());
+      };
+
+      const allCapsEntries = processedProductDescriptions.filter(({ description }) =>
+        isLikelyBadlyCapitalised(description),
+      );
+      // Offer the fix when ≥2 descriptions are flagged
+      const allCapsProductIds = allCapsEntries.length >= 2
+        ? allCapsEntries.map(({ productId }) => productId)
+        : [];
+
       return NextResponse.json({
         ok: true,
         priceListId,
@@ -1683,6 +1727,8 @@ export async function POST(req: NextRequest) {
         priceChanges: priceChangeDetails,
         newProducts: newProductDetails,
         skippedRowDetails,
+        allCapsProductIds,
+        allCapsDescriptionCount: allCapsProductIds.length,
       });
     } catch (err) {
       await transaction.rollback();

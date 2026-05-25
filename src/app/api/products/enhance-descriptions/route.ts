@@ -60,7 +60,8 @@ type ProductRow = {
 
 type EnhanceResult = {
   productId: number;
-  offerDetailId?: number;
+  offerDetailId?: number;   // single id for backward-compat (first one)
+  offerDetailIds?: number[]; // all ids updated
   oldDescription: string | null;
   oldOfferDescription?: string | null;
   newDescription: string | null;
@@ -133,16 +134,20 @@ export async function POST(req: NextRequest) {
     const rawOfferDetailIds: unknown = body?.offerDetailIds;
 
     let productIds: number[] = [];
-    let offerDetailMap: Map<number, number> | null = null; // productId -> offerDetailId
+    // productId -> all offerDetailIds (supports multiple offer rows with same product)
+    let offerDetailPairsMap: Map<number, number[]> | null = null;
 
     if (Array.isArray(rawOfferDetailIds) && rawOfferDetailIds.length > 0) {
-      offerDetailMap = new Map();
+      offerDetailPairsMap = new Map();
       for (const entry of rawOfferDetailIds) {
         const pid = normalizeId((entry as { productId?: unknown })?.productId);
         const odId = normalizeId((entry as { offerDetailId?: unknown })?.offerDetailId);
         if (pid !== null && odId !== null) {
-          productIds.push(pid);
-          offerDetailMap.set(pid, odId);
+          if (!offerDetailPairsMap.has(pid)) {
+            productIds.push(pid);
+            offerDetailPairsMap.set(pid, []);
+          }
+          offerDetailPairsMap.get(pid)!.push(odId);
         }
       }
     } else if (Array.isArray(rawProductIds) && rawProductIds.length > 0) {
@@ -186,9 +191,9 @@ export async function POST(req: NextRequest) {
 
     // If updating offer details too, fetch old offer descriptions
     let offerDescriptions: Map<number, string | null> | null = null;
-    if (offerDetailMap && offerDetailMap.size > 0) {
+    if (offerDetailPairsMap && offerDetailPairsMap.size > 0) {
       offerDescriptions = new Map();
-      const odIds = [...offerDetailMap.values()].join(",");
+      const odIds = [...offerDetailPairsMap.values()].flat().join(",");
       const odFetchReq = pool.request();
       const odResult = await odFetchReq.query<{ ID: number; ProductDescription: string | null }>(`
         SELECT ID, ProductDescription FROM dbo.OfferDetails WHERE ID IN (${odIds})
@@ -208,12 +213,14 @@ export async function POST(req: NextRequest) {
         const description = product.Description?.trim() ?? "";
         const category = product.Category?.trim() ?? "";
         const subCategory = product.SubCategory?.trim() ?? "";
-        const offerDetailId = offerDetailMap?.get(product.ID) ?? undefined;
+        const offerDetailIds = offerDetailPairsMap?.get(product.ID) ?? undefined;
+        const offerDetailId = offerDetailIds?.[0]; // first for backward-compat
 
         if (!brand && !modelNumber && !partNumber && !description) {
           return {
             productId: product.ID,
             offerDetailId,
+            offerDetailIds,
             oldDescription: product.Description,
             oldOfferDescription: offerDetailId && offerDescriptions
               ? offerDescriptions.get(offerDetailId) ?? null
@@ -258,6 +265,8 @@ export async function POST(req: NextRequest) {
                   "FORMAT: Comma-separated key specs in a single line (or bullet list for complex kits). No full sentences. No filler words.",
                   "",
                   "MODEL NUMBER RULE (critical — read carefully): Check whether the model number appears in the Current Description. If it does NOT appear there, do NOT write it anywhere in the output — not at the start, not in the middle, not at the end. The Model and Part Number fields are provided only so you can look up specs; they must never be copied into the output description unless they were already present in the Current Description.",
+                  "",
+                  "CAPITALIZATION: Never write the description in ALL CAPS. If the input is in ALL CAPS or SCREAMING CASE, convert it to sentence case (capitalize only the first letter and recognised proper nouns/brand names). Write all other words in lowercase.",
                   "",
                   "NEVER DO:",
                   "- Add disclaimers or 'verify with manufacturer' notes",
@@ -328,6 +337,8 @@ export async function POST(req: NextRequest) {
         // the model number from a previous enhance run and would cause a false "it was
         // already there" match.
         if (enhanced) {
+          // Use first offer row's description as baseline (they all share the same product,
+          // so any one of them is representative for the conservative token-strip check).
           const offerDesc = offerDetailId && offerDescriptions
             ? (offerDescriptions.get(offerDetailId) ?? null)
             : null;
@@ -355,6 +366,7 @@ export async function POST(req: NextRequest) {
           return {
             productId: product.ID,
             offerDetailId,
+            offerDetailIds,
             oldDescription: product.Description,
             oldOfferDescription: offerDetailId && offerDescriptions
               ? offerDescriptions.get(offerDetailId) ?? null
@@ -380,30 +392,33 @@ export async function POST(req: NextRequest) {
           WHERE ID = @ProductID
         `);
 
-        // Step 4: Update dbo.OfferDetails if applicable
+        // Step 4: Update ALL matching dbo.OfferDetails rows (product may appear multiple times)
         let oldOfferDescription: string | null | undefined = undefined;
-        if (offerDetailId && offerDetailMap) {
-          oldOfferDescription = offerDescriptions?.get(offerDetailId) ?? null;
-          const odUpdateReq = pool.request();
-          odUpdateReq.input("OfferDetailID", sql.Int, offerDetailId);
-          odUpdateReq.input("ProductDescription", sql.NVarChar(2000), newDescription);
-          odUpdateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
-          await odUpdateReq.query(`
-            UPDATE dbo.OfferDetails
-            SET ProductDescription = @ProductDescription,
-                ModifiedOn = SYSUTCDATETIME(),
-                ModifiedBy = @ModifiedBy
-            WHERE ID = @OfferDetailID
-          `);
+        if (offerDetailIds && offerDetailIds.length > 0 && offerDetailPairsMap) {
+          oldOfferDescription = offerDescriptions?.get(offerDetailIds[0]) ?? null;
+          for (const odId of offerDetailIds) {
+            const odUpdateReq = pool.request();
+            odUpdateReq.input("OfferDetailID", sql.Int, odId);
+            odUpdateReq.input("ProductDescription", sql.NVarChar(2000), newDescription);
+            odUpdateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
+            await odUpdateReq.query(`
+              UPDATE dbo.OfferDetails
+              SET ProductDescription = @ProductDescription,
+                  ModifiedOn = SYSUTCDATETIME(),
+                  ModifiedBy = @ModifiedBy
+              WHERE ID = @OfferDetailID
+            `);
+          }
         }
 
         console.log(
-          `[enhance-desc] product ${product.ID}: "${description}" → "${newDescription.slice(0, 80)}..."`,
+          `[enhance-desc] product ${product.ID}${offerDetailIds ? ` (${offerDetailIds.length} offer row(s))` : ""}: "${description}" → "${newDescription.slice(0, 80)}..."`,
         );
 
         return {
           productId: product.ID,
           offerDetailId,
+          offerDetailIds,
           oldDescription: product.Description,
           oldOfferDescription,
           newDescription,

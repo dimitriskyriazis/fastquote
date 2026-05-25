@@ -84,6 +84,7 @@ import {
   viewProductMenuIcon,
   viewProductDetailsMenuIcon,
   viewBrandDetailsMenuIcon,
+  fixCapitalisationMenuIcon,
 } from './offerProductsIcons';
 import type {
   GridRowNode,
@@ -447,6 +448,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   requestedItemNoVisibleRef.current = requestedItemNoVisible;
   const [isAddingWebLinks, setIsAddingWebLinks] = useState(false);
   const [isEnhancingDescriptions, setIsEnhancingDescriptions] = useState(false);
+  const [isFixingCapitalisation, setIsFixingCapitalisation] = useState(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const gridWrapperRef = useRef<HTMLDivElement | null>(null);
   const shiftedAnchorIdRef = useRef<number | null>(null);
@@ -6376,6 +6378,7 @@ const requestedColumnDefsMap = useMemo(
               results?: Array<{
                 productId: number;
                 offerDetailId?: number;
+                offerDetailIds?: number[];
                 oldDescription: string | null;
                 oldOfferDescription?: string | null;
                 newDescription: string | null;
@@ -6402,12 +6405,15 @@ const requestedColumnDefsMap = useMemo(
                       method: 'PUT',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
-                        items: updatedResults.map((r) => ({
-                          productId: r.productId,
-                          offerDetailId: r.offerDetailId,
-                          description: r.oldDescription ?? '',
-                          offerDescription: r.oldOfferDescription ?? '',
-                        })),
+                        items: updatedResults.flatMap((r) => {
+                          const ids = r.offerDetailIds ?? (r.offerDetailId != null ? [r.offerDetailId] : [undefined]);
+                          return ids.map((odId) => ({
+                            productId: r.productId,
+                            offerDetailId: odId,
+                            description: r.oldDescription ?? '',
+                            offerDescription: r.oldOfferDescription ?? '',
+                          }));
+                        }),
                       }),
                     });
                     refreshOfferProductGrid(null, { purge: true });
@@ -6427,10 +6433,115 @@ const requestedColumnDefsMap = useMemo(
         },
       };
 
+      const fixCapItem: MenuItemDef = {
+        name: isSelectAllActive
+          ? 'Fix capitalisation (all filtered)'
+          : targetIds.length > 1
+            ? `Fix capitalisation (${targetIds.length})`
+            : 'Fix capitalisation',
+        icon: fixCapitalisationMenuIcon,
+        disabled: isFixingCapitalisation,
+        action: async () => {
+          let idsToProcess: Array<{ productId: number; offerDetailId: number }> = [];
+          if (isSelectAllActive) {
+            const confirmed = await showConfirmDialog({
+              title: 'Fix capitalisation for all filtered products',
+              message: 'This will update the capitalisation of descriptions for the filtered rows. Continue?',
+              confirmLabel: 'Continue',
+              cancelLabel: 'Cancel',
+            });
+            if (!confirmed) return;
+            try {
+              idsToProcess = await fetchAllFilteredProductPairs();
+            } catch (err) {
+              showToastMessage(
+                err instanceof Error ? err.message : 'Failed to resolve selected products.',
+                'error',
+              );
+              return;
+            }
+          } else {
+            idsToProcess = [...targetOfferDetailIds];
+          }
+
+          if (idsToProcess.length === 0) {
+            showToastMessage('No products selected for capitalisation fix.', 'info');
+            return;
+          }
+          if (idsToProcess.length > 200) {
+            showToastMessage('Cannot process more than 200 products at once. Please filter first.', 'error');
+            return;
+          }
+
+          setIsFixingCapitalisation(true);
+          const dismissLoadingToast = showToastMessage('Fixing capitalisation…', 'info', 120000);
+          try {
+            const res = await fetch('/api/products/fix-capitalisation', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ offerDetailIds: idsToProcess }),
+            });
+            const data = (await res.json()) as {
+              ok: boolean;
+              updatedCount?: number;
+              failedCount?: number;
+              results?: Array<{
+                productId: number;
+                offerDetailId?: number;
+                oldDescription: string | null;
+                oldOfferDescription?: string | null;
+                newDescription: string | null;
+                status: string;
+              }>;
+              error?: string;
+            };
+            dismissLoadingToast();
+            if (data.ok) {
+              const msg = data.failedCount
+                ? `Fixed capitalisation for ${data.updatedCount} description(s), ${data.failedCount} could not be updated.`
+                : `Fixed capitalisation for ${data.updatedCount} description(s).`;
+              showToastMessage(msg, 'success');
+              refreshOfferProductGrid(null, { purge: true });
+              router.refresh();
+
+              const updatedResults = (data.results ?? []).filter((r) => r.status === 'updated');
+              if (updatedResults.length > 0) {
+                pushUndo({
+                  label: `Fix capitalisation (${updatedResults.length})`,
+                  undo: async () => {
+                    await fetch('/api/products/fix-capitalisation', {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        items: updatedResults.map((r) => ({
+                          productId: r.productId,
+                          offerDetailId: r.offerDetailId,
+                          description: r.oldDescription ?? '',
+                          offerDescription: r.oldOfferDescription ?? '',
+                        })),
+                      }),
+                    });
+                    refreshOfferProductGrid(null, { purge: true });
+                    router.refresh();
+                  },
+                });
+              }
+            } else {
+              showToastMessage(data.error ?? 'Failed to fix capitalisation. Please try again.', 'error');
+            }
+          } catch {
+            dismissLoadingToast();
+            showToastMessage('Failed to fix capitalisation. Please try again.', 'error');
+          } finally {
+            setIsFixingCapitalisation(false);
+          }
+        },
+      };
+
       const aiSubmenu: MenuItemDef = {
         name: 'AI features',
         icon: enhanceDescriptionMenuIcon,
-        subMenu: [webLinkItem, enhanceDescItem],
+        subMenu: [webLinkItem, enhanceDescItem, fixCapItem],
       };
       const aiDeleteIdx = findDeleteMenuItemIndex(items);
       items.splice(aiDeleteIdx >= 0 ? aiDeleteIdx : items.length, 0, aiSubmenu);
@@ -6443,6 +6554,7 @@ const requestedColumnDefsMap = useMemo(
     fetchAllFilteredProductPairs,
     isAddingWebLinks,
     isEnhancingDescriptions,
+    isFixingCapitalisation,
     pushUndo,
     performUndo,
     refreshOfferProductGrid,
