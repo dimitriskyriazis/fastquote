@@ -15,6 +15,7 @@ import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import styles from "./PriceListsClient.module.css";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import { openLinkInNewTab } from "../../lib/navigation";
 import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
 import { useAuditUser } from "../components/AuditUserProvider";
 import { formatDateUK } from "../lib/formatDateTime";
@@ -225,6 +226,8 @@ export default function PriceListsClient() {
     </span>
   `;
 
+  const brandDetailsMenuIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>';
+
   const priceListsContextMenuItems = useCallback(
     (params: GetContextMenuItemsParams<Record<string, unknown>>) => {
       const baseItems = priceListRowDeletion.getContextMenuItems(params);
@@ -258,7 +261,25 @@ export default function PriceListsClient() {
           { name: 'Open in new tab', icon: newTabIcon, action: () => { window.open(productsHref, '_blank', 'noopener,noreferrer'); } },
         ],
       };
-      baseItems.unshift(viewBasicDataItem, viewProductsItem, 'separator');
+
+      const topItems: Array<MenuItemDef<Record<string, unknown>> | string> = [viewBasicDataItem, viewProductsItem];
+
+      const rawBrandId = (rowData as { BrandID?: unknown } | null)?.BrandID ?? null;
+      const brandId = typeof rawBrandId === 'number'
+        ? rawBrandId
+        : typeof rawBrandId === 'string'
+          ? Number.parseInt(rawBrandId, 10)
+          : null;
+      if (brandId != null && Number.isInteger(brandId) && brandId > 0) {
+        const viewBrandDetailsItem: MenuItemDef<Record<string, unknown>> = {
+          name: 'View Brand Details',
+          icon: brandDetailsMenuIcon,
+          action: () => { openLinkInNewTab(`/brands/${encodeURIComponent(String(brandId))}/details`); },
+        };
+        topItems.push(viewBrandDetailsItem);
+      }
+
+      baseItems.unshift(...topItems, 'separator');
 
       const importItem = {
         name: "Import new version",
@@ -305,7 +326,7 @@ export default function PriceListsClient() {
 
       return baseItems;
     },
-    [priceListRowDeletion, router, importNewVersionIcon, appendProductsIcon, viewOriginalFileIcon],
+    [priceListRowDeletion, router, importNewVersionIcon, appendProductsIcon, viewOriginalFileIcon, brandDetailsMenuIcon],
   );
 
   const pricingPolicyColumns: ColDef[] = useMemo(
@@ -331,6 +352,7 @@ export default function PriceListsClient() {
 
   const columnDefs: ColDef[] = useMemo(
     () => [
+      { field: "BrandID", hide: true, suppressColumnsToolPanel: true },
       { field: "Name", headerName: "Price List Name", filter: "agTextColumnFilter" },
       { field: "BrandName", headerName: "Brand", filter: "agTextColumnFilter" },
       { field: "SupplierName", headerName: "Supplier", filter: "agTextColumnFilter", enableRowGroup: true },

@@ -24,6 +24,7 @@ import { normalizeBoolean } from "../../../../lib/normalizeBoolean";
 import { showToastMessage } from "../../../../lib/toast";
 import { useUndoStack } from "../../../hooks/useUndoStack";
 import { pushCellEditUndo, makePatternAUndoFn } from "../../../../lib/undoHelpers";
+import { openLinkInNewTab } from "../../../../lib/navigation";
 
 const AgGridAll = dynamic(() => import("../../../components/AgGridAll"), {
   ssr: false,
@@ -132,6 +133,8 @@ const addWebLinkMenuIcon = `
   </span>
 `;
 const ADD_WEBLINK_MAX_PRODUCTS = 200;
+
+const productDetailsMenuIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>';
 
 export default function PriceListProductsClient({
   priceListId,
@@ -470,6 +473,14 @@ export default function PriceListProductsClient({
         return items;
       }
 
+      const detailsItem: MenuItemDef = {
+        name: "View Product Details",
+        icon: productDetailsMenuIcon,
+        action: () => {
+          openLinkInNewTab(`/products/${encodeURIComponent(String(productId))}/details`);
+        },
+      };
+
       const historyItem: MenuItemDef = {
         name: "View Product's History",
         icon: productHistoryMenuIcon,
@@ -491,9 +502,9 @@ export default function PriceListProductsClient({
           (item as MenuItemDef).name.trim().toLowerCase().startsWith("delete"),
       );
       if (deleteIndex >= 0) {
-        items.splice(deleteIndex, 0, historyItem);
+        items.splice(deleteIndex, 0, detailsItem, historyItem);
       } else {
-        items.push(historyItem);
+        items.push(detailsItem, historyItem);
       }
 
       const isSelectAllActive = params.api && typeof params.api.getServerSideSelectionState === "function"

@@ -200,6 +200,7 @@ export async function POST(req: NextRequest) {
         COUNT_BIG(1) OVER () AS __totalCount,
         dbo.PriceLists.ID AS PriceListID,
         dbo.PriceLists.Name,
+        dbo.PriceLists.BrandID,
         dbo.Brands.Name AS BrandName,
         dbo.PriceLists.ValidFromDate,
         dbo.PriceLists.ValidToDate,
