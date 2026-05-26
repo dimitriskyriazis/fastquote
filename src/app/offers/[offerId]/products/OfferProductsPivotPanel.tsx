@@ -4,12 +4,15 @@ import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } 
 import { AgGridReact } from 'ag-grid-react';
 import type {
   CellDoubleClickedEvent,
+  CellValueChangedEvent,
   ColumnState,
   ColumnPivotModeChangedEvent,
   ColDef,
   GridApi,
   GridReadyEvent,
+  RowClassParams,
   ValueFormatterParams,
+  ValueSetterParams,
 } from 'ag-grid-community';
 import {
   ClientSideRowModelModule,
@@ -55,7 +58,7 @@ type Props = {
   refreshToken?: number;
   onExitPivot?: () => void;
   onDataChanged?: () => void;
-  layout: 'category' | 'brand';
+  layout: 'category' | 'brand' | 'brandPartNo';
 };
 
 type BulkEditField = 'CustomerDiscount' | 'TelmacoDiscount' | 'Margin';
@@ -95,6 +98,10 @@ const formatEuroTotal = (value: number | null | undefined) => {
 const formatPercentTotal = (value: number | null | undefined) => {
   if (value == null || !Number.isFinite(value)) return '—';
   return `${percentFormatter.format(value)} %`;
+};
+const formatHoursTotal = (value: number | null | undefined) => {
+  if (value == null || !Number.isFinite(value)) return '0 h';
+  return `${currencyFormatter.format(value)} h`;
 };
 
 const toFiniteNumber = (value: unknown): number | null => {
@@ -154,10 +161,19 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
   const quickSearch = useContext(GridQuickSearchContext);
   const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const lastFetchSignatureRef = useRef<string>('');
+  const suppressPivotExitRef = useRef(false);
   const [gridReady, setGridReady] = useState(false);
   const [rowData, setRowData] = useState<RowData[]>([]);
   const [loading, setLoading] = useState(false);
   const [rowCount, setRowCount] = useState<number | null>(null);
+  const [apiTotals, setApiTotals] = useState<{
+    totalListPrice: number;
+    totalNetPrice: number;
+    totalCost: number;
+    totalInstallation: number;
+    totalElInstalation: number;
+    totalCommissioning: number;
+  } | null>(null);
 
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [bulkEditField, setBulkEditField] = useState<BulkEditField>('CustomerDiscount');
@@ -172,14 +188,19 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
   );
 
   const columnDefs = useMemo<ColDef<RowData>[]>(() => {
-    const hideCategory = layout === 'brand';
+    const hideCategory = layout === 'brand' || layout === 'brandPartNo';
     const hideBrand = layout === 'category';
+    const isBrandPartNo = layout === 'brandPartNo';
     return [
       { field: 'OfferDetailID', hide: true, suppressColumnsToolPanel: true },
       { field: 'ProductID', hide: true, suppressColumnsToolPanel: true },
+      { field: 'IsService', hide: true, suppressColumnsToolPanel: true },
+      { field: 'IsOption', hide: true, suppressColumnsToolPanel: true },
+      { field: 'IsPrintable', hide: true, suppressColumnsToolPanel: true },
 
       { field: 'CategoryName', headerName: 'Category', hide: hideCategory, suppressColumnsToolPanel: hideCategory},
       { field: 'BrandName', headerName: 'Brand', hide: hideBrand, suppressColumnsToolPanel: hideBrand },
+      { field: 'PartNumber', headerName: 'Part No', hide: !isBrandPartNo, suppressColumnsToolPanel: !isBrandPartNo },
       { field: 'Quantity', headerName: 'Qty', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('Quantity'), valueFormatter: numberValueFormatter, aggFunc: 'sum', width: 110 },
       { field: 'TotalPrice', headerName: 'Total List', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalPrice'), valueFormatter: euroValueFormatter, aggFunc: 'sum', width: 150 },
       { field: 'CustomerDiscount', headerName: 'Customer Discount', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('CustomerDiscount'), valueFormatter: percentValueFormatter, aggFunc: 'avg', width: 200 },
@@ -189,20 +210,55 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
       { field: 'GrossProfit', headerName: 'Gross Profit', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('GrossProfit'), valueFormatter: euroValueFormatter, aggFunc: 'sum', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' }, width: 150 },
       { field: 'TotalCost', headerName: 'Total Cost', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalCost'), valueFormatter: euroValueFormatter, aggFunc: 'sum', cellClass: panelStyles.redDataCell, cellStyle: { color:'#dc2626' }, width : 150},
       {
-        colId: 'DiscountAmount',
-        headerName: 'Total Discounts',
-        valueGetter: (params) => {
-          const data = params.data as RowData | null | undefined;
-          const totalPrice = data ? toFiniteNumber((data as { TotalPrice?: unknown })?.TotalPrice) : null;
-          const totalNet = data ? toFiniteNumber((data as { TotalNet?: unknown })?.TotalNet) : null;
-          if (totalPrice == null || totalNet == null) return null;
-          return totalPrice - totalNet;
+        field: 'Installation',
+        headerName: 'Installation (h)',
+        hide: !isBrandPartNo,
+        suppressColumnsToolPanel: !isBrandPartNo,
+        filter: 'agNumberColumnFilter',
+        valueGetter: numericFieldValueGetter('Installation'),
+        valueSetter: (params: ValueSetterParams<RowData>) => {
+          if (params.data) { (params.data as Record<string, unknown>).Installation = params.newValue; return true; }
+          return false;
         },
-        valueFormatter: euroValueFormatter,
+        valueFormatter: numberValueFormatter,
         aggFunc: 'sum',
-        enableValue: true,
-        cellStyle: { color: '#dc2626' },
-        width: 180,
+        editable: (params) => !params.node.group,
+        cellStyle: (params) => params.node.group ? null : { backgroundColor: '#f0fdf4' as string, cursor: 'text' as string },
+        width: 160,
+      },
+      {
+        field: 'ElInstalation',
+        headerName: 'El Installation (h)',
+        hide: !isBrandPartNo,
+        suppressColumnsToolPanel: !isBrandPartNo,
+        filter: 'agNumberColumnFilter',
+        valueGetter: numericFieldValueGetter('ElInstalation'),
+        valueSetter: (params: ValueSetterParams<RowData>) => {
+          if (params.data) { (params.data as Record<string, unknown>).ElInstalation = params.newValue; return true; }
+          return false;
+        },
+        valueFormatter: numberValueFormatter,
+        aggFunc: 'sum',
+        editable: (params) => !params.node.group,
+        cellStyle: (params) => params.node.group ? null : { backgroundColor: '#f0fdf4' as string, cursor: 'text' as string },
+        width: 175,
+      },
+      {
+        field: 'Commissioning',
+        headerName: 'Commissioning (h)',
+        hide: !isBrandPartNo,
+        suppressColumnsToolPanel: !isBrandPartNo,
+        filter: 'agNumberColumnFilter',
+        valueGetter: numericFieldValueGetter('Commissioning'),
+        valueSetter: (params: ValueSetterParams<RowData>) => {
+          if (params.data) { (params.data as Record<string, unknown>).Commissioning = params.newValue; return true; }
+          return false;
+        },
+        valueFormatter: numberValueFormatter,
+        aggFunc: 'sum',
+        editable: (params) => !params.node.group,
+        cellStyle: (params) => params.node.group ? null : { backgroundColor: '#f0fdf4' as string, cursor: 'text' as string },
+        width: 185,
       },
     ];
   }, [layout]);
@@ -211,29 +267,36 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     () => Array.from(new Set(
       columnDefs
         .map((def) => (typeof def.field === 'string' ? def.field : null))
-        .filter((field): field is string => Boolean(field) && field !== 'OfferDetailID'),
+        .filter((field): field is string => Boolean(field)),
     )),
     [columnDefs],
   );
   const totals = useMemo(() => {
-    let totalNetPrice = 0;
-    let totalListPrice = 0;
-    let totalCost = 0;
-    rowData.forEach((row) => {
-      totalNetPrice += toFiniteNumber((row as { TotalNet?: unknown }).TotalNet) ?? 0;
-      totalListPrice += toFiniteNumber((row as { TotalPrice?: unknown }).TotalPrice) ?? 0;
-      totalCost += toFiniteNumber((row as { TotalCost?: unknown }).TotalCost) ?? 0;
-    });
-    const marginBasis = Object.is(totalNetPrice, 0) ? 0 : totalNetPrice;
-    const totalMargin = marginBasis === 0 ? 0 : ((totalNetPrice - totalCost) / marginBasis) * 100;
-    return { totalNetPrice, totalListPrice, totalCost, totalMargin };
-  }, [rowData]);
+    const totalNetPrice = apiTotals?.totalNetPrice ?? 0;
+    const totalListPrice = apiTotals?.totalListPrice ?? 0;
+    const totalCost = apiTotals?.totalCost ?? 0;
+    const totalInstallation = apiTotals?.totalInstallation ?? 0;
+    const totalElInstalation = apiTotals?.totalElInstalation ?? 0;
+    const totalCommissioning = apiTotals?.totalCommissioning ?? 0;
+    const totalDiscount = totalListPrice - totalNetPrice;
+    const discountPct = totalListPrice === 0 ? 0 : (totalDiscount / totalListPrice) * 100;
+    const totalMargin = totalNetPrice === 0 ? 0 : ((totalNetPrice - totalCost) / totalNetPrice) * 100;
+    return { totalNetPrice, totalListPrice, totalCost, totalMargin, totalDiscount, discountPct, totalInstallation, totalElInstalation, totalCommissioning };
+  }, [apiTotals]);
 
   const applyLayout = useMemo(() => () => {
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return;
 
-    api.setGridOption('pivotMode', true);
+    // brandPartNo uses plain row-grouping (no pivot mode) so leaf cells are editable.
+    // Suppress the exit callback that fires when pivotMode goes false.
+    if (layout === 'brandPartNo') {
+      suppressPivotExitRef.current = true;
+      api.setGridOption('pivotMode', false);
+      window.setTimeout(() => { suppressPivotExitRef.current = false; }, 0);
+    } else {
+      api.setGridOption('pivotMode', true);
+    }
     api.closeToolPanel();
 
     const state: ColumnState[] = [
@@ -265,6 +328,15 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
         enableTotals();
         break;
       }
+      case 'brandPartNo': {
+        set('BrandName', { rowGroup: true, rowGroupIndex: 0 });
+        set('PartNumber', { rowGroup: true, rowGroupIndex: 1 });
+        enableTotals();
+        set('Installation', { aggFunc: 'sum' });
+        set('ElInstalation', { aggFunc: 'sum' });
+        set('Commissioning', { aggFunc: 'sum' });
+        break;
+      }
       default:
         break;
     }
@@ -277,9 +349,11 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
   }, [layout]);
 
   const handleCellDoubleClicked = useCallback((event: CellDoubleClickedEvent<RowData>) => {
-    if (layout !== 'brand') return;
+    if (layout !== 'brand' && layout !== 'brandPartNo') return;
     const { node, colDef } = event;
     if (!node.group || !colDef.field || !BULK_EDIT_FIELDS.has(colDef.field)) return;
+    // For brandPartNo, only allow bulk edit on the top-level brand group (level 0)
+    if (layout === 'brandPartNo' && node.level !== 0) return;
     const brandName = String(node.key ?? '').trim();
     if (!brandName) return;
     // AG Grid 'avg' aggFunc stores {count, value}; 'sum' stores a plain number
@@ -295,6 +369,8 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     setBulkEditOpen(true);
   }, [layout]);
 
+  const EDITABLE_HOUR_FIELDS = useMemo(() => new Set(['Installation', 'ElInstalation', 'Commissioning']), []);
+
   const refreshPivotData = useCallback(() => {
     lastFetchSignatureRef.current = '';
     setLoading(true);
@@ -309,12 +385,23 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
           }),
         });
         const payload = (await res.json().catch(() => null)) as
-          | { ok?: boolean; error?: string; rows?: RowData[]; rowCount?: number }
+          | { ok?: boolean; error?: string; rows?: RowData[]; rowCount?: number; totals?: Record<string, number> }
           | null;
         if (!res.ok || !payload?.ok) throw new Error(payload?.error ?? 'Failed to reload');
         const rows = Array.isArray(payload.rows) ? payload.rows : [];
         setRowData(rows);
         setRowCount(typeof payload.rowCount === 'number' ? payload.rowCount : rows.length);
+        if (payload.totals) {
+          const t = payload.totals;
+          setApiTotals({
+            totalListPrice: typeof t.totalListPrice === 'number' ? t.totalListPrice : 0,
+            totalNetPrice: typeof t.totalNetPrice === 'number' ? t.totalNetPrice : 0,
+            totalCost: typeof t.totalCost === 'number' ? t.totalCost : 0,
+            totalInstallation: typeof t.totalInstallation === 'number' ? t.totalInstallation : 0,
+            totalElInstalation: typeof t.totalElInstalation === 'number' ? t.totalElInstalation : 0,
+            totalCommissioning: typeof t.totalCommissioning === 'number' ? t.totalCommissioning : 0,
+          });
+        }
       } catch {
         showToastMessage('Unable to reload pivot data.', 'error');
       } finally {
@@ -323,6 +410,53 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     };
     void run();
   }, [endpoint, fieldList, quickSearch?.value]);
+
+  const HOUR_FIELD_LABELS: Record<string, string> = useMemo(() => ({
+    Installation: 'Installation',
+    ElInstalation: 'El. Installation',
+    Commissioning: 'Commissioning',
+  }), []);
+
+  const HOUR_FIELD_TOTAL_KEYS: Record<string, keyof NonNullable<typeof apiTotals>> = useMemo(() => ({
+    Installation: 'totalInstallation',
+    ElInstalation: 'totalElInstalation',
+    Commissioning: 'totalCommissioning',
+  }), []);
+
+  const handleCellValueChanged = useCallback(async (event: CellValueChangedEvent<RowData>) => {
+    const { data, colDef, newValue, oldValue } = event;
+    if (!data || !colDef.field || !EDITABLE_HOUR_FIELDS.has(colDef.field)) return;
+    const offerDetailId = typeof data.OfferDetailID === 'number' ? data.OfferDetailID : null;
+    if (offerDetailId == null) return;
+    const parsed = newValue === '' || newValue == null ? null : Number(newValue);
+    const valueToSave = parsed != null && Number.isFinite(parsed) ? parsed : null;
+    const fieldLabel = HOUR_FIELD_LABELS[colDef.field] ?? colDef.field;
+    const totalKey = HOUR_FIELD_TOTAL_KEYS[colDef.field];
+    try {
+      const res = await fetch(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          updates: [{ OfferDetailID: offerDetailId, [colDef.field]: valueToSave }],
+        }),
+      });
+      if (!res.ok) throw new Error('Save failed');
+      showToastMessage(`${fieldLabel} updated`, 'success');
+      // Update bottom totals bar locally — avoids a full data re-fetch that would collapse groups
+      if (totalKey) {
+        const qty = toFiniteNumber((data as Record<string, unknown>).Quantity) ?? 0;
+        const oldVal = toFiniteNumber(oldValue) ?? 0;
+        const newVal = valueToSave ?? 0;
+        const delta = qty * (newVal - oldVal);
+        if (delta !== 0) {
+          setApiTotals((prev) => prev ? { ...prev, [totalKey]: (prev[totalKey] ?? 0) + delta } : prev);
+        }
+      }
+    } catch {
+      showToastMessage('Failed to save change. Please try again.', 'error');
+      refreshPivotData();
+    }
+  }, [endpoint, EDITABLE_HOUR_FIELDS, HOUR_FIELD_LABELS, HOUR_FIELD_TOTAL_KEYS, refreshPivotData]);
 
   const confirmBulkEdit = useCallback(async () => {
     const valueNumber = Number(bulkEditValue);
@@ -411,7 +545,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
           }),
         });
         const payload = (await res.json().catch(() => null)) as
-          | { ok?: boolean; error?: string; rows?: RowData[]; rowCount?: number }
+          | { ok?: boolean; error?: string; rows?: RowData[]; rowCount?: number; totals?: Record<string, number> }
           | null;
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to load pivot data (status ${res.status})`);
@@ -420,11 +554,23 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
         const rows = Array.isArray(payload.rows) ? payload.rows : [];
         setRowData(rows);
         setRowCount(typeof payload.rowCount === 'number' ? payload.rowCount : rows.length);
+        if (payload.totals) {
+          const t = payload.totals;
+          setApiTotals({
+            totalListPrice: typeof t.totalListPrice === 'number' ? t.totalListPrice : 0,
+            totalNetPrice: typeof t.totalNetPrice === 'number' ? t.totalNetPrice : 0,
+            totalCost: typeof t.totalCost === 'number' ? t.totalCost : 0,
+            totalInstallation: typeof t.totalInstallation === 'number' ? t.totalInstallation : 0,
+            totalElInstalation: typeof t.totalElInstalation === 'number' ? t.totalElInstalation : 0,
+            totalCommissioning: typeof t.totalCommissioning === 'number' ? t.totalCommissioning : 0,
+          });
+        }
       } catch (err) {
         console.error('Failed to load pivot data', err);
         if (!cancelled) {
           setRowData([]);
           setRowCount(null);
+          setApiTotals(null);
         }
         showToastMessage('Unable to load pivot data. Please try again.', 'error');
       } finally {
@@ -460,17 +606,33 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     },
   }), []);
 
+  const getRowClass = useCallback((params: RowClassParams<RowData>) => {
+    // AG Grid group rows (Brand/PartNo header rows) — no extra class
+    if (params.node.group) return undefined;
+    const d = params.data as Record<string, unknown> | null | undefined;
+    if (!d) return undefined;
+    const isService = d.IsService === 1 || d.IsService === true || d.IsService === '1';
+    const isPrintable = d.IsPrintable === 1 || d.IsPrintable === true || d.IsPrintable === '1';
+    const isOption = d.IsOption === 1 || d.IsOption === true || d.IsOption === '1';
+    if (isService) {
+      return isPrintable ? 'offer-row offer-row--printable-service' : 'offer-row offer-row--nonprintable-service';
+    }
+    if (isOption) return 'offer-row offer-row--option';
+    return undefined;
+  }, []);
+
   const onGridReady = useMemo(() => (e: GridReadyEvent<RowData>) => {
     gridApiRef.current = e.api;
     e.api.setSideBarVisible(true);
     e.api.closeToolPanel();
-    // Start in pivot mode for the pivot view.
-    e.api.setGridOption('pivotMode', true);
+    // brandPartNo uses plain row-grouping (not pivot mode) so leaf cells are editable
+    e.api.setGridOption('pivotMode', layout !== 'brandPartNo');
     e.api.setGridOption('quickFilterText', quickSearch?.value ?? '');
     setGridReady(true);
-  }, [quickSearch?.value]);
+  }, [layout, quickSearch?.value]);
 
   const handlePivotModeChanged = useMemo(() => (e: ColumnPivotModeChangedEvent<RowData>) => {
+    if (suppressPivotExitRef.current) return;
     const api = e.api ?? gridApiRef.current;
     const enabled = typeof api?.isPivotMode === 'function' ? api.isPivotMode() : true;
     if (!enabled) {
@@ -504,7 +666,9 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
             rowHeight={32}
             headerHeight={38}
             rowModelType="clientSide"
+            getRowClass={getRowClass}
             onCellDoubleClicked={handleCellDoubleClicked}
+            onCellValueChanged={(e) => { void handleCellValueChanged(e); }}
             sideBar={{
               toolPanels: [
                 {
@@ -528,6 +692,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
               ],
             }}
             statusBar={{ statusPanels: [{ statusPanel: 'agAggregationComponent' }] }}
+            groupRemoveLowestSingleChildren={layout === 'brandPartNo'}
             rowGroupPanelShow="always"
             pivotPanelShow="always"
             suppressAggFuncInHeader
@@ -545,12 +710,21 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
       </div>
       <div className={panelStyles.totalsBar}>
         <div className={panelStyles.totalItem}>
-          <span className={panelStyles.totalLabel}>Total Net Price:</span>
-          <span className={panelStyles.totalValue}>{formatEuroTotal(totals.totalNetPrice)}</span>
+          <span className={panelStyles.totalLabel}>Total List:</span>
+          <span className={panelStyles.totalValue}>{formatEuroTotal(totals.totalListPrice)}</span>
         </div>
         <div className={panelStyles.totalItem}>
-          <span className={panelStyles.totalLabel}>Total List Price:</span>
-          <span className={panelStyles.totalValue}>{formatEuroTotal(totals.totalListPrice)}</span>
+          <span className={panelStyles.totalLabel}>Total Discount:</span>
+          <span className={panelStyles.totalValue}>
+            {formatEuroTotal(totals.totalDiscount)}
+            {Number.isFinite(totals.discountPct) && totals.discountPct !== 0
+              ? ` (${percentFormatter.format(totals.discountPct)} %)`
+              : null}
+          </span>
+        </div>
+        <div className={panelStyles.totalItem}>
+          <span className={panelStyles.totalLabel}>Total Net:</span>
+          <span className={panelStyles.totalValue}>{formatEuroTotal(totals.totalNetPrice)}</span>
         </div>
         <div className={panelStyles.totalItem}>
           <span className={panelStyles.totalLabel}>Total Cost:</span>
@@ -559,6 +733,18 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
         <div className={panelStyles.totalItem}>
           <span className={panelStyles.totalLabel}>Total Margin:</span>
           <span className={panelStyles.totalValue}>{formatPercentTotal(totals.totalMargin)}</span>
+        </div>
+        <div className={panelStyles.totalItem}>
+          <span className={panelStyles.totalLabel}>Installation:</span>
+          <span className={panelStyles.totalValue}>{formatHoursTotal(totals.totalInstallation)}</span>
+        </div>
+        <div className={panelStyles.totalItem}>
+          <span className={panelStyles.totalLabel}>El. Installation:</span>
+          <span className={panelStyles.totalValue}>{formatHoursTotal(totals.totalElInstalation)}</span>
+        </div>
+        <div className={panelStyles.totalItem}>
+          <span className={panelStyles.totalLabel}>Commissioning:</span>
+          <span className={panelStyles.totalValue}>{formatHoursTotal(totals.totalCommissioning)}</span>
         </div>
       </div>
       <LookupModal

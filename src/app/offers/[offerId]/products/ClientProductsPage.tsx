@@ -44,7 +44,7 @@ type Props = {
 type AddActionType = 'product' | 'category' | 'printable-comment' | 'non-printable-comment' | 'printable-service' | 'non-printable-service';
 type CreatableActionType = Exclude<AddActionType, 'product'>;
 type ProductsTableLayout = 'cust' | 'wCost' | 'wReq';
-type PivotLayout = 'category' | 'brand';
+type PivotLayout = 'category' | 'brand' | 'brandPartNo';
 type StandardPackageOption = {
   id: number;
   description: string;
@@ -1578,6 +1578,7 @@ export default function ClientProductsPage({
       aria-label="Pivot layout"
     >
       <option value="brand">Layout: Brand</option>
+      <option value="brandPartNo">Layout: Brand w PartNo</option>
       <option value="category">Layout: Category</option>
     </select>
   ) : null;

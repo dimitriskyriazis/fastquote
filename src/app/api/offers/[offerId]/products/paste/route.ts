@@ -295,6 +295,8 @@ const insertNonProductRows = async (transaction: Transaction, offerId: number, r
       request.input(`${p}_isComment`, sql.Bit, row.isComment ? 1 : 0);
       request.input(`${p}_isCategory`, sql.Bit, row.isCategory ? 1 : 0);
       request.input(`${p}_isOption`, sql.Bit, row.isOption ? 1 : 0);
+      request.input(`${p}_isService`, sql.Bit, row.isService ? 1 : 0);
+      request.input(`${p}_serviceType`, sql.NVarChar(20), row.serviceType);
       request.input(`${p}_productDescription`, sql.NVarChar(sql.MAX), row.productDescription ?? row.description);
       request.input(`${p}_comment`, sql.NVarChar(sql.MAX), row.comment);
       request.input(`${p}_delivery`, sql.NVarChar(255), row.delivery);
@@ -311,15 +313,15 @@ const insertNonProductRows = async (transaction: Transaction, offerId: number, r
       request.input(`${p}_requestedDescription3`, sql.NVarChar(sql.MAX), row.requestedDescription3);
       request.input(`${p}_requestedQuantity`, sql.Decimal(18, 4), row.requestedQuantity);
       request.input(`${p}_quantity`, sql.Decimal(18, 4), row.quantity ?? 0);
-      values.push(`(@${p}_seq,@${p}_tree,@${p}_ordering,@${p}_isPrintable,@${p}_isComment,@${p}_isCategory,@${p}_isOption,@${p}_productDescription,@${p}_comment,@${p}_delivery,@${p}_installation,@${p}_elInstalation,@${p}_commissioning,@${p}_requestedItemNo,@${p}_requestedBrand,@${p}_requestedPartNo,@${p}_requestedModelNo,@${p}_requestedWebLink,@${p}_requestedDescription,@${p}_requestedDescription2,@${p}_requestedDescription3,@${p}_requestedQuantity,@${p}_quantity)`);
+      values.push(`(@${p}_seq,@${p}_tree,@${p}_ordering,@${p}_isPrintable,@${p}_isComment,@${p}_isCategory,@${p}_isOption,@${p}_isService,@${p}_serviceType,@${p}_productDescription,@${p}_comment,@${p}_delivery,@${p}_installation,@${p}_elInstalation,@${p}_commissioning,@${p}_requestedItemNo,@${p}_requestedBrand,@${p}_requestedPartNo,@${p}_requestedModelNo,@${p}_requestedWebLink,@${p}_requestedDescription,@${p}_requestedDescription2,@${p}_requestedDescription3,@${p}_requestedQuantity,@${p}_quantity)`);
     });
     const result = await request.query<{ OfferDetailID: number }>(`
-      DECLARE @r TABLE (Seq INT, TreeOrdering NVARCHAR(255), Ordering INT, IsPrintable BIT NULL, IsComment BIT, IsCategory BIT, IsOption BIT, ProductDescription NVARCHAR(MAX) NULL, Comment NVARCHAR(MAX) NULL, Delivery NVARCHAR(255) NULL, Installation DECIMAL(18,4) NULL, ElInstalation DECIMAL(18,4) NULL, Commissioning DECIMAL(18,4) NULL, RequestedItemNo NVARCHAR(255) NULL, RequestedBrand NVARCHAR(255) NULL, RequestedPartNo NVARCHAR(255) NULL, RequestedModelNo NVARCHAR(255) NULL, RequestedWebLink NVARCHAR(MAX) NULL, RequestedDescription NVARCHAR(MAX) NULL, RequestedDescription2 NVARCHAR(MAX) NULL, RequestedDescription3 NVARCHAR(MAX) NULL, RequestedQuantity DECIMAL(18,4) NULL, Quantity DECIMAL(18,4) NOT NULL);
+      DECLARE @r TABLE (Seq INT, TreeOrdering NVARCHAR(255), Ordering INT, IsPrintable BIT NULL, IsComment BIT, IsCategory BIT, IsOption BIT, IsService BIT, ServiceType NVARCHAR(20) NULL, ProductDescription NVARCHAR(MAX) NULL, Comment NVARCHAR(MAX) NULL, Delivery NVARCHAR(255) NULL, Installation DECIMAL(18,4) NULL, ElInstalation DECIMAL(18,4) NULL, Commissioning DECIMAL(18,4) NULL, RequestedItemNo NVARCHAR(255) NULL, RequestedBrand NVARCHAR(255) NULL, RequestedPartNo NVARCHAR(255) NULL, RequestedModelNo NVARCHAR(255) NULL, RequestedWebLink NVARCHAR(MAX) NULL, RequestedDescription NVARCHAR(MAX) NULL, RequestedDescription2 NVARCHAR(MAX) NULL, RequestedDescription3 NVARCHAR(MAX) NULL, RequestedQuantity DECIMAL(18,4) NULL, Quantity DECIMAL(18,4) NOT NULL);
       INSERT INTO @r VALUES ${values.join(', ')};
       DECLARE @i TABLE (OfferDetailID INT, TreeOrdering NVARCHAR(255));
-      INSERT INTO dbo.OfferDetails (OfferID, ParentOfferDetailID, TreeOrdering, Ordering, IsPrintable, IsComment, IsCategory, IsOption, ProductDescription, Quantity, Comment, Delivery, Installation, ElInstalation, Commissioning, RequestedItemNo, RequestedBrand, RequestedPartNo, RequestedModelNo, RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy)
+      INSERT INTO dbo.OfferDetails (OfferID, ParentOfferDetailID, TreeOrdering, Ordering, IsPrintable, IsComment, IsCategory, IsOption, IsService, ServiceType, ProductDescription, Quantity, Comment, Delivery, Installation, ElInstalation, Commissioning, RequestedItemNo, RequestedBrand, RequestedPartNo, RequestedModelNo, RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy)
       OUTPUT INSERTED.ID, INSERTED.TreeOrdering INTO @i (OfferDetailID, TreeOrdering)
-      SELECT @__offerId, NULL, src.TreeOrdering, src.Ordering, src.IsPrintable, src.IsComment, src.IsCategory, src.IsOption, src.ProductDescription, src.Quantity, src.Comment, src.Delivery, src.Installation, src.ElInstalation, src.Commissioning, src.RequestedItemNo, src.RequestedBrand, src.RequestedPartNo, src.RequestedModelNo, src.RequestedWebLink, src.RequestedDescription, src.RequestedDescription2, src.RequestedDescription3, src.RequestedQuantity, SYSUTCDATETIME(), @__createdBy, SYSUTCDATETIME(), @__modifiedBy
+      SELECT @__offerId, NULL, src.TreeOrdering, src.Ordering, src.IsPrintable, src.IsComment, src.IsCategory, src.IsOption, src.IsService, src.ServiceType, src.ProductDescription, src.Quantity, src.Comment, src.Delivery, src.Installation, src.ElInstalation, src.Commissioning, src.RequestedItemNo, src.RequestedBrand, src.RequestedPartNo, src.RequestedModelNo, src.RequestedWebLink, src.RequestedDescription, src.RequestedDescription2, src.RequestedDescription3, src.RequestedQuantity, SYSUTCDATETIME(), @__createdBy, SYSUTCDATETIME(), @__modifiedBy
       FROM @r src
       ORDER BY src.Seq;
       UPDATE child
@@ -387,15 +389,17 @@ const insertProductRowsKeepPricing = async (transaction: Transaction, offerId: n
       request.input(`${p}_requestedDescription2`, sql.NVarChar(sql.MAX), row.requestedDescription2);
       request.input(`${p}_requestedDescription3`, sql.NVarChar(sql.MAX), row.requestedDescription3);
       request.input(`${p}_requestedQuantity`, sql.Decimal(18, 4), row.requestedQuantity);
-      values.push(`(@${p}_seq,@${p}_tree,@${p}_ordering,@${p}_isPrintable,@${p}_isOption,@${p}_productId,@${p}_partNo,@${p}_modelNo,@${p}_description,@${p}_quantity,@${p}_listPrice,@${p}_netUnitPrice,@${p}_telmacoDiscount,@${p}_customerDiscount,@${p}_additionalCustomerDiscount,@${p}_netCostOtherCurrency,@${p}_otherCurrencyId,@${p}_currencyCostModifier,@${p}_netCost,@${p}_margin,@${p}_grossProfit,@${p}_warranty,@${p}_telmacoWarranty,@${p}_priceListId,@${p}_priceListItemId,@${p}_comment,@${p}_delivery,@${p}_installation,@${p}_elInstalation,@${p}_commissioning,@${p}_requestedItemNo,@${p}_requestedBrand,@${p}_requestedPartNo,@${p}_requestedModelNo,@${p}_requestedWebLink,@${p}_requestedDescription,@${p}_requestedDescription2,@${p}_requestedDescription3,@${p}_requestedQuantity)`);
+      request.input(`${p}_isService`, sql.Bit, row.isService ? 1 : 0);
+      request.input(`${p}_serviceType`, sql.NVarChar(20), row.serviceType);
+      values.push(`(@${p}_seq,@${p}_tree,@${p}_ordering,@${p}_isPrintable,@${p}_isOption,@${p}_isService,@${p}_serviceType,@${p}_productId,@${p}_partNo,@${p}_modelNo,@${p}_description,@${p}_quantity,@${p}_listPrice,@${p}_netUnitPrice,@${p}_telmacoDiscount,@${p}_customerDiscount,@${p}_additionalCustomerDiscount,@${p}_netCostOtherCurrency,@${p}_otherCurrencyId,@${p}_currencyCostModifier,@${p}_netCost,@${p}_margin,@${p}_grossProfit,@${p}_warranty,@${p}_telmacoWarranty,@${p}_priceListId,@${p}_priceListItemId,@${p}_comment,@${p}_delivery,@${p}_installation,@${p}_elInstalation,@${p}_commissioning,@${p}_requestedItemNo,@${p}_requestedBrand,@${p}_requestedPartNo,@${p}_requestedModelNo,@${p}_requestedWebLink,@${p}_requestedDescription,@${p}_requestedDescription2,@${p}_requestedDescription3,@${p}_requestedQuantity)`);
     });
     const result = await request.query<{ OfferDetailID: number }>(`
-      DECLARE @r TABLE (Seq INT, TreeOrdering NVARCHAR(255), Ordering INT, IsPrintable BIT NULL, IsOption BIT, ProductID INT NULL, PartNumber NVARCHAR(255) NULL, ModelNumber NVARCHAR(255) NULL, ProductDescription NVARCHAR(MAX) NULL, Quantity DECIMAL(18,4) NULL, ListPrice DECIMAL(18,4) NULL, NetUnitPrice DECIMAL(18,4) NULL, TelmacoDiscount DECIMAL(18,4) NULL, CustomerDiscount DECIMAL(18,4) NULL, AdditionalCustomerDiscount DECIMAL(18,4) NULL, NetCostOtherCurrency DECIMAL(18,4) NULL, OtherCurrencyID INT NULL, CurrencyCostModifier DECIMAL(18,8) NULL, NetCost DECIMAL(18,4) NULL, Margin DECIMAL(18,4) NULL, GrossProfit DECIMAL(18,4) NULL, Warranty INT NULL, TelmacoWarranty INT NULL, PriceListID INT NULL, PriceListItemID INT NULL, Comment NVARCHAR(MAX) NULL, Delivery NVARCHAR(255) NULL, Installation DECIMAL(18,4) NULL, ElInstalation DECIMAL(18,4) NULL, Commissioning DECIMAL(18,4) NULL, RequestedItemNo NVARCHAR(255) NULL, RequestedBrand NVARCHAR(255) NULL, RequestedPartNo NVARCHAR(255) NULL, RequestedModelNo NVARCHAR(255) NULL, RequestedWebLink NVARCHAR(MAX) NULL, RequestedDescription NVARCHAR(MAX) NULL, RequestedDescription2 NVARCHAR(MAX) NULL, RequestedDescription3 NVARCHAR(MAX) NULL, RequestedQuantity DECIMAL(18,4) NULL);
+      DECLARE @r TABLE (Seq INT, TreeOrdering NVARCHAR(255), Ordering INT, IsPrintable BIT NULL, IsOption BIT, IsService BIT, ServiceType NVARCHAR(20) NULL, ProductID INT NULL, PartNumber NVARCHAR(255) NULL, ModelNumber NVARCHAR(255) NULL, ProductDescription NVARCHAR(MAX) NULL, Quantity DECIMAL(18,4) NULL, ListPrice DECIMAL(18,4) NULL, NetUnitPrice DECIMAL(18,4) NULL, TelmacoDiscount DECIMAL(18,4) NULL, CustomerDiscount DECIMAL(18,4) NULL, AdditionalCustomerDiscount DECIMAL(18,4) NULL, NetCostOtherCurrency DECIMAL(18,4) NULL, OtherCurrencyID INT NULL, CurrencyCostModifier DECIMAL(18,8) NULL, NetCost DECIMAL(18,4) NULL, Margin DECIMAL(18,4) NULL, GrossProfit DECIMAL(18,4) NULL, Warranty INT NULL, TelmacoWarranty INT NULL, PriceListID INT NULL, PriceListItemID INT NULL, Comment NVARCHAR(MAX) NULL, Delivery NVARCHAR(255) NULL, Installation DECIMAL(18,4) NULL, ElInstalation DECIMAL(18,4) NULL, Commissioning DECIMAL(18,4) NULL, RequestedItemNo NVARCHAR(255) NULL, RequestedBrand NVARCHAR(255) NULL, RequestedPartNo NVARCHAR(255) NULL, RequestedModelNo NVARCHAR(255) NULL, RequestedWebLink NVARCHAR(MAX) NULL, RequestedDescription NVARCHAR(MAX) NULL, RequestedDescription2 NVARCHAR(MAX) NULL, RequestedDescription3 NVARCHAR(MAX) NULL, RequestedQuantity DECIMAL(18,4) NULL);
       INSERT INTO @r VALUES ${values.join(', ')};
       DECLARE @i TABLE (OfferDetailID INT, TreeOrdering NVARCHAR(255));
-      INSERT INTO dbo.OfferDetails (OfferID, ParentOfferDetailID, TreeOrdering, Ordering, IsPrintable, IsComment, IsCategory, IsOption, ProductID, BrandID, PartNumber, ModelNumber, ProductDescription, Quantity, ListPrice, NetUnitPrice, TotalPrice, TotalNet, TelmacoDiscount, CustomerDiscount, AdditionalCustomerDiscount, NetCostOtherCurrency, OtherCurrencyID, CurrencyCostModifier, NetCost, Margin, GrossProfit, TotalCost, Warranty, TelmacoWarranty, PriceListID, PriceListItemID, Comment, Delivery, Installation, ElInstalation, Commissioning, RequestedItemNo, RequestedBrand, RequestedPartNo, RequestedModelNo, RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy)
+      INSERT INTO dbo.OfferDetails (OfferID, ParentOfferDetailID, TreeOrdering, Ordering, IsPrintable, IsComment, IsCategory, IsOption, IsService, ServiceType, ProductID, BrandID, PartNumber, ModelNumber, ProductDescription, Quantity, ListPrice, NetUnitPrice, TotalPrice, TotalNet, TelmacoDiscount, CustomerDiscount, AdditionalCustomerDiscount, NetCostOtherCurrency, OtherCurrencyID, CurrencyCostModifier, NetCost, Margin, GrossProfit, TotalCost, Warranty, TelmacoWarranty, PriceListID, PriceListItemID, Comment, Delivery, Installation, ElInstalation, Commissioning, RequestedItemNo, RequestedBrand, RequestedPartNo, RequestedModelNo, RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy)
       OUTPUT INSERTED.ID, INSERTED.TreeOrdering INTO @i (OfferDetailID, TreeOrdering)
-      SELECT @__offerId, NULL, src.TreeOrdering, src.Ordering, src.IsPrintable, 0, 0, src.IsOption, src.ProductID, pr.BrandID, src.PartNumber, src.ModelNumber, src.ProductDescription, src.Quantity, src.ListPrice, src.NetUnitPrice, CASE WHEN src.ListPrice IS NULL OR src.Quantity IS NULL THEN NULL ELSE src.ListPrice * src.Quantity END, CASE WHEN src.NetUnitPrice IS NULL OR src.Quantity IS NULL THEN NULL ELSE src.NetUnitPrice * src.Quantity END, src.TelmacoDiscount, src.CustomerDiscount, src.AdditionalCustomerDiscount, src.NetCostOtherCurrency, src.OtherCurrencyID, src.CurrencyCostModifier, src.NetCost, src.Margin, src.GrossProfit, CASE WHEN src.NetCost IS NULL OR src.Quantity IS NULL THEN NULL ELSE src.NetCost * src.Quantity END, src.Warranty, src.TelmacoWarranty, src.PriceListID, src.PriceListItemID, src.Comment, src.Delivery, src.Installation, src.ElInstalation, src.Commissioning, src.RequestedItemNo, src.RequestedBrand, src.RequestedPartNo, src.RequestedModelNo, src.RequestedWebLink, src.RequestedDescription, src.RequestedDescription2, src.RequestedDescription3, src.RequestedQuantity, SYSUTCDATETIME(), @__createdBy, SYSUTCDATETIME(), @__modifiedBy FROM @r src LEFT JOIN dbo.Products pr ON pr.ID = src.ProductID ORDER BY src.Seq;
+      SELECT @__offerId, NULL, src.TreeOrdering, src.Ordering, src.IsPrintable, 0, 0, src.IsOption, src.IsService, src.ServiceType, src.ProductID, pr.BrandID, src.PartNumber, src.ModelNumber, src.ProductDescription, src.Quantity, src.ListPrice, src.NetUnitPrice, CASE WHEN src.ListPrice IS NULL OR src.Quantity IS NULL THEN NULL ELSE src.ListPrice * src.Quantity END, CASE WHEN src.NetUnitPrice IS NULL OR src.Quantity IS NULL THEN NULL ELSE src.NetUnitPrice * src.Quantity END, src.TelmacoDiscount, src.CustomerDiscount, src.AdditionalCustomerDiscount, src.NetCostOtherCurrency, src.OtherCurrencyID, src.CurrencyCostModifier, src.NetCost, src.Margin, src.GrossProfit, CASE WHEN src.NetCost IS NULL OR src.Quantity IS NULL THEN NULL ELSE src.NetCost * src.Quantity END, src.Warranty, src.TelmacoWarranty, src.PriceListID, src.PriceListItemID, src.Comment, src.Delivery, src.Installation, src.ElInstalation, src.Commissioning, src.RequestedItemNo, src.RequestedBrand, src.RequestedPartNo, src.RequestedModelNo, src.RequestedWebLink, src.RequestedDescription, src.RequestedDescription2, src.RequestedDescription3, src.RequestedQuantity, SYSUTCDATETIME(), @__createdBy, SYSUTCDATETIME(), @__modifiedBy FROM @r src LEFT JOIN dbo.Products pr ON pr.ID = src.ProductID ORDER BY src.Seq;
       UPDATE child
       SET child.ParentOfferDetailID = parent.ID
       FROM dbo.OfferDetails child
@@ -473,7 +477,9 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, pool: Con
       request.input(`${p}_requestedDescription2`, sql.NVarChar(sql.MAX), row.requestedDescription2);
       request.input(`${p}_requestedDescription3`, sql.NVarChar(sql.MAX), row.requestedDescription3);
       request.input(`${p}_requestedQuantity`, sql.Decimal(18, 4), row.requestedQuantity);
-      values.push(`(@${p}_seq,@${p}_tree,@${p}_ordering,@${p}_isPrintable,@${p}_isOption,@${p}_productId,@${p}_comment,@${p}_delivery,@${p}_installation,@${p}_elInstalation,@${p}_commissioning,@${p}_requestedItemNo,@${p}_requestedBrand,@${p}_requestedPartNo,@${p}_requestedModelNo,@${p}_requestedWebLink,@${p}_requestedDescription,@${p}_requestedDescription2,@${p}_requestedDescription3,@${p}_requestedQuantity)`);
+      request.input(`${p}_isService`, sql.Bit, row.isService ? 1 : 0);
+      request.input(`${p}_serviceType`, sql.NVarChar(20), row.serviceType);
+      values.push(`(@${p}_seq,@${p}_tree,@${p}_ordering,@${p}_isPrintable,@${p}_isOption,@${p}_isService,@${p}_serviceType,@${p}_productId,@${p}_comment,@${p}_delivery,@${p}_installation,@${p}_elInstalation,@${p}_commissioning,@${p}_requestedItemNo,@${p}_requestedBrand,@${p}_requestedPartNo,@${p}_requestedModelNo,@${p}_requestedWebLink,@${p}_requestedDescription,@${p}_requestedDescription2,@${p}_requestedDescription3,@${p}_requestedQuantity)`);
     });
     const result = await request.query<{ OfferDetailID: number }>(`
       DECLARE @pricingPolicyId INT;
@@ -507,6 +513,8 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, pool: Con
         Ordering INT,
         IsPrintable BIT NULL,
         IsOption BIT,
+        IsService BIT,
+        ServiceType NVARCHAR(20) NULL,
         ProductID INT,
         Comment NVARCHAR(MAX) NULL,
         Delivery NVARCHAR(255) NULL,
@@ -558,6 +566,8 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, pool: Con
         Ordering INT,
         IsPrintable BIT NULL,
         IsOption BIT,
+        IsService BIT,
+        ServiceType NVARCHAR(20) NULL,
         ProductID INT,
         BrandID INT NULL,
         PartNumber NVARCHAR(255) NULL,
@@ -592,6 +602,8 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, pool: Con
         src.Ordering,
         src.IsPrintable,
         src.IsOption,
+        src.IsService,
+        src.ServiceType,
         src.ProductID,
         pr.BrandID,
         pr.PartNumber,
@@ -653,7 +665,7 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, pool: Con
       DECLARE @i TABLE (OfferDetailID INT, TreeOrdering NVARCHAR(255));
       INSERT INTO dbo.OfferDetails (
         OfferID, ParentOfferDetailID, TreeOrdering, Ordering,
-        IsPrintable, IsComment, IsCategory, IsOption,
+        IsPrintable, IsComment, IsCategory, IsOption, IsService, ServiceType,
         ProductID, BrandID, PartNumber, ModelNumber, ProductDescription,
         TelmacoWarranty, Warranty, Quantity,
         ListPrice, NetUnitPrice, TotalPrice, TotalNet,
@@ -669,7 +681,7 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, pool: Con
       OUTPUT INSERTED.ID, INSERTED.TreeOrdering INTO @i (OfferDetailID, TreeOrdering)
       SELECT
         @__offerId, NULL, p.TreeOrdering, p.Ordering,
-        p.IsPrintable, 0, 0, p.IsOption,
+        p.IsPrintable, 0, 0, p.IsOption, p.IsService, p.ServiceType,
         p.ProductID, p.BrandID, p.PartNumber, p.ModelNumber, p.ProductDescription,
         0, 0, 1,
         p.ListPrice,
