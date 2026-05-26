@@ -593,6 +593,24 @@ describe('resolvePricing — single-field edit cascade', () => {
       expect(r.customerDiscount).toBe(0);   // unchanged
     });
 
+    it('preserves NetCost when ListPrice changes with customer-discount anchor', () => {
+      const input: PricingInput = {
+        listPrice: 200,
+        customerDiscount: 0,
+        telmacoDiscount: 0,
+        netUnitPrice: null,
+        netCost: 100,
+        margin: null,
+        provided: { ...noProvided, listPrice: true },
+        sellAnchor: 'customerDiscount',
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netCost).toBe(100);
+      expect(r.telmacoDiscount).toBe(50);
+      expect(r.netUnitPrice).toBe(200);
+      expect(r.customerDiscount).toBe(0);
+    });
+
     it('preserves NetUnitPrice when only NP is populated', () => {
       const input: PricingInput = {
         listPrice: 200,

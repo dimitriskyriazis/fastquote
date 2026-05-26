@@ -273,23 +273,24 @@ const resolveSingleFieldEdit = (input: PricingInput): ResolvedPricing | null => 
 
   // ListPrice edit — cascade depends on sellAnchor:
   //   'netUnitPrice'     → hold NP (and TC), recompute CD+TD  (default)
-  //   'customerDiscount' → hold CD (and TD), recompute NP+TC
+  //   'customerDiscount' → hold CD; keep TC when present, otherwise derive it from TD
   //   'margin'           → hold Margin+TC, recompute NP then CD
   if (p.listPrice) {
     if (!hasValidLp) return null;
 
     if (sellAnchor === 'customerDiscount') {
-      // Hold CD → recompute NP from LP × (1 - effectiveCD).
+      // Hold CD on the sell side; keep an existing absolute cost anchored.
       const effectiveCd = (cd ?? 0) + acdValue;
       const newNp = cd != null
         ? roundTo(lp * (1 - percentageToFactor(effectiveCd)))
         : np;
-      const newTc = td != null
-        ? roundTo(lp * (1 - percentageToFactor(td)))
-        : tc;
+      const newTc = tc != null
+        ? tc
+        : td != null ? roundTo(lp * (1 - percentageToFactor(td))) : null;
+      const newTd = newTc != null ? roundTo((1 - newTc / lp) * 100) : td;
       return {
         customerDiscount: cd,
-        telmacoDiscount: td,
+        telmacoDiscount: newTd,
         netUnitPrice: newNp,
         netCost: newTc,
         margin: deriveMarginPercent(newNp, newTc),

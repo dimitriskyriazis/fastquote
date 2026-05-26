@@ -4904,13 +4904,36 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     api.setFilterModel(Object.keys(next).length > 0 ? next : null);
   }, []);
 
-  // CONTEXT MENU - Flip upward when it would overflow the viewport bottom
+  // CONTEXT MENU - Keep context menus and submenus inside the viewport.
   const postProcessPopup = useCallback((params: PostProcessPopupParams<RowData>) => {
-    if (params.type !== 'contextMenu') return;
+    if (params.type !== 'contextMenu' && params.type !== 'subMenu') return;
     const popup = params.ePopup;
     if (!popup) return;
-    // Run after the browser has painted so the popup has its final rendered height
+    // Run after the browser has painted so the popup has its final rendered size.
     requestAnimationFrame(() => {
+      if (params.type === 'subMenu' && params.eventSource) {
+        const popupRect = popup.getBoundingClientRect();
+        const sourceRect = params.eventSource.getBoundingClientRect();
+        const currentLeft = parseFloat(popup.style.left) || 0;
+        const currentTop = parseFloat(popup.style.top) || 0;
+        const MARGIN = 4;
+        const OVERLAP = 2;
+        const hasRoomRight = sourceRect.right - OVERLAP + popupRect.width <= window.innerWidth - MARGIN;
+        const preferredLeft = hasRoomRight
+          ? sourceRect.right - OVERLAP
+          : sourceRect.left - popupRect.width + OVERLAP;
+        const nextLeft = Math.min(
+          Math.max(MARGIN, preferredLeft),
+          Math.max(MARGIN, window.innerWidth - MARGIN - popupRect.width),
+        );
+        const nextTop = Math.min(
+          Math.max(MARGIN, sourceRect.top),
+          Math.max(MARGIN, window.innerHeight - MARGIN - popupRect.height),
+        );
+        popup.style.left = `${currentLeft + (nextLeft - popupRect.left)}px`;
+        popup.style.top = `${currentTop + (nextTop - popupRect.top)}px`;
+        return;
+      }
       const rect = popup.getBoundingClientRect();
       const MARGIN = 4;
       if (rect.bottom > window.innerHeight - MARGIN) {
