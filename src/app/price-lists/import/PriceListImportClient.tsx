@@ -339,7 +339,7 @@ const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string; required?: bo
   { key: "partNumber", label: "Part Number", required: true },
   { key: "modelNumber", label: "Model Number (optional)", required: false },
   { key: "description", label: "Name / Description (optional)", required: false },
-  { key: "listPrice", label: "List Price (Ath price for services)", required: true },
+  { key: "listPrice", label: "List Price", required: true },
   { key: "costPrice", label: "Cost Price (optional)", required: false },
   { key: "warning", label: "Warning (optional)", required: false },
   { key: "weblink", label: "Weblink (optional)", required: false },
@@ -373,7 +373,8 @@ type SheetMapping = {
   selection: Partial<Record<HeaderColumnKey, number | null>>;
   rowCount: number;
   enabled: boolean;
-  previewRows: Record<number, unknown>[];
+  previewRows: Record<number, unknown>[]; // first 20 rows for display
+  allRows: Record<number, unknown>[]; // all data rows (for filtering)
 };
 
 type PreviewColumn = {
@@ -801,15 +802,14 @@ const analyzeSheet = (
   const rawDataRows = rawRows
     .slice(dataStartIndex)
     .filter((row) => Array.isArray(row) && row.some(hasCellValue));
-  const previewRows = rawDataRows
-    .slice(0, 20)
-    .map((row) => {
-      const preview: Record<number, unknown> = {};
-      row.forEach((cell, colIdx) => {
-        preview[colIdx] = cell;
-      });
-      return preview;
+  const allRows = rawDataRows.map((row) => {
+    const obj: Record<number, unknown> = {};
+    row.forEach((cell, colIdx) => {
+      obj[colIdx] = cell;
     });
+    return obj;
+  });
+  const previewRows = allRows.slice(0, 20);
 
   return {
     name: sheetName || `Sheet ${fallbackIndex + 1}`,
@@ -820,6 +820,7 @@ const analyzeSheet = (
     rowCount,
     enabled,
     previewRows,
+    allRows,
   };
 };
 
@@ -1003,6 +1004,7 @@ export default function PriceListImportClient({
   const validationRunId = useRef(0);
   const [showSheetSelector, setShowSheetSelector] = useState(false);
   const [multiSelectEnabled, setMultiSelectEnabled] = useState(false);
+  const [rowFilterText, setRowFilterText] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1776,20 +1778,47 @@ export default function PriceListImportClient({
     }).filter((col): col is PreviewColumn => Boolean(col));
   }, [activeSheet, values.isService]);
 
+  // Indices (0-based into allRows) of rows matching the current filter text.
+  // null means no active filter (import everything).
+  const filteredRowIndices = useMemo<number[] | null>(() => {
+    if (!activeSheet || !rowFilterText.trim()) return null;
+    const search = rowFilterText.trim().toLowerCase();
+    const partCol = activeSheet.selection.partNumber;
+    const descCol = activeSheet.selection.description;
+    const modelCol = activeSheet.selection.modelNumber;
+    const matches: number[] = [];
+    activeSheet.allRows.forEach((row, idx) => {
+      const cellMatches = (colIndex: number | null | undefined) => {
+        if (colIndex == null) return false;
+        const val = row[colIndex];
+        if (typeof val === "string") return val.toLowerCase().includes(search);
+        if (typeof val === "number") return String(val).includes(search);
+        return false;
+      };
+      if (cellMatches(partCol) || cellMatches(descCol) || cellMatches(modelCol)) {
+        matches.push(idx);
+      }
+    });
+    return matches;
+  }, [activeSheet, rowFilterText]);
+
   const displayPreviewRows = useMemo<Record<number, unknown>[]>(() => {
     if (!activeSheet) return [];
     const partCol = activeSheet.selection.partNumber;
     const priceCol = activeSheet.selection.listPrice;
-    const rows = activeSheet.previewRows;
-    if (partCol == null || priceCol == null) return rows.slice(0, 3);
+    // Use filtered rows when a filter is active, otherwise fall back to all rows
+    const candidateRows = filteredRowIndices !== null
+      ? filteredRowIndices.map((idx) => activeSheet.allRows[idx]).filter(Boolean) as Record<number, unknown>[]
+      : activeSheet.allRows;
+    if (partCol == null || priceCol == null) return candidateRows.slice(0, 3);
     const isFilled = (value: unknown) => {
       if (value === null || value === undefined) return false;
       if (typeof value === "string") return value.trim().length > 0;
       if (typeof value === "number") return Number.isFinite(value);
       return true;
     };
-    return rows.filter((row) => isFilled(row[partCol]) && isFilled(row[priceCol])).slice(0, 3);
-  }, [activeSheet]);
+    return candidateRows.filter((row) => isFilled(row[partCol]) && isFilled(row[priceCol])).slice(0, 3);
+  }, [activeSheet, filteredRowIndices]);
 
   const formatPreviewCell = useCallback(
     (value: unknown): string => {
@@ -1844,6 +1873,7 @@ export default function PriceListImportClient({
     validationRunId.current += 1;
     const runId = validationRunId.current;
     setFile(nextFile);
+    setRowFilterText("");
 
     if (!nextFile) {
       setFileValidation(INITIAL_VALIDATION);
@@ -1979,6 +2009,40 @@ export default function PriceListImportClient({
       return;
     }
 
+    // If a row filter is active, ask the user whether to import all rows or only the filtered ones.
+    // Compute fresh here (don't rely on the useMemo closure which may be stale).
+    let importFilteredIndices: number[] | null = null;
+    const trimmedFilter = rowFilterText.trim();
+    if (trimmedFilter && activeSheet && activeSheet.allRows.length > 0) {
+      const search = trimmedFilter.toLowerCase();
+      const partCol = activeSheet.selection.partNumber;
+      const descCol = activeSheet.selection.description;
+      const modelCol = activeSheet.selection.modelNumber;
+      const cellMatch = (row: Record<number, unknown>, colIndex: number | null | undefined): boolean => {
+        if (colIndex == null) return false;
+        const val = row[colIndex];
+        if (typeof val === "string") return val.toLowerCase().includes(search);
+        if (typeof val === "number") return String(val).includes(search);
+        return false;
+      };
+      const freshFilteredIndices = activeSheet.allRows
+        .map((row, idx) => ({ row, idx }))
+        .filter(({ row }) => cellMatch(row, partCol) || cellMatch(row, descCol) || cellMatch(row, modelCol))
+        .map(({ idx }) => idx);
+
+      if (freshFilteredIndices.length < activeSheet.allRows.length) {
+        const importFiltered = await showConfirmDialog({
+          title: "Import filtered rows?",
+          message: `Your filter matches ${freshFilteredIndices.length} of ${activeSheet.allRows.length} rows. Import only the matching rows, or all rows?`,
+          confirmLabel: `Import ${freshFilteredIndices.length} filtered rows only`,
+          cancelLabel: `Import all ${activeSheet.allRows.length} rows`,
+        });
+        if (importFiltered) {
+          importFilteredIndices = freshFilteredIndices;
+        }
+      }
+    }
+
     setSubmitting(true);
     try {
       const currentFile = file;
@@ -2049,6 +2113,11 @@ export default function PriceListImportClient({
           servicePriceOutGR: sheet.selection.servicePriceOutGR ?? null,
           serviceType: sheet.selection.serviceType ?? null,
         },
+        // Only pass rowIndices for the active sheet when filtering is used;
+        // other sheets (multi-sheet import) are always imported in full.
+        rowIndices: (importFilteredIndices && activeSheet && sheet.name === activeSheet.name)
+          ? importFilteredIndices
+          : null,
       }));
       formData.append("columnMappings", JSON.stringify(columnMappings));
 
@@ -2302,7 +2371,7 @@ export default function PriceListImportClient({
     } finally {
       setSubmitting(false);
     }
-  }, [appendMode, appendToPriceListId, clearDraft, euroCurrencyId, file, fileValidation, isCostCurrencyEuro, router, values]);
+  }, [appendMode, appendToPriceListId, clearDraft, euroCurrencyId, file, fileValidation, isCostCurrencyEuro, router, rowFilterText, values]);
 
   const renderOption = (option: DropdownOption) => (
     <option key={option.value} value={option.value}>
@@ -2885,7 +2954,7 @@ export default function PriceListImportClient({
                                 return (
                                   <label key={column.key} className={styles.mappingField}>
                                     <span className={styles.mappingLabel}>
-                                      {column.label} {column.required ? <span className={styles.requiredMark}>*</span> : null}
+                                      {column.label}{column.key === "listPrice" && values.isService ? " (Ath price for services)" : ""} {column.required ? <span className={styles.requiredMark}>*</span> : null}
                                     </span>
                                     <select
                                       className={styles.input}
@@ -2927,11 +2996,32 @@ export default function PriceListImportClient({
                               <div className={styles.previewSection}>
                                 <div className={styles.previewHeading}>
                                   <span>
-                                    Sample rows (first {displayPreviewRows.length > 0 ? displayPreviewRows.length : 3})
+                                    {filteredRowIndices !== null
+                                      ? `Preview (${filteredRowIndices.length} of ${activeSheet.allRows.length} rows match)`
+                                      : `Sample rows (first ${displayPreviewRows.length > 0 ? displayPreviewRows.length : 3})`}
                                   </span>
                                   <span className={styles.previewHint}>
                                     Showing mapped columns; the list price column is bold.
                                   </span>
+                                </div>
+                                <div className={styles.previewFilterRow}>
+                                  <input
+                                    type="search"
+                                    className={styles.previewFilterInput}
+                                    placeholder={`Filter rows by part number, description or model…`}
+                                    value={rowFilterText}
+                                    onChange={(e) => setRowFilterText(e.target.value)}
+                                  />
+                                  {rowFilterText && (
+                                    <button
+                                      type="button"
+                                      className={styles.previewFilterClear}
+                                      onClick={() => setRowFilterText("")}
+                                      aria-label="Clear filter"
+                                    >
+                                      ×
+                                    </button>
+                                  )}
                                 </div>
                                 {previewColumns.length === 0 ? (
                                   <div className={styles.previewEmpty}>

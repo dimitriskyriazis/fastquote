@@ -78,6 +78,7 @@ import {
   ScrollApiModule,
   RowAutoHeightModule,
   RenderApiModule,
+  PostProcessPopupParams,
 } from 'ag-grid-community';
 import {
   AggregationModule,
@@ -4903,6 +4904,28 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     api.setFilterModel(Object.keys(next).length > 0 ? next : null);
   }, []);
 
+  // CONTEXT MENU - Flip upward when it would overflow the viewport bottom
+  const postProcessPopup = useCallback((params: PostProcessPopupParams<RowData>) => {
+    if (params.type !== 'contextMenu') return;
+    const popup = params.ePopup;
+    if (!popup) return;
+    // Run after the browser has painted so the popup has its final rendered height
+    requestAnimationFrame(() => {
+      const rect = popup.getBoundingClientRect();
+      const MARGIN = 4;
+      if (rect.bottom > window.innerHeight - MARGIN) {
+        const overflow = rect.bottom - (window.innerHeight - MARGIN);
+        const currentTop = parseFloat(popup.style.top) || 0;
+        popup.style.top = `${Math.max(MARGIN, currentTop - overflow)}px`;
+      }
+      if (rect.right > window.innerWidth - MARGIN) {
+        const overflow = rect.right - (window.innerWidth - MARGIN);
+        const currentLeft = parseFloat(popup.style.left) || 0;
+        popup.style.left = `${Math.max(MARGIN, currentLeft - overflow)}px`;
+      }
+    });
+  }, []);
+
   // RENDER - AgGridReact Component with All Props
   return (
     <div className={styles.container}>
@@ -4934,6 +4957,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
           getMainMenuItems={headerMenuItemsHandler}
           getContextMenuItems={contextMenuItemsHandler}
           suppressContextMenu={suppressContextMenu}
+          postProcessPopup={postProcessPopup}
           onFirstDataRendered={handleFirstDataRendered}
           onCellContextMenu={handleCellContextMenu}
           onCellMouseDown={handleCellMouseDown}

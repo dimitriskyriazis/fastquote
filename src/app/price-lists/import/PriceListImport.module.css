@@ -458,6 +458,46 @@
   color: #b91c1c;
 }
 
+.previewFilterRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  margin-bottom: 2px;
+}
+
+.previewFilterInput {
+  flex: 1;
+  padding: 5px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  color: #0f172a;
+  background: #f9fafb;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.previewFilterInput:focus {
+  border-color: #3b82f6;
+  background: #fff;
+}
+
+.previewFilterClear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.1rem;
+  color: #6b7280;
+  padding: 0 4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.previewFilterClear:hover {
+  color: #111827;
+}
+
 .previewEmpty {
   margin-top: 8px;
   font-size: 0.85rem;

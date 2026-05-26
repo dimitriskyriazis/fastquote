@@ -8254,6 +8254,17 @@ const requestedColumnDefsMap = useMemo(
     return `${wrapper.offsetWidth - sidebarWidth}px`;
   }, []);
 
+  // When body has transform:scale(N), getBoundingClientRect() returns viewport
+  // pixels but style.top/left use CSS layout pixels. Divide by this ratio to
+  // convert viewport px → CSS px for insert-line positioning.
+  const getBcrScale = useCallback((el: HTMLElement): number => {
+    const bcrW = el.getBoundingClientRect().width;
+    const cssW = el.offsetWidth;
+    if (!cssW) return 1;
+    const s = bcrW / cssW;
+    return s > 0 && s < 100 ? s : 1;
+  }, []);
+
   useEffect(() => {
     const wrapper = gridWrapperRef.current;
     if (!wrapper) return;
@@ -8309,7 +8320,7 @@ const requestedColumnDefsMap = useMemo(
                       const lastRowRect = lastRowEl.getBoundingClientRect();
                       if (viewportRect && lastRowRect.bottom >= viewportRect.top && lastRowRect.bottom <= viewportRect.bottom) {
                         line.style.display = 'flex';
-                        line.style.top = `${lastRowRect.bottom - wrapperRect.top}px`;
+                        line.style.top = `${(lastRowRect.bottom - wrapperRect.top) / getBcrScale(wrapper)}px`;
                         line.style.width = getLineWidth();
                         const lastTreeRawValue = typeof lastTreeRaw === 'string' ? lastTreeRaw.trim() : buildTreeOrderingKey(lastPath);
                         const lastTree = displayOrderingMapRef.current.get(String(lastId)) ?? lastTreeRawValue;
@@ -8350,7 +8361,7 @@ const requestedColumnDefsMap = useMemo(
                   const viewportRect = viewportEl.getBoundingClientRect();
                   if (rowRect.top >= viewportRect.top && rowRect.top <= viewportRect.bottom) {
                     line.style.display = 'flex';
-                    line.style.top = `${rowRect.top - wrapperRect.top}px`;
+                    line.style.top = `${(rowRect.top - wrapperRect.top) / getBcrScale(wrapper)}px`;
                     line.style.width = getLineWidth();
                     const prevTreeRawValue = typeof prevTreeRaw === 'string' ? prevTreeRaw.trim() : buildTreeOrderingKey(prevPath);
                     const prevTree = displayOrderingMapRef.current.get(String(prevId)) ?? prevTreeRawValue;
@@ -8387,7 +8398,7 @@ const requestedColumnDefsMap = useMemo(
       const viewportRect = viewportEl.getBoundingClientRect();
       if (rowRect.bottom < viewportRect.top || rowRect.bottom > viewportRect.bottom) { hide(); return; }
       line.style.display = 'flex';
-      line.style.top = `${rowRect.bottom - wrapperRect.top}px`;
+      line.style.top = `${(rowRect.bottom - wrapperRect.top) / getBcrScale(wrapper)}px`;
       line.style.width = getLineWidth();
       const rawTreeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
       const treeOrdering = displayOrderingMapRef.current.get(String(offerDetailId)) ?? rawTreeOrdering;
@@ -8406,8 +8417,9 @@ const requestedColumnDefsMap = useMemo(
         const newTop = insertLinePinTopRef.current - scrollDelta;
         const vpRect = vp.getBoundingClientRect();
         const wrapperRect = wrapper.getBoundingClientRect();
-        const vpTopInWrapper = vpRect.top - wrapperRect.top;
-        const vpBottomInWrapper = vpRect.bottom - wrapperRect.top;
+        const scale = getBcrScale(wrapper);
+        const vpTopInWrapper = (vpRect.top - wrapperRect.top) / scale;
+        const vpBottomInWrapper = (vpRect.bottom - wrapperRect.top) / scale;
         if (newTop < vpTopInWrapper || newTop > vpBottomInWrapper) {
           pinLine.style.display = 'none';
         } else {
@@ -8437,7 +8449,7 @@ const requestedColumnDefsMap = useMemo(
       wrapper.removeEventListener('mouseleave', hide);
       wrapper.removeEventListener('scroll', handleScroll, true);
     };
-  }, [getLineWidth]);
+  }, [getBcrScale, getLineWidth]);
 
   // Walks the grid and applies the correct row height to every node based on
   // the currently active shifted anchor (shiftedAnchorIdRef.current). Pass any
@@ -8533,7 +8545,8 @@ const requestedColumnDefsMap = useMemo(
           const rowId = normalizeOfferDetailId((node?.data as { OfferDetailID?: unknown } | null)?.OfferDetailID ?? null);
           if (rowId === data.offerDetailId) {
             const rowRect = (row as HTMLElement).getBoundingClientRect();
-            const newTop = rowRect.bottom - wrapperRect.top - DEFAULT_ROW_HEIGHT;
+            const scale = getBcrScale(wrapperNow);
+            const newTop = (rowRect.bottom - wrapperRect.top) / scale - DEFAULT_ROW_HEIGHT;
             pinLine.style.top = `${newTop}px`;
             insertLinePinTopRef.current = newTop;
             const vpNow = wrapperNow.querySelector('.ag-body-viewport') as HTMLElement | null;
@@ -8544,7 +8557,7 @@ const requestedColumnDefsMap = useMemo(
       });
     }
     onRequestInsertProductRef.current?.(data);
-  }, [clearSelectedRowHighlight, getLineWidth, startRowShift]);
+  }, [getBcrScale, clearSelectedRowHighlight, getLineWidth, startRowShift]);
 
   const setInsertLineVisible = useCallback((visible: boolean, atEnd?: boolean) => {
     const pinLine = pinnedLineRef.current;
@@ -8575,7 +8588,7 @@ const requestedColumnDefsMap = useMemo(
               if (rowId === anchor.offerDetailId) {
                 const wrapperRect = wrapper.getBoundingClientRect();
                 const rowRect = (row as HTMLElement).getBoundingClientRect();
-                const topPos = rowRect.bottom - wrapperRect.top;
+                const topPos = (rowRect.bottom - wrapperRect.top) / getBcrScale(wrapper);
                 pinLine.style.top = `${topPos}px`;
                 insertLinePinTopRef.current = topPos;
                 positioned = true;
@@ -8608,8 +8621,10 @@ const requestedColumnDefsMap = useMemo(
             }
             if (lastRowEl) {
               const rowRect = lastRowEl.getBoundingClientRect();
+              const bcrScale = getBcrScale(viewport);
               // Only show if the last row's bottom is within the viewport
-              if (rowRect.bottom >= vpRect.top && rowRect.bottom <= vpRect.bottom + 32) {
+              // (32 is CSS px so multiply by scale to compare with viewport-px coords)
+              if (rowRect.bottom >= vpRect.top && rowRect.bottom <= vpRect.bottom + 32 * bcrScale) {
                 const node = api.getDisplayedRowAtIndex(lastIdx);
                 const rowData = node?.data as Record<string, unknown> | null | undefined;
                 if (rowData) {
@@ -8621,7 +8636,7 @@ const requestedColumnDefsMap = useMemo(
                     const treeOrdering = displayOrderingMapRef.current.get(String(lastId)) ?? rawTreeOrdering;
                     insertLineDataRef.current = { offerDetailId: lastId, parentPath: path.slice(0, -1), label: resolveRowLabel(rowData, ''), treeOrdering, isRequested: isRequestedRow(rowData) };
                     const wrapperRect = wrapper.getBoundingClientRect();
-                    const topPos = rowRect.bottom - wrapperRect.top;
+                    const topPos = (rowRect.bottom - wrapperRect.top) / getBcrScale(wrapper);
                     pinLine.style.top = `${topPos}px`;
                     insertLinePinScrollRef.current = viewport.scrollTop;
                     insertLinePinTopRef.current = topPos;
@@ -8668,7 +8683,7 @@ const requestedColumnDefsMap = useMemo(
       insertLineDataRef.current = null;
       stopRowShift();
     }
-  }, [getAddInsertionAnchor, getLineWidth, startRowShift, stopRowShift]);
+  }, [getBcrScale, getAddInsertionAnchor, getLineWidth, startRowShift, stopRowShift]);
   setInsertLineVisibleRef.current = setInsertLineVisible;
 
   // Try to pin the line below the row with the given OfferDetailID. If the row
@@ -8707,7 +8722,7 @@ const requestedColumnDefsMap = useMemo(
     if (!rowEl) return false;
     const wrapperRect = wrapper.getBoundingClientRect();
     const rowRect = rowEl.getBoundingClientRect();
-    const topPos = rowRect.bottom - wrapperRect.top;
+    const topPos = (rowRect.bottom - wrapperRect.top) / getBcrScale(wrapper);
     const rawTreeOrdering = typeof treeOrderingRaw === 'string' ? treeOrderingRaw.trim() : buildTreeOrderingKey(path);
     const treeOrdering = displayOrderingMapRef.current.get(String(offerDetailId)) ?? rawTreeOrdering;
     insertLineDataRef.current = {
@@ -8732,7 +8747,7 @@ const requestedColumnDefsMap = useMemo(
     // must not set a new placementAnchor or subsequent adds will use it.
     if (notifyParent) onRequestInsertProductRef.current?.(insertLineDataRef.current);
     return true;
-  }, [getLineWidth]);
+  }, [getBcrScale, getLineWidth]);
   tryPinInsertLineBelowRowIdRef.current = tryPinInsertLineBelowRowId;
 
   const pinInsertLineBelowRowId = useCallback((offerDetailId: number, notifyParent = false) => {
