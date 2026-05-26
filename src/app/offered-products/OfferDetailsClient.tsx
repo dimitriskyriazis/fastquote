@@ -374,10 +374,10 @@ export default function OfferDetailsClient() {
       minWidth: 140,
     },
     {
-      field: 'ERPCode',
-      headerName: 'ERP Code',
+      field: 'ERPProjectCode',
+      headerName: 'ERP Project Code',
       filter: 'agTextColumnFilter',
-      width: 130,
+      width: 150,
     },
     {
       field: 'ProductDescription',

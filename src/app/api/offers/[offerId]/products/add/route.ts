@@ -634,7 +634,7 @@ async function tryStage1QuickMatch(
       + ` OR UPPER(ISNULL(p.Description, '')) LIKE '%' + @${key}_raw + '%')`,
     );
   });
-  const whereSql = `WHERE ${orGroups.join(' OR ')}`;
+  const whereSql = `WHERE ISNULL(p.Enabled, 1) = 1 AND (${orGroups.join(' OR ')})`;
 
   // Rank: exact Part match first, then exact Model match, then LIKE matches.
   // Within each tier, newer products (ProductID DESC) first.
@@ -1293,6 +1293,7 @@ async function handleProductGrid(
         b.Name AS BrandName
       FROM dbo.Products p
         LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
+      WHERE ISNULL(p.Enabled, 1) = 1
     ),
     PagedBase AS (
       SELECT bp.*, ${scoreColumnSql}
