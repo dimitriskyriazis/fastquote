@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useMemo, useCallback, useState } from 'react';
 import Link from 'next/link';
@@ -183,7 +183,7 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
           </div>
         </div>
 
-        <div className={styles.gridFrame}>
+        <div className={`${styles.gridFrame} fq-grid-panel`}>
           <AgGridAll
             endpoint={`/api/marketing/contact-groups/${encodeURIComponent(groupId)}/contacts`}
             columnDefs={columnDefs}

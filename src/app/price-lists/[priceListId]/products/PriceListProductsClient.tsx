@@ -658,7 +658,7 @@ export default function PriceListProductsClient({
         </div>
       </div>
       <div className={`${layoutStyles.pageBody} ${pageStyles.gridShell}`}>
-        <div className={`${pageStyles.gridWrapper} ${pageStyles.bandedRows}`}>
+        <div className={`${pageStyles.gridWrapper} ${pageStyles.bandedRows} price-list-products-grid`}>
           <AgGridAll
             endpoint={endpoint}
             columnDefs={columnDefs}

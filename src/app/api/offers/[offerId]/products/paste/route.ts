@@ -862,13 +862,23 @@ export async function POST(
       parentPath = anchorPath.slice(0, -1);
       insertSibling = Number(anchorPath[anchorPath.length - 1]) + 1;
     } else {
-      if (existingRows.length > 0) {
-        await transaction.rollback();
-        transaction = null;
-        return NextResponse.json({ ok: false, error: 'Missing anchor row' }, { status: 400 });
-      }
+      // No anchor supplied → append at the end of the top level
       parentPath = [];
-      insertSibling = 1;
+      if (existingRows.length > 0) {
+        let maxTopLevel = 0;
+        for (const row of existingRows) {
+          const tree = normalizeTreeOrderingValue(row.TreeOrdering);
+          if (!tree) continue;
+          const path = parseTreeOrderingPath(tree);
+          if (path.length === 1) {
+            const n = Number(path[0]);
+            if (!Number.isNaN(n) && n > maxTopLevel) maxTopLevel = n;
+          }
+        }
+        insertSibling = maxTopLevel + 1;
+      } else {
+        insertSibling = 1;
+      }
     }
 
     const roots = computeRoots(clipboardRows);

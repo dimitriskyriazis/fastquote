@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -714,7 +714,7 @@ export default function CustomerContactsClient({ customerId, customerName, statu
         }
       >
         <GridQuickSearchProvider>
-          <div className={styles.gridFrame}>
+          <div className={`${styles.gridFrame} fq-grid-panel`}>
             <AgGridAll
               endpoint={endpoint}
               columnDefs={columnDefs}

@@ -1110,8 +1110,12 @@ export default function ClientProductsPage({
     setShowPasteDialog(true);
   }, []);
 
-  const handleRequestAddStandardPackage = useCallback((anchorOfferDetailId: number, anchorTreeOrdering: string) => {
-    setAddStandardPackageAnchor({ offerDetailId: anchorOfferDetailId, treeOrdering: anchorTreeOrdering });
+  const handleRequestAddStandardPackage = useCallback((anchorOfferDetailId: number | null, anchorTreeOrdering: string | null) => {
+    if (anchorOfferDetailId != null && anchorTreeOrdering) {
+      setAddStandardPackageAnchor({ offerDetailId: anchorOfferDetailId, treeOrdering: anchorTreeOrdering });
+    } else {
+      setAddStandardPackageAnchor(null);
+    }
     setShowAddStandardPackageModal(true);
     setAddStandardPackageError(null);
   }, []);
@@ -1122,11 +1126,6 @@ export default function ClientProductsPage({
       setAddStandardPackageError('Select a standard package first.');
       return;
     }
-    if (!addStandardPackageAnchor?.offerDetailId) {
-      setAddStandardPackageError('Missing insertion anchor.');
-      return;
-    }
-
     setAddingStandardPackage(true);
     setAddStandardPackageError(null);
     try {
@@ -1208,7 +1207,7 @@ export default function ClientProductsPage({
           body: JSON.stringify({
             rows: clipboardRows,
             keepPricing: true,
-            anchorOfferDetailId: addStandardPackageAnchor.offerDetailId,
+            anchorOfferDetailId: addStandardPackageAnchor?.offerDetailId ?? null,
           }),
         },
       );

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useMemo, useCallback, useState, useRef } from "react";
 import dynamic from "next/dynamic";
@@ -275,7 +275,7 @@ export default function BrandOffersClient({ brands }: Props) {
         }
       >
         <GridQuickSearchProvider>
-          <div className={styles.gridFrame}>
+          <div className={`${styles.gridFrame} fq-grid-panel`}>
             {selectedBrandId ? (
               <AgGridAll
                 endpoint="/api/manufacturers-pipeline"

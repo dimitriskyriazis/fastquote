@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -530,7 +530,7 @@ export default function PriceListsClient() {
         }
       >
         <GridQuickSearchProvider>
-          <div className={styles.gridFrame}>
+          <div className={`${styles.gridFrame} fq-grid-panel`}>
             <AgGridAll
               endpoint="/api/price-lists"
               columnDefs={columnDefs}

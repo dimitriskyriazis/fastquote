@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useMemo, useCallback, useState, useRef } from 'react';
 import Link from 'next/link';
@@ -318,7 +318,7 @@ export default function MailContactGroupsClient({ mailId, description }: Props) 
       <div className={styles.splitContainer}>
         <div className={styles.halfSection}>
           <div className={styles.sectionTitle}>All Contact Groups</div>
-          <div className={styles.gridFrame}>
+          <div className={`${styles.gridFrame} fq-grid-panel`}>
             <AgGridAll
               endpoint="/api/marketing/contact-groups"
               columnDefs={allGroupsColumnDefs}
@@ -334,7 +334,7 @@ export default function MailContactGroupsClient({ mailId, description }: Props) 
 
         <div className={styles.halfSection}>
           <div className={styles.sectionTitle}>Assigned Contact Groups for this Mail List</div>
-          <div className={styles.gridFrame}>
+          <div className={`${styles.gridFrame} fq-grid-panel`}>
             <AgGridAll
               endpoint={`/api/marketing/mails/${encodeURIComponent(mailId)}/contact-groups`}
               columnDefs={assignedColumnDefs}

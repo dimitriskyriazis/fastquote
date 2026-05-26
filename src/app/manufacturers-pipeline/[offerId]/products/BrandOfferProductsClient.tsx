@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useMemo } from "react";
 import dynamic from "next/dynamic";
@@ -187,7 +187,7 @@ export default function BrandOfferProductsClient({
         title={heading}
       >
         <GridQuickSearchProvider>
-          <div className={styles.gridFrame}>
+          <div className={`${styles.gridFrame} fq-grid-panel`}>
             <AgGridAll
               endpoint={`/api/manufacturers-pipeline/${encodeURIComponent(offerId)}/products`}
               columnDefs={columnDefs}

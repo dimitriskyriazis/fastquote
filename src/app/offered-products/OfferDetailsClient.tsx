@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import dynamic from 'next/dynamic';
@@ -848,7 +848,7 @@ export default function OfferDetailsClient() {
     <main className={styles.page}>
       <PageHeader title="Offered Products" afterSearchActions={pivotModeButton} rightActions={headerActions}>
         <GridQuickSearchProvider>
-          <div className={styles.gridFrame} style={summaryMode ? { display: 'none' } : undefined}>
+          <div className={`${styles.gridFrame} fq-grid-panel`} style={summaryMode ? { display: 'none' } : undefined}>
             <AgGridAll
               endpoint="/api/offered-products"
               columnDefs={columnDefs}
@@ -862,7 +862,7 @@ export default function OfferDetailsClient() {
             />
           </div>
           {summaryMode && (
-            <div className={styles.gridFrame}>
+            <div className={`${styles.gridFrame} fq-grid-panel`}>
               {summaryLoading || !summaryData ? (
                 <div className={styles.loading}>Loading summary…</div>
               ) : (

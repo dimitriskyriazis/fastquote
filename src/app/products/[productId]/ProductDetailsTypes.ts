@@ -16,6 +16,8 @@ export type ProductDetailsRecord = {
   SubCategoryName: string | null;
   TypeID: number | null;
   TypeName: string | null;
+  IsService: boolean | null;
+  ServiceType: string | null;
 };
 
 export type ProductLookupItem = { id: number; name: string };

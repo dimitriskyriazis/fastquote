@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
@@ -367,7 +367,7 @@ export default function CountriesClient() {
           }
         >
           <GridQuickSearchProvider>
-            <div className={styles.gridFrame}>
+            <div className={`${styles.gridFrame} fq-grid-panel`}>
               <AgGridAll
                 endpoint="/api/countries-cities/grid"
                 columnDefs={columnDefs}

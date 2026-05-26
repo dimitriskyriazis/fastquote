@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -434,7 +434,7 @@ export default function UsersClient() {
           }
         >
           <GridQuickSearchProvider>
-            <div className={styles.gridFrame}>
+            <div className={`${styles.gridFrame} fq-grid-panel`}>
               <AgGridAll
                 endpoint="/api/user-management/grid"
                 columnDefs={columnDefs}

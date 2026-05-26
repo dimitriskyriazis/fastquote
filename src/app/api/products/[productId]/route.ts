@@ -50,6 +50,8 @@ const updateProductSchema = z.object({
   subCategoryId: positiveIntSchema,
   typeId: positiveIntSchema,
   enabled: booleanSchema,
+  isService: booleanSchema,
+  serviceType: stringSchema(20).optional(),
 }).strict().refine((data) => (
   data.partNumber !== undefined
   || data.modelNumber !== undefined
@@ -61,6 +63,8 @@ const updateProductSchema = z.object({
   || data.subCategoryId !== undefined
   || data.typeId !== undefined
   || data.enabled !== undefined
+  || data.isService !== undefined
+  || data.serviceType !== undefined
 ), {
   message: 'No updates provided',
 });
@@ -111,6 +115,8 @@ export async function GET(
       SubCategoryName: string | null;
       TypeID: number | null;
       TypeName: string | null;
+      IsService: boolean | null;
+      ServiceType: string | null;
     }>(`
       SELECT
         p.ID AS ProductID,
@@ -129,7 +135,9 @@ export async function GET(
         p.SubCategoryID,
         NULLIF(LTRIM(RTRIM(psc.Name)), '') AS SubCategoryName,
         p.TypeID,
-        NULLIF(LTRIM(RTRIM(pt.Name)), '') AS TypeName
+        NULLIF(LTRIM(RTRIM(pt.Name)), '') AS TypeName,
+        CAST(p.IsService AS BIT) AS IsService,
+        NULLIF(LTRIM(RTRIM(p.ServiceType)), '') AS ServiceType
       FROM dbo.Products p
       LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
       LEFT JOIN dbo.ProductCategories pc ON p.CategoryID = pc.ID
@@ -249,6 +257,12 @@ export async function PATCH(
     }
     if (body.enabled !== undefined) {
       updates.push({ column: 'Enabled', param: 'Enabled', value: body.enabled ? 1 : 0, type: sql.Bit });
+    }
+    if (body.isService !== undefined) {
+      updates.push({ column: 'IsService', param: 'IsService', value: body.isService ? 1 : 0, type: sql.Bit });
+    }
+    if (body.serviceType !== undefined) {
+      updates.push({ column: 'ServiceType', param: 'ServiceType', value: body.serviceType, type: sql.NVarChar(20) });
     }
 
     if (updates.length === 0) {

@@ -14,7 +14,7 @@ function isScrollable(el: Element): el is HTMLElement {
 const HIDE_DELAY_MS = 3000;
 
 // Selectors for the two panels that can host this button — order matters: most-specific first.
-const PANEL_SELECTORS = [".offer-products-grid"];
+const PANEL_SELECTORS = [".offer-products-grid", ".price-list-products-grid", ".fq-grid-panel"];
 
 type Anchor = { panel: HTMLElement; selector: string };
 

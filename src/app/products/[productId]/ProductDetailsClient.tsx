@@ -36,6 +36,7 @@ type FieldDefinition = {
   inputType?: string;
   readOnly?: boolean;
   isSelect?: boolean;
+  noBlankOption?: boolean;
 };
 
 const SECTION_METADATA: Record<SectionKey, { title: string }> = {
@@ -60,11 +61,18 @@ const BASE_FIELD_DEFINITIONS: FieldDefinition[] = [
   { id: 'subCategory', label: 'Sub-Category', section: 'classification', recordKey: 'SubCategoryID', apiField: 'subCategoryId', isSelect: true },
   { id: 'type', label: 'Type', section: 'classification', recordKey: 'TypeID', apiField: 'typeId', isSelect: true },
   { id: 'enabled', label: 'Enabled', section: 'status', recordKey: 'Enabled', apiField: 'enabled', isSelect: true },
+  { id: 'isService', label: 'Is Service', section: 'status', recordKey: 'IsService', readOnly: true },
+  { id: 'serviceType', label: 'Service Type', section: 'status', recordKey: 'ServiceType', apiField: 'serviceType', isSelect: true, noBlankOption: true },
 ];
 
-const BOOLEAN_OPTIONS = [
+const BOOLEAN_OPTIONS: Array<{ id: number | string; name: string }> = [
   { id: 1, name: 'Yes' },
   { id: 0, name: 'No' },
+];
+
+const SERVICE_TYPE_OPTIONS: Array<{ id: number | string; name: string }> = [
+  { id: 'ServPerUnit', name: 'ServPerUnit' },
+  { id: 'ServLot', name: 'ServLot' },
 ];
 
 const formatInitialValue = (record: ProductDetailsRecord, def: FieldDefinition): string => {
@@ -124,8 +132,9 @@ export default function ProductDetailsClient({
       if (!def.apiField) return false;
 
       // Compute API payload value
+      const booleanFieldIds = ['enabled', 'isService'];
       let payloadValue: string | number | boolean | null;
-      if (def.id === 'enabled') {
+      if (booleanFieldIds.includes(def.id)) {
         payloadValue = rawValue === '1' ? true : rawValue === '0' ? false : null;
       } else if (['brand', 'category', 'subCategory', 'type'].includes(def.id)) {
         payloadValue = rawValue === '' ? null : Number(rawValue);
@@ -135,7 +144,7 @@ export default function ProductDetailsClient({
 
       const oldDisplayValue = savedValuesRef.current[def.id] ?? '';
       let oldPayloadValue: string | number | boolean | null;
-      if (def.id === 'enabled') {
+      if (booleanFieldIds.includes(def.id)) {
         oldPayloadValue = oldDisplayValue === '1' ? true : oldDisplayValue === '0' ? false : null;
       } else if (['brand', 'category', 'subCategory', 'type'].includes(def.id)) {
         oldPayloadValue = oldDisplayValue === '' ? null : Number(oldDisplayValue);
@@ -223,12 +232,14 @@ export default function ProductDetailsClient({
     [selectedCategoryId, subCategories],
   );
 
-  const getSelectOptions = (def: FieldDefinition): Array<{ id: number; name: string }> => {
+  const getSelectOptions = (def: FieldDefinition): Array<{ id: number | string; name: string }> => {
     if (def.id === 'brand') return brands;
     if (def.id === 'category') return categories;
     if (def.id === 'subCategory') return filteredSubCategories;
     if (def.id === 'type') return types;
     if (def.id === 'enabled') return BOOLEAN_OPTIONS;
+    if (def.id === 'isService') return BOOLEAN_OPTIONS;
+    if (def.id === 'serviceType') return SERVICE_TYPE_OPTIONS;
     return [];
   };
 
@@ -260,7 +271,7 @@ export default function ProductDetailsClient({
             void saveField(nextDef, nextVal);
           }}
         >
-          <option value="">Select...</option>
+          {!def.noBlankOption && <option value="">Select...</option>}
           {options.map((opt) => (
             <option key={opt.id} value={String(opt.id)}>
               {opt.name}

@@ -5011,6 +5011,7 @@ const requestedColumnDefsMap = useMemo(
     const clipboardHasRows = isClipboardPopulated();
 
     if (isEmptySpaceClick) {
+      const emptySpaceItems: MenuItemDef[] = [];
       const canPaste = Boolean(onRequestPaste && clipboardHasRows);
       const pasteOnlyItem: MenuItemDef = {
         name: 'Paste Rows',
@@ -5027,7 +5028,18 @@ const requestedColumnDefsMap = useMemo(
           }
         },
       };
-      return [pasteOnlyItem];
+      emptySpaceItems.push(pasteOnlyItem);
+      if (!standardPackageMode && onRequestAddStandardPackage) {
+        const addStdPkgItem: MenuItemDef = {
+          name: 'Add Standard Package',
+          icon: addStandardPackageMenuIcon,
+          action: () => {
+            onRequestAddStandardPackage(null, null);
+          },
+        };
+        emptySpaceItems.push(addStdPkgItem);
+      }
+      return emptySpaceItems;
     }
 
     // Copy (plain) + Copy with… submenu (Headers + Group Headers) + Copy Rows
@@ -5137,6 +5149,24 @@ const requestedColumnDefsMap = useMemo(
     );
     const rowIsProductLike =
       isOfferProductProduct(rowData) || hasRequestedLookupIdentifiers(rowData);
+    const rowIsService = isOfferProductService(rowData);
+
+    // For service rows: add a standalone "View Product Details" item (no full "View Product" submenu)
+    if (rowIsService && resolvedProductId != null) {
+      const viewServiceDetailsItem: MenuItemDef = {
+        name: 'View Product Details',
+        icon: viewProductDetailsMenuIcon,
+        action: () => {
+          openLinkInNewTab(`/products/${encodeURIComponent(String(resolvedProductId))}/details`);
+        },
+      };
+      const deleteIndex = findDeleteMenuItemIndex(items);
+      if (deleteIndex >= 0) {
+        items.splice(deleteIndex, 0, viewServiceDetailsItem);
+      } else {
+        items.push(viewServiceDetailsItem);
+      }
+    }
 
     // Build "View Product" submenu with Details + History + PriceList
     if (rowIsProductLike && (viewProductPartNumber || viewProductDescription || canViewHistory)) {
@@ -6574,7 +6604,8 @@ const requestedColumnDefsMap = useMemo(
   ]);
 
   const handleEmptyGridWrapperContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (!onRequestPaste) return;
+    const canShowMenu = Boolean(onRequestPaste || (!standardPackageMode && onRequestAddStandardPackage));
+    if (!canShowMenu) return;
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.() || typeof api.forEachNode !== 'function') return;
     let hasRows = false;
@@ -6588,13 +6619,19 @@ const requestedColumnDefsMap = useMemo(
     event.preventDefault();
     event.stopPropagation();
     setEmptyGridPasteMenu({ x: event.clientX, y: event.clientY });
-  }, [onRequestPaste]);
+  }, [onRequestPaste, onRequestAddStandardPackage, standardPackageMode]);
 
   const handleEmptyGridPasteRows = useCallback(() => {
     setEmptyGridPasteMenu(null);
     if (!onRequestPaste) return;
     onRequestPaste(null, null);
   }, [onRequestPaste]);
+
+  const handleEmptyGridAddStandardPackage = useCallback(() => {
+    setEmptyGridPasteMenu(null);
+    if (!onRequestAddStandardPackage) return;
+    onRequestAddStandardPackage(null, null);
+  }, [onRequestAddStandardPackage]);
 
   useEffect(() => {
     if (!emptyGridPasteMenu) return;
@@ -8807,6 +8844,24 @@ const requestedColumnDefsMap = useMemo(
                 />
                 Paste Rows
               </button>
+              {!standardPackageMode && onRequestAddStandardPackage ? (
+                <button
+                  type="button"
+                  className={styles.emptyGridContextMenuItem}
+                  role="menuitem"
+                  onClick={handleEmptyGridAddStandardPackage}
+                >
+                  <span
+                    className="fastquote-menu-icon"
+                    aria-hidden="true"
+                    // biome-ignore lint: dangerouslySetInnerHTML needed for SVG icon
+                    dangerouslySetInnerHTML={{
+                      __html: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h9" /><path d="M17 15v6" /><path d="M14 18h6" /></svg>`,
+                    }}
+                  />
+                  Add Standard Package
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>

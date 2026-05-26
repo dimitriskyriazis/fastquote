@@ -798,13 +798,9 @@ const analyzeSheet = (
     .slice(dataStartIndex)
     .filter((row) => Array.isArray(row) && row.some(hasCellValue));
   const rowCount = nonEmptyDataRows.length;
-  // Pull preview rows from the raw-typed sheet so we can keep numeric cells as
-  // numbers (and re-format them per the user's decimal choice) while exposing
-  // text cells literally — that surfaces mixed-format columns to the user.
-  const rawDataRows = rawRows
-    .slice(dataStartIndex)
-    .filter((row) => Array.isArray(row) && row.some(hasCellValue));
-  const previewRows = rawDataRows
+  // Use the formatted rows (raw: false) for the preview so cells appear
+  // exactly as they do in Excel — e.g. "$6.050,00" stays "$6.050,00".
+  const previewRows = nonEmptyDataRows
     .slice(0, 20)
     .map((row) => {
       const preview: Record<number, unknown> = {};
@@ -1794,8 +1790,10 @@ export default function PriceListImportClient({
       if (typeof value === "string") return value;
       if (typeof value === "boolean") return String(value);
       if (typeof value === "number" && Number.isFinite(value)) {
+        // Fallback for any raw numbers that slip through — show without
+        // floating-point noise (e.g. 2372.389999999999 → 2372.39).
         const isInteger = Number.isInteger(value);
-        const formatted = isInteger ? value.toFixed(0) : value.toString();
+        const formatted = isInteger ? value.toFixed(0) : value.toFixed(2);
         if (values.decimalFormat === "commaDecimal") {
           return formatted.replace(".", ",");
         }

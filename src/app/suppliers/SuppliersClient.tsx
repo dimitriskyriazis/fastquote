@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useEffect, useMemo, useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -429,7 +429,7 @@ export default function SuppliersClient({ countries }: Props) {
           }
         >
           <GridQuickSearchProvider>
-            <div className={styles.gridFrame}>
+            <div className={`${styles.gridFrame} fq-grid-panel`}>
               <AgGridAll
                 endpoint="/api/suppliers"
                 columnDefs={columnDefs}

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useMemo, useCallback, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
@@ -494,7 +494,7 @@ export default function MailsClient() {
           }
         >
           <GridQuickSearchProvider>
-            <div className={styles.gridFrame}>
+            <div className={`${styles.gridFrame} fq-grid-panel`}>
               <AgGridAll
                 endpoint="/api/marketing/mails"
                 columnDefs={columnDefs}

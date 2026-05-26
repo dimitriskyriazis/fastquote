@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useMemo } from "react";
 import dynamic from "next/dynamic";
@@ -107,7 +107,7 @@ export default function LogsClient() {
     <main className={styles.page}>
       <PageHeader title="Logs">
         <GridQuickSearchProvider>
-          <div className={styles.gridFrame}>
+          <div className={`${styles.gridFrame} fq-grid-panel`}>
             <AgGridAll
               endpoint="/api/logs"
               columnDefs={columnDefs}

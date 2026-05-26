@@ -15,7 +15,7 @@ export type OfferProductsPanelProps = {
   initialSelectedOfferDetailIds?: number[];
   initialViewportScrollTop?: number | null;
   onRequestPaste?: (anchorOfferDetailId: number | null, anchorTreeOrdering: string | null) => void;
-  onRequestAddStandardPackage?: (anchorOfferDetailId: number, anchorTreeOrdering: string) => void;
+  onRequestAddStandardPackage?: (anchorOfferDetailId: number | null, anchorTreeOrdering: string | null) => void;
   onUndoStateChange?: (state: { canUndo: boolean; lastLabel: string | undefined }) => void;
   offerCreatedByUserId?: string | null;
   onMainGridSelectionChanged?: (selectedRow: { offerDetailId: number; treeOrdering: string; label: string; isRequested: boolean; parentPath: number[]; requestedBrand?: string | null; requestedPartNo?: string | null; requestedModelNo?: string | null; requestedDescription?: string | null } | null) => void;

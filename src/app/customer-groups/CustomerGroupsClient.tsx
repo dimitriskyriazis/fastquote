@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useMemo, useCallback, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -323,7 +323,7 @@ export default function CustomerGroupsClient() {
         }
       >
         <GridQuickSearchProvider>
-          <div className={styles.gridFrame}>
+          <div className={`${styles.gridFrame} fq-grid-panel`}>
             <AgGridAll
               endpoint="/api/customer-groups"
               columnDefs={columnDefs}

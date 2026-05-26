@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useMemo, useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -420,7 +420,7 @@ export default function BrandsClient() {
           }
         >
           <GridQuickSearchProvider>
-            <div className={styles.gridFrame}>
+            <div className={`${styles.gridFrame} fq-grid-panel`}>
               <AgGridAll
                 endpoint="/api/brands/grid"
                 columnDefs={columnDefs}

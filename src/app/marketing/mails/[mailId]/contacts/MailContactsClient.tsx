@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useMemo, useCallback, useState } from 'react';
 import Link from 'next/link';
@@ -221,7 +221,7 @@ export default function MailContactsClient({ mailId, description }: Props) {
           </div>
         </div>
 
-        <div className={styles.gridFrame}>
+        <div className={`${styles.gridFrame} fq-grid-panel`}>
           <AgGridAll
             endpoint={`/api/marketing/mails/${encodeURIComponent(mailId)}/contacts`}
             columnDefs={columnDefs}
