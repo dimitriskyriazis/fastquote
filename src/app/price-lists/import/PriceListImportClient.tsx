@@ -371,10 +371,12 @@ type SheetMapping = {
   columns: ColumnOption[];
   suggestions: Record<HeaderColumnKey, ColumnOption[]>;
   selection: Partial<Record<HeaderColumnKey, number | null>>;
-  rowCount: number;
+  rowCount: number;         // total non-empty data rows (including hidden)
+  visibleRowCount: number;  // visible rows only (equals rowCount when no Excel filter)
   enabled: boolean;
-  previewRows: Record<number, unknown>[]; // first 20 rows for display
-  allRows: Record<number, unknown>[]; // all data rows (for filtering)
+  previewRows: Record<number, unknown>[];             // up to 20 visible rows
+  allRows: Record<number, unknown>[];                 // all data rows
+  visibleDataRowIndices: number[] | null; // null = no Excel filter; array = 0-based indices into allRows that are visible
 };
 
 type PreviewColumn = {
@@ -782,34 +784,50 @@ const analyzeSheet = (
   sheetName: string,
   rows: unknown[][],
   rawRows: unknown[][],
+  hiddenRowIndices: Set<number>, // 0-based sheet row indices that are hidden in Excel
   fallbackIndex: number,
   enabled: boolean,
 ): SheetMapping => {
   const detection = detectHeaderRow(rows);
-  // For multi-row headers use the merged row as column source; data starts after all header rows.
   const headerRow = detection.mergedRow ?? (Array.isArray(rows[detection.index]) ? rows[detection.index] : []);
   const dataStartIndex = detection.index + detection.span;
   const columns = buildColumns(headerRow);
   const suggestions = buildSuggestions(columns);
-
-  // Auto-select suggested columns, but do not map the same source column twice.
   const selection = autoSelectUniqueSuggestions(suggestions);
 
-  const nonEmptyDataRows = rows
-    .slice(dataStartIndex)
-    .filter((row) => Array.isArray(row) && row.some(hasCellValue));
-  const rowCount = nonEmptyDataRows.length;
-  const rawDataRows = rawRows
-    .slice(dataStartIndex)
-    .filter((row) => Array.isArray(row) && row.some(hasCellValue));
-  const allRows = rawDataRows.map((row) => {
+  // Track each data row together with its original index in rawRows (= sheet row index).
+  const rawDataRowsIndexed: { row: unknown[]; sheetRowIdx: number }[] = [];
+  rawRows.slice(dataStartIndex).forEach((row, relIdx) => {
+    if (Array.isArray(row) && row.some(hasCellValue)) {
+      rawDataRowsIndexed.push({ row, sheetRowIdx: dataStartIndex + relIdx });
+    }
+  });
+
+  const rowCount = rawDataRowsIndexed.length;
+
+  const allRows: Record<number, unknown>[] = rawDataRowsIndexed.map(({ row }) => {
     const obj: Record<number, unknown> = {};
-    row.forEach((cell, colIdx) => {
-      obj[colIdx] = cell;
-    });
+    row.forEach((cell, colIdx) => { obj[colIdx] = cell; });
     return obj;
   });
-  const previewRows = allRows.slice(0, 20);
+
+  // Detect Excel filter: any data row whose sheet row index is hidden.
+  const hasHiddenDataRows =
+    hiddenRowIndices.size > 0 &&
+    rawDataRowsIndexed.some(({ sheetRowIdx }) => hiddenRowIndices.has(sheetRowIdx));
+
+  const visibleDataRowIndices: number[] | null = hasHiddenDataRows
+    ? rawDataRowsIndexed
+        .map(({ sheetRowIdx }, idx) => ({ idx, sheetRowIdx }))
+        .filter(({ sheetRowIdx }) => !hiddenRowIndices.has(sheetRowIdx))
+        .map(({ idx }) => idx)
+    : null;
+
+  const visibleRowCount = visibleDataRowIndices !== null ? visibleDataRowIndices.length : rowCount;
+
+  // Preview shows visible rows only (matches what the user sees in Excel).
+  const previewSourceIndices = visibleDataRowIndices ?? allRows.map((_, i) => i);
+  const previewRows = previewSourceIndices.slice(0, 20).map((i) => allRows[i]);
 
   return {
     name: sheetName || `Sheet ${fallbackIndex + 1}`,
@@ -818,9 +836,11 @@ const analyzeSheet = (
     suggestions,
     selection,
     rowCount,
+    visibleRowCount,
     enabled,
     previewRows,
     allRows,
+    visibleDataRowIndices,
   };
 };
 
@@ -829,10 +849,22 @@ const analyzeWorkbook = (workbook: XLSXTypes.WorkBook, xlsx: XlsxModule): SheetM
   for (const sheetName of workbook.SheetNames ?? []) {
     const sheet = workbook.Sheets?.[sheetName];
     if (!sheet) continue;
+
+    // Build a set of 0-based sheet row indices that Excel has hidden (via row filter or manual hide).
+    const hiddenRowIndices = new Set<number>();
+    const rowsInfo = (sheet as Record<string, unknown>)["!rows"] as
+      | Array<{ hidden?: boolean } | null | undefined>
+      | undefined;
+    if (Array.isArray(rowsInfo)) {
+      rowsInfo.forEach((info, idx) => {
+        if (info?.hidden) hiddenRowIndices.add(idx);
+      });
+    }
+
     const rows = xlsx.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
     const rawRows = xlsx.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: true });
     if (!Array.isArray(rows) || !Array.isArray(rawRows)) continue;
-    sheets.push(analyzeSheet(sheetName, rows, rawRows, sheets.length, sheets.length === 0));
+    sheets.push(analyzeSheet(sheetName, rows, rawRows, hiddenRowIndices, sheets.length, sheets.length === 0));
   }
   return sheets;
 };
@@ -885,7 +917,9 @@ const validateFileStructure = async (uploadFile: File): Promise<FileValidation> 
   try {
     const buffer = await uploadFile.arrayBuffer();
     const xlsx = await loadXlsx();
-    const workbook = xlsx.read(buffer, { type: "array" });
+    // cellStyles: true is required for SheetJS to populate !rows[i].hidden,
+    // which is how we detect rows hidden by Excel's row filter.
+    const workbook = xlsx.read(buffer, { type: "array", cellStyles: true });
     const sheets = analyzeWorkbook(workbook, xlsx);
 
     if (sheets.length === 0) {
@@ -1004,7 +1038,6 @@ export default function PriceListImportClient({
   const validationRunId = useRef(0);
   const [showSheetSelector, setShowSheetSelector] = useState(false);
   const [multiSelectEnabled, setMultiSelectEnabled] = useState(false);
-  const [rowFilterText, setRowFilterText] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1778,47 +1811,20 @@ export default function PriceListImportClient({
     }).filter((col): col is PreviewColumn => Boolean(col));
   }, [activeSheet, values.isService]);
 
-  // Indices (0-based into allRows) of rows matching the current filter text.
-  // null means no active filter (import everything).
-  const filteredRowIndices = useMemo<number[] | null>(() => {
-    if (!activeSheet || !rowFilterText.trim()) return null;
-    const search = rowFilterText.trim().toLowerCase();
-    const partCol = activeSheet.selection.partNumber;
-    const descCol = activeSheet.selection.description;
-    const modelCol = activeSheet.selection.modelNumber;
-    const matches: number[] = [];
-    activeSheet.allRows.forEach((row, idx) => {
-      const cellMatches = (colIndex: number | null | undefined) => {
-        if (colIndex == null) return false;
-        const val = row[colIndex];
-        if (typeof val === "string") return val.toLowerCase().includes(search);
-        if (typeof val === "number") return String(val).includes(search);
-        return false;
-      };
-      if (cellMatches(partCol) || cellMatches(descCol) || cellMatches(modelCol)) {
-        matches.push(idx);
-      }
-    });
-    return matches;
-  }, [activeSheet, rowFilterText]);
-
   const displayPreviewRows = useMemo<Record<number, unknown>[]>(() => {
     if (!activeSheet) return [];
     const partCol = activeSheet.selection.partNumber;
     const priceCol = activeSheet.selection.listPrice;
-    // Use filtered rows when a filter is active, otherwise fall back to all rows
-    const candidateRows = filteredRowIndices !== null
-      ? filteredRowIndices.map((idx) => activeSheet.allRows[idx]).filter(Boolean) as Record<number, unknown>[]
-      : activeSheet.allRows;
-    if (partCol == null || priceCol == null) return candidateRows.slice(0, 3);
+    const rows = activeSheet.previewRows;
+    if (partCol == null || priceCol == null) return rows.slice(0, 3);
     const isFilled = (value: unknown) => {
       if (value === null || value === undefined) return false;
       if (typeof value === "string") return value.trim().length > 0;
       if (typeof value === "number") return Number.isFinite(value);
       return true;
     };
-    return candidateRows.filter((row) => isFilled(row[partCol]) && isFilled(row[priceCol])).slice(0, 3);
-  }, [activeSheet, filteredRowIndices]);
+    return rows.filter((row) => isFilled(row[partCol]) && isFilled(row[priceCol])).slice(0, 3);
+  }, [activeSheet]);
 
   const formatPreviewCell = useCallback(
     (value: unknown): string => {
@@ -1873,7 +1879,6 @@ export default function PriceListImportClient({
     validationRunId.current += 1;
     const runId = validationRunId.current;
     setFile(nextFile);
-    setRowFilterText("");
 
     if (!nextFile) {
       setFileValidation(INITIAL_VALIDATION);
@@ -2009,37 +2014,19 @@ export default function PriceListImportClient({
       return;
     }
 
-    // If a row filter is active, ask the user whether to import all rows or only the filtered ones.
-    // Compute fresh here (don't rely on the useMemo closure which may be stale).
+    // If the file has an Excel filter active (hidden rows), ask the user which rows to import.
     let importFilteredIndices: number[] | null = null;
-    const trimmedFilter = rowFilterText.trim();
-    if (trimmedFilter && activeSheet && activeSheet.allRows.length > 0) {
-      const search = trimmedFilter.toLowerCase();
-      const partCol = activeSheet.selection.partNumber;
-      const descCol = activeSheet.selection.description;
-      const modelCol = activeSheet.selection.modelNumber;
-      const cellMatch = (row: Record<number, unknown>, colIndex: number | null | undefined): boolean => {
-        if (colIndex == null) return false;
-        const val = row[colIndex];
-        if (typeof val === "string") return val.toLowerCase().includes(search);
-        if (typeof val === "number") return String(val).includes(search);
-        return false;
-      };
-      const freshFilteredIndices = activeSheet.allRows
-        .map((row, idx) => ({ row, idx }))
-        .filter(({ row }) => cellMatch(row, partCol) || cellMatch(row, descCol) || cellMatch(row, modelCol))
-        .map(({ idx }) => idx);
-
-      if (freshFilteredIndices.length < activeSheet.allRows.length) {
-        const importFiltered = await showConfirmDialog({
-          title: "Import filtered rows?",
-          message: `Your filter matches ${freshFilteredIndices.length} of ${activeSheet.allRows.length} rows. Import only the matching rows, or all rows?`,
-          confirmLabel: `Import ${freshFilteredIndices.length} filtered rows only`,
-          cancelLabel: `Import all ${activeSheet.allRows.length} rows`,
-        });
-        if (importFiltered) {
-          importFilteredIndices = freshFilteredIndices;
-        }
+    if (activeSheet.visibleDataRowIndices !== null) {
+      const visibleCount = activeSheet.visibleDataRowIndices.length;
+      const totalCount = activeSheet.allRows.length;
+      const importVisible = await showConfirmDialog({
+        title: "Excel filter detected",
+        message: `This file has an Excel filter active — ${visibleCount} of ${totalCount} rows are visible. Import only the visible rows, or all rows?`,
+        confirmLabel: `Import ${visibleCount} visible rows only`,
+        cancelLabel: `Import all ${totalCount} rows`,
+      });
+      if (importVisible) {
+        importFilteredIndices = activeSheet.visibleDataRowIndices;
       }
     }
 
@@ -2371,7 +2358,7 @@ export default function PriceListImportClient({
     } finally {
       setSubmitting(false);
     }
-  }, [appendMode, appendToPriceListId, clearDraft, euroCurrencyId, file, fileValidation, isCostCurrencyEuro, router, rowFilterText, values]);
+  }, [appendMode, appendToPriceListId, clearDraft, euroCurrencyId, file, fileValidation, isCostCurrencyEuro, router, values]);
 
   const renderOption = (option: DropdownOption) => (
     <option key={option.value} value={option.value}>
@@ -2872,13 +2859,12 @@ export default function PriceListImportClient({
                             "Choose columns for the fields below."}
                           {activeSheet ? (
                             <span className={styles.validationHint}>
-                              {`Detected ${activeSheet.columns.length} column${activeSheet.columns.length === 1 ? "" : "s"} in ${
-                                activeSheet.name
-                              }. ${
-                                activeSheet.rowCount > 0
-                                  ? `${activeSheet.rowCount} data row${activeSheet.rowCount === 1 ? "" : "s"} after the header.`
-                                  : "No data rows detected yet."
-                              }`}
+                              {`Detected ${activeSheet.columns.length} column${activeSheet.columns.length === 1 ? "" : "s"} in ${activeSheet.name}. `}
+                              {activeSheet.rowCount > 0
+                                ? activeSheet.visibleDataRowIndices !== null
+                                  ? `${activeSheet.visibleRowCount} visible row${activeSheet.visibleRowCount === 1 ? "" : "s"} of ${activeSheet.rowCount} total (Excel filter active).`
+                                  : `${activeSheet.rowCount} data row${activeSheet.rowCount === 1 ? "" : "s"} after the header.`
+                                : "No data rows detected yet."}
                             </span>
                           ) : null}
                         </div>
@@ -2933,7 +2919,11 @@ export default function PriceListImportClient({
                                       />
                                     ) : null}
                                     {sheet.name || `Sheet ${idx + 1}`}
-                                    <span className={styles.sheetTabRows}>{sheet.rowCount} rows</span>
+                                    <span className={styles.sheetTabRows}>
+                                      {sheet.visibleDataRowIndices !== null
+                                        ? `${sheet.visibleRowCount} / ${sheet.rowCount} rows`
+                                        : `${sheet.rowCount} rows`}
+                                    </span>
                                   </button>
                                 );
                               })}
@@ -2996,32 +2986,13 @@ export default function PriceListImportClient({
                               <div className={styles.previewSection}>
                                 <div className={styles.previewHeading}>
                                   <span>
-                                    {filteredRowIndices !== null
-                                      ? `Preview (${filteredRowIndices.length} of ${activeSheet.allRows.length} rows match)`
+                                    {activeSheet.visibleDataRowIndices !== null
+                                      ? `Sample rows — ${activeSheet.visibleRowCount} visible of ${activeSheet.rowCount} total (Excel filter active)`
                                       : `Sample rows (first ${displayPreviewRows.length > 0 ? displayPreviewRows.length : 3})`}
                                   </span>
                                   <span className={styles.previewHint}>
                                     Showing mapped columns; the list price column is bold.
                                   </span>
-                                </div>
-                                <div className={styles.previewFilterRow}>
-                                  <input
-                                    type="search"
-                                    className={styles.previewFilterInput}
-                                    placeholder={`Filter rows by part number, description or model…`}
-                                    value={rowFilterText}
-                                    onChange={(e) => setRowFilterText(e.target.value)}
-                                  />
-                                  {rowFilterText && (
-                                    <button
-                                      type="button"
-                                      className={styles.previewFilterClear}
-                                      onClick={() => setRowFilterText("")}
-                                      aria-label="Clear filter"
-                                    >
-                                      ×
-                                    </button>
-                                  )}
                                 </div>
                                 {previewColumns.length === 0 ? (
                                   <div className={styles.previewEmpty}>
