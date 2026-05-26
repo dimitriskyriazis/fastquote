@@ -95,6 +95,8 @@ DECLARE @SourceDetails TABLE (
   IsComment BIT NULL,
   IsCategory BIT NULL,
   IsOption BIT NULL,
+  IsService BIT NULL,
+  ServiceType NVARCHAR(20) NULL,
   Enabled BIT NULL,
   ProductDescription NVARCHAR(2000) NULL,
   BrandID INT NULL,
@@ -136,7 +138,7 @@ DECLARE @SourceDetails TABLE (
   RequestedQuantity DECIMAL(18,4) NULL
 );
 
-INSERT INTO @SourceDetails (Seq, OldId, ParentOfferDetailID, TreeOrdering, Ordering, IsPrintable, IsComment, IsCategory, IsOption, Enabled, ProductDescription, BrandID, PartNumber, ModelNumber, ProductID, Quantity, CustomerDiscount, AdditionalCustomerDiscount, NetUnitPrice, TotalPrice, TotalNet, TelmacoWarranty, Warranty, Installation, ElInstalation, Commissioning, Delivery, Comment, ListPrice, TelmacoDiscount, NetCostOtherCurrency, OtherCurrencyID, CurrencyCostModifier, NetCost, Margin, GrossProfit, TotalCost, PriceListID, PriceListItemID, RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo, RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity)
+INSERT INTO @SourceDetails (Seq, OldId, ParentOfferDetailID, TreeOrdering, Ordering, IsPrintable, IsComment, IsCategory, IsOption, IsService, ServiceType, Enabled, ProductDescription, BrandID, PartNumber, ModelNumber, ProductID, Quantity, CustomerDiscount, AdditionalCustomerDiscount, NetUnitPrice, TotalPrice, TotalNet, TelmacoWarranty, Warranty, Installation, ElInstalation, Commissioning, Delivery, Comment, ListPrice, TelmacoDiscount, NetCostOtherCurrency, OtherCurrencyID, CurrencyCostModifier, NetCost, Margin, GrossProfit, TotalCost, PriceListID, PriceListItemID, RequestedItemNo, RequestedBrand, RequestedModelNo, RequestedPartNo, RequestedWebLink, RequestedDescription, RequestedDescription2, RequestedDescription3, RequestedQuantity)
 SELECT
   ROW_NUMBER() OVER (ORDER BY od.ID),
   od.ID,
@@ -147,6 +149,8 @@ SELECT
   od.IsComment,
   od.IsCategory,
   od.IsOption,
+  od.IsService,
+  od.ServiceType,
   od.Enabled,
   od.ProductDescription,
   od.BrandID,
@@ -199,6 +203,8 @@ INSERT INTO dbo.OfferDetails (
   IsComment,
   IsCategory,
   IsOption,
+  IsService,
+  ServiceType,
   Enabled,
   ProductDescription,
   ProductID,
@@ -253,6 +259,8 @@ SELECT
   src.IsComment,
   src.IsCategory,
   src.IsOption,
+  src.IsService,
+  src.ServiceType,
   src.Enabled,
   src.ProductDescription,
   src.ProductID,
