@@ -193,7 +193,7 @@ const resolveDefaultPricingPolicyId = (options: DropdownOption[]): string => {
 };
 
 const resolveDefaultStatusId = (options: DropdownOption[]): string => {
-  const normalizedTarget = 'request';
+  const normalizedTarget = 'draft request';
   const byLabel = options.find((opt) => (opt.label ?? '').trim().toLowerCase() === normalizedTarget);
   if (byLabel?.value) return byLabel.value;
   const byValue = options.find((opt) => (opt.value ?? '').trim().toLowerCase() === normalizedTarget);

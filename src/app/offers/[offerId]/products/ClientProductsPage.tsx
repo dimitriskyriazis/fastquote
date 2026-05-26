@@ -12,7 +12,7 @@ const OfferProductsPanel = dynamic(
   { ssr: false, loading: () => <div style={{ padding: '2rem', opacity: 0.5 }}>Loading products…</div> },
 );
 import { showToastMessage } from '../../../../lib/toast';
-import { showConfirmDialog } from '../../../../lib/confirm';
+import { showConfirmDialog, showMultiChoiceDialog } from '../../../../lib/confirm';
 import { addRecentOffer } from '../../../lib/recentOffers';
 import { useAuditUser } from '../../../components/AuditUserProvider';
 import layoutStyles from '../../offersDetail.module.css';
@@ -1171,6 +1171,8 @@ export default function ClientProductsPage({
               'CurrencyCostModifier',
               'PriceListID',
               'PriceListItemID',
+              'IsService',
+              'ServiceType',
               'RequestedItemNo',
               'RequestedBrand',
               'RequestedPartNo',
@@ -1198,7 +1200,7 @@ export default function ClientProductsPage({
         throw new Error('Selected standard package has no rows to insert.');
       }
 
-      const pasteResponse = await fetch(
+      const doPaste = () => fetch(
         `/api/offers/${encodeURIComponent(offerId)}/products/paste`,
         {
           method: 'POST',
@@ -1210,9 +1212,38 @@ export default function ClientProductsPage({
           }),
         },
       );
-      const pastePayload = (await pasteResponse.json().catch(() => null)) as
-        | { ok?: boolean; inserted?: number; error?: string }
+
+      let pasteResponse = await doPaste();
+      let pastePayload = (await pasteResponse.json().catch(() => null)) as
+        | { ok?: boolean; inserted?: number; error?: string; requiresServicesLocation?: boolean }
         | null;
+
+      // If service rows need a location, prompt the user then retry
+      if (!pasteResponse.ok && pastePayload?.requiresServicesLocation === true) {
+        const location = await showMultiChoiceDialog({
+          title: 'Services Location Required',
+          message: 'This standard package includes service products. Please select the Services Location for this offer:',
+          choices: [
+            { label: 'Ath (Athens)', value: 'Ath' },
+            { label: 'GR (Greece)', value: 'GR' },
+            { label: 'outGR (Outside GR)', value: 'outGR' },
+          ],
+        });
+        if (!location) {
+          setAddStandardPackageError('Services Location is required to add service products.');
+          return;
+        }
+        await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates: [{ field: 'ServicesLocation', value: location }] }),
+        });
+        pasteResponse = await doPaste();
+        pastePayload = (await pasteResponse.json().catch(() => null)) as
+          | { ok?: boolean; inserted?: number; error?: string }
+          | null;
+      }
+
       if (!pasteResponse.ok || !pastePayload?.ok) {
         throw new Error(pastePayload?.error ?? 'Unable to add standard package.');
       }
@@ -1240,7 +1271,7 @@ export default function ClientProductsPage({
     }
     setShowPasteDialog(false);
     try {
-      const response = await fetch(
+      const doPaste = () => fetch(
         `/api/offers/${encodeURIComponent(offerId)}/products/paste`,
         {
           method: 'POST',
@@ -1253,9 +1284,35 @@ export default function ClientProductsPage({
           }),
         },
       );
-      const payload = (await response.json().catch(() => null)) as
-        | { ok?: boolean; error?: string; inserted?: number }
+
+      let response = await doPaste();
+      let payload = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; inserted?: number; requiresServicesLocation?: boolean }
         | null;
+
+      // If service rows need a location, prompt the user then retry
+      if (!response.ok && payload?.requiresServicesLocation === true) {
+        const location = await showMultiChoiceDialog({
+          title: 'Services Location Required',
+          message: 'The rows being pasted include service products. Please select the Services Location for this offer:',
+          choices: [
+            { label: 'Ath (Athens)', value: 'Ath' },
+            { label: 'GR (Greece)', value: 'GR' },
+            { label: 'outGR (Outside GR)', value: 'outGR' },
+          ],
+        });
+        if (!location) return; // user cancelled — silently abort
+        await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates: [{ field: 'ServicesLocation', value: location }] }),
+        });
+        response = await doPaste();
+        payload = (await response.json().catch(() => null)) as
+          | { ok?: boolean; error?: string; inserted?: number }
+          | null;
+      }
+
       if (!response.ok || !payload?.ok) {
         throw new Error(payload?.error ?? 'Failed to paste products');
       }

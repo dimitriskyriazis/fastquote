@@ -37,6 +37,8 @@ export interface ClipboardRow {
   currencyCostModifier: number | null;
   priceListId: number | null;
   priceListItemId: number | null;
+  isService: boolean;
+  serviceType: string | null;
   requestedItemNo: string | null;
   requestedBrand: string | null;
   requestedPartNo: string | null;
@@ -166,6 +168,8 @@ export function mapRowToClipboardRow(row: Record<string, unknown>): ClipboardRow
     currencyCostModifier: coerceNumber(row.CurrencyCostModifier),
     priceListId: coerceInt(row.PriceListID),
     priceListItemId: coerceInt(row.PriceListItemID),
+    isService: coerceBool(row.IsService),
+    serviceType: coerceString(row.ServiceType),
     requestedItemNo: coerceString(row.RequestedItemNo),
     requestedBrand: coerceString(row.RequestedBrand),
     requestedPartNo: coerceString(row.RequestedPartNo),

@@ -152,6 +152,8 @@ type ProductRow = {
   PricingSellAnchor?: string | null;
   PricingHoldMarginOnCost?: boolean | null;
   PriceListItemListPrice?: number | null;
+  PriceListItemServicePriceGR?: number | null;
+  PriceListItemServicePriceOutGR?: number | null;
 };
 
 type RequestedFieldKey =
@@ -1525,7 +1527,17 @@ export async function POST(
             WHEN od.PriceListItemID IS NULL THEN NULL
             WHEN pl.CurrencyId IS NULL OR pl.CurrencyId = o.CurrencyID THEN pli.ListPrice
             ELSE pli.ListPrice * COALESCE(o.CurrencyModifier, pl.CurrencyCostModifier, 1)
-          END AS PriceListItemListPrice
+          END AS PriceListItemListPrice,
+          CASE
+            WHEN od.PriceListItemID IS NULL OR pli.ServicePriceGR IS NULL THEN NULL
+            WHEN pl.CurrencyId IS NULL OR pl.CurrencyId = o.CurrencyID THEN pli.ServicePriceGR
+            ELSE pli.ServicePriceGR * COALESCE(o.CurrencyModifier, pl.CurrencyCostModifier, 1)
+          END AS PriceListItemServicePriceGR,
+          CASE
+            WHEN od.PriceListItemID IS NULL OR pli.ServicePriceOutGR IS NULL THEN NULL
+            WHEN pl.CurrencyId IS NULL OR pl.CurrencyId = o.CurrencyID THEN pli.ServicePriceOutGR
+            ELSE pli.ServicePriceOutGR * COALESCE(o.CurrencyModifier, pl.CurrencyCostModifier, 1)
+          END AS PriceListItemServicePriceOutGR
         FROM dbo.OfferDetails od
           OUTER APPLY (
             SELECT TOP 1 cat_inner.ProductDescription

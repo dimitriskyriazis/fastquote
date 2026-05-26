@@ -38,7 +38,7 @@ type OfferDetailRow = {
   ERPFWCProjectShortName: string | null;
   PartNumber: string | null;
   ModelNumber: string | null;
-  ERPCode: string | null;
+  ERPProjectCode: string | null;
   BrandName: string | null;
   Origin: string | null;
   ProductDescription: string | null;
@@ -85,7 +85,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   ERPFWCProjectShortName: 'fwc.ShortName',
   PartNumber: 'od.PartNumber',
   ModelNumber: 'od.ModelNumber',
-  ERPCode: 'p.ERPCode',
+  ERPProjectCode: 'o.ERPProjectCode',
   BrandName: 'b.Name',
   Origin: 'p.Origin',
   ProductDescription: 'od.ProductDescription',
@@ -252,7 +252,7 @@ const selectClause = `
     fwc.ShortName AS ERPFWCProjectShortName,
     od.PartNumber,
     od.ModelNumber,
-    p.ERPCode AS ERPCode,
+    o.ERPProjectCode,
     b.Name AS BrandName,
     p.Origin AS Origin,
     od.ProductDescription,

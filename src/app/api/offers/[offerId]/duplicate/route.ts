@@ -35,6 +35,7 @@ const normalizeNullableString = (value: unknown): string | null => {
 type ExistingOfferRecord = {
   CustomerID: number | null;
   StatusID: number | null;
+  StatusName: string | null;
   PricingPolicyID: number | null;
   MarketID: number | null;
   SalesDivisionID: number | null;
@@ -350,6 +351,7 @@ export async function POST(
       SELECT
         CustomerID,
         StatusID,
+        (SELECT Name FROM dbo.OfferStatus WHERE ID = dbo.Offer.StatusID) AS StatusName,
         PricingPolicyID,
         MarketID,
         SalesDivisionID,
@@ -453,6 +455,24 @@ export async function POST(
         ? Boolean(existingOffer.IsStandardPackage)
         : false;
 
+    // For copy mode: clear ERP Project Code and reset "signed" statuses to Draft Request
+    let effectiveStatusId = existingOffer.StatusID;
+    let effectiveERPProjectCode = existingOffer.ERPProjectCode;
+    if (duplicateMode === 'copy') {
+      effectiveERPProjectCode = null;
+      const statusName = (existingOffer.StatusName ?? '').trim().toLowerCase();
+      if (statusName.includes('signed')) {
+        const draftStatusRequest = pool.request();
+        const draftStatusResult = await draftStatusRequest.query<{ ID: number }>(`
+          SELECT TOP 1 ID FROM dbo.OfferStatus WHERE LOWER(TRIM(Name)) = 'draft request'
+        `);
+        const draftStatusId = draftStatusResult.recordset?.[0]?.ID ?? null;
+        if (draftStatusId != null) {
+          effectiveStatusId = draftStatusId;
+        }
+      }
+    }
+
     const transaction = new sql.Transaction(pool);
     await transaction.begin();
     try {
@@ -461,7 +481,7 @@ export async function POST(
       const normalizedApprovalUserId = normalizeNullableString(existingOffer.ApprovalUserId);
       const insertRequest = transaction.request();
       insertRequest.input('CustomerID', sql.Int, existingOffer.CustomerID);
-      insertRequest.input('StatusID', sql.Int, existingOffer.StatusID);
+      insertRequest.input('StatusID', sql.Int, effectiveStatusId);
       insertRequest.input('PricingPolicyID', sql.Int, existingOffer.PricingPolicyID);
       insertRequest.input('MarketID', sql.Int, existingOffer.MarketID);
       insertRequest.input('SalesDivisionID', sql.Int, existingOffer.SalesDivisionID);
@@ -480,7 +500,7 @@ export async function POST(
       insertRequest.input('Comments', sql.NVarChar(2000), existingOffer.Comments);
       insertRequest.input('ContactID', sql.Int, existingOffer.ContactID);
       insertRequest.input('OfferContact', sql.NVarChar(500), existingOffer.OfferContact);
-      insertRequest.input('ERPProjectCode', sql.NVarChar(500), existingOffer.ERPProjectCode);
+      insertRequest.input('ERPProjectCode', sql.NVarChar(500), effectiveERPProjectCode);
       insertRequest.input('ERPFWCProjectID', sql.Int, existingOffer.ERPFWCProjectID);
       insertRequest.input('PrintLevelGroupingID', sql.Int, existingOffer.PrintLevelGroupingID);
       insertRequest.input('CustomerRef', sql.NVarChar(500), existingOffer.CustomerRef);

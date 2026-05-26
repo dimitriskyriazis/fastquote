@@ -47,6 +47,8 @@ type ClipboardRow = {
   currencyCostModifier: number | null;
   priceListId: number | null;
   priceListItemId: number | null;
+  isService: boolean;
+  serviceType: string | null;
   requestedItemNo: string | null;
   requestedBrand: string | null;
   requestedPartNo: string | null;
@@ -149,6 +151,8 @@ const toPreparedRow = (value: unknown): PreparedRow | null => {
     currencyCostModifier: coerceNumber(row.currencyCostModifier ?? row.CurrencyCostModifier),
     priceListId: coerceInt(row.priceListId ?? row.PriceListID),
     priceListItemId: coerceInt(row.priceListItemId ?? row.PriceListItemID),
+    isService: coerceBool(row.isService ?? row.IsService),
+    serviceType: coerceString(row.serviceType ?? row.ServiceType),
     requestedItemNo: coerceString(row.requestedItemNo ?? row.RequestedItemNo),
     requestedBrand: coerceString(row.requestedBrand ?? row.RequestedBrand),
     requestedPartNo: coerceString(row.requestedPartNo ?? row.RequestedPartNo),
@@ -406,7 +410,36 @@ const insertProductRowsKeepPricing = async (transaction: Transaction, offerId: n
   return inserted;
 };
 
-const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: number, rows: InsertRow[], createdBy: number): Promise<number[]> => {
+/** Look up the location-adjusted list price for each priceListItemId. */
+const resolveAdjustedServicePrices = async (
+  pool: ConnectionPool,
+  priceListItemIds: number[],
+  servicesLocation: string,
+): Promise<Map<number, number | null>> => {
+  if (priceListItemIds.length === 0) return new Map();
+  const request = pool.request();
+  request.input('__svcLocation', sql.NVarChar(10), servicesLocation);
+  priceListItemIds.forEach((id, idx) => request.input(`__pli${idx}`, sql.Int, id));
+  const idList = priceListItemIds.map((_, idx) => `@__pli${idx}`).join(', ');
+  const result = await request.query<{ PriceListItemID: number; AdjustedPrice: number | null }>(`
+    SELECT
+      pli.ID AS PriceListItemID,
+      CASE
+        WHEN @__svcLocation = 'GR'    THEN COALESCE(pli.ServicePriceGR,    pli.ListPrice)
+        WHEN @__svcLocation = 'outGR' THEN COALESCE(pli.ServicePriceOutGR, pli.ListPrice)
+        ELSE pli.ListPrice
+      END AS AdjustedPrice
+    FROM dbo.PriceListItems pli
+    WHERE pli.ID IN (${idList})
+  `);
+  const map = new Map<number, number | null>();
+  for (const row of result.recordset ?? []) {
+    map.set(row.PriceListItemID, typeof row.AdjustedPrice === 'number' ? row.AdjustedPrice : null);
+  }
+  return map;
+};
+
+const insertProductRowsFreshPricing = async (transaction: Transaction, pool: ConnectionPool, offerId: number, rows: InsertRow[], createdBy: number, svcLocation: string | null): Promise<number[]> => {
   if (!rows.length) return [];
   const inserted: number[] = [];
   const BATCH_SIZE = 50;
@@ -416,6 +449,7 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
     request.input('__offerId', sql.Int, offerId);
     request.input('__createdBy', sql.Int, createdBy);
     request.input('__modifiedBy', sql.Int, createdBy);
+    request.input('__svcLocation', sql.NVarChar(10), svcLocation);
     const values: string[] = [];
     batch.forEach((row, idx) => {
       const p = `r${idx}`;
@@ -464,6 +498,8 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
         END;
 
       IF @offerCurrencyId IS NULL SET @offerCurrencyId = @euroCurrencyId;
+
+      DECLARE @svcLocation NVARCHAR(10) = @__svcLocation;
 
       DECLARE @r TABLE (
         Seq INT,
@@ -587,8 +623,15 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, offerId: 
         SELECT TOP (1)
           pli.ID AS PriceListItemID,
           pli.PriceListID,
-          CASE WHEN pl.CurrencyId = @offerCurrencyId THEN pli.ListPrice
-               ELSE pli.ListPrice * COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1)
+          CASE
+            WHEN ISNULL(pl.IsService, 0) = 1 THEN
+              CASE @svcLocation
+                WHEN 'GR'    THEN COALESCE(pli.ServicePriceGR,    pli.ListPrice)
+                WHEN 'outGR' THEN COALESCE(pli.ServicePriceOutGR, pli.ListPrice)
+                ELSE pli.ListPrice
+              END
+            WHEN pl.CurrencyId = @offerCurrencyId THEN pli.ListPrice
+            ELSE pli.ListPrice * COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1)
           END AS ListPrice,
           pli.CostPrice,
           CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @offerCurrencyId THEN NULL
@@ -837,6 +880,59 @@ export async function POST(
     const insertRows = prepareInsertRows(clipboardRows, remap, nextOrdering);
     const createdBy = resolveCreatedBy(buildAuditContext(req).userId);
 
+    // ── Service-location price adjustment ──────────────────────────────
+    // If any clipboard rows are services, the target offer must have a
+    // ServicesLocation set so prices are adjusted to the correct tier.
+    const hasServiceRows = insertRows.some((r) => r.isService);
+    let servicesLocation: string | null = null;
+    if (hasServiceRows) {
+      const locationReq = pool.request();
+      locationReq.input('__offerId', sql.Int, offerId);
+      const locationResult = await locationReq.query<{ ServicesLocation: string | null }>(`
+        SELECT TOP (1) ServicesLocation FROM dbo.Offer WHERE ID = @__offerId
+      `);
+      servicesLocation = locationResult.recordset?.[0]?.ServicesLocation ?? null;
+      if (servicesLocation === null) {
+        await transaction.rollback();
+        transaction = null;
+        return NextResponse.json(
+          { ok: false, requiresServicesLocation: true, error: 'Services Location must be set on this offer before pasting service rows.' },
+          { status: 400 },
+        );
+      }
+
+      // For keepPricing=true: re-price service rows in-place so the copied
+      // discount structure is preserved but the base price reflects the
+      // target offer's location.
+      if (keepPricing) {
+        const serviceRowsWithPli = insertRows.filter(
+          (r) => r.isService && r.priceListItemId != null && !r.isCategory && !r.isComment,
+        );
+        if (serviceRowsWithPli.length > 0) {
+          const uniquePliIds = [...new Set(serviceRowsWithPli.map((r) => r.priceListItemId!))];
+          const adjustedPrices = await resolveAdjustedServicePrices(pool, uniquePliIds, servicesLocation);
+          for (const row of insertRows) {
+            if (!row.isService || row.priceListItemId == null) continue;
+            const newPrice = adjustedPrices.get(row.priceListItemId) ?? null;
+            if (newPrice == null) continue;
+            const custDisc = row.customerDiscount ?? 0;
+            const telDisc = row.telmacoDiscount ?? 0;
+            const qty = row.quantity ?? 1;
+            const newNet = Math.round(newPrice * (1 - custDisc / 100) * 10000) / 10000;
+            const newCost = Math.round(newPrice * (1 - telDisc / 100) * 10000) / 10000;
+            row.listPrice = newPrice;
+            row.netUnitPrice = newNet;
+            row.netCost = newCost;
+            row.grossProfit = Math.round((newNet - newCost) * qty * 10000) / 10000;
+            row.margin = newNet !== 0
+              ? Math.round((1 - newCost / newNet) * 100 * 10000) / 10000
+              : null;
+          }
+        }
+      }
+    }
+    // ───────────────────────────────────────────────────────────────────
+
     const nonProductRows = insertRows.filter((row) => row.productId == null || row.isCategory || row.isComment);
     const productRows = insertRows.filter((row) => row.productId != null && !row.isCategory && !row.isComment);
 
@@ -847,7 +943,7 @@ export async function POST(
       if (keepPricing) {
         insertedOfferDetailIds.push(...(await insertProductRowsKeepPricing(transaction, offerId, productRows, createdBy)));
       } else {
-        insertedOfferDetailIds.push(...(await insertProductRowsFreshPricing(transaction, offerId, productRows, createdBy)));
+        insertedOfferDetailIds.push(...(await insertProductRowsFreshPricing(transaction, pool, offerId, productRows, createdBy, servicesLocation)));
       }
     }
 

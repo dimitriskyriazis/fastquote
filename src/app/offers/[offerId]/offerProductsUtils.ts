@@ -2079,7 +2079,7 @@ export const productAccentCellClassRules = {
 };
 
 export const productPriceListClassRules = priceListStatusClassRules((params) =>
-  isOfferProductProduct(params.data) ? params.data : null,
+  (isOfferProductProduct(params.data) || isOfferProductService(params.data)) ? params.data : null,
 );
 
 export const totalPriceCellClassRules = {

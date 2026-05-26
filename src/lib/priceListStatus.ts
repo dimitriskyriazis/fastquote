@@ -8,6 +8,8 @@ export type PriceListRow = {
   PriceListItemID?: unknown;
   ListPrice?: unknown;
   PriceListItemListPrice?: unknown;
+  PriceListItemServicePriceGR?: unknown;
+  PriceListItemServicePriceOutGR?: unknown;
 } | null | undefined;
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -89,9 +91,15 @@ export const isPriceListListPriceEdited = (row: PriceListRow): boolean => {
   const priceListItemId = normalizeInteger((row as { PriceListItemID?: unknown })?.PriceListItemID ?? null);
   if (priceListItemId == null) return false;
   const listPrice = parseFiniteNumber((row as { ListPrice?: unknown })?.ListPrice ?? null);
+  if (listPrice == null) return false;
   const plListPrice = parseFiniteNumber((row as { PriceListItemListPrice?: unknown })?.PriceListItemListPrice ?? null);
-  if (listPrice == null || plListPrice == null) return false;
-  return Math.abs(listPrice - plListPrice) > LIST_PRICE_EDIT_TOLERANCE;
+  const plServicePriceGR = parseFiniteNumber((row as { PriceListItemServicePriceGR?: unknown })?.PriceListItemServicePriceGR ?? null);
+  const plServicePriceOutGR = parseFiniteNumber((row as { PriceListItemServicePriceOutGR?: unknown })?.PriceListItemServicePriceOutGR ?? null);
+  // The list price is considered unedited if it matches any of the available
+  // price list reference prices (base, service GR, or service outGR).
+  const referencePrices = [plListPrice, plServicePriceGR, plServicePriceOutGR].filter((p): p is number => p != null);
+  if (referencePrices.length === 0) return false;
+  return !referencePrices.some(ref => Math.abs(listPrice - ref) <= LIST_PRICE_EDIT_TOLERANCE);
 };
 
 export const priceListStatusClassRules = (rowAccessor?: (params: { data?: Record<string, unknown> | null }) => PriceListRow) => {

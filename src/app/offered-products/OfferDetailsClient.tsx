@@ -282,6 +282,12 @@ export default function OfferDetailsClient() {
       width: 150,
     },
     {
+      field: 'ERPProjectCode',
+      headerName: 'ERP Project Code',
+      filter: 'agTextColumnFilter',
+      width: 150,
+    },
+    {
       field: 'OfferDescription',
       headerName: 'Offer Description',
       filter: 'agTextColumnFilter',
@@ -372,12 +378,6 @@ export default function OfferDetailsClient() {
       headerName: 'Model Number',
       filter: 'agTextColumnFilter',
       minWidth: 140,
-    },
-    {
-      field: 'ERPProjectCode',
-      headerName: 'ERP Project Code',
-      filter: 'agTextColumnFilter',
-      width: 150,
     },
     {
       field: 'ProductDescription',
