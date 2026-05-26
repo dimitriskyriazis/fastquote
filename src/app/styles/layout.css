@@ -1,12 +1,12 @@
 .app-shell {
-  min-height: 100vh;
+  min-height: 100%;
   display: flex;
   background: #000000;
 }
 
 .app-content {
   flex: 1;
-  min-height: 100vh;
+  min-height: 100%;
   background: #000000;
   overflow: hidden;
 }
@@ -342,7 +342,7 @@
 
 /* Access denied page (unrecognized Windows user) */
 .access-denied-page {
-  min-height: 100vh;
+  min-height: var(--fq-100vh);
   display: flex;
   align-items: center;
   justify-content: center;
