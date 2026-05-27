@@ -4936,8 +4936,12 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       }
       const rect = popup.getBoundingClientRect();
       const MARGIN = 4;
-      if (rect.bottom > window.innerHeight - MARGIN) {
-        const overflow = rect.bottom - (window.innerHeight - MARGIN);
+      // Use the grid shell's bottom edge so the menu doesn't slide under the totals bar.
+      const shellBottom = shellRef.current
+        ? shellRef.current.getBoundingClientRect().bottom
+        : window.innerHeight;
+      if (rect.bottom > shellBottom - MARGIN) {
+        const overflow = rect.bottom - (shellBottom - MARGIN);
         const currentTop = parseFloat(popup.style.top) || 0;
         popup.style.top = `${Math.max(MARGIN, currentTop - overflow)}px`;
       }
