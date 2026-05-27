@@ -1824,10 +1824,10 @@ async function handleExecute(
       requestId,
     });
 
-    // Update offer status to "Official Offer Sent"
+    // Update offer status to "Order Signed"
     try {
       const statusRow = await pool.request()
-        .query<{ ID: number }>(`SELECT TOP 1 ID FROM dbo.OfferStatus WHERE Name = 'Official Offer Sent'`);
+        .query<{ ID: number }>(`SELECT TOP 1 ID FROM dbo.OfferStatus WHERE Name = 'Order Signed'`);
       const newStatusId = statusRow.recordset[0]?.ID;
       if (newStatusId != null) {
         const currentRow = await pool.request()
@@ -1845,7 +1845,7 @@ async function handleExecute(
             INSERT INTO dbo.OfferStatusHistory (OfferID, StatusID, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, Enabled)
             VALUES (@__offerId, @__statusId, SYSUTCDATETIME(), ${ctx.userId ? '@__userId' : 'NULL'}, SYSUTCDATETIME(), ${ctx.userId ? '@__userId' : 'NULL'}, 1)
           `);
-          logger.info('wizard execute offer status updated to Official Offer Sent', { requestId, offerId, newStatusId });
+          logger.info('wizard execute offer status updated to Order Signed', { requestId, offerId, newStatusId });
         }
       }
     } catch (statusErr) {

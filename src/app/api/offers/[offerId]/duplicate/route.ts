@@ -463,21 +463,20 @@ export async function POST(
         ? Boolean(existingOffer.IsStandardPackage)
         : false;
 
-    // For copy mode: clear ERP Project Code and reset "signed" statuses to Draft Request
+    // Always reset status to Draft Request for both new version and copy
     let effectiveStatusId = existingOffer.StatusID;
     let effectiveERPProjectCode = existingOffer.ERPProjectCode;
     if (duplicateMode === 'copy') {
       effectiveERPProjectCode = null;
-      const statusName = (existingOffer.StatusName ?? '').trim().toLowerCase();
-      if (statusName.includes('signed')) {
-        const draftStatusRequest = pool.request();
-        const draftStatusResult = await draftStatusRequest.query<{ ID: number }>(`
-          SELECT TOP 1 ID FROM dbo.OfferStatus WHERE LOWER(TRIM(Name)) = 'draft request'
-        `);
-        const draftStatusId = draftStatusResult.recordset?.[0]?.ID ?? null;
-        if (draftStatusId != null) {
-          effectiveStatusId = draftStatusId;
-        }
+    }
+    {
+      const draftStatusRequest = pool.request();
+      const draftStatusResult = await draftStatusRequest.query<{ ID: number }>(`
+        SELECT TOP 1 ID FROM dbo.OfferStatus WHERE LOWER(TRIM(Name)) = 'draft request'
+      `);
+      const draftStatusId = draftStatusResult.recordset?.[0]?.ID ?? null;
+      if (draftStatusId != null) {
+        effectiveStatusId = draftStatusId;
       }
     }
 
