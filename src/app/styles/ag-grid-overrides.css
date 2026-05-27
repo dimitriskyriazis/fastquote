@@ -2,6 +2,17 @@
   cursor: default !important;
 }
 
+/* Suppress AG Grid's built-in row-drag highlight lines.
+   ag-row-highlight-above/below draw a 1px ::after line that fires
+   alongside our own box-shadow drop indicator, creating a strobe effect
+   that looks like rows are moving.  We use our own indicator exclusively. */
+.offer-products-grid .ag-row.ag-row-highlight-above::after,
+.offer-products-grid .ag-row.ag-row-highlight-below::after,
+.offer-products-grid .ag-row.ag-row-highlight-inside::after,
+.offer-products-grid .ag-row.ag-row-highlight-indent::after {
+  display: none !important;
+}
+
 /* Context menu popup must appear above the insert-line overlay (z-index 5). */
 .ag-popup-wrapper,
 .ag-menu {
@@ -465,6 +476,41 @@
   background-color: #ead9b8 !important; /* Slightly darker version of #f5e6c8 for hover */
 }
 
+/* Each .ag-cell carries a 1px transparent border (all sides). Because cells are
+   position:absolute the transparent border shows through to the .ag-row's own
+   background (white / alternating), creating thin white lines at every column
+   boundary on uniformly-coloured rows.
+   Fix: give the row the same background as its cells so nothing shows through. */
+.offer-products-grid .ag-row.offer-row--category               { background-color: rgb(220, 220, 220) !important; }
+.offer-products-grid .ag-row.offer-row--printable-comment      { background-color: #e0f2fe !important; }
+.offer-products-grid .ag-row.offer-row--nonprintable-comment   { background-color: #fee2e2 !important; }
+.offer-products-grid .ag-row.offer-row--printable-service      { background-color: #fef9c3 !important; }
+.offer-products-grid .ag-row.offer-row--nonprintable-service   { background-color: #ffedd5 !important; }
+
+/* Selected state — match the row background to the selected cell background */
+.offer-products-grid .ag-row.offer-row--category.ag-row-selected,
+.offer-products-grid .ag-row.offer-row--category.ag-row-range-selected,
+.offer-products-grid .ag-row.offer-row--category.ag-row--context-menu-active             { background-color: #c5c9d0 !important; }
+.offer-products-grid .ag-row.offer-row--printable-comment.ag-row-selected,
+.offer-products-grid .ag-row.offer-row--printable-comment.ag-row-range-selected,
+.offer-products-grid .ag-row.offer-row--printable-comment.ag-row--context-menu-active    { background-color: #bde0ff !important; }
+.offer-products-grid .ag-row.offer-row--nonprintable-comment.ag-row-selected,
+.offer-products-grid .ag-row.offer-row--nonprintable-comment.ag-row-range-selected,
+.offer-products-grid .ag-row.offer-row--nonprintable-comment.ag-row--context-menu-active { background-color: #ffb7b7 !important; }
+.offer-products-grid .ag-row.offer-row--printable-service.ag-row-selected,
+.offer-products-grid .ag-row.offer-row--printable-service.ag-row-range-selected,
+.offer-products-grid .ag-row.offer-row--printable-service.ag-row--context-menu-active    { background-color: #fde68a !important; }
+.offer-products-grid .ag-row.offer-row--nonprintable-service.ag-row-selected,
+.offer-products-grid .ag-row.offer-row--nonprintable-service.ag-row-range-selected,
+.offer-products-grid .ag-row.offer-row--nonprintable-service.ag-row--context-menu-active { background-color: #fdba74 !important; }
+
+/* Hover state — match the row background to the hovered cell background */
+.offer-products-grid .ag-row.offer-row--category.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected)             { background-color: #d4d4d4 !important; }
+.offer-products-grid .ag-row.offer-row--printable-comment.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected)    { background-color: #cfe2f3 !important; }
+.offer-products-grid .ag-row.offer-row--nonprintable-comment.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected) { background-color: #fecaca !important; }
+.offer-products-grid .ag-row.offer-row--printable-service.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected)    { background-color: #fef08a !important; }
+.offer-products-grid .ag-row.offer-row--nonprintable-service.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected) { background-color: #fed7aa !important; }
+
 .offer-products-grid .offer-row--printable-comment .ag-cell {
   background-color: #e0f2fe !important;
 }
@@ -498,7 +544,7 @@
   background-color: #fef9c3 !important;
 }
 
-.offer-products-grid .offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell {
+.offer-products-grid .offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited) {
   background-color: #fde68a !important;
 }
 
@@ -512,13 +558,32 @@
   background-color: #ffedd5 !important;
 }
 
-.offer-products-grid .offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell {
+.offer-products-grid .offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited) {
   background-color: #fdba74 !important;
 }
 
 .offer-products-grid .ag-row.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell,
 .offer-products-grid .ag-row-hover.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell {
   background-color: #fed7aa !important;
+}
+
+/* Preserve pricelist cell colors on selected service rows — placed AFTER the
+   service-selected rules so cascade order guarantees these win. */
+.offer-products-grid .offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active,
+.offer-products-grid .offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active {
+  background-color: #8fdfa8 !important; /* Darker version of #b7ffcf */
+}
+.offer-products-grid .offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring,
+.offer-products-grid .offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring {
+  background-color: #e6d87a !important; /* Darker version of #fff8a5 */
+}
+.offer-products-grid .offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired,
+.offer-products-grid .offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired {
+  background-color: #df9f9f !important; /* Darker version of #ffcfcf */
+}
+.offer-products-grid .offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-lp-edited,
+.offer-products-grid .offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-lp-edited {
+  background-color: #d9c4a0 !important; /* Darker version of #f5e6c8 */
 }
 
 .offer-products-grid .offer-row--product .ag-cell {

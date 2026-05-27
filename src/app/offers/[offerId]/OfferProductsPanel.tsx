@@ -2548,6 +2548,13 @@ const ModelNumberCell = useCallback((params: ICellRendererParams<Record<string, 
     } catch {
       /* noop */
     }
+    // redrawRows re-evaluates getRowClass so the row color updates immediately
+    // when a row transitions between types (e.g. category ↔ product).
+    try {
+      api.redrawRows({ rowNodes: [node] });
+    } catch {
+      /* noop */
+    }
   }, []);
 
   const promoteNodeToCategory = useCallback((
@@ -2697,13 +2704,13 @@ const requestedColumnDefsMap = useMemo(
       // flow uses; without it, actions like "Set as Requested product" or
       // any router.refresh()-adjacent flow visibly jump the page to the top.
       captureAndPinScroll(viewport ?? null);
-      // Always refresh with purge: false. A purged refresh empties the grid
-      // momentarily, which shrinks the rendered area and lets the browser
-      // clamp window.scrollY toward 0 (and causes a white flash). Matches
-      // the row-drag flow — stale neighbour values settle once the SSRM
-      // blocks reload. Callers' purge:true requests are intentionally
-      // ignored; the option is kept on the signature for compatibility.
-      void options?.purge;
+      // purge:true destroys all SSRM block caches and recreates rows from
+      // fresh server data — the only reliable way to re-evaluate getRowClass
+      // when a row's type changes (category→product, category→comment, etc.).
+      // purge:false keeps old rows visible during reload but AG Grid does NOT
+      // re-apply getRowClass to existing nodes, so row colors stay stale.
+      // Scroll position is protected by captureAndPinScroll + pendingGridScrollRestoreRef above.
+      const shouldPurge = options?.purge ?? false;
       pendingRefreshPurgeRef.current = false;
       if (!refreshScheduledRef.current) {
         refreshScheduledRef.current = true;
@@ -2713,7 +2720,7 @@ const requestedColumnDefsMap = useMemo(
           pendingRefreshPurgeRef.current = null;
           if (!apiForRefresh) return;
           try {
-            apiForRefresh.refreshServerSide?.({ purge: false });
+            apiForRefresh.refreshServerSide?.({ purge: shouldPurge });
           } catch (err) {
             console.warn('Failed to refresh grid after row deletion', err);
           }
@@ -4863,6 +4870,11 @@ const requestedColumnDefsMap = useMemo(
     try {
       gridApiRef.current?.refreshCells?.({ rowNodes: [demoteNode], force: true });
     } catch { /* noop */ }
+    // redrawRows re-evaluates getRowClass so the row recolors immediately from
+    // "category" styling to "product" styling without needing a full grid refresh.
+    try {
+      gridApiRef.current?.redrawRows?.({ rowNodes: [demoteNode] });
+    } catch { /* noop */ }
 
     try {
       const payloadEntry: Record<string, unknown> = {
@@ -4919,6 +4931,10 @@ const requestedColumnDefsMap = useMemo(
       try { demoteNode.setDataValue('__isRequestedRow', 0); } catch { /* noop */ }
       try {
         gridApiRef.current?.refreshCells?.({ rowNodes: [demoteNode], force: true });
+      } catch { /* noop */ }
+      // Redraw to restore original row class (category styling) on rollback.
+      try {
+        gridApiRef.current?.redrawRows?.({ rowNodes: [demoteNode] });
       } catch { /* noop */ }
       console.error('Failed to set as requested product', err);
       setDemotePromptError(err instanceof Error ? err.message : 'Unable to set row as requested product. Please try again.');
@@ -5613,6 +5629,13 @@ const requestedColumnDefsMap = useMemo(
               } catch {
                 /* noop */
               }
+              try {
+                gridApiRef.current?.refreshCells?.({ rowNodes: [rowNode], force: true });
+              } catch { /* noop */ }
+              // Redraw to restore the original row class (e.g. product → category) on rollback.
+              try {
+                gridApiRef.current?.redrawRows?.({ rowNodes: [rowNode] });
+              } catch { /* noop */ }
             }
             console.error('Failed to mark category', err);
             showToastMessage('Unable to mark row as category. Please try again.', 'error');
@@ -5653,6 +5676,10 @@ const requestedColumnDefsMap = useMemo(
         const api = gridApiRef.current;
         try {
           api?.refreshCells?.({ rowNodes: commentTargetNodes as GridRowNode[], force: true });
+        } catch { /* noop */ }
+        // redrawRows re-evaluates getRowClass so rows recolor immediately (e.g. category → comment).
+        try {
+          api?.redrawRows?.({ rowNodes: commentTargetNodes as GridRowNode[] });
         } catch { /* noop */ }
         try {
           const updates = commentTargetNodes.map((n) => ({
@@ -5710,6 +5737,10 @@ const requestedColumnDefsMap = useMemo(
           try {
             api?.refreshCells?.({ rowNodes: commentTargetNodes as GridRowNode[], force: true });
           } catch { /* noop */ }
+          // Redraw to restore original row class on rollback.
+          try {
+            api?.redrawRows?.({ rowNodes: commentTargetNodes as GridRowNode[] });
+          } catch { /* noop */ }
           console.error('Failed to mark as comment', err);
           showToastMessage('Unable to mark row(s) as comment. Please try again.', 'error');
         }
@@ -5757,6 +5788,11 @@ const requestedColumnDefsMap = useMemo(
         const api = gridApiRef.current;
         try {
           api?.refreshCells?.({ rowNodes: serviceTargetNodes as GridRowNode[], force: true });
+        } catch { /* noop */ }
+        // redrawRows re-evaluates getRowClass so rows recolor immediately
+        // (e.g. printable-service ↔ non-printable-service).
+        try {
+          api?.redrawRows?.({ rowNodes: serviceTargetNodes as GridRowNode[] });
         } catch { /* noop */ }
         try {
           const updates = serviceTargetNodes.map((n) => ({
@@ -5807,6 +5843,10 @@ const requestedColumnDefsMap = useMemo(
           try {
             api?.refreshCells?.({ rowNodes: serviceTargetNodes as GridRowNode[], force: true });
           } catch { /* noop */ }
+          // Redraw to restore original row class on rollback.
+          try {
+            api?.redrawRows?.({ rowNodes: serviceTargetNodes as GridRowNode[] });
+          } catch { /* noop */ }
           console.error('Failed to update service row', err);
           showToastMessage('Unable to update service row(s). Please try again.', 'error');
         }
@@ -5854,6 +5894,11 @@ const requestedColumnDefsMap = useMemo(
         const api = gridApiRef.current;
         try {
           api?.refreshCells?.({ rowNodes: optionTargetNodes as GridRowNode[], force: true });
+        } catch { /* noop */ }
+        // redrawRows re-evaluates getRowClass so the offer-row--option class
+        // is applied/removed immediately without waiting for a grid refresh.
+        try {
+          api?.redrawRows?.({ rowNodes: optionTargetNodes as GridRowNode[] });
         } catch { /* noop */ }
         try {
           const updates = optionTargetNodes.map((n) => ({
@@ -5903,6 +5948,10 @@ const requestedColumnDefsMap = useMemo(
           }
           try {
             api?.refreshCells?.({ rowNodes: optionTargetNodes as GridRowNode[], force: true });
+          } catch { /* noop */ }
+          // Redraw to restore original row class on rollback.
+          try {
+            api?.redrawRows?.({ rowNodes: optionTargetNodes as GridRowNode[] });
           } catch { /* noop */ }
           console.error('Failed to update option flag', err);
           showToastMessage('Unable to update option flag. Please try again.', 'error');

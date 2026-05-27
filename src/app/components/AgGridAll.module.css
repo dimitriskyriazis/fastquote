@@ -170,6 +170,8 @@
 .gridShell :global(.ag-row--drop-after) {
   box-shadow: 0 2px 0 0 var(--row-drop-line, rgba(37, 99, 235, 0.85));
   border-bottom-color: transparent !important;
+  isolation: isolate; /* new stacking context without touching position:absolute */
+  z-index: 1; /* paint the shadow above the next row so it isn't covered */
 }
 
 .gridShell :global(.ag-row--drop-inside .ag-cell) {
@@ -723,34 +725,35 @@
   background-color: #fecaca !important;
 }
 
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-cell-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-single-cell),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-cell-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-single-cell) {
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)) {
   background-color: #fef08a !important;
 }
 
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-cell-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-single-cell),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-cell-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-single-cell) {
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)),
+:global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)) {
   background-color: #fed7aa !important;
 }
 
-/* Non-hover, range-selected: keep service base color (beat the transparent rule at gridShell level) */
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):not(.ag-row-hover):not(:hover) .ag-cell.ag-cell-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-single-cell) {
+/* Non-hover, range-selected: keep service base color (beat the transparent rule at gridShell level).
+   Pricelist cells are excluded so the pricelist color rules can win. */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):not(.ag-row-hover):not(:hover) .ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)) {
   background-color: #fef9c3 !important;
 }
 
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):not(.ag-row-hover):not(:hover) .ag-cell.ag-cell-range-selected),
-:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-single-cell) {
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):not(.ag-row-hover):not(:hover) .ag-cell.ag-cell-range-selected:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)),
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-single-cell:not(.offer-products-grid__cell--pricelist-active):not(.offer-products-grid__cell--pricelist-expiring):not(.offer-products-grid__cell--pricelist-expired):not(.offer-products-grid__cell--pricelist-lp-edited)) {
   background-color: #ffedd5 !important;
 }
 
@@ -1027,4 +1030,72 @@
 .activeFiltersClearButton:focus-visible {
   background: #dbeafe;
   outline: none;
+}
+
+/* =========================================================================
+   SERVICE ROWS — PRESERVE PRICELIST CELL COLORS WHEN SELECTED
+   Uses maximum-specificity pattern (repeated classes + .gridShell) to beat
+   every service-row selected-state rule regardless of cascade order.
+   Covers all 4 pricelist states × 2 service row types × row-selected +
+   ag-cell-range-selected combinations.
+   ========================================================================= */
+
+/* --- pricelist-active: darker green #8fdfa8 --- */
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active.offer-products-grid__cell--pricelist-active),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active.offer-products-grid__cell--pricelist-active) {
+  background-color: #8fdfa8 !important;
+}
+
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active.offer-products-grid__cell--pricelist-active.ag-cell-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active.offer-products-grid__cell--pricelist-active.ag-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active.offer-products-grid__cell--pricelist-active.ag-range-single-cell),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active.offer-products-grid__cell--pricelist-active.ag-cell-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active.offer-products-grid__cell--pricelist-active.ag-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-active.offer-products-grid__cell--pricelist-active.ag-range-single-cell) {
+  background-color: #8fdfa8 !important;
+}
+
+/* --- pricelist-expiring: darker yellow #e6d87a --- */
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring.offer-products-grid__cell--pricelist-expiring),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring.offer-products-grid__cell--pricelist-expiring) {
+  background-color: #e6d87a !important;
+}
+
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring.offer-products-grid__cell--pricelist-expiring.ag-cell-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring.offer-products-grid__cell--pricelist-expiring.ag-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring.offer-products-grid__cell--pricelist-expiring.ag-range-single-cell),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring.offer-products-grid__cell--pricelist-expiring.ag-cell-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring.offer-products-grid__cell--pricelist-expiring.ag-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expiring.offer-products-grid__cell--pricelist-expiring.ag-range-single-cell) {
+  background-color: #e6d87a !important;
+}
+
+/* --- pricelist-expired: darker red #df9f9f --- */
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired.offer-products-grid__cell--pricelist-expired),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired.offer-products-grid__cell--pricelist-expired) {
+  background-color: #df9f9f !important;
+}
+
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired.offer-products-grid__cell--pricelist-expired.ag-cell-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired.offer-products-grid__cell--pricelist-expired.ag-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired.offer-products-grid__cell--pricelist-expired.ag-range-single-cell),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired.offer-products-grid__cell--pricelist-expired.ag-cell-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired.offer-products-grid__cell--pricelist-expired.ag-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-expired.offer-products-grid__cell--pricelist-expired.ag-range-single-cell) {
+  background-color: #df9f9f !important;
+}
+
+/* --- pricelist-lp-edited: darker beige #d9c4a0 --- */
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-lp-edited.offer-products-grid__cell--pricelist-lp-edited),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-lp-edited.offer-products-grid__cell--pricelist-lp-edited) {
+  background-color: #d9c4a0 !important;
+}
+
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-lp-edited.offer-products-grid__cell--pricelist-lp-edited.ag-cell-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-lp-edited.offer-products-grid__cell--pricelist-lp-edited.ag-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--printable-service.offer-row--printable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-lp-edited.offer-products-grid__cell--pricelist-lp-edited.ag-range-single-cell),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-lp-edited.offer-products-grid__cell--pricelist-lp-edited.ag-cell-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-lp-edited.offer-products-grid__cell--pricelist-lp-edited.ag-range-selected),
+:global(.offer-products-grid.offer-products-grid) .gridShell :global(.ag-row.offer-row--nonprintable-service.offer-row--nonprintable-service:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--pricelist-lp-edited.offer-products-grid__cell--pricelist-lp-edited.ag-range-single-cell) {
+  background-color: #d9c4a0 !important;
 }

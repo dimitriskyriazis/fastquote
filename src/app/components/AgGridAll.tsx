@@ -1750,6 +1750,10 @@ export default function AgGridAll({
   const dropIndicatorRef = useRef<RowDropIndicator | null>(null);
   const dropIndicatorFrameRef = useRef<number | null>(null);
   const lastDragNodeRef = useRef<IRowNode<RowData> | null>(null);
+  // Corrects the AG Grid drag ghost position when body has transform:scale().
+  // AG Grid sets style.left/top in viewport px but they are CSS layout px, so
+  // the ghost drifts from the cursor proportionally with distance from origin.
+  const ghostObserverRef = useRef<MutationObserver | null>(null);
   // QUICK SEARCH - Configuration & State
   const quickSearchFilterRef = useRef("");
   const quickSearchEnabled = allowQuickSearch !== false;
@@ -1906,8 +1910,10 @@ export default function AgGridAll({
       if (viewport && targetRow) {
         const viewportRect = viewport.getBoundingClientRect();
         const rowRect = targetRow.getBoundingClientRect();
-        // Check if row is at or near the top of the viewport (within 3px tolerance)
-        const isAtTop = rowRect.top <= viewportRect.top + 3;
+        // Check if row is at or near the top of the viewport.
+        // Both rects are viewport px so the comparison is direct; use a
+        // tolerance of 1 CSS row-border-width scaled to viewport px (~1px).
+        const isAtTop = rowRect.top <= viewportRect.top + 2;
 
         if (isAtTop) {
           // Create or update the top drop line element
@@ -1926,10 +1932,15 @@ export default function AgGridAll({
             `;
             shell.appendChild(topDropLine);
           }
-          // Position it at the top of the viewport relative to the shell
+          // Position it at the top of the viewport relative to the shell.
+          // getBoundingClientRect() returns viewport px; style.top is CSS
+          // layout px.  When body has transform:scale(S), divide by S.
           const viewportTop = viewport.getBoundingClientRect().top;
           const shellTop = shell.getBoundingClientRect().top;
-          topDropLine.style.top = `${viewportTop - shellTop}px`;
+          const bcrW = document.body.getBoundingClientRect().width;
+          const cssW = document.body.offsetWidth;
+          const bodyScale = cssW > 0 ? bcrW / cssW : 1;
+          topDropLine.style.top = `${(viewportTop - shellTop) / bodyScale}px`;
         }
       }
     }
@@ -4344,7 +4355,14 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
 
     const rowTop = typeof overNode.rowTop === 'number' ? overNode.rowTop : 0;
     const rowHeight = typeof overNode.rowHeight === 'number' ? overNode.rowHeight : GRID_ROW_HEIGHT;
-    const offset = event.y - rowTop;
+    // event.y is in viewport px (clientY − dropZone.getBCR().top).
+    // rowTop and scrollTop are in CSS layout px (grid virtual-scroll space).
+    // Divide event.y by the body scale so both sides are in CSS layout px.
+    const bcrW = document.body.getBoundingClientRect().width;
+    const cssW = document.body.offsetWidth;
+    const bodyScale = cssW > 0 ? bcrW / cssW : 1;
+    const scrollTop = api.getVerticalPixelRange().top;
+    const offset = (bodyScale > 0 ? event.y / bodyScale : event.y) + scrollTop - rowTop;
     const edgeBand = Math.min(ROW_DRAG_EDGE_THRESHOLD, Math.max(6, Math.round(rowHeight * 0.2)));
     let position: 'before' | 'after' | 'inside' = 'after';
 
@@ -4392,8 +4410,19 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     if (!overNode || !rowId) return null;
     const rowTop = typeof overNode.rowTop === 'number' ? overNode.rowTop : 0;
     const rowHeight = typeof overNode.rowHeight === 'number' ? overNode.rowHeight : GRID_ROW_HEIGHT;
-    const pointerY = typeof event.y === 'number' ? event.y : rowTop;
-    const offset = pointerY - rowTop;
+    // event.y = clientY - gridContainer.getBoundingClientRect().top → viewport px.
+    // rowTop and scrollTop are in CSS layout px (the grid's internal coordinate space).
+    // When body has transform:scale(S), 1 CSS px = S viewport px, so event.y must be
+    // divided by S before being compared against rowTop/scrollTop to avoid grow-as-
+    // you-scroll drift in the drop indicator.
+    const bcrW = document.body.getBoundingClientRect().width;
+    const cssW = document.body.offsetWidth;
+    const bodyScale = cssW > 0 ? bcrW / cssW : 1;
+    const pointerYViewport = typeof event.y === 'number' ? event.y : rowTop * bodyScale;
+    const pointerY = bodyScale > 0 ? pointerYViewport / bodyScale : pointerYViewport;
+    // rowTop is in the full scrollable content space — add the current scroll offset.
+    const scrollTop = event.api.getVerticalPixelRange().top;
+    const offset = pointerY + scrollTop - rowTop;
     const edgeBand = Math.min(ROW_DRAG_EDGE_THRESHOLD, Math.max(6, Math.round(rowHeight * 0.2)));
     let position: 'before' | 'after' | 'inside' = 'after';
 
@@ -4414,16 +4443,75 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     if (!useAgGridRowDrag) return;
     lastDragNodeRef.current = event.node ?? lastDragNodeRef.current;
     setDropIndicator(resolveDropIndicator(event));
+
+    // Ghost position corrector — set up once per drag on first move.
+    // We do it here (not in onRowDragEnter) because AG Grid creates the ghost
+    // element after firing onRowDragEnter, so the element doesn't exist yet there.
+    //
+    // Root cause: AG Grid calls _anchorElementToMouseMoveEvent which computes
+    //   top = clientY - offsetParentBCR.top - height/2   (all viewport px)
+    // then writes the result to element.style.top (CSS layout px).  When body
+    // has transform:scale(0.9) with transform-origin:top-left, 1 CSS px = 0.9
+    // viewport px, so the ghost drifts further from the cursor as Y grows.
+    //
+    // Fix: watch every style mutation AG Grid makes on the ghost and divide the
+    // raw values by the CSS→viewport scale factor.
+    // Use disconnect/reconnect (not a "correcting" flag) to prevent re-entry —
+    // MutationObserver callbacks are microtasks so a synchronous flag is always
+    // reset before the callback fires a second time, causing double-correction.
+    if (!ghostObserverRef.current) {
+      // AG Grid's drag ghost HTML structure:
+      //   <div style="position:absolute; top:Xpx; left:Ypx">   ← this is dragImageComp.getGui()
+      //     <div class="ag-dnd-ghost">...</div>
+      //   </div>
+      // _anchorElementToMouseMoveEvent sets style.top/left on the OUTER wrapper,
+      // not on .ag-dnd-ghost itself.  We must watch the wrapper's style attribute.
+      const innerGhost = document.querySelector<HTMLElement>('.ag-dnd-ghost');
+      const ghost = innerGhost?.parentElement ?? null;
+      if (ghost instanceof HTMLElement && ghost !== document.body) {
+        const bcrW = document.body.getBoundingClientRect().width;
+        const cssW = document.body.offsetWidth;
+        const scale = cssW > 0 ? bcrW / cssW : 1;
+        if (scale !== 1 && scale > 0) {
+          const correct = () => {
+            const rawLeft = parseFloat(ghost.style.left);
+            const rawTop  = parseFloat(ghost.style.top);
+            if (!Number.isNaN(rawLeft)) ghost.style.left = `${rawLeft / scale}px`;
+            if (!Number.isNaN(rawTop))  ghost.style.top  = `${rawTop  / scale}px`;
+          };
+          const observer = new MutationObserver(() => {
+            // Disconnect first so our own style writes don't re-trigger this callback
+            observer.disconnect();
+            correct();
+            // Reconnect to watch the next AG Grid update
+            observer.observe(ghost, { attributes: true, attributeFilter: ['style'] });
+          });
+          // Correct the position AG Grid already set for this frame before we
+          // had a chance to observe it, then start watching future updates.
+          correct();
+          observer.observe(ghost, { attributes: true, attributeFilter: ['style'] });
+          ghostObserverRef.current = observer;
+        }
+      }
+    }
   }, [resolveDropIndicator, setDropIndicator, useAgGridRowDrag]);
 
   const handleRowDragEnter = useCallback((event: RowDragEnterEvent<RowData>) => {
     if (!useAgGridRowDrag) return;
     clearDropIndicator();
     lastDragNodeRef.current = event.node ?? lastDragNodeRef.current;
+    // Clear any stale observer from a previous drag; the new one is set up in
+    // handleRowDragMove once the ghost element is confirmed to be in the DOM.
+    if (ghostObserverRef.current) {
+      ghostObserverRef.current.disconnect();
+      ghostObserverRef.current = null;
+    }
   }, [clearDropIndicator, useAgGridRowDrag]);
 
   const handleRowDragLeave = useCallback(() => {
     clearDropIndicator();
+    ghostObserverRef.current?.disconnect();
+    ghostObserverRef.current = null;
   }, [clearDropIndicator]);
 
   // GRID EVENT HANDLERS - Row & Cell Value Changes
@@ -4540,6 +4628,8 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     lastDragNodeRef.current = null;
     clearDropIndicator();
     clearDragGhostDom();
+    ghostObserverRef.current?.disconnect();
+    ghostObserverRef.current = null;
     if (!useAgGridRowDrag) {
       if (typeof onRowsMoved === 'function') {
         onRowsMoved(event.api);
