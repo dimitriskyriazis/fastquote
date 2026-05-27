@@ -49,6 +49,7 @@ type PriceListProductRowGrid = {
   CostPriceOtherCurrency?: string | number | null;
   CostCurrencyName?: string | null;
   Warning?: string | number | boolean | null;
+  MOQ?: number | null;
   Enabled?: boolean | number | null;
   PriceListID?: number | null;
 };
@@ -320,6 +321,14 @@ export default function PriceListProductsClient({
         filter: "agTextColumnFilter",
         filterParams: TWO_CONDITION_FILTER_PARAMS,
         width: 140,
+      },
+      {
+        field: "MOQ",
+        headerName: "MOQ",
+        filter: "agNumberColumnFilter",
+        filterParams: TWO_CONDITION_FILTER_PARAMS,
+        type: "numericColumn",
+        width: 100,
       },
       {
         field: "Enabled",

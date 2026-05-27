@@ -28,6 +28,7 @@ type PriceListProductRow = {
   CostPriceOtherCurrency: string | number | null;
   CostCurrencyName: string | null;
   Warning: string | number | boolean | null;
+  MOQ: number | null;
   Enabled: boolean | number | null;
   PartNumber: string | null;
   LegacyPartNo: string | null;
@@ -63,6 +64,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   CostPriceOtherCurrency: "dbo.PriceListItems.CostPrice",
   CostCurrencyName: "costCur.Name",
   Warning: "dbo.PriceListItems.Warning",
+  MOQ: "dbo.PriceListItems.MOQ",
   Enabled: "dbo.PriceListItems.Enabled",
   PartNumber: "dbo.Products.PartNumber",
   LegacyPartNo: "dbo.Products.LegacyPartNo",
@@ -310,6 +312,7 @@ export async function POST(
         dbo.PriceListItems.CostPrice AS CostPriceOtherCurrency,
         costCur.Name AS CostCurrencyName,
         dbo.PriceListItems.Warning,
+        dbo.PriceListItems.MOQ,
         dbo.PriceListItems.Enabled,
         dbo.Products.PartNumber,
         NULLIF(LTRIM(RTRIM(dbo.Products.LegacyPartNo)), '') AS LegacyPartNo,
