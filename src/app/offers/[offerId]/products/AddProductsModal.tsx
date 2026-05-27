@@ -986,6 +986,32 @@ export default function AddProductsModal({
           cellClassRules: priceListStatusClassRules(),
         },
         { field: 'PriceListName', headerName: 'Price List', filter: 'agTextColumnFilter', width: 170 },
+        {
+          colId: 'Warning',
+          headerName: 'Warning',
+          filter: 'agTextColumnFilter',
+          width: 350,
+          valueGetter: ({ data }) => {
+            const row = data as Record<string, unknown> | null | undefined;
+            if (!row) return '';
+            const moq = (row.MOQ ?? null) as number | null;
+            const warning = (row.Warning ?? null) as string | null;
+            const moqPrefix = moq != null ? `MOQ: ${moq}` : null;
+            if (moqPrefix && warning) return `${moqPrefix}, ${warning}`;
+            if (moqPrefix) return moqPrefix;
+            return warning ?? '';
+          },
+          tooltipValueGetter: ({ data }) => {
+            const row = data as Record<string, unknown> | null | undefined;
+            if (!row) return '';
+            const moq = (row.MOQ ?? null) as number | null;
+            const warning = (row.Warning ?? null) as string | null;
+            const moqPrefix = moq != null ? `MOQ: ${moq}` : null;
+            if (moqPrefix && warning) return `${moqPrefix}, ${warning}`;
+            if (moqPrefix) return moqPrefix;
+            return warning ?? '';
+          },
+        },
       );
     }
     return columns;

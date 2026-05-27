@@ -580,6 +580,8 @@ type ProductGridRow = {
   PriceListValidFromDate: Date | string | null;
   PriceListValidToDate: Date | string | null;
   PriceListEnabled: boolean | number | null;
+  Warning: string | null;
+  MOQ: number | null;
 };
 
 // Stage-1 "quick match": before firing the full smart-search machinery
@@ -689,7 +691,9 @@ async function tryStage1QuickMatch(
       price.CostPrice,
       price.PriceListValidFromDate,
       price.PriceListValidToDate,
-      price.PriceListEnabled
+      price.PriceListEnabled,
+      price.Warning,
+      price.MOQ
     FROM PagedBase bp
       OUTER APPLY (
         SELECT TOP (1)
@@ -700,7 +704,9 @@ async function tryStage1QuickMatch(
           pli.CostPrice,
           pl.ValidFromDate AS PriceListValidFromDate,
           pl.ValidToDate AS PriceListValidToDate,
-          pl.Enabled AS PriceListEnabled
+          pl.Enabled AS PriceListEnabled,
+          pli.Warning,
+          pli.MOQ
         FROM dbo.PriceListItems pli
           INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
           LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @__pricingPolicyId
@@ -756,6 +762,8 @@ async function handleProductGrid(
     PriceListName: 'price.PriceListName',
     ListPrice: 'price.ListPrice',
     CostPrice: 'price.CostPrice',
+    Warning: 'price.Warning',
+    MOQ: 'price.MOQ',
   };
 
   // Pre-normalize any BrandName filter values so they meet the normalized
@@ -1317,7 +1325,9 @@ async function handleProductGrid(
       price.CostPrice,
       price.PriceListValidFromDate,
       price.PriceListValidToDate,
-      price.PriceListEnabled
+      price.PriceListEnabled,
+      price.Warning,
+      price.MOQ
     FROM PagedBase bp
       OUTER APPLY (
         SELECT TOP (1)
@@ -1334,7 +1344,9 @@ async function handleProductGrid(
           pli.CostPrice,
           pl.ValidFromDate AS PriceListValidFromDate,
           pl.ValidToDate AS PriceListValidToDate,
-          pl.Enabled AS PriceListEnabled
+          pl.Enabled AS PriceListEnabled,
+          pli.Warning,
+          pli.MOQ
         FROM dbo.PriceListItems pli
           INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
           LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @__pricingPolicyId

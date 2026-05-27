@@ -39,6 +39,7 @@ type Props = {
   pricingPolicyName?: string | null;
   initialPricingSellAnchor?: string | null;
   initialPricingHoldMarginOnCost?: boolean;
+  isReadOnly?: boolean;
 };
 
 type AddActionType = 'product' | 'category' | 'printable-comment' | 'non-printable-comment' | 'printable-service' | 'non-printable-service';
@@ -142,6 +143,7 @@ export default function ClientProductsPage({
   pricingPolicyName,
   initialPricingSellAnchor,
   initialPricingHoldMarginOnCost = false,
+  isReadOnly = false,
 }: Props) {
   const { userId } = useAuditUser();
   const normalizedHeadingTop = typeof headingTopText === 'string' ? headingTopText.trim() : '';
@@ -1422,7 +1424,7 @@ export default function ClientProductsPage({
 
   const headerRightControls = (
     <div className={toolbarStyles.topControls}>
-      {pivotView || isStandardPackage ? null : (
+      {!isReadOnly && !pivotView && !isStandardPackage ? (
         <>
           <button
             type="button"
@@ -1441,8 +1443,8 @@ export default function ClientProductsPage({
             {isUpdatingPrices ? 'Updating prices...' : 'Update Prices'}
           </button>
         </>
-      )}
-      {isStandardPackage ? null : pricingMenuDetails}
+      ) : null}
+      {isStandardPackage || isReadOnly ? null : pricingMenuDetails}
       {isStandardPackage ? null : (
         <Link
           href={`/offers/${encodeURIComponent(offerId)}/basicdata`}
@@ -1454,7 +1456,7 @@ export default function ClientProductsPage({
     </div>
   );
 
-  const addButtonGroup = (
+  const addButtonGroup = isReadOnly ? null : (
     <div className={toolbarStyles.addButtons}>
       {!isStandardPackage && !pivotView ? (
         <button
@@ -1546,7 +1548,7 @@ export default function ClientProductsPage({
     ? addButtonGroup
     : headerRightControls;
 
-  const addRequestedButton = (
+  const addRequestedButton = isReadOnly ? null : (
     <button
       type="button"
       className={`${toolbarStyles.button} ${toolbarStyles.buttonAddRequested} page-header-button`}
@@ -1614,7 +1616,7 @@ export default function ClientProductsPage({
         <span aria-hidden="true" style={{ fontSize: '20px', lineHeight: 1 }}>&larr;</span>
       </Link>
       {pivotToggleButton}
-      {pivotView ? null : (
+      {!isReadOnly && !pivotView && (
         <button
           type="button"
           className={manualToggleClass}
@@ -1658,7 +1660,7 @@ export default function ClientProductsPage({
     </div>
   );
 
-  const undoButton = undoState.canUndo ? (
+  const undoButton = !isReadOnly && undoState.canUndo ? (
     <button
       type="button"
       className={`${toolbarStyles.button} page-header-button`}
@@ -1760,6 +1762,7 @@ export default function ClientProductsPage({
                 setPricingHoldMarginOnCost(next);
                 void savePricingMode(pricingSellAnchor, next);
               }}
+              readOnly={isReadOnly}
             />
           </div>
           {showAddProductModal || showAddServiceModal ? (

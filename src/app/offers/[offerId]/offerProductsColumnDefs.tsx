@@ -209,6 +209,7 @@ export type ProductColumnDefsDeps = {
   RequestedItemNoCell: (params: ICellRendererParams<Record<string, unknown>>) => React.ReactNode;
   offerCurrencySymbol: string;
   pricingPolicyName?: string | null;
+  readOnly?: boolean;
 };
 
 // Discount columns (CustomerDiscount, AdditionalCustomerDiscount,
@@ -244,6 +245,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
     RequestedItemNoCell,
     offerCurrencySymbol,
     pricingPolicyName,
+    readOnly = false,
   } = deps;
   const additionalDiscountVisibleByDefault = pricingPolicyName === 'AVC4';
 
@@ -305,6 +307,58 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
         cellStyle: truncateCellStyle,
       },
       {
+        colId: 'WarningIndicator',
+        headerName: '',
+        field: 'PriceListItemWarning',
+        width: 36,
+        minWidth: 36,
+        maxWidth: 36,
+        resizable: false,
+        sortable: false,
+        filter: false,
+        editable: false,
+        suppressMovable: true,
+        cellStyle: { display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 },
+        cellRenderer: ({ data }: ICellRendererParams<Record<string, unknown>>) => {
+          const row = data as Record<string, unknown> | null | undefined;
+          if (!row) return null;
+          const moq = (row.PriceListItemMOQ ?? null) as number | null;
+          const warning = (row.PriceListItemWarning ?? null) as string | null;
+          if (moq == null && !warning) return null;
+          return (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 20,
+                height: 20,
+                borderRadius: '50%',
+                backgroundColor: '#dc2626',
+                color: '#fff',
+                fontSize: 13,
+                fontWeight: 700,
+                lineHeight: 1,
+                cursor: 'default',
+                flexShrink: 0,
+              }}
+            >
+              !
+            </span>
+          );
+        },
+        tooltipValueGetter: ({ data }) => {
+          const row = data as Record<string, unknown> | null | undefined;
+          if (!row) return '';
+          const moq = (row.PriceListItemMOQ ?? null) as number | null;
+          const warning = (row.PriceListItemWarning ?? null) as string | null;
+          const moqPrefix = moq != null ? `MOQ: ${moq}` : null;
+          if (moqPrefix && warning) return `${moqPrefix}, ${warning}`;
+          if (moqPrefix) return moqPrefix;
+          return warning ?? '';
+        },
+      },
+      {
         field: 'PartNumber',
         headerName: 'Part Number',
         filter: 'agTextColumnFilter',
@@ -351,7 +405,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
           (data as Record<string, unknown>).Description = normalized;
           return true;
         },
-        editable: (params) => {
+        editable: readOnly ? false : (params) => {
           const row = params?.data ?? null;
           return (
             isOfferProductCategory(row)
@@ -373,6 +427,11 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
             overflow: 'hidden',
             textOverflow: hasLineBreaks ? 'clip' : 'ellipsis',
           };
+        },
+        tooltipValueGetter: ({ data }) => {
+          const row = data as Record<string, unknown> | null | undefined;
+          if (!row) return '';
+          return (normalizeDescriptionValue(row?.ProductDescription ?? null) ?? normalizeDescriptionValue(row?.Description ?? null) ?? '') as string;
         },
       },
       {
@@ -488,6 +547,58 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       cellStyle: truncateCellStyle,
     },
     {
+      colId: 'WarningIndicator',
+      headerName: '',
+      field: 'PriceListItemWarning',
+      width: 36,
+      minWidth: 36,
+      maxWidth: 36,
+      resizable: false,
+      sortable: false,
+      filter: false,
+      editable: false,
+      suppressMovable: true,
+      cellStyle: { display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 },
+      cellRenderer: ({ data }: ICellRendererParams<Record<string, unknown>>) => {
+        const row = data as Record<string, unknown> | null | undefined;
+        if (!row) return null;
+        const moq = (row.PriceListItemMOQ ?? null) as number | null;
+        const warning = (row.PriceListItemWarning ?? null) as string | null;
+        if (moq == null && !warning) return null;
+        return (
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 20,
+              height: 20,
+              borderRadius: '50%',
+              backgroundColor: '#dc2626',
+              color: '#fff',
+              fontSize: 13,
+              fontWeight: 700,
+              lineHeight: 1,
+              cursor: 'default',
+              flexShrink: 0,
+            }}
+          >
+            !
+          </span>
+        );
+      },
+      tooltipValueGetter: ({ data }) => {
+        const row = data as Record<string, unknown> | null | undefined;
+        if (!row) return '';
+        const moq = (row.PriceListItemMOQ ?? null) as number | null;
+        const warning = (row.PriceListItemWarning ?? null) as string | null;
+        const moqPrefix = moq != null ? `MOQ: ${moq}` : null;
+        if (moqPrefix && warning) return `${moqPrefix}, ${warning}`;
+        if (moqPrefix) return moqPrefix;
+        return warning ?? '';
+      },
+    },
+    {
       field: 'PartNumber',
       headerName: 'Part Number',
       filter: 'agTextColumnFilter',
@@ -533,7 +644,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
         (data as Record<string, unknown>).Description = normalized;
         return true;
       },
-      editable: (params) => {
+      editable: readOnly ? false : (params) => {
         const row = params?.data ?? null;
         if (isUnassignedRequestedRow(row)) return false;
         return (
@@ -556,6 +667,11 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
           overflow: 'hidden',
           textOverflow: hasLineBreaks ? 'clip' : 'ellipsis',
         };
+      },
+      tooltipValueGetter: ({ data }) => {
+        const row = data as Record<string, unknown> | null | undefined;
+        if (!row) return '';
+        return (normalizeDescriptionValue(row?.ProductDescription ?? null) ?? normalizeDescriptionValue(row?.Description ?? null) ?? '') as string;
       },
     },
     {
@@ -798,6 +914,35 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       valueFormatter: zeroBlankNumberFormatter,
       cellClass: [...actualNumericCellClass, styles.redDataCell],
       cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
+    },
+    {
+      field: 'PriceListItemWarning',
+      headerName: 'Warning',
+      filter: 'agTextColumnFilter',
+      width: 350,
+      editable: false,
+      valueGetter: ({ data }) => {
+        const row = data as Record<string, unknown> | null | undefined;
+        if (!row) return '';
+        const moq = (row.PriceListItemMOQ ?? null) as number | null;
+        const warning = (row.PriceListItemWarning ?? null) as string | null;
+        const moqPrefix = moq != null ? `MOQ: ${moq}` : null;
+        if (moqPrefix && warning) return `${moqPrefix}, ${warning}`;
+        if (moqPrefix) return moqPrefix;
+        return warning ?? '';
+      },
+      cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS, TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS],
+      cellStyle: truncateCellStyle,
+      tooltipValueGetter: ({ data }) => {
+        const row = data as Record<string, unknown> | null | undefined;
+        if (!row) return '';
+        const moq = (row.PriceListItemMOQ ?? null) as number | null;
+        const warning = (row.PriceListItemWarning ?? null) as string | null;
+        const moqPrefix = moq != null ? `MOQ: ${moq}` : null;
+        if (moqPrefix && warning) return `${moqPrefix}, ${warning}`;
+        if (moqPrefix) return moqPrefix;
+        return warning ?? '';
+      },
     },
     {
       field: 'Origin',

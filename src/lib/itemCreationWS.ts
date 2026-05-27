@@ -226,8 +226,8 @@ export async function createItemViaWebService(
   const item: SetItemEntry = {
     code: newCode,
     code2: params.partNumber ?? undefined,
-    name: itemName,
-    name1: itemName,
+    name: itemName,  // Ονομασία (Description 1)
+    name1: itemName, // Περιγραφή 2 — per V9 WS spec, name1 = Description 2
     mtrunit: 1,
     vat: 1410,
     mtracn: '0',

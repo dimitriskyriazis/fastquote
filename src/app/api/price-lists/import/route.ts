@@ -36,6 +36,7 @@ type ParsedPriceListRow = {
   servicePriceOutGR: number | null;
   serviceType: string | null;
   warning: string | null;
+  moq: number | null;
   weblink: string | null;
   legacyPartNumber: string | null;
 };
@@ -48,7 +49,7 @@ type ProductRow = {
   Description: string | null;
 };
 
-type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "servicePriceGR" | "servicePriceOutGR" | "serviceType" | "warning" | "weblink" | "legacyPartNumber";
+type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "servicePriceGR" | "servicePriceOutGR" | "serviceType" | "warning" | "moq" | "weblink" | "legacyPartNumber";
 
 type ColumnMapping = {
   sheetName: string | null;
@@ -106,6 +107,11 @@ const HEADER_SYNONYMS: Record<HeaderColumnKey, string[]> = {
   warning: [
     "warning", "warn", "note", "remark",
     "σημείωση", "σημειωση", "προσοχή", "προσοχη",
+  ],
+  moq: [
+    "moq", "min order", "minimum order", "min qty", "minimum qty",
+    "minimum quantity", "min order qty",
+    "ελάχιστη παραγγελία", "ελαχιστη παραγγελια",
   ],
   weblink: [
     "weblink", "web link", "weblnk", "url", "link", "hyperlink",
@@ -497,6 +503,8 @@ const parseSheetWithMapping = (
     const serviceTypeRaw = normalizeCellString(getValue(row, "serviceType"), 20);
     const serviceType = serviceTypeRaw === "ServLot" || serviceTypeRaw === "ServPerUnit" ? serviceTypeRaw : null;
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
+    const moqRaw = getRawValue(rawRow, "moq");
+    const moq = normalizeInt(moqRaw != null ? moqRaw : getValue(row, "moq"));
     const legacyPartNumber = normalizeCellString(getValue(row, "legacyPartNumber"), 50);
 
     // Extract weblink: first try hyperlink, then fall back to cell value
@@ -526,6 +534,7 @@ const parseSheetWithMapping = (
       servicePriceOutGR,
       serviceType,
       warning,
+      moq,
       weblink,
       legacyPartNumber,
     });
@@ -575,6 +584,8 @@ const parseSheet = (
     const serviceTypeRaw2 = normalizeCellString(getValue(row, "serviceType"), 20);
     const serviceType = serviceTypeRaw2 === "ServLot" || serviceTypeRaw2 === "ServPerUnit" ? serviceTypeRaw2 : null;
     const warning = normalizeCellString(getValue(row, "warning"), 1000);
+    const moqRaw2 = getRawValue(rawRow, "moq");
+    const moq = normalizeInt(moqRaw2 != null ? moqRaw2 : getValue(row, "moq"));
     const legacyPartNumber = normalizeCellString(getValue(row, "legacyPartNumber"), 50);
 
     // Extract weblink: first try hyperlink, then fall back to cell value
@@ -604,6 +615,7 @@ const parseSheet = (
       servicePriceOutGR,
       serviceType,
       warning,
+      moq,
       weblink,
       legacyPartNumber,
     });
@@ -915,6 +927,7 @@ const insertPriceListItem = async (
   request.input("ServicePriceOutGR", decimalType, servicePriceOutGR ?? null);
   request.input("ServiceType", sql.NVarChar(20), row.serviceType ?? null);
   request.input("Warning", sql.NVarChar(1000), row.warning);
+  request.input("MOQ", sql.Int, row.moq ?? null);
   request.input("CreatedBy", sql.NVarChar(450), auditUserId);
   request.input("ModifiedBy", sql.NVarChar(450), auditUserId);
 
@@ -928,6 +941,7 @@ const insertPriceListItem = async (
       ServicePriceOutGR,
       ServiceType,
       Warning,
+      MOQ,
       Enabled,
       CreatedOn,
       CreatedBy,
@@ -943,6 +957,7 @@ const insertPriceListItem = async (
       @ServicePriceOutGR,
       @ServiceType,
       @Warning,
+      @MOQ,
       1,
       SYSUTCDATETIME(),
       @CreatedBy,

@@ -5,6 +5,8 @@ import { getPool } from '../../../../lib/sql';
 const buildHeading = (offerId: string) =>
   /^[0-9]+$/.test(offerId) ? `Offer ${offerId}` : offerId;
 
+const READ_ONLY_STATUSES = new Set(['Official Offer Sent', 'Order Signed']);
+
 type OfferHeaderInfo = {
   title: string | null;
   description: string | null;
@@ -14,6 +16,7 @@ type OfferHeaderInfo = {
   pricingPolicyName: string | null;
   pricingSellAnchor: string | null;
   pricingHoldMarginOnCost: boolean;
+  statusName: string | null;
 };
 
 async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
@@ -26,6 +29,7 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
     PricingPolicyName: string | null;
     PricingSellAnchor: string | null;
     PricingHoldMarginOnCost: boolean | number | null;
+    StatusName: string | null;
   };
   try {
     const pool = await getPool();
@@ -40,10 +44,12 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
         o.CreatedBy,
         pp.Name AS PricingPolicyName,
         o.PricingSellAnchor,
-        o.PricingHoldMarginOnCost
+        o.PricingHoldMarginOnCost,
+        os.Name AS StatusName
       FROM dbo.Offer AS o
       LEFT JOIN dbo.Customers AS c ON c.ID = o.CustomerID
       LEFT JOIN dbo.PricingPolicies AS pp ON pp.ID = o.PricingPolicyID
+      LEFT JOIN dbo.OfferStatus AS os ON os.ID = o.StatusID
       WHERE o.ID = @offerId
     `);
     const row = result.recordset?.[0] ?? null;
@@ -56,6 +62,7 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
       pricingPolicyName: row?.PricingPolicyName?.trim() || null,
       pricingSellAnchor: row?.PricingSellAnchor ?? null,
       pricingHoldMarginOnCost: row?.PricingHoldMarginOnCost === true || row?.PricingHoldMarginOnCost === 1,
+      statusName: row?.StatusName?.trim() ?? null,
     };
   } catch (err) {
     console.error('Failed to load offer title for products page', err);
@@ -68,6 +75,7 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
       pricingPolicyName: null,
       pricingSellAnchor: null,
       pricingHoldMarginOnCost: false,
+      statusName: null,
     };
   }
 }
@@ -88,6 +96,7 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
         pricingPolicyName: null,
         pricingSellAnchor: null,
         pricingHoldMarginOnCost: false,
+        statusName: null,
       };
   const offerTitle = offerHeader.title;
   const offerDescription = offerHeader.description;
@@ -102,6 +111,8 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
   const headingTopText = isStandardPackage ? null : customerName;
   const headingBottomText = isStandardPackage ? null : (offerDescription ?? offerTitle ?? null);
 
+  const isReadOnly = !isStandardPackage && offerHeader.statusName != null && READ_ONLY_STATUSES.has(offerHeader.statusName);
+
   return (
     <ClientProductsPage
       offerId={decodedId}
@@ -113,6 +124,7 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
       pricingPolicyName={offerHeader.pricingPolicyName}
       initialPricingSellAnchor={offerHeader.pricingSellAnchor}
       initialPricingHoldMarginOnCost={offerHeader.pricingHoldMarginOnCost}
+      isReadOnly={isReadOnly}
     />
   );
 }

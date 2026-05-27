@@ -1513,13 +1513,26 @@ export async function generateOfferPdf(
       ...(smallOffer
         ? buildCompactHeader(data, L, lang, orientation, logo)
         : buildCoverPage(data, L, lang, orientation, logo, equipmentList)),
+      ...(smallOffer && str(data.title)
+        ? [
+            {
+              text: str(data.title),
+              fontSize: 20,
+              bold: true,
+              color: COLORS.primaryText,
+              alignment: 'center',
+              margin: [0, 6, 0, 4],
+            },
+          ]
+        : []),
       ...(smallOffer && str(data.offerDescription)
         ? [
             {
               text: str(data.offerDescription),
-              fontSize: 10,
-              color: COLORS.secondaryText,
-              margin: [0, 0, 0, 8],
+              fontSize: 16,
+              color: COLORS.primaryText,
+              alignment: 'center',
+              margin: [0, 0, 0, 10],
             },
           ]
         : []),

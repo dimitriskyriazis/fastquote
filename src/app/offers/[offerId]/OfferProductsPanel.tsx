@@ -2,6 +2,7 @@
 
 import React, { useMemo, useCallback, useState, useRef, useEffect, useImperativeHandle } from 'react';
 import type {
+  CellEditingStartedEvent,
   CellValueChangedEvent,
   ColDef,
   ColumnEventType,
@@ -191,6 +192,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   onCollapseAllSuppressed,
   offerPricingSellAnchor = null,
   offerPricingHoldMarginOnCost = false,
+  readOnly = false,
 }: Props, ref) => {
   const router = useRouter();
   const { userId, roles } = useAuditUser();
@@ -985,7 +987,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   ]);
 
   const defaultColDef = useMemo<ColDef>(() => ({
-    editable: (params) => (
+    editable: readOnly ? false : (params) => (
       isOfferProductProduct(params?.data ?? null)
       || isOfferProductComment(params?.data ?? null)
     ),
@@ -994,7 +996,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       display: 'flex',
       alignItems: 'center',
     },
-  }), []);
+  }), [readOnly]);
 
   const applyRowTotalsDelta = useCallback((
     oldRow: { TotalPrice: number; TotalNet: number; TotalCost: number; InstallationHours: number; ElInstalationHours: number; CommissioningHours: number },
@@ -2640,6 +2642,7 @@ const requestedColumnDefsMap = useMemo(
       RequestedItemNoCell,
       offerCurrencySymbol: offerCurrencyName ?? '€',
       pricingPolicyName,
+      readOnly,
     }), [
     actualNumericCellClass,
     actualNumericCellStyle,
@@ -2659,6 +2662,7 @@ const requestedColumnDefsMap = useMemo(
     truncateCellStyle,
     offerCurrencyName,
     pricingPolicyName,
+    readOnly,
   ]);
 
   useEffect(() => {
@@ -2666,6 +2670,7 @@ const requestedColumnDefsMap = useMemo(
     if (!api || api.isDestroyed?.()) return;
     api.refreshCells({ force: true });
   }, [offerCurrencyName]);
+
 
   productColumnDefsRef.current = productColumnDefs;
 
@@ -4925,6 +4930,7 @@ const requestedColumnDefsMap = useMemo(
   const productContextMenuItems = useCallback((
     params: GetContextMenuItemsParams<Record<string, unknown>>,
   ) => {
+    if (readOnly) return [];
     const baseItems = productRowDeletion.getContextMenuItems(params) ?? [];
     const items = [...baseItems].filter((item) => item !== 'copy' && item !== 'copyWithHeaders' && item !== 'copyWithGroupHeaders' && item !== 'cut' && item !== 'paste');
     if (pendingContextMenuSelectionClearRef.current) {
@@ -6654,6 +6660,7 @@ const requestedColumnDefsMap = useMemo(
     standardPackageMode,
     offerPricingSellAnchor,
     offerPricingHoldMarginOnCost,
+    readOnly,
   ]);
 
   const handleEmptyGridWrapperContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
@@ -7931,6 +7938,12 @@ const requestedColumnDefsMap = useMemo(
     })();
   }, [manualMode, registerRealtimeCellUpdate, resolvedEndpoint, shouldSkipRealtimeCellEdit, fetchAllRowsForOrdering]);
 
+  const handleCellEditingStarted = useCallback((event: CellEditingStartedEvent<Record<string, unknown>>) => {
+    if (readOnly) {
+      event.api?.stopEditing(true);
+    }
+  }, [readOnly]);
+
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const wasProgrammatic = isProgrammaticCellEdit(event);
     handleDescriptionEdit(event);
@@ -8832,6 +8845,7 @@ const requestedColumnDefsMap = useMemo(
             manualMode={manualMode}
             getRowClass={getRowClass}
             getContextMenuItems={productContextMenuItems}
+            onCellEditingStarted={handleCellEditingStarted}
             onCellValueChanged={handleCellEdit}
             refreshToken={refreshToken}
             onGridReady={handleGridReady}

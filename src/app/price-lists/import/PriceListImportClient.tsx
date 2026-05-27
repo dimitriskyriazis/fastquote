@@ -127,7 +127,7 @@ type FormValues = {
   decimalFormat: PriceListDecimalFormat;
 };
 
-type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning" | "weblink" | "legacyPartNumber" | "servicePriceGR" | "servicePriceOutGR" | "serviceType";
+type HeaderColumnKey = "partNumber" | "modelNumber" | "description" | "listPrice" | "costPrice" | "warning" | "moq" | "weblink" | "legacyPartNumber" | "servicePriceGR" | "servicePriceOutGR" | "serviceType";
 
 const columnKeywords: Record<HeaderColumnKey, string[]> = {
   partNumber: [
@@ -280,6 +280,21 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "παρατηρ.",
   ],
 
+  moq: [
+    "moq",
+    "min order",
+    "min_order",
+    "minimum order",
+    "minimum_order",
+    "min qty",
+    "min_qty",
+    "minimum qty",
+    "minimum quantity",
+    "ελάχιστη παραγγελία",
+    "ελαχιστη παραγγελια",
+    "ελάχ. ποσ.",
+  ],
+
   weblink: [
     "weblink",
     "web link",
@@ -342,6 +357,7 @@ const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string; required?: bo
   { key: "listPrice", label: "List Price", required: true },
   { key: "costPrice", label: "Cost Price (optional)", required: false },
   { key: "warning", label: "Warning (optional)", required: false },
+  { key: "moq", label: "MOQ (optional)", required: false },
   { key: "weblink", label: "Weblink (optional)", required: false },
   { key: "legacyPartNumber", label: "Legacy Part Number (optional)", required: false },
   { key: "servicePriceGR", label: "Service Price GR (optional)", required: false, serviceOnly: true },
@@ -356,6 +372,7 @@ const PREVIEW_COLUMN_KEYS: HeaderColumnKey[] = [
   "listPrice",
   "costPrice",
   "warning",
+  "moq",
   "weblink",
   "legacyPartNumber",
   "servicePriceGR",
@@ -756,6 +773,7 @@ const buildSuggestions = (columns: ColumnOption[]) => {
     listPrice: makeSuggestions("listPrice"),
     costPrice: makeSuggestions("costPrice"),
     warning: makeSuggestions("warning"),
+    moq: makeSuggestions("moq"),
     weblink: makeSuggestions("weblink"),
     legacyPartNumber: makeSuggestions("legacyPartNumber"),
     servicePriceGR: makeSuggestions("servicePriceGR"),
@@ -895,6 +913,7 @@ const evaluateSelection = (sheets: SheetMapping[], activeSheetIndex: number) => 
     listPrice: selection.listPrice != null,
     costPrice: selection.costPrice != null,
     warning: selection.warning != null,
+    moq: selection.moq != null,
     weblink: selection.weblink != null,
     legacyPartNumber: selection.legacyPartNumber != null,
     servicePriceGR: selection.servicePriceGR != null,

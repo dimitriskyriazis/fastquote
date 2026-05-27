@@ -28,6 +28,7 @@ export type OfferProductsPanelProps = {
   offerPricingSellAnchor?: string | null;
   offerPricingHoldMarginOnCost?: boolean;
   onOfferPricingHoldMarginOnCostChange?: (next: boolean) => void;
+  readOnly?: boolean;
 };
 
 export type OfferProductsPanelHandle = {

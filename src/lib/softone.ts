@@ -109,8 +109,8 @@ export type SetItemEntry = {
   code: string;
   code1?: string;
   code2?: string;
-  name: string;
-  name1?: string;
+  name: string;       // Ονομασία Είδους (Description 1 / item name)
+  name1?: string;     // Περιγραφή 2 Είδους (Description 2) — per V9 WS spec
   mtrunit: number;
   vat: number;
   mtracn: number | string;
