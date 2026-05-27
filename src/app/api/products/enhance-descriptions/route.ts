@@ -65,7 +65,10 @@ type EnhanceResult = {
   oldDescription: string | null;
   oldOfferDescription?: string | null;
   newDescription: string | null;
-  status: "updated" | "skipped" | "error";
+  status: "updated" | "previewed" | "skipped" | "error";
+  brand?: string | null;
+  partNumber?: string | null;
+  modelNumber?: string | null;
 };
 
 const serperSearch = async (
@@ -126,6 +129,60 @@ export async function POST(req: NextRequest) {
     if (!auth.ok) return auth.response;
 
     const body = await req.json();
+
+    // dryRun: generate descriptions but do NOT write to DB — used for preview
+    const dryRun: boolean = body?.dryRun === true;
+
+    // applyPrecomputed: skip OpenAI and directly apply already-generated descriptions
+    // Shape: { productId, newDescription, offerDetailIds? }[]
+    const rawApplyPrecomputed: unknown = body?.applyPrecomputed;
+    if (Array.isArray(rawApplyPrecomputed) && rawApplyPrecomputed.length > 0) {
+      const auditUserId = resolveAuditUserId(req);
+      const pool = await getPool();
+      let updatedCount = 0;
+
+      for (const item of rawApplyPrecomputed) {
+        const productId = normalizeId((item as { productId?: unknown })?.productId);
+        const newDescription = typeof (item as { newDescription?: unknown })?.newDescription === "string"
+          ? (item as { newDescription: string }).newDescription
+          : null;
+        const rawOdIds: unknown = (item as { offerDetailIds?: unknown })?.offerDetailIds;
+        const odIds: number[] = Array.isArray(rawOdIds)
+          ? rawOdIds.map(normalizeId).filter((x): x is number => x !== null)
+          : [];
+
+        if (productId === null || newDescription === null) continue;
+
+        const updateReq = pool.request();
+        updateReq.input("ProductID", sql.Int, productId);
+        updateReq.input("Description", sql.NVarChar(2000), newDescription.slice(0, 2000));
+        updateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
+        await updateReq.query(`
+          UPDATE dbo.Products
+          SET Description = @Description,
+              ModifiedOn = SYSUTCDATETIME(),
+              ModifiedBy = @ModifiedBy
+          WHERE ID = @ProductID
+        `);
+        updatedCount++;
+
+        for (const odId of odIds) {
+          const odUpdateReq = pool.request();
+          odUpdateReq.input("OfferDetailID", sql.Int, odId);
+          odUpdateReq.input("ProductDescription", sql.NVarChar(2000), newDescription.slice(0, 2000));
+          odUpdateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
+          await odUpdateReq.query(`
+            UPDATE dbo.OfferDetails
+            SET ProductDescription = @ProductDescription,
+                ModifiedOn = SYSUTCDATETIME(),
+                ModifiedBy = @ModifiedBy
+            WHERE ID = @OfferDetailID
+          `);
+        }
+      }
+
+      return NextResponse.json({ ok: true, updatedCount, failedCount: 0, results: [] });
+    }
 
     // Two modes:
     // 1. productIds: number[] — from Products page, update master only
@@ -227,6 +284,9 @@ export async function POST(req: NextRequest) {
               : undefined,
             newDescription: null,
             status: "skipped",
+            brand: product.Brand,
+            partNumber: product.PartNumber,
+            modelNumber: product.ModelNumber,
           };
         }
 
@@ -373,46 +433,54 @@ export async function POST(req: NextRequest) {
               : undefined,
             newDescription: null,
             status: "skipped",
+            brand: product.Brand,
+            partNumber: product.PartNumber,
+            modelNumber: product.ModelNumber,
           };
         }
 
         // Truncate to DB column limit
         const newDescription = enhanced.slice(0, 2000);
 
-        // Step 3: Update dbo.Products (master)
-        const updateReq = pool.request();
-        updateReq.input("ProductID", sql.Int, product.ID);
-        updateReq.input("Description", sql.NVarChar(2000), newDescription);
-        updateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
-        await updateReq.query(`
-          UPDATE dbo.Products
-          SET Description = @Description,
-              ModifiedOn = SYSUTCDATETIME(),
-              ModifiedBy = @ModifiedBy
-          WHERE ID = @ProductID
-        `);
-
-        // Step 4: Update ALL matching dbo.OfferDetails rows (product may appear multiple times)
+        // In dry-run mode skip all DB writes
         let oldOfferDescription: string | null | undefined = undefined;
-        if (offerDetailIds && offerDetailIds.length > 0 && offerDetailPairsMap) {
-          oldOfferDescription = offerDescriptions?.get(offerDetailIds[0]) ?? null;
-          for (const odId of offerDetailIds) {
-            const odUpdateReq = pool.request();
-            odUpdateReq.input("OfferDetailID", sql.Int, odId);
-            odUpdateReq.input("ProductDescription", sql.NVarChar(2000), newDescription);
-            odUpdateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
-            await odUpdateReq.query(`
-              UPDATE dbo.OfferDetails
-              SET ProductDescription = @ProductDescription,
-                  ModifiedOn = SYSUTCDATETIME(),
-                  ModifiedBy = @ModifiedBy
-              WHERE ID = @OfferDetailID
-            `);
+        if (!dryRun) {
+          // Step 3: Update dbo.Products (master)
+          const updateReq = pool.request();
+          updateReq.input("ProductID", sql.Int, product.ID);
+          updateReq.input("Description", sql.NVarChar(2000), newDescription);
+          updateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
+          await updateReq.query(`
+            UPDATE dbo.Products
+            SET Description = @Description,
+                ModifiedOn = SYSUTCDATETIME(),
+                ModifiedBy = @ModifiedBy
+            WHERE ID = @ProductID
+          `);
+
+          // Step 4: Update ALL matching dbo.OfferDetails rows (product may appear multiple times)
+          if (offerDetailIds && offerDetailIds.length > 0 && offerDetailPairsMap) {
+            oldOfferDescription = offerDescriptions?.get(offerDetailIds[0]) ?? null;
+            for (const odId of offerDetailIds) {
+              const odUpdateReq = pool.request();
+              odUpdateReq.input("OfferDetailID", sql.Int, odId);
+              odUpdateReq.input("ProductDescription", sql.NVarChar(2000), newDescription);
+              odUpdateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
+              await odUpdateReq.query(`
+                UPDATE dbo.OfferDetails
+                SET ProductDescription = @ProductDescription,
+                    ModifiedOn = SYSUTCDATETIME(),
+                    ModifiedBy = @ModifiedBy
+                WHERE ID = @OfferDetailID
+              `);
+            }
           }
+        } else if (offerDetailIds && offerDetailIds.length > 0) {
+          oldOfferDescription = offerDescriptions?.get(offerDetailIds[0]) ?? null;
         }
 
         console.log(
-          `[enhance-desc] product ${product.ID}${offerDetailIds ? ` (${offerDetailIds.length} offer row(s))` : ""}: "${description}" → "${newDescription.slice(0, 80)}..."`,
+          `[enhance-desc]${dryRun ? " [dry-run]" : ""} product ${product.ID}${offerDetailIds ? ` (${offerDetailIds.length} offer row(s))` : ""}: "${description}" → "${newDescription.slice(0, 80)}..."`,
         );
 
         return {
@@ -422,8 +490,11 @@ export async function POST(req: NextRequest) {
           oldDescription: product.Description,
           oldOfferDescription,
           newDescription,
-          status: "updated",
-        };
+          status: dryRun ? "previewed" : "updated",
+          brand: product.Brand,
+          partNumber: product.PartNumber,
+          modelNumber: product.ModelNumber,
+        } as EnhanceResult;
       }),
     );
 
@@ -435,6 +506,9 @@ export async function POST(req: NextRequest) {
         oldDescription: products[i].Description,
         newDescription: null,
         status: "error",
+        brand: products[i].Brand,
+        partNumber: products[i].PartNumber,
+        modelNumber: products[i].ModelNumber,
       };
     });
 

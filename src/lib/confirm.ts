@@ -1,5 +1,255 @@
 export type MultiChoiceDialogOption = { label: string; value: string };
 
+// ---------------------------------------------------------------------------
+// Enhance-descriptions preview dialog
+// Shows a before/after table for each product with per-row checkboxes.
+// Returns the indices of rows the user selected to apply, or false if cancelled.
+// ---------------------------------------------------------------------------
+export type EnhancePreviewRow = {
+  /** Fallback identifier shown when brand + partNumber are both empty */
+  label: string;
+  brand?: string | null;
+  partNumber?: string | null;
+  before: string | null;
+  after: string | null;
+  /** If true the row was skipped (no AI result) — shown greyed out, not selectable */
+  skipped?: boolean;
+};
+
+/**
+ * Returns the indices (into `rows`) that the user chose to apply,
+ * or `false` if the dialog was cancelled.
+ */
+export const showEnhancePreviewDialog = async (
+  rows: EnhancePreviewRow[],
+): Promise<number[] | false> => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return [];
+
+  return new Promise<number[] | false>((resolve) => {
+    /* ---- checked state: only non-skipped rows are selectable ---- */
+    const selectableIndices = rows
+      .map((r, i) => ({ r, i }))
+      .filter(({ r }) => !r.skipped)
+      .map(({ i }) => i);
+    const checked = new Set<number>(selectableIndices); // all on by default
+
+    /* ---- overlay ---- */
+    const overlay = document.createElement('div');
+    overlay.className = 'fastquote-confirm-overlay';
+
+    /* ---- dialog shell ---- */
+    const dialog = document.createElement('div');
+    dialog.className = 'fastquote-confirm-dialog';
+    dialog.style.cssText =
+      'width:min(96vw,1200px);max-width:96vw;padding:24px 28px 20px;display:flex;flex-direction:column;gap:0;';
+
+    /* ---- title ---- */
+    const heading = document.createElement('h3');
+    heading.className = 'fastquote-confirm-title';
+    heading.textContent = `Review enhanced descriptions (${selectableIndices.length} product${selectableIndices.length !== 1 ? 's' : ''})`;
+    dialog.appendChild(heading);
+
+    /* ---- subtitle ---- */
+    const sub = document.createElement('p');
+    sub.className = 'fastquote-confirm-message';
+    sub.style.marginBottom = '14px';
+    sub.textContent = 'Uncheck any rows you don\'t want to update, then click "Apply" to save or "Cancel" to discard all.';
+    dialog.appendChild(sub);
+
+    /* ---- scrollable table wrapper ---- */
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText =
+      'overflow-y:auto;max-height:55vh;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:18px;flex:1 1 auto;';
+
+    const table = document.createElement('table');
+    table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.82rem;table-layout:fixed;';
+
+    /* -- thead -- */
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+
+    // Select-all checkbox cell
+    const thCheck = document.createElement('th');
+    thCheck.style.cssText =
+      'width:36px;padding:6px 8px;background:#f3f4f6;border-bottom:1px solid #e5e7eb;' +
+      'position:sticky;top:0;z-index:1;text-align:center;';
+    const selectAllCb = document.createElement('input');
+    selectAllCb.type = 'checkbox';
+    selectAllCb.checked = true;
+    selectAllCb.title = 'Select / deselect all';
+    selectAllCb.style.cursor = 'pointer';
+    thCheck.appendChild(selectAllCb);
+    headerRow.appendChild(thCheck);
+
+    const colDefs = [
+      { label: 'Brand', width: '10%' },
+      { label: 'Part / Model No.', width: '12%' },
+      { label: 'Before', width: '37%' },
+      { label: 'After', width: '37%' },
+    ];
+    colDefs.forEach(({ label, width }) => {
+      const th = document.createElement('th');
+      th.textContent = label;
+      th.style.cssText =
+        `text-align:left;padding:7px 10px;background:#f3f4f6;border-bottom:1px solid #e5e7eb;` +
+        `font-weight:600;position:sticky;top:0;z-index:1;width:${width};`;
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    /* ---- Apply button (created early so updateApplyBtn can close over it as const) ---- */
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'fastquote-confirm-btn fastquote-confirm-btn--confirm';
+    confirmBtn.textContent = `Apply ${checked.size} change${checked.size !== 1 ? 's' : ''}`;
+
+    /* helper: update Apply button label + select-all indeterminate state */
+    const updateApplyBtn = () => {
+      const n = checked.size;
+      confirmBtn.textContent = `Apply ${n} change${n !== 1 ? 's' : ''}`;
+      confirmBtn.disabled = n === 0;
+      const total = selectableIndices.length;
+      if (n === 0) {
+        selectAllCb.checked = false;
+        selectAllCb.indeterminate = false;
+      } else if (n === total) {
+        selectAllCb.checked = true;
+        selectAllCb.indeterminate = false;
+      } else {
+        selectAllCb.checked = false;
+        selectAllCb.indeterminate = true;
+      }
+    };
+
+    /* -- tbody -- */
+    const tbody = document.createElement('tbody');
+    const rowCheckboxes: Map<number, HTMLInputElement> = new Map();
+
+    rows.forEach((row, idx) => {
+      const isSelectable = !row.skipped;
+      const tr = document.createElement('tr');
+      const baseRowBg = idx % 2 === 1 ? '#fafafa' : '#ffffff';
+      tr.style.background = baseRowBg;
+
+      const makeCell = (text: string | null, muted?: boolean) => {
+        const td = document.createElement('td');
+        td.style.cssText =
+          `padding:6px 10px;border-bottom:1px solid #f0f0f0;vertical-align:top;` +
+          `word-break:break-word;white-space:pre-wrap;line-height:1.4;` +
+          (muted ? 'color:#9ca3af;font-style:italic;' : '');
+        td.textContent = text ?? '—';
+        return td;
+      };
+
+      /* checkbox cell */
+      const tdCheck = document.createElement('td');
+      tdCheck.style.cssText =
+        'padding:6px 8px;border-bottom:1px solid #f0f0f0;vertical-align:middle;text-align:center;';
+      if (isSelectable) {
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = true;
+        cb.style.cursor = 'pointer';
+        cb.addEventListener('change', () => {
+          if (cb.checked) {
+            checked.add(idx);
+            tr.style.opacity = '1';
+          } else {
+            checked.delete(idx);
+            tr.style.opacity = '0.45';
+          }
+          updateApplyBtn();
+        });
+        rowCheckboxes.set(idx, cb);
+        tdCheck.appendChild(cb);
+      }
+      tr.appendChild(tdCheck);
+
+      /* brand cell */
+      const brandText = row.brand?.trim() || null;
+      const brandCell = makeCell(brandText, !brandText);
+      brandCell.style.fontWeight = brandText ? '500' : '';
+      tr.appendChild(brandCell);
+
+      /* part / model cell */
+      const partText = [row.partNumber?.trim(), '']
+        .filter(Boolean)[0] ?? null;
+      tr.appendChild(makeCell(partText, !partText));
+
+      if (row.skipped) {
+        const skipCell = makeCell('(skipped — no data)', true);
+        skipCell.colSpan = 2;
+        tr.appendChild(skipCell);
+        tr.style.opacity = '0.5';
+      } else {
+        tr.appendChild(makeCell(row.before, !row.before));
+
+        const afterCell = makeCell(row.after, !row.after);
+        if (row.after && row.after !== row.before) {
+          afterCell.style.background = '#f0fdf4';
+          afterCell.style.color = '#166534';
+        }
+        tr.appendChild(afterCell);
+      }
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrapper.appendChild(table);
+    dialog.appendChild(wrapper);
+
+    /* ---- select-all handler (runs after rowCheckboxes is populated) ---- */
+    selectAllCb.addEventListener('change', () => {
+      const shouldCheck = selectAllCb.checked;
+      selectableIndices.forEach((idx) => {
+        const cb = rowCheckboxes.get(idx);
+        if (cb) cb.checked = shouldCheck;
+        const tr = tbody.children[idx] as HTMLTableRowElement | undefined;
+        if (tr) tr.style.opacity = shouldCheck ? '1' : '0.45';
+        if (shouldCheck) checked.add(idx);
+        else checked.delete(idx);
+      });
+      updateApplyBtn();
+    });
+
+    /* ---- buttons ---- */
+    const buttons = document.createElement('div');
+    buttons.className = 'fastquote-confirm-buttons';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'fastquote-confirm-btn fastquote-confirm-btn--cancel';
+    cancelBtn.textContent = 'Cancel';
+
+    buttons.appendChild(cancelBtn);
+    buttons.appendChild(confirmBtn);
+    dialog.appendChild(buttons);
+    overlay.appendChild(dialog);
+
+    const cleanup = (result: number[] | false) => {
+      overlay.classList.remove('visible');
+      window.setTimeout(() => overlay.remove(), 180);
+      window.removeEventListener('keydown', handleKey);
+      resolve(result);
+    };
+
+    cancelBtn.addEventListener('click', () => cleanup(false));
+    confirmBtn.addEventListener('click', () => cleanup([...checked]));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(false); });
+
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); cleanup(false); }
+    };
+    window.addEventListener('keydown', handleKey);
+
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => {
+      overlay.classList.add('visible');
+      confirmBtn.focus();
+    });
+  });
+};
+
 export const showMultiChoiceDialog = async ({
   title,
   message,

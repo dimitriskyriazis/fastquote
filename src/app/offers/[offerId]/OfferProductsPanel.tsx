@@ -55,7 +55,7 @@ const AgGridAll = dynamic<AgGridAllProps>(() => import('../../components/AgGridA
 import { showToastMessage } from '../../../lib/toast';
 import { useUndoStack } from '../../hooks/useUndoStack';
 import { pushCellEditUndo } from '../../../lib/undoHelpers';
-import { showConfirmDialog, showMultiChoiceDialog } from '../../../lib/confirm';
+import { showConfirmDialog, showMultiChoiceDialog, showEnhancePreviewDialog, type EnhancePreviewRow } from '../../../lib/confirm';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselectedRowIds, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption, isOfferProductService } from '../../../lib/offerProductRows';
@@ -6363,7 +6363,7 @@ const requestedColumnDefsMap = useMemo(
           if (isSelectAllActive) {
             const confirmed = await showConfirmDialog({
               title: 'Enhance descriptions for all filtered products',
-              message: 'This will overwrite descriptions for the filtered rows. Continue?',
+              message: 'This will generate enhanced descriptions for all filtered rows. You will be able to review before/after before saving.',
               confirmLabel: 'Continue',
               cancelLabel: 'Cancel',
             });
@@ -6393,40 +6393,93 @@ const requestedColumnDefsMap = useMemo(
             return;
           }
 
+          // \u2500\u2500 Phase 1: dry-run \u2014 generate descriptions without saving \u2500\u2500
           setIsEnhancingDescriptions(true);
-          const dismissLoadingToast = showToastMessage('Enhancing descriptions\u2026', 'info', 120000);
+          const dismissLoadingToast = showToastMessage('Generating enhanced descriptions\u2026', 'info', 120000);
+          type EnhanceApiResult = {
+            productId: number;
+            offerDetailId?: number;
+            offerDetailIds?: number[];
+            oldDescription: string | null;
+            oldOfferDescription?: string | null;
+            newDescription: string | null;
+            status: string;
+            brand?: string | null;
+            partNumber?: string | null;
+            modelNumber?: string | null;
+          };
+          let previewResults: EnhanceApiResult[] = [];
           try {
             const res = await fetch('/api/products/enhance-descriptions', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ offerDetailIds: idsToProcess }),
+              body: JSON.stringify({ offerDetailIds: idsToProcess, dryRun: true }),
             });
-            const data = (await res.json()) as {
-              ok: boolean;
-              updatedCount?: number;
-              failedCount?: number;
-              results?: Array<{
-                productId: number;
-                offerDetailId?: number;
-                offerDetailIds?: number[];
-                oldDescription: string | null;
-                oldOfferDescription?: string | null;
-                newDescription: string | null;
-                status: string;
-              }>;
-              error?: string;
-            };
+            const data = (await res.json()) as { ok: boolean; results?: EnhanceApiResult[]; error?: string };
             dismissLoadingToast();
-            if (data.ok) {
-              const msg = data.failedCount
-                ? `Enhanced ${data.updatedCount} description(s), ${data.failedCount} could not be enhanced.`
-                : `Enhanced ${data.updatedCount} description(s).`;
-              showToastMessage(msg, 'success');
+            if (!data.ok) {
+              showToastMessage(data.error ?? 'Failed to generate enhanced descriptions. Please try again.', 'error');
+              return;
+            }
+            previewResults = data.results ?? [];
+          } catch {
+            dismissLoadingToast();
+            showToastMessage('Failed to generate enhanced descriptions. Please try again.', 'error');
+            return;
+          } finally {
+            setIsEnhancingDescriptions(false);
+          }
+
+          // \u2500\u2500 Phase 2: show before/after preview dialog \u2500\u2500
+          const previewRows: EnhancePreviewRow[] = previewResults.map((r) => {
+            const base = r.oldOfferDescription ?? r.oldDescription ?? `Product ${r.productId}`;
+            const label = base.length > 60 ? base.slice(0, 60) + '\u2026' : base;
+            return {
+              label,
+              brand: r.brand,
+              partNumber: r.partNumber ?? r.modelNumber,
+              before: r.oldOfferDescription ?? r.oldDescription,
+              after: r.newDescription,
+              skipped: r.status === 'skipped',
+            };
+          });
+
+          const selectedIndices = await showEnhancePreviewDialog(previewRows);
+          if (selectedIndices === false || selectedIndices.length === 0) return;
+
+          const selectedSet = new Set(selectedIndices);
+
+          // \u2500\u2500 Phase 3: apply the pre-computed descriptions \u2500\u2500
+          const applyItems = previewResults
+            .filter((_, i) => selectedSet.has(i) && previewResults[i].status === 'previewed' && previewResults[i].newDescription)
+            .map((r) => ({
+              productId: r.productId,
+              newDescription: r.newDescription!,
+              offerDetailIds: r.offerDetailIds ?? (r.offerDetailId != null ? [r.offerDetailId] : []),
+            }));
+
+          if (applyItems.length === 0) {
+            showToastMessage('No descriptions to apply.', 'info');
+            return;
+          }
+
+          setIsEnhancingDescriptions(true);
+          const dismissApplyToast = showToastMessage('Applying descriptions\u2026', 'info', 60000);
+          try {
+            const applyRes = await fetch('/api/products/enhance-descriptions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ applyPrecomputed: applyItems }),
+            });
+            const applyData = (await applyRes.json()) as { ok: boolean; updatedCount?: number; error?: string };
+            dismissApplyToast();
+            if (applyData.ok) {
+              showToastMessage(`Enhanced ${applyData.updatedCount} description(s).`, 'success');
               refreshOfferProductGrid(null, { purge: true });
               router.refresh();
 
-              // Push undo entry
-              const updatedResults = (data.results ?? []).filter((r) => r.status === 'updated');
+              // Push undo entry (only the rows that were actually selected + applied)
+              const updatedResults = previewResults.filter((_, i) => selectedSet.has(i) && previewResults[i].status === 'previewed' && previewResults[i].newDescription);
               if (updatedResults.length > 0) {
                 pushUndo({
                   label: `Enhance ${updatedResults.length} description(s)`,
@@ -6452,11 +6505,11 @@ const requestedColumnDefsMap = useMemo(
                 });
               }
             } else {
-              showToastMessage(data.error ?? 'Failed to enhance descriptions. Please try again.', 'error');
+              showToastMessage(applyData.error ?? 'Failed to apply descriptions. Please try again.', 'error');
             }
           } catch {
-            dismissLoadingToast();
-            showToastMessage('Failed to enhance descriptions. Please try again.', 'error');
+            dismissApplyToast();
+            showToastMessage('Failed to apply descriptions. Please try again.', 'error');
           } finally {
             setIsEnhancingDescriptions(false);
           }
