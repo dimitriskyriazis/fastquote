@@ -46,6 +46,7 @@ const updateProductSchema = z.object({
   description: stringSchema(2000).optional(),
   webLink: urlSchema,
   origin: stringSchema(100).optional(),
+  brandId: positiveIntSchema,
   categoryId: positiveIntSchema,
   subCategoryId: positiveIntSchema,
   typeId: positiveIntSchema,
@@ -59,6 +60,7 @@ const updateProductSchema = z.object({
   || data.description !== undefined
   || data.webLink !== undefined
   || data.origin !== undefined
+  || data.brandId !== undefined
   || data.categoryId !== undefined
   || data.subCategoryId !== undefined
   || data.typeId !== undefined
@@ -245,6 +247,9 @@ export async function PATCH(
     }
     if (body.origin !== undefined) {
       updates.push({ column: 'Origin', param: 'Origin', value: body.origin, type: sql.NVarChar(100) });
+    }
+    if (body.brandId !== undefined) {
+      updates.push({ column: 'BrandID', param: 'BrandID', value: body.brandId, type: sql.Int });
     }
     if (body.categoryId !== undefined) {
       updates.push({ column: 'CategoryID', param: 'CategoryID', value: body.categoryId, type: sql.Int });
