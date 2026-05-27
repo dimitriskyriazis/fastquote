@@ -1725,6 +1725,7 @@ export default function ClientProductsPage({
           layout={pivotLayout}
           onExitPivot={() => setPivotView(false)}
           onDataChanged={() => setRefreshToken((prev) => prev + 1)}
+          readOnly={isReadOnly}
         />
       ) : (
         <div className={toolbarStyles.splitLayout}>

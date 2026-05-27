@@ -8867,7 +8867,7 @@ const requestedColumnDefsMap = useMemo(
             rowSelection="multiple"
             rowMultiSelectWithClick
             rowDeselection
-            useAgGridRowDrag
+            useAgGridRowDrag={!readOnly}
             pushUndo={pushUndo}
             suppressColumnVirtualisation={false}
             cacheBlockSize={100}

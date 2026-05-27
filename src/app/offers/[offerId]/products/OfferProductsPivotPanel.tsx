@@ -59,6 +59,7 @@ type Props = {
   onExitPivot?: () => void;
   onDataChanged?: () => void;
   layout: 'category' | 'brand' | 'brandPartNo';
+  readOnly?: boolean;
 };
 
 type BulkEditField = 'CustomerDiscount' | 'TelmacoDiscount' | 'Margin';
@@ -157,7 +158,7 @@ if (!(globalThis as unknown as { __AG_GRID_PIVOT_MODULES_REGISTERED__?: boolean 
 
 LicenseManager.setLicenseKey(process.env.NEXT_PUBLIC_AG_GRID_LICENSE || '');
 
-export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onExitPivot, onDataChanged, layout }: Props) {
+export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onExitPivot, onDataChanged, layout, readOnly = false }: Props) {
   const quickSearch = useContext(GridQuickSearchContext);
   const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const lastFetchSignatureRef = useRef<string>('');
@@ -222,8 +223,8 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
         },
         valueFormatter: numberValueFormatter,
         aggFunc: 'sum',
-        editable: (params) => !params.node.group,
-        cellStyle: (params) => params.node.group ? null : { backgroundColor: '#f0fdf4' as string, cursor: 'text' as string },
+        editable: readOnly ? false : (params) => !params.node.group,
+        cellStyle: (params) => params.node.group || readOnly ? null : { backgroundColor: '#f0fdf4' as string, cursor: 'text' as string },
         width: 160,
       },
       {
@@ -239,8 +240,8 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
         },
         valueFormatter: numberValueFormatter,
         aggFunc: 'sum',
-        editable: (params) => !params.node.group,
-        cellStyle: (params) => params.node.group ? null : { backgroundColor: '#f0fdf4' as string, cursor: 'text' as string },
+        editable: readOnly ? false : (params) => !params.node.group,
+        cellStyle: (params) => params.node.group || readOnly ? null : { backgroundColor: '#f0fdf4' as string, cursor: 'text' as string },
         width: 175,
       },
       {
@@ -256,12 +257,12 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
         },
         valueFormatter: numberValueFormatter,
         aggFunc: 'sum',
-        editable: (params) => !params.node.group,
-        cellStyle: (params) => params.node.group ? null : { backgroundColor: '#f0fdf4' as string, cursor: 'text' as string },
+        editable: readOnly ? false : (params) => !params.node.group,
+        cellStyle: (params) => params.node.group || readOnly ? null : { backgroundColor: '#f0fdf4' as string, cursor: 'text' as string },
         width: 185,
       },
     ];
-  }, [layout]);
+  }, [layout, readOnly]);
 
   const fieldList = useMemo(
     () => Array.from(new Set(
@@ -349,6 +350,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
   }, [layout]);
 
   const handleCellDoubleClicked = useCallback((event: CellDoubleClickedEvent<RowData>) => {
+    if (readOnly) return;
     if (layout !== 'brand' && layout !== 'brandPartNo') return;
     const { node, colDef } = event;
     if (!node.group || !colDef.field || !BULK_EDIT_FIELDS.has(colDef.field)) return;
@@ -367,7 +369,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     setBulkEditValue(String(Math.round(num * 100) / 100));
     setBulkEditError(null);
     setBulkEditOpen(true);
-  }, [layout]);
+  }, [layout, readOnly]);
 
   const EDITABLE_HOUR_FIELDS = useMemo(() => new Set(['Installation', 'ElInstalation', 'Commissioning']), []);
 
@@ -668,7 +670,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
             rowModelType="clientSide"
             getRowClass={getRowClass}
             onCellDoubleClicked={handleCellDoubleClicked}
-            onCellValueChanged={(e) => { void handleCellValueChanged(e); }}
+            onCellValueChanged={readOnly ? undefined : (e) => { void handleCellValueChanged(e); }}
             sideBar={{
               toolPanels: [
                 {
