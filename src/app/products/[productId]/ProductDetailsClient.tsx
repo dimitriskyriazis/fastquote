@@ -317,6 +317,7 @@ export default function ProductDetailsClient({
         <div className={styles.sectionHeading}>{metadata.title}</div>
         <div className={styles.sectionFields}>
           {sectionFields.map((field) => {
+            if (field.id === 'serviceType' && values['isService'] !== '1') return null;
             const spanClass =
               field.span === -1 ? styles.fieldFull : field.span && field.span > 1 ? styles.fieldWide : '';
             return (
