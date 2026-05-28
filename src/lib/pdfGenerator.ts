@@ -4,6 +4,11 @@ import { DEFAULT_PDF_PRODUCT_COLUMNS, type PdfProductColumn } from './pdfColumns
 
 export type PdfLang = 'el' | 'en';
 export type PdfOrientation = 'portrait' | 'landscape';
+export type PdfTotalsDisplaySettings = {
+  showGrandTotal: boolean;
+  showDiscount: boolean;
+  showFinalPrice: boolean;
+};
 
 /** Loose cell type for pdfmake table body entries. */
 type PdfCell = Record<string, unknown> & { rowKind?: string };
@@ -1201,11 +1206,21 @@ function buildTotalsAndTerms(
   L: Labels,
   orientation: PdfOrientation,
   selectedColumns: PdfProductColumn[],
+  totalsDisplaySettings: PdfTotalsDisplaySettings = {
+    showGrandTotal: true,
+    showDiscount: true,
+    showFinalPrice: true,
+  },
   equipmentList: boolean = false,
 ): { totals: unknown[]; terms: unknown[] } {
   const hasPriceColumns = selectedColumns.some(c => PRICE_COLUMNS.has(c));
   const discountSummary = calculateDiscountSummary(data);
-  const showDiscountSummary = discountSummary.discountEur > 0;
+  const showGrandTotalSummary = totalsDisplaySettings.showGrandTotal;
+  const showDiscountSummary = totalsDisplaySettings.showDiscount && discountSummary.discountEur > 0;
+  const showAnyTotalRow =
+    showGrandTotalSummary ||
+    showDiscountSummary ||
+    totalsDisplaySettings.showFinalPrice;
 
   let terms = [
     { label: L.offerValidity, value: fixObviousTypos(str(data.terms.offerValidity)) },
@@ -1239,18 +1254,24 @@ function buildTotalsAndTerms(
 
   const summaryRowStyle = { fontSize: 8.3, color: COLORS.primaryText };
   const finalPriceStyle = { fontSize: 9.3, bold: true, color: COLORS.primaryText };
-  const baseRows: PdfCell[][] = showDiscountSummary
-    ? [
+  const baseRows: PdfCell[][] = [
+    ...(showGrandTotalSummary
+      ? [
         [
           { text: L.subtotal, ...summaryRowStyle },
           { text: formatCurrency(discountSummary.listSubtotal), ...summaryRowStyle, alignment: 'right' },
         ],
+      ]
+      : []),
+    ...(showDiscountSummary
+      ? [
         [
           { text: L.discountAmount, ...summaryRowStyle },
           { text: formatCurrency(discountSummary.discountEur), ...summaryRowStyle, alignment: 'right' },
         ],
       ]
-    : [];
+      : []),
+  ];
 
   const finalPriceLabel = str(data.finalPriceLabel) || L.total;
   const finalPriceValue = discountSummary.totalNet;
@@ -1259,12 +1280,14 @@ function buildTotalsAndTerms(
     { text: formatCurrency(finalPriceValue), ...finalPriceStyle, alignment: 'right' },
   ];
 
-  const summaryRows: PdfCell[][] = [...baseRows, totalRow];
+  const summaryRows: PdfCell[][] = totalsDisplaySettings.showFinalPrice
+    ? [...baseRows, totalRow]
+    : baseRows;
 
   const discountNote = str(data.discountNote);
   const totalsBoxWidth = orientation === 'portrait' ? 220 : 250;
 
-  if (hasPriceColumns) {
+  if (hasPriceColumns && showAnyTotalRow) {
     const totalsBox = {
       width: totalsBoxWidth,
       table: {
@@ -1286,7 +1309,7 @@ function buildTotalsAndTerms(
       },
     };
 
-    if (discountNote) {
+    if (totalsDisplaySettings.showDiscount && discountNote) {
       totalsBlocks.push({
         columns: [
           {
@@ -1427,6 +1450,11 @@ export async function generateOfferPdf(
   orientation: PdfOrientation = 'portrait',
   selectedColumns: PdfProductColumn[] = DEFAULT_PDF_PRODUCT_COLUMNS,
   printSettings: PdfPrintSettings | null = null,
+  totalsDisplaySettings: PdfTotalsDisplaySettings = {
+    showGrandTotal: true,
+    showDiscount: true,
+    showFinalPrice: true,
+  },
   smallOffer: boolean = false,
   equipmentList: boolean = false,
 ): Promise<Buffer> {
@@ -1446,7 +1474,7 @@ export async function generateOfferPdf(
   }
 
   const itemsTable = buildItemsTable(data, L, orientation, cols, printSettings);
-  const totalsAndTerms = buildTotalsAndTerms(data, L, orientation, cols, equipmentList);
+  const totalsAndTerms = buildTotalsAndTerms(data, L, orientation, cols, totalsDisplaySettings, equipmentList);
   const openingNote = str(data.notesIntroduction)
     ? [
         { text: fixObviousTypos(str(data.notesIntroduction)), style: 'body', margin: [0, 0, 0, 8] },

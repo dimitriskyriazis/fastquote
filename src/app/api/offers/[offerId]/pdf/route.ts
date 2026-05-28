@@ -3,7 +3,7 @@ import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../../../lib/sql';
 import { requirePermission } from '../../../../../lib/authz';
-import type { OfferPdfData, OfferProductRow, PdfLang, PdfOrientation, PdfPrintSettings } from '../../../../../lib/pdfGenerator';
+import type { OfferPdfData, OfferProductRow, PdfLang, PdfOrientation, PdfPrintSettings, PdfTotalsDisplaySettings } from '../../../../../lib/pdfGenerator';
 import { parsePdfProductColumnsParam } from '../../../../../lib/pdfColumns';
 import { normalizeOfferLanguage, offerLanguageToPdfLang } from '../../../../../lib/offerLanguage';
 
@@ -98,6 +98,11 @@ export async function GET(
     const printCategories = req.nextUrl.searchParams.get('printCategories') === '1' ? 1 : 0;
     const printSubCategories = req.nextUrl.searchParams.get('printSubCategories') === '1' ? 1 : 0;
     const printSubSubCategories = req.nextUrl.searchParams.get('printSubSubCategories') === '1' ? 1 : 0;
+    const totalsDisplaySettings: PdfTotalsDisplaySettings = {
+      showGrandTotal: req.nextUrl.searchParams.get('showGrandTotal') !== '0',
+      showDiscount: req.nextUrl.searchParams.get('showDiscount') !== '0',
+      showFinalPrice: req.nextUrl.searchParams.get('showFinalPrice') !== '0',
+    };
     const smallOffer = req.nextUrl.searchParams.get('smallOffer') === '1';
 
     const pool = await getPool();
@@ -337,7 +342,16 @@ export async function GET(
     };
 
     const { generateOfferPdf } = await import('../../../../../lib/pdfGenerator');
-    const buffer = await generateOfferPdf(pdfData, lang, orientation, productColumns, pdfPrintSettings, smallOffer, equipmentList);
+    const buffer = await generateOfferPdf(
+      pdfData,
+      lang,
+      orientation,
+      productColumns,
+      pdfPrintSettings,
+      totalsDisplaySettings,
+      smallOffer,
+      equipmentList,
+    );
 
     const customerSlug = (header.CustomerName ?? 'Offer')
       .replace(/[^a-zA-Z0-9\u0370-\u03FF\u0400-\u04FF _-]/g, '')
