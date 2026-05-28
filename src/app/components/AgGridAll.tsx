@@ -3208,6 +3208,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       maintainColumnOrder,
       tooltipShowDelay: 300,
       tooltipHideDelay: 10000,
+      popupParent: document.body,
     };
     if (useAgGridRowDrag) {
       options.rowDragMultiRow = true;
@@ -4996,17 +4997,16 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
 
   // CONTEXT MENU - Keep context menus and submenus inside the viewport.
   const postProcessPopup = useCallback((params: PostProcessPopupParams<RowData>) => {
-    if (params.type !== 'contextMenu' && params.type !== 'subMenu') return;
     const popup = params.ePopup;
     if (!popup) return;
-    // Run after the browser has painted so the popup has its final rendered size.
     requestAnimationFrame(() => {
+      const popupRect = popup.getBoundingClientRect();
+      const currentLeft = parseFloat(popup.style.left) || 0;
+      const currentTop = parseFloat(popup.style.top) || 0;
+      const MARGIN = 4;
+
       if (params.type === 'subMenu' && params.eventSource) {
-        const popupRect = popup.getBoundingClientRect();
         const sourceRect = params.eventSource.getBoundingClientRect();
-        const currentLeft = parseFloat(popup.style.left) || 0;
-        const currentTop = parseFloat(popup.style.top) || 0;
-        const MARGIN = 4;
         const OVERLAP = 2;
         const hasRoomRight = sourceRect.right - OVERLAP + popupRect.width <= window.innerWidth - MARGIN;
         const preferredLeft = hasRoomRight
@@ -5024,21 +5024,36 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
         popup.style.top = `${currentTop + (nextTop - popupRect.top)}px`;
         return;
       }
-      const rect = popup.getBoundingClientRect();
-      const MARGIN = 4;
-      // Use the grid shell's bottom edge so the menu doesn't slide under the totals bar.
-      const shellBottom = shellRef.current
-        ? shellRef.current.getBoundingClientRect().bottom
-        : window.innerHeight;
-      if (rect.bottom > shellBottom - MARGIN) {
-        const overflow = rect.bottom - (shellBottom - MARGIN);
-        const currentTop = parseFloat(popup.style.top) || 0;
-        popup.style.top = `${Math.max(MARGIN, currentTop - overflow)}px`;
+
+      if (params.type === 'contextMenu') {
+        const shellBottom = shellRef.current
+          ? shellRef.current.getBoundingClientRect().bottom
+          : window.innerHeight;
+        if (popupRect.bottom > shellBottom - MARGIN) {
+          popup.style.top = `${Math.max(MARGIN, currentTop - (popupRect.bottom - shellBottom + MARGIN))}px`;
+        }
+        if (popupRect.right > window.innerWidth - MARGIN) {
+          popup.style.left = `${Math.max(MARGIN, currentLeft - (popupRect.right - window.innerWidth + MARGIN))}px`;
+        }
+        return;
       }
-      if (rect.right > window.innerWidth - MARGIN) {
-        const overflow = rect.right - (window.innerWidth - MARGIN);
-        const currentLeft = parseFloat(popup.style.left) || 0;
-        popup.style.left = `${Math.max(MARGIN, currentLeft - overflow)}px`;
+
+      // The popupCellEditor wrapper is already placed correctly by AG Grid — skip it.
+      if (params.type === 'popupCellEditor') return;
+
+      // All other popups with an eventSource (select dropdowns, column menus, etc.):
+      // delta-correct both axes so the popup sits flush below the editing cell.
+      if (params.eventSource) {
+        const editingCellEl = popup.ownerDocument?.querySelector('.ag-cell.ag-cell-editing');
+        const sourceRect = (editingCellEl ?? params.eventSource).getBoundingClientRect();
+        const deltaX = sourceRect.left - popupRect.left;
+        const deltaY = sourceRect.bottom - popupRect.top;
+        if (Math.abs(deltaX) > 1) {
+          popup.style.left = `${currentLeft + deltaX}px`;
+        }
+        if (Math.abs(deltaY) > 1) {
+          popup.style.top = `${currentTop + deltaY}px`;
+        }
       }
     });
   }, []);

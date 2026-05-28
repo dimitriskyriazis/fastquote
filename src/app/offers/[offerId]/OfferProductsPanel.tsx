@@ -8106,17 +8106,9 @@ const requestedColumnDefsMap = useMemo(
       type Entry = { OfferDetailID: number; oldNet: number; quantity: number; newNet: number };
       const entries: Entry[] = [];
       let recomputedTotal = 0;
-      // Service rows are never rescaled — compute their fixed net contribution so
-      // we can subtract it from the user's target before deriving the scale factor.
-      let serviceTotal = 0;
       for (const row of rows) {
-        if (isOfferProductService(row)) {
-          const net = coerceNumber((row as { NetUnitPrice?: unknown }).NetUnitPrice);
-          const qty = coerceNumber((row as { Quantity?: unknown }).Quantity);
-          if (net != null && qty != null) serviceTotal += net * qty;
-          continue;
-        }
-        if (!isOfferProductProduct(row)) continue;
+        const rowIsService = isOfferProductService(row);
+        if (!rowIsService && !isOfferProductProduct(row)) continue;
         // Option rows are excluded from rescaling — they are optional items
         // whose prices should not change when the offer total is adjusted.
         if (isOfferProductOption(row)) continue;
@@ -8134,16 +8126,11 @@ const requestedColumnDefsMap = useMemo(
         return;
       }
 
-      // targetTotal is the desired offer-wide total (products + services).
-      // Since service rows are not rescaled, we only need to hit (targetTotal - serviceTotal)
-      // with the product rows. Using the raw targetTotal here would produce a wrong scale
-      // whenever service rows are present.
-      const targetForProducts = targetTotal - serviceTotal;
-      if (!Number.isFinite(targetForProducts)) {
+      if (!Number.isFinite(targetTotal)) {
         showToastMessage('Unable to compute a valid target for product rows.', 'error');
         return;
       }
-      const scale = targetForProducts / recomputedTotal;
+      const scale = targetTotal / recomputedTotal;
 
       // Group entries that currently share the same net price — identical products
       // must keep identical prices after rescale, even when distributing residual.
@@ -8169,7 +8156,7 @@ const requestedColumnDefsMap = useMemo(
         group.newNet = fromUnits(unitValue);
         for (const e of group.entries) e.newNet = group.newNet;
       };
-      const targetUnits = toUnits(targetForProducts);
+      const targetUnits = toUnits(targetTotal);
       const achievedUnits = groups.reduce((s, g) => s + toUnits(g.newNet) * g.totalQty, 0);
       let diffUnits = targetUnits - achievedUnits;
 

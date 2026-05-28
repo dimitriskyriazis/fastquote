@@ -1297,7 +1297,6 @@ export default function OfferBasicDataClient({
         onMouseDown={() => refreshFieldLookups(def.id)}
         onFocus={() => refreshFieldLookups(def.id)}
         onChange={(event) => handleSelectChange(def, event.target.value)}
-        onBlur={() => handleBlur(def)}
       >
         {!def.hideEmptyOption && <option value="">Select...</option>}
         {selectOptions.map((option) => (
