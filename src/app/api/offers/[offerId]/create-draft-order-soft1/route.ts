@@ -1030,6 +1030,35 @@ async function handleCheckBrands(
       logger.info('wizard check-brands ambiguous, falling back to fuzzy', { requestId, offerId, brandName });
     }
 
+    // 1b. Exact NAME match (trimmed, case/accent-insensitive). This catches
+    // brand names that exist more than once in MTRMANFCTR (e.g. two active rows
+    // both named "ACT"), which _mtrlFindBrand can't resolve to a single id.
+    // These are the real matches and must always be surfaced — the loose
+    // substring fuzzy below would otherwise bury them under unrelated names
+    // that merely contain the same letters (FACTORY, TRACTEL, INTERACTIVE …).
+    const exactReq = erpPool.request();
+    exactReq.input('brandNameExact', sql.NVarChar(128), brandName.trim());
+    const exactRes = await exactReq.query<{ MTRMANFCTR: number; NAME: string }>(`
+      SELECT MTRMANFCTR, NAME FROM dbo.MTRMANFCTR
+      WHERE COMPANY = 1
+        AND ISACTIVE = 1
+        AND LTRIM(RTRIM(NAME)) COLLATE Latin1_General_CI_AI = @brandNameExact
+      ORDER BY MTRMANFCTR
+    `);
+    if (exactRes.recordset?.length === 1) {
+      // Single exact match — resolvable by name at execute time.
+      existingBrands.push(brandName);
+      continue;
+    }
+    if (exactRes.recordset && exactRes.recordset.length > 1) {
+      // Duplicated brand name — let the user pick which MTRMANFCTR to use.
+      nearMatchBrands.push({
+        fastquoteName: brandName,
+        matches: exactRes.recordset.map(r => ({ erpName: r.NAME.trim(), MTRMANFCTR: r.MTRMANFCTR })),
+      });
+      continue;
+    }
+
     // 2. Try fuzzy match — strip spaces/special chars, check both directions, accent-insensitive
     const cleanedBrand = brandName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[-_\s./,()"'&+]+/g, '').toUpperCase();
     if (cleanedBrand) {
