@@ -52,20 +52,45 @@ async function resolveErpManufacturerId(
 }
 
 /**
+ * Resolves a brand directly by its MTRMANFCTR id. Used when the user has
+ * explicitly selected which ERP manufacturer to use, so we never re-match by
+ * name (which is ambiguous when the same brand name appears more than once).
+ */
+export async function findBrandById(
+  erpPool: Awaited<ReturnType<typeof getErpPool>>,
+  mtrmanfctr: number,
+): Promise<{ brandId: number | null; brandCode: string | null }> {
+  const request = erpPool.request();
+  request.input('Mtrmanfctr', sql.Int, mtrmanfctr);
+  const result = await request.query<{ MTRMANFCTR: number; CODE: string | null }>(`
+    SELECT TOP (1) MTRMANFCTR, CODE FROM dbo.MTRMANFCTR WHERE MTRMANFCTR = @Mtrmanfctr
+  `);
+  const row = result.recordset?.[0];
+  return { brandId: row?.MTRMANFCTR ?? null, brandCode: row?.CODE ?? null };
+}
+
+/**
  * Creates a manufacturer (brand) in the ERP via stored procedure.
  * Returns the new MTRMANFCTR ID and CODE.
+ *
+ * The proc sets the department (ACNMSK = 'AVS'/'TVS') — which is filled by
+ * hand when opening a manufacturer manually — from the @AcnMsk parameter,
+ * derived from the offer's business unit (i.e. its sales division).
  */
 export async function createManufacturerInErp(
   erpPool: Awaited<ReturnType<typeof getErpPool>>,
   brandName: string,
+  businessUnit: 'AVS' | 'TVS',
 ): Promise<{ mtrmanfctrId: number; mtrmanfctrCode: string }> {
   const request = erpPool.request();
   request.input('Name', sql.VarChar(50), brandName.trim());
+  request.input('AcnMsk', sql.VarChar(10), businessUnit);
 
   const result = await request.query<{ MTRMANFCTR_ID: number; MTRMANFCTR_CODE: string }>(`
     DECLARE @NewId INT, @NewCode VARCHAR(10);
     EXEC [tlm].[mtrmanfctr_CreateFromIntegration]
       @Name = @Name,
+      @AcnMsk = @AcnMsk,
       @NewId = @NewId OUTPUT,
       @NewCode = @NewCode OUTPUT;
     SELECT @NewId AS MTRMANFCTR_ID, @NewCode AS MTRMANFCTR_CODE;
@@ -78,6 +103,7 @@ export async function createManufacturerInErp(
 
   logger.info('Created manufacturer in ERP', {
     brandName,
+    businessUnit,
     mtrmanfctrId: row.MTRMANFCTR_ID,
     mtrmanfctrCode: row.MTRMANFCTR_CODE,
   });
@@ -184,17 +210,32 @@ export async function createItemViaWebService(
     TypeID: params.typeId,
     BrandID: params.brandId,
     BrandName: params.brandName,
+    Mtrmanfctr: params.mtrmanfctr ?? null,
   });
 
-  // Resolve ERP manufacturer ID from brand name. Throw if not found so we
-  // never create an item without a manufacturer — earlier silent fall-through
-  // produced items with empty MTRMANFCTR that had to be fixed by hand.
-  const mtrmanfctr = await resolveErpManufacturerId(erpPool, params.brandName);
-  if (!mtrmanfctr) {
-    throw new Error(
-      `Cannot resolve ERP manufacturer for brand "${params.brandName}". ` +
-      `Ensure the brand exists in MTRMANFCTR with a non-empty CODE.`,
-    );
+  // Resolve the ERP manufacturer id. When the caller passed an explicit
+  // MTRMANFCTR (user-selected in the wizard), use it directly so a duplicated
+  // brand name can't make the name lookup ambiguous. Otherwise resolve by name.
+  // Throw if unresolved so we never create an item without a manufacturer —
+  // earlier silent fall-through produced items with empty MTRMANFCTR that had
+  // to be fixed by hand.
+  let mtrmanfctr: string | undefined;
+  if (params.mtrmanfctr != null) {
+    const byId = await findBrandById(erpPool, params.mtrmanfctr);
+    mtrmanfctr = byId.brandId != null ? String(byId.brandId) : undefined;
+    if (!mtrmanfctr) {
+      throw new Error(
+        `Selected ERP manufacturer MTRMANFCTR=${params.mtrmanfctr} not found in MTRMANFCTR.`,
+      );
+    }
+  } else {
+    mtrmanfctr = await resolveErpManufacturerId(erpPool, params.brandName);
+    if (!mtrmanfctr) {
+      throw new Error(
+        `Cannot resolve ERP manufacturer for brand "${params.brandName}". ` +
+        `Ensure the brand exists in MTRMANFCTR with a non-empty CODE.`,
+      );
+    }
   }
 
   // SoftOne's CCCCLCATEG / CCCCLSUBCATEG / CCCCLTYPE fields expect numeric IDs,

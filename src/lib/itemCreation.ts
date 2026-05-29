@@ -1,6 +1,6 @@
 import sql from 'mssql';
 import { getPool, getErpPool } from './sql';
-import { createItemViaWebService, findBrandInErp } from './itemCreationWS';
+import { createItemViaWebService, findBrandInErp, findBrandById } from './itemCreationWS';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -15,6 +15,13 @@ export type CreateItemParams = {
   subCategoryId: number;
   typeId: number;
   businessUnit: 'AVS' | 'TVS';
+  /**
+   * Explicit ERP manufacturer (MTRMANFCTR) id chosen by the user in the wizard.
+   * When set, brand resolution uses this id directly instead of matching by
+   * BrandName — which is ambiguous when the same brand name exists more than
+   * once in MTRMANFCTR.
+   */
+  mtrmanfctr?: number | null;
 };
 
 export type CreatedItemInfo = {
@@ -36,6 +43,8 @@ export async function generateNewErpCode(
     TypeID: number;
     BrandID: number;
     BrandName: string;
+    /** User-selected ERP manufacturer id; bypasses ambiguous name matching. */
+    Mtrmanfctr?: number | null;
   },
 ): Promise<string> {
   // 1. Get SubCategory Code (first 3 chars) from FASTQUOTE
@@ -68,10 +77,20 @@ export async function generateNewErpCode(
   }
   const typeFirstLetter = typeName.trim().charAt(0).toUpperCase();
 
-  // 3. Match Brand Name with ERP MTRMANFCTR via tlm._mtrlFindBrand and get CODE
-  const { brandCode } = await findBrandInErp(erpPool, product.BrandName);
+  // 3. Resolve the brand CODE. When the caller passed an explicit MTRMANFCTR
+  // (the brand the user selected in the wizard), look the CODE up by id so a
+  // duplicated brand name can't make the lookup ambiguous. Otherwise fall back
+  // to matching by name via tlm._mtrlFindBrand.
+  const { brandCode } =
+    product.Mtrmanfctr != null
+      ? await findBrandById(erpPool, product.Mtrmanfctr)
+      : await findBrandInErp(erpPool, product.BrandName);
   if (!brandCode) {
-    throw new Error(`Brand Code not found in ERP for brand name: ${product.BrandName}`);
+    throw new Error(
+      product.Mtrmanfctr != null
+        ? `Brand Code not found in ERP for selected manufacturer MTRMANFCTR=${product.Mtrmanfctr}`
+        : `Brand Code not found in ERP for brand name: ${product.BrandName}`,
+    );
   }
 
   // 4. Build prefix: SubCategoryCode + TypeFirstLetter + "." + BrandCode

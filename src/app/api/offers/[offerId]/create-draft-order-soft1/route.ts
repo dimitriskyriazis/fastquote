@@ -1554,6 +1554,14 @@ async function handleExecute(
   );
   const resolveBrandName = (fastquoteName: string): string =>
     brandResolutionMap.get(fastquoteName.trim()) ?? fastquoteName;
+  // The user may resolve an ambiguous/near-match brand to a specific ERP
+  // manufacturer. Carry that MTRMANFCTR id through to item creation so the
+  // chosen brand is used directly instead of being re-matched by name.
+  const brandMtrmanfctrMap = new Map(
+    (body.brandResolutions ?? []).map((r) => [r.fastquoteName.trim(), r.MTRMANFCTR]),
+  );
+  const resolveBrandMtrmanfctr = (fastquoteName: string): number | null =>
+    brandMtrmanfctrMap.get(fastquoteName.trim()) ?? null;
 
   if (!resolvedCustomer) {
     return NextResponse.json({ ok: false, error: 'Missing resolved customer' }, { status: 400 });
@@ -1604,8 +1612,8 @@ async function handleExecute(
       alreadyExists = true;
     }
     if (!alreadyExists) {
-      const created = await createManufacturerInErp(erpPool, brandName);
-      logger.info('wizard execute brand created', { requestId, offerId, brandName, mtrmanfctrId: created.mtrmanfctrId });
+      const created = await createManufacturerInErp(erpPool, brandName, ctx.businessUnit);
+      logger.info('wizard execute brand created', { requestId, offerId, brandName, businessUnit: ctx.businessUnit, mtrmanfctrId: created.mtrmanfctrId });
     }
     results.brandsCreated.push(brandName);
   }
@@ -1674,6 +1682,7 @@ async function handleExecute(
           partNumber: product.PartNumber,
           brandId: product.BrandID,
           brandName: resolveBrandName(product.BrandName!),
+          mtrmanfctr: resolveBrandMtrmanfctr(product.BrandName!),
           categoryId: product.CategoryID!,
           subCategoryId: product.SubCategoryID,
           typeId: product.TypeID,
@@ -2384,7 +2393,7 @@ export async function POST(
         // User confirmed — create the missing brands
         for (const brandName of missingBrands) {
           try {
-            const created = await createManufacturerInErp(erpPool, brandName);
+            const created = await createManufacturerInErp(erpPool, brandName, businessUnit);
             logger.info('create-draft-order-soft1 brand created in ERP', {
               requestId,
               offerId: normalizedId,
