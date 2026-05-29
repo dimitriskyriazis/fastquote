@@ -19,6 +19,7 @@ import { useAuditUser } from '../components/AuditUserProvider';
 import PageHeader, { PageHeaderContext } from '../components/PageHeader';
 import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
 import { formatDateTime } from '../lib/formatDateTime';
+import { getUserNumberLocale } from '../../lib/localeNumber';
 import { showToastMessage } from '../../lib/toast';
 import OfferStatusHistoryModal from './[offerId]/OfferStatusHistoryModal';
 import styles from './OffersClient.module.css';
@@ -31,6 +32,21 @@ const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
     </div>
   ),
 });
+
+const totalNetFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const formatTotalNetValue = (value: unknown, currencySymbol?: unknown): string => {
+  if (value == null || value === '') return '';
+  const numeric = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numeric)) return '';
+  const formatted = totalNetFormatter.format(numeric);
+  const trimmed = typeof currencySymbol === 'string' ? currencySymbol.trim() : '';
+  const symbol = trimmed || '€';
+  return symbol === '$' ? `${symbol} ${formatted}` : `${formatted} ${symbol}`;
+};
 
 const formatEnabledValue = (value: unknown) => {
   if (value === 1 || value === true || value === 'true') return 'Yes';
@@ -719,6 +735,19 @@ export default function OffersClient() {
         (params.data as Record<string, unknown>).Probability = normalizedValue;
         return true;
       },
+    },
+    {
+      field: 'TotalNet',
+      headerName: 'Total Net',
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      width: 150,
+      headerClass: 'ag-right-aligned-header',
+      valueFormatter: (params) =>
+        formatTotalNetValue(
+          params.value,
+          (params.data as { OfferCurrencySymbol?: unknown } | null | undefined)?.OfferCurrencySymbol,
+        ),
     },
     { field: 'SalesCreationPerson', headerName: 'Sales Creation Person', filter: 'agTextColumnFilter', enableRowGroup: true },
     {

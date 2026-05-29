@@ -100,6 +100,8 @@ type OfferRow = {
   OrderSignedDate: string | null;
   DeliveryDueDate: string | null;
   PossibleOrderDate: string | null;
+  TotalNet: number | null;
+  OfferCurrencySymbol: string | null;
 };
 
 type OfferRowWithCount = OfferRow & { __totalCount: number | bigint | null };
@@ -170,6 +172,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OrderSignedDate: 'dbo.Offer.OrderSignedDate',
   DeliveryDueDate: 'dbo.Offer.DeliveryDueDate',
   PossibleOrderDate: 'dbo.Offer.PossibleOrderDate',
+  TotalNet: 'offerTotals.TotalNet',
 };
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
   colId,
@@ -411,7 +414,9 @@ export async function POST(req: NextRequest) {
         dbo.Offer.OfferDeadlineDate,
         dbo.Offer.OrderSignedDate,
         dbo.Offer.DeliveryDueDate,
-        dbo.Offer.PossibleOrderDate
+        dbo.Offer.PossibleOrderDate,
+        offerTotals.TotalNet AS TotalNet,
+        offerCurrency.Name AS OfferCurrencySymbol
     `;
 
     const from = `
@@ -436,6 +441,7 @@ export async function POST(req: NextRequest) {
 	        LEFT JOIN dbo.FWCs AS fwc ON fwc.ID = dbo.Offer.ERPFWCProjectID
 	        LEFT JOIN dbo.Contacts AS contact ON dbo.Offer.ContactID = contact.ID
 	        LEFT JOIN dbo.AspNetUsers AS approval ON dbo.Offer.ApprovalUserId = approval.Id
+	        LEFT JOIN dbo.Currencies AS offerCurrency ON offerCurrency.ID = dbo.Offer.CurrencyID
 	        OUTER APPLY (
 	          SELECT MAX(od.ModifiedOn) AS DetailsModifiedOn
 	          FROM dbo.OfferDetails od
@@ -447,6 +453,17 @@ export async function POST(req: NextRequest) {
 	          FROM dbo.OfferDetails od
 	          WHERE od.OfferID = dbo.Offer.ID
         ) AS allOfferDetailsStats
+        OUTER APPLY (
+          SELECT SUM(
+            CASE
+              WHEN (od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0
+                THEN COALESCE(od.TotalNet, 0)
+              ELSE 0
+            END
+          ) AS TotalNet
+          FROM dbo.OfferDetails od
+          WHERE od.OfferID = dbo.Offer.ID
+        ) AS offerTotals
     `;
 
     const { where, params: whereParams } = buildWhereAndParams(gridRequest.filterModel);

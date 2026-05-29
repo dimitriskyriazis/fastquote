@@ -222,6 +222,7 @@ export async function GET(
         LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
         WHERE od.OfferID = @offerId
           AND NOT (ISNULL(od.IsComment, 0) = 1 AND ISNULL(od.IsPrintable, 0) = 0)
+          AND NOT (ISNULL(od.IsService, 0) = 1 AND ISNULL(od.IsPrintable, 0) = 0)
         ORDER BY TRY_CONVERT(
           hierarchyid,
           CONCAT('/', REPLACE(od.TreeOrdering, '.', '/'), '/')
