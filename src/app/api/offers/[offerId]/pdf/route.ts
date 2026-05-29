@@ -6,6 +6,7 @@ import { requirePermission } from '../../../../../lib/authz';
 import type { OfferPdfData, OfferProductRow, PdfLang, PdfOrientation, PdfPrintSettings, PdfTotalsDisplaySettings } from '../../../../../lib/pdfGenerator';
 import { parsePdfProductColumnsParam } from '../../../../../lib/pdfColumns';
 import { normalizeOfferLanguage, offerLanguageToPdfLang } from '../../../../../lib/offerLanguage';
+import { computeDisplayOrderingMap } from '../../../../../lib/offerItemNumbering';
 
 type OfferHeaderRow = {
   ID: number;
@@ -44,10 +45,12 @@ type OfferHeaderRow = {
 };
 
 type ProductRow = {
+  OfferDetailID: number;
   TreeOrdering: string | null;
   IsCategory: boolean | number | null;
   IsComment: boolean | number | null;
   IsPrintable: boolean | number | null;
+  IsService: boolean | number | null;
   IsOption: boolean | number | null;
   Quantity: number | null;
   ProductDescription: string | null;
@@ -192,10 +195,12 @@ export async function GET(
       .input('offerId', sql.Int, numericId)
       .query<ProductRow>(`
         SELECT
+          od.ID AS OfferDetailID,
           od.TreeOrdering,
           od.IsCategory,
           od.IsComment,
           od.IsPrintable,
+          od.IsService,
           od.IsOption,
           od.Quantity,
           od.ProductDescription,
@@ -222,7 +227,6 @@ export async function GET(
         LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
         WHERE od.OfferID = @offerId
           AND NOT (ISNULL(od.IsComment, 0) = 1 AND ISNULL(od.IsPrintable, 0) = 0)
-          AND NOT (ISNULL(od.IsService, 0) = 1 AND ISNULL(od.IsPrintable, 0) = 0)
         ORDER BY TRY_CONVERT(
           hierarchyid,
           CONCAT('/', REPLACE(od.TreeOrdering, '.', '/'), '/')
@@ -254,12 +258,27 @@ export async function GET(
         WHERE ID = @offerId2
       `);
 
+    // ── Compute the printable-only "Item No" display ───────────────────
+    // Uses the same logic as the products grid (auto mode), so the printed
+    // "No" column matches the grid exactly: non-printable rows are anchored
+    // annotations and never consume a number, while the raw TreeOrdering keeps
+    // its structural slots.
+    const displayNoById = computeDisplayOrderingMap(
+      (productsResult.recordset ?? []) as unknown as Record<string, unknown>[],
+      { manualMode: false },
+    );
+
     // ── Transform to OfferPdfData ──────────────────────────────────────
     const products: OfferProductRow[] = (productsResult.recordset ?? []).map((r) => ({
       treeOrdering: r.TreeOrdering,
+      displayNo: displayNoById.get(String(r.OfferDetailID)) ?? r.TreeOrdering,
       isCategory: !!r.IsCategory,
       isComment: !!r.IsComment,
       isOption: !!r.IsOption,
+      // Non-printable services are kept for totals but hidden from the table.
+      // A service is non-printable only when IsPrintable is explicitly falsy
+      // (matching resolveOfferProductRowType); a null IsPrintable is printable.
+      hidden: !!r.IsService && (r.IsPrintable === 0 || r.IsPrintable === false),
       quantity: r.Quantity,
       brandName: r.BrandName,
       modelNumber: r.ModelNumber,

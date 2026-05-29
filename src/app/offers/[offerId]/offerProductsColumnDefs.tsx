@@ -265,7 +265,9 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
         sortable: false,
         filter: false,
         width: 44,
-        rowDrag: true,
+        // Drag-to-reorder is disabled in manual mode — manual mode is for
+        // typing Item No values; reordering is done in normal mode.
+        rowDrag: () => !isManualMode(),
         cellClass: ACTUAL_COLUMN_GLOBAL_CLASS,
       },
       {

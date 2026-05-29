@@ -50,9 +50,17 @@ export type OfferPdfData = {
 
 export type OfferProductRow = {
   treeOrdering: string | null;
+  // Printable-only "Item No" display (e.g. "1", "2", "1.1"), computed the same
+  // way as the products grid. Falls back to treeOrdering when absent. Used for
+  // the rendered "No" column and category labels; treeOrdering remains the raw
+  // structural value used for hierarchy/total grouping.
+  displayNo?: string | null;
   isCategory: boolean;
   isComment: boolean;
   isOption: boolean;
+  // When true, the row is excluded from the rendered table but still counted in
+  // totals (e.g. non-printable services).
+  hidden?: boolean;
   quantity: number | null;
   brandName: string | null;
   modelNumber: string | null;
@@ -800,7 +808,7 @@ function shouldShowPrices(row: OfferProductRow, printSettings: PdfPrintSettings 
 function columnValue(row: OfferProductRow, column: PdfProductColumn): string {
   switch (column) {
     case 'no': {
-      return str(row.treeOrdering);
+      return str(row.displayNo ?? row.treeOrdering);
     }
     case 'qty': {
       if (row.isComment && (row.quantity == null || row.quantity === 0)) return '';
@@ -935,8 +943,11 @@ function buildItemsTable(
   const body: PdfCell[][] = [headerRow];
 
   for (const row of data.products) {
+    // Hidden rows (e.g. non-printable services) are excluded from the rendered
+    // table but remain in data.products so totals still account for them.
+    if (row.hidden) continue;
     if (row.isCategory) {
-      const categoryText = [str(row.treeOrdering), str(row.description)].filter(Boolean).join('     ');
+      const categoryText = [str(row.displayNo ?? row.treeOrdering), str(row.description)].filter(Boolean).join('     ');
       const categoryKey = str(row.treeOrdering);
       const fallbackNetAmount = categoryKey ? categoryNetTotalsMap.get(categoryKey) : null;
       const categoryNetAmountValue =
