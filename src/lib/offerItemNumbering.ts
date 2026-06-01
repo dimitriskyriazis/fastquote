@@ -106,12 +106,12 @@ export function computeDisplayOrderingMap(
       // Comments anchor on the previous visible row's display. In manual
       // mode "lastVisibleDisplay" is the previous row's RAW value; in auto
       // mode it's the renumbered display. Either way the comment reads
-      // naturally as "<rowAbove>C".
-      result.set(String(id), `${lastVisibleDisplay}C`);
+      // naturally as "<rowAbove>np".
+      result.set(String(id), `${lastVisibleDisplay}np`);
       continue;
     }
     if (rowType === 'non-printable-service') {
-      result.set(String(id), `${lastVisibleDisplay}S`);
+      result.set(String(id), `${lastVisibleDisplay}np`);
       continue;
     }
 

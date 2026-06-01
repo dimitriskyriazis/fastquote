@@ -291,7 +291,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
         valueGetter: ({ data }) => {
           // Always return the raw TreeOrdering — AG-Grid uses this for
           // sorting and filtering. The renderer is responsible for the
-          // display (incl. the "C" suffix on non-printable comments and
+          // display (incl. the "np" suffix on non-printable comments and
           // the "o" suffix on options).
           const row = data as { TreeOrdering?: unknown } | null | undefined;
           const value = row?.TreeOrdering;
@@ -478,7 +478,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
     cellStyle: truncateCellStyle,
     valueGetter: ({ data }) => {
       // Always return the raw TreeOrdering — AG-Grid uses this for sorting
-      // and filtering. The renderer handles the display (incl. the "C"
+      // and filtering. The renderer handles the display (incl. the "np"
       // suffix on non-printable comments and "o" on options).
       const row = data as {
         __isRequestedRow?: number | null;

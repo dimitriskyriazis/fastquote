@@ -93,7 +93,7 @@ describe('computeDisplayOrderingMap', () => {
     ]);
   });
 
-  it('non-printable comments display as "<prevSibling>C" and don\'t advance the count', () => {
+  it('non-printable comments display as "<prevSibling>np" and don\'t advance the count', () => {
     const rows = [
       product('1'),
       nonPrintableComment('2'),
@@ -102,7 +102,7 @@ describe('computeDisplayOrderingMap', () => {
     ];
     expect(display(rows)).toEqual([
       ['1', '1'],
-      ['2', '1C'],
+      ['2', '1np'],
       ['3', '2'],
       ['4', '3'],
     ]);
@@ -136,7 +136,7 @@ describe('computeDisplayOrderingMap', () => {
       ['2', '2'],
       ['2.1', '2.1'],
       ['2.2', '2.2'],
-      ['3', '2.2C'],
+      ['3', '2.2np'],
     ]);
   });
 
@@ -211,10 +211,10 @@ describe('computeDisplayOrderingMap', () => {
     ];
     expect(display(rows)).toEqual([
       ['2', '2'],
-      ['3', '2C'],
+      ['3', '2np'],
       ['5', '3'],
       ['5.2', '3.1'],
-      ['5.3', '3.1C'],
+      ['5.3', '3.1np'],
       ['5.5', '3.2'],
       ['7', '4'],
     ]);
@@ -341,10 +341,10 @@ describe('computeDisplayOrderingMap', () => {
     ];
     expect(display(rows)).toEqual([
       ['1', '1'],
-      ['2', '1C'],
-      ['3', '1C'],
-      ['4', '1C'],
-      ['5', '1C'],
+      ['2', '1np'],
+      ['3', '1np'],
+      ['4', '1np'],
+      ['5', '1np'],
       ['6', '2'],
       ['7', '3'],
     ]);
@@ -398,7 +398,7 @@ describe('computeDisplayOrderingMap', () => {
       ['1', '1'],
       ['1.1', '1.1'],
       ['1.2', '1.2'],
-      ['1.3', '1.2C'],
+      ['1.3', '1.2np'],
       ['1.5', '1.3'],
       ['1.6', '1.4'],
       ['1.7', '1.5'],
@@ -475,7 +475,7 @@ describe('computeDisplayOrderingMap', () => {
       expect(byTree(rows, map, '6.2.8')).toBe('6.2.8');
     });
 
-    it('non-printable comments still render with the C suffix in manual mode', () => {
+    it('non-printable comments still render with the np suffix in manual mode', () => {
       const rows = [
         product('1'),
         nonPrintableComment('2'),
@@ -483,7 +483,7 @@ describe('computeDisplayOrderingMap', () => {
       ];
       const map = computeDisplayOrderingMap(rows, { manualMode: true });
       expect(byTree(rows, map, '1')).toBe('1');
-      expect(byTree(rows, map, '2')).toBe('1C');
+      expect(byTree(rows, map, '2')).toBe('1np');
       // Manual: raw value, no compression — product stays at "3" not "2".
       expect(byTree(rows, map, '3')).toBe('3');
     });

@@ -2312,7 +2312,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
 
     // Display map is keyed by OfferDetailID so rows that share the same
     // raw TreeOrdering (corrupted offers) each render their own number.
-    // Non-printable comments get a "<prev>C"-style entry from the map in
+    // Non-printable comments get a "<prev>np"-style entry from the map in
     // both modes, so we don't special-case them to empty here.
     const offerDetailId = normalizeOfferDetailId(
       (rowData as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null,
