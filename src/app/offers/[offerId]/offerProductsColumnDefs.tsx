@@ -40,7 +40,7 @@ import {
   DESCRIPTION_PASTE_BLOCKLIST,
   type RequestedDisplayFieldKey,
 } from './offerProductsUtils';
-import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment, resolveOfferProductRowType } from '../../../lib/offerProductRows';
+import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isNonPrintableOfferProductRow, resolveOfferProductRowType } from '../../../lib/offerProductRows';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 
 const otherCurrencyAmountFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
@@ -698,7 +698,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
         return offerCurrencyFormatter(params);
       },
       cellClassRules: productPriceListClassRules,
-      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && !isNonPrintableOfferProductRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
     },
@@ -763,7 +763,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && !isNonPrintableOfferProductRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: offerCurrencyFormatter,
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,

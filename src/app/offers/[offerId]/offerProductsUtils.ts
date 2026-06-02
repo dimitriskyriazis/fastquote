@@ -6,7 +6,7 @@ import type {
   ValueFormatterParams,
   ValueGetterParams,
 } from 'ag-grid-community';
-import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductService, isOfferProductOption } from '../../../lib/offerProductRows';
+import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductService, isOfferProductOption, isNonPrintableComment } from '../../../lib/offerProductRows';
 import { priceListStatusClassRules } from '../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 import type { RequestedProductMatchEntry } from './products/MatchRequestedProductsModal';
@@ -1926,7 +1926,11 @@ export const recalcProductTotals = (
   const data = event.data;
   if (!node || !data) return;
 
-  const quantity = quantityOverride ?? coerceNumber((data as { Quantity?: unknown }).Quantity) ?? 0;
+  const rawQuantity = quantityOverride ?? coerceNumber((data as { Quantity?: unknown }).Quantity) ?? 0;
+  // Non-printable comments are single cost lines with no real quantity (they
+  // default to 0). Treat a blank/zero quantity as 1 so editing a per-unit value
+  // (e.g. Net Cost) flows through to the matching total (e.g. Total Cost).
+  const quantity = rawQuantity === 0 && isNonPrintableComment(data) ? 1 : rawQuantity;
   const listPrice = coerceNumber((data as { ListPrice?: unknown }).ListPrice);
   const netUnitPrice = coerceNumber((data as { NetUnitPrice?: unknown }).NetUnitPrice);
   const netCost = coerceNumber((data as { NetCost?: unknown }).NetCost);

@@ -90,6 +90,14 @@ export const isOfferProductService = (row: OfferProductRow): boolean => {
   return type === 'printable-service' || type === 'non-printable-service';
 };
 
+export const isNonPrintableOfferProductRow = (row: OfferProductRow): boolean => {
+  const type = resolveOfferProductRowType(row);
+  return type === 'non-printable-service' || type === 'non-printable-comment';
+};
+
+export const isNonPrintableComment = (row: OfferProductRow): boolean =>
+  resolveOfferProductRowType(row) === 'non-printable-comment';
+
 export const isOfferProductOption = (row: OfferProductRow): boolean => {
   if (!row || typeof row !== 'object') return false;
   return isTruthy((row as { IsOption?: unknown }).IsOption);

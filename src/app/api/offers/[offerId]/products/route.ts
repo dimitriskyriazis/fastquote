@@ -2238,6 +2238,7 @@ export async function PATCH(
         OfferDetailID: number;
         ProductID: number | null;
         IsComment: number | null;
+        IsPrintable: number | null;
         PartNumber: string | null;
         ModelNumber: string | null;
         ProductDescription: string | null;
@@ -2262,6 +2263,7 @@ export async function PATCH(
         od.ID AS OfferDetailID,
         od.ProductID,
         od.IsComment,
+        od.IsPrintable,
         od.PartNumber,
         od.ModelNumber,
         od.ProductDescription,
@@ -2288,6 +2290,7 @@ export async function PATCH(
       const currentById = new Map<number, {
         ProductID: number | null;
         IsComment: number | null;
+        IsPrintable: number | null;
         PartNumber: string | null;
         ModelNumber: string | null;
         ProductDescription: string | null;
@@ -2580,11 +2583,16 @@ export async function PATCH(
             )
           : null;
         const listPriceForTotals = listPriceCandidate ?? derivedListPrice ?? fallbackListPrice;
-        const totalPrice = listPriceForTotals != null ? roundTo(listPriceForTotals * safeQuantity) : null;
-        const totalNet = netPrice != null ? roundTo(netPrice * safeQuantity) : null;
-        const totalCost = telmacoCost != null ? roundTo(telmacoCost * safeQuantity) : null;
+        // Non-printable comments are single cost lines with no real quantity
+        // (they default to 0). Treat a blank/zero quantity as 1 so per-unit
+        // values (e.g. Net Cost) flow through to their totals (e.g. Total Cost).
+        const isNonPrintableComment = isCommentRow && !current.IsPrintable;
+        const totalsQuantity = isNonPrintableComment && safeQuantity === 0 ? 1 : safeQuantity;
+        const totalPrice = listPriceForTotals != null ? roundTo(listPriceForTotals * totalsQuantity) : null;
+        const totalNet = netPrice != null ? roundTo(netPrice * totalsQuantity) : null;
+        const totalCost = telmacoCost != null ? roundTo(telmacoCost * totalsQuantity) : null;
         const grossProfit = netPrice != null && telmacoCost != null
-          ? roundTo((netPrice - telmacoCost) * safeQuantity)
+          ? roundTo((netPrice - telmacoCost) * totalsQuantity)
           : null;
 
         pendingRows.push({

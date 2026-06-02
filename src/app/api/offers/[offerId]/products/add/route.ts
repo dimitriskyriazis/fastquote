@@ -1890,10 +1890,12 @@ async function handleAddProducts(
     p.TelmacoWarrantyYears,
     p.CustomerWarrantyYears,
     1,
-    p.ListPrice,
-    p.ComputedNetUnitPrice,
-    CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
-    p.ComputedNetUnitPrice,
+    -- Non-printable services carry only a cost; List Price / Net (Unit) Price
+    -- and their derived totals are left NULL.
+    CASE WHEN p.IsService = 1 AND @__isPrintable = 0 THEN NULL ELSE p.ListPrice END,
+    CASE WHEN p.IsService = 1 AND @__isPrintable = 0 THEN NULL ELSE p.ComputedNetUnitPrice END,
+    CASE WHEN p.IsService = 1 AND @__isPrintable = 0 THEN NULL WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice END,
+    CASE WHEN p.IsService = 1 AND @__isPrintable = 0 THEN NULL ELSE p.ComputedNetUnitPrice END,
     p.ComputedTelmacoDiscount,
     p.CustomerDiscountPct,
     CASE WHEN p.OtherCurrencyID IS NULL THEN NULL ELSE p.CostPrice END,
@@ -1901,6 +1903,7 @@ async function handleAddProducts(
     p.CurrencyCostModifier,
     COALESCE(p.ComputedNetCost, p.CostPrice * COALESCE(p.CurrencyCostModifier, 1), p.ListPrice),
     CASE
+      WHEN p.IsService = 1 AND @__isPrintable = 0 THEN NULL
       WHEN p.ComputedNetUnitPrice IS NULL
         OR p.ComputedNetUnitPrice = 0
         OR COALESCE(p.ComputedNetCost, p.CostPrice * COALESCE(p.CurrencyCostModifier, 1), p.ListPrice) IS NULL
@@ -1915,6 +1918,7 @@ async function handleAddProducts(
       )
     END,
     CASE
+      WHEN p.IsService = 1 AND @__isPrintable = 0 THEN NULL
       WHEN p.ComputedNetUnitPrice IS NULL
         OR COALESCE(p.ComputedNetCost, p.CostPrice * COALESCE(p.CurrencyCostModifier, 1), p.ListPrice) IS NULL
         THEN NULL
