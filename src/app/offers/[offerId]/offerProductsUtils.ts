@@ -1972,7 +1972,11 @@ export const productAccentCellClassRules = {
 };
 
 export const productPriceListClassRules = priceListStatusClassRules((params) =>
-  (isOfferProductProduct(params.data) || isOfferProductService(params.data)) ? params.data : null,
+  // Non-printable services carry no list price, so the price-list status
+  // colouring (active/expiring/expired/edited) doesn't apply to them.
+  (isOfferProductProduct(params.data) || resolveOfferProductRowType(params.data) === 'printable-service')
+    ? params.data
+    : null,
 );
 
 export const totalPriceCellClassRules = {
