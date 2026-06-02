@@ -79,6 +79,7 @@ import {
   RowAutoHeightModule,
   RenderApiModule,
   PostProcessPopupParams,
+  _BaseTooltipStateManager,
 } from 'ag-grid-community';
 import {
   AggregationModule,
@@ -558,6 +559,23 @@ if (!globalThis.__AG_GRID_MODULES_REGISTERED__) {
 }
 
 LicenseManager.setLicenseKey(process.env.NEXT_PUBLIC_AG_GRID_LICENSE || '');
+
+// By default AG Grid uses a hardcoded "quick re-show": once any tooltip has been
+// shown, hovering another cell within ~1s re-shows it after only 200ms instead of
+// the configured tooltipShowDelay. That makes the description popups feel like they
+// never reset when moving between cells. Disable the quick path so every cell waits
+// the full tooltipShowDelay independently.
+declare global {
+  var __AG_GRID_TOOLTIP_QUICK_DISABLED__: boolean | undefined;
+}
+if (!globalThis.__AG_GRID_TOOLTIP_QUICK_DISABLED__) {
+  (
+    _BaseTooltipStateManager.prototype as unknown as {
+      isLastTooltipHiddenRecently: () => boolean;
+    }
+  ).isLastTooltipHiddenRecently = () => false;
+  globalThis.__AG_GRID_TOOLTIP_QUICK_DISABLED__ = true;
+}
 
 // TYPE DEFINITIONS
 export type GridTotals = {
@@ -3205,7 +3223,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     const options: GridOptions<RowData> = {
       cellSelection: true,
       maintainColumnOrder,
-      tooltipShowDelay: 300,
+      tooltipShowDelay: 1500,
       tooltipHideDelay: 10000,
       popupParent: document.body,
     };
