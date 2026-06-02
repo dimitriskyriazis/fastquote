@@ -46,6 +46,7 @@ const navItems: NavItem[] = [
     label: "Price Lists", href: "/price-lists", icon: <PriceListsIcon />,
     subItems: [
       { label: "Farnell Pricing Lookup", href: "/price-lists/farnell" },
+      { label: "Pricelist Cleanup", href: "/price-lists/cleanup" },
     ],
   },
   { label: "Pricing Policies", href: "/pricing-policies", icon: <PricingPoliciesIcon /> },

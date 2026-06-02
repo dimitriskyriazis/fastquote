@@ -460,7 +460,14 @@ function buildDescriptionCell(
   };
 }
 
-function buildCompactHeader(data: OfferPdfData, L: Labels, lang: PdfLang, orientation: PdfOrientation, logo: string) {
+function buildCompactHeader(
+  data: OfferPdfData,
+  L: Labels,
+  lang: PdfLang,
+  orientation: PdfOrientation,
+  logo: string,
+  includeCustomer: boolean = true,
+) {
   const meta = getOfferMeta(data, lang);
 
   const companyName = lang === 'el' ? COMPANY.name : COMPANY.nameEN;
@@ -472,8 +479,10 @@ function buildCompactHeader(data: OfferPdfData, L: Labels, lang: PdfLang, orient
       : `Tax ID: ${COMPANY.afm}, Tax Office: ${COMPANY.doyEN}`;
 
   const salesEmail = str(data.salesPerson.email);
+  // When the customer identity is shown centered under the title (see the
+  // small-offer title block), drop the duplicate "To:" row here.
   const leftInfo = [
-    { label: L.to, value: meta.customerName || '-' },
+    ...(includeCustomer ? [{ label: L.to, value: meta.customerName || '-' }] : []),
     { label: L.attn, value: meta.attn },
     { label: L.address, value: str(data.customer.address) },
     { label: L.phone, value: str(data.customer.phone) },
@@ -1549,6 +1558,64 @@ export async function generateOfferPdf(
     ...(str(data.notesClosing) ? [{ text: fixObviousTypos(str(data.notesClosing)), style: 'body', margin: [0, 0, 0, 6] }] : []),
   ];
 
+  // ── Small-offer centered identity block ────────────────────────────────
+  // Mirrors the cover page: a centered title (or "EQUIPMENT LIST") with the
+  // customer name centered beneath it, plus breathing room above the items
+  // table. When the customer is shown here, it is dropped from the compact
+  // header's "To:" row to avoid duplication.
+  const meta = getOfferMeta(data, lang);
+  const smallOfferShowsTitle = smallOffer && (equipmentList || !!str(data.title));
+  const smallOfferShowsCustomer = smallOfferShowsTitle && !!meta.customerName;
+  const smallOfferIdentity: unknown[] = smallOfferShowsTitle
+    ? [
+        {
+          // Equipment lists always show the "EQUIPMENT LIST" heading (matching
+          // the cover-page layout) rather than the offer's own title.
+          text: equipmentList ? L.equipmentListTitle : str(data.title),
+          fontSize: 22,
+          bold: true,
+          color: COLORS.primaryText,
+          alignment: 'center',
+          margin: [0, 22, 0, 0],
+        },
+        ...(str(data.offerDescription)
+          ? [
+              {
+                text: str(data.offerDescription),
+                fontSize: 15,
+                color: COLORS.primaryText,
+                alignment: 'center',
+                margin: [0, 10, 0, 0],
+              },
+            ]
+          : []),
+        ...(smallOfferShowsCustomer
+          ? [
+              {
+                text: meta.customerName,
+                fontSize: 14,
+                bold: true,
+                color: COLORS.primaryText,
+                alignment: 'center',
+                margin: [0, 12, 0, 0],
+              },
+            ]
+          : []),
+        // Breathing room before the items table.
+        { text: '', margin: [0, 0, 0, 16] },
+      ]
+    : smallOffer && str(data.offerDescription)
+      ? [
+          {
+            text: str(data.offerDescription),
+            fontSize: 16,
+            color: COLORS.primaryText,
+            alignment: 'center',
+            margin: [0, 0, 0, 10],
+          },
+        ]
+      : [];
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const docDefinition: any = {
     pageSize: 'A4',
@@ -1573,31 +1640,9 @@ export async function generateOfferPdf(
 
     content: [
       ...(smallOffer
-        ? buildCompactHeader(data, L, lang, orientation, logo)
+        ? buildCompactHeader(data, L, lang, orientation, logo, !smallOfferShowsCustomer)
         : buildCoverPage(data, L, lang, orientation, logo, equipmentList)),
-      ...(smallOffer && str(data.title)
-        ? [
-            {
-              text: str(data.title),
-              fontSize: 20,
-              bold: true,
-              color: COLORS.primaryText,
-              alignment: 'center',
-              margin: [0, 6, 0, 4],
-            },
-          ]
-        : []),
-      ...(smallOffer && str(data.offerDescription)
-        ? [
-            {
-              text: str(data.offerDescription),
-              fontSize: 16,
-              color: COLORS.primaryText,
-              alignment: 'center',
-              margin: [0, 0, 0, 10],
-            },
-          ]
-        : []),
+      ...smallOfferIdentity,
       ...openingNote,
       itemsTable,
       ...totalsAndTerms.totals,

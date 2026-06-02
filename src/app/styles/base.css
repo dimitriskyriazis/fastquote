@@ -5,8 +5,10 @@
 }
 
 :root {
-  /* Compensate for transform: scale(0.9) on body — use var(--fq-100vh) instead of 100vh for full-height containers */
+  /* Compensate for transform: scale(0.9) on body — use var(--fq-100vh)/var(--fq-100vw)
+     instead of 100vh/100vw for full-viewport containers (the body is pre-scaled to 1/0.9). */
   --fq-100vh: calc(100vh / 0.9);
+  --fq-100vw: calc(100vw / 0.9);
   --background: #ffffff;
   --foreground: #171717;
   --page-heading-font-size: 28px;

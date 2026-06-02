@@ -124,6 +124,7 @@ import { resolveColumnWidthAssignments, ColumnWidthAssignment } from '../../lib/
 import { useGridUrlState } from '../hooks/useGridUrlState';
 import { parseGridSearchParams } from '../../lib/gridUrlState';
 import { captureAndPinScroll } from '../../lib/scrollPreservation';
+import { DdMmYyyyDateFilter } from './dateFilterDdMmYyyy';
 
 // CONSTANTS
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
@@ -1718,6 +1719,15 @@ export default function AgGridAll({
         }
         if (next.filter !== false) {
           next.filterParams = mergeCompoundFilterParams(next.filterParams);
+          if (next.filter === 'agDateColumnFilter') {
+            // Format the floating-filter read-only date text (e.g. "in range")
+            // as DD/MM/YYYY to match the custom date input. A column may still
+            // override this via its own filterParams.
+            next.filterParams = {
+              inRangeFloatingFilterDateFormat: 'DD/MM/YYYY',
+              ...(next.filterParams as Record<string, unknown> | undefined),
+            };
+          }
         }
         const children = definition.children;
         if (Array.isArray(children) && children.length > 0) {
@@ -3226,6 +3236,10 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       tooltipShowDelay: 1500,
       tooltipHideDelay: 10000,
       popupParent: document.body,
+      // Override AG Grid's default date-filter input (ISO yyyy-mm-dd) with one
+      // that enters/displays dates as DD/MM/YYYY. Applies to every
+      // agDateColumnFilter — main popup and floating filter alike.
+      components: { agDateInput: DdMmYyyyDateFilter },
     };
     if (useAgGridRowDrag) {
       options.rowDragMultiRow = true;
@@ -5161,7 +5175,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
           getRowHeight={getRowHeight}
       suppressColumnVirtualisation={suppressColumnVirtualisation}
       suppressMovableColumns={suppressMovableColumns}
-      localeText={{ resetFilter: 'Clear' }}
+      localeText={{ resetFilter: 'Clear', dateFormatOoo: 'dd/mm/yyyy' }}
 
           // Cache settings
           cacheBlockSize={resolvedCacheBlockSize}

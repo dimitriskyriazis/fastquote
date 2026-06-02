@@ -35,6 +35,9 @@
     "xlsx": "^0.20.2",
     "zod": "^4.3.6"
   },
+  "overrides": {
+    "postcss": "^8.5.10"
+  },
   "devDependencies": {
     "@eslint/eslintrc": "^0.1.0",
     "@types/mssql": "^9.1.8",

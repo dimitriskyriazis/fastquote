@@ -19,6 +19,17 @@
   z-index: 10 !important;
 }
 
+/* The filter popup is an .ag-menu (z-index:10 above). A select dropdown opened
+   inside it — e.g. the filter operator list ("Equals", "Less than"...) — is a
+   separate .ag-popup-child at z-index:5, so it renders BEHIND the filter popup and
+   only the options that spill below the popup are visible. Lift select/rich-select
+   dropdown lists above the menu so the whole list shows on top of the popup. */
+.ag-select-list,
+.ag-rich-select,
+.ag-rich-select-list {
+  z-index: 11 !important;
+}
+
 
 /* Keep grab cursor on the offer products row drag handle (avoid default cursor override). */
 .offer-products-grid .ag-cell[col-id="__row_drag__"],

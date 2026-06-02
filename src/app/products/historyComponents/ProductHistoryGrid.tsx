@@ -10,6 +10,7 @@ import type {
 } from 'ag-grid-community';
 import styles from './ProductHistory.module.css';
 import { formatDateUK } from '../../lib/formatDateTime';
+import { DdMmYyyyDateFilter } from '../../components/dateFilterDdMmYyyy';
 
 declare global {
   var __FASTQUOTE_HISTORY_AG__: boolean | undefined;
@@ -81,13 +82,14 @@ export default function ProductHistoryGrid({ rows }: Props) {
       filter: 'agDateColumnFilter', 
       suppressHeaderMenuButton: true, 
       valueFormatter: (p: ValueFormatterParams<HistoryRow>) => p.value ? formatDateUK(p.value) : '', 
-      filterParams: { 
-        browserDatePicker: false, 
+      filterParams: {
+        browserDatePicker: false,
         minValidYear: 2000,
         maxNumConditions: 2,
         alwaysShowBothConditions: true,
         defaultJoinOperator: 'AND',
-      } 
+        inRangeFloatingFilterDateFormat: 'DD/MM/YYYY',
+      }
     },
     { field: 'CustomerName', headerName: 'Customer', filter: 'agTextColumnFilter', width: 200, suppressHeaderMenuButton: true, enableRowGroup: true },
     { field: 'SalesPerson', headerName: 'Sales Person', filter: 'agTextColumnFilter', width: 160, suppressHeaderMenuButton: true, enableRowGroup: true },
@@ -109,6 +111,8 @@ export default function ProductHistoryGrid({ rows }: Props) {
           rowData={rows}
           columnDefs={pricingCols}
           defaultColDef={defaultColDef}
+          components={{ agDateInput: DdMmYyyyDateFilter }}
+          localeText={{ dateFormatOoo: 'dd/mm/yyyy' }}
           domLayout="autoHeight"
           animateRows
           rowGroupPanelShow="always"

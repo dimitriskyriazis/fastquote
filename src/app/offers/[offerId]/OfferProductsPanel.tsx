@@ -4977,7 +4977,10 @@ const requestedColumnDefsMap = useMemo(
   const productContextMenuItems = useCallback((
     params: GetContextMenuItemsParams<Record<string, unknown>>,
   ) => {
-    if (readOnly) return [];
+    // Locked offers (read-only status) still allow exporting the grid. Returning
+    // the default 'export' item lets AgGridAll swap in its custom Excel/CSV
+    // export submenu; mutating items (delete/paste/add/bulk-edit/AI) stay out.
+    if (readOnly) return ['export' as unknown as DefaultMenuItem];
     const baseItems = productRowDeletion.getContextMenuItems(params) ?? [];
     const items = [...baseItems].filter((item) => item !== 'copy' && item !== 'copyWithHeaders' && item !== 'copyWithGroupHeaders' && item !== 'cut' && item !== 'paste');
     if (pendingContextMenuSelectionClearRef.current) {
