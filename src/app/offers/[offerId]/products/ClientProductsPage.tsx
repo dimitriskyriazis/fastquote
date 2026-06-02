@@ -39,6 +39,10 @@ type Props = {
   pricingPolicyName?: string | null;
   initialPricingSellAnchor?: string | null;
   initialPricingHoldMarginOnCost?: boolean;
+  initialExtraListDiscount?: number | null;
+  initialExtraListDiscountMode?: 'pct' | 'abs';
+  initialExtraNetDiscount?: number | null;
+  initialExtraNetDiscountMode?: 'pct' | 'abs';
   isReadOnly?: boolean;
 };
 
@@ -143,6 +147,10 @@ export default function ClientProductsPage({
   pricingPolicyName,
   initialPricingSellAnchor,
   initialPricingHoldMarginOnCost = false,
+  initialExtraListDiscount = null,
+  initialExtraListDiscountMode = 'pct',
+  initialExtraNetDiscount = null,
+  initialExtraNetDiscountMode = 'pct',
   isReadOnly = false,
 }: Props) {
   const { userId } = useAuditUser();
@@ -217,6 +225,44 @@ export default function ClientProductsPage({
     v === 'netUnitPrice' || v === 'margin' ? 'netUnitPrice' : 'customerDiscount';
   const [pricingSellAnchor, setPricingSellAnchor] = useState<SellAnchor>(() => normalizeSellAnchor(initialPricingSellAnchor));
   const [pricingHoldMarginOnCost, setPricingHoldMarginOnCost] = useState(initialPricingHoldMarginOnCost);
+  // Offer-level "additional discounts" applied on top of the List/Net totals.
+  // Persisted on the offer; reflected in the totals bar and the generated PDF.
+  const [extraListDiscount, setExtraListDiscount] = useState<number | null>(initialExtraListDiscount);
+  const [extraListDiscountMode, setExtraListDiscountMode] = useState<'pct' | 'abs'>(initialExtraListDiscountMode);
+  const [extraNetDiscount, setExtraNetDiscount] = useState<number | null>(initialExtraNetDiscount);
+  const [extraNetDiscountMode, setExtraNetDiscountMode] = useState<'pct' | 'abs'>(initialExtraNetDiscountMode);
+  const saveExtraDiscounts = useCallback(async (next: {
+    listValue: number | null;
+    listMode: 'pct' | 'abs';
+    netValue: number | null;
+    netMode: 'pct' | 'abs';
+  }) => {
+    setExtraListDiscount(next.listValue);
+    setExtraListDiscountMode(next.listMode);
+    setExtraNetDiscount(next.netValue);
+    setExtraNetDiscountMode(next.netMode);
+    // Let failures propagate so the panel can surface them via a toast.
+    const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        updates: [
+          { field: 'ExtraListDiscount', value: next.listValue },
+          { field: 'ExtraListDiscountMode', value: next.listMode },
+          { field: 'ExtraNetDiscount', value: next.netValue },
+          { field: 'ExtraNetDiscountMode', value: next.netMode },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      let detail = '';
+      try {
+        const body = await res.json();
+        detail = typeof body?.error === 'string' ? `: ${body.error}` : '';
+      } catch { /* ignore */ }
+      throw new Error(`Save failed (${res.status})${detail}`);
+    }
+  }, [offerId]);
   const [pricingMenuOpen, setPricingMenuOpen] = useState(false);
   const pricingMenuRef = useRef<HTMLDetailsElement | null>(null);
   const savePricingMode = useCallback(async (sellAnchor: SellAnchor, holdMargin: boolean) => {
@@ -1763,6 +1809,11 @@ export default function ClientProductsPage({
                 setPricingHoldMarginOnCost(next);
                 void savePricingMode(pricingSellAnchor, next);
               }}
+              offerExtraListDiscount={extraListDiscount}
+              offerExtraListDiscountMode={extraListDiscountMode}
+              offerExtraNetDiscount={extraNetDiscount}
+              offerExtraNetDiscountMode={extraNetDiscountMode}
+              onOfferExtraDiscountsChange={saveExtraDiscounts}
               readOnly={isReadOnly}
             />
           </div>

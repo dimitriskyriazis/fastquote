@@ -192,6 +192,11 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   onCollapseAllSuppressed,
   offerPricingSellAnchor = null,
   offerPricingHoldMarginOnCost = false,
+  offerExtraListDiscount = null,
+  offerExtraListDiscountMode = 'pct',
+  offerExtraNetDiscount = null,
+  offerExtraNetDiscountMode = 'pct',
+  onOfferExtraDiscountsChange,
   readOnly = false,
 }: Props, ref) => {
   const router = useRouter();
@@ -433,6 +438,32 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [totalMarginEditing, setTotalMarginEditing] = useState(false);
   const [totalMarginInputValue, setTotalMarginInputValue] = useState('');
   const totalMarginSubmitPendingRef = useRef(false);
+  // Offer-level additional discounts applied on top of the List/Net totals.
+  // Persisted on the offer (via onOfferExtraDiscountsChange) and reflected in the
+  // PDF totals. They do NOT touch any individual product row's stored price.
+  // String buffers back the inputs for smooth typing; committed on blur.
+  const [listExtraDiscountValue, setListExtraDiscountValue] = useState(
+    offerExtraListDiscount != null ? String(offerExtraListDiscount) : '',
+  );
+  const [listExtraDiscountMode, setListExtraDiscountMode] = useState<'pct' | 'abs'>(offerExtraListDiscountMode);
+  const [netExtraDiscountValue, setNetExtraDiscountValue] = useState(
+    offerExtraNetDiscount != null ? String(offerExtraNetDiscount) : '',
+  );
+  const [netExtraDiscountMode, setNetExtraDiscountMode] = useState<'pct' | 'abs'>(offerExtraNetDiscountMode);
+  // Both discounts are edited together in a single popover opened from one button.
+  // The panel uses fixed positioning (anchored to the trigger) so it isn't clipped
+  // by the totals bar's overflow.
+  const [extraDiscountPopoverOpen, setExtraDiscountPopoverOpen] = useState(false);
+  const [extraDiscountPopoverPos, setExtraDiscountPopoverPos] = useState<{ left: number; bottom: number } | null>(null);
+  const extraDiscountPopoverRef = useRef<HTMLDivElement | null>(null);
+  const extraDiscountPopoverWasOpenRef = useRef(false);
+  // Last persisted snapshot, so blur doesn't re-save / re-toast unchanged values.
+  const lastCommittedExtraDiscountsRef = useRef<{ listValue: number | null; listMode: 'pct' | 'abs'; netValue: number | null; netMode: 'pct' | 'abs' }>({
+    listValue: offerExtraListDiscount,
+    listMode: offerExtraListDiscountMode,
+    netValue: offerExtraNetDiscount,
+    netMode: offerExtraNetDiscountMode,
+  });
   const [requestedColumnVisibility, setRequestedColumnVisibility] = useState<Record<RequestedDisplayFieldKey, boolean>>({
     RequestedBrand: false,
     RequestedModelNo: false,
@@ -6760,6 +6791,32 @@ const requestedColumnDefsMap = useMemo(
     };
   }, [emptyGridPasteMenu]);
 
+  // Close the additional-discount popover on outside click / Escape.
+  // Field edits are persisted on input blur, which fires before this closes.
+  useEffect(() => {
+    if (!extraDiscountPopoverOpen) return;
+    const onMouseDown = (event: MouseEvent) => {
+      const el = extraDiscountPopoverRef.current;
+      if (el && !el.contains(event.target as Node)) {
+        setExtraDiscountPopoverOpen(false);
+      }
+    };
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExtraDiscountPopoverOpen(false);
+    };
+    const onReposition = () => setExtraDiscountPopoverOpen(false);
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('keydown', onEsc);
+    window.addEventListener('scroll', onReposition, true);
+    window.addEventListener('resize', onReposition);
+    return () => {
+      window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('keydown', onEsc);
+      window.removeEventListener('scroll', onReposition, true);
+      window.removeEventListener('resize', onReposition);
+    };
+  }, [extraDiscountPopoverOpen]);
+
   const getCellEditorRawValue = (
     event: CellValueChangedEvent<Record<string, unknown>>,
   ): string | null => {
@@ -8042,6 +8099,76 @@ const requestedColumnDefsMap = useMemo(
     const percent = Math.abs(listPrice) < 1e-9 ? 0 : (discount / listPrice) * 100;
     return `${withCurrency(decimalFormatter.format(discount))} (${decimalFormatter.format(percent)} %)`;
   };
+  // Apply a display-only additional discount (percentage or absolute amount) to a total.
+  // Returns the base unchanged when the input is empty/invalid.
+  const applyExtraDiscount = (
+    base: number | null | undefined,
+    rawValue: string,
+    mode: 'pct' | 'abs',
+  ): number | null => {
+    if (base == null || !Number.isFinite(base)) return null;
+    if (rawValue.trim() === '') return base;
+    const parsed = coerceNumber(rawValue);
+    if (parsed == null || !Number.isFinite(parsed)) return base;
+    const reduction = mode === 'pct' ? base * (parsed / 100) : parsed;
+    return base - reduction;
+  };
+  // Persist the current additional-discount buffers to the offer. `override` lets a
+  // mode-toggle click commit the new mode without waiting for a state flush.
+  // Skips a no-op save (so blur doesn't re-toast) and surfaces success/failure.
+  const commitExtraDiscounts = async (override?: { listMode?: 'pct' | 'abs'; netMode?: 'pct' | 'abs' }) => {
+    if (!onOfferExtraDiscountsChange) return;
+    const listValueRaw = coerceNumber(listExtraDiscountValue);
+    const netValueRaw = coerceNumber(netExtraDiscountValue);
+    const next = {
+      listValue: listValueRaw == null || !Number.isFinite(listValueRaw) ? null : listValueRaw,
+      listMode: override?.listMode ?? listExtraDiscountMode,
+      netValue: netValueRaw == null || !Number.isFinite(netValueRaw) ? null : netValueRaw,
+      netMode: override?.netMode ?? netExtraDiscountMode,
+    } as const;
+    const prev = lastCommittedExtraDiscountsRef.current;
+    const modeMattersList = next.listValue != null;
+    const modeMattersNet = next.netValue != null;
+    const unchanged =
+      next.listValue === prev.listValue
+      && next.netValue === prev.netValue
+      && (!modeMattersList || next.listMode === prev.listMode)
+      && (!modeMattersNet || next.netMode === prev.netMode);
+    if (unchanged) return;
+    lastCommittedExtraDiscountsRef.current = { ...next };
+    try {
+      await onOfferExtraDiscountsChange(next);
+      showToastMessage('Additional discount saved', 'success', 2500);
+    } catch (err) {
+      console.error('Failed to save additional discounts', err);
+      showToastMessage(
+        `Could not save additional discount${err instanceof Error ? `: ${err.message}` : ''}`,
+        'error',
+      );
+    }
+  };
+  // Safety net: when the popover closes (outside click, Esc, or the toggle button),
+  // commit the current buffers. Covers cases where the input never fired onBlur
+  // (e.g. Esc, or clicking a non-focusable area unmounts the input first).
+  useEffect(() => {
+    if (extraDiscountPopoverWasOpenRef.current && !extraDiscountPopoverOpen) {
+      void commitExtraDiscounts();
+    }
+    extraDiscountPopoverWasOpenRef.current = extraDiscountPopoverOpen;
+    // commitExtraDiscounts is intentionally excluded (it is redefined every render
+    // and reads the latest buffers via closure); we only want to react to open/close.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extraDiscountPopoverOpen]);
+  const listExtraDiscountedTotal = applyExtraDiscount(totals?.totalListPrice, listExtraDiscountValue, listExtraDiscountMode);
+  const netExtraDiscountedTotal = applyExtraDiscount(totals?.totalNetPrice, netExtraDiscountValue, netExtraDiscountMode);
+  const listExtraDiscountActive =
+    listExtraDiscountedTotal != null
+    && totals?.totalListPrice != null
+    && Math.abs(listExtraDiscountedTotal - totals.totalListPrice) > 1e-9;
+  const netExtraDiscountActive =
+    netExtraDiscountedTotal != null
+    && totals?.totalNetPrice != null
+    && Math.abs(netExtraDiscountedTotal - totals.totalNetPrice) > 1e-9;
 
   const beginEditTotalNet = useCallback(() => {
     if (totalNetApplying) return;
@@ -9006,10 +9133,15 @@ const requestedColumnDefsMap = useMemo(
             <div className={styles.totalItem}>
               <span className={styles.totalLabel}>Total List:</span>
               <span className={styles.totalValue}>{formatEuroTotal(totals?.totalListPrice)}</span>
+              {listExtraDiscountActive ? (
+                <span className={styles.totalDiscountedValue} title="Total list price after the additional discount">
+                  {`→ ${formatEuroTotal(listExtraDiscountedTotal)}`}
+                </span>
+              ) : null}
             </div>
             <div className={styles.totalItem}>
               <span className={styles.totalLabel}>Total Discount:</span>
-              <span className={styles.totalValue}>{formatDiscountTotal(totals?.totalListPrice, totals?.totalNetPrice)}</span>
+              <span className={styles.totalValue}>{formatDiscountTotal(listExtraDiscountedTotal, netExtraDiscountedTotal)}</span>
             </div>
             <div className={styles.totalItem}>
               <span className={styles.totalLabel}>Total Net:</span>
@@ -9049,7 +9181,110 @@ const requestedColumnDefsMap = useMemo(
                   {formatEuroTotal(totals?.totalNetPrice)}
                 </span>
               )}
+              {netExtraDiscountActive ? (
+                <span className={styles.totalDiscountedValue} title="Total net price after the additional discount">
+                  {`→ ${formatEuroTotal(netExtraDiscountedTotal)}`}
+                </span>
+              ) : null}
             </div>
+            {readOnly ? null : (
+              <div className={styles.totalItem}>
+                <div className={styles.discountPopoverWrap} ref={extraDiscountPopoverRef}>
+                  <button
+                    type="button"
+                    className={listExtraDiscountActive || netExtraDiscountActive ? `${styles.addDiscountButton} ${styles.addDiscountButtonActive}` : styles.addDiscountButton}
+                    aria-expanded={extraDiscountPopoverOpen}
+                    aria-haspopup="dialog"
+                    onClick={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setExtraDiscountPopoverPos({
+                        left: rect.left + rect.width / 2,
+                        bottom: window.innerHeight - rect.top + 8,
+                      });
+                      setExtraDiscountPopoverOpen((open) => !open);
+                    }}
+                  >
+                    {listExtraDiscountActive || netExtraDiscountActive ? 'Add. discount ✎' : '+ Add. discount'}
+                  </button>
+                  {extraDiscountPopoverOpen ? (
+                    <div
+                      className={styles.discountPopover}
+                      role="dialog"
+                      aria-label="Additional discount"
+                      style={extraDiscountPopoverPos ? { left: extraDiscountPopoverPos.left, bottom: extraDiscountPopoverPos.bottom } : undefined}
+                    >
+                      <div className={styles.discountPopoverTitle}>Additional discount</div>
+                      <div className={styles.discountPopoverRow}>
+                        <span className={styles.discountPopoverLabel}>List</span>
+                        <input
+                          className={styles.discountInput}
+                          inputMode="decimal"
+                          placeholder="0"
+                          aria-label="Additional discount on total list price"
+                          value={listExtraDiscountValue}
+                          onChange={(e) => setListExtraDiscountValue(e.target.value)}
+                          onBlur={() => { void commitExtraDiscounts(); }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              (e.target as HTMLInputElement).blur();
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className={styles.discountModeToggle}
+                          title="Toggle between percentage and absolute amount"
+                          onClick={() => {
+                            const nextMode = listExtraDiscountMode === 'pct' ? 'abs' : 'pct';
+                            setListExtraDiscountMode(nextMode);
+                            void commitExtraDiscounts({ listMode: nextMode });
+                          }}
+                        >
+                          {listExtraDiscountMode === 'pct' ? '%' : offerCurrencySymbol}
+                        </button>
+                        <span className={styles.discountPopoverResult}>
+                          {`→ ${formatEuroTotal(listExtraDiscountedTotal)}`}
+                        </span>
+                      </div>
+                      <div className={styles.discountPopoverRow}>
+                        <span className={styles.discountPopoverLabel}>Net</span>
+                        <input
+                          className={styles.discountInput}
+                          inputMode="decimal"
+                          placeholder="0"
+                          aria-label="Additional discount on total net price"
+                          value={netExtraDiscountValue}
+                          onChange={(e) => setNetExtraDiscountValue(e.target.value)}
+                          onBlur={() => { void commitExtraDiscounts(); }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              (e.target as HTMLInputElement).blur();
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className={styles.discountModeToggle}
+                          title="Toggle between percentage and absolute amount"
+                          onClick={() => {
+                            const nextMode = netExtraDiscountMode === 'pct' ? 'abs' : 'pct';
+                            setNetExtraDiscountMode(nextMode);
+                            void commitExtraDiscounts({ netMode: nextMode });
+                          }}
+                        >
+                          {netExtraDiscountMode === 'pct' ? '%' : offerCurrencySymbol}
+                        </button>
+                        <span className={styles.discountPopoverResult}>
+                          {`→ ${formatEuroTotal(netExtraDiscountedTotal)}`}
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            )}
             <div className={styles.totalItem}>
               <span className={styles.totalLabel}>Total Cost:</span>
               <span className={styles.totalValue}>{formatEuroTotal(totals?.totalCost)}</span>

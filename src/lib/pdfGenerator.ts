@@ -46,6 +46,12 @@ export type OfferPdfData = {
   discountNote: string | null;
   finalPriceLabel: string | null;
   currencySymbol?: string | null;
+  // Offer-level "additional discounts" applied on top of the List/Net subtotals.
+  // mode 'pct' = percentage, 'abs' = absolute amount in the offer currency.
+  extraListDiscount?: number | null;
+  extraListDiscountMode?: 'pct' | 'abs' | null;
+  extraNetDiscount?: number | null;
+  extraNetDiscountMode?: 'pct' | 'abs' | null;
 };
 
 export type OfferProductRow = {
@@ -1207,9 +1213,26 @@ function calculateDiscountSummary(data: OfferPdfData): {
 
   if (listSubtotal <= 0) listSubtotal = totalNet;
 
+  // Apply offer-level additional discounts on top of the computed subtotals.
+  listSubtotal = applyExtraDiscount(listSubtotal, data.extraListDiscount, data.extraListDiscountMode);
+  totalNet = applyExtraDiscount(totalNet, data.extraNetDiscount, data.extraNetDiscountMode);
+
   const discountEur = Math.max(0, listSubtotal - totalNet);
 
   return { listSubtotal, discountEur, totalNet };
+}
+
+// Applies an offer-level additional discount (percentage or absolute amount) to a
+// total, returning the base unchanged when the discount is absent or invalid.
+function applyExtraDiscount(
+  base: number,
+  value: number | null | undefined,
+  mode: 'pct' | 'abs' | null | undefined,
+): number {
+  if (value == null || !Number.isFinite(value) || value === 0) return base;
+  const reduction = mode === 'abs' ? value : base * (value / 100);
+  const next = base - reduction;
+  return Number.isFinite(next) ? next : base;
 }
 
 function buildTotalsAndTerms(

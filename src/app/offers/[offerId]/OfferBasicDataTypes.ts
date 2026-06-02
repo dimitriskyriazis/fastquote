@@ -60,6 +60,10 @@ export type OfferBasicRecord = {
   ServicesLocation: string | null;
   PricingSellAnchor: string | null;
   PricingHoldMarginOnCost: boolean | null;
+  ExtraListDiscount: number | null;
+  ExtraListDiscountMode: string | null;
+  ExtraNetDiscount: number | null;
+  ExtraNetDiscountMode: string | null;
 };
 
 export type OfferContactInfo = {
@@ -113,4 +117,8 @@ export type OfferBasicUpdateField =
   | 'ProtocolNo'
   | 'ServicesLocation'
   | 'PricingSellAnchor'
-  | 'PricingHoldMarginOnCost';
+  | 'PricingHoldMarginOnCost'
+  | 'ExtraListDiscount'
+  | 'ExtraListDiscountMode'
+  | 'ExtraNetDiscount'
+  | 'ExtraNetDiscountMode';

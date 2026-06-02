@@ -16,7 +16,24 @@ type OfferHeaderInfo = {
   pricingPolicyName: string | null;
   pricingSellAnchor: string | null;
   pricingHoldMarginOnCost: boolean;
+  extraListDiscount: number | null;
+  extraListDiscountMode: 'pct' | 'abs';
+  extraNetDiscount: number | null;
+  extraNetDiscountMode: 'pct' | 'abs';
   statusName: string | null;
+};
+
+const normalizeDiscountMode = (value: unknown): 'pct' | 'abs' =>
+  value === 'abs' ? 'abs' : 'pct';
+const normalizeDiscountValue = (value: unknown): number | null => {
+  // SQL Server DECIMAL columns may surface as a number or a string depending on the
+  // driver, so accept both.
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 };
 
 async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
@@ -29,6 +46,10 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
     PricingPolicyName: string | null;
     PricingSellAnchor: string | null;
     PricingHoldMarginOnCost: boolean | number | null;
+    ExtraListDiscount: number | null;
+    ExtraListDiscountMode: string | null;
+    ExtraNetDiscount: number | null;
+    ExtraNetDiscountMode: string | null;
     StatusName: string | null;
   };
   try {
@@ -45,6 +66,10 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
         pp.Name AS PricingPolicyName,
         o.PricingSellAnchor,
         o.PricingHoldMarginOnCost,
+        o.ExtraListDiscount,
+        o.ExtraListDiscountMode,
+        o.ExtraNetDiscount,
+        o.ExtraNetDiscountMode,
         os.Name AS StatusName
       FROM dbo.Offer AS o
       LEFT JOIN dbo.Customers AS c ON c.ID = o.CustomerID
@@ -62,6 +87,10 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
       pricingPolicyName: row?.PricingPolicyName?.trim() || null,
       pricingSellAnchor: row?.PricingSellAnchor ?? null,
       pricingHoldMarginOnCost: row?.PricingHoldMarginOnCost === true || row?.PricingHoldMarginOnCost === 1,
+      extraListDiscount: normalizeDiscountValue(row?.ExtraListDiscount),
+      extraListDiscountMode: normalizeDiscountMode(row?.ExtraListDiscountMode),
+      extraNetDiscount: normalizeDiscountValue(row?.ExtraNetDiscount),
+      extraNetDiscountMode: normalizeDiscountMode(row?.ExtraNetDiscountMode),
       statusName: row?.StatusName?.trim() ?? null,
     };
   } catch (err) {
@@ -75,6 +104,10 @@ async function fetchOfferHeaderInfo(offerId: number): Promise<OfferHeaderInfo> {
       pricingPolicyName: null,
       pricingSellAnchor: null,
       pricingHoldMarginOnCost: false,
+      extraListDiscount: null,
+      extraListDiscountMode: 'pct',
+      extraNetDiscount: null,
+      extraNetDiscountMode: 'pct',
       statusName: null,
     };
   }
@@ -85,7 +118,7 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
   const decodedId = decodeURIComponent(offerId);
   const hasNumericOfferId = /^[0-9]+$/.test(decodedId);
   const normalizedId = Number.parseInt(decodedId, 10);
-  const offerHeader = hasNumericOfferId
+  const offerHeader: OfferHeaderInfo = hasNumericOfferId
     ? await fetchOfferHeaderInfo(normalizedId)
     : {
         title: null,
@@ -96,6 +129,10 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
         pricingPolicyName: null,
         pricingSellAnchor: null,
         pricingHoldMarginOnCost: false,
+        extraListDiscount: null,
+        extraListDiscountMode: 'pct',
+        extraNetDiscount: null,
+        extraNetDiscountMode: 'pct',
         statusName: null,
       };
   const offerTitle = offerHeader.title;
@@ -124,6 +161,10 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
       pricingPolicyName={offerHeader.pricingPolicyName}
       initialPricingSellAnchor={offerHeader.pricingSellAnchor}
       initialPricingHoldMarginOnCost={offerHeader.pricingHoldMarginOnCost}
+      initialExtraListDiscount={offerHeader.extraListDiscount}
+      initialExtraListDiscountMode={offerHeader.extraListDiscountMode}
+      initialExtraNetDiscount={offerHeader.extraNetDiscount}
+      initialExtraNetDiscountMode={offerHeader.extraNetDiscountMode}
       isReadOnly={isReadOnly}
     />
   );

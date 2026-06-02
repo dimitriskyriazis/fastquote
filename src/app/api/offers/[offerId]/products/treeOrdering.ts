@@ -197,10 +197,20 @@ const computeRootStart = (roots: TreeOrderingNode[]): number => {
 
 export const collectResequencedUpdates = (
   roots: TreeOrderingNode[],
-  options: { forceRenumber?: boolean } = {},
+  options: { forceRenumber?: boolean; rootStartOverride?: number } = {},
 ): TreeOrderingUpdateInput[] => {
   const forceRenumber = options.forceRenumber === true;
-  const rootStart = computeRootStart(roots);
+  // rootStartOverride lets callers pin the starting Item No explicitly. The
+  // delete flow passes the *pre-deletion* lowest root so that removing the
+  // top row closes the gap back to the original start (1,2,3 → delete 1 →
+  // 1,2) instead of inferring the new (higher) min from the rows that remain.
+  const rootStart = (
+    typeof options.rootStartOverride === 'number'
+    && Number.isInteger(options.rootStartOverride)
+    && options.rootStartOverride >= 1
+  )
+    ? options.rootStartOverride
+    : computeRootStart(roots);
   const updates: TreeOrderingUpdateInput[] = [];
   const assign = (nodes: TreeOrderingNode[], parentPath: string[]) => {
     const segments = buildSegmentList(nodes, parentPath.length, forceRenumber, rootStart);

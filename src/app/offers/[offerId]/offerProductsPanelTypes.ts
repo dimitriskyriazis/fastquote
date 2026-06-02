@@ -28,6 +28,16 @@ export type OfferProductsPanelProps = {
   offerPricingSellAnchor?: string | null;
   offerPricingHoldMarginOnCost?: boolean;
   onOfferPricingHoldMarginOnCostChange?: (next: boolean) => void;
+  offerExtraListDiscount?: number | null;
+  offerExtraListDiscountMode?: 'pct' | 'abs';
+  offerExtraNetDiscount?: number | null;
+  offerExtraNetDiscountMode?: 'pct' | 'abs';
+  onOfferExtraDiscountsChange?: (next: {
+    listValue: number | null;
+    listMode: 'pct' | 'abs';
+    netValue: number | null;
+    netMode: 'pct' | 'abs';
+  }) => Promise<void> | void;
   readOnly?: boolean;
 };
 

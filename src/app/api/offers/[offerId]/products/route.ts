@@ -781,6 +781,7 @@ async function handleReorderRow(
 async function resequenceTreeOrdering(
   offerId: number,
   audit: AuditContext,
+  rootStartOverride?: number,
 ): Promise<{ updated: number; rowsAffected: number }> {
   const pool = await getPool();
   const readRequest = pool.request();
@@ -797,7 +798,10 @@ async function resequenceTreeOrdering(
   // Force renumber: after a deletion the remaining siblings need to close
   // gaps (e.g. 1,2,3,5,6,7 → 1,2,3,4,5,6). No sentinel is set by the delete
   // flow, so the default preserve-on-no-sentinel path would leave the gap.
-  const updates = collectResequencedUpdates(roots, { forceRenumber: true });
+  // rootStartOverride pins the starting Item No to its pre-deletion value so
+  // deleting the top row closes the gap (1,2,3 → delete 1 → 1,2) rather than
+  // leaving the lowest remaining root (2) as the new start.
+  const updates = collectResequencedUpdates(roots, { forceRenumber: true, rootStartOverride });
   if (updates.length === 0) {
     return { updated: 0, rowsAffected: 0 };
   }
@@ -3324,6 +3328,34 @@ export async function DELETE(
     if (!deleteCheck.allowed) {
       return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }
+
+    // Capture the starting Item No (lowest root segment) BEFORE any deletion.
+    // Resequencing after the delete pins root numbering to this value, so
+    // removing the top row closes the gap back to the original start
+    // (1,2,3 → delete 1 → 1,2) instead of inferring a new, higher start from
+    // the rows that remain.
+    const startRootReq = pool.request();
+    startRootReq.input('__offerId', sql.Int, offerId);
+    const startRootResult = await startRootReq.query<{ MinRoot: number | null }>(`
+      SELECT MIN(TRY_CONVERT(INT,
+        CASE
+          WHEN CHARINDEX('.', t.tval) > 0 THEN LEFT(t.tval, CHARINDEX('.', t.tval) - 1)
+          ELSE NULLIF(t.tval, '')
+        END
+      )) AS MinRoot
+      FROM (
+        SELECT LTRIM(RTRIM(ISNULL(od.TreeOrdering, ''))) AS tval
+        FROM dbo.OfferDetails od
+        WHERE od.OfferID = @__offerId
+      ) t
+      WHERE t.tval <> ''
+    `);
+    const preDeleteRootStartRaw = startRootResult.recordset?.[0]?.MinRoot ?? null;
+    const preDeleteRootStart =
+      typeof preDeleteRootStartRaw === 'number' && Number.isInteger(preDeleteRootStartRaw) && preDeleteRootStartRaw >= 1
+        ? preDeleteRootStartRaw
+        : undefined;
+
     const chunkSize = 200;
     let deleted = 0;
     const allDeletedRows: Record<string, unknown>[] = [];
@@ -3453,7 +3485,7 @@ export async function DELETE(
     }
 
     const resequenced = deleted > 0
-      ? await resequenceTreeOrdering(offerId, audit)
+      ? await resequenceTreeOrdering(offerId, audit, preDeleteRootStart)
       : { updated: 0, rowsAffected: 0 };
 
     // Strip ID and audit columns from deleted rows for restore payload

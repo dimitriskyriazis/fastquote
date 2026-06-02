@@ -78,6 +78,10 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   ServicesLocation: { column: 'ServicesLocation', type: 'string', sqlType: sql.NVarChar, length: 10 },
   PricingSellAnchor: { column: 'PricingSellAnchor', type: 'string', sqlType: sql.NVarChar, length: 20 },
   PricingHoldMarginOnCost: { column: 'PricingHoldMarginOnCost', type: 'number', sqlType: sql.Bit },
+  ExtraListDiscount: { column: 'ExtraListDiscount', type: 'number', sqlType: sql.Decimal, precision: 18, scale: 4 },
+  ExtraListDiscountMode: { column: 'ExtraListDiscountMode', type: 'string', sqlType: sql.NVarChar, length: 8 },
+  ExtraNetDiscount: { column: 'ExtraNetDiscount', type: 'number', sqlType: sql.Decimal, precision: 18, scale: 4 },
+  ExtraNetDiscountMode: { column: 'ExtraNetDiscountMode', type: 'string', sqlType: sql.NVarChar, length: 8 },
 };
 
 const normalizeValue = (value: unknown, type: FieldType): NormalizedValue => {

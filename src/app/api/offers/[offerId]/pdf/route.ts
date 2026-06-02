@@ -8,6 +8,17 @@ import { parsePdfProductColumnsParam } from '../../../../../lib/pdfColumns';
 import { normalizeOfferLanguage, offerLanguageToPdfLang } from '../../../../../lib/offerLanguage';
 import { computeDisplayOrderingMap } from '../../../../../lib/offerItemNumbering';
 
+// SQL Server DECIMAL columns may surface as a number or a string depending on the
+// driver; accept both and fall back to null.
+const toFiniteNumberOrNull = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
 type OfferHeaderRow = {
   ID: number;
   Title: string | null;
@@ -24,6 +35,10 @@ type OfferHeaderRow = {
   OfferContact: string | null;
   FinalPriceLabel: string | null;
   OfferLanguage: string | null;
+  ExtraListDiscount: number | null;
+  ExtraListDiscountMode: string | null;
+  ExtraNetDiscount: number | null;
+  ExtraNetDiscountMode: string | null;
   CurrencyName: string | null;
   CustomerName: string | null;
   CustomerBrandName: string | null;
@@ -131,6 +146,10 @@ export async function GET(
           o.OfferContact,
           o.FinalPriceLabel,
           o.OfferLanguage,
+          o.ExtraListDiscount,
+          o.ExtraListDiscountMode,
+          o.ExtraNetDiscount,
+          o.ExtraNetDiscountMode,
           c.Name AS CustomerName,
           c.BrandName AS CustomerBrandName,
           c.Address AS CustomerAddress,
@@ -350,6 +369,10 @@ export async function GET(
       discountNote: header.DiscountNote,
       finalPriceLabel: header.FinalPriceLabel?.trim() || null,
       currencySymbol: header.CurrencyName?.trim() || null,
+      extraListDiscount: toFiniteNumberOrNull(header.ExtraListDiscount),
+      extraListDiscountMode: header.ExtraListDiscountMode === 'abs' ? 'abs' : 'pct',
+      extraNetDiscount: toFiniteNumberOrNull(header.ExtraNetDiscount),
+      extraNetDiscountMode: header.ExtraNetDiscountMode === 'abs' ? 'abs' : 'pct',
     };
 
     // ── Generate PDF ───────────────────────────────────────────────────

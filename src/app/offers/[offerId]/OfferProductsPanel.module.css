@@ -260,6 +260,146 @@
   cursor: wait;
 }
 
+.discountInput {
+  font-size: 0.95rem;
+  line-height: 1;
+  color: #0f172a;
+  font-weight: 600;
+  padding: 3px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #ffffff;
+  width: 64px;
+  text-align: right;
+}
+
+.discountInput:focus-visible {
+  border-color: #3b82f6;
+  outline: none;
+}
+
+.discountModeToggle {
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1;
+  color: #475569;
+  padding: 4px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #f1f5f9;
+  cursor: pointer;
+  min-width: 28px;
+}
+
+.discountModeToggle:hover,
+.discountModeToggle:focus-visible {
+  border-color: #3b82f6;
+  color: #1d4ed8;
+  background: #ffffff;
+  outline: none;
+}
+
+.discountModeToggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.addDiscountButton {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #475569;
+  padding: 4px 10px;
+  border: 1px dashed #94a3b8;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.addDiscountButton:hover,
+.addDiscountButton:focus-visible {
+  border-color: #3b82f6;
+  color: #1d4ed8;
+  background: #ffffff;
+  outline: none;
+}
+
+.addDiscountButtonActive {
+  border-style: solid;
+  border-color: #3b82f6;
+  color: #1d4ed8;
+}
+
+/* Discounted total shown inline next to its base total (e.g. "→ 1.042,72 €"). */
+.totalDiscountedValue {
+  font-size: 1rem;
+  line-height: 1;
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+/* Popover anchor + panel (opens upward, since the totals bar is at the bottom). */
+.discountPopoverWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.discountPopover {
+  position: fixed;
+  transform: translateX(-50%);
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  min-width: 260px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+}
+
+.discountPopover::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #ffffff;
+}
+
+.discountPopoverTitle {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #475569;
+}
+
+.discountPopoverRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.discountPopoverLabel {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #334155;
+  width: 32px;
+}
+
+.discountPopoverResult {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #1d4ed8;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
 .undoButton {
   margin-left: auto;
   padding: 4px 12px;
