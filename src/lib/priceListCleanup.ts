@@ -133,6 +133,8 @@ export type CleanedRow = {
   warning: string | null;
   moq: number | null;
   weblink: string | null;
+  // Optional lifecycle/EOL annotation, added downstream (not produced by cleanupRows).
+  status?: string | null;
 };
 
 export type CleanupSummary = {
@@ -301,6 +303,7 @@ export const CLEANED_HEADERS = [
   "Warning",
   "MOQ",
   "Weblink",
+  "Status",
 ] as const;
 
 const cellForHeader = (header: string, row: CleanedRow): unknown => {
@@ -321,6 +324,8 @@ const cellForHeader = (header: string, row: CleanedRow): unknown => {
       return row.moq;
     case "Weblink":
       return row.weblink;
+    case "Status":
+      return row.status ?? null;
     default:
       return null;
   }

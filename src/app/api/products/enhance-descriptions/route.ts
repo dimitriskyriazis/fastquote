@@ -4,6 +4,11 @@ import sql from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { requirePermission } from "../../../../lib/authz";
+import {
+  PRODUCT_DESCRIPTION_SYSTEM_PROMPT,
+  buildDescriptionUserMessage,
+  stripModelPartTokens,
+} from "../../../../lib/productDescriptionPrompt";
 import OpenAI from "openai";
 
 export const runtime = "nodejs";
@@ -317,105 +322,17 @@ export async function POST(req: NextRequest) {
             model: "gpt-4o-mini",
             temperature: 0,
             input: [
-              {
-                role: "system",
-                content: [
-                  "Rewrite product descriptions for a B2B AV equipment catalog. Output ONLY the description, nothing else.",
-                  "",
-                  "FORMAT: Comma-separated key specs in a single line (or bullet list for complex kits). No full sentences. No filler words.",
-                  "",
-                  "MODEL NUMBER RULE (critical — read carefully): Check whether the model number appears in the Current Description. If it does NOT appear there, do NOT write it anywhere in the output — not at the start, not in the middle, not at the end. The Model and Part Number fields are provided only so you can look up specs; they must never be copied into the output description unless they were already present in the Current Description.",
-                  "",
-                  "CAPITALIZATION: Never write the description in ALL CAPS. If the input is in ALL CAPS or SCREAMING CASE, convert it to sentence case (capitalize only the first letter and recognised proper nouns/brand names). Write all other words in lowercase.",
-                  "",
-                  "NEVER DO:",
-                  "- Add disclaimers or 'verify with manufacturer' notes",
-                  "- Add label prefixes like 'Type:' or 'Lens type:'",
-                  "- Use marketing/filler words (high-performance, seamless, cutting-edge, robust, innovative, designed for, optimized for)",
-                  "- Explain what a spec means (e.g. 'for clear projection in confined spaces')",
-                  "- Add info not in the input or web context",
-                  "- Remove or change any model/part number that appears at the start of the description — keep it exactly as-is, including any ' - ' separator that follows it",
-                  "- Add the model number or part number anywhere in the output if it does not already appear in the current description",
-                  "",
-                  "FORMATTING RULES:",
-                  "- Start with the product type/category as the first term (e.g. 'PDU, ...' / 'Commercial ceiling speaker, ...' / 'Single-chip DLP projector, ...')",
-                  "- Specs are comma-separated with no label prefixes ('16 A' not 'Amperage: 16 A')",
-                  "- Physical dimensions go at the end in format: LxHxD: W×H×D cm",
-                  "- Color goes at the end, lowercase (e.g. 'white', 'black')",
-                  "- No trailing period for comma-separated spec lists; use full sentences with periods only for control panels and accessories where function needs describing",
-                  "- Wattage and impedance format: '8 ohms / 140 watts' or '70V/100V transformer'",
-                  "- Parenthetical notes for important commercial info: e.g. '(priced individually, but sold in pairs)'",
-                  "- Bundles and kits: short type description + semicolon + 'includes' + comma-separated component list; quantities in parentheses before each component: '(2) ComponentName'",
-                  "- Component model numbers inside bundle/kit descriptions ARE kept — they identify the included items, not the product itself",
-                  "- Displays: start with size + panel type (e.g. '43\" Edge LED professional display with ...'); resolution as 'Name (W×H)' (e.g. '4K UHD (3840×2160)'); brightness in cd/m²; input count as '2× HDMI 2.0'; VESA mount as 'VESA W×H mm mount'; use 'with' connector and end with period",
-                  "",
-                  "EXAMPLES:",
-                  "IN: Z 48 Older style clamping action shockmount for all variants of U 67, U 77, U 87, M 269 | Brand: Sennheiser | Part Number: Z48",
-                  "OUT: Z 48 Clamping shockmount, compatible with U 67, U 77, U 87, M 269.",
-                  "(Z 48 was already in the description — kept as-is)",
-                  "",
-                  "IN: Z 48 - Older style clamping action shockmount for all variants of U 67, U 77, U 87, M 269 | Brand: Sennheiser | Part Number: Z48",
-                  "OUT: Z 48 - Clamping shockmount, compatible with U 67, U 77, U 87, M 269.",
-                  "(Z 48 was already in the description — kept as-is)",
-                  "",
-                  "IN: Short-throw zoom lens | Brand: Barco | Part Number: R9832753",
-                  "OUT: Short-throw zoom lens, 0.65-0.75:1 throw ratio, WUXGA resolution.",
-                  "(R9832753 was NOT in the description — do NOT add it)",
-                  "",
-                  "IN: G LENS (0.65-0.75:1) | Brand: Barco | Part Number: R9832753",
-                  "OUT: Short-throw zoom lens, 0.65-0.75:1 throw ratio, WUXGA resolution.",
-                  "(R9832753 was NOT in the description — do NOT add it)",
-                  "",
-                  "IN: Digital 4 channel access point transceiver, Europe version 1880-1900 MHz... | Brand: Televic",
-                  "OUT: (return unchanged — already good)",
-                  "",
-                  "IN: Pole mount bracket, single/dual loudspeakers | Brand: Biamp | Model: PMB-2RR | Part Number: 910-01230",
-                  "OUT: Pole mount bracket, single/dual loudspeakers, pan-tilt, hot-dipped galvanized steel, stainless steel fasteners, aluminum clamp.",
-                  "(PMB-2RR was NOT in the Current Description — do NOT add it anywhere in the output)",
-                  "",
-                  "IN: High brightness 4K UHD laser projector, single chip DLP, 8000 lumens | Brand: Barco | Model: I600-4K8",
-                  "OUT: 8,000 ISO lumen, 4K UHD (Supershift), 1920 × 1200 native, single-chip DLP laser phosphor projector, sealed optical engine, laser phosphor light source rated for 20,000 hours",
-                  "(key lumen spec goes first; technical abbreviations kept; no trailing period for spec list; model not in description — not added)",
-                  "",
-                  "IN: Power distribution unit 16A type F socket with sensor | Brand: Gude | Model: Expert Power Control 1105-1",
-                  "OUT: PDU, 16 A, safety socket type F, 1 sensor connector, SSL, IPv6, SNMPv3, plastic case, LxHxD: 12×6.5×9.5 cm",
-                  "(type as abbreviation first; dimensions last; lowercase 'plastic case'; no trailing period)",
-                  "",
-                  "IN: Wall controller with LCD for source and volume selection | Brand: Biamp | Model: D-DIWAC",
-                  "OUT: Digital decora style wall control with 2-line LCD display. Buttons for source selection and volume control. Standard 2-wire connection.",
-                  "(sentence-style with periods for control panels; 'digital' lowercase mid-sentence; functional description appropriate here)",
-                  "",
-                  "IN: Drop ceiling speaker 600x600mm commercial | Brand: Biamp | Model: DC220T-M | Part Number: 910-00337",
-                  "OUT: Commercial 600mm × 600mm drop ceiling speaker, 10W, 8 ohms, 70V/100V transformer, white (priced individually, but sold in pairs)",
-                  "(application type first; dimensions next; parenthetical note for sales info; color lowercase at end; no trailing period)",
-                  "",
-                  "IN: Meeting room bundle with DSP, microphone, amp, speakers and cables | Brand: Biamp | Part Number: 930-10007-00025",
-                  "OUT: Certified meeting room bundle; includes TesiraFORTÉ X 400, Parlé TCM-X White, Tesira AMP-450BP, (2) Desono MASK6C-BL Black, (1) Cat5e Cable Black 25' Plenum Rated, (4) Cat5e Cable Black 10' Plenum Rated, (1) Cat5e Cable Black 3', (2) Desono CCA-1",
-                  "(bundle: type + semicolon + 'includes' list; quantities in parentheses; component model numbers kept as they identify included items)",
-                  "",
-                  "IN: 43\" professional display, 4K, Edge LED | Brand: Samsung | Model: QE43T | Part Number: LH43QETELGCXEN",
-                  "OUT: 43\" Edge LED professional display with 4K UHD (3840×2160) resolution, 300 cd/m² brightness, 16/7 operation, MagicInfo Lite SoC, 2× HDMI 2.0 inputs, VESA 200×200 mm mount.",
-                  "(display format: size + panel type first, then 'with' + comma-separated specs; resolution as 'Name (W×H)'; brightness in cd/m²; input count as '2×'; VESA as 'VESA W×H mm mount'; ends with period; model QE43T not in original description — not added)",
-                ].join("\n"),
-              },
+              { role: "system", content: PRODUCT_DESCRIPTION_SYSTEM_PROMPT },
               {
                 role: "user",
-                content: (() => {
-                  // Only include model/part number in the prompt if they already appear
-                  // in the current description — otherwise the AI copies them into the output.
-                  const modelInDesc = modelNumber && description.toLowerCase().includes(modelNumber.toLowerCase());
-                  const partInDesc = partNumber && description.toLowerCase().includes(partNumber.toLowerCase());
-                  return [
-                    `Brand: ${brand || "Unknown"}`,
-                    modelInDesc ? `Model: ${modelNumber}` : "",
-                    partInDesc ? `Part Number: ${partNumber}` : "",
-                    categoryInfo ? `Category: ${categoryInfo}` : "",
-                    `Current Description: ${description || "None"}`,
-                    webSnippets ? `\nWeb context:\n${webSnippets}` : "",
-                  ]
-                    .filter((line) => line !== "")
-                    .join("\n");
-                })(),
+                content: buildDescriptionUserMessage({
+                  brand,
+                  modelNumber,
+                  partNumber,
+                  category: categoryInfo,
+                  description,
+                  webSnippets,
+                }),
               },
             ],
             stream: false,
@@ -426,35 +343,11 @@ export async function POST(req: NextRequest) {
           openaiSemaphore.release();
         }
 
-        // Post-process: if model/part number was NOT in the current visible description,
-        // strip it from the AI output — the AI picks them up from web context snippets.
-        // When in offer mode, use the OfferDetails.ProductDescription as the baseline
-        // (what the user actually sees), because Products.Description may already contain
-        // the model number from a previous enhance run and would cause a false "it was
-        // already there" match.
+        // Post-process: the product's own model/part number is never kept in the output
+        // (the Model/Part fields are for spec lookup only), so strip any that leaked in —
+        // e.g. from the web context snippets. See the MODEL NUMBER RULE in the shared prompt.
         if (enhanced) {
-          // Use first offer row's description as baseline (they all share the same product,
-          // so any one of them is representative for the conservative token-strip check).
-          const offerDesc = offerDetailId && offerDescriptions
-            ? (offerDescriptions.get(offerDetailId) ?? null)
-            : null;
-          // Use whichever baseline is more conservative: if EITHER source lacks the
-          // token, treat it as absent and strip it.
-          const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const tokenAbsent = (token: string): boolean => {
-            if (!token) return false;
-            const t = token.toLowerCase();
-            const inProduct = description.toLowerCase().includes(t);
-            const inOffer = offerDesc !== null ? offerDesc.toLowerCase().includes(t) : inProduct;
-            // Only keep it if it appears in BOTH — if either baseline lacks it, strip it
-            return !(inProduct && inOffer);
-          };
-          const stripToken = (token: string, text: string): string => {
-            if (!tokenAbsent(token)) return text;
-            return text.replace(new RegExp(escapeRegex(token) + "\\s*[-–—]?\\s*", "gi"), "").trim();
-          };
-          enhanced = stripToken(modelNumber, enhanced);
-          enhanced = stripToken(partNumber, enhanced);
+          enhanced = stripModelPartTokens(enhanced, modelNumber, partNumber);
         }
 
         if (!enhanced) {

@@ -65,7 +65,8 @@ export function buildFuzzyTerms(customerName: string): string[] {
 /**
  * Exact-match customer lookup on dbo.TRDR by tax ID (AFM).
  * SoftOne stores the Greek tax registration number in TRDR.AFM.
- * Inactive customers (ISACTIVE = 0) are excluded.
+ * Inactive customers (ISACTIVE = 0) are excluded, and only the primary
+ * company (COMPANY = 1) is searched.
  */
 export async function searchCustomerByTaxId(
   erpPool: ConnectionPool,
@@ -80,7 +81,7 @@ export async function searchCustomerByTaxId(
     .query<CustomerMatch>(`
       SELECT TOP (20) TRDR, CODE, NAME
       FROM dbo.TRDR
-      WHERE AFM = @TaxID AND ISACTIVE = 1
+      WHERE AFM = @TaxID AND ISACTIVE = 1 AND COMPANY = 1
       ORDER BY NAME
     `);
 
@@ -88,9 +89,9 @@ export async function searchCustomerByTaxId(
 }
 
 /**
- * Drops inactive customers (TRDR.ISACTIVE = 0) from a set of matches.
- * Used to post-filter results returned by stored procedures that don't
- * expose ISACTIVE.
+ * Drops inactive customers (TRDR.ISACTIVE = 0) and any rows outside the
+ * primary company (COMPANY <> 1) from a set of matches. Used to post-filter
+ * results returned by stored procedures that don't expose these columns.
  */
 export async function filterActiveCustomers(
   erpPool: ConnectionPool,
@@ -102,7 +103,7 @@ export async function filterActiveCustomers(
   const req = erpPool.request();
   ids.forEach((id, i) => req.input(`id${i}`, sql.Int, id));
   const res = await req.query<{ TRDR: number }>(`
-    SELECT TRDR FROM dbo.TRDR WHERE ISACTIVE = 1 AND TRDR IN (${placeholders})
+    SELECT TRDR FROM dbo.TRDR WHERE ISACTIVE = 1 AND COMPANY = 1 AND TRDR IN (${placeholders})
   `);
   const active = new Set((res.recordset ?? []).map(r => r.TRDR));
   return matches.filter(m => active.has(m.TRDR));
@@ -128,7 +129,7 @@ export async function fuzzyCustomerSearch(
       .query<CustomerMatch>(`
         SELECT TOP (10) TRDR, CODE, NAME
         FROM dbo.TRDR
-        WHERE NAME LIKE @FuzzyTerm AND ISACTIVE = 1
+        WHERE NAME LIKE @FuzzyTerm AND ISACTIVE = 1 AND COMPANY = 1
         ORDER BY NAME
       `);
     for (const row of result.recordset ?? []) {

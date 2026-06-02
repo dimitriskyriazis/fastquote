@@ -7,7 +7,6 @@ import {
   cleanupRows,
   buildCleanedWorkbook,
   formatDecimalForExport,
-  CLEANED_HEADERS,
   type CleanedRow,
 } from "../priceListCleanup";
 import type { ColumnOption } from "../priceListColumnDetection";
@@ -304,9 +303,18 @@ describe("buildCleanedWorkbook", () => {
     const wb = XLSX.read(buffer, { type: "array" });
     const ws = wb.Sheets[wb.SheetNames[0]];
 
-    // Header row order matches the importer's standard columns.
+    // Header row order matches the importer's standard columns (Status omitted — empty here).
     const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 });
-    expect(aoa[0]).toEqual([...CLEANED_HEADERS]);
+    expect(aoa[0]).toEqual([
+      "Part Number",
+      "Model Number",
+      "Description",
+      "List Price",
+      "Cost Price",
+      "Warning",
+      "MOQ",
+      "Weblink",
+    ]);
 
     // List Price (col 3) and Cost Price (col 4) are stored as numeric cells.
     const listCell = ws["D2"]; // row 1 data
@@ -374,5 +382,20 @@ describe("buildCleanedWorkbook", () => {
     expect(listCell.v).toBe("100,00");
     expect(costCell.t).toBe("s");
     expect(costCell.v).toBe("80,00");
+  });
+
+  it("appends a Status column only when a row carries a status", () => {
+    const withStatus: CleanedRow[] = [
+      { ...rows[0], status: "EOL" },
+      { ...rows[1], status: null },
+    ];
+    const buffer = buildCleanedWorkbook(withStatus, XLSX, { includeCost: false });
+    const wb = XLSX.read(buffer, { type: "array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 });
+    const headers = aoa[0] as string[];
+    expect(headers[headers.length - 1]).toBe("Status");
+    const statusCol = headers.indexOf("Status");
+    expect((aoa[1] as unknown[])[statusCol]).toBe("EOL");
   });
 });

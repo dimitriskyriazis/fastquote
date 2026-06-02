@@ -24,6 +24,7 @@ import {
 type SubItem = {
   label: string;
   href: string;
+  requiresRoles?: string[];
 };
 
 type NavItem = {
@@ -46,7 +47,11 @@ const navItems: NavItem[] = [
     label: "Price Lists", href: "/price-lists", icon: <PriceListsIcon />,
     subItems: [
       { label: "Farnell Pricing Lookup", href: "/price-lists/farnell" },
-      { label: "Pricelist Cleanup", href: "/price-lists/cleanup" },
+      {
+        label: "Pricelist Cleanup",
+        href: "/price-lists/cleanup",
+        requiresRoles: ["Administrator", "Developer"],
+      },
     ],
   },
   { label: "Pricing Policies", href: "/pricing-policies", icon: <PricingPoliciesIcon /> },
@@ -102,13 +107,17 @@ export default function SideNav({ initialCollapsed = false }: SideNavProps) {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
   }, []);
 
-  const visibleNavItems = useMemo(
-    () =>
-      navItems.filter((item) => {
-        if (!item.requiresRoles || item.requiresRoles.length === 0) return true;
-        return item.requiresRoles.some((role) => roles.includes(role));
-      }),
+  const canSee = useCallback(
+    (requiresRoles?: string[]) =>
+      !requiresRoles ||
+      requiresRoles.length === 0 ||
+      requiresRoles.some((role) => roles.includes(role)),
     [roles],
+  );
+
+  const visibleNavItems = useMemo(
+    () => navItems.filter((item) => canSee(item.requiresRoles)),
+    [canSee],
   );
 
   return (
@@ -166,7 +175,8 @@ export default function SideNav({ initialCollapsed = false }: SideNavProps) {
             item.href === '/'
               ? pathname === '/' || pathname === ''
               : pathname?.startsWith(item.href);
-          const subActive = item.subItems?.some((sub) => pathname?.startsWith(sub.href)) ?? false;
+          const visibleSubItems = item.subItems?.filter((sub) => canSee(sub.requiresRoles)) ?? [];
+          const subActive = visibleSubItems.some((sub) => pathname?.startsWith(sub.href));
           const expanded = active || subActive;
           return (
             <div key={item.href} className="side-nav__group">
@@ -179,9 +189,9 @@ export default function SideNav({ initialCollapsed = false }: SideNavProps) {
                 <span className="side-nav__icon">{item.icon}</span>
                 <span className="side-nav__label">{item.label}</span>
               </Link>
-              {item.subItems && expanded && (
+              {visibleSubItems.length > 0 && expanded && (
                 <div className="side-nav__sub-items">
-                  {item.subItems.map((sub) => {
+                  {visibleSubItems.map((sub) => {
                     const subItemActive = pathname?.startsWith(sub.href);
                     return (
                       <Link

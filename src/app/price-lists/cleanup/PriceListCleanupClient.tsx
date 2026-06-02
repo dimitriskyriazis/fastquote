@@ -11,7 +11,9 @@ import Link from "next/link";
 import layoutStyles from "../priceListDetail.module.css";
 import styles from "./PriceListCleanup.module.css";
 import { showToastMessage } from "../../../lib/toast";
+import { showConfirmDialog } from "../../../lib/confirm";
 import { detectDecimalFormat } from "../../../lib/parsePriceValue";
+import { detectLifecycleMarker } from "../../../lib/priceListLifecycle";
 import {
   PRICE_LIST_DECIMAL_FORMAT_OPTIONS,
   type PriceListDecimalFormat,
@@ -58,7 +60,12 @@ const OUTPUT_COLUMNS: Array<{ key: keyof CleanedRow; label: string; isCost?: boo
   { key: "warning", label: "Warning" },
   { key: "moq", label: "MOQ" },
   { key: "weblink", label: "Weblink" },
+  { key: "status", label: "Status" },
 ];
+
+// Above this many rows, confirm before sending them all to the AI.
+const AI_CONFIRM_THRESHOLD = 200;
+const AI_CHUNK = 25;
 
 const makeCleanedFileName = (originalName: string): string => {
   const dot = originalName.lastIndexOf(".");
@@ -91,6 +98,14 @@ export default function PriceListCleanupClient() {
   const [keepNonNumericPrice, setKeepNonNumericPrice] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // AI description state.
+  const [brand, setBrand] = useState("");
+  const [aiByPartNumber, setAiByPartNumber] = useState<Record<string, string>>({});
+  const [aiRunning, setAiRunning] = useState(false);
+  const [aiProgress, setAiProgress] = useState<{ done: number; total: number } | null>(null);
+  // Lifecycle / EOL handling: keep marker in description, move to a Status column, or drop rows.
+  const [eolChoice, setEolChoice] = useState<"keep" | "annotate" | "drop">("keep");
 
   const activeSheet = fileValidation.sheets[fileValidation.activeSheetIndex] ?? null;
   const hasPartAndPrice =
@@ -131,11 +146,11 @@ export default function PriceListCleanupClient() {
     [exportFormat],
   );
 
-  // Cleaned rows from a head slice (fast) — used to drive the preview table.
-  const previewSample = useMemo<CleanedRow[] | null>(() => {
+  // All cleaned rows (pre-AI, pre-lifecycle) + the run summary — the single source of truth
+  // for preview, AI input, lifecycle scan, and download.
+  const cleanedAll = useMemo(() => {
     if (!activeSheet || !hasPartAndPrice) return null;
-    const sample = activeSheet.allRows.slice(0, 400);
-    const { rows } = cleanupRows(sample, {
+    return cleanupRows(activeSheet.allRows, {
       selection: activeSheet.selection,
       discountColumnIndex,
       fileWideDiscountPercent: null,
@@ -143,7 +158,6 @@ export default function PriceListCleanupClient() {
       costMode: effectiveCostMode,
       keepNonNumericPrice,
     });
-    return rows;
   }, [
     activeSheet,
     hasPartAndPrice,
@@ -153,17 +167,53 @@ export default function PriceListCleanupClient() {
     keepNonNumericPrice,
   ]);
 
-  const previewRows = useMemo(() => previewSample?.slice(0, 20) ?? null, [previewSample]);
+  // Apply AI descriptions (by part number) and the lifecycle choice. Lifecycle is detected on
+  // the ORIGINAL cleaned description (before any AI rewrite removes the marker).
+  const transformRows = useCallback(
+    (rows: CleanedRow[]): CleanedRow[] => {
+      const out: CleanedRow[] = [];
+      for (const row of rows) {
+        const marker = detectLifecycleMarker(row.description) ?? detectLifecycleMarker(row.warning);
+        if (marker && eolChoice === "drop") continue;
+        const ai = aiByPartNumber[row.partNumber];
+        const next: CleanedRow = { ...row, description: ai ?? row.description };
+        if (marker && eolChoice === "annotate") next.status = marker.match;
+        out.push(next);
+      }
+      return out;
+    },
+    [aiByPartNumber, eolChoice],
+  );
 
-  // Only show columns that carry data (drops Cost when off, and empty optional columns).
+  const transformedAll = useMemo(
+    () => (cleanedAll ? transformRows(cleanedAll.rows) : null),
+    [cleanedAll, transformRows],
+  );
+
+  const previewRows = useMemo(() => transformedAll?.slice(0, 20) ?? null, [transformedAll]);
+
+  const lifecycleCount = useMemo(
+    () =>
+      cleanedAll
+        ? cleanedAll.rows.filter(
+            (r) => detectLifecycleMarker(r.description) || detectLifecycleMarker(r.warning),
+          ).length
+        : 0,
+    [cleanedAll],
+  );
+
+  // Only show columns that carry data (drops Cost when off, empty optional columns, and the
+  // Status column unless EOL annotation added it).
   const outputColumns = useMemo(() => {
-    const used = new Set(usedOutputHeaders(previewSample ?? [], includeCost));
+    const used = new Set(usedOutputHeaders(transformedAll ?? [], includeCost));
     return OUTPUT_COLUMNS.filter((col) => used.has(col.label));
-  }, [previewSample, includeCost]);
+  }, [transformedAll, includeCost]);
 
   const processFile = useCallback(async (nextFile: File) => {
     setFile(nextFile);
     setError(null);
+    setAiByPartNumber({}); // a new file invalidates any prior AI descriptions
+    setEolChoice("keep");
     setFileValidation((prev) => ({
       ...prev,
       status: "checking",
@@ -231,31 +281,88 @@ export default function PriceListCleanupClient() {
     [fileValidation],
   );
 
+  const handleImproveDescriptions = useCallback(async () => {
+    if (!cleanedAll || aiRunning) return;
+    const rows = cleanedAll.rows;
+    if (rows.length === 0) return;
+
+    if (rows.length > AI_CONFIRM_THRESHOLD) {
+      const ok = await showConfirmDialog({
+        title: "Improve descriptions with AI?",
+        message: `This sends ${rows.length} rows to the AI (with web search). It can take a while and incurs cost. Continue?`,
+        confirmLabel: "Run AI",
+      });
+      if (!ok) return;
+    }
+
+    setAiRunning(true);
+    setAiProgress({ done: 0, total: rows.length });
+    setError(null);
+    try {
+      const acc: Record<string, string> = { ...aiByPartNumber };
+      for (let i = 0; i < rows.length; i += AI_CHUNK) {
+        const slice = rows.slice(i, i + AI_CHUNK);
+        const payload = slice.map((r, j) => ({
+          id: i + j,
+          partNumber: r.partNumber,
+          modelNumber: r.modelNumber ?? "",
+          description: r.description ?? "",
+        }));
+        const res = await fetch("/api/price-lists/cleanup/describe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ brand: brand.trim(), useWeb: true, rows: payload }),
+        });
+        if (!res.ok) {
+          const e = await res.json().catch(() => ({}));
+          throw new Error(e?.error || `Request failed (${res.status})`);
+        }
+        const data = await res.json();
+        for (const result of data.results ?? []) {
+          if (result?.newDescription && typeof result.id === "number") {
+            const row = rows[result.id];
+            if (row) acc[row.partNumber] = result.newDescription;
+          }
+        }
+        setAiByPartNumber({ ...acc });
+        setAiProgress({ done: Math.min(i + AI_CHUNK, rows.length), total: rows.length });
+      }
+      const count = Object.keys(acc).length;
+      showToastMessage(`AI improved ${count} description${count === 1 ? "" : "s"}.`, "success", 6000);
+    } catch (err) {
+      console.error("AI describe failed", err);
+      setError(err instanceof Error ? err.message : "AI description generation failed.");
+    } finally {
+      setAiRunning(false);
+      setAiProgress(null);
+    }
+  }, [cleanedAll, aiRunning, aiByPartNumber, brand]);
+
   const handleCleanAndDownload = useCallback(async () => {
-    if (!file || !activeSheet || !hasPartAndPrice) return;
+    if (!file || !transformedAll || !cleanedAll) return;
     setProcessing(true);
     setError(null);
     try {
-      const { rows, summary } = cleanupRows(activeSheet.allRows, {
-        selection: activeSheet.selection,
-        discountColumnIndex,
-        fileWideDiscountPercent: null,
-        decimalFormat: resolvedFormat,
-        costMode: effectiveCostMode,
-        keepNonNumericPrice,
-      });
-      if (rows.length === 0) {
+      if (transformedAll.length === 0) {
         setError(
           "No product rows found after cleanup. Check the Part Number and List Price columns.",
         );
         return;
       }
       const xlsx = await loadXlsx();
-      const buffer = buildCleanedWorkbook(rows, xlsx, { includeCost, numberFormat: exportFormat });
+      const buffer = buildCleanedWorkbook(transformedAll, xlsx, {
+        includeCost,
+        numberFormat: exportFormat,
+      });
       downloadXlsx(buffer, makeCleanedFileName(file.name));
 
-      const parts = [`Cleaned ${summary.kept}`, `trimmed ${summary.trimmed} junk`];
+      const summary = cleanedAll.summary;
+      const parts = [`Cleaned ${transformedAll.length}`, `trimmed ${summary.trimmed} junk`];
       if (summary.zeroPriced > 0) parts.push(`${summary.zeroPriced} priced 0`);
+      if (eolChoice === "drop" && lifecycleCount > 0) parts.push(`${lifecycleCount} EOL dropped`);
+      if (eolChoice === "annotate" && lifecycleCount > 0) parts.push(`${lifecycleCount} EOL flagged`);
+      const aiCount = Object.keys(aiByPartNumber).length;
+      if (aiCount > 0) parts.push(`${aiCount} AI descriptions`);
       if (effectiveCostMode === "compute") {
         parts.push(`cost on ${summary.withCost}`);
         if (summary.capped > 0) parts.push(`${summary.capped} capped`);
@@ -270,14 +377,14 @@ export default function PriceListCleanupClient() {
     }
   }, [
     file,
-    activeSheet,
-    hasPartAndPrice,
-    discountColumnIndex,
-    resolvedFormat,
-    effectiveCostMode,
+    transformedAll,
+    cleanedAll,
     includeCost,
     exportFormat,
-    keepNonNumericPrice,
+    eolChoice,
+    lifecycleCount,
+    aiByPartNumber,
+    effectiveCostMode,
   ]);
 
   const showNoDiscountWarning = showDiscountControls && discountColumnIndex == null;
@@ -578,6 +685,91 @@ export default function PriceListCleanupClient() {
               </label>
             </div>
 
+            <div className={styles.sectionHeading}>Descriptions (AI)</div>
+            <div className={styles.optionsRow}>
+              <label className={styles.mappingField}>
+                <span className={styles.mappingLabel}>Brand (for AI context)</span>
+                <input
+                  type="text"
+                  className={styles.input}
+                  value={brand}
+                  onChange={(event) => setBrand(event.target.value)}
+                  placeholder="e.g. Samsung"
+                />
+              </label>
+              <div className={styles.mappingField}>
+                <span className={styles.mappingLabel}>&nbsp;</span>
+                <button
+                  type="button"
+                  className={styles.submitButton}
+                  onClick={() => void handleImproveDescriptions()}
+                  disabled={!hasPartAndPrice || aiRunning}
+                >
+                  {aiRunning
+                    ? aiProgress
+                      ? `Improving ${aiProgress.done}/${aiProgress.total}…`
+                      : "Improving…"
+                    : "Improve descriptions with AI"}
+                </button>
+              </div>
+            </div>
+            <div className={styles.intro}>
+              Rewrites the Description column to the Telmaco house style (uses web search for extra
+              specs). Nothing is saved — only your downloaded file changes.
+              {Object.keys(aiByPartNumber).length > 0 && !aiRunning ? (
+                <>
+                  {" "}
+                  <strong>{Object.keys(aiByPartNumber).length}</strong> improved.{" "}
+                  <button
+                    type="button"
+                    className={styles.sheetTab}
+                    onClick={() => setAiByPartNumber({})}
+                  >
+                    Clear AI descriptions
+                  </button>
+                </>
+              ) : null}
+            </div>
+
+            {lifecycleCount > 0 ? (
+              <>
+                <div className={styles.sectionHeading}>Lifecycle / EOL</div>
+                <div className={styles.warningNote}>
+                  {lifecycleCount} row{lifecycleCount === 1 ? "" : "s"} contain lifecycle markers
+                  (EOL, discontinued, successor, …).
+                  <span className={styles.toggleRow} style={{ marginTop: 6 }}>
+                    <label className={styles.radioLabel}>
+                      <input
+                        type="radio"
+                        name="eolChoice"
+                        checked={eolChoice === "keep"}
+                        onChange={() => setEolChoice("keep")}
+                      />
+                      Keep marker in description
+                    </label>
+                    <label className={styles.radioLabel}>
+                      <input
+                        type="radio"
+                        name="eolChoice"
+                        checked={eolChoice === "annotate"}
+                        onChange={() => setEolChoice("annotate")}
+                      />
+                      Add a Status column
+                    </label>
+                    <label className={styles.radioLabel}>
+                      <input
+                        type="radio"
+                        name="eolChoice"
+                        checked={eolChoice === "drop"}
+                        onChange={() => setEolChoice("drop")}
+                      />
+                      Drop these rows
+                    </label>
+                  </span>
+                </div>
+              </>
+            ) : null}
+
             <div className={styles.previewSection}>
               <div className={styles.previewHeading}>
                 <span>Cleaned preview (first product rows)</span>
@@ -611,7 +803,7 @@ export default function PriceListCleanupClient() {
                               key={`${rowIndex}-${column.key}`}
                               className={column.isCost ? styles.previewCost : ""}
                             >
-                              {formatPreviewCell(column.key, row[column.key])}
+                              {formatPreviewCell(column.key, row[column.key] ?? null)}
                             </td>
                           ))}
                         </tr>
