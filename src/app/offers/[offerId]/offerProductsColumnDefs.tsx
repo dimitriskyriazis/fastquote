@@ -40,7 +40,7 @@ import {
   DESCRIPTION_PASTE_BLOCKLIST,
   type RequestedDisplayFieldKey,
 } from './offerProductsUtils';
-import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isNonPrintableOfferProductRow, resolveOfferProductRowType } from '../../../lib/offerProductRows';
+import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductService, isNonPrintableOfferProductRow, resolveOfferProductRowType } from '../../../lib/offerProductRows';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 
 const otherCurrencyAmountFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
@@ -413,6 +413,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
             isOfferProductCategory(row)
             || isOfferProductComment(row)
             || isOfferProductProduct(row)
+            || isOfferProductService(row)
           );
         },
         cellEditor: MultilineTextCellEditor,
@@ -653,6 +654,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
           isOfferProductCategory(row)
           || isOfferProductComment(row)
           || isOfferProductProduct(row)
+          || isOfferProductService(row)
         );
       },
       cellEditor: MultilineTextCellEditor,

@@ -66,6 +66,7 @@ type ProductRow = {
   IsComment: boolean | number | null;
   IsPrintable: boolean | number | null;
   IsService: boolean | number | null;
+  ServiceType: string | null;
   IsOption: boolean | number | null;
   Quantity: number | null;
   ProductDescription: string | null;
@@ -220,6 +221,7 @@ export async function GET(
           od.IsComment,
           od.IsPrintable,
           od.IsService,
+          od.ServiceType,
           od.IsOption,
           od.Quantity,
           od.ProductDescription,
@@ -288,7 +290,23 @@ export async function GET(
     );
 
     // ── Transform to OfferPdfData ──────────────────────────────────────
-    const products: OfferProductRow[] = (productsResult.recordset ?? []).map((r) => ({
+    const products: OfferProductRow[] = (productsResult.recordset ?? []).map((r) => {
+      // Lot services are priced as a single lump sum: the PDF shows quantity 1
+      // and surfaces the line totals in the per-unit price columns (list/net),
+      // rather than a per-unit price. TotalPrice/TotalNet are left untouched so
+      // the line/category totals and grand totals stay correct.
+      const isLotService = !!r.IsService && (r.ServiceType ?? '').trim() === 'ServLot';
+      const rawQty = toFiniteNumberOrNull(r.Quantity);
+      const totalListAmount = toFiniteNumberOrNull(r.TotalPrice)
+        ?? (toFiniteNumberOrNull(r.ListPrice) != null && rawQty != null
+          ? (toFiniteNumberOrNull(r.ListPrice) as number) * rawQty
+          : toFiniteNumberOrNull(r.ListPrice));
+      const totalNetAmount = toFiniteNumberOrNull(r.TotalNet)
+        ?? (toFiniteNumberOrNull(r.NetUnitPrice) != null && rawQty != null
+          ? (toFiniteNumberOrNull(r.NetUnitPrice) as number) * rawQty
+          : toFiniteNumberOrNull(r.TotalPrice));
+
+      return {
       treeOrdering: r.TreeOrdering,
       displayNo: displayNoById.get(String(r.OfferDetailID)) ?? r.TreeOrdering,
       isCategory: !!r.IsCategory,
@@ -298,7 +316,7 @@ export async function GET(
       // A service is non-printable only when IsPrintable is explicitly falsy
       // (matching resolveOfferProductRowType); a null IsPrintable is printable.
       hidden: !!r.IsService && (r.IsPrintable === 0 || r.IsPrintable === false),
-      quantity: r.Quantity,
+      quantity: isLotService ? 1 : r.Quantity,
       brandName: r.BrandName,
       modelNumber: r.ModelNumber,
       partNumber: r.PartNumber,
@@ -307,18 +325,19 @@ export async function GET(
       origin: r.Origin,
       comment: r.Comment,
       delivery: r.Delivery,
-      unitPrice: r.NetUnitPrice,
+      unitPrice: isLotService ? totalNetAmount : r.NetUnitPrice,
       totalPrice: r.TotalPrice,
       totalNet: r.TotalNet,
       webLink: r.WebLink,
-      listPrice: r.ListPrice,
+      listPrice: isLotService ? totalListAmount : r.ListPrice,
       customerDiscount: r.CustomerDiscount,
       requestedBrand: r.RequestedBrand,
       requestedPartNo: r.RequestedPartNo,
       requestedModelNo: r.RequestedModelNo,
       requestedDescription: r.RequestedDescription,
       requestedQuantity: r.RequestedQuantity,
-    }));
+      };
+    });
 
     const offerDateStr =
       header.OfferDate instanceof Date
