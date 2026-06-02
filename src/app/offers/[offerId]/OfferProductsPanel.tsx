@@ -7539,6 +7539,19 @@ const requestedColumnDefsMap = useMemo(
       return;
     }
 
+    // Entering a real numeric value on a comment row that has no quantity yet
+    // defaults the quantity to 1, so the value flows through to the row/offer
+    // total instead of being multiplied by a blank quantity. Comment rows are
+    // created with Quantity = 0 (which renders as a blank cell), so a 0 counts
+    // as "no quantity" here just like null. Only triggers for a non-zero new
+    // value — clearing a field (which normalizes to 0) must not silently
+    // assign a quantity.
+    const currentQuantity = coerceNumber((event.data as { Quantity?: unknown }).Quantity);
+    const shouldAutoSetCommentQuantity =
+      isOfferProductComment(event.data)
+      && (currentQuantity == null || currentQuantity === 0)
+      && normalizedNewValue !== 0;
+
     const revertValue = () => {
       try { event.node?.setDataValue?.(field, event.oldValue ?? ''); } catch { /* noop */ }
     };
@@ -7557,10 +7570,12 @@ const requestedColumnDefsMap = useMemo(
 
     const runUpdate = async () => {
       try {
+        const updateEntry: Record<string, unknown> = { OfferDetailID: offerDetailId, [field]: normalizedNewValue };
+        if (shouldAutoSetCommentQuantity) updateEntry.Quantity = 1;
         const res = await fetch(resolvedEndpoint, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ updates: [{ OfferDetailID: offerDetailId, [field]: normalizedNewValue }] }),
+          body: JSON.stringify({ updates: [updateEntry] }),
         });
         const payload = (await res.json().catch(() => null)) as {
           ok?: boolean;
@@ -7601,6 +7616,13 @@ const requestedColumnDefsMap = useMemo(
             registerRealtimeCellUpdate(offerDetailId, derivedField as string, newDerived);
             try { event.node?.setDataValue(derivedField as string, newDerived); } catch { /* noop */ }
           });
+        }
+        // Reflect the auto-assigned quantity on the grid node before totals are
+        // recalculated below. registerRealtimeCellUpdate suppresses the echoed
+        // Quantity edit so handleQuantityEdit doesn't fire a redundant PATCH.
+        if (shouldAutoSetCommentQuantity && event.node) {
+          registerRealtimeCellUpdate(offerDetailId, 'Quantity', 1);
+          try { event.node.setDataValue('Quantity', 1); } catch { /* noop */ }
         }
         const toastKey = `${offerDetailId}:${field}:${String(normalizedNewValue)}`;
         const now = Date.now();
