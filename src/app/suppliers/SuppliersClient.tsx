@@ -19,6 +19,7 @@ import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { showToastMessage } from "../../lib/toast";
 import { GridRowDeletion } from "../../lib/gridRowDeletion";
 import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
+import { coerceRoles, roleHasPermission } from "../../lib/roles";
 import { useAuditUser } from "../components/AuditUserProvider";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
@@ -107,6 +108,10 @@ function normalizeSupplierContextMenuItems(
 export default function SuppliersClient({ countries }: Props) {
   useRouter();
   const { roles } = useAuditUser();
+  const canManage = useMemo(
+    () => roleHasPermission(coerceRoles([...roles]), "manageBrandsSuppliers"),
+    [roles],
+  );
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
@@ -247,27 +252,27 @@ export default function SuppliersClient({ countries }: Props) {
         field: "Name",
         headerName: "Supplier Name",
         filter: "agTextColumnFilter",
-        editable: true,
+        editable: canManage,
       },
       {
         field: "TaxID",
         headerName: "Tax ID",
         filter: "agTextColumnFilter",
-        editable: true,
+        editable: canManage,
         width: 150,
       },
       {
         field: "Address",
         headerName: "Address",
         filter: "agTextColumnFilter",
-        editable: true,
+        editable: canManage,
       },
       {
         field: "Country",
         headerName: "Country",
         filter: "agTextColumnFilter",
         enableRowGroup: true,
-        editable: true,
+        editable: canManage,
         cellEditor: "agRichSelectCellEditor",
         cellEditorParams: {
           values: countryOptions,
@@ -286,34 +291,34 @@ export default function SuppliersClient({ countries }: Props) {
         headerName: "City",
         filter: "agTextColumnFilter",
         enableRowGroup: true,
-        editable: true,
+        editable: canManage,
       },
       {
         field: "PostalCode",
         headerName: "Postal Code",
         filter: "agTextColumnFilter",
-        editable: true,
+        editable: canManage,
         width: 130,
       },
       {
         field: "Phone",
         headerName: "Phone",
         filter: "agTextColumnFilter",
-        editable: true,
+        editable: canManage,
         width: 150,
       },
       {
         field: "WebSite",
         headerName: "Website",
         filter: "agTextColumnFilter",
-        editable: true,
+        editable: canManage,
         width: 200,
       },
       {
         field: "Comments",
         headerName: "Comments",
         filter: "agTextColumnFilter",
-        editable: true,
+        editable: canManage,
       },
       {
         field: "Enabled",
@@ -329,7 +334,7 @@ export default function SuppliersClient({ countries }: Props) {
           },
         },
         width: 120,
-        editable: true,
+        editable: canManage,
         cellEditor: "agSelectCellEditor",
         cellEditorParams: {
           values: enabledOptions,
@@ -341,7 +346,7 @@ export default function SuppliersClient({ countries }: Props) {
         },
       },
     ],
-    [enabledOptions, countryOptions],
+    [enabledOptions, countryOptions, canManage],
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
@@ -419,13 +424,15 @@ export default function SuppliersClient({ countries }: Props) {
             ) : undefined
           }
           rightActions={
-            <button
-              type="button"
-              className={`page-header-button ${styles.headerButton}`}
-              onClick={() => setIsAddSupplierOpen(true)}
-            >
-              Add Supplier
-            </button>
+            canManage ? (
+              <button
+                type="button"
+                className={`page-header-button ${styles.headerButton}`}
+                onClick={() => setIsAddSupplierOpen(true)}
+              >
+                Add Supplier
+              </button>
+            ) : undefined
           }
         >
           <GridQuickSearchProvider>

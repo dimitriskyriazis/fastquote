@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, useMemo, type DragEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { showToastMessage } from '../../../../lib/toast';
 import LookupModal from '../../../components/LookupModal';
 import {
@@ -118,6 +119,23 @@ export default function ExportPdfButton({ offerId, className }: Props) {
   const [loadingSettings, setLoadingSettings] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  // The app scales <body> with `transform: scale(0.9)` (see base.css). Any
+  // descendant <iframe> gets rasterized and resampled through that transform,
+  // which makes the PDF preview look blurry even though the file itself is
+  // crisp. Mount the preview into a node attached to <html> (outside <body>)
+  // so the iframe renders at native 1:1 resolution.
+  const [previewPortalEl, setPreviewPortalEl] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = document.createElement('div');
+    el.setAttribute('data-pdf-preview-root', '');
+    el.style.fontFamily = 'Arial, Helvetica, sans-serif';
+    document.documentElement.appendChild(el);
+    setPreviewPortalEl(el);
+    return () => {
+      el.remove();
+    };
+  }, []);
 
   const openMenuWithValidation = useCallback(async () => {
     if (showMenu) {
@@ -715,24 +733,30 @@ export default function ExportPdfButton({ offerId, className }: Props) {
           )}
         </div>
       )}
-      <LookupModal
-        open={!!previewUrl}
-        title="PDF Preview"
-        confirmLabel="Download"
-        cancelLabel="Close"
-        onConfirm={handlePreviewDownload}
-        onClose={handlePreviewClose}
-        overlayStyle={{ padding: 0 }}
-        cardStyle={{ width: '100vw', maxWidth: '100vw', height: '100vh', maxHeight: '100vh', borderRadius: 0 }}
-      >
-        {previewUrl && (
-          <iframe
-            src={previewUrl}
-            style={{ width: '100%', height: 'calc(100vh - 120px)', border: 'none' }}
+      {previewPortalEl &&
+        createPortal(
+          <LookupModal
+            open={!!previewUrl}
             title="PDF Preview"
-          />
+            confirmLabel="Download"
+            cancelLabel="Close"
+            onConfirm={handlePreviewDownload}
+            onClose={handlePreviewClose}
+            draggable={false}
+            resizable={false}
+            overlayStyle={{ padding: 0 }}
+            cardStyle={{ width: '100vw', maxWidth: '100vw', height: '100vh', maxHeight: '100vh', borderRadius: 0 }}
+          >
+            {previewUrl && (
+              <iframe
+                src={previewUrl}
+                style={{ width: '100%', height: 'calc(100vh - 120px)', border: 'none' }}
+                title="PDF Preview"
+              />
+            )}
+          </LookupModal>,
+          previewPortalEl,
         )}
-      </LookupModal>
     </div>
   );
 }

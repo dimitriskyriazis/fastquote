@@ -283,7 +283,8 @@ async function readGridRequest(req: NextRequest): Promise<GridRequest> {
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/suppliers');
   try {
-    const auth = await requirePermission(req, "manageBrandsSuppliers");
+    // Read-only grid data: viewable by Simple Users as well as the management roles.
+    const auth = await requirePermission(req, "viewBrandsSuppliers");
     if (!auth.ok) return auth.response;
 
     const gridRequest = await readGridRequest(req);

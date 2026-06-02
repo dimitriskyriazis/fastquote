@@ -13,6 +13,7 @@ export type Permission =
   | 'managePriceLists'
   | 'managePricingPolicies'
   | 'manageBrandsSuppliers'
+  | 'viewBrandsSuppliers'
   | 'manageCitiesCountries'
   | 'manageMarkets'
   | 'createOffers'
@@ -88,6 +89,15 @@ export const roleHasPermission = (roles: readonly AppRole[], permission: Permiss
     // Permission ID 40: brands & suppliers management
     case 'manageBrandsSuppliers':
       return (
+        roles.includes('Sales Team') ||
+        roles.includes('Sales Manager') ||
+        roles.includes('Back Office User')
+      );
+    // Read-only access to brands & suppliers (superset of the management roles
+    // above, plus Simple User). Gates the suppliers grid read endpoint.
+    case 'viewBrandsSuppliers':
+      return (
+        roles.includes('Simple User') ||
         roles.includes('Sales Team') ||
         roles.includes('Sales Manager') ||
         roles.includes('Back Office User')
