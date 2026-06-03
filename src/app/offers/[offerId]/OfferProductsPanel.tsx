@@ -9248,7 +9248,7 @@ const requestedColumnDefsMap = useMemo(
                       setExtraDiscountPopoverOpen((open) => !open);
                     }}
                   >
-                    {listExtraDiscountActive || netExtraDiscountActive ? 'Add. discount ✎' : '+ Add. discount'}
+                    {listExtraDiscountActive || netExtraDiscountActive ? 'Additional Discounts ✎' : '+ Additional Discounts'}
                   </button>
                   {extraDiscountPopoverOpen ? (
                     <div
