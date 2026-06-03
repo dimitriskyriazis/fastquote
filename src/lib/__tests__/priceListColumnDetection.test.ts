@@ -5,6 +5,7 @@ import {
   buildSuggestions,
   autoSelectUniqueSuggestions,
   headerContainsKeyword,
+  buildValidationFromRows,
 } from "../priceListColumnDetection";
 
 describe("header detection", () => {
@@ -36,6 +37,27 @@ describe("header detection", () => {
     expect(columns[selection.partNumber as number].label).toBe("Product code");
     expect(selection.listPrice).not.toBeNull();
     expect(columns[selection.listPrice as number].label).toBe("List Price");
+  });
+});
+
+describe("buildValidationFromRows (PDF-extracted rows)", () => {
+  it("builds a valid single-sheet validation and maps required columns", () => {
+    const aoa: unknown[][] = [
+      ["Product code", "Description", "List Price"],
+      ["CS0622", "Cloud service annual fee", "357 EUR"],
+      ["CS0604", "Mandatory license", "120 EUR"],
+    ];
+    const validation = buildValidationFromRows("CUE PDF", aoa);
+    expect(validation.status).toBe("valid");
+    expect(validation.sheets).toHaveLength(1);
+    const sheet = validation.sheets[0];
+    expect(sheet.selection.partNumber).not.toBeNull();
+    expect(sheet.selection.listPrice).not.toBeNull();
+    expect(sheet.allRows).toHaveLength(2);
+  });
+
+  it("returns invalid for empty input", () => {
+    expect(buildValidationFromRows("PDF", []).status).toBe("invalid");
   });
 });
 

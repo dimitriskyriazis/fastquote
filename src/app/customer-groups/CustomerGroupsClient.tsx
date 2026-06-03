@@ -121,6 +121,14 @@ export default function CustomerGroupsClient() {
         editable: true,
       },
       {
+        field: "CustomerCount",
+        headerName: "Count",
+        type: "numericColumn",
+        width: 110,
+        filter: false,
+        editable: false,
+      },
+      {
         field: "Enabled",
         headerName: "Enabled",
         filter: "agSetColumnFilter",

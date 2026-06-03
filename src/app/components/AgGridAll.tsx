@@ -772,6 +772,233 @@ const buildFilterModelForColumnValue = (colDef: ColDef | null | undefined, value
   }
 };
 
+// Synchronous clipboard write via execCommand. Unlike the async Clipboard API
+// (navigator.clipboard.*), this does NOT require the document to have focus, so it works
+// when invoked from an AG Grid context-menu click (where the async API rejects silently).
+// Returns true on success. Pass `html` to also place a text/html flavour (preserves links).
+const writeToClipboardSync = (text: string, html: string): boolean => {
+  if (typeof document === 'undefined') return false;
+  try {
+    if (html) {
+      const selection = window.getSelection();
+      const saved: Range[] = [];
+      if (selection) {
+        for (let i = 0; i < selection.rangeCount; i += 1) saved.push(selection.getRangeAt(i));
+      }
+      const node = document.createElement('div');
+      node.setAttribute('contenteditable', 'true');
+      node.style.cssText = 'position:fixed;left:-9999px;top:0;white-space:pre;';
+      node.innerHTML = html;
+      document.body.appendChild(node);
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      const ok = document.execCommand('copy');
+      document.body.removeChild(node);
+      selection?.removeAllRanges();
+      saved.forEach((r) => selection?.addRange(r));
+      if (ok) return true;
+      // fall through to the plain-text path if the rich copy failed
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.cssText = 'position:fixed;left:-9999px;top:0;';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
+};
+
+// Robust clipboard write: synchronous execCommand first (focus-independent, works from
+// context-menu clicks), with the async Clipboard API as a fallback.
+const copyToClipboardRobust = (text: string, html: string): void => {
+  if (writeToClipboardSync(text, html)) return;
+  if (html && typeof navigator?.clipboard?.write === 'function') {
+    navigator.clipboard
+      .write([
+        new ClipboardItem({
+          'text/plain': new Blob([text], { type: 'text/plain' }),
+          'text/html': new Blob([html], { type: 'text/html' }),
+        }),
+      ])
+      .catch(() => {
+        navigator.clipboard?.writeText(text).catch(() => { /* noop */ });
+      });
+  } else {
+    navigator.clipboard?.writeText(text).catch(() => { /* noop */ });
+  }
+};
+
+// CONTEXT-MENU COPY — custom "Copy" / "Copy with Headers" / "Copy with Group Headers".
+// AG Grid's built-in copy items copy the current *cell selection*, which the app's global
+// "deselect on outside click" logic empties out on grids that aren't multi-row-select — so
+// the built-in copy silently does nothing there (Ctrl+C still works because it reads the
+// focused cell directly). These custom items instead read the right-clicked cell — and any
+// active range — straight from the menu `params`, so they always have data to copy, then
+// write it via copyToClipboardRobust (focus-independent). Hyperlinked cells keep their HTML
+// so links survive a paste into Excel.
+const escClipHtml = (s: string): string =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+const resolveClipboardCellLink = (field: string, rowData: Record<string, unknown>): string => {
+  if (field === 'PartNumber' || field === 'ModelNumber') {
+    const webLink = typeof rowData.WebLink === 'string' ? rowData.WebLink.trim() : '';
+    if (webLink) {
+      if (field === 'PartNumber') return webLink;
+      const pn = typeof rowData.PartNumber === 'string' ? rowData.PartNumber.trim() : '';
+      if (!pn) return webLink;
+    }
+  } else if (field === 'RequestedPartNo' || field === 'RequestedModelNo') {
+    const webLink = typeof rowData.RequestedWebLink === 'string' ? rowData.RequestedWebLink.trim() : '';
+    if (webLink) {
+      if (field === 'RequestedPartNo') return webLink;
+      const pn = typeof rowData.RequestedPartNo === 'string' ? rowData.RequestedPartNo.trim() : '';
+      if (!pn) return webLink;
+    }
+  }
+  return '';
+};
+
+const clipboardColumnHeader = (column: Column): string => {
+  const colDef = column.getColDef?.() ?? {};
+  return String(colDef.headerName ?? colDef.field ?? column.getColId?.() ?? '');
+};
+
+const clipboardColumnField = (column: Column): string => {
+  const colDef = column.getColDef?.() ?? {};
+  return String(colDef.field ?? column.getColId?.() ?? '');
+};
+
+const clipboardCellText = (
+  api: GridApi<RowData> | null | undefined,
+  node: IRowNode<RowData> | null | undefined,
+  column: Column,
+): string => {
+  const colDef = column.getColDef?.() ?? {};
+  const field = colDef.field ?? column.getColId?.();
+  const raw = node?.data && field != null ? (node.data as Record<string, unknown>)[field] : undefined;
+  const formatter = colDef.valueFormatter;
+  if (typeof formatter === 'function') {
+    try {
+      const formatted = (formatter as unknown as (p: unknown) => unknown)({
+        value: raw, data: node?.data, node, colDef, column, api, context: undefined,
+      });
+      if (formatted != null) return String(formatted);
+    } catch { /* ignore formatter errors, fall back to raw value */ }
+  }
+  return raw == null ? '' : String(raw);
+};
+
+type ClipboardCell = { text: string; link: string };
+
+const buildContextMenuCopyPayload = (
+  params: GetContextMenuItemsParams<RowData>,
+  includeHeaders: boolean,
+): { text: string; html: string } => {
+  const api = params.api ?? null;
+  const ranges = api?.getCellRanges?.() ?? [];
+  const textRows: string[] = [];
+  const htmlRows: string[] = [];
+  let hasLinks = false;
+
+  const pushRow = (cells: ClipboardCell[]) => {
+    textRows.push(cells.map((c) => c.text).join('\t'));
+    htmlRows.push(
+      '<tr>' + cells.map((c) => {
+        if (c.link) { hasLinks = true; return `<td><a href="${escClipHtml(c.link)}">${escClipHtml(c.text)}</a></td>`; }
+        return `<td>${escClipHtml(c.text)}</td>`;
+      }).join('') + '</tr>',
+    );
+  };
+
+  if (api && ranges.length > 0) {
+    ranges.forEach((range, rangeIndex) => {
+      const columns: Column[] = (range as { columns?: Column[] }).columns ?? [];
+      const startIdx = Math.min(
+        (range as { startRow?: { rowIndex: number } }).startRow?.rowIndex ?? 0,
+        (range as { endRow?: { rowIndex: number } }).endRow?.rowIndex ?? 0,
+      );
+      const endIdx = Math.max(
+        (range as { startRow?: { rowIndex: number } }).startRow?.rowIndex ?? 0,
+        (range as { endRow?: { rowIndex: number } }).endRow?.rowIndex ?? 0,
+      );
+      if (includeHeaders && rangeIndex === 0) {
+        pushRow(columns.map((column) => ({ text: clipboardColumnHeader(column), link: '' })));
+      }
+      for (let rowIdx = startIdx; rowIdx <= endIdx; rowIdx += 1) {
+        const node = api.getDisplayedRowAtIndex(rowIdx);
+        if (!node?.data) continue;
+        const rowData = node.data as Record<string, unknown>;
+        pushRow(columns.map((column) => ({
+          text: clipboardCellText(api, node, column),
+          link: resolveClipboardCellLink(clipboardColumnField(column), rowData),
+        })));
+      }
+    });
+  } else if (params.column && params.node) {
+    const column = params.column;
+    const node = params.node;
+    const rowData = (node.data ?? {}) as Record<string, unknown>;
+    if (includeHeaders) pushRow([{ text: clipboardColumnHeader(column), link: '' }]);
+    pushRow([{ text: clipboardCellText(api, node, column), link: resolveClipboardCellLink(clipboardColumnField(column), rowData) }]);
+  } else if (params.value != null) {
+    pushRow([{ text: String(params.value), link: '' }]);
+  }
+
+  return { text: textRows.join('\n'), html: hasLinks ? `<table>${htmlRows.join('')}</table>` : '' };
+};
+
+const CONTEXT_MENU_COPY_ICON = '<span class="ag-icon ag-icon-copy" aria-hidden="true"></span>';
+
+const makeContextMenuCopyItem = (
+  params: GetContextMenuItemsParams<RowData>,
+  label: string,
+  includeHeaders: boolean,
+): MenuItemDef<RowData> => {
+  // Compute the payload NOW, at menu-build time, while the cell selection is still intact.
+  // The app's global "deselect on outside click" clears the cell range when a menu item is
+  // clicked, so reading the range inside the action would miss a multi-cell selection and
+  // only ever copy the single right-clicked cell.
+  const { text, html } = buildContextMenuCopyPayload(params, includeHeaders);
+  return {
+    name: label,
+    icon: CONTEXT_MENU_COPY_ICON,
+    disabled: !text && !html,
+    action: () => {
+      if (!text && !html) return;
+      copyToClipboardRobust(text, html);
+    },
+  };
+};
+
+// Replace AG Grid's default copy string items (including inside submenus) with the custom ones.
+const replaceContextMenuCopyItems = (
+  items: Array<MenuItemDef<RowData> | DefaultMenuItem | string>,
+  params: GetContextMenuItemsParams<RowData>,
+): Array<MenuItemDef<RowData> | DefaultMenuItem | string> =>
+  items.map((item) => {
+    if (item === 'copy') return makeContextMenuCopyItem(params, 'Copy', false);
+    if (item === 'copyWithHeaders') return makeContextMenuCopyItem(params, 'Copy with Headers', true);
+    if (item === 'copyWithGroupHeaders') return makeContextMenuCopyItem(params, 'Copy with Group Headers', true);
+    const subMenu = typeof item === 'object' && item ? (item as MenuItemDef<RowData>).subMenu : undefined;
+    if (Array.isArray(subMenu)) {
+      return {
+        ...(item as MenuItemDef<RowData>),
+        subMenu: replaceContextMenuCopyItems(
+          subMenu as Array<MenuItemDef<RowData> | DefaultMenuItem | string>,
+          params,
+        ),
+      };
+    }
+    return item;
+  });
+
 const createFilterByMenuItem = (params: GetContextMenuItemsParams<RowData>): MenuItemDef<RowData> | null => {
   const column = params.column;
   const api = params.api;
@@ -3665,7 +3892,10 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       return defaultItems;
     };
 
-    const menuItems = resolveMenuItems().filter((item) => item !== 'cut');
+    const menuItems = replaceContextMenuCopyItems(
+      resolveMenuItems().filter((item) => item !== 'cut'),
+      params,
+    );
     const deleteMenuItem: MenuItemDef<RowData> = {
       name: 'Delete',
       action: (actionParams) => {
@@ -4909,17 +5139,16 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     wrapGridApiRefreshers(gridApiRef.current);
   }, [wrapGridApiRefreshers]);
 
-  // CLIPBOARD - Write HTML to clipboard so hyperlinks survive paste into Excel
+  // CLIPBOARD - Copy grid data reliably from BOTH Ctrl+C and the context-menu "Copy" items.
+  // The async Clipboard API only resolves while the document has focus (true during a Ctrl+C
+  // keydown, but NOT after clicking an AG Grid context-menu item), so menu copies used to
+  // fail silently. copyToClipboardRobust() copies synchronously via execCommand instead.
+  // Hyperlinked cells still get an HTML table so links survive a paste into Excel.
   const sendToClipboard = useCallback((params: { data: string }) => {
     const api = gridRef.current?.api ?? null;
-    if (!api) {
-      navigator.clipboard?.writeText(params.data).catch(() => { /* noop */ });
-      return;
-    }
-
-    const cellRanges = api.getCellRanges?.();
-    if (!cellRanges || cellRanges.length === 0) {
-      navigator.clipboard?.writeText(params.data).catch(() => { /* noop */ });
+    const cellRanges = api?.getCellRanges?.();
+    if (!api || !cellRanges || cellRanges.length === 0) {
+      copyToClipboardRobust(params.data ?? '', '');
       return;
     }
 
@@ -4986,49 +5215,8 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       }
     });
 
-    const writeTextFallback = (text: string) => {
-      // Async Clipboard API – works when the page has focus & permissions
-      if (navigator.clipboard?.writeText) {
-        navigator.clipboard.writeText(text).catch(() => {
-          // Fallback: use a hidden textarea + execCommand for cross-browser support
-          try {
-            const ta = document.createElement('textarea');
-            ta.value = text;
-            ta.style.position = 'fixed';
-            ta.style.left = '-9999px';
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand('copy');
-            document.body.removeChild(ta);
-          } catch { /* last resort – nothing we can do */ }
-        });
-      } else {
-        try {
-          const ta = document.createElement('textarea');
-          ta.value = text;
-          ta.style.position = 'fixed';
-          ta.style.left = '-9999px';
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand('copy');
-          document.body.removeChild(ta);
-        } catch { /* noop */ }
-      }
-    };
-
-    if (hasLinks && typeof navigator?.clipboard?.write === 'function') {
-      const html = `<table>${htmlRows.join('')}</table>`;
-      navigator.clipboard.write([
-        new ClipboardItem({
-          'text/plain': new Blob([params.data], { type: 'text/plain' }),
-          'text/html': new Blob([html], { type: 'text/html' }),
-        }),
-      ]).catch(() => {
-        writeTextFallback(params.data);
-      });
-    } else {
-      writeTextFallback(params.data);
-    }
+    const html = hasLinks ? `<table>${htmlRows.join('')}</table>` : '';
+    copyToClipboardRobust(params.data ?? '', html);
   }, []);
 
   const handleClearUserFilters = useCallback(() => {

@@ -36,6 +36,7 @@ type CustomerGroupRow = {
   CustomerGroupID: number | null;
   Name: string | null;
   Code: string | null;
+  CustomerCount: number | null;
   Enabled: boolean | number | null;
 };
 
@@ -175,6 +176,7 @@ export async function POST(req: NextRequest) {
         dbo.CustomerGroups.ID AS CustomerGroupID,
         dbo.CustomerGroups.Name,
         dbo.CustomerGroups.Code,
+        (SELECT COUNT(*) FROM dbo.Customers c WHERE c.CustomerGroupID = dbo.CustomerGroups.ID) AS CustomerCount,
         dbo.CustomerGroups.Enabled
       FROM dbo.CustomerGroups
       ${combinedWhere}

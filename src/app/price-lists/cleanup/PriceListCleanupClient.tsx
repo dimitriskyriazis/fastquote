@@ -23,9 +23,11 @@ import {
   INITIAL_VALIDATION,
   evaluateSelection,
   validateFileStructure,
+  buildValidationFromRows,
   loadXlsx,
   type FileValidation,
   type HeaderColumnKey,
+  type SheetMapping,
 } from "../../../lib/priceListColumnDetection";
 import {
   cleanupRows,
@@ -96,6 +98,8 @@ export default function PriceListCleanupClient() {
   const [generateCost, setGenerateCost] = useState(false);
   const [costMode, setCostMode] = useState<CostMode>("keepExisting");
   const [keepNonNumericPrice, setKeepNonNumericPrice] = useState(true);
+  const [mergeSheets, setMergeSheets] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -111,10 +115,21 @@ export default function PriceListCleanupClient() {
   const hasPartAndPrice =
     activeSheet?.selection.partNumber != null && activeSheet?.selection.listPrice != null;
   const hasExistingCost = activeSheet?.selection.costPrice != null;
+  const multiSheet = fileValidation.sheets.length > 1;
 
-  // The cost column is included when the file already has one, or when the user opts to
-  // generate it. Mode drives how each cost value is produced.
-  const includeCost = Boolean(hasExistingCost || generateCost);
+  const sheetReady = (sheet: SheetMapping | null | undefined) =>
+    sheet?.selection.partNumber != null && sheet?.selection.listPrice != null;
+
+  // Whether anything can be produced — active sheet (single) or any sheet (merge).
+  const canProduce = mergeSheets
+    ? fileValidation.sheets.some(sheetReady)
+    : hasPartAndPrice;
+
+  const anySheetHasCost = fileValidation.sheets.some((s) => s.selection.costPrice != null);
+
+  // The cost column is included when a relevant sheet already has one, or when the user opts
+  // to generate it. Mode drives how each cost value is produced.
+  const includeCost = Boolean((mergeSheets ? anySheetHasCost : hasExistingCost) || generateCost);
   const effectiveCostMode: CostMode = hasExistingCost
     ? costMode
     : generateCost
@@ -146,26 +161,55 @@ export default function PriceListCleanupClient() {
     [exportFormat],
   );
 
-  // All cleaned rows (pre-AI, pre-lifecycle) + the run summary — the single source of truth
-  // for preview, AI input, lifecycle scan, and download.
+  // Clean a single sheet using its own detected mapping + the global options. Each sheet
+  // resolves its own decimal format (when "auto") and its own discount column (except the
+  // active sheet, which honours the user's explicit discount-column choice).
+  const cleanOneSheet = useCallback(
+    (sheet: SheetMapping) => {
+      const sel = sheet.selection;
+      const lpIdx = sel.listPrice;
+      if (sel.partNumber == null || lpIdx == null) return null;
+      const hasCost = sel.costPrice != null;
+      const mode: CostMode = hasCost ? costMode : generateCost ? "compute" : "none";
+      const fmt =
+        decimalFormat !== "auto"
+          ? decimalFormat
+          : detectDecimalFormat(sheet.allRows.map((r) => r[lpIdx]));
+      const discIdx =
+        sheet === activeSheet ? discountColumnIndex : suggestDiscountColumn(sheet.columns);
+      return cleanupRows(sheet.allRows, {
+        selection: sel,
+        discountColumnIndex: discIdx,
+        fileWideDiscountPercent: null,
+        decimalFormat: fmt,
+        costMode: mode,
+        keepNonNumericPrice,
+      });
+    },
+    [activeSheet, costMode, generateCost, decimalFormat, discountColumnIndex, keepNonNumericPrice],
+  );
+
+  // All cleaned rows (pre-AI, pre-lifecycle) + the aggregated summary — the single source of
+  // truth for preview, AI input, lifecycle scan, and download. Merges every sheet when enabled.
   const cleanedAll = useMemo(() => {
-    if (!activeSheet || !hasPartAndPrice) return null;
-    return cleanupRows(activeSheet.allRows, {
-      selection: activeSheet.selection,
-      discountColumnIndex,
-      fileWideDiscountPercent: null,
-      decimalFormat: resolvedFormat,
-      costMode: effectiveCostMode,
-      keepNonNumericPrice,
-    });
-  }, [
-    activeSheet,
-    hasPartAndPrice,
-    discountColumnIndex,
-    resolvedFormat,
-    effectiveCostMode,
-    keepNonNumericPrice,
-  ]);
+    if (!canProduce) return null;
+    const sheetsToClean = mergeSheets ? fileValidation.sheets : activeSheet ? [activeSheet] : [];
+    const results = sheetsToClean.map(cleanOneSheet).filter((r): r is NonNullable<typeof r> => r !== null);
+    if (results.length === 0) return null;
+    const rows = results.flatMap((r) => r.rows);
+    const summary = results.reduce(
+      (acc, r) => ({
+        kept: acc.kept + r.summary.kept,
+        trimmed: acc.trimmed + r.summary.trimmed,
+        withCost: acc.withCost + r.summary.withCost,
+        withoutCost: acc.withoutCost + r.summary.withoutCost,
+        capped: acc.capped + r.summary.capped,
+        zeroPriced: acc.zeroPriced + r.summary.zeroPriced,
+      }),
+      { kept: 0, trimmed: 0, withCost: 0, withoutCost: 0, capped: 0, zeroPriced: 0 },
+    );
+    return { rows, summary };
+  }, [canProduce, mergeSheets, fileValidation.sheets, activeSheet, cleanOneSheet]);
 
   // Apply AI descriptions (by part number) and the lifecycle choice. Lifecycle is detected on
   // the ORIGINAL cleaned description (before any AI rewrite removes the marker).
@@ -209,18 +253,9 @@ export default function PriceListCleanupClient() {
     return OUTPUT_COLUMNS.filter((col) => used.has(col.label));
   }, [transformedAll, includeCost]);
 
-  const processFile = useCallback(async (nextFile: File) => {
-    setFile(nextFile);
-    setError(null);
-    setAiByPartNumber({}); // a new file invalidates any prior AI descriptions
-    setEolChoice("keep");
-    setFileValidation((prev) => ({
-      ...prev,
-      status: "checking",
-      message: "Checking file format…",
-    }));
-    const result = await validateFileStructure(nextFile);
+  const applyValidation = useCallback((result: FileValidation) => {
     setFileValidation(result);
+    setMergeSheets(result.sheets.length > 1); // default to merging multi-sheet workbooks
     const active = result.sheets[result.activeSheetIndex];
     if (active) {
       setDiscountColumnIndex(suggestDiscountColumn(active.columns));
@@ -229,6 +264,63 @@ export default function PriceListCleanupClient() {
       setDiscountColumnIndex(null);
     }
   }, []);
+
+  const processFile = useCallback(
+    async (nextFile: File) => {
+      setFile(nextFile);
+      setError(null);
+      setAiByPartNumber({}); // a new file invalidates any prior AI descriptions
+      setEolChoice("keep");
+
+      const isPdf = nextFile.type === "application/pdf" || /\.pdf$/i.test(nextFile.name);
+      if (isPdf) {
+        setPdfLoading(true);
+        setFileValidation((prev) => ({
+          ...prev,
+          status: "checking",
+          message: "Extracting tables from the PDF with AI…",
+        }));
+        try {
+          const formData = new FormData();
+          formData.append("file", nextFile);
+          const res = await fetch("/api/price-lists/cleanup/parse-pdf", {
+            method: "POST",
+            body: formData,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.ok) {
+            setFileValidation({
+              ...INITIAL_VALIDATION,
+              status: "invalid",
+              message: data?.error || "Could not read the PDF. Try an Excel/CSV export instead.",
+            });
+            return;
+          }
+          applyValidation(
+            buildValidationFromRows(nextFile.name.replace(/\.pdf$/i, ""), data.aoa),
+          );
+        } catch (err) {
+          console.error("PDF parse failed", err);
+          setFileValidation({
+            ...INITIAL_VALIDATION,
+            status: "invalid",
+            message: "Could not read the PDF. Please try an Excel/CSV export.",
+          });
+        } finally {
+          setPdfLoading(false);
+        }
+        return;
+      }
+
+      setFileValidation((prev) => ({
+        ...prev,
+        status: "checking",
+        message: "Checking file format…",
+      }));
+      applyValidation(await validateFileStructure(nextFile));
+    },
+    [applyValidation],
+  );
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const next = event.target.files?.[0];
@@ -363,7 +455,10 @@ export default function PriceListCleanupClient() {
       if (eolChoice === "annotate" && lifecycleCount > 0) parts.push(`${lifecycleCount} EOL flagged`);
       const aiCount = Object.keys(aiByPartNumber).length;
       if (aiCount > 0) parts.push(`${aiCount} AI descriptions`);
-      if (effectiveCostMode === "compute") {
+      if (mergeSheets && fileValidation.sheets.length > 1) {
+        parts.push(`merged ${fileValidation.sheets.length} sheets`);
+      }
+      if (includeCost) {
         parts.push(`cost on ${summary.withCost}`);
         if (summary.capped > 0) parts.push(`${summary.capped} capped`);
         if (summary.withoutCost > 0) parts.push(`${summary.withoutCost} without cost`);
@@ -384,7 +479,8 @@ export default function PriceListCleanupClient() {
     eolChoice,
     lifecycleCount,
     aiByPartNumber,
-    effectiveCostMode,
+    mergeSheets,
+    fileValidation.sheets,
   ]);
 
   const showNoDiscountWarning = showDiscountControls && discountColumnIndex == null;
@@ -405,7 +501,7 @@ export default function PriceListCleanupClient() {
             type="button"
             className={`${styles.submitButton} page-header-button`}
             onClick={() => void handleCleanAndDownload()}
-            disabled={!hasPartAndPrice || processing}
+            disabled={!canProduce || processing || pdfLoading}
           >
             {processing ? "Cleaning…" : "Clean & Download"}
           </button>
@@ -429,15 +525,16 @@ export default function PriceListCleanupClient() {
         >
           <input
             type="file"
-            accept=".xlsx,.xlsm,.xls,.csv"
+            accept=".xlsx,.xlsm,.xls,.csv,.pdf"
             className={styles.fileInput}
             onChange={handleFileChange}
             autoComplete="off"
           />
           <div className={styles.uploadText}>
-            <div className={styles.uploadTitle}>Drop your Excel file here</div>
+            <div className={styles.uploadTitle}>Drop your Excel or PDF file here</div>
             <div className={styles.uploadSubtitle}>
-              Required columns: Part Number and List Price. Everything else is optional.
+              Excel/CSV or PDF (tables are extracted with AI). Required columns: Part Number and
+              List Price.
             </div>
             {file ? (
               <div className={styles.selectedFile}>
@@ -508,27 +605,38 @@ export default function PriceListCleanupClient() {
           </div>
         ) : null}
 
-        {fileValidation.sheets.length > 1 ? (
-          <div className={styles.sheetTabs}>
-            {fileValidation.sheets.map((sheet, idx) => {
-              const isActive = idx === fileValidation.activeSheetIndex;
-              return (
-                <button
-                  type="button"
-                  key={sheet.name || idx}
-                  className={`${styles.sheetTab} ${isActive ? styles.sheetTabActive : ""}`}
-                  onClick={() => handleSheetChange(idx)}
-                >
-                  {sheet.name || `Sheet ${idx + 1}`}
-                  <span className={styles.sheetTabRows}>
-                    {sheet.visibleDataRowIndices !== null
-                      ? `${sheet.visibleRowCount} / ${sheet.rowCount} rows`
-                      : `${sheet.rowCount} rows`}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+        {multiSheet ? (
+          <>
+            <div className={styles.sheetTabs}>
+              {fileValidation.sheets.map((sheet, idx) => {
+                const isActive = idx === fileValidation.activeSheetIndex;
+                return (
+                  <button
+                    type="button"
+                    key={sheet.name || idx}
+                    className={`${styles.sheetTab} ${isActive ? styles.sheetTabActive : ""}`}
+                    onClick={() => handleSheetChange(idx)}
+                  >
+                    {sheet.name || `Sheet ${idx + 1}`}
+                    <span className={styles.sheetTabRows}>
+                      {sheet.visibleDataRowIndices !== null
+                        ? `${sheet.visibleRowCount} / ${sheet.rowCount} rows`
+                        : `${sheet.rowCount} rows`}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <label className={styles.radioLabel}>
+              <input
+                type="checkbox"
+                checked={mergeSheets}
+                onChange={(event) => setMergeSheets(event.target.checked)}
+              />
+              Combine all {fileValidation.sheets.length} sheets into one output (each tab keeps its
+              own column mapping)
+            </label>
+          </>
         ) : null}
 
         {activeSheet ? (
@@ -703,7 +811,7 @@ export default function PriceListCleanupClient() {
                   type="button"
                   className={styles.submitButton}
                   onClick={() => void handleImproveDescriptions()}
-                  disabled={!hasPartAndPrice || aiRunning}
+                  disabled={!canProduce || aiRunning}
                 >
                   {aiRunning
                     ? aiProgress
@@ -777,7 +885,7 @@ export default function PriceListCleanupClient() {
                   Normalized output columns{includeCost ? "; the Cost Price column is bold" : ""}.
                 </span>
               </div>
-              {!hasPartAndPrice ? (
+              {!canProduce ? (
                 <div className={styles.previewEmpty}>
                   Map Part Number and List Price to see the cleaned preview.
                 </div>

@@ -863,3 +863,30 @@ export const validateFileStructure = async (uploadFile: File): Promise<FileValid
     };
   }
 };
+
+/**
+ * Build a FileValidation from an already-extracted array-of-arrays (e.g. rows pulled out of a
+ * PDF). Runs the same header detection / column mapping as a real workbook, producing a single
+ * synthetic sheet.
+ */
+export const buildValidationFromRows = (sheetName: string, aoa: unknown[][]): FileValidation => {
+  const rows = Array.isArray(aoa) ? aoa.filter((r) => Array.isArray(r)) : [];
+  if (rows.length === 0) {
+    return {
+      ...INITIAL_VALIDATION,
+      status: "invalid",
+      message: "No rows could be extracted from the PDF.",
+    };
+  }
+  const sheet = analyzeSheet(sheetName, rows, rows, new Set<number>(), 0, true);
+  const evaluation = evaluateSelection([sheet], 0);
+  return {
+    status: evaluation.status,
+    message: evaluation.message,
+    columns: evaluation.columns,
+    rowCount: evaluation.rowCount,
+    sheetName: evaluation.sheetName,
+    sheets: [sheet],
+    activeSheetIndex: 0,
+  };
+};
