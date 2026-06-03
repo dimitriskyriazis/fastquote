@@ -80,6 +80,7 @@ type OfferRow = {
   OfferContact: string | null;
   OfferVersion: number | null;
   Enabled: boolean | number | null;
+  FromTelquote: boolean | number | null;
   OfferDate: string | null;
   ModifiedOn: string | null;
   ModifiedOnAny: string | null;
@@ -152,6 +153,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferContact: 'dbo.Offer.OfferContact',
   OfferVersion: 'dbo.Offer.OfferVersion',
   Enabled: 'dbo.Offer.Enabled',
+  FromTelquote: 'dbo.Offer.FromTelquote',
   OfferDate: 'dbo.Offer.OfferDate',
   ModifiedOn: LATEST_MODIFIED_EXPRESSION,
   ModifiedOnAny: LATEST_MODIFIED_ANY_EXPRESSION,
@@ -395,6 +397,7 @@ export async function POST(req: NextRequest) {
         dbo.Offer.OfferContact,
         dbo.Offer.OfferVersion,
         dbo.Offer.Enabled,
+        dbo.Offer.FromTelquote,
         dbo.Offer.OfferDate,
         dbo.Offer.Probability,
         dbo.Offer.CreatedOn AS CreatedOn,

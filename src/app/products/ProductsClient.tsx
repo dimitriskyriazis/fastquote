@@ -213,7 +213,10 @@ export default function ProductsClient() {
         request: {
           ...baseRequest,
           startRow: 0,
-          endRow: ADD_WEBLINK_MAX_PRODUCTS,
+          // Fetch one past the limit: /api/products no longer returns an exact
+          // COUNT_BIG total, so request LIMIT+1 to distinguish "exactly LIMIT"
+          // (allowed) from "more than LIMIT" (guard fires below).
+          endRow: ADD_WEBLINK_MAX_PRODUCTS + 1,
         },
       }),
     });

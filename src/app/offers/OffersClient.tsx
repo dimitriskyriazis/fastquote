@@ -775,6 +775,17 @@ export default function OffersClient() {
     {field: 'Comments',  headerName: 'Telmaco Note', filter: 'agTextColumnFilter'},
 { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
     {
+      field: 'FromTelquote',
+      headerName: 'From TelQuote',
+      filter: 'agSetColumnFilter',
+      valueFormatter: (params) => formatEnabledValue(params.value),
+      filterParams: {
+        values: ['true', 'false'],
+        valueFormatter: (params: { value?: unknown }) => formatEnabledValue(params.value),
+        comparator: (valueA: string, valueB: string) => (valueA === valueB ? 0 : valueA === 'true' ? -1 : 1),
+      },
+    },
+    {
       field: 'Enabled',
       headerName: 'Enabled',
       filter: 'agSetColumnFilter',

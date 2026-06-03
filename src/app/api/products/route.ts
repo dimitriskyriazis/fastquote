@@ -50,7 +50,6 @@ type ProductRow = {
   Enabled: boolean | number | null;
 };
 
-type ProductRowWithCount = ProductRow & { __totalCount: number | bigint | null };
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   ProductID: "dbo.Products.ID",
@@ -389,7 +388,6 @@ export async function POST(req: NextRequest) {
 
     const select = `
       SELECT
-        COUNT_BIG(1) OVER () AS __totalCount,
         dbo.Products.ID AS ProductID,
         dbo.Brands.ID AS BrandID,
         dbo.Brands.Name AS Brand,
@@ -489,16 +487,18 @@ export async function POST(req: NextRequest) {
     if (highlightProductId != null) {
       dataReq.input("__highlightProductId", sql.Int, highlightProductId);
     }
-    const dataRes = await dataReq.query<ProductRowWithCount>(dataSql);
+    const dataRes = await dataReq.query<ProductRow>(dataSql);
 
-    const rowsWithCount = dataRes.recordset ?? [];
-    const rowCount =
-      rowsWithCount.length > 0 ? Number(rowsWithCount[0].__totalCount ?? 0) : rowsWithCount.length;
-    const rows = rowsWithCount.map((row) => {
-      const { __totalCount, ...rest } = row;
-      void __totalCount;
-      return rest;
-    });
+    const rows = dataRes.recordset ?? [];
+    // No COUNT_BIG(1) OVER(): that windowed count forced the entire filtered
+    // ~56k-row set to materialize on every catalog load/filter/sort. Instead
+    // infer end-of-data the way the add-products grid does — a full page means
+    // "more" (len+1), a short page is the true end (exact count). AgGridAll's
+    // end-of-data check (startRow + rows.length >= rowCount) paginates correctly
+    // with this, and the ProductsClient bulk-op guard still fires once a full
+    // page comes back (which is why its fetch asks for one row past the limit).
+    const fetched = rows.length;
+    const rowCount = fetched < pageSize ? offset + fetched : offset + fetched + 1;
 
     return NextResponse.json({ ok: true, rows, rowCount });
   } catch (err: unknown) {

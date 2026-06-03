@@ -40,6 +40,21 @@ export type DraftOrderCompletionResults = {
     warrantyMonths: number | null;
     comment: string | null;
   }>;
+  // Lines sent to setDocs that SoftOne did not register in the created document.
+  droppedLines?: Array<{
+    position: number | null;
+    code: string;
+    brandName: string | null;
+    partNumber: string | null;
+    description: string | null;
+    qty: number;
+    price: number;
+    lineval: number;
+    cost: number | null;
+    costTotal: number | null;
+    warrantyMonths: number | null;
+    comment: string | null;
+  }>;
 };
 
 const moneyFmt = new Intl.NumberFormat('el-GR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -121,6 +136,10 @@ function renderEmail(
   const pl = (count: number, singular: string, plural: string) => (count === 1 ? singular : plural);
   const eidos = (count: number) => pl(count, 'είδους', 'ειδών');
 
+  const droppedLines = results.droppedLines ?? [];
+  const droppedTotal = droppedLines.reduce((sum, l) => sum + l.lineval, 0);
+  const hasDropped = droppedLines.length > 0;
+
   const actions: string[] = [];
   if (results.brandsCreated.length > 0) {
     const n = results.brandsCreated.length;
@@ -157,7 +176,7 @@ function renderEmail(
     actions.push(`Δημιουργία προπαραγγελίας: ${results.order.finCode}`);
   }
 
-  const subject = `FastQuote — Δημιουργήθηκε προπαραγγελία Soft1 (${orderCode}) για προσφορά #${offerId}`;
+  const subject = `${hasDropped ? '⚠ ' : ''}FastQuote — Δημιουργήθηκε προπαραγγελία Soft1 (${orderCode}) για προσφορά #${offerId}${hasDropped ? ` — ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή ΔΕΝ καταχωρήθηκε', 'γραμμές ΔΕΝ καταχωρήθηκαν')}` : ''}`;
 
   const actionsHtml = actions.length > 0
     ? `<ul>${actions.map(a => `<li>${escapeHtml(a)}</li>`).join('')}</ul>`
@@ -247,16 +266,67 @@ function renderEmail(
     `
     : '';
 
+  const droppedHtml = hasDropped
+    ? `
+      <div style="border: 2px solid #dc2626; background: #fef2f2; border-radius: 6px; padding: 12px 16px; margin: 16px 0;">
+        <p style="margin: 0 0 8px; color: #b91c1c; font-weight: 700;">⚠ Προσοχή: ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή δεν καταχωρήθηκε', 'γραμμές δεν καταχωρήθηκαν')} στο Soft1</p>
+        <p style="margin: 0 0 10px; color: #7f1d1d;">Οι παρακάτω γραμμές στάλθηκαν αλλά δεν εμφανίζονται στην προπαραγγελία ${escapeHtml(orderCode)} — πιθανή αιτία: ο κωδικός είδους περιέχει «&». Πρέπει να καταχωρηθούν χειροκίνητα.</p>
+        <table style="border-collapse: collapse; font-size: 0.9rem; width: 100%; max-width: 900px;">
+          <thead>
+            <tr style="background: #fee2e2;">
+              <th style="border: 1px solid #fca5a5; padding: 6px 8px; text-align: left;">#</th>
+              <th style="border: 1px solid #fca5a5; padding: 6px 8px; text-align: left;">Κωδικός</th>
+              <th style="border: 1px solid #fca5a5; padding: 6px 8px; text-align: left;">Brand</th>
+              <th style="border: 1px solid #fca5a5; padding: 6px 8px; text-align: left;">Part No</th>
+              <th style="border: 1px solid #fca5a5; padding: 6px 8px; text-align: left;">Περιγραφή</th>
+              <th style="border: 1px solid #fca5a5; padding: 6px 8px; text-align: right;">Ποσότητα</th>
+              <th style="border: 1px solid #fca5a5; padding: 6px 8px; text-align: right;">Τιμή</th>
+              <th style="border: 1px solid #fca5a5; padding: 6px 8px; text-align: right;">Αξία γραμμής</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${droppedLines
+              .map((l, idx) => {
+                const pos = l.position != null ? l.position : idx + 1;
+                return `<tr>
+                  <td style="border: 1px solid #fecaca; padding: 6px 8px;">${pos}</td>
+                  <td style="border: 1px solid #fecaca; padding: 6px 8px;">${escapeHtml(l.code)}</td>
+                  <td style="border: 1px solid #fecaca; padding: 6px 8px;">${escapeHtml(l.brandName ?? '—')}</td>
+                  <td style="border: 1px solid #fecaca; padding: 6px 8px;">${escapeHtml(l.partNumber ?? '—')}</td>
+                  <td style="border: 1px solid #fecaca; padding: 6px 8px;">${escapeHtml(l.description ?? '—')}</td>
+                  <td style="border: 1px solid #fecaca; padding: 6px 8px; text-align: right;">${formatQty(l.qty)}</td>
+                  <td style="border: 1px solid #fecaca; padding: 6px 8px; text-align: right;">${formatMoney(l.price)}</td>
+                  <td style="border: 1px solid #fecaca; padding: 6px 8px; text-align: right;">${formatMoney(l.lineval)}</td>
+                </tr>`;
+              })
+              .join('')}
+          </tbody>
+          <tfoot>
+            <tr style="background: #fee2e2; font-weight: 600;">
+              <td colspan="7" style="border: 1px solid #fca5a5; padding: 6px 8px; text-align: right;">Σύνολο αξίας που λείπει:</td>
+              <td style="border: 1px solid #fca5a5; padding: 6px 8px; text-align: right;">${formatMoney(droppedTotal)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    `
+    : '';
+
+  const introHtml = hasDropped
+    ? `<p>Η προπαραγγελία στο Soft1 για την προσφορά <strong>#${offerId}</strong>${offerDescription ? ` (${escapeHtml(offerDescription)})` : ''} δημιουργήθηκε, <strong style="color: #b91c1c;">αλλά ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή δεν καταχωρήθηκε', 'γραμμές δεν καταχωρήθηκαν')}</strong> (δείτε παρακάτω).</p>`
+    : `<p>Η προπαραγγελία στο Soft1 για την προσφορά <strong>#${offerId}</strong>${offerDescription ? ` (${escapeHtml(offerDescription)})` : ''} δημιουργήθηκε με επιτυχία.</p>`;
+
   const html = `
     <div style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.5;">
       <p>${greeting}</p>
-      <p>Η προπαραγγελία στο Soft1 για την προσφορά <strong>#${offerId}</strong>${offerDescription ? ` (${escapeHtml(offerDescription)})` : ''} δημιουργήθηκε με επιτυχία.</p>
+      ${introHtml}
       <table style="border-collapse: collapse; margin: 12px 0;">
         <tr><td style="padding: 4px 12px 4px 0;"><strong>Κωδικός προπαραγγελίας:</strong></td><td style="padding: 4px 0;">${escapeHtml(orderCode)}</td></tr>
         <tr><td style="padding: 4px 12px 4px 0;"><strong>${projectCodeLabel}</strong></td><td style="padding: 4px 0;">${escapeHtml(projectCode)}</td></tr>
         <tr><td style="padding: 4px 12px 4px 0;"><strong>Πελάτης:</strong></td><td style="padding: 4px 0;">${escapeHtml(customerLabel)}</td></tr>
         <tr><td style="padding: 4px 12px 4px 0;"><strong>Περιγραφή έργου:</strong></td><td style="padding: 4px 0;">${escapeHtml(projectDescription)}</td></tr>
       </table>
+      ${droppedHtml}
       <p><strong>Ενέργειες που εκτελέστηκαν:</strong></p>
       ${actionsHtml}
       ${newProductsHtml}
@@ -269,8 +339,21 @@ function renderEmail(
   const textLines = [
     greeting,
     '',
-    `Η προπαραγγελία στο Soft1 για την προσφορά #${offerId}${offerDescription ? ` (${offerDescription})` : ''} δημιουργήθηκε με επιτυχία.`,
+    hasDropped
+      ? `Η προπαραγγελία στο Soft1 για την προσφορά #${offerId}${offerDescription ? ` (${offerDescription})` : ''} δημιουργήθηκε, ΑΛΛΑ ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή δεν καταχωρήθηκε', 'γραμμές δεν καταχωρήθηκαν')} (δείτε παρακάτω).`
+      : `Η προπαραγγελία στο Soft1 για την προσφορά #${offerId}${offerDescription ? ` (${offerDescription})` : ''} δημιουργήθηκε με επιτυχία.`,
     '',
+    ...(hasDropped
+      ? [
+          `⚠ ΠΡΟΣΟΧΗ — ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή δεν καταχωρήθηκε', 'γραμμές δεν καταχωρήθηκαν')} στο Soft1 (πιθανή αιτία: ο κωδικός περιέχει «&»). Καταχωρήστε τες χειροκίνητα:`,
+          ...droppedLines.map((l, idx) => {
+            const pos = l.position != null ? l.position : idx + 1;
+            return `  ${pos}. ${l.code} — ${l.brandName ?? '—'} | ${l.partNumber ?? '—'} | ${l.description ?? '—'} | qty ${formatQty(l.qty)} | price ${formatMoney(l.price)} | lineval ${formatMoney(l.lineval)}`;
+          }),
+          `  Σύνολο αξίας που λείπει: ${formatMoney(droppedTotal)}`,
+          '',
+        ]
+      : []),
     `Κωδικός προπαραγγελίας: ${orderCode}`,
     `${projectCodeLabel} ${projectCode}`,
     `Πελάτης: ${customerLabel}`,

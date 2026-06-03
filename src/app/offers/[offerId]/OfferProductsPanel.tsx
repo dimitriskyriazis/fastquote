@@ -4977,11 +4977,13 @@ const requestedColumnDefsMap = useMemo(
   const productContextMenuItems = useCallback((
     params: GetContextMenuItemsParams<Record<string, unknown>>,
   ) => {
-    // Locked offers (read-only status) still allow exporting the grid. Returning
-    // the default 'export' item lets AgGridAll swap in its custom Excel/CSV
-    // export submenu; mutating items (delete/paste/add/bulk-edit/AI) stay out.
-    if (readOnly) return ['export' as unknown as DefaultMenuItem];
-    const baseItems = productRowDeletion.getContextMenuItems(params) ?? [];
+    // Locked offers (read-only status) keep the non-mutating actions — copy /
+    // copy-rows, the "View Product" / "View Brand" navigation items, and the grid
+    // export — while every mutating action is withheld. Delete is dropped via the
+    // empty baseItems here; paste / add are skipped when building the clipboard
+    // items; and the read-only branch returns right after the view items, before
+    // any create / bulk-edit / category / pricing / AI item is built.
+    const baseItems = readOnly ? [] : (productRowDeletion.getContextMenuItems(params) ?? []);
     const items = [...baseItems].filter((item) => item !== 'copy' && item !== 'copyWithHeaders' && item !== 'copyWithGroupHeaders' && item !== 'cut' && item !== 'paste');
     if (pendingContextMenuSelectionClearRef.current) {
       pendingContextMenuSelectionClearRef.current = false;
@@ -5056,7 +5058,7 @@ const requestedColumnDefsMap = useMemo(
     const rowData = rowNode?.data ?? relevantNodes[0]?.data ?? fallbackAnchorRowData ?? null;
     const isEmptySpaceClick = !rowNode?.data;
     if (!rowData) {
-      return items;
+      return readOnly ? ['export' as unknown as DefaultMenuItem] : items;
     }
     const anchorId = normalizeOfferDetailId(
       (rowData as { OfferDetailID?: unknown }).OfferDetailID ?? null,
@@ -5067,6 +5069,8 @@ const requestedColumnDefsMap = useMemo(
     const clipboardHasRows = isClipboardPopulated();
 
     if (isEmptySpaceClick) {
+      // Empty-space click on a locked offer only offers export — paste / add are mutating.
+      if (readOnly) return ['export' as unknown as DefaultMenuItem];
       const emptySpaceItems: MenuItemDef[] = [];
       const canPaste = Boolean(onRequestPaste && clipboardHasRows);
       const pasteOnlyItem: MenuItemDef = {
@@ -5140,10 +5144,14 @@ const requestedColumnDefsMap = useMemo(
     const clipboardItems: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> = [
       'copy' as unknown as MenuItemDef,
       copyWithSubmenu,
-      'paste' as unknown as MenuItemDef,
     ];
+    // Paste is mutating — withhold the built-in paste (and the custom paste / add
+    // items below) on locked offers; copy and copy-rows stay available.
+    if (!readOnly) {
+      clipboardItems.push('paste' as unknown as MenuItemDef);
+    }
     clipboardItems.push(copyRowsItem);
-    if (onRequestPaste && clipboardHasRows) {
+    if (!readOnly && onRequestPaste && clipboardHasRows) {
       const pasteItem: MenuItemDef = {
         name: 'Paste Rows',
         icon: pasteRowsMenuIcon,
@@ -5157,7 +5165,7 @@ const requestedColumnDefsMap = useMemo(
       };
       clipboardItems.push(pasteItem);
     }
-    if (!standardPackageMode && onRequestAddStandardPackage) {
+    if (!readOnly && !standardPackageMode && onRequestAddStandardPackage) {
       const addStandardPackageItem: MenuItemDef = {
         name: 'Add Standard Package',
         icon: addStandardPackageMenuIcon,
@@ -5341,6 +5349,15 @@ const requestedColumnDefsMap = useMemo(
           items.push(brandDetailsItem);
         }
       }
+    }
+
+    // Locked offers stop here: the copy and "View Product" / "View Brand" items
+    // built above are all non-mutating. Everything below writes to the offer
+    // (create product, brand bulk-edit, set-as-category / comment / option,
+    // pricing mode, AI features), so return now with the export item appended.
+    if (readOnly) {
+      items.push('separator' as unknown as DefaultMenuItem, 'export' as unknown as DefaultMenuItem);
+      return items;
     }
 
     const rowHasRequestedFields = hasRequestedPseudoFields(rowData);
@@ -6747,6 +6764,8 @@ const requestedColumnDefsMap = useMemo(
   ]);
 
   const handleEmptyGridWrapperContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    // The empty-grid menu only offers paste / add-package — both mutating, so suppress it on locked offers.
+    if (readOnly) return;
     const canShowMenu = Boolean(onRequestPaste || (!standardPackageMode && onRequestAddStandardPackage));
     if (!canShowMenu) return;
     const api = gridApiRef.current;
@@ -6762,7 +6781,7 @@ const requestedColumnDefsMap = useMemo(
     event.preventDefault();
     event.stopPropagation();
     setEmptyGridPasteMenu({ x: event.clientX, y: event.clientY });
-  }, [onRequestPaste, onRequestAddStandardPackage, standardPackageMode]);
+  }, [onRequestPaste, onRequestAddStandardPackage, standardPackageMode, readOnly]);
 
   const handleEmptyGridPasteRows = useCallback(() => {
     setEmptyGridPasteMenu(null);

@@ -1000,6 +1000,76 @@ async function handleUpdateProductCategory(
   return NextResponse.json({ ok: true, step: 'update-product-category' });
 }
 
+// ── Brand fuzzy-match helpers ──────────────────────────────────────────────
+// Substring LIKE matching was both too brittle and too loose: a one-char
+// interior diff like "Williams" vs "William" breaks containment in *both*
+// directions (so the real Soft1 brand never surfaces), while a short code like
+// "MSS" is a coincidental substring of the cleaned query "WILLIAMSSOUND" (so a
+// bogus match surfaces as the only candidate). We rank candidates by a
+// normalized similarity score instead — near-matches rise to the top and short
+// coincidences fall below threshold.
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const cols = b.length + 1;
+  const prev = new Array<number>(cols);
+  const curr = new Array<number>(cols);
+  for (let j = 0; j < cols; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j < cols; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j < cols; j++) prev[j] = curr[j];
+  }
+  return prev[cols - 1];
+}
+
+function normSim(a: string, b: string): number {
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return a === b ? 1 : 0;
+  return 1 - levenshtein(a, b) / maxLen;
+}
+
+// Collapse to bare alnum, uppercase, accent-stripped (matches the old cleaning).
+function cleanBrandKey(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[-_\s./,()"'&+]+/g, '').toUpperCase();
+}
+
+function brandTokens(s: string): string[] {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+}
+
+// Score a FastQuote brand against an ERP brand: the better of a whole-string
+// similarity and a per-token similarity, so word-order changes and extra
+// trailing words (e.g. "… CORP") don't tank an otherwise-strong match.
+function brandSimilarity(
+  query: { key: string; tokens: string[] },
+  cand: { key: string; tokens: string[] },
+): number {
+  const full = normSim(query.key, cand.key);
+  let tokenSim = 0;
+  if (query.tokens.length && cand.tokens.length) {
+    const [small, large] = query.tokens.length <= cand.tokens.length
+      ? [query.tokens, cand.tokens]
+      : [cand.tokens, query.tokens];
+    let sum = 0;
+    for (const t of small) {
+      let best = 0;
+      for (const u of large) best = Math.max(best, normSim(t, u));
+      sum += best;
+    }
+    tokenSim = sum / small.length;
+  }
+  return Math.max(full, tokenSim);
+}
+
+const BRAND_MATCH_THRESHOLD = 0.7;
+
 async function handleCheckBrands(
   ctx: OfferContext,
 ): Promise<NextResponse> {
@@ -1013,6 +1083,20 @@ async function handleCheckBrands(
   const missingBrands: string[] = [];
   const existingBrands: string[] = [];
   const nearMatchBrands: Array<{ fastquoteName: string; matches: Array<{ erpName: string; MTRMANFCTR: number }> }> = [];
+
+  // Active company-1 brands, loaded once and reused for JS-side fuzzy ranking
+  // below (same ISACTIVE/COMPANY filter as the exact-name match). The table is
+  // small, so one query beats a per-brand LIKE round-trip and lets us rank by a
+  // real similarity score instead of brittle substring containment.
+  const activeBrandsRes = await erpPool.request().query<{ MTRMANFCTR: number; NAME: string }>(`
+    SELECT MTRMANFCTR, NAME FROM dbo.MTRMANFCTR
+    WHERE COMPANY = 1 AND ISACTIVE = 1
+      AND NAME IS NOT NULL AND LTRIM(RTRIM(NAME)) <> ''
+  `);
+  const candidateBrands = (activeBrandsRes.recordset ?? []).map(r => {
+    const name = r.NAME.trim();
+    return { MTRMANFCTR: r.MTRMANFCTR, name, key: cleanBrandKey(name), tokens: brandTokens(name) };
+  });
 
   for (const brandName of uniqueBrandNames) {
     // 1. Try exact match via tlm._mtrlFindBrand. Proc throws 53101 on
@@ -1033,9 +1117,9 @@ async function handleCheckBrands(
     // 1b. Exact NAME match (trimmed, case/accent-insensitive). This catches
     // brand names that exist more than once in MTRMANFCTR (e.g. two active rows
     // both named "ACT"), which _mtrlFindBrand can't resolve to a single id.
-    // These are the real matches and must always be surfaced — the loose
-    // substring fuzzy below would otherwise bury them under unrelated names
-    // that merely contain the same letters (FACTORY, TRACTEL, INTERACTIVE …).
+    // These are the real matches and must always be surfaced before the fuzzy
+    // ranking below, which would otherwise score them no higher than other
+    // names that merely share letters (FACTORY, TRACTEL, INTERACTIVE …).
     const exactReq = erpPool.request();
     exactReq.input('brandNameExact', sql.NVarChar(128), brandName.trim());
     const exactRes = await exactReq.query<{ MTRMANFCTR: number; NAME: string }>(`
@@ -1059,30 +1143,22 @@ async function handleCheckBrands(
       continue;
     }
 
-    // 2. Try fuzzy match — strip spaces/special chars, check both directions, accent-insensitive
-    const cleanedBrand = brandName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[-_\s./,()"'&+]+/g, '').toUpperCase();
-    if (cleanedBrand) {
-      const fuzzyReq = erpPool.request();
-      fuzzyReq.input('cleanedBrand', sql.NVarChar(130), '%' + cleanedBrand + '%');
-      fuzzyReq.input('cleanedBrandRaw', sql.NVarChar(128), cleanedBrand);
-      const fuzzyRes = await fuzzyReq.query<{ MTRMANFCTR: number; NAME: string }>(`
-        SELECT TOP (5) MTRMANFCTR, NAME FROM dbo.MTRMANFCTR
-        WHERE (
-          UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-                NAME,
-                '-', ''), ' ', ''), '_', ''), '.', ''), '/', ''), ',', ''), '(', ''), ')', ''))
-              COLLATE Latin1_General_CI_AI LIKE @cleanedBrand
-          OR @cleanedBrandRaw COLLATE Latin1_General_CI_AI LIKE
-              '%' + UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-                NAME,
-                '-', ''), ' ', ''), '_', ''), '.', ''), '/', ''), ',', ''), '(', ''), ')', '')) + '%'
-        )
-        ORDER BY MTRMANFCTR
-      `);
-      if (fuzzyRes.recordset?.length) {
+    // 2. Fuzzy match - rank active brands by normalized similarity (whole-string
+    // edit distance + per-token), keep those above threshold, surface the top 5.
+    // This catches near-matches a substring search misses (e.g. "Williams Sound"
+    // vs "WILLIAM SOUND", which differ by one interior char) while rejecting
+    // short coincidences (e.g. "MSS" buried inside "WILLIAMSSOUND").
+    const q = { key: cleanBrandKey(brandName), tokens: brandTokens(brandName) };
+    if (q.key) {
+      const ranked = candidateBrands
+        .map(c => ({ c, score: brandSimilarity(q, c) }))
+        .filter(x => x.score >= BRAND_MATCH_THRESHOLD)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5);
+      if (ranked.length) {
         nearMatchBrands.push({
           fastquoteName: brandName,
-          matches: fuzzyRes.recordset.map(r => ({ erpName: r.NAME.trim(), MTRMANFCTR: r.MTRMANFCTR })),
+          matches: ranked.map(x => ({ erpName: x.c.name, MTRMANFCTR: x.c.MTRMANFCTR })),
         });
         continue;
       }
@@ -1618,6 +1694,22 @@ async function handleExecute(
       warrantyMonths: number | null;
       comment: string | null;
     }>;
+    // Lines we sent to setDocs that did NOT land in the created Soft1 document
+    // (SoftOne silently drops e.g. codes containing '&'). Same shape as orderLines.
+    droppedLines: Array<{
+      position: number | null;
+      code: string;
+      brandName: string | null;
+      partNumber: string | null;
+      description: string | null;
+      qty: number;
+      price: number;
+      lineval: number;
+      cost: number | null;
+      costTotal: number | null;
+      warrantyMonths: number | null;
+      comment: string | null;
+    }>;
   } = {
     brandsCreated: [],
     productsCreated: [],
@@ -1625,6 +1717,7 @@ async function handleExecute(
     project: null,
     order: null,
     orderLines: [],
+    droppedLines: [],
   };
 
   // 1. Create missing brands
@@ -1842,6 +1935,49 @@ async function handleExecute(
 
     results.order = { findocId: orderInfo.findocId, finCode: orderInfo.finCode };
     logger.info('wizard execute order created', { requestId, offerId, findocId: orderInfo.findocId, finCode: orderInfo.finCode });
+
+    // 5. Reconcile what SoftOne actually accepted. setDocs can silently drop a
+    // line (e.g. a product code containing '&' breaks its server-side XML import)
+    // while still creating the header — re-read the created document's lines and
+    // flag anything we sent that didn't land, so the completion email reports the
+    // truth instead of a false "success". Read-only; failure here never blocks.
+    try {
+      const sentByCode = new Map<string, (typeof results.orderLines)[number]>();
+      for (const l of results.orderLines) {
+        const key = l.code.trim().toUpperCase();
+        if (key) sentByCode.set(key, l);
+      }
+      if (sentByCode.size > 0) {
+        const accReq = erpPool.request();
+        accReq.input('findoc', sql.Int, orderInfo.findocId);
+        const accRes = await accReq.query<{ CODE: string | null }>(`
+          SELECT m.CODE
+          FROM dbo.MTRLINES ml
+          INNER JOIN dbo.MTRL m ON ml.MTRL = m.MTRL
+          WHERE ml.FINDOC = @findoc AND ml.SODTYPE = 51
+        `);
+        const accepted = new Set<string>();
+        for (const r of accRes.recordset ?? []) {
+          if (r.CODE) accepted.add(r.CODE.trim().toUpperCase());
+        }
+        for (const [key, line] of sentByCode) {
+          if (!accepted.has(key)) results.droppedLines.push(line);
+        }
+        if (results.droppedLines.length > 0) {
+          logger.error('wizard execute: SoftOne dropped order lines silently', {
+            requestId, offerId, findocId: orderInfo.findocId, finCode: orderInfo.finCode,
+            sentCount: sentByCode.size, acceptedCount: accepted.size,
+            droppedCodes: results.droppedLines.map(l => l.code),
+          });
+        } else {
+          logger.info('wizard execute: order line reconciliation ok', {
+            requestId, offerId, findocId: orderInfo.findocId, acceptedCount: accepted.size,
+          });
+        }
+      }
+    } catch (reconErr) {
+      logger.error('wizard execute: order line reconciliation failed', { requestId, offerId }, reconErr instanceof Error ? reconErr : undefined);
+    }
   }
 
   if (results.order) {
