@@ -171,14 +171,17 @@ type RequestedFieldKey =
 
 type RequestedColumns = Record<RequestedFieldKey, boolean>;
 
-type ProductRowWithCount = ProductRow & {
-  __totalCount: number | bigint | null;
+type OfferProductTotalsRow = {
   __sumTotalPrice?: number | bigint | string | null;
   __sumTotalNet?: number | bigint | string | null;
   __sumTotalCost?: number | bigint | string | null;
   __sumInstallation?: number | bigint | string | null;
   __sumElInstalation?: number | bigint | string | null;
   __sumCommissioning?: number | bigint | string | null;
+};
+
+type ProductRowWithCount = ProductRow & {
+  __totalCount: number | bigint | null;
   __hasRequestedItemNo?: number | bigint | null;
   __hasRequestedBrand?: number | bigint | null;
   __hasRequestedModelNo?: number | bigint | null;
@@ -1486,8 +1489,45 @@ export async function POST(
     });
     const combinedWhereSql = mergeWhereClauses(whereSql, quickFilterClause.clause);
     const combinedParams = [...filterParams, ...quickFilterClause.params, ...collapsedParams];
+    // Totals are the offer's grand total and must NOT change when the user
+    // collapses categories — collapsing only hides descendant rows for paging.
+    // So the totals query mirrors the row query's filters/quick-filter but
+    // deliberately omits the collapse clauses (and paging).
+    const totalsWhereClauses = [`od.OfferID = @__id`, ...viewClauses, ...clauses];
+    const totalsWhereSql = `WHERE ${totalsWhereClauses.join(' AND ')}`;
+    const combinedTotalsWhereSql = mergeWhereClauses(totalsWhereSql, quickFilterClause.clause);
+    const totalsParams = [...filterParams, ...quickFilterClause.params];
     const orderSql = buildOrder(gridRequest.sortModel) || `ORDER BY ${TREE_ORDERING_SORT_PRIORITY_EXPRESSION}, TreeOrderingHierarchy, od.TreeOrdering, od.ID`;
     const pagingSql = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
+
+    // Shared FROM/JOIN block so the row query and the totals query stay in
+    // sync (filters can reference any of these aliases — cat/b/p/pl/pli/oc).
+    const productsFromSql = `
+        FROM dbo.OfferDetails od
+          OUTER APPLY (
+            SELECT TOP 1 cat_inner.ProductDescription
+            FROM dbo.OfferDetails cat_inner
+            WHERE cat_inner.OfferID = od.OfferID
+              AND ISNULL(cat_inner.IsCategory, 0) = 1
+              AND NULLIF(LTRIM(RTRIM(cat_inner.TreeOrdering)), '') = ${TREE_ORDERING_ROOT_EXPRESSION}
+          ) cat
+          LEFT OUTER JOIN dbo.Products p ON od.ProductID = p.ID
+          LEFT OUTER JOIN dbo.Brands b ON od.BrandID = b.ID
+          LEFT OUTER JOIN dbo.[Offer] o ON od.OfferID = o.ID
+          LEFT OUTER JOIN dbo.PriceLists pl ON od.PriceListID = pl.ID
+          LEFT OUTER JOIN dbo.PriceListItems pli ON od.PriceListItemID = pli.ID
+          LEFT OUTER JOIN dbo.Currencies oc ON od.OtherCurrencyID = oc.ID`;
+
+    // The set of rows that count toward the totals (priced products and
+    // comments, excluding options).
+    const TOTALS_ROW_PREDICATE = `(od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0`;
+    const totalsSumSelectSql = `
+          SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} THEN COALESCE(od.TotalPrice, 0) ELSE 0 END) AS __sumTotalPrice,
+          SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} THEN COALESCE(od.TotalNet, 0) ELSE 0 END) AS __sumTotalNet,
+          SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} THEN COALESCE(od.TotalCost, 0) ELSE 0 END) AS __sumTotalCost,
+          SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} THEN COALESCE(od.Quantity, 0) * COALESCE(od.Installation, 0) ELSE 0 END) AS __sumInstallation,
+          SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} THEN COALESCE(od.Quantity, 0) * COALESCE(od.ElInstalation, 0) ELSE 0 END) AS __sumElInstalation,
+          SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} THEN COALESCE(od.Quantity, 0) * COALESCE(od.Commissioning, 0) ELSE 0 END) AS __sumCommissioning`;
 
     const selectedColumnSql = selectedFields
       .map((field) => `${SELECT_FIELD_EXPRESSIONS[field]} AS ${field}`)
@@ -1495,12 +1535,6 @@ export async function POST(
     const query = `
         SELECT
           COUNT_BIG(1) OVER () AS __totalCount,
-          SUM(CASE WHEN (od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0 THEN COALESCE(od.TotalPrice, 0) ELSE 0 END) OVER () AS __sumTotalPrice,
-          SUM(CASE WHEN (od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0 THEN COALESCE(od.TotalNet, 0) ELSE 0 END) OVER () AS __sumTotalNet,
-          SUM(CASE WHEN (od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0 THEN COALESCE(od.TotalCost, 0) ELSE 0 END) OVER () AS __sumTotalCost,
-          SUM(CASE WHEN (od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0 THEN COALESCE(od.Quantity, 0) * COALESCE(od.Installation, 0) ELSE 0 END) OVER () AS __sumInstallation,
-          SUM(CASE WHEN (od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0 THEN COALESCE(od.Quantity, 0) * COALESCE(od.ElInstalation, 0) ELSE 0 END) OVER () AS __sumElInstalation,
-          SUM(CASE WHEN (od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0 THEN COALESCE(od.Quantity, 0) * COALESCE(od.Commissioning, 0) ELSE 0 END) OVER () AS __sumCommissioning,
           ${TREE_ORDERING_HIERARCHY_EXPRESSION} AS TreeOrderingHierarchy,
           ${selectedColumnSql},
           CASE
@@ -1546,23 +1580,19 @@ export async function POST(
           END AS PriceListItemServicePriceOutGR,
           CASE WHEN od.PriceListItemID IS NULL THEN NULL ELSE pli.Warning END AS PriceListItemWarning,
           CASE WHEN od.PriceListItemID IS NULL THEN NULL ELSE pli.MOQ END AS PriceListItemMOQ
-        FROM dbo.OfferDetails od
-          OUTER APPLY (
-            SELECT TOP 1 cat_inner.ProductDescription
-            FROM dbo.OfferDetails cat_inner
-            WHERE cat_inner.OfferID = od.OfferID
-              AND ISNULL(cat_inner.IsCategory, 0) = 1
-              AND NULLIF(LTRIM(RTRIM(cat_inner.TreeOrdering)), '') = ${TREE_ORDERING_ROOT_EXPRESSION}
-          ) cat
-          LEFT OUTER JOIN dbo.Products p ON od.ProductID = p.ID
-          LEFT OUTER JOIN dbo.Brands b ON od.BrandID = b.ID
-          LEFT OUTER JOIN dbo.[Offer] o ON od.OfferID = o.ID
-          LEFT OUTER JOIN dbo.PriceLists pl ON od.PriceListID = pl.ID
-          LEFT OUTER JOIN dbo.PriceListItems pli ON od.PriceListItemID = pli.ID
-          LEFT OUTER JOIN dbo.Currencies oc ON od.OtherCurrencyID = oc.ID
+        ${productsFromSql}
         ${combinedWhereSql}
           ${orderSql}
           ${pagingSql}
+      `;
+
+    // Totals query — same filters as the rows, but ignoring collapse so the
+    // totals row stays the offer grand total no matter what's collapsed.
+    const totalsQuery = `
+        SELECT
+          ${totalsSumSelectSql}
+        ${productsFromSql}
+        ${combinedTotalsWhereSql}
       `;
 
     const sqlRequest = pool.request();
@@ -1571,7 +1601,14 @@ export async function POST(
     sqlRequest.input('__offset', sql.Int, offset);
     sqlRequest.input('__limit', sql.Int, pageSize);
 
-    const result = await sqlRequest.query<ProductRowWithCount>(query);
+    const totalsRequest = pool.request();
+    totalsRequest.input('__id', sql.Int, idValue);
+    totalsParams.forEach(param => totalsRequest.input(param.key, param.value));
+
+    const [result, totalsResult] = await Promise.all([
+      sqlRequest.query<ProductRowWithCount>(query),
+      totalsRequest.query<OfferProductTotalsRow>(totalsQuery),
+    ]);
     const recordset = result.recordset ?? [];
     const rowCount = recordset.length > 0 ? Number(recordset[0].__totalCount ?? 0) : 0;
 
@@ -1586,14 +1623,15 @@ export async function POST(
         { status: 413 },
       );
     }
-    const totals: OfferProductTotals = recordset.length > 0
+    const totalsRow = totalsResult.recordset?.[0] ?? null;
+    const totals: OfferProductTotals = totalsRow
       ? {
-        totalListPrice: normalizeAggregateValue(recordset[0].__sumTotalPrice ?? 0),
-        totalNetPrice: normalizeAggregateValue(recordset[0].__sumTotalNet ?? 0),
-        totalCost: normalizeAggregateValue(recordset[0].__sumTotalCost ?? 0),
-        totalInstallation: normalizeAggregateValue(recordset[0].__sumInstallation ?? 0),
-        totalElInstalation: normalizeAggregateValue(recordset[0].__sumElInstalation ?? 0),
-        totalCommissioning: normalizeAggregateValue(recordset[0].__sumCommissioning ?? 0),
+        totalListPrice: normalizeAggregateValue(totalsRow.__sumTotalPrice ?? 0),
+        totalNetPrice: normalizeAggregateValue(totalsRow.__sumTotalNet ?? 0),
+        totalCost: normalizeAggregateValue(totalsRow.__sumTotalCost ?? 0),
+        totalInstallation: normalizeAggregateValue(totalsRow.__sumInstallation ?? 0),
+        totalElInstalation: normalizeAggregateValue(totalsRow.__sumElInstalation ?? 0),
+        totalCommissioning: normalizeAggregateValue(totalsRow.__sumCommissioning ?? 0),
       }
       : { totalListPrice: 0, totalNetPrice: 0, totalCost: 0, totalInstallation: 0, totalElInstalation: 0, totalCommissioning: 0 };
 
@@ -1654,12 +1692,6 @@ export async function POST(
     const rows: ProductRow[] = recordset.map(row => {
       const {
         __totalCount,
-        __sumTotalPrice,
-        __sumTotalNet,
-        __sumTotalCost,
-        __sumInstallation,
-        __sumElInstalation,
-        __sumCommissioning,
       __hasRequestedItemNo,
       __hasRequestedBrand,
       __hasRequestedModelNo,
@@ -1672,12 +1704,6 @@ export async function POST(
       ...rest
       } = row;
       void __totalCount;
-      void __sumTotalPrice;
-      void __sumTotalNet;
-      void __sumTotalCost;
-      void __sumInstallation;
-      void __sumElInstalation;
-      void __sumCommissioning;
       void __hasRequestedItemNo;
       void __hasRequestedBrand;
       void __hasRequestedModelNo;
