@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { logRequest } from "../../../../../lib/apiHelpers";
 import { requirePermission } from "../../../../../lib/authz";
+import { sanitizeExtractedCell } from "../../../../../lib/sanitizeExtractedText";
 
 export const runtime = "nodejs";
 
@@ -16,6 +17,7 @@ const EXTRACT_PROMPT = [
   "- Include EVERY product row. Do not summarize, sample, or skip rows.",
   "- Do NOT invent values. Copy text and numbers exactly as printed, keeping currency symbols and number formatting (e.g. \"1.234,56\", \"357 EUR\", \"CALL\").",
   "- Skip page headers/footers, category banner rows, and totals — only real product rows.",
+  "- Part numbers and codes are often split across two lines in the PDF; join them into ONE code and use a plain ASCII hyphen '-' for the break (e.g. a code shown as \"TPC-ANDROID-\" then \"PHONE\" is \"TPC-ANDROID-PHONE\"). Use only standard characters (A-Z, 0-9, -, ., /, space) in codes; never output replacement characters, soft hyphens, or box/control glyphs.",
   '- If a cell is empty, use "".',
   "Output JSON only — no prose, no markdown code fences.",
 ].join("\n");
@@ -24,8 +26,10 @@ type ExtractedTable = { headers: unknown; rows: unknown };
 
 const toCellString = (value: unknown): string => {
   if (value == null) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "string") return sanitizeExtractedCell(value);
+  if (typeof value === "number" || typeof value === "boolean") {
+    return sanitizeExtractedCell(String(value));
+  }
   return "";
 };
 

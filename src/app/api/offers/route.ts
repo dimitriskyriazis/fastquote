@@ -273,25 +273,24 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
   return { where, params };
 }
 
-function buildOrder(sortModel: GridRequest['sortModel']) {
-  if (!sortModel || sortModel.length === 0) return '';
-  const parts = sortModel.map(s => {
-    const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
-    return `${expression} ${s.sort.toUpperCase()}`;
-  });
-  return `ORDER BY ${parts.join(', ')}`;
-}
-
 function buildVersionGroupedOrder(sortModel: GridRequest['sortModel']) {
   if (!sortModel || sortModel.length === 0) return '';
+  // Each user-sort column is applied at the GROUP level via its FIRST_VALUE-of-latest
+  // alias (see buildVersionGroupedSortColumns), so every version of an offer shares the
+  // same primary key and the group stays contiguous. VersionGroupId then breaks ties
+  // between distinct groups whose latest versions share the sort value (e.g. same
+  // Description, or both NULL), and the per-row keys order versions WITHIN a group
+  // (anchor first, then newest→oldest). offerId is the unique tiebreaker that keeps
+  // OFFSET/FETCH paging deterministic. All referenced names are projected aliases.
   const parts = sortModel.map(s => {
     const alias = `__sort_${s.colId}`;
     return `[${alias}] ${s.sort.toUpperCase()}`;
   });
   parts.push(
+    'VersionGroupId',
     'IsLatestVersion DESC',
-    'dbo.Offer.OfferVersion DESC',
-    'dbo.Offer.ID DESC',
+    'OfferVersion DESC',
+    'offerId DESC',
   );
   return `ORDER BY ${parts.join(', ')}`;
 }
@@ -363,7 +362,7 @@ export async function POST(req: NextRequest) {
 
 	    const select = `
 	      SELECT
-	        COUNT_BIG(1) OVER () AS __totalCount,
+	        -- total count is computed by the outer query (after version-visibility filtering)
 	        dbo.Offer.ID AS OfferPK,
 	        dbo.Offer.Description,
 	        dbo.Offer.Title,
@@ -472,67 +471,85 @@ export async function POST(req: NextRequest) {
     const { where, params: whereParams } = buildWhereAndParams(gridRequest.filterModel);
     const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, QUICK_FILTER_COLUMNS);
     const combinedWhere = mergeWhereClauses(where, quickFilterClause.clause);
-    const combinedWhereWithStandardOffersOnly = mergeWhereClauses(
-      combinedWhere,
-      'AND ISNULL(dbo.Offer.IsStandardPackage, 0) = 0',
-    );
+
+    // The grid filter (including the always-present default Enabled=true) is NOT applied as a
+    // hard WHERE anymore. Instead it becomes a per-row match flag, so a version group can be
+    // surfaced whenever ANY of its versions matches — even when the latest version does not.
+    // This is what lets a filter that only matches an OLD version still show that offer without
+    // the user first having to expand the version group.
+    const filterCondition = combinedWhere.trim().replace(/^\s*WHERE\s+/i, '').trim();
+    const filterExpr = filterCondition.length > 0 ? `(${filterCondition})` : '1=1';
+
+    const groupExpr = 'COALESCE(versionTree.RootOfferID, dbo.Offer.ID)';
+    const isLatestExpr = 'dbo.Offer.OfferVersion = COALESCE(versionStats.MaxOfferVersion, dbo.Offer.OfferVersion)';
+
+    // Groups the user explicitly expanded (clicked the ▸ toggle) show every version.
     const expandedParams: QueryParam[] = [];
-    let combinedWhereWithVersions: string;
-    if (!includeAllVersions) {
-      if (expandedVersionGroupIds.length > 0) {
-        const placeholders = expandedVersionGroupIds.map((groupId, idx) => {
-          const key = `__expanded_group_${idx}`;
-          expandedParams.push({ key, value: groupId });
-          return `@${key}`;
-        });
-        const expandedInList = placeholders.join(', ');
-        // When version groups are expanded, historical versions must bypass grid filters
-        // (e.g. Enabled=true) so ALL versions in the group are shown.
-        // Structure: IsStandardPackage=0 AND ((grid_filters AND is_latest_or_in_expanded) OR is_historical_in_expanded)
-        const isLatest = 'dbo.Offer.OfferVersion = COALESCE(versionStats.MaxOfferVersion, dbo.Offer.OfferVersion)';
-        const inExpandedGroup = `COALESCE(versionTree.RootOfferID, dbo.Offer.ID) IN (${expandedInList})`;
-        const isHistorical = 'dbo.Offer.OfferVersion < COALESCE(versionStats.MaxOfferVersion, dbo.Offer.OfferVersion)';
-
-        // Strip leading WHERE from the filter clause so we can wrap it in parens
-        const filterClause = combinedWhere.trim();
-        const filterCondition = filterClause.replace(/^\s*WHERE\s+/i, '').trim();
-
-        const standardPackageFilter = 'ISNULL(dbo.Offer.IsStandardPackage, 0) = 0';
-
-        if (filterCondition.length > 0) {
-          combinedWhereWithVersions = `WHERE ${standardPackageFilter} AND (
-            (${filterCondition} AND (${isLatest} OR ${inExpandedGroup}))
-            OR (${isHistorical} AND ${inExpandedGroup})
-          )`;
-        } else {
-          combinedWhereWithVersions = `WHERE ${standardPackageFilter} AND (
-            ${isLatest} OR ${inExpandedGroup}
-          )`;
-        }
-      } else {
-        const versionVisibilityClause = 'AND dbo.Offer.OfferVersion = COALESCE(versionStats.MaxOfferVersion, dbo.Offer.OfferVersion)';
-        combinedWhereWithVersions = mergeWhereClauses(combinedWhereWithStandardOffersOnly, versionVisibilityClause);
-      }
-    } else {
-      combinedWhereWithVersions = combinedWhereWithStandardOffersOnly;
+    let expandedExpr = '1 = 0';
+    if (expandedVersionGroupIds.length > 0) {
+      const placeholders = expandedVersionGroupIds.map((groupId, idx) => {
+        const key = `__expanded_group_${idx}`;
+        expandedParams.push({ key, value: groupId });
+        return `@${key}`;
+      });
+      expandedExpr = `${groupExpr} IN (${placeholders.join(', ')})`;
     }
+
+    // Inner-query annotations: per-row match flag + per-version-group aggregates.
+    //   __matchesFilter  – does THIS row match the grid filter?
+    //   __groupHasMatch  – does ANY version in this group match?
+    //   __latestMatches  – does the group's LATEST version match? (gates the "rescue" below)
+    //   __inExpandedGroup – is this row in an explicitly expanded group?
+    // __rootDescription is projected so the outer query can keep the default version-grouped order.
+    const matchColumns = `,
+        CASE WHEN ${filterExpr} THEN 1 ELSE 0 END AS __matchesFilter,
+        MAX(CASE WHEN ${filterExpr} THEN 1 ELSE 0 END)
+          OVER (PARTITION BY ${groupExpr}) AS __groupHasMatch,
+        MAX(CASE WHEN (${isLatestExpr}) AND ${filterExpr} THEN 1 ELSE 0 END)
+          OVER (PARTITION BY ${groupExpr}) AS __latestMatches,
+        CASE WHEN ${expandedExpr} THEN 1 ELSE 0 END AS __inExpandedGroup,
+        COALESCE(rootOffer.Description, dbo.Offer.Description) AS __rootDescription`;
+
+    // Visibility predicate applied by the OUTER query, after the window flags are computed:
+    //   - the latest version of any group that has a match  → the collapsible anchor row
+    //   - a matching historical version, but ONLY when the latest does NOT match  → the rescued
+    //     match. The "latest does not match" gate is what keeps the default Enabled=true view
+    //     collapsed: when the latest already satisfies the filter, older matching versions stay
+    //     hidden behind the toggle exactly as before.
+    //   - any version in an explicitly expanded group
+    // With includeAllVersions we skip collapsing entirely and return every matching version.
+    const visibilityWhere = includeAllVersions
+      ? 'WHERE __matchesFilter = 1'
+      : `WHERE (
+          (IsLatestVersion = 1 AND __groupHasMatch = 1)
+          OR (IsLatestVersion = 0 AND __matchesFilter = 1 AND __latestMatches = 0)
+          OR __inExpandedGroup = 1
+        )`;
+
     const combinedParams = [...whereParams, ...quickFilterClause.params, ...expandedParams];
+    // Outer-query ORDER BY references projected aliases (the inner query owns the FROM joins).
+    // VersionGroupId is a tiebreaker so all versions of one offer stay contiguous even when two
+    // offers share the same root Description; offerId keeps OFFSET/FETCH paging deterministic.
     const defaultOrder = `
       ORDER BY
-        COALESCE(rootOffer.Description, dbo.Offer.Description),
+        __rootDescription,
+        VersionGroupId,
         IsLatestVersion DESC,
-        dbo.Offer.OfferVersion DESC,
-        dbo.Offer.ID DESC
+        OfferVersion DESC,
+        offerId DESC
     `.trim();
-    const hasExpandedGroups = expandedVersionGroupIds.length > 0;
+    // Apply the version-grouped ordering whenever the user has a sort — NOT only when a group is
+    // expanded. The visibility rule can return a rescued historical row alongside its latest
+    // anchor in the collapsed view too, and a flat per-column sort would scatter that child away
+    // from (or above) its anchor, possibly into a different scroll page. Sorting at the group
+    // level keeps each offer's versions together. With no user sort, defaultOrder already groups.
     const hasUserSort = Array.isArray(gridRequest.sortModel) && gridRequest.sortModel.length > 0;
-    const useVersionGroupedSort = hasExpandedGroups && hasUserSort;
-    const versionSortColumns = useVersionGroupedSort
+    const versionSortColumns = hasUserSort
       ? buildVersionGroupedSortColumns(gridRequest.sortModel)
       : '';
-    const orderClause = useVersionGroupedSort
+    const orderClause = hasUserSort
       ? buildVersionGroupedOrder(gridRequest.sortModel)
-      : (buildOrder(gridRequest.sortModel) || defaultOrder);
+      : defaultOrder;
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
     const groupingFields = resolveGroupingFields(gridRequest.rowGroupCols);
@@ -543,6 +560,13 @@ export async function POST(req: NextRequest) {
       : { clause: '', params: [] };
     const groupLevel = Math.min(groupKeys.length, groupingFields.length);
 
+    // Hard, structural constraints applied by the INNER query: standard offers only, narrowed
+    // to the drilled-in row-group keys. The grid filter itself rides along as the match flags.
+    const innerWhere = combineWhereClauses(
+      'WHERE ISNULL(dbo.Offer.IsStandardPackage, 0) = 0',
+      parentFilter.clause,
+    );
+
     const pool = await getPool();
     const bindParams = (request: SqlRequest, paramsList: QueryParam[]) => {
       paramsList.forEach((param) => request.input(param.key, param.value));
@@ -551,12 +575,20 @@ export async function POST(req: NextRequest) {
     };
 
     if (groupingFields.length > 0 && groupLevel < groupingFields.length) {
-      const groupWhere = combineWhereClauses(combinedWhereWithVersions, parentFilter.clause);
+      const groupField = groupingFields[groupLevel].field;
+      // The group field is projected under its colId alias, so the outer query references [alias].
+      const innerSql = `${select}${matchColumns} ${from} ${innerWhere}`;
       const countReq = bindParams(pool.request(), [...combinedParams, ...parentFilter.params]);
+      // Count DISTINCT group values INCLUDING the NULL bucket so the count matches the rows the
+      // data query emits (SELECT DISTINCT yields one NULL row; COUNT(DISTINCT col) would drop it,
+      // under-reporting by one for nullable group fields such as CustomerGroup).
       const countSql = `
-        SELECT COUNT(DISTINCT ${groupingFields[groupLevel].expression}) AS __groupCount
-        ${from}
-        ${groupWhere}
+        SELECT COUNT(*) AS __groupCount
+        FROM (
+          SELECT DISTINCT [${groupField}] AS GroupValue
+          FROM (${innerSql}) AS visible
+          ${visibilityWhere}
+        ) AS distinctGroups
       `;
       const countRes = await countReq.query<{ __groupCount: number }>(`${versionTreeCte} ${countSql}`);
       const totalGroupCount = Number(countRes.recordset?.[0]?.__groupCount ?? 0);
@@ -565,10 +597,10 @@ export async function POST(req: NextRequest) {
       groupReq.input('__offset', sql.Int, offset);
       groupReq.input('__limit', sql.Int, pageSize);
       const groupSql = `
-        SELECT DISTINCT ${groupingFields[groupLevel].expression} AS GroupValue
-        ${from}
-        ${groupWhere}
-        ORDER BY ${groupingFields[groupLevel].expression}
+        SELECT DISTINCT [${groupField}] AS GroupValue
+        FROM (${innerSql}) AS visible
+        ${visibilityWhere}
+        ORDER BY GroupValue
         ${paging}
       `;
       const groupRes = await groupReq.query<{ GroupValue: string | null }>(`${versionTreeCte} ${groupSql}`);
@@ -577,20 +609,22 @@ export async function POST(req: NextRequest) {
         return {
           group: true,
           key: value === null ? null : String(value),
-          field: groupingFields[groupLevel].field,
-          [groupingFields[groupLevel].field]: value,
+          field: groupField,
+          [groupField]: value,
         };
       });
 
       return NextResponse.json({ ok: true, rows, rowCount: totalGroupCount });
     }
 
-    const appliedWhere = groupingFields.length > 0
-      ? combineWhereClauses(combinedWhereWithVersions, parentFilter.clause)
-      : combinedWhereWithVersions;
     const appliedParams = [...combinedParams, ...parentFilter.params];
-
-    const dataSql = `${versionTreeCte} ${select}${versionSortColumns} ${from} ${appliedWhere} ${orderClause} ${paging}`;
+    const innerSql = `${select}${versionSortColumns}${matchColumns} ${from} ${innerWhere}`;
+    const dataSql = `${versionTreeCte}
+      SELECT visible.*, COUNT_BIG(1) OVER () AS __totalCount
+      FROM (${innerSql}) AS visible
+      ${visibilityWhere}
+      ${orderClause}
+      ${paging}`;
     const dataReq = bindParams(pool.request(), appliedParams);
     dataReq.input('__offset', sql.Int, offset);
     dataReq.input('__limit', sql.Int, pageSize);
@@ -604,8 +638,9 @@ export async function POST(req: NextRequest) {
       const { __totalCount, ...rest } = row;
       void __totalCount;
       const cleaned = rest as Record<string, unknown>;
+      // Drop internal helper columns (__matchesFilter, __groupHasMatch, __sort_*, __rootDescription, …)
       for (const key of Object.keys(cleaned)) {
-        if (key.startsWith('__sort_')) {
+        if (key.startsWith('__')) {
           delete cleaned[key];
         }
       }
