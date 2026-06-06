@@ -262,14 +262,20 @@ export async function POST(req: NextRequest) {
             if (segments.length >= 2) score += 1; // deeper path = more specific page
             const lastSeg = segments[segments.length - 1] ?? "";
             if (/search|results|catalog|category|products?$/.test(lastSeg)) score -= 4;
-            // Prefer English/canonical URLs over locale-specific variants (e.g. /nb/, /zh/, /es-LATAM/)
+            // Prefer English URLs over other languages, and EU/UK English over en-US
+            // (the company is EU-based, so regional pricing/availability is correct there).
             const localePattern = /^[a-z]{2}(-[a-zA-Z]{2,8})?$/;
             const firstSeg = segments[0] ?? "";
             const secondSeg = segments[1] ?? "";
-            const locSeg = localePattern.test(firstSeg) ? firstSeg
+            const locSeg = (localePattern.test(firstSeg) ? firstSeg
               : (/^(global|region|site)$/i.test(firstSeg) && localePattern.test(secondSeg)) ? secondSeg
-              : null;
-            if (locSeg && locSeg !== "en" && !locSeg.startsWith("en-")) score -= 3;
+              : null)?.toLowerCase() ?? null;
+            if (locSeg) {
+              if (locSeg !== "en" && !locSeg.startsWith("en-")) score -= 3; // non-English locale
+              else if (/^en-(eu|gb|ie)$/.test(locSeg)) score += 2;          // EU/UK English — preferred
+              else if (locSeg === "en") score += 1;                         // generic global English
+              // en-US and other English regions: neutral
+            }
             // Penalise documentation, guide, and support paths — prefer product listing/spec pages.
             // Exception: /support/s/portalproduct/ (e.g. community.grassvalley.com) is a product page.
             if (/\/support\/s\/portalproduct\//.test(path)) { /* no penalty — this is a product portal page */ }
@@ -499,47 +505,89 @@ export async function POST(req: NextRequest) {
           return { productId: product.ID, webLink: null, status: "not_found" };
         }
 
-        // Normalize URL to English. Handles common locale patterns:
-        //   Pattern 1: /{locale}/rest/of/path       (e.g. /fr/products/..., /es-LATAM/productos/...)
-        //   Pattern 2: /{prefix}/{locale}/rest       (e.g. /global/de/produkte/..., /global/ru/...)
-        //   Pattern 3: /{country}/{lang}/rest        (e.g. /jp/ja/products/... → /global/en/products/...)
+        // Normalize the chosen URL to an English-language page. Two failure modes:
+        //   (a) Only the locale prefix is localized (e.g. /fr/products/...) — a simple
+        //       prefix swap to English recovers it.
+        //   (b) The whole path is localized (e.g. Shure /it-IT/prodotti/accessori/sbc220,
+        //       whose English page lives at /en-US/products/accessories/sbc220) — a prefix
+        //       swap can't recover this because the path words are translated too, so we
+        //       re-search for the English variant via the locale-neutral product slug.
+        const isLocaleSeg = (s: string) => /^[a-z]{2}(-[a-zA-Z]{2,8})?$/.test(s);
+        const isEnglishSeg = (s: string) => s === "en" || s.startsWith("en-");
+        // Index of the leading locale segment: segs[0], or segs[1] when prefixed by
+        // global/region/site. Returns -1 when the path has no locale prefix.
+        const localePrefixIndex = (segs: string[]): number => {
+          if (segs.length > 1 && /^(global|region|site)$/i.test(segs[0]) && isLocaleSeg(segs[1])) return 1;
+          if (segs.length > 0 && isLocaleSeg(segs[0])) return 0;
+          return -1;
+        };
         try {
           const parsed = new URL(webLink);
           const segs = parsed.pathname.split("/").filter(Boolean);
-          const isLocale = (s: string) => /^[a-z]{2}(-[a-zA-Z]{2,8})?$/.test(s);
-          const isEnglish = (s: string) => s === "en" || s.startsWith("en-");
+          const localeIdx = localePrefixIndex(segs);
+          const isNonEnglishLocale = localeIdx >= 0 && !isEnglishSeg(segs[localeIdx]);
 
-          // Detect how many leading segments are locale-like
-          // Pattern 3: two consecutive locales (country + language), e.g. /jp/ja/...
-          // Pattern 2: prefix + locale, e.g. /global/de/...
-          // Pattern 1: single locale, e.g. /fr/...
-          const hasDoubleLocale = segs.length > 2 && isLocale(segs[0]) && isLocale(segs[1]);
-          const hasPrefixLocale = !hasDoubleLocale && segs.length > 2
-            && /^(global|region|site)$/i.test(segs[0]) && isLocale(segs[1]);
-          const hasSingleLocale = !hasDoubleLocale && !hasPrefixLocale
-            && segs.length > 1 && isLocale(segs[0]);
+          if (isNonEnglishLocale) {
+            const rest = segs.slice(localeIdx + 1);
+            const prefix = segs.slice(0, localeIdx);
+            let fixed: string | null = null;
 
-          // Build English URL candidates to try, in order of preference
-          const rest = hasDoubleLocale ? segs.slice(2)
-            : hasPrefixLocale ? segs.slice(2)
-            : hasSingleLocale ? segs.slice(1)
-            : [];
-
-          const needsFix = (hasDoubleLocale && !(isEnglish(segs[0]) || isEnglish(segs[1])))
-            || (hasPrefixLocale && !isEnglish(segs[1]))
-            || (hasSingleLocale && !isEnglish(segs[0]));
-
-          if (needsFix && rest.length > 0) {
-            // Try multiple English URL patterns in order
-            const candidates = [
+            // (a) Cheap prefix swaps — succeed when only the locale prefix is localized.
+            const swaps = Array.from(new Set([
+              `${parsed.origin}/${[...prefix, "en-US", ...rest].join("/")}`,
+              `${parsed.origin}/${[...prefix, "en", ...rest].join("/")}`,
               `${parsed.origin}/global/en/${rest.join("/")}`,
-              `${parsed.origin}/en/${rest.join("/")}`,
               `${parsed.origin}/${rest.join("/")}`,
-            ];
-            for (const candidate of candidates) {
+            ]));
+            for (const candidate of swaps) {
+              if (candidate === webLink) continue;
+              if (await verifyUrl(candidate)) { fixed = candidate; break; }
+            }
+
+            // (b) Fully-localized path — re-search for the English page using the
+            // locale-neutral product slug (last path segment, e.g. "sbc220") plus the
+            // model number, then keep only English-locale results on the same domain.
+            if (!fixed && rest.length > 0) {
+              const slug = rest[rest.length - 1].replace(/\.[a-z0-9]+$/i, "");
+              const reSearchQuery = `site:${domain} ${[modelNumber, slug].filter(Boolean).join(" ")}`.trim();
+              const englishCandidates = (await serperSearch(reSearchQuery))
+                .filter(domainFilter)
+                .filter((r) => {
+                  try {
+                    const segsR = new URL(r.link).pathname.split("/").filter(Boolean);
+                    const li = localePrefixIndex(segsR);
+                    return li >= 0 && isEnglishSeg(segsR[li]);
+                  } catch { return false; }
+                });
+              const englishLink = await tryVerifyCandidates(englishCandidates);
+              if (englishLink) fixed = englishLink;
+            }
+
+            if (fixed) {
+              console.log(`[weblink] product ${product.ID}: localized → English ${webLink} → ${fixed}`);
+              webLink = fixed;
+            } else {
+              console.log(`[weblink] product ${product.ID}: no English variant found for ${webLink}, keeping original`);
+            }
+          }
+        } catch { /* ignore */ }
+
+        // Prefer the EU/UK English site over en-US: when the URL already points at an
+        // English page (e.g. /en-US/...), try swapping the locale to en-EU then en-GB
+        // (path words are identical across English regions) and keep the first that exists.
+        try {
+          const parsed = new URL(webLink);
+          const segs = parsed.pathname.split("/").filter(Boolean);
+          const localeIdx = localePrefixIndex(segs);
+          const loc = localeIdx >= 0 ? segs[localeIdx].toLowerCase() : "";
+          if (loc && isEnglishSeg(loc) && !/^en-(eu|gb)$/.test(loc)) {
+            for (const target of ["en-EU", "en-GB"]) {
+              const swapped = [...segs];
+              swapped[localeIdx] = target;
+              const candidate = `${parsed.origin}/${swapped.join("/")}${parsed.search}`;
               if (candidate === webLink) continue;
               if (await verifyUrl(candidate)) {
-                console.log(`[weblink] product ${product.ID}: localized to English ${webLink} → ${candidate}`);
+                console.log(`[weblink] product ${product.ID}: preferring EU English ${webLink} → ${candidate}`);
                 webLink = candidate;
                 break;
               }
