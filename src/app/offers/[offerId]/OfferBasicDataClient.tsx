@@ -11,6 +11,7 @@ import type {
   MarketOption,
 } from './OfferBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
+import { showConfirmDialog } from '../../../lib/confirm';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { useUndoStack } from '../../hooks/useUndoStack';
 import { useAutoSaveTimer } from '../../hooks/useAutoSaveTimer';
@@ -1021,8 +1022,29 @@ export default function OfferBasicDataClient({
     handleValueChange(def.id, newValue);
     if (!def.updateField) return;
     if (newValue === savedValuesRef.current[def.id]) return;
-    void saveField(def, newValue);
-  }, [handleValueChange, saveField]);
+    void (async () => {
+      await saveField(def, newValue);
+      // After adding an Order Signed date, offer to switch the status to "Order Signed" too.
+      if (def.id !== 'orderSigned' || !newValue) return;
+      if (savedValuesRef.current.orderSigned !== newValue) return; // save failed; don't prompt
+      const orderSignedStatus = localStatuses.find(
+        (option) => option.label.trim().toLowerCase() === 'order signed',
+      );
+      if (!orderSignedStatus) return;
+      if ((savedValuesRef.current.status ?? '') === orderSignedStatus.value) return; // already set
+      const confirmed = await showConfirmDialog({
+        title: 'Change status to Order Signed?',
+        message: 'You added an Order Signed date. Do you also want to set the offer status to "Order Signed"?',
+        confirmLabel: 'Yes, set status',
+        cancelLabel: 'No',
+      });
+      if (!confirmed) return;
+      const statusDef = fieldDefinitions.find((d) => d.id === 'status');
+      if (statusDef) {
+        await saveField(statusDef, orderSignedStatus.value);
+      }
+    })();
+  }, [handleValueChange, saveField, localStatuses, fieldDefinitions]);
 
   const handleSelectChange = useCallback((def: FieldDefinition, newValue: string) => {
     cancelAutoSaveRef.current(def.id);
