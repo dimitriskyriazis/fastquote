@@ -9373,16 +9373,17 @@ const requestedColumnDefsMap = useMemo(
         </div>
         {hideTotals ? null : (
           <div className={styles.totalsBar}>
+            <span className={styles.totalsHeading}>Totals:</span>
             <div className={styles.totalItem}>
-              <span className={styles.totalLabel}>Total List:</span>
+              <span className={styles.totalLabel}>List:</span>
               <span className={styles.totalValue}>{formatEuroTotal(totals?.totalListPrice)}</span>
             </div>
             <div className={styles.totalItem}>
-              <span className={styles.totalLabel}>Total Discount:</span>
+              <span className={styles.totalLabel}>Discount:</span>
               <span className={styles.totalValue}>{formatDiscountTotal(totals?.totalListPrice, totals?.totalNetPrice)}</span>
             </div>
             <div className={styles.totalItem}>
-              <span className={styles.totalLabel}>Total Net:</span>
+              <span className={styles.totalLabel}>Net:</span>
               {totalNetEditing ? (
                 <input
                   className={styles.totalNetInput}
@@ -9491,11 +9492,11 @@ const requestedColumnDefsMap = useMemo(
               </div>
             )}
             <div className={styles.totalItem}>
-              <span className={styles.totalLabel}>Total Cost:</span>
+              <span className={styles.totalLabel}>Cost:</span>
               <span className={styles.totalValue}>{formatEuroTotal(totals?.totalCost)}</span>
             </div>
             <div className={styles.totalItem}>
-              <span className={styles.totalLabel}>Total Margin:</span>
+              <span className={styles.totalLabel}>Margin:</span>
               {totalMarginEditing ? (
                 <input
                   className={styles.totalNetInput}
