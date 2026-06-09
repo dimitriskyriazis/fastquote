@@ -113,6 +113,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
   const [printSubSubCategories, setPrintSubSubCategories] = useState(false);
   const [showGrandTotal, setShowGrandTotal] = useState(true);
   const [showDiscount, setShowDiscount] = useState(true);
+  const [showAdditionalDiscount, setShowAdditionalDiscount] = useState(true);
   const [showFinalPrice, setShowFinalPrice] = useState(true);
   const [smallOffer, setSmallOffer] = useState(false);
   const [equipmentList, setEquipmentList] = useState(false);
@@ -302,7 +303,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
       setIsExporting(true);
       try {
         const columnsParam = encodeURIComponent(selectedColumns.join(','));
-        const printParams = `&printProducts=${printProducts ? '1' : '0'}&printCategories=${printCategories ? '1' : '0'}&printSubCategories=${printSubCategories ? '1' : '0'}&printSubSubCategories=${printSubSubCategories ? '1' : '0'}&showGrandTotal=${showGrandTotal ? '1' : '0'}&showDiscount=${showDiscount ? '1' : '0'}&showFinalPrice=${showFinalPrice ? '1' : '0'}&smallOffer=${smallOffer ? '1' : '0'}&equipmentList=${equipmentList ? '1' : '0'}`;
+        const printParams = `&printProducts=${printProducts ? '1' : '0'}&printCategories=${printCategories ? '1' : '0'}&printSubCategories=${printSubCategories ? '1' : '0'}&printSubSubCategories=${printSubSubCategories ? '1' : '0'}&showGrandTotal=${showGrandTotal ? '1' : '0'}&showDiscount=${showDiscount ? '1' : '0'}&showAdditionalDiscount=${showAdditionalDiscount ? '1' : '0'}&showFinalPrice=${showFinalPrice ? '1' : '0'}&smallOffer=${smallOffer ? '1' : '0'}&equipmentList=${equipmentList ? '1' : '0'}`;
         const res = await fetch(
           `/api/offers/${encodeURIComponent(offerId)}/pdf?lang=${selectedLang}&orientation=${orientation}&columns=${columnsParam}${printParams}`,
         );
@@ -326,7 +327,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
         setIsExporting(false);
       }
     },
-    [offerId, selectedColumns, selectedLang, printProducts, printCategories, printSubCategories, printSubSubCategories, showGrandTotal, showDiscount, showFinalPrice, smallOffer, equipmentList],
+    [offerId, selectedColumns, selectedLang, printProducts, printCategories, printSubCategories, printSubSubCategories, showGrandTotal, showDiscount, showAdditionalDiscount, showFinalPrice, smallOffer, equipmentList],
   );
 
   const handlePreviewClose = useCallback(() => {
@@ -649,6 +650,14 @@ export default function ExportPdfButton({ offerId, className }: Props) {
                     onChange={(e) => setShowDiscount(e.target.checked)}
                   />
                   <span>Discount</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 13, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={showAdditionalDiscount}
+                    onChange={(e) => setShowAdditionalDiscount(e.target.checked)}
+                  />
+                  <span>Additional Discount</span>
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 13, cursor: 'pointer' }}>
                   <input

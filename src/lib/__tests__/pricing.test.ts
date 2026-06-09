@@ -438,40 +438,83 @@ describe('resolvePricing — single-field edit cascade', () => {
   });
 
   describe('TelmacoDiscount edit', () => {
-    it('price-list row: holds LP, recomputes NetCost (sell side untouched)', () => {
+    it('Keep Net (default): recomputes NetCost, holds NP + CD, Margin floats', () => {
       const input: PricingInput = {
         listPrice: 1000,
         customerDiscount: 10,
         telmacoDiscount: 25,    // user changed from 20
         netUnitPrice: 900,
         netCost: 800,
-        margin: null,
+        margin: 11.1111,
         provided: { ...noProvided, telmacoDiscount: true },
+        holdMarginOnCostChange: false,
       };
       const r = resolvePricing(input)!;
       expect(r.netCost).toBe(750);            // 1000 × 0.75
       expect(r.telmacoDiscount).toBe(25);
       expect(r.netUnitPrice).toBe(900);       // unchanged
       expect(r.customerDiscount).toBe(10);    // unchanged
+      expect(r.margin).toBeCloseTo(16.6667, 3); // (1 - 750/900) — floated
+    });
+
+    it('Keep Margin: recomputes NetCost, holds Margin, floats NP + CD', () => {
+      const input: PricingInput = {
+        listPrice: 1000,
+        customerDiscount: 10,
+        telmacoDiscount: 25,    // user changed from 20
+        netUnitPrice: 900,
+        netCost: 800,
+        margin: 11.1111,        // (1 - 800/900) — to be held
+        provided: { ...noProvided, telmacoDiscount: true },
+        holdMarginOnCostChange: true,
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netCost).toBe(750);            // 1000 × 0.75
+      expect(r.telmacoDiscount).toBe(25);
+      expect(r.margin).toBe(11.1111);         // held
+      // NP = 750 / (1 - 0.111111) = 843.7508 → CD = 1 - 843.7508/1000
+      expect(r.netUnitPrice).toBeCloseTo(843.75, 1);
+      expect(r.customerDiscount).toBeCloseTo(15.625, 2);
     });
   });
 
   describe('NetCost edit', () => {
-    it('price-list row: holds LP, recomputes TelmacoDiscount (sell side untouched)', () => {
+    it('Keep Net (default): recomputes TelmacoDiscount, holds NP + CD, Margin floats', () => {
       const input: PricingInput = {
         listPrice: 1000,
         customerDiscount: 10,
         telmacoDiscount: 20,
         netUnitPrice: 900,
         netCost: 750,    // user edited from 800
-        margin: null,
+        margin: 11.1111,
         provided: { ...noProvided, netCost: true },
+        holdMarginOnCostChange: false,
       };
       const r = resolvePricing(input)!;
       expect(r.netCost).toBe(750);
       expect(r.telmacoDiscount).toBe(25);     // 1 - 750/1000
       expect(r.netUnitPrice).toBe(900);       // unchanged
       expect(r.customerDiscount).toBe(10);    // unchanged
+      expect(r.margin).toBeCloseTo(16.6667, 3); // floated
+    });
+
+    it('Keep Margin: recomputes TelmacoDiscount, holds Margin, floats NP + CD', () => {
+      const input: PricingInput = {
+        listPrice: 1000,
+        customerDiscount: 10,
+        telmacoDiscount: 20,
+        netUnitPrice: 900,
+        netCost: 720,    // user edited from 800
+        margin: 20,      // to be held
+        provided: { ...noProvided, netCost: true },
+        holdMarginOnCostChange: true,
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netCost).toBe(720);
+      expect(r.telmacoDiscount).toBe(28);     // 1 - 720/1000
+      expect(r.margin).toBe(20);              // held
+      expect(r.netUnitPrice).toBe(900);       // 720 / 0.8
+      expect(r.customerDiscount).toBe(10);    // 1 - 900/1000
     });
   });
 
@@ -593,22 +636,23 @@ describe('resolvePricing — single-field edit cascade', () => {
       expect(r.customerDiscount).toBe(0);   // unchanged
     });
 
-    it('preserves NetCost when ListPrice changes with customer-discount anchor', () => {
+    it('normal consistent row: holds both discounts, rescales prices, preserves margin', () => {
+      // Core screenshot behaviour: CD/TD stay, NP/TC auto-calc, Margin unchanged.
       const input: PricingInput = {
-        listPrice: 200,
-        customerDiscount: 0,
-        telmacoDiscount: 0,
-        netUnitPrice: null,
-        netCost: 100,
-        margin: null,
+        listPrice: 1100,     // raised from 1000
+        customerDiscount: 10,
+        telmacoDiscount: 20,
+        netUnitPrice: 900,   // was 1000 × 0.9
+        netCost: 800,        // was 1000 × 0.8
+        margin: 11.1111,
         provided: { ...noProvided, listPrice: true },
-        sellAnchor: 'customerDiscount',
       };
       const r = resolvePricing(input)!;
-      expect(r.netCost).toBe(100);
-      expect(r.telmacoDiscount).toBe(50);
-      expect(r.netUnitPrice).toBe(200);
-      expect(r.customerDiscount).toBe(0);
+      expect(r.customerDiscount).toBe(10);   // held
+      expect(r.telmacoDiscount).toBe(20);    // held
+      expect(r.netUnitPrice).toBe(990);      // 1100 × 0.9
+      expect(r.netCost).toBe(880);           // 1100 × 0.8
+      expect(r.margin).toBeCloseTo(11.1111, 3); // preserved
     });
 
     it('preserves NetUnitPrice when only NP is populated', () => {

@@ -15,6 +15,8 @@ export const PRODUCT_DESCRIPTION_SYSTEM_PROMPT: string = [
   "",
   "CAPITALIZATION: Never write the description in ALL CAPS. If the input is in ALL CAPS or SCREAMING CASE, convert it to sentence case (capitalize only the first letter and recognised proper nouns/brand names). Write all other words in lowercase.",
   "",
+  "WEB CONTEXT RULE (critical): The Current Description defines WHAT the product is. Use web context ONLY to add specs that are consistent with it. If the web context looks like a DIFFERENT product — a different category/type than the Current Description (e.g. the description says 'projector' but the web result is a server, a meter, or an unrelated device) — IGNORE the web context entirely and rewrite from the Current Description alone. Never let web context change the product's category. Never invent specs (resolutions, pixel dimensions, wattages, sizes) that are not in the Current Description or trustworthy matching web context — e.g. do not write a resolution like '4K UHD (1920×1200)' unless those exact pixel dimensions are given.",
+  "",
   "NEVER DO:",
   "- Add disclaimers or 'verify with manufacturer' notes",
   "- Add label prefixes like 'Type:' or 'Lens type:'",
@@ -84,6 +86,36 @@ export const PRODUCT_DESCRIPTION_SYSTEM_PROMPT: string = [
   "(display format: size + panel type first, then 'with' + comma-separated specs; resolution as 'Name (W×H)'; brightness in cd/m²; input count as '2×'; VESA as 'VESA W×H mm mount'; ends with period; model/part number never written)",
 ].join("\n");
 
+/**
+ * Addendum that turns the single-product prompt into a batch/consistency prompt. The base rules
+ * still apply to every item; this only adds the "make the variants read as one family" goal and
+ * the JSON output contract. Appended to PRODUCT_DESCRIPTION_SYSTEM_PROMPT so the house style stays
+ * the single source of truth.
+ */
+const GROUP_CONSISTENCY_ADDENDUM: string = [
+  "",
+  "BATCH / CONSISTENCY MODE:",
+  "The user message lists SEVERAL products that are variants of the same product line — they differ only in attributes such as colour, size, capacity, channel count, or region.",
+  "Rewrite ALL of them so the descriptions are CONSISTENT with each other:",
+  "- identical leading product-type term across the whole set,",
+  "- identical spec vocabulary and units (don't write '8 ohms' for one and '8 ohm' for another),",
+  "- identical ordering and formatting of the specs the items share,",
+  "- so the set reads as one coherent family.",
+  "Vary ONLY the attribute(s) that genuinely differ between the items (e.g. the colour, the size, the wattage); everything the items share must be worded identically.",
+  "Each item still obeys ALL the rules above (no model/part numbers, no ALL CAPS, no filler, product type first, etc.).",
+  "",
+  "OUTPUT: Return ONLY a JSON array — no prose, no markdown, no code fences. One object per input item, keyed by its id:",
+  '[{"id": <item id>, "description": "<rewritten description>"}]',
+  "Include every id from the input exactly once. The description value is the plain description text only.",
+].join("\n");
+
+/**
+ * System prompt for rewriting a family of similar products together so their descriptions stay
+ * consistent. Shares the base house-style rules and adds the batch-consistency + JSON contract.
+ */
+export const PRODUCT_DESCRIPTION_GROUP_SYSTEM_PROMPT: string =
+  `${PRODUCT_DESCRIPTION_SYSTEM_PROMPT}\n${GROUP_CONSISTENCY_ADDENDUM}`;
+
 export type DescriptionInput = {
   brand: string;
   modelNumber: string;
@@ -110,6 +142,39 @@ export const buildDescriptionUserMessage = (input: DescriptionInput): string => 
   ]
     .filter((line) => line !== "")
     .join("\n");
+};
+
+export type GroupDescriptionMember = {
+  id: number;
+  modelNumber: string;
+  partNumber: string;
+  description: string;
+};
+
+/**
+ * Build the user message for a family of similar products. Each member is listed with its id (so
+ * the model can key its JSON output) plus the Model/Part fields for spec lookup — which, as in the
+ * single-item path, are never copied into the output and are stripped afterwards. Web context is
+ * shared across the whole family.
+ */
+export const buildGroupDescriptionUserMessage = (input: {
+  brand: string;
+  members: GroupDescriptionMember[];
+  webSnippets?: string;
+}): string => {
+  const { brand, members, webSnippets } = input;
+  const lines: string[] = [`Brand: ${brand || "Unknown"}`, "", "Items:"];
+  for (const member of members) {
+    const parts = [`- id ${member.id}:`];
+    if (member.modelNumber) parts.push(`Model: ${member.modelNumber}`);
+    if (member.partNumber) parts.push(`Part Number: ${member.partNumber}`);
+    parts.push(`Current Description: ${member.description || "None"}`);
+    lines.push(parts.join(" | "));
+  }
+  if (webSnippets) {
+    lines.push("", "Web context (shared across the family, for spec lookup):", webSnippets);
+  }
+  return lines.join("\n");
 };
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

@@ -10,6 +10,8 @@ export type OfferLanguageDefaults = {
   deliveryTime: string;
   offerValidity: string;
   closingNote: string;
+  discountLabel: string;
+  additionalDiscountLabel: string;
   finalPriceLabel: string;
 };
 
@@ -20,6 +22,8 @@ export const OFFER_LANGUAGE_DEFAULTS: Record<OfferLanguage, OfferLanguageDefault
     deliveryTime: '8 εβδομάδες',
     offerValidity: '4 εβδομάδες',
     closingNote: 'Οι παραπάνω τιμές είναι σε Ευρώ για προϊόντα ελεύθερα χωρίς ΦΠΑ.',
+    discountLabel: 'Έκπτωση',
+    additionalDiscountLabel: 'Επιπλέον Έκπτωση',
     finalPriceLabel: 'Τελική Τιμή',
   },
   English: {
@@ -28,6 +32,8 @@ export const OFFER_LANGUAGE_DEFAULTS: Record<OfferLanguage, OfferLanguageDefault
     deliveryTime: '8 weeks',
     offerValidity: '4 weeks',
     closingNote: 'The above prices are in Euro and do not include VAT.',
+    discountLabel: 'Discount',
+    additionalDiscountLabel: 'Extra Discount',
     finalPriceLabel: 'Final Price',
   },
 };

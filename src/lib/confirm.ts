@@ -250,6 +250,228 @@ export const showEnhancePreviewDialog = async (
   });
 };
 
+// ---------------------------------------------------------------------------
+// Selectable confirm dialog
+// Like showConfirmDialog's details table, but each row has a checkbox plus a
+// header "select all" checkbox. Returns the indices of the rows the user chose
+// to apply, or `false` if cancelled. Used for the import "Description Mismatch"
+// / "Model Number Mismatch" prompts so the user can pick which rows to overwrite.
+// ---------------------------------------------------------------------------
+export type SelectableConfirmDialogOptions = {
+  title?: string;
+  message: string;
+  /** Verb shown on the confirm button; a live count is appended, e.g. "Overwrite 12 selected". */
+  confirmLabel?: string;
+  cancelLabel?: string;
+  columns: string[];
+  rows: string[][];
+  /** Column widths (CSS values) aligned to `columns`; checkbox column is sized automatically. */
+  columnWidths?: string[];
+  /** Index into `columns` of the "new value" column to highlight green when it differs. */
+  highlightColumn?: number;
+};
+
+/**
+ * Returns the indices (into `rows`) the user chose to apply, or `false` if cancelled.
+ * All rows start checked.
+ */
+export const showSelectableConfirmDialog = async ({
+  title,
+  message,
+  confirmLabel = 'Apply',
+  cancelLabel = 'Cancel',
+  columns,
+  rows,
+  columnWidths,
+  highlightColumn,
+}: SelectableConfirmDialogOptions): Promise<number[] | false> => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    // SSR / non-interactive: apply everything by default.
+    return rows.map((_, i) => i);
+  }
+
+  return new Promise<number[] | false>((resolve) => {
+    const checked = new Set<number>(rows.map((_, i) => i)); // all on by default
+
+    const overlay = document.createElement('div');
+    overlay.className = 'fastquote-confirm-overlay';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'fastquote-confirm-dialog';
+    dialog.style.cssText =
+      'width:min(96vw,1100px);max-width:96vw;padding:24px 28px 20px;display:flex;flex-direction:column;gap:0;';
+
+    if (title) {
+      const heading = document.createElement('h3');
+      heading.className = 'fastquote-confirm-title';
+      heading.textContent = title;
+      dialog.appendChild(heading);
+    }
+
+    const messageEl = document.createElement('p');
+    messageEl.className = 'fastquote-confirm-message';
+    messageEl.style.marginBottom = '14px';
+    messageEl.textContent = message;
+    dialog.appendChild(messageEl);
+
+    /* ---- scrollable table wrapper ---- */
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText =
+      'overflow-y:auto;max-height:55vh;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:18px;flex:1 1 auto;';
+
+    const table = document.createElement('table');
+    table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.82rem;table-layout:fixed;';
+
+    /* -- thead -- */
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+
+    const thCheck = document.createElement('th');
+    thCheck.style.cssText =
+      'width:36px;padding:6px 8px;background:#f3f4f6;border-bottom:1px solid #e5e7eb;' +
+      'position:sticky;top:0;z-index:1;text-align:center;';
+    const selectAllCb = document.createElement('input');
+    selectAllCb.type = 'checkbox';
+    selectAllCb.checked = rows.length > 0;
+    selectAllCb.title = 'Select / deselect all';
+    selectAllCb.style.cursor = 'pointer';
+    thCheck.appendChild(selectAllCb);
+    headerRow.appendChild(thCheck);
+
+    columns.forEach((label, colIdx) => {
+      const th = document.createElement('th');
+      th.textContent = label;
+      const width = columnWidths?.[colIdx];
+      th.style.cssText =
+        'text-align:left;padding:7px 10px;background:#f3f4f6;border-bottom:1px solid #e5e7eb;' +
+        'font-weight:600;position:sticky;top:0;z-index:1;' +
+        (width ? `width:${width};` : '');
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    /* ---- confirm button (created early so updateConfirmBtn can close over it) ---- */
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'fastquote-confirm-btn fastquote-confirm-btn--confirm';
+
+    const updateConfirmBtn = () => {
+      const n = checked.size;
+      confirmBtn.textContent = `${confirmLabel} ${n} selected`;
+      confirmBtn.disabled = n === 0;
+      if (n === 0) {
+        selectAllCb.checked = false;
+        selectAllCb.indeterminate = false;
+      } else if (n === rows.length) {
+        selectAllCb.checked = true;
+        selectAllCb.indeterminate = false;
+      } else {
+        selectAllCb.checked = false;
+        selectAllCb.indeterminate = true;
+      }
+    };
+
+    /* -- tbody -- */
+    const tbody = document.createElement('tbody');
+    const rowCheckboxes: HTMLInputElement[] = [];
+
+    rows.forEach((row, idx) => {
+      const tr = document.createElement('tr');
+      tr.style.background = idx % 2 === 1 ? '#fafafa' : '#ffffff';
+
+      const tdCheck = document.createElement('td');
+      tdCheck.style.cssText =
+        'padding:6px 8px;border-bottom:1px solid #f0f0f0;vertical-align:middle;text-align:center;';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      cb.style.cursor = 'pointer';
+      cb.addEventListener('change', () => {
+        if (cb.checked) {
+          checked.add(idx);
+          tr.style.opacity = '1';
+        } else {
+          checked.delete(idx);
+          tr.style.opacity = '0.45';
+        }
+        updateConfirmBtn();
+      });
+      rowCheckboxes.push(cb);
+      tdCheck.appendChild(cb);
+      tr.appendChild(tdCheck);
+
+      row.forEach((cell, colIdx) => {
+        const td = document.createElement('td');
+        td.style.cssText =
+          'padding:6px 10px;border-bottom:1px solid #f0f0f0;vertical-align:top;' +
+          'word-break:break-word;white-space:pre-wrap;line-height:1.4;';
+        td.textContent = cell;
+        if (highlightColumn === colIdx && cell && cell !== row[colIdx - 1]) {
+          td.style.background = '#f0fdf4';
+          td.style.color = '#166534';
+        }
+        tr.appendChild(td);
+      });
+
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrapper.appendChild(table);
+    dialog.appendChild(wrapper);
+
+    /* ---- select-all handler ---- */
+    selectAllCb.addEventListener('change', () => {
+      const shouldCheck = selectAllCb.checked;
+      rowCheckboxes.forEach((cb, idx) => {
+        cb.checked = shouldCheck;
+        const tr = tbody.children[idx] as HTMLTableRowElement | undefined;
+        if (tr) tr.style.opacity = shouldCheck ? '1' : '0.45';
+        if (shouldCheck) checked.add(idx);
+        else checked.delete(idx);
+      });
+      updateConfirmBtn();
+    });
+
+    /* ---- buttons ---- */
+    const buttons = document.createElement('div');
+    buttons.className = 'fastquote-confirm-buttons';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'fastquote-confirm-btn fastquote-confirm-btn--cancel';
+    cancelBtn.textContent = cancelLabel;
+
+    buttons.appendChild(cancelBtn);
+    buttons.appendChild(confirmBtn);
+    dialog.appendChild(buttons);
+    overlay.appendChild(dialog);
+
+    const cleanup = (result: number[] | false) => {
+      overlay.classList.remove('visible');
+      window.setTimeout(() => overlay.remove(), 180);
+      window.removeEventListener('keydown', handleKey);
+      resolve(result);
+    };
+
+    cancelBtn.addEventListener('click', () => cleanup(false));
+    confirmBtn.addEventListener('click', () => cleanup([...checked]));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(false); });
+
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); cleanup(false); }
+    };
+    window.addEventListener('keydown', handleKey);
+
+    updateConfirmBtn();
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => {
+      overlay.classList.add('visible');
+      confirmBtn.focus();
+    });
+  });
+};
+
 export const showMultiChoiceDialog = async ({
   title,
   message,

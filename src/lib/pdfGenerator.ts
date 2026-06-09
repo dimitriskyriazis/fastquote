@@ -7,6 +7,7 @@ export type PdfOrientation = 'portrait' | 'landscape';
 export type PdfTotalsDisplaySettings = {
   showGrandTotal: boolean;
   showDiscount: boolean;
+  showAdditionalDiscount: boolean;
   showFinalPrice: boolean;
 };
 
@@ -44,12 +45,15 @@ export type OfferPdfData = {
   notesIntroduction: string | null;
   notesClosing: string | null;
   discountNote: string | null;
+  // Per-offer label overrides for the totals box. Fall back to the localized
+  // defaults (L.discountAmount / L.additionalDiscountAmount / L.total) when blank.
+  discountLabel: string | null;
+  additionalDiscountLabel: string | null;
   finalPriceLabel: string | null;
   currencySymbol?: string | null;
-  // Offer-level "additional discounts" applied on top of the List/Net subtotals.
+  // Offer-level "additional discount" shown as its own totals line BELOW the main
+  // discount (it is NOT folded into the main discount). Applied to the net total.
   // mode 'pct' = percentage, 'abs' = absolute amount in the offer currency.
-  extraListDiscount?: number | null;
-  extraListDiscountMode?: 'pct' | 'abs' | null;
   extraNetDiscount?: number | null;
   extraNetDiscountMode?: 'pct' | 'abs' | null;
 };
@@ -133,6 +137,7 @@ const LABELS = {
     colRequestedQuantity: 'Ζητ. Τεμ',
     subtotal: 'Γενικό Σύνολο',
     discountAmount: 'Έκπτωση',
+    additionalDiscountAmount: 'Επιπλέον Έκπτωση',
     total: 'Τελική Τιμή',
     discountNoteTitle: 'Σημείωση Έκπτωσης',
     termsTitle: 'Όροι Προσφοράς',
@@ -182,6 +187,7 @@ const LABELS = {
     colRequestedQuantity: 'Req. Qty',
     subtotal: 'Grand Total',
     discountAmount: 'Discount',
+    additionalDiscountAmount: 'Extra Discount',
     total: 'Final Price',
     discountNoteTitle: 'Discount Note',
     termsTitle: 'Commercial Terms',
@@ -339,9 +345,11 @@ let currentCurrencySymbol = '€';
 function formatCurrency(n: number | null | undefined): string {
   const v = formatEuropeanNumber(n);
   if (!v) return '';
-  return currentCurrencySymbol === '$'
-    ? `${currentCurrencySymbol} ${v}`
-    : `${v} ${currentCurrencySymbol}`;
+  // Join the amount and currency symbol with a non-breaking space so the symbol
+  // never wraps onto its own line when the totals column is narrow.
+  return currentCurrencySymbol === '$' || currentCurrencySymbol === '£'
+    ? `${currentCurrencySymbol} ${v}`
+    : `${v} ${currentCurrencySymbol}`;
 }
 
 function formatPercent(n: number | null | undefined): string {
@@ -1193,19 +1201,20 @@ function buildItemsTable(
 function calculateDiscountSummary(data: OfferPdfData): {
   listSubtotal: number;
   discountEur: number;
+  additionalDiscountEur: number;
   totalNet: number;
 } {
   const detailRows = data.products.filter((p) => !p.isCategory && !p.isOption);
 
   let listSubtotal = 0;
-  let totalNet = 0;
+  let netBeforeExtra = 0;
 
   for (const row of detailRows) {
     const lineTotal = lineNetAmount(row);
     const qty = row.quantity ?? null;
 
     // Net summary should follow the same source as the line Total column.
-    totalNet += lineTotal;
+    netBeforeExtra += lineTotal;
 
     if (qty != null && row.listPrice != null) {
       listSubtotal += row.listPrice * qty;
@@ -1220,15 +1229,18 @@ function calculateDiscountSummary(data: OfferPdfData): {
     listSubtotal += lineTotal;
   }
 
-  if (listSubtotal <= 0) listSubtotal = totalNet;
+  if (listSubtotal <= 0) listSubtotal = netBeforeExtra;
 
-  // Apply offer-level additional discounts on top of the computed subtotals.
-  listSubtotal = applyExtraDiscount(listSubtotal, data.extraListDiscount, data.extraListDiscountMode);
-  totalNet = applyExtraDiscount(totalNet, data.extraNetDiscount, data.extraNetDiscountMode);
+  // The main "Discount" line is the list→net gap from per-line customer discounts
+  // only — it deliberately EXCLUDES the offer-level additional discount.
+  const discountEur = Math.max(0, listSubtotal - netBeforeExtra);
 
-  const discountEur = Math.max(0, listSubtotal - totalNet);
+  // The offer-level additional discount is applied on top of the net subtotal and
+  // surfaced as its own line; the final price reflects net after this reduction.
+  const totalNet = applyExtraDiscount(netBeforeExtra, data.extraNetDiscount, data.extraNetDiscountMode);
+  const additionalDiscountEur = Math.max(0, netBeforeExtra - totalNet);
 
-  return { listSubtotal, discountEur, totalNet };
+  return { listSubtotal, discountEur, additionalDiscountEur, totalNet };
 }
 
 // Applies an offer-level additional discount (percentage or absolute amount) to a
@@ -1252,6 +1264,7 @@ function buildTotalsAndTerms(
   totalsDisplaySettings: PdfTotalsDisplaySettings = {
     showGrandTotal: true,
     showDiscount: true,
+    showAdditionalDiscount: true,
     showFinalPrice: true,
   },
   equipmentList: boolean = false,
@@ -1260,9 +1273,12 @@ function buildTotalsAndTerms(
   const discountSummary = calculateDiscountSummary(data);
   const showGrandTotalSummary = totalsDisplaySettings.showGrandTotal;
   const showDiscountSummary = totalsDisplaySettings.showDiscount && discountSummary.discountEur > 0;
+  const showAdditionalDiscountSummary =
+    totalsDisplaySettings.showAdditionalDiscount && discountSummary.additionalDiscountEur > 0;
   const showAnyTotalRow =
     showGrandTotalSummary ||
     showDiscountSummary ||
+    showAdditionalDiscountSummary ||
     totalsDisplaySettings.showFinalPrice;
 
   let terms = [
@@ -1309,8 +1325,16 @@ function buildTotalsAndTerms(
     ...(showDiscountSummary
       ? [
         [
-          { text: L.discountAmount, ...summaryRowStyle },
+          { text: str(data.discountLabel) || L.discountAmount, ...summaryRowStyle },
           { text: formatCurrency(discountSummary.discountEur), ...summaryRowStyle, alignment: 'right' },
+        ],
+      ]
+      : []),
+    ...(showAdditionalDiscountSummary
+      ? [
+        [
+          { text: str(data.additionalDiscountLabel) || L.additionalDiscountAmount, ...summaryRowStyle },
+          { text: formatCurrency(discountSummary.additionalDiscountEur), ...summaryRowStyle, alignment: 'right' },
         ],
       ]
       : []),
@@ -1496,6 +1520,7 @@ export async function generateOfferPdf(
   totalsDisplaySettings: PdfTotalsDisplaySettings = {
     showGrandTotal: true,
     showDiscount: true,
+    showAdditionalDiscount: true,
     showFinalPrice: true,
   },
   smallOffer: boolean = false,

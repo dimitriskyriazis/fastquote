@@ -283,7 +283,8 @@ export default async function PriceListImportPage({ searchParams }: PageProps) {
           CASE
             WHEN Name = N'€' OR LOWER(Name) LIKE '%eur%' OR LOWER(Name) LIKE '%euro%' THEN 0
             WHEN Name = N'$' OR LOWER(Name) LIKE '%usd%' OR LOWER(Name) LIKE '%dollar%' THEN 1
-            ELSE 2
+            WHEN Name = N'£' OR LOWER(Name) LIKE '%gbp%' OR LOWER(Name) LIKE '%pound%' OR LOWER(Name) LIKE '%sterling%' THEN 2
+            ELSE 3
           END,
           Name
       `)

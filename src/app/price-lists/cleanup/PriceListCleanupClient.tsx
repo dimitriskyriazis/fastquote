@@ -38,6 +38,7 @@ import {
   type CleanedRow,
   type CostMode,
 } from "../../../lib/priceListCleanup";
+import { groupSimilarRows } from "../../../lib/priceListSimilarity";
 
 // Fields the cleanup tool maps (a subset of the importer — service/legacy columns are
 // out of scope for the normalized output).
@@ -98,7 +99,9 @@ export default function PriceListCleanupClient() {
   const [generateCost, setGenerateCost] = useState(false);
   const [costMode, setCostMode] = useState<CostMode>("keepExisting");
   const [keepNonNumericPrice, setKeepNonNumericPrice] = useState(true);
-  const [mergeSheets, setMergeSheets] = useState(false);
+  // Multi-select lets the user tick several sheets to combine into one output (like the
+  // pricelist importer). Off → a single selected sheet is the output.
+  const [multiSelectEnabled, setMultiSelectEnabled] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,16 +123,17 @@ export default function PriceListCleanupClient() {
   const sheetReady = (sheet: SheetMapping | null | undefined) =>
     sheet?.selection.partNumber != null && sheet?.selection.listPrice != null;
 
-  // Whether anything can be produced — active sheet (single) or any sheet (merge).
-  const canProduce = mergeSheets
-    ? fileValidation.sheets.some(sheetReady)
-    : hasPartAndPrice;
+  // Ticked sheets drive the output; in single-select mode only the active sheet is enabled.
+  const enabledSheets = fileValidation.sheets.filter((s) => s.enabled);
+  const enabledReadySheets = enabledSheets.filter(sheetReady);
 
-  const anySheetHasCost = fileValidation.sheets.some((s) => s.selection.costPrice != null);
+  // Whether anything can be produced — at least one enabled sheet has Part Number + List Price.
+  const canProduce = enabledReadySheets.length > 0;
 
-  // The cost column is included when a relevant sheet already has one, or when the user opts
+  // The cost column is included when an enabled sheet already has one, or when the user opts
   // to generate it. Mode drives how each cost value is produced.
-  const includeCost = Boolean((mergeSheets ? anySheetHasCost : hasExistingCost) || generateCost);
+  const enabledHasCost = enabledSheets.some((s) => s.selection.costPrice != null);
+  const includeCost = Boolean(enabledHasCost || generateCost);
   const effectiveCostMode: CostMode = hasExistingCost
     ? costMode
     : generateCost
@@ -189,11 +193,10 @@ export default function PriceListCleanupClient() {
     [activeSheet, costMode, generateCost, decimalFormat, discountColumnIndex, keepNonNumericPrice],
   );
 
-  // All cleaned rows (pre-AI, pre-lifecycle) + the aggregated summary — the single source of
-  // truth for preview, AI input, lifecycle scan, and download. Merges every sheet when enabled.
+  // All cleaned rows (pre-AI, pre-lifecycle) + the aggregated summary — the source of truth for
+  // the lifecycle scan and the download. Combines every ticked (enabled) sheet.
   const cleanedAll = useMemo(() => {
-    if (!canProduce) return null;
-    const sheetsToClean = mergeSheets ? fileValidation.sheets : activeSheet ? [activeSheet] : [];
+    const sheetsToClean = fileValidation.sheets.filter((s) => s.enabled);
     const results = sheetsToClean.map(cleanOneSheet).filter((r): r is NonNullable<typeof r> => r !== null);
     if (results.length === 0) return null;
     const rows = results.flatMap((r) => r.rows);
@@ -209,7 +212,7 @@ export default function PriceListCleanupClient() {
       { kept: 0, trimmed: 0, withCost: 0, withoutCost: 0, capped: 0, zeroPriced: 0 },
     );
     return { rows, summary };
-  }, [canProduce, mergeSheets, fileValidation.sheets, activeSheet, cleanOneSheet]);
+  }, [fileValidation.sheets, cleanOneSheet]);
 
   // Apply AI descriptions (by part number) and the lifecycle choice. Lifecycle is detected on
   // the ORIGINAL cleaned description (before any AI rewrite removes the marker).
@@ -234,7 +237,20 @@ export default function PriceListCleanupClient() {
     [cleanedAll, transformRows],
   );
 
-  const previewRows = useMemo(() => transformedAll?.slice(0, 20) ?? null, [transformedAll]);
+  // The active (selected) sheet cleaned on its own — drives the preview and the AI descriptions,
+  // so switching sheet tabs updates both even when merging. The merged `transformedAll` still
+  // drives the download and the lifecycle scan.
+  const cleanedActive = useMemo(
+    () => (activeSheet && hasPartAndPrice ? cleanOneSheet(activeSheet) : null),
+    [activeSheet, hasPartAndPrice, cleanOneSheet],
+  );
+
+  const previewTransformed = useMemo(
+    () => (cleanedActive ? transformRows(cleanedActive.rows) : null),
+    [cleanedActive, transformRows],
+  );
+
+  const previewRows = useMemo(() => previewTransformed?.slice(0, 20) ?? null, [previewTransformed]);
 
   const lifecycleCount = useMemo(
     () =>
@@ -255,7 +271,7 @@ export default function PriceListCleanupClient() {
 
   const applyValidation = useCallback((result: FileValidation) => {
     setFileValidation(result);
-    setMergeSheets(result.sheets.length > 1); // default to merging multi-sheet workbooks
+    setMultiSelectEnabled(false); // default to a single selected sheet (the importer's default)
     const active = result.sheets[result.activeSheetIndex];
     if (active) {
       setDiscountColumnIndex(suggestDiscountColumn(active.columns));
@@ -356,6 +372,14 @@ export default function PriceListCleanupClient() {
     });
   }, []);
 
+  // Sync the per-sheet option defaults (discount column, cost mode) when the active sheet changes.
+  const syncActiveSheetOptions = useCallback((sheet: SheetMapping | undefined) => {
+    if (!sheet) return;
+    setDiscountColumnIndex(suggestDiscountColumn(sheet.columns));
+    setCostMode(sheet.selection.costPrice != null ? "keepExisting" : "compute");
+  }, []);
+
+  // Single-select: make this the only ticked sheet AND the active one (the output is just it).
   const handleSheetChange = useCallback(
     (targetIdx: number) => {
       const target = fileValidation.sheets[targetIdx];
@@ -365,17 +389,37 @@ export default function PriceListCleanupClient() {
         const evaluation = evaluateSelection(sheets, targetIdx);
         return { ...prev, ...evaluation, sheets, activeSheetIndex: targetIdx };
       });
-      if (target) {
-        setDiscountColumnIndex(suggestDiscountColumn(target.columns));
-        setCostMode(target.selection.costPrice != null ? "keepExisting" : "compute");
-      }
+      syncActiveSheetOptions(target);
     },
-    [fileValidation],
+    [fileValidation, syncActiveSheetOptions],
   );
 
+  // Multi-select: just switch which sheet is shown for mapping/preview; keep the ticked set.
+  const activateSheet = useCallback(
+    (targetIdx: number) => {
+      const target = fileValidation.sheets[targetIdx];
+      setFileValidation((prev) => {
+        if (targetIdx < 0 || targetIdx >= prev.sheets.length) return prev;
+        const evaluation = evaluateSelection(prev.sheets, targetIdx);
+        return { ...prev, ...evaluation, activeSheetIndex: targetIdx };
+      });
+      syncActiveSheetOptions(target);
+    },
+    [fileValidation, syncActiveSheetOptions],
+  );
+
+  // Multi-select: tick/untick whether a sheet is included in the combined output.
+  const toggleSheetEnabled = useCallback((index: number, enabled: boolean) => {
+    setFileValidation((prev) => {
+      const sheets = prev.sheets.map((sheet, idx) => (idx === index ? { ...sheet, enabled } : sheet));
+      const evaluation = evaluateSelection(sheets, prev.activeSheetIndex);
+      return { ...prev, ...evaluation, sheets };
+    });
+  }, []);
+
   const handleImproveDescriptions = useCallback(async () => {
-    if (!cleanedAll || aiRunning) return;
-    const rows = cleanedAll.rows;
+    if (!cleanedActive || aiRunning) return;
+    const rows = cleanedActive.rows;
     if (rows.length === 0) return;
 
     if (rows.length > AI_CONFIRM_THRESHOLD) {
@@ -392,14 +436,43 @@ export default function PriceListCleanupClient() {
     setError(null);
     try {
       const acc: Record<string, string> = { ...aiByPartNumber };
-      for (let i = 0; i < rows.length; i += AI_CHUNK) {
-        const slice = rows.slice(i, i + AI_CHUNK);
-        const payload = slice.map((r, j) => ({
-          id: i + j,
-          partNumber: r.partNumber,
-          modelNumber: r.modelNumber ?? "",
-          description: r.description ?? "",
-        }));
+
+      // Group very similar products (e.g. the same line in different colours/sizes) so each
+      // family is rewritten in one call and reads consistently. Then pack groups into batches of
+      // up to AI_CHUNK rows WITHOUT splitting a group across batches — a family must stay in one
+      // request to share a single LLM call.
+      const groups = groupSimilarRows(rows);
+      const batches: number[][][] = [];
+      let current: number[][] = [];
+      let currentCount = 0;
+      for (const group of groups) {
+        if (currentCount > 0 && currentCount + group.length > AI_CHUNK) {
+          batches.push(current);
+          current = [];
+          currentCount = 0;
+        }
+        current.push(group);
+        currentCount += group.length;
+      }
+      if (current.length > 0) batches.push(current);
+
+      let done = 0;
+      for (const batch of batches) {
+        const payload = batch.flatMap((group) => {
+          // Tag multi-member families with a stable key (their lowest row index); singletons go
+          // unkeyed so the server keeps the original per-row path for them.
+          const groupKey = group.length > 1 ? `g${group[0]}` : "";
+          return group.map((idx) => {
+            const r = rows[idx];
+            return {
+              id: idx,
+              partNumber: r.partNumber,
+              modelNumber: r.modelNumber ?? "",
+              description: r.description ?? "",
+              ...(groupKey ? { groupKey } : {}),
+            };
+          });
+        });
         const res = await fetch("/api/price-lists/cleanup/describe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -416,8 +489,9 @@ export default function PriceListCleanupClient() {
             if (row) acc[row.partNumber] = result.newDescription;
           }
         }
+        done += payload.length;
         setAiByPartNumber({ ...acc });
-        setAiProgress({ done: Math.min(i + AI_CHUNK, rows.length), total: rows.length });
+        setAiProgress({ done: Math.min(done, rows.length), total: rows.length });
       }
       const count = Object.keys(acc).length;
       showToastMessage(`AI improved ${count} description${count === 1 ? "" : "s"}.`, "success", 6000);
@@ -428,7 +502,7 @@ export default function PriceListCleanupClient() {
       setAiRunning(false);
       setAiProgress(null);
     }
-  }, [cleanedAll, aiRunning, aiByPartNumber, brand]);
+  }, [cleanedActive, aiRunning, aiByPartNumber, brand]);
 
   const handleCleanAndDownload = useCallback(async () => {
     if (!file || !transformedAll || !cleanedAll) return;
@@ -455,8 +529,11 @@ export default function PriceListCleanupClient() {
       if (eolChoice === "annotate" && lifecycleCount > 0) parts.push(`${lifecycleCount} EOL flagged`);
       const aiCount = Object.keys(aiByPartNumber).length;
       if (aiCount > 0) parts.push(`${aiCount} AI descriptions`);
-      if (mergeSheets && fileValidation.sheets.length > 1) {
-        parts.push(`merged ${fileValidation.sheets.length} sheets`);
+      const combinedSheetCount = fileValidation.sheets.filter(
+        (s) => s.enabled && s.selection.partNumber != null && s.selection.listPrice != null,
+      ).length;
+      if (combinedSheetCount > 1) {
+        parts.push(`merged ${combinedSheetCount} sheets`);
       }
       if (includeCost) {
         parts.push(`cost on ${summary.withCost}`);
@@ -479,7 +556,6 @@ export default function PriceListCleanupClient() {
     eolChoice,
     lifecycleCount,
     aiByPartNumber,
-    mergeSheets,
     fileValidation.sheets,
   ]);
 
@@ -606,17 +682,41 @@ export default function PriceListCleanupClient() {
         ) : null}
 
         {multiSheet ? (
-          <>
+          <div className={styles.sheetSelector}>
+            <div className={styles.sheetToggle}>
+              <span>Multi-select</span>
+              <button
+                type="button"
+                tabIndex={-1}
+                className={`${styles.toggleSwitch} ${multiSelectEnabled ? styles.toggleSwitchOn : ""}`}
+                onClick={() => setMultiSelectEnabled((prev) => !prev)}
+              >
+                <span className={styles.toggleKnob} />
+              </button>
+            </div>
             <div className={styles.sheetTabs}>
               {fileValidation.sheets.map((sheet, idx) => {
                 const isActive = idx === fileValidation.activeSheetIndex;
+                const included = sheet.enabled;
                 return (
                   <button
                     type="button"
                     key={sheet.name || idx}
-                    className={`${styles.sheetTab} ${isActive ? styles.sheetTabActive : ""}`}
-                    onClick={() => handleSheetChange(idx)}
+                    className={`${styles.sheetTab} ${isActive ? styles.sheetTabActive : ""} ${included ? styles.sheetTabIncluded : ""}`}
+                    onClick={() => (multiSelectEnabled ? activateSheet(idx) : handleSheetChange(idx))}
                   >
+                    {multiSelectEnabled ? (
+                      <input
+                        type="checkbox"
+                        checked={included}
+                        className={styles.sheetTabCheckbox}
+                        onChange={(event) => {
+                          event.stopPropagation();
+                          toggleSheetEnabled(idx, event.target.checked);
+                        }}
+                        onClick={(event) => event.stopPropagation()}
+                      />
+                    ) : null}
                     {sheet.name || `Sheet ${idx + 1}`}
                     <span className={styles.sheetTabRows}>
                       {sheet.visibleDataRowIndices !== null
@@ -627,16 +727,12 @@ export default function PriceListCleanupClient() {
                 );
               })}
             </div>
-            <label className={styles.radioLabel}>
-              <input
-                type="checkbox"
-                checked={mergeSheets}
-                onChange={(event) => setMergeSheets(event.target.checked)}
-              />
-              Combine all {fileValidation.sheets.length} sheets into one output (each tab keeps its
-              own column mapping)
-            </label>
-          </>
+            <div className={styles.intro}>
+              {multiSelectEnabled
+                ? "Tick the sheets to combine into one output. Click a tab to preview and map its columns."
+                : "Click a sheet to use it. Turn on Multi-select to combine several sheets into one output."}
+            </div>
+          </div>
         ) : null}
 
         {activeSheet ? (
@@ -811,7 +907,7 @@ export default function PriceListCleanupClient() {
                   type="button"
                   className={styles.submitButton}
                   onClick={() => void handleImproveDescriptions()}
-                  disabled={!canProduce || aiRunning}
+                  disabled={!hasPartAndPrice || aiRunning}
                 >
                   {aiRunning
                     ? aiProgress
@@ -823,7 +919,12 @@ export default function PriceListCleanupClient() {
             </div>
             <div className={styles.intro}>
               Rewrites the Description column to the Telmaco house style (uses web search for extra
-              specs). Nothing is saved — only your downloaded file changes.
+              specs). Very similar products (the same line in different colours/sizes) are rewritten
+              together so their descriptions stay consistent. Nothing is saved — only your downloaded
+              file changes.
+              {enabledReadySheets.length > 1
+                ? " Only the selected sheet's descriptions are processed — switch tabs to run it on another sheet."
+                : ""}
               {Object.keys(aiByPartNumber).length > 0 && !aiRunning ? (
                 <>
                   {" "}
@@ -880,12 +981,18 @@ export default function PriceListCleanupClient() {
 
             <div className={styles.previewSection}>
               <div className={styles.previewHeading}>
-                <span>Cleaned preview (first product rows)</span>
+                <span>
+                  Cleaned preview (first product rows)
+                  {multiSheet ? ` — ${activeSheet?.name ?? "active sheet"}` : ""}
+                </span>
                 <span className={styles.previewHint}>
                   Normalized output columns{includeCost ? "; the Cost Price column is bold" : ""}.
+                  {enabledReadySheets.length > 1
+                    ? ` Showing the selected sheet; the download combines ${enabledReadySheets.length} sheets.`
+                    : ""}
                 </span>
               </div>
-              {!canProduce ? (
+              {!hasPartAndPrice ? (
                 <div className={styles.previewEmpty}>
                   Map Part Number and List Price to see the cleaned preview.
                 </div>

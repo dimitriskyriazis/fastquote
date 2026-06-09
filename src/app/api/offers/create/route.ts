@@ -44,6 +44,8 @@ type CreateOfferRequestBody = {
   offerDate?: string | Date | null;
   protocolNo?: number | string | null;
   offerLanguage?: string | null;
+  discountLabel?: string | null;
+  additionalDiscountLabel?: string | null;
   finalPriceLabel?: string | null;
 };
 
@@ -107,6 +109,10 @@ export async function POST(req: NextRequest) {
   const erpFwcProjectId = normalizeInt(body?.erpFwcProjectId);
   const protocolNo = normalizeInt(body?.protocolNo);
   const offerLanguage = normalizeOfferLanguage(body?.offerLanguage);
+  const discountLabel = normalizeString(body?.discountLabel, 500)
+    ?? OFFER_LANGUAGE_DEFAULTS[offerLanguage].discountLabel;
+  const additionalDiscountLabel = normalizeString(body?.additionalDiscountLabel, 500)
+    ?? OFFER_LANGUAGE_DEFAULTS[offerLanguage].additionalDiscountLabel;
   const finalPriceLabel = normalizeString(body?.finalPriceLabel, 500)
     ?? OFFER_LANGUAGE_DEFAULTS[offerLanguage].finalPriceLabel;
 
@@ -278,6 +284,8 @@ export async function POST(req: NextRequest) {
     request.input('ApprovalUserId', sql.NVarChar(450), approvalUserId);
     request.input('ProtocolNo', sql.Int, protocolNo);
     request.input('OfferLanguage', sql.NVarChar(16), offerLanguage);
+    request.input('DiscountLabel', sql.NVarChar(500), discountLabel);
+    request.input('AdditionalDiscountLabel', sql.NVarChar(500), additionalDiscountLabel);
     request.input('FinalPriceLabel', sql.NVarChar(500), finalPriceLabel);
     request.input('CurrencyID', sql.Int, resolvedCurrencyId);
     request.input('CurrencyModifier', sql.Decimal(18, 8), persistedCurrencyModifier);
@@ -320,6 +328,8 @@ export async function POST(req: NextRequest) {
         ApprovalUserId,
         ProtocolNo,
         OfferLanguage,
+        DiscountLabel,
+        AdditionalDiscountLabel,
         FinalPriceLabel,
         CurrencyID,
         CurrencyModifier,
@@ -366,6 +376,8 @@ export async function POST(req: NextRequest) {
         @ApprovalUserId,
         @ProtocolNo,
         @OfferLanguage,
+        @DiscountLabel,
+        @AdditionalDiscountLabel,
         @FinalPriceLabel,
         @CurrencyID,
         @CurrencyModifier,

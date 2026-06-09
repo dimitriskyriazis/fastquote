@@ -13,21 +13,37 @@ export const serperSearch = async (q: string, tag = ""): Promise<SerperSnippet[]
   if (!process.env.SERPER_API_KEY) return [];
   const MAX_RETRIES = 3;
   const BASE_DELAY_MS = 1000;
+  // Web context is best-effort. Without a timeout a single slow/hanging search holds a worker (and
+  // a semaphore permit) indefinitely — that is what turns a batch of rows into a multi-minute
+  // stall. Bound each attempt and give up fast rather than blocking the whole run.
+  const REQUEST_TIMEOUT_MS = 8000;
 
   await serperSemaphore.acquire();
   try {
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      const res = await fetch("https://google.serper.dev/search", {
-        method: "POST",
-        headers: {
-          "X-API-KEY": process.env.SERPER_API_KEY ?? "",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ q, num: 5, hl: "en", gl: "us" }),
-      });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      let res: Response;
+      try {
+        res = await fetch("https://google.serper.dev/search", {
+          method: "POST",
+          headers: {
+            "X-API-KEY": process.env.SERPER_API_KEY ?? "",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ q, num: 5, hl: "en", gl: "us" }),
+          signal: controller.signal,
+        });
+      } catch (err) {
+        // Timed out or network error — abandon web context for this row instead of stalling.
+        console.warn(`[serper] aborted/failed${tag ? ` (${tag})` : ""} after ${REQUEST_TIMEOUT_MS}ms:`, err);
+        return [];
+      } finally {
+        clearTimeout(timer);
+      }
 
       if (res.ok) {
-        const data = (await res.json()) as {
+        const data = (await res.json().catch(() => ({}))) as {
           organic?: Array<{ title?: string; snippet?: string }>;
         };
         return (data.organic ?? [])
@@ -46,9 +62,6 @@ export const serperSearch = async (q: string, tag = ""): Promise<SerperSnippet[]
       console.error(`[serper] API error${tag ? ` (${tag})` : ""}: ${res.status}`);
       return [];
     }
-    return [];
-  } catch (err) {
-    console.warn(`[serper] request failed${tag ? ` (${tag})` : ""}:`, err);
     return [];
   } finally {
     serperSemaphore.release();

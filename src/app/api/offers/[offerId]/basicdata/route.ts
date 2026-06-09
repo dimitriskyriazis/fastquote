@@ -53,6 +53,8 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   DiscountNote: { column: 'DiscountNote', type: 'string', sqlType: sql.NVarChar, length: 2000 },
   Comments: { column: 'Comments', type: 'string', sqlType: sql.NVarChar, length: 2000 },
   OfferContact: { column: 'OfferContact', type: 'string', sqlType: sql.NVarChar, length: 500 },
+  DiscountLabel: { column: 'DiscountLabel', type: 'string', sqlType: sql.NVarChar, length: 500 },
+  AdditionalDiscountLabel: { column: 'AdditionalDiscountLabel', type: 'string', sqlType: sql.NVarChar, length: 500 },
   FinalPriceLabel: { column: 'FinalPriceLabel', type: 'string', sqlType: sql.NVarChar, length: 500 },
   OfferLanguage: { column: 'OfferLanguage', type: 'string', sqlType: sql.NVarChar, length: 16 },
   ContactID: { column: 'ContactID', type: 'number', sqlType: sql.Int },
@@ -78,8 +80,6 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   ServicesLocation: { column: 'ServicesLocation', type: 'string', sqlType: sql.NVarChar, length: 10 },
   PricingSellAnchor: { column: 'PricingSellAnchor', type: 'string', sqlType: sql.NVarChar, length: 20 },
   PricingHoldMarginOnCost: { column: 'PricingHoldMarginOnCost', type: 'number', sqlType: sql.Bit },
-  ExtraListDiscount: { column: 'ExtraListDiscount', type: 'number', sqlType: sql.Decimal, precision: 18, scale: 4 },
-  ExtraListDiscountMode: { column: 'ExtraListDiscountMode', type: 'string', sqlType: sql.NVarChar, length: 8 },
   ExtraNetDiscount: { column: 'ExtraNetDiscount', type: 'number', sqlType: sql.Decimal, precision: 18, scale: 4 },
   ExtraNetDiscountMode: { column: 'ExtraNetDiscountMode', type: 'string', sqlType: sql.NVarChar, length: 8 },
 };

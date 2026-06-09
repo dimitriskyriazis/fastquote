@@ -2024,7 +2024,9 @@ export async function PATCH(
             || (hasTelmacoDiscount && telmacoDiscount == null)
             || (hasNetUnitPrice && netUnitPrice == null)
             || (hasNetCostOtherCurrency && netCostOtherCurrency == null)
-            || (hasOtherCurrencyID && otherCurrencyId == null)
+            // An explicit null OtherCurrencyID clears the currency (e.g. undoing a manual
+            // foreign-cost entry); only a non-null value that fails to parse is invalid.
+            || (hasOtherCurrencyID && otherCurrencyId == null && (entry?.OtherCurrencyID ?? null) != null)
             || (hasCurrencyCostModifier && currencyCostModifier == null)
             || (hasNetCost && netCost == null)
             || (hasMargin && (margin == null || Math.abs(margin) >= 100));
@@ -2226,7 +2228,6 @@ export async function PATCH(
         FROM dbo.Offer WHERE ID = @__offerIdDefaults
       `);
     const offerDefaults = offerDefaultsRes.recordset?.[0] ?? null;
-    const offerSellAnchor = offerDefaults?.PricingSellAnchor ?? null;
     const offerHoldMarginOnCost = offerDefaults?.PricingHoldMarginOnCost ?? false;
 
     const chunkSize = 400;
@@ -2429,11 +2430,8 @@ export async function PATCH(
           return;
         }
 
-        // Resolve pricing behaviour: row override → offer default → built-in default.
-        const effectiveSellAnchor = (entry.hasPricingSellAnchor ? entry.PricingSellAnchor : null)
-          ?? current.PricingSellAnchor
-          ?? offerSellAnchor
-          ?? 'customerDiscount';
+        // Resolve cost-side pricing behaviour (Keep Net / Keep Margin):
+        // row override → offer default → built-in default (Keep Net = false).
         const effectiveHoldMarginOnCost =
           (entry.hasPricingHoldMarginOnCost ? entry.PricingHoldMarginOnCost : null)
           ?? current.PricingHoldMarginOnCost
@@ -2513,7 +2511,6 @@ export async function PATCH(
                 netCost: entry.hasNetCost || costFieldsProvided,
                 margin: entry.hasMargin,
               },
-              sellAnchor: effectiveSellAnchor as import('../../../../../lib/pricing').SellAnchor,
               holdMarginOnCostChange: effectiveHoldMarginOnCost,
             };
 
@@ -2567,7 +2564,6 @@ export async function PATCH(
                 netCost: entry.hasNetCost || costFieldsProvided,
                 margin: entry.hasMargin,
               },
-              sellAnchor: effectiveSellAnchor as import('../../../../../lib/pricing').SellAnchor,
               holdMarginOnCostChange: effectiveHoldMarginOnCost,
             };
 
@@ -2612,7 +2608,12 @@ export async function PATCH(
               resolvedPricing.additionalCustomerDiscount ?? null,
             )
           : null;
-        const listPriceForTotals = listPriceCandidate ?? derivedListPrice ?? fallbackListPrice;
+        // A foreign-currency cost must not masquerade as a list price. `fallbackListPrice`
+        // only differs from `listPriceCandidate` when it falls back to the foreign cost, so
+        // using it here is what makes "Total List Price" (TotalPrice) show the cost on a
+        // product row that has no real/derived list price. Drop that fallback for product
+        // rows so List Price / Total List Price stay blank; comment cost lines keep it.
+        const listPriceForTotals = listPriceCandidate ?? derivedListPrice ?? (isCommentRow ? fallbackListPrice : null);
         // Non-printable comments are single cost lines with no real quantity
         // (they default to 0). Treat a blank/zero quantity as 1 so per-unit
         // values (e.g. Net Cost) flow through to their totals (e.g. Total Cost).

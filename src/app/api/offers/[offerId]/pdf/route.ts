@@ -33,10 +33,10 @@ type OfferHeaderRow = {
   OfferNotesClosing: string | null;
   DiscountNote: string | null;
   OfferContact: string | null;
+  DiscountLabel: string | null;
+  AdditionalDiscountLabel: string | null;
   FinalPriceLabel: string | null;
   OfferLanguage: string | null;
-  ExtraListDiscount: number | null;
-  ExtraListDiscountMode: string | null;
   ExtraNetDiscount: number | null;
   ExtraNetDiscountMode: string | null;
   CurrencyName: string | null;
@@ -120,6 +120,7 @@ export async function GET(
     const totalsDisplaySettings: PdfTotalsDisplaySettings = {
       showGrandTotal: req.nextUrl.searchParams.get('showGrandTotal') !== '0',
       showDiscount: req.nextUrl.searchParams.get('showDiscount') !== '0',
+      showAdditionalDiscount: req.nextUrl.searchParams.get('showAdditionalDiscount') !== '0',
       showFinalPrice: req.nextUrl.searchParams.get('showFinalPrice') !== '0',
     };
     const smallOffer = req.nextUrl.searchParams.get('smallOffer') === '1';
@@ -145,10 +146,10 @@ export async function GET(
           o.OfferNotesClosing,
           o.DiscountNote,
           o.OfferContact,
+          o.DiscountLabel,
+          o.AdditionalDiscountLabel,
           o.FinalPriceLabel,
           o.OfferLanguage,
-          o.ExtraListDiscount,
-          o.ExtraListDiscountMode,
           o.ExtraNetDiscount,
           o.ExtraNetDiscountMode,
           c.Name AS CustomerName,
@@ -386,10 +387,10 @@ export async function GET(
       notesIntroduction: header.OfferNotesIntroduction,
       notesClosing: header.OfferNotesClosing,
       discountNote: header.DiscountNote,
+      discountLabel: header.DiscountLabel?.trim() || null,
+      additionalDiscountLabel: header.AdditionalDiscountLabel?.trim() || null,
       finalPriceLabel: header.FinalPriceLabel?.trim() || null,
       currencySymbol: header.CurrencyName?.trim() || null,
-      extraListDiscount: toFiniteNumberOrNull(header.ExtraListDiscount),
-      extraListDiscountMode: header.ExtraListDiscountMode === 'abs' ? 'abs' : 'pct',
       extraNetDiscount: toFiniteNumberOrNull(header.ExtraNetDiscount),
       extraNetDiscountMode: header.ExtraNetDiscountMode === 'abs' ? 'abs' : 'pct',
     };

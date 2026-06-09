@@ -17,7 +17,7 @@ import lookupButtonStyles from "../../components/LookupAddButton.module.css";
 import { useRouter } from "next/navigation";
 import type { DropdownOption } from "../../../lib/dropdownOptions";
 import { showToastMessage } from "../../../lib/toast";
-import { showConfirmDialog } from "../../../lib/confirm";
+import { showConfirmDialog, showSelectableConfirmDialog } from "../../../lib/confirm";
 import layoutStyles from "../priceListDetail.module.css";
 import styles from "./PriceListImport.module.css";
 import lookupStyles from "../../components/LookupModal.module.css";
@@ -1395,22 +1395,23 @@ export default function PriceListImportClient({
       // Prompt user if product descriptions don't match
       const mismatches = typedPayload.descriptionMismatches;
       if (mismatches && mismatches.length > 0) {
-        const confirmed = await showConfirmDialog({
+        const selected = await showSelectableConfirmDialog({
           title: "Description Mismatch",
-          message: `${mismatches.length} product(s) don't match the products' original descriptions. Do you want to overwrite them?`,
-          confirmLabel: "Yes",
-          cancelLabel: "No",
-          details: {
-            columns: ["Part Number", "Current Description", "New Description"],
-            rows: mismatches.map((m) => [m.partNumber || "-", m.oldDescription || "-", m.newDescription || "-"]),
-          },
+          message: `${mismatches.length} product(s) don't match the products' original descriptions. Select which ones to overwrite.`,
+          confirmLabel: "Overwrite",
+          cancelLabel: "Cancel",
+          columns: ["Part Number", "Current Description", "New Description"],
+          columnWidths: ["14%", "43%", "43%"],
+          highlightColumn: 2,
+          rows: mismatches.map((m) => [m.partNumber || "-", m.oldDescription || "-", m.newDescription || "-"]),
         });
-        if (confirmed) {
+        if (selected && selected.length > 0) {
+          const chosenMismatches = selected.map((i) => mismatches[i]);
           try {
             const updateRes = await fetch("/api/products/update-descriptions", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ mismatches }),
+              body: JSON.stringify({ mismatches: chosenMismatches }),
             });
             const updateData = await updateRes.json().catch(() => null);
             if (updateRes.ok && updateData?.ok) {
@@ -1427,22 +1428,23 @@ export default function PriceListImportClient({
       // Prompt user if product model numbers don't match
       const modelMismatches = typedPayload.modelNumberMismatches;
       if (modelMismatches && modelMismatches.length > 0) {
-        const confirmed = await showConfirmDialog({
+        const selected = await showSelectableConfirmDialog({
           title: "Model Number Mismatch",
-          message: `${modelMismatches.length} product(s) don't match the products' original model numbers. Do you want to overwrite them?`,
-          confirmLabel: "Yes",
-          cancelLabel: "No",
-          details: {
-            columns: ["Part Number", "Current Model", "New Model"],
-            rows: modelMismatches.map((m) => [m.partNumber || "-", m.oldModelNumber || "-", m.newModelNumber || "-"]),
-          },
+          message: `${modelMismatches.length} product(s) don't match the products' original model numbers. Select which ones to overwrite.`,
+          confirmLabel: "Overwrite",
+          cancelLabel: "Cancel",
+          columns: ["Part Number", "Current Model", "New Model"],
+          columnWidths: ["34%", "33%", "33%"],
+          highlightColumn: 2,
+          rows: modelMismatches.map((m) => [m.partNumber || "-", m.oldModelNumber || "-", m.newModelNumber || "-"]),
         });
-        if (confirmed) {
+        if (selected && selected.length > 0) {
+          const chosenMismatches = selected.map((i) => modelMismatches[i]);
           try {
             const updateRes = await fetch("/api/products/update-model-numbers", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ mismatches: modelMismatches }),
+              body: JSON.stringify({ mismatches: chosenMismatches }),
             });
             const updateData = await updateRes.json().catch(() => null);
             if (updateRes.ok && updateData?.ok) {

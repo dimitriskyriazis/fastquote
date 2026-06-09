@@ -67,7 +67,11 @@ type ExistingOfferRecord = {
   ApprovalUserId: string | null;
   ProtocolNo: number | null;
   OfferLanguage: string | null;
+  DiscountLabel: string | null;
+  AdditionalDiscountLabel: string | null;
   FinalPriceLabel: string | null;
+  ExtraNetDiscount: number | null;
+  ExtraNetDiscountMode: string | null;
   CurrencyID: number | null;
   CurrencyModifier: number | null;
   ParentOfferID: number | null;
@@ -392,7 +396,11 @@ export async function POST(
         ParentOfferID,
         ProtocolNo,
         OfferLanguage,
+        DiscountLabel,
+        AdditionalDiscountLabel,
         FinalPriceLabel,
+        ExtraNetDiscount,
+        ExtraNetDiscountMode,
         CurrencyID,
         CurrencyModifier,
         OfferVersion,
@@ -523,7 +531,11 @@ export async function POST(
       insertRequest.input('ParentOfferID', sql.Int, targetParentOfferId);
       insertRequest.input('ProtocolNo', sql.Int, existingOffer.ProtocolNo);
       insertRequest.input('OfferLanguage', sql.NVarChar(16), existingOffer.OfferLanguage);
+      insertRequest.input('DiscountLabel', sql.NVarChar(500), existingOffer.DiscountLabel);
+      insertRequest.input('AdditionalDiscountLabel', sql.NVarChar(500), existingOffer.AdditionalDiscountLabel);
       insertRequest.input('FinalPriceLabel', sql.NVarChar(500), existingOffer.FinalPriceLabel);
+      insertRequest.input('ExtraNetDiscount', sql.Decimal(18, 4), existingOffer.ExtraNetDiscount);
+      insertRequest.input('ExtraNetDiscountMode', sql.NVarChar(8), existingOffer.ExtraNetDiscountMode);
       insertRequest.input('CurrencyID', sql.Int, existingOffer.CurrencyID);
       insertRequest.input('CurrencyModifier', sql.Decimal(18, 8), existingOffer.CurrencyModifier);
       insertRequest.input('OfferVersion', sql.Int, targetVersion);
@@ -568,7 +580,11 @@ export async function POST(
           ParentOfferID,
           ProtocolNo,
           OfferLanguage,
+          DiscountLabel,
+          AdditionalDiscountLabel,
           FinalPriceLabel,
+          ExtraNetDiscount,
+          ExtraNetDiscountMode,
           CurrencyID,
           CurrencyModifier,
           OfferVersion,
@@ -615,7 +631,11 @@ export async function POST(
           @ParentOfferID,
           @ProtocolNo,
           @OfferLanguage,
+          @DiscountLabel,
+          @AdditionalDiscountLabel,
           @FinalPriceLabel,
+          @ExtraNetDiscount,
+          @ExtraNetDiscountMode,
           @CurrencyID,
           @CurrencyModifier,
           @OfferVersion,

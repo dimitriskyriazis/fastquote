@@ -310,7 +310,7 @@ export default function PriceListProductsClient({
           const currencyName = (params.data as PriceListProductRowGrid | undefined)?.CostCurrencyName ?? "";
           if (!currencyName) return currencyFormatter.format(num);
           const formatted = currencyFormatter.format(num);
-          return currencyName === '$' ? `${currencyName} ${formatted}` : `${formatted} ${currencyName}`;
+          return currencyName === '$' || currencyName === '£' ? `${currencyName} ${formatted}` : `${formatted} ${currencyName}`;
         },
         type: "numericColumn",
         width: 200,

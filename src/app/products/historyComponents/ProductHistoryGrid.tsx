@@ -28,6 +28,8 @@ if (!globalThis.__FASTQUOTE_HISTORY_AG__) {
 export type HistoryRow = {
   OfferID: number | null;
   OfferDate: Date | string | null;
+  OfferDescription: string | null;
+  ERPProjectCode: string | null;
   CustomerName: string | null;
   SalesPerson: string | null;
   PricingPolicyName: string | null;
@@ -116,6 +118,8 @@ export default function ProductHistoryGrid({ rows }: Props) {
         inRangeFloatingFilterDateFormat: 'DD/MM/YYYY',
       }
     },
+    { field: 'OfferDescription', headerName: 'Offer Description', filter: 'agTextColumnFilter', width: 240, suppressHeaderMenuButton: true },
+    { field: 'ERPProjectCode', headerName: 'ERP Project Code', filter: 'agTextColumnFilter', width: 160, suppressHeaderMenuButton: true, enableRowGroup: true },
     { field: 'CustomerName', headerName: 'Customer', filter: 'agTextColumnFilter', width: 200, suppressHeaderMenuButton: true, enableRowGroup: true },
     { field: 'SalesPerson', headerName: 'Sales Person', filter: 'agTextColumnFilter', width: 160, suppressHeaderMenuButton: true, enableRowGroup: true },
     { field: 'PricingPolicyName', headerName: 'Pricing Policy', filter: 'agTextColumnFilter', width: 160, suppressHeaderMenuButton: true, enableRowGroup: true },

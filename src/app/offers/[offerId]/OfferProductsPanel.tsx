@@ -190,10 +190,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   onStartingItemNoChanged,
   collapseAllCategories = false,
   onCollapseAllSuppressed,
-  offerPricingSellAnchor = null,
   offerPricingHoldMarginOnCost = false,
-  offerExtraListDiscount = null,
-  offerExtraListDiscountMode = 'pct',
   offerExtraNetDiscount = null,
   offerExtraNetDiscountMode = 'pct',
   onOfferExtraDiscountsChange,
@@ -208,8 +205,6 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   // and cause the white flash + scroll-to-top).
   const manualModeRef = useRef(manualMode);
   useEffect(() => { manualModeRef.current = manualMode; }, [manualMode]);
-  const offerPricingSellAnchorRef = useRef(offerPricingSellAnchor);
-  useEffect(() => { offerPricingSellAnchorRef.current = offerPricingSellAnchor; }, [offerPricingSellAnchor]);
   const offerPricingHoldMarginOnCostRef = useRef(offerPricingHoldMarginOnCost);
   useEffect(() => { offerPricingHoldMarginOnCostRef.current = offerPricingHoldMarginOnCost; }, [offerPricingHoldMarginOnCost]);
   const isManualMode = useCallback(() => manualModeRef.current, []);
@@ -438,29 +433,23 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [totalMarginEditing, setTotalMarginEditing] = useState(false);
   const [totalMarginInputValue, setTotalMarginInputValue] = useState('');
   const totalMarginSubmitPendingRef = useRef(false);
-  // Offer-level additional discounts applied on top of the List/Net totals.
-  // Persisted on the offer (via onOfferExtraDiscountsChange) and reflected in the
-  // PDF totals. They do NOT touch any individual product row's stored price.
-  // String buffers back the inputs for smooth typing; committed on blur.
-  const [listExtraDiscountValue, setListExtraDiscountValue] = useState(
-    offerExtraListDiscount != null ? String(offerExtraListDiscount) : '',
-  );
-  const [listExtraDiscountMode, setListExtraDiscountMode] = useState<'pct' | 'abs'>(offerExtraListDiscountMode);
+  // Offer-level additional discount applied on top of the Net total. Persisted on
+  // the offer (via onOfferExtraDiscountsChange) and surfaced as its own line in the
+  // PDF totals. It does NOT touch any individual product row's stored price.
+  // A string buffer backs the input for smooth typing; committed on blur.
   const [netExtraDiscountValue, setNetExtraDiscountValue] = useState(
     offerExtraNetDiscount != null ? String(offerExtraNetDiscount) : '',
   );
   const [netExtraDiscountMode, setNetExtraDiscountMode] = useState<'pct' | 'abs'>(offerExtraNetDiscountMode);
-  // Both discounts are edited together in a single popover opened from one button.
-  // The panel uses fixed positioning (anchored to the trigger) so it isn't clipped
-  // by the totals bar's overflow.
+  // The discount is edited in a single popover opened from one button. The panel uses
+  // fixed positioning (anchored to the trigger) so it isn't clipped by the totals
+  // bar's overflow.
   const [extraDiscountPopoverOpen, setExtraDiscountPopoverOpen] = useState(false);
   const [extraDiscountPopoverPos, setExtraDiscountPopoverPos] = useState<{ left: number; bottom: number } | null>(null);
   const extraDiscountPopoverRef = useRef<HTMLDivElement | null>(null);
   const extraDiscountPopoverWasOpenRef = useRef(false);
   // Last persisted snapshot, so blur doesn't re-save / re-toast unchanged values.
-  const lastCommittedExtraDiscountsRef = useRef<{ listValue: number | null; listMode: 'pct' | 'abs'; netValue: number | null; netMode: 'pct' | 'abs' }>({
-    listValue: offerExtraListDiscount,
-    listMode: offerExtraListDiscountMode,
+  const lastCommittedExtraDiscountsRef = useRef<{ netValue: number | null; netMode: 'pct' | 'abs' }>({
     netValue: offerExtraNetDiscount,
     netMode: offerExtraNetDiscountMode,
   });
@@ -819,6 +808,28 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [demotePromptError, setDemotePromptError] = useState<string | null>(null);
   const [demotePromptSaving, setDemotePromptSaving] = useState(false);
   const demotePromptPayloadRef = useRef<{ node: GridRowNode; row: Record<string, unknown>; detailId: number } | null>(null);
+  // Manual "cost in other currency" entry: when a foreign cost is typed on a row
+  // that has no currency assigned yet, prompt the user to pick the currency
+  // (excluding EUR) and auto-set the cost modifier to 1.
+  const [costCurrencyPromptOpen, setCostCurrencyPromptOpen] = useState(false);
+  const [costCurrencyOptions, setCostCurrencyOptions] = useState<{ value: string; label: string }[]>([]);
+  const [costCurrencyLoading, setCostCurrencyLoading] = useState(false);
+  const [costCurrencySelectedId, setCostCurrencySelectedId] = useState('');
+  const [costCurrencyError, setCostCurrencyError] = useState<string | null>(null);
+  const [costCurrencySaving, setCostCurrencySaving] = useState(false);
+  const costCurrencyOptionsRef = useRef<{ value: string; label: string }[] | null>(null);
+  const costCurrencySelectRef = useRef<HTMLSelectElement | null>(null);
+  const costCurrencyPromptPayloadRef = useRef<{
+    event: CellValueChangedEvent<Record<string, unknown>>;
+    offerDetailId: number;
+    amount: number;
+    oldValue: unknown;
+    oldNetCost: number | null;
+  } | null>(null);
+  // Marks the cell-edit event whose save was deferred to the currency prompt, so
+  // handleCellEdit skips duplicate-propagation for it (otherwise siblings would be
+  // PATCHed with the foreign cost but no currency — see propagateChangeToDuplicates).
+  const deferredCostCurrencyEventRef = useRef<CellValueChangedEvent<Record<string, unknown>> | null>(null);
   const hasNonEuroCostCurrencyRef = useRef(false);
   const refreshScheduledRef = useRef(false);
   const pendingRefreshPurgeRef = useRef<boolean | null>(null);
@@ -2355,26 +2366,17 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     if (display && isOfferProductOption(rowData)) {
       display = `${display}o`;
     }
-    const rowPricingSellAnchor = typeof (rowData as { PricingSellAnchor?: unknown } | null | undefined)?.PricingSellAnchor === 'string'
-      ? (rowData as { PricingSellAnchor?: string }).PricingSellAnchor ?? null
-      : null;
     const rowHoldMarginRaw = (rowData as { PricingHoldMarginOnCost?: unknown } | null | undefined)?.PricingHoldMarginOnCost;
     const rowHoldMarginExplicit = rowHoldMarginRaw === true || rowHoldMarginRaw === 1 ? true
       : rowHoldMarginRaw === false || rowHoldMarginRaw === 0 ? false
       : null; // null = not set, uses offer default
-    // Compare row setting against offer defaults (read from refs, no dep on offer state)
-    const normalizeAnchor = (v: string | null | undefined) => v === 'netUnitPrice' ? 'netUnitPrice' : 'customerDiscount';
-    const offerAnchor = normalizeAnchor(offerPricingSellAnchorRef.current);
-    const rowAnchorDiffers = !isCategory && rowPricingSellAnchor != null
-      && normalizeAnchor(rowPricingSellAnchor) !== offerAnchor;
+    // Compare the row's Keep Net / Keep Margin override against the offer default
+    // (read from a ref, so this doesn't depend on offer state).
     const rowHoldMarginDiffers = !isCategory && rowHoldMarginExplicit != null
       && rowHoldMarginExplicit !== offerPricingHoldMarginOnCostRef.current;
-    const hasRowPricingOverride = rowAnchorDiffers || rowHoldMarginDiffers;
-    const pricingOverrideParts: string[] = [];
-    if (rowAnchorDiffers) pricingOverrideParts.push(rowPricingSellAnchor === 'netUnitPrice' ? 'Hold Net Unit Price' : 'Hold Customer Discount');
-    if (rowHoldMarginDiffers && rowHoldMarginExplicit) pricingOverrideParts.push('Hold Margin on Cost');
-    const pricingOverrideTitle = pricingOverrideParts.length > 0
-      ? `Row override: ${pricingOverrideParts.join(', ')} (right-click → Pricing mode to change)`
+    const hasRowPricingOverride = rowHoldMarginDiffers;
+    const pricingOverrideTitle = rowHoldMarginDiffers
+      ? `Row override: ${rowHoldMarginExplicit ? 'Keep Margin' : 'Keep Net'} (right-click → Pricing mode to change)`
       : '';
 
     return (
@@ -6096,78 +6098,10 @@ const requestedColumnDefsMap = useMemo(
         .filter((id): id is number => id !== null);
 
       if (pricingDetailIds.length > 0) {
-        // Detect the current per-row anchor so we can show a checkmark on the active option
-        const firstRowAnchor = typeof (pricingTargetNodes[0]?.data as { PricingSellAnchor?: unknown } | undefined)?.PricingSellAnchor === 'string'
-          ? (pricingTargetNodes[0]!.data as { PricingSellAnchor?: string }).PricingSellAnchor ?? null
-          : null;
-        const allSameAnchor = pricingTargetNodes.every((n) => {
-          const a = typeof (n.data as { PricingSellAnchor?: unknown })?.PricingSellAnchor === 'string'
-            ? (n.data as { PricingSellAnchor?: string }).PricingSellAnchor ?? null
-            : null;
-          return a === firstRowAnchor;
-        });
-        const shownAnchor = allSameAnchor ? firstRowAnchor : '__mixed__';
-
         const contextMenuApi = params.api ?? null;
 
-        // Effective anchor = row override if consistent, else offer default
-        const normalizeAnchorValue = (v: string | null | undefined) =>
-          v === 'netUnitPrice' ? 'netUnitPrice' : 'customerDiscount';
-        const offerAnchorDefault = normalizeAnchorValue(offerPricingSellAnchor);
-        const effectiveAnchor = shownAnchor !== '__mixed__' && shownAnchor !== null
-          ? normalizeAnchorValue(shownAnchor)
-          : offerAnchorDefault;
-
-        const makePricingModeItem = (
-          label: string,
-          value: string | null,
-        ): MenuItemDef => ({
-          name: (value !== null && effectiveAnchor === value) ? `✓ ${label}` : label,
-          action: async () => {
-            try {
-              const updates = pricingDetailIds.map((id) => ({
-                OfferDetailID: id,
-                PricingSellAnchor: value,
-              }));
-              const res = await fetch(resolvedEndpoint, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ updates }),
-              });
-              const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-              if (!res.ok || !payload?.ok) {
-                throw new Error(payload?.error ?? `Failed to set pricing mode (status ${res.status})`);
-              }
-              // Update data + force-refresh TreeOrdering cells so indicator appears immediately
-              pricingTargetNodes.forEach((n) => {
-                try { (n as RowNode<Record<string, unknown>>).setData({ ...(n.data ?? {}), PricingSellAnchor: value }); } catch { /* noop */ }
-              });
-              try {
-                contextMenuApi?.refreshCells({
-                  rowNodes: pricingTargetNodes as IRowNode[],
-                  columns: ['TreeOrdering'],
-                  force: true,
-                });
-              } catch { /* noop */ }
-              const modeLabel = value === null ? 'offer default' : value === 'customerDiscount' ? 'Customer Discount' : 'Net Unit Price';
-              showToastMessage(
-                pricingDetailIds.length === 1
-                  ? `Pricing mode set to ${modeLabel}`
-                  : `Pricing mode set to ${modeLabel} for ${pricingDetailIds.length} rows`,
-                'success',
-              );
-            } catch (err) {
-              console.error('Failed to set pricing mode', err);
-              showToastMessage(
-                err instanceof Error ? err.message : 'Unable to set pricing mode. Please try again.',
-                'error',
-              );
-            }
-          },
-        });
-
         // Resolve a raw PricingHoldMarginOnCost cell value:
-        // explicit true/false → use it; null/undefined → inherit offer default
+        // explicit true/false → use it; null/undefined → inherit offer default.
         const resolveHoldMargin = (v: unknown): boolean =>
           v === true || v === 1 ? true : v === false || v === 0 ? false : offerPricingHoldMarginOnCost;
 
@@ -6179,19 +6113,16 @@ const requestedColumnDefsMap = useMemo(
         });
         const effectiveHoldMargin = allSameHoldMargin ? firstRowHoldMarginResolved : offerPricingHoldMarginOnCost;
 
-        // Determine if any selected row has a meaningful override (differs from offer default)
-        const anyAnchorOverride = pricingTargetNodes.some((n) => {
-          const a = (n.data as { PricingSellAnchor?: unknown })?.PricingSellAnchor;
-          return typeof a === 'string' && normalizeAnchorValue(a) !== offerAnchorDefault;
-        });
-        const anyHoldMarginOverride = pricingTargetNodes.some((n) => {
+        // A row has a meaningful override when its explicit value differs from the offer default.
+        const anyRowHasOverride = pricingTargetNodes.some((n) => {
           const v = (n.data as { PricingHoldMarginOnCost?: unknown })?.PricingHoldMarginOnCost;
           const explicit = v === true || v === 1 ? true : v === false || v === 0 ? false : null;
           return explicit !== null && explicit !== offerPricingHoldMarginOnCost;
         });
-        const anyRowHasOverride = anyAnchorOverride || anyHoldMarginOverride;
 
-        const makeHoldCostItem = (label: string, holdMargin: boolean): MenuItemDef => ({
+        // Keep Net (holdMargin=false) vs Keep Margin (holdMargin=true): the single
+        // cost-side behaviour toggle, persisted to PricingHoldMarginOnCost.
+        const makeKeepModeItem = (label: string, holdMargin: boolean): MenuItemDef => ({
           name: effectiveHoldMargin === holdMargin ? `✓ ${label}` : label,
           action: async () => {
             try {
@@ -6206,7 +6137,7 @@ const requestedColumnDefsMap = useMemo(
               });
               const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
               if (!res.ok || !payload?.ok) {
-                throw new Error(payload?.error ?? `Failed to set Hold Margin on Cost (status ${res.status})`);
+                throw new Error(payload?.error ?? `Failed to set pricing mode (status ${res.status})`);
               }
               pricingTargetNodes.forEach((n) => {
                 try { (n as RowNode<Record<string, unknown>>).setData({ ...(n.data ?? {}), PricingHoldMarginOnCost: holdMargin }); } catch { /* noop */ }
@@ -6219,15 +6150,15 @@ const requestedColumnDefsMap = useMemo(
                 });
               } catch { /* noop */ }
               showToastMessage(
-                holdMargin
-                  ? `Hold Margin on Cost enabled for ${pricingDetailIds.length === 1 ? 'row' : `${pricingDetailIds.length} rows`}`
-                  : `Hold Net Unit Price on Cost enabled for ${pricingDetailIds.length === 1 ? 'row' : `${pricingDetailIds.length} rows`}`,
+                pricingDetailIds.length === 1
+                  ? `Pricing mode set to ${label}`
+                  : `Pricing mode set to ${label} for ${pricingDetailIds.length} rows`,
                 'success',
               );
             } catch (err) {
-              console.error('Failed to set Hold Margin on Cost', err);
+              console.error('Failed to set pricing mode', err);
               showToastMessage(
-                err instanceof Error ? err.message : 'Unable to set Hold Margin on Cost. Please try again.',
+                err instanceof Error ? err.message : 'Unable to set pricing mode. Please try again.',
                 'error',
               );
             }
@@ -6240,7 +6171,6 @@ const requestedColumnDefsMap = useMemo(
             try {
               const updates = pricingDetailIds.map((id) => ({
                 OfferDetailID: id,
-                PricingSellAnchor: null,
                 PricingHoldMarginOnCost: null,
               }));
               const res = await fetch(resolvedEndpoint, {
@@ -6253,7 +6183,7 @@ const requestedColumnDefsMap = useMemo(
                 throw new Error(payload?.error ?? `Failed to reset pricing mode (status ${res.status})`);
               }
               pricingTargetNodes.forEach((n) => {
-                try { (n as RowNode<Record<string, unknown>>).setData({ ...(n.data ?? {}), PricingSellAnchor: null, PricingHoldMarginOnCost: null }); } catch { /* noop */ }
+                try { (n as RowNode<Record<string, unknown>>).setData({ ...(n.data ?? {}), PricingHoldMarginOnCost: null }); } catch { /* noop */ }
               });
               try {
                 contextMenuApi?.refreshCells({
@@ -6277,13 +6207,9 @@ const requestedColumnDefsMap = useMemo(
         };
 
         const subMenuItems: Array<MenuItemDef | string> = [
-          { name: 'When List Price changes, hold:', disabled: true } as MenuItemDef,
-          makePricingModeItem('Net Unit Price', 'netUnitPrice'),
-          makePricingModeItem('Customer Discount', 'customerDiscount'),
-          'separator' as unknown as MenuItemDef,
-          { name: 'When Net Cost changes, hold:', disabled: true } as MenuItemDef,
-          makeHoldCostItem('Net Unit Price', false),
-          makeHoldCostItem('Margin', true),
+          { name: 'When Net Cost or Telmaco Discount changes:', disabled: true } as MenuItemDef,
+          makeKeepModeItem('Keep Net', false),
+          makeKeepModeItem('Keep Margin', true),
         ];
         if (anyRowHasOverride) {
           subMenuItems.push('separator' as unknown as MenuItemDef);
@@ -6758,7 +6684,6 @@ const requestedColumnDefsMap = useMemo(
     onRequestPaste,
     onRequestAddStandardPackage,
     standardPackageMode,
-    offerPricingSellAnchor,
     offerPricingHoldMarginOnCost,
     readOnly,
   ]);
@@ -7497,6 +7422,236 @@ const requestedColumnDefsMap = useMemo(
     void runUpdate();
   }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
 
+  const isEuroCurrencyOption = useCallback((opt: { label?: string | null }) => {
+    const label = (opt.label ?? '').trim();
+    return label === '€' || label.toLowerCase().includes('eur');
+  }, []);
+
+  const loadCostCurrencyOptions = useCallback(async (): Promise<{ value: string; label: string }[]> => {
+    if (costCurrencyOptionsRef.current) return costCurrencyOptionsRef.current;
+    const res = await fetch('/api/offers/lookups?keys=currencies', { cache: 'no-store' });
+    const payload = (await res.json().catch(() => null)) as
+      | { ok?: boolean; error?: string; lookups?: { currencies?: { value: string; label: string }[] } }
+      | null;
+    if (!res.ok || !payload?.ok || !payload.lookups?.currencies) {
+      throw new Error(payload?.error ?? 'Unable to load currencies.');
+    }
+    const filtered = payload.lookups.currencies.filter((c) => !isEuroCurrencyOption(c));
+    if (filtered.length === 0) {
+      // Don't cache an empty list — leaving the ref null lets a later open retry.
+      throw new Error('No non-EUR currencies are configured.');
+    }
+    costCurrencyOptionsRef.current = filtered;
+    return filtered;
+  }, [isEuroCurrencyOption]);
+
+  // Defers a manual foreign-cost edit until the user picks a currency for the row.
+  const openCostCurrencyPrompt = useCallback((payload: {
+    event: CellValueChangedEvent<Record<string, unknown>>;
+    offerDetailId: number;
+    amount: number;
+    oldValue: unknown;
+    oldNetCost: number | null;
+  }) => {
+    costCurrencyPromptPayloadRef.current = payload;
+    setCostCurrencySelectedId('');
+    setCostCurrencyError(null);
+    setCostCurrencySaving(false);
+    setCostCurrencyPromptOpen(true);
+    if (costCurrencyOptionsRef.current) {
+      setCostCurrencyOptions(costCurrencyOptionsRef.current);
+      return;
+    }
+    setCostCurrencyLoading(true);
+    void loadCostCurrencyOptions()
+      .then((opts) => { setCostCurrencyOptions(opts); })
+      .catch((err) => { setCostCurrencyError(err instanceof Error ? err.message : 'Unable to load currencies.'); })
+      .finally(() => { setCostCurrencyLoading(false); });
+  }, [loadCostCurrencyOptions]);
+
+  const closeCostCurrencyPrompt = useCallback(() => {
+    if (costCurrencySaving) return;
+    const payload = costCurrencyPromptPayloadRef.current;
+    if (payload) {
+      // Revert the optimistic cell value — a foreign cost cannot exist without a currency.
+      // Register a realtime-suppression key first so the setDataValue echo is ignored by
+      // handlePricingEdit; otherwise it would fire a spurious PATCH (the deferred edit was
+      // never persisted, so re-saving NetCostOtherCurrency=0 here would zero the net cost).
+      const revertValue = payload.oldValue ?? '';
+      registerRealtimeCellUpdate(payload.offerDetailId, 'NetCostOtherCurrency', revertValue);
+      try { payload.event.node?.setDataValue('NetCostOtherCurrency', revertValue); } catch { /* noop */ }
+    }
+    costCurrencyPromptPayloadRef.current = null;
+    setCostCurrencyPromptOpen(false);
+  }, [costCurrencySaving, registerRealtimeCellUpdate]);
+
+  const confirmCostCurrencyPrompt = useCallback(async () => {
+    if (costCurrencySaving) return;
+    if (costCurrencyLoading) {
+      setCostCurrencyError('Currencies are still loading…');
+      return;
+    }
+    const payload = costCurrencyPromptPayloadRef.current;
+    if (!payload) { setCostCurrencyPromptOpen(false); return; }
+    const selectedId = Number(costCurrencySelectedId);
+    if (!costCurrencySelectedId || !Number.isInteger(selectedId) || selectedId <= 0) {
+      setCostCurrencyError('Please select a currency.');
+      return;
+    }
+    const selectedLabel = costCurrencyOptions.find((o) => o.value === costCurrencySelectedId)?.label ?? '';
+    const { event, offerDetailId, amount, oldValue, oldNetCost } = payload;
+
+    setCostCurrencySaving(true);
+    setCostCurrencyError(null);
+
+    const oldRowTotalsSnapshot = isOfferProductCommentOrProduct(event.data)
+      ? snapshotRowTotals(event.data as Record<string, unknown>)
+      : null;
+
+    try {
+      const res = await fetch(resolvedEndpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          updates: [{
+            OfferDetailID: offerDetailId,
+            NetCostOtherCurrency: amount,
+            OtherCurrencyID: selectedId,
+            CurrencyCostModifier: 1,
+          }],
+        }),
+      });
+      const respPayload = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+        resolvedRows?: Array<Record<string, unknown> & { OfferDetailID?: number }>;
+      } | null;
+      if (!res.ok || !respPayload?.ok) {
+        throw new Error(respPayload?.error ?? `Failed to set cost currency (status ${res.status})`);
+      }
+
+      const resolved = respPayload.resolvedRows?.find(
+        (row) => normalizeOfferDetailId(row?.OfferDetailID ?? null) === offerDetailId,
+      );
+      if (event.node && event.data) {
+        const data = event.data as Record<string, unknown>;
+        // Grid-column fields the backend resolves — apply via setDataValue (with echo
+        // suppression). ListPrice is intentionally NOT applied: setting a foreign cost
+        // must not change the list price.
+        const columnFields = [
+          'NetCostOtherCurrency', 'CurrencyCostModifier', 'NetCost',
+          'NetUnitPrice', 'Margin', 'CustomerDiscount', 'AdditionalCustomerDiscount',
+          'TelmacoDiscount', 'TotalPrice', 'TotalNet', 'TotalCost', 'GrossProfit',
+        ];
+        columnFields.forEach((field) => {
+          const newValue = resolved
+            ? ((resolved as Record<string, unknown>)[field] ?? null)
+            : field === 'NetCostOtherCurrency' ? amount
+              : field === 'CurrencyCostModifier' ? 1
+                : (data[field] ?? null);
+          registerRealtimeCellUpdate(offerDetailId, field, newValue);
+          try { event.node?.setDataValue(field, newValue); } catch { /* noop */ }
+        });
+        // OtherCurrencyID / OtherCurrencyName have no grid column (setDataValue can't resolve
+        // them) — set them on the row data directly. The cost/modifier cell formatters read
+        // OtherCurrencyName, so without this the cells render blank until a server refresh.
+        const newCurrencyId = resolved ? ((resolved as Record<string, unknown>).OtherCurrencyID ?? selectedId) : selectedId;
+        data.OtherCurrencyID = newCurrencyId;
+        data.OtherCurrencyName = selectedLabel;
+        registerRealtimeCellUpdate(offerDetailId, 'OtherCurrencyID', newCurrencyId);
+        registerRealtimeCellUpdate(offerDetailId, 'OtherCurrencyName', selectedLabel);
+        // Re-run the cost/modifier formatters now that OtherCurrencyName is present on the row.
+        try {
+          event.api?.refreshCells({
+            rowNodes: [event.node],
+            columns: ['NetCostOtherCurrency', 'CurrencyCostModifier'],
+            force: true,
+          });
+        } catch { /* noop */ }
+      }
+
+      // Reveal the cost-currency columns (auto-hidden when every row is in offer currency)
+      // so the just-set modifier can be adjusted.
+      hasNonEuroCostCurrencyRef.current = true;
+      try {
+        gridApiRef.current?.applyColumnState({
+          state: [
+            { colId: 'NetCostOtherCurrency', hide: false },
+            { colId: 'CurrencyCostModifier', hide: false },
+          ],
+          applyOrder: false,
+        });
+      } catch { /* noop */ }
+
+      // Totals were already applied from the server's resolvedRows above. We deliberately
+      // do NOT call recalcProductTotals here: it would recompute TotalPrice from the row's
+      // (intentionally unchanged) ListPrice and clobber the server value — the backend uses
+      // the cost as the effective list price for totals without changing the list price.
+      refreshCategoryAggregates(event.api);
+      if (oldRowTotalsSnapshot && event.data) {
+        const newRowTotals = snapshotRowTotals(event.data as Record<string, unknown>);
+        applyRowTotalsDelta(oldRowTotalsSnapshot, newRowTotals);
+      }
+
+      const capturedEndpoint = resolvedEndpoint;
+      pushUndo({
+        label: 'Cost (Other Currency) updated',
+        undo: async () => {
+          // Fully reverse the create: clear the foreign cost AND the currency (null clears it),
+          // and restore the prior net cost. This returns the row to the "no currency" state so
+          // a later foreign-cost edit re-prompts as it did originally.
+          const undoRes = await fetch(capturedEndpoint, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              updates: [{
+                OfferDetailID: offerDetailId,
+                NetCostOtherCurrency: coerceNumber(oldValue) ?? 0,
+                OtherCurrencyID: null,
+                NetCost: oldNetCost ?? 0,
+              }],
+            }),
+          });
+          const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+          if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
+          refreshOfferProductGrid(null, { purge: false });
+        },
+      });
+      showToastMessage('Cost (Other Currency) updated', 'success', 5500, {
+        label: 'Undo',
+        onClick: () => performUndo(),
+      });
+
+      costCurrencyPromptPayloadRef.current = null;
+      setCostCurrencyPromptOpen(false);
+    } catch (err) {
+      console.error('Failed to set cost currency', err);
+      setCostCurrencyError(err instanceof Error ? err.message : 'Unable to set cost currency.');
+    } finally {
+      setCostCurrencySaving(false);
+    }
+  }, [
+    costCurrencySaving,
+    costCurrencyLoading,
+    costCurrencySelectedId,
+    costCurrencyOptions,
+    resolvedEndpoint,
+    snapshotRowTotals,
+    applyRowTotalsDelta,
+    registerRealtimeCellUpdate,
+    pushUndo,
+    performUndo,
+    refreshOfferProductGrid,
+  ]);
+
+  // Focus the currency <select> once it is enabled (the autoFocus attribute is a no-op
+  // because the control is disabled while currencies load on the first open).
+  useEffect(() => {
+    if (costCurrencyPromptOpen && !costCurrencyLoading && costCurrencyOptions.length > 0) {
+      costCurrencySelectRef.current?.focus();
+    }
+  }, [costCurrencyPromptOpen, costCurrencyLoading, costCurrencyOptions.length]);
+
   const handlePricingEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
     if (!field || !PRICING_EDITABLE_FIELDS.has(field)) return;
@@ -7559,6 +7714,41 @@ const requestedColumnDefsMap = useMemo(
     const normalizedOldValue = coerceNumber(event.oldValue);
     if (normalizedOldValue != null && Object.is(normalizedOldValue, normalizedNewValue)) {
       return;
+    }
+
+    // Manually entering a non-zero foreign cost on a row that has no currency yet:
+    // defer the save and prompt for the currency (excluding EUR). The currency-prompt
+    // flow persists the cost together with the chosen currency and a cost modifier of 1.
+    // Skip bulk/programmatic sources (paste/fill/undo/redo) to avoid a modal per row;
+    // 'api' already returned above and clears normalize to 0 (so they can't reach here).
+    if (
+      field === 'NetCostOtherCurrency'
+      && normalizedNewValue !== 0
+      && source !== 'paste'
+      && source !== 'rangeService'
+      && source !== 'fill'
+      && source !== 'undo'
+      && source !== 'redo'
+    ) {
+      const rowCurrencyId = coerceNumber((event.data as { OtherCurrencyID?: unknown }).OtherCurrencyID);
+      const rowCurrencyName = typeof (event.data as { OtherCurrencyName?: unknown }).OtherCurrencyName === 'string'
+        ? String((event.data as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
+        : '';
+      const rowHasCurrency = (rowCurrencyId != null && rowCurrencyId > 0) || rowCurrencyName.length > 0;
+      if (!rowHasCurrency) {
+        // Suppress duplicate-propagation for this event: the save is deferred and the
+        // currency isn't known yet, so propagating the bare amount to sibling rows would
+        // orphan a foreign cost with no currency.
+        deferredCostCurrencyEventRef.current = event;
+        openCostCurrencyPrompt({
+          event,
+          offerDetailId,
+          amount: normalizedNewValue,
+          oldValue: event.oldValue,
+          oldNetCost: coerceNumber((event.data as { NetCost?: unknown }).NetCost),
+        });
+        return;
+      }
     }
 
     // Entering a real numeric value on a comment row that has no quantity yet
@@ -7627,8 +7817,22 @@ const requestedColumnDefsMap = useMemo(
             'TotalCost',
             'GrossProfit',
           ];
+          // On a foreign-currency row the server returns ListPrice = EffectiveListPrice,
+          // which falls back to the cost when the row has no real list price. Applying it
+          // would auto-fill the List Price cell with the cost even though the backend never
+          // persists it (HasListPrice = 0), so it would just revert on the next refresh.
+          // Adjusting a cost must not change the list price — skip ListPrice for cost edits
+          // on rows that carry a foreign currency.
+          const rowOtherCurrencyId = coerceNumber((event.data as { OtherCurrencyID?: unknown }).OtherCurrencyID);
+          const rowOtherCurrencyName = typeof (event.data as { OtherCurrencyName?: unknown }).OtherCurrencyName === 'string'
+            ? String((event.data as { OtherCurrencyName?: unknown }).OtherCurrencyName).trim()
+            : '';
+          const rowHasForeignCurrency = (rowOtherCurrencyId != null && rowOtherCurrencyId > 0) || rowOtherCurrencyName.length > 0;
+          const skipDerivedListPrice = rowHasForeignCurrency
+            && (field === 'NetCost' || field === 'NetCostOtherCurrency' || field === 'CurrencyCostModifier');
           derivedFields.forEach((derivedField) => {
             if (derivedField === field) return;
+            if (derivedField === 'ListPrice' && skipDerivedListPrice) return;
             const newDerived = (resolved as Record<string, unknown>)[derivedField as string] ?? null;
             const currentDerived = (event.data as Record<string, unknown>)[derivedField as string] ?? null;
             const a = coerceNumber(newDerived);
@@ -7689,7 +7893,7 @@ const requestedColumnDefsMap = useMemo(
     };
 
     void runUpdate();
-  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo, registerRealtimeCellUpdate, snapshotRowTotals, applyRowTotalsDelta]);
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo, registerRealtimeCellUpdate, snapshotRowTotals, applyRowTotalsDelta, openCostCurrencyPrompt]);
 
   const handleOriginEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Origin') return;
@@ -8107,16 +8311,22 @@ const requestedColumnDefsMap = useMemo(
     handleHoursFieldEdit(event);
     handleWarrantyFieldEdit(event);
     handleTreeOrderingEdit(event);
-    void propagateChangeToDuplicates(event, wasProgrammatic);
+    // A foreign-cost edit deferred to the currency prompt must not be propagated to
+    // duplicate rows — doing so would persist the cost on siblings without a currency.
+    if (deferredCostCurrencyEventRef.current === event) {
+      deferredCostCurrencyEventRef.current = null;
+    } else {
+      void propagateChangeToDuplicates(event, wasProgrammatic);
+    }
   }, [isProgrammaticCellEdit, handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit, handleOriginEdit, handleHoursFieldEdit, handleWarrantyFieldEdit, handleTreeOrderingEdit, propagateChangeToDuplicates]);
 
   const offerCurrencySymbol = offerCurrencyName ?? '€';
   const withCurrency = (formatted: string) =>
-    offerCurrencySymbol === '$' ? `${offerCurrencySymbol} ${formatted}` : `${formatted} ${offerCurrencySymbol}`;
+    offerCurrencySymbol === '$' || offerCurrencySymbol === '£' ? `${offerCurrencySymbol} ${formatted}` : `${formatted} ${offerCurrencySymbol}`;
   const formatEuroTotal = useCallback((value: number | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return '—';
     const formatted = decimalFormatter.format(value);
-    return offerCurrencySymbol === '$' ? `${offerCurrencySymbol} ${formatted}` : `${formatted} ${offerCurrencySymbol}`;
+    return offerCurrencySymbol === '$' || offerCurrencySymbol === '£' ? `${offerCurrencySymbol} ${formatted}` : `${formatted} ${offerCurrencySymbol}`;
   }, [offerCurrencySymbol]);
   const formatPercentTotal = (value: number | null | undefined) => {
     if (value == null || !Number.isFinite(value)) return '—';
@@ -8157,26 +8367,20 @@ const requestedColumnDefsMap = useMemo(
     const reduction = mode === 'pct' ? base * (parsed / 100) : parsed;
     return base - reduction;
   };
-  // Persist the current additional-discount buffers to the offer. `override` lets a
+  // Persist the current additional-discount buffer to the offer. `override` lets a
   // mode-toggle click commit the new mode without waiting for a state flush.
   // Skips a no-op save (so blur doesn't re-toast) and surfaces success/failure.
-  const commitExtraDiscounts = async (override?: { listMode?: 'pct' | 'abs'; netMode?: 'pct' | 'abs' }) => {
+  const commitExtraDiscounts = async (override?: { netMode?: 'pct' | 'abs' }) => {
     if (!onOfferExtraDiscountsChange) return;
-    const listValueRaw = coerceNumber(listExtraDiscountValue);
     const netValueRaw = coerceNumber(netExtraDiscountValue);
     const next = {
-      listValue: listValueRaw == null || !Number.isFinite(listValueRaw) ? null : listValueRaw,
-      listMode: override?.listMode ?? listExtraDiscountMode,
       netValue: netValueRaw == null || !Number.isFinite(netValueRaw) ? null : netValueRaw,
       netMode: override?.netMode ?? netExtraDiscountMode,
     } as const;
     const prev = lastCommittedExtraDiscountsRef.current;
-    const modeMattersList = next.listValue != null;
     const modeMattersNet = next.netValue != null;
     const unchanged =
-      next.listValue === prev.listValue
-      && next.netValue === prev.netValue
-      && (!modeMattersList || next.listMode === prev.listMode)
+      next.netValue === prev.netValue
       && (!modeMattersNet || next.netMode === prev.netMode);
     if (unchanged) return;
     lastCommittedExtraDiscountsRef.current = { ...next };
@@ -8184,7 +8388,7 @@ const requestedColumnDefsMap = useMemo(
       await onOfferExtraDiscountsChange(next);
       showToastMessage('Additional discount saved', 'success', 2500);
     } catch (err) {
-      console.error('Failed to save additional discounts', err);
+      console.error('Failed to save additional discount', err);
       showToastMessage(
         `Could not save additional discount${err instanceof Error ? `: ${err.message}` : ''}`,
         'error',
@@ -8203,12 +8407,7 @@ const requestedColumnDefsMap = useMemo(
     // and reads the latest buffers via closure); we only want to react to open/close.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [extraDiscountPopoverOpen]);
-  const listExtraDiscountedTotal = applyExtraDiscount(totals?.totalListPrice, listExtraDiscountValue, listExtraDiscountMode);
   const netExtraDiscountedTotal = applyExtraDiscount(totals?.totalNetPrice, netExtraDiscountValue, netExtraDiscountMode);
-  const listExtraDiscountActive =
-    listExtraDiscountedTotal != null
-    && totals?.totalListPrice != null
-    && Math.abs(listExtraDiscountedTotal - totals.totalListPrice) > 1e-9;
   const netExtraDiscountActive =
     netExtraDiscountedTotal != null
     && totals?.totalNetPrice != null
@@ -9177,15 +9376,10 @@ const requestedColumnDefsMap = useMemo(
             <div className={styles.totalItem}>
               <span className={styles.totalLabel}>Total List:</span>
               <span className={styles.totalValue}>{formatEuroTotal(totals?.totalListPrice)}</span>
-              {listExtraDiscountActive ? (
-                <span className={styles.totalDiscountedValue} title="Total list price after the additional discount">
-                  {`→ ${formatEuroTotal(listExtraDiscountedTotal)}`}
-                </span>
-              ) : null}
             </div>
             <div className={styles.totalItem}>
               <span className={styles.totalLabel}>Total Discount:</span>
-              <span className={styles.totalValue}>{formatDiscountTotal(listExtraDiscountedTotal, netExtraDiscountedTotal)}</span>
+              <span className={styles.totalValue}>{formatDiscountTotal(totals?.totalListPrice, totals?.totalNetPrice)}</span>
             </div>
             <div className={styles.totalItem}>
               <span className={styles.totalLabel}>Total Net:</span>
@@ -9236,7 +9430,7 @@ const requestedColumnDefsMap = useMemo(
                 <div className={styles.discountPopoverWrap} ref={extraDiscountPopoverRef}>
                   <button
                     type="button"
-                    className={listExtraDiscountActive || netExtraDiscountActive ? `${styles.addDiscountButton} ${styles.addDiscountButtonActive}` : styles.addDiscountButton}
+                    className={netExtraDiscountActive ? `${styles.addDiscountButton} ${styles.addDiscountButtonActive}` : styles.addDiscountButton}
                     aria-expanded={extraDiscountPopoverOpen}
                     aria-haspopup="dialog"
                     onClick={(e) => {
@@ -9248,7 +9442,7 @@ const requestedColumnDefsMap = useMemo(
                       setExtraDiscountPopoverOpen((open) => !open);
                     }}
                   >
-                    {listExtraDiscountActive || netExtraDiscountActive ? 'Additional Discounts ✎' : '+ Additional Discounts'}
+                    {netExtraDiscountActive ? 'Additional Discount ✎' : '+ Additional Discount'}
                   </button>
                   {extraDiscountPopoverOpen ? (
                     <div
@@ -9258,39 +9452,6 @@ const requestedColumnDefsMap = useMemo(
                       style={extraDiscountPopoverPos ? { left: extraDiscountPopoverPos.left, bottom: extraDiscountPopoverPos.bottom } : undefined}
                     >
                       <div className={styles.discountPopoverTitle}>Additional discount</div>
-                      <div className={styles.discountPopoverRow}>
-                        <span className={styles.discountPopoverLabel}>List</span>
-                        <input
-                          className={styles.discountInput}
-                          inputMode="decimal"
-                          placeholder="0"
-                          aria-label="Additional discount on total list price"
-                          value={listExtraDiscountValue}
-                          onChange={(e) => setListExtraDiscountValue(e.target.value)}
-                          onBlur={() => { void commitExtraDiscounts(); }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              (e.target as HTMLInputElement).blur();
-                            }
-                          }}
-                        />
-                        <button
-                          type="button"
-                          className={styles.discountModeToggle}
-                          title="Toggle between percentage and absolute amount"
-                          onClick={() => {
-                            const nextMode = listExtraDiscountMode === 'pct' ? 'abs' : 'pct';
-                            setListExtraDiscountMode(nextMode);
-                            void commitExtraDiscounts({ listMode: nextMode });
-                          }}
-                        >
-                          {listExtraDiscountMode === 'pct' ? '%' : offerCurrencySymbol}
-                        </button>
-                        <span className={styles.discountPopoverResult}>
-                          {`→ ${formatEuroTotal(listExtraDiscountedTotal)}`}
-                        </span>
-                      </div>
                       <div className={styles.discountPopoverRow}>
                         <span className={styles.discountPopoverLabel}>Net</span>
                         <input
@@ -9495,6 +9656,36 @@ const requestedColumnDefsMap = useMemo(
               }
             }}
           />
+        </div>
+      </LookupModal>
+      <LookupModal
+        open={costCurrencyPromptOpen}
+        title="Select cost currency"
+        onClose={closeCostCurrencyPrompt}
+        onConfirm={confirmCostCurrencyPrompt}
+        confirmLabel="Save"
+        saving={costCurrencySaving}
+        error={costCurrencyError}
+        footerHint="Cost modifier is set to 1. You can adjust it afterwards in the grid."
+      >
+        <div className={lookupStyles.field}>
+          <label className={lookupStyles.fieldLabel} htmlFor="cost-currency-select">
+            Currency <span className={lookupStyles.requiredMark}>*</span>
+          </label>
+          <select
+            id="cost-currency-select"
+            ref={costCurrencySelectRef}
+            className={lookupStyles.fieldControl}
+            style={{ width: '100%' }}
+            value={costCurrencySelectedId}
+            disabled={costCurrencyLoading || costCurrencySaving}
+            onChange={(e) => setCostCurrencySelectedId(e.target.value)}
+          >
+            <option value="">{costCurrencyLoading ? 'Loading…' : 'Select a currency…'}</option>
+            {costCurrencyOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
         </div>
       </LookupModal>
     </>

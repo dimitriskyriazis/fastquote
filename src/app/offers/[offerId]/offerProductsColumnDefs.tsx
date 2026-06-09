@@ -225,6 +225,32 @@ const parseDiscountValue = (params: { newValue: unknown; oldValue: unknown }) =>
   return num;
 };
 
+// A priced row (a product or a printable service) that carries a Net Unit Price
+// but no List Price is almost always a data-entry mistake — the list price was
+// dropped (compare 1.4 vs 2.2 in the DIVA offer, both "First Year Support": one
+// has a list price, one doesn't). When such a row has no explicit customer
+// discount, surface a -100% sentinel discount so the cell flags red (the
+// negative-margin rule fires on value < 0) and the anomaly is easy to spot.
+// Display-only: returned by the valueGetter, never written to the field, so it
+// is not persisted or exported as real data.
+const MISSING_LIST_PRICE_DISCOUNT_FLAG = -100;
+
+const flagMissingListPriceDiscount = (
+  data: Record<string, unknown> | null | undefined,
+): number | null => {
+  if (!data) return null;
+  const isPricedRow = isOfferProductProduct(data) || resolveOfferProductRowType(data) === 'printable-service';
+  if (!isPricedRow) return null;
+  // Respect an explicitly entered discount — only flag rows that are otherwise blank.
+  const storedDiscount = coerceNumber((data as { CustomerDiscount?: unknown }).CustomerDiscount);
+  if (storedDiscount != null && storedDiscount !== 0) return null;
+  const listPrice = coerceNumber((data as { ListPrice?: unknown }).ListPrice);
+  if (listPrice != null && listPrice !== 0) return null;
+  const netUnitPrice = coerceNumber((data as { NetUnitPrice?: unknown }).NetUnitPrice);
+  if (netUnitPrice == null || netUnitPrice === 0) return null;
+  return MISSING_LIST_PRICE_DISCOUNT_FLAG;
+};
+
 export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
   const {
     standardPackageMode,
@@ -728,6 +754,20 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       headerClass: 'ag-right-aligned-header',
       editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueParser: parseDiscountValue,
+      // Display the stored discount, except surface a -100% flag on priced rows
+      // that have a net price but no list price (see flagMissingListPriceDiscount).
+      valueGetter: (params) => {
+        const flagged = flagMissingListPriceDiscount(params.data ?? null);
+        if (flagged != null) return flagged;
+        return (params.data as { CustomerDiscount?: unknown } | null | undefined)?.CustomerDiscount ?? null;
+      },
+      // Pairing a valueGetter with editing requires an explicit setter to write
+      // edits back to the underlying field.
+      valueSetter: (params) => {
+        if (!params.data) return false;
+        (params.data as Record<string, unknown>).CustomerDiscount = params.newValue;
+        return true;
+      },
       valueFormatter: (params) => {
         if (!isOfferProductCommentOrProduct(params.data ?? null)) return '';
         return percentageFormatter(params);
@@ -827,7 +867,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
           : '';
         if (!currencyName) return '';
         const formatted = otherCurrencyAmountFormatter.format(num);
-        return currencyName === '$' ? `${currencyName} ${formatted}` : `${formatted} ${currencyName}`;
+        return currencyName === '$' || currencyName === '£' ? `${currencyName} ${formatted}` : `${formatted} ${currencyName}`;
       },
       cellClass: [...actualNumericCellClass, styles.redDataCell],
       cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },

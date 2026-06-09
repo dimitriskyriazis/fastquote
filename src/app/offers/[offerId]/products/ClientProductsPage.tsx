@@ -27,7 +27,6 @@ const AddProductModal = dynamic(() => import('../../../products/AddProductModal'
 const AddProductsModal = dynamic(() => import('./AddProductsModal'), { ssr: false });
 const PasteProductsDialog = dynamic(() => import('./PasteProductsDialog'), { ssr: false });
 const LookupModal = dynamic(() => import('../../../components/LookupModal'), { ssr: false });
-type SellAnchor = 'netUnitPrice' | 'customerDiscount' | 'margin';
 
 type Props = {
   offerId: string;
@@ -37,10 +36,7 @@ type Props = {
   isStandardPackage: boolean;
   offerCreatedByUserId?: string | null;
   pricingPolicyName?: string | null;
-  initialPricingSellAnchor?: string | null;
   initialPricingHoldMarginOnCost?: boolean;
-  initialExtraListDiscount?: number | null;
-  initialExtraListDiscountMode?: 'pct' | 'abs';
   initialExtraNetDiscount?: number | null;
   initialExtraNetDiscountMode?: 'pct' | 'abs';
   isReadOnly?: boolean;
@@ -131,12 +127,6 @@ const normalizeBrandList = (value: unknown): string[] => {
   );
 };
 
-const SELL_ANCHOR_LABELS: Record<SellAnchor, string> = {
-  netUnitPrice: 'Net Unit Price',
-  customerDiscount: 'Customer Discount',
-  margin: 'Margin',
-};
-
 export default function ClientProductsPage({
   offerId,
   headingText,
@@ -145,10 +135,7 @@ export default function ClientProductsPage({
   isStandardPackage,
   offerCreatedByUserId,
   pricingPolicyName,
-  initialPricingSellAnchor,
   initialPricingHoldMarginOnCost = false,
-  initialExtraListDiscount = null,
-  initialExtraListDiscountMode = 'pct',
   initialExtraNetDiscount = null,
   initialExtraNetDiscountMode = 'pct',
   isReadOnly = false,
@@ -221,24 +208,15 @@ export default function ClientProductsPage({
   const [addingStandardPackage, setAddingStandardPackage] = useState(false);
   const [addStandardPackageError, setAddStandardPackageError] = useState<string | null>(null);
   const [undoState, setUndoState] = useState<{ canUndo: boolean; lastLabel: string | undefined }>({ canUndo: false, lastLabel: undefined });
-  const normalizeSellAnchor = (v: string | null | undefined): SellAnchor =>
-    v === 'netUnitPrice' || v === 'margin' ? 'netUnitPrice' : 'customerDiscount';
-  const [pricingSellAnchor, setPricingSellAnchor] = useState<SellAnchor>(() => normalizeSellAnchor(initialPricingSellAnchor));
   const [pricingHoldMarginOnCost, setPricingHoldMarginOnCost] = useState(initialPricingHoldMarginOnCost);
-  // Offer-level "additional discounts" applied on top of the List/Net totals.
-  // Persisted on the offer; reflected in the totals bar and the generated PDF.
-  const [extraListDiscount, setExtraListDiscount] = useState<number | null>(initialExtraListDiscount);
-  const [extraListDiscountMode, setExtraListDiscountMode] = useState<'pct' | 'abs'>(initialExtraListDiscountMode);
+  // Offer-level "additional discount" applied on top of the Net total. Persisted on
+  // the offer; surfaced as its own line in the totals bar and the generated PDF.
   const [extraNetDiscount, setExtraNetDiscount] = useState<number | null>(initialExtraNetDiscount);
   const [extraNetDiscountMode, setExtraNetDiscountMode] = useState<'pct' | 'abs'>(initialExtraNetDiscountMode);
   const saveExtraDiscounts = useCallback(async (next: {
-    listValue: number | null;
-    listMode: 'pct' | 'abs';
     netValue: number | null;
     netMode: 'pct' | 'abs';
   }) => {
-    setExtraListDiscount(next.listValue);
-    setExtraListDiscountMode(next.listMode);
     setExtraNetDiscount(next.netValue);
     setExtraNetDiscountMode(next.netMode);
     // Let failures propagate so the panel can surface them via a toast.
@@ -247,8 +225,6 @@ export default function ClientProductsPage({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         updates: [
-          { field: 'ExtraListDiscount', value: next.listValue },
-          { field: 'ExtraListDiscountMode', value: next.listMode },
           { field: 'ExtraNetDiscount', value: next.netValue },
           { field: 'ExtraNetDiscountMode', value: next.netMode },
         ],
@@ -265,14 +241,13 @@ export default function ClientProductsPage({
   }, [offerId]);
   const [pricingMenuOpen, setPricingMenuOpen] = useState(false);
   const pricingMenuRef = useRef<HTMLDetailsElement | null>(null);
-  const savePricingMode = useCallback(async (sellAnchor: SellAnchor, holdMargin: boolean) => {
+  const savePricingMode = useCallback(async (holdMargin: boolean) => {
     try {
       await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           updates: [
-            { field: 'PricingSellAnchor', value: sellAnchor === 'customerDiscount' ? null : sellAnchor },
             { field: 'PricingHoldMarginOnCost', value: holdMargin ? 1 : 0 },
           ],
         }),
@@ -1395,48 +1370,17 @@ export default function ClientProductsPage({
         ].join(' ')}
         style={{ cursor: 'pointer', userSelect: 'none', background: 'white', display: 'inline-flex', alignItems: 'center', gap: 6 }}
       >
-        <span style={{ color: '#1565c0', fontWeight: 700 }}>{SELL_ANCHOR_LABELS[pricingSellAnchor]}</span>
-        <span style={{ color: '#9e9e9e', fontWeight: 400 }}>·</span>
-        <span style={{ color: '#c62828', fontWeight: 700 }}>{pricingHoldMarginOnCost ? 'Margin' : 'Net Unit Price'}</span>
+        <span style={{ color: '#c62828', fontWeight: 700 }}>{pricingHoldMarginOnCost ? 'Keep Margin' : 'Keep Net'}</span>
       </summary>
-      <div className={toolbarStyles.commentMenu} style={{ minWidth: 260, right: 0, left: 'auto' }}>
+      <div className={toolbarStyles.commentMenu} style={{ minWidth: 280, right: 0, left: 'auto' }}>
         <div style={{ padding: '4px 8px 6px', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#475569' }}>
           Pricing Behaviour
         </div>
-        <div style={{ padding: '2px 4px 6px', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>
-          When List Price changes, hold:
-        </div>
-        {(['netUnitPrice', 'customerDiscount'] as SellAnchor[]).map((anchor) => (
-          <button
-            key={anchor}
-            type="button"
-            className={toolbarStyles.commentMenuItem}
-            style={{
-              background: pricingSellAnchor === anchor ? '#e0f2fe' : '#f8fafc',
-              color: pricingSellAnchor === anchor ? '#0c4a6e' : '#0f172a',
-              borderColor: pricingSellAnchor === anchor ? 'rgba(7,89,133,0.3)' : 'rgba(15,23,42,0.1)',
-              fontWeight: pricingSellAnchor === anchor ? 600 : 400,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-            onClick={() => {
-              setPricingSellAnchor(anchor);
-              void savePricingMode(anchor, pricingHoldMarginOnCost);
-              if (pricingMenuRef.current) pricingMenuRef.current.open = false;
-              setPricingMenuOpen(false);
-            }}
-          >
-            <span style={{ width: 14, textAlign: 'center' }}>{pricingSellAnchor === anchor ? '✓' : ''}</span>
-            {SELL_ANCHOR_LABELS[anchor]}
-          </button>
-        ))}
-        <div style={{ margin: '6px 4px 2px', borderTop: '1px solid #e2e8f0' }} />
-        <div style={{ padding: '4px 4px 2px', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>
-          When Net Cost changes, hold:
+        <div style={{ padding: '2px 8px 6px', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>
+          When Net Cost or Telmaco Discount changes:
         </div>
         {([false, true] as const).map((holdMargin) => {
-          const label = holdMargin ? 'Margin' : 'Net Unit Price';
+          const label = holdMargin ? 'Keep Margin' : 'Keep Net';
           const active = pricingHoldMarginOnCost === holdMargin;
           return (
             <button
@@ -1454,12 +1398,12 @@ export default function ClientProductsPage({
               }}
               onClick={() => {
                 setPricingHoldMarginOnCost(holdMargin);
-                void savePricingMode(pricingSellAnchor, holdMargin);
+                void savePricingMode(holdMargin);
                 if (pricingMenuRef.current) pricingMenuRef.current.open = false;
                 setPricingMenuOpen(false);
               }}
             >
-              <span style={{ width: 14, textAlign: 'center' }}>{active ? '✓' : ''}</span>
+              <span style={{ width: 14, textAlign: 'center', flexShrink: 0 }}>{active ? '✓' : ''}</span>
               {label}
             </button>
           );
@@ -1803,14 +1747,11 @@ export default function ClientProductsPage({
               }}
               collapseAllCategories={collapseAllCategories}
               onCollapseAllSuppressed={() => setCollapseAllCategories(false)}
-              offerPricingSellAnchor={pricingSellAnchor}
               offerPricingHoldMarginOnCost={pricingHoldMarginOnCost}
               onOfferPricingHoldMarginOnCostChange={(next) => {
                 setPricingHoldMarginOnCost(next);
-                void savePricingMode(pricingSellAnchor, next);
+                void savePricingMode(next);
               }}
-              offerExtraListDiscount={extraListDiscount}
-              offerExtraListDiscountMode={extraListDiscountMode}
               offerExtraNetDiscount={extraNetDiscount}
               offerExtraNetDiscountMode={extraNetDiscountMode}
               onOfferExtraDiscountsChange={saveExtraDiscounts}

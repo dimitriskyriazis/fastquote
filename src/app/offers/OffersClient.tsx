@@ -45,7 +45,7 @@ const formatTotalNetValue = (value: unknown, currencySymbol?: unknown): string =
   const formatted = totalNetFormatter.format(numeric);
   const trimmed = typeof currencySymbol === 'string' ? currencySymbol.trim() : '';
   const symbol = trimmed || '€';
-  return symbol === '$' ? `${symbol} ${formatted}` : `${formatted} ${symbol}`;
+  return symbol === '$' || symbol === '£' ? `${symbol} ${formatted}` : `${formatted} ${symbol}`;
 };
 
 const formatEnabledValue = (value: unknown) => {

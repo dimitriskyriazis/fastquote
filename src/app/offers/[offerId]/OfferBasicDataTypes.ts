@@ -23,6 +23,8 @@ export type OfferBasicRecord = {
   DiscountNote: string | null;
   TelmacoNote: string | null;
   OfferContact: string | null;
+  DiscountLabel: string | null;
+  AdditionalDiscountLabel: string | null;
   FinalPriceLabel: string | null;
   OfferLanguage: string | null;
   ContactID: number | null;
@@ -60,8 +62,6 @@ export type OfferBasicRecord = {
   ServicesLocation: string | null;
   PricingSellAnchor: string | null;
   PricingHoldMarginOnCost: boolean | null;
-  ExtraListDiscount: number | null;
-  ExtraListDiscountMode: string | null;
   ExtraNetDiscount: number | null;
   ExtraNetDiscountMode: string | null;
 };
@@ -93,6 +93,8 @@ export type OfferBasicUpdateField =
   | 'DiscountNote'
   | 'Comments'
   | 'OfferContact'
+  | 'DiscountLabel'
+  | 'AdditionalDiscountLabel'
   | 'FinalPriceLabel'
   | 'OfferLanguage'
   | 'ContactID'
@@ -118,7 +120,5 @@ export type OfferBasicUpdateField =
   | 'ServicesLocation'
   | 'PricingSellAnchor'
   | 'PricingHoldMarginOnCost'
-  | 'ExtraListDiscount'
-  | 'ExtraListDiscountMode'
   | 'ExtraNetDiscount'
   | 'ExtraNetDiscountMode';

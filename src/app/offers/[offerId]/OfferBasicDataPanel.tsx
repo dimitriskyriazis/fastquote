@@ -32,6 +32,8 @@ async function fetchOfferBasicRecord(offerId: number) {
         o.DiscountNote,
         o.Comments AS TelmacoNote,
         o.OfferContact,
+        o.DiscountLabel,
+        o.AdditionalDiscountLabel,
         o.FinalPriceLabel,
         o.OfferLanguage,
         o.ContactID,

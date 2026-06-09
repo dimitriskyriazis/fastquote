@@ -75,11 +75,9 @@ const BULK_EDIT_LABELS: Record<BulkEditField, string> = {
 const currencyFormatter = new Intl.NumberFormat(getUserNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const percentFormatter = new Intl.NumberFormat(getUserNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const euroValueFormatter = ({ value }: ValueFormatterParams<RowData, unknown>) => {
-  const num = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(num) || Object.is(num, 0)) return '';
-  return `${currencyFormatter.format(num)} €`;
-};
+// Symbol placement mirrors the rest of the app: '$'/'£' lead the amount, others trail.
+const placeCurrencySymbol = (formatted: string, symbol: string) =>
+  symbol === '$' || symbol === '£' ? `${symbol} ${formatted}` : `${formatted} ${symbol}`;
 
 const percentValueFormatter = ({ value }: ValueFormatterParams<RowData, unknown>) => {
   const num = typeof value === 'number' ? value : Number(value);
@@ -91,10 +89,6 @@ const numberValueFormatter = ({ value }: ValueFormatterParams<RowData, unknown>)
   const num = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(num) || Object.is(num, 0)) return '';
   return String(num);
-};
-const formatEuroTotal = (value: number | null | undefined) => {
-  if (value == null || !Number.isFinite(value)) return '—';
-  return `${currencyFormatter.format(value)} €`;
 };
 const formatPercentTotal = (value: number | null | undefined) => {
   if (value == null || !Number.isFinite(value)) return '—';
@@ -188,6 +182,29 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     [offerId],
   );
 
+  // Offer currency symbol (from the products endpoint). Kept in a ref so the grid
+  // value formatter can stay stable (no columnDefs/fieldList churn → no extra fetch),
+  // plus state so the totals bar re-renders when it changes.
+  const currencySymbolRef = useRef('€');
+  const [currencySymbol, setCurrencySymbol] = useState('€');
+
+  const applyOfferCurrency = useCallback((name: unknown) => {
+    const symbol = typeof name === 'string' && name.trim() ? name.trim() : '€';
+    currencySymbolRef.current = symbol;
+    setCurrencySymbol(symbol);
+  }, []);
+
+  const moneyValueFormatter = useCallback(({ value }: ValueFormatterParams<RowData, unknown>) => {
+    const num = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(num) || Object.is(num, 0)) return '';
+    return placeCurrencySymbol(currencyFormatter.format(num), currencySymbolRef.current);
+  }, []);
+
+  const formatMoneyTotal = useCallback((value: number | null | undefined) => {
+    if (value == null || !Number.isFinite(value)) return '—';
+    return placeCurrencySymbol(currencyFormatter.format(value), currencySymbol);
+  }, [currencySymbol]);
+
   const columnDefs = useMemo<ColDef<RowData>[]>(() => {
     const hideCategory = layout === 'brand' || layout === 'brandPartNo';
     const hideBrand = layout === 'category';
@@ -203,13 +220,13 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
       { field: 'BrandName', headerName: 'Brand', hide: hideBrand, suppressColumnsToolPanel: hideBrand },
       { field: 'PartNumber', headerName: 'Part No', hide: !isBrandPartNo, suppressColumnsToolPanel: !isBrandPartNo },
       { field: 'Quantity', headerName: 'Qty', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('Quantity'), valueFormatter: numberValueFormatter, aggFunc: 'sum', width: 110 },
-      { field: 'TotalPrice', headerName: 'Total List', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalPrice'), valueFormatter: euroValueFormatter, aggFunc: 'sum', width: 150 },
+      { field: 'TotalPrice', headerName: 'Total List', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalPrice'), valueFormatter: moneyValueFormatter, aggFunc: 'sum', width: 150 },
       { field: 'CustomerDiscount', headerName: 'Customer Discount', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('CustomerDiscount'), valueFormatter: percentValueFormatter, aggFunc: 'avg', width: 200 },
-      { field: 'TotalNet', headerName: 'Total Net', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalNet'), valueFormatter: euroValueFormatter, aggFunc: 'sum', width: 150 },
+      { field: 'TotalNet', headerName: 'Total Net', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalNet'), valueFormatter: moneyValueFormatter, aggFunc: 'sum', width: 150 },
       { field: 'TelmacoDiscount', headerName: 'Telmaco Discount', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TelmacoDiscount'), valueFormatter: percentValueFormatter, aggFunc: 'avg', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' }, width: 180 },
       { field: 'Margin', headerName: 'Margin %', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('Margin'), valueFormatter: percentValueFormatter, aggFunc: 'avg', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' }, width: 150 },
-      { field: 'GrossProfit', headerName: 'Gross Profit', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('GrossProfit'), valueFormatter: euroValueFormatter, aggFunc: 'sum', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' }, width: 150 },
-      { field: 'TotalCost', headerName: 'Total Cost', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalCost'), valueFormatter: euroValueFormatter, aggFunc: 'sum', cellClass: panelStyles.redDataCell, cellStyle: { color:'#dc2626' }, width : 150},
+      { field: 'GrossProfit', headerName: 'Gross Profit', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('GrossProfit'), valueFormatter: moneyValueFormatter, aggFunc: 'sum', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' }, width: 150 },
+      { field: 'TotalCost', headerName: 'Total Cost', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalCost'), valueFormatter: moneyValueFormatter, aggFunc: 'sum', cellClass: panelStyles.redDataCell, cellStyle: { color:'#dc2626' }, width : 150},
       {
         field: 'Installation',
         headerName: 'Installation (h)',
@@ -262,7 +279,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
         width: 185,
       },
     ];
-  }, [layout, readOnly]);
+  }, [layout, readOnly, moneyValueFormatter]);
 
   const fieldList = useMemo(
     () => Array.from(new Set(
@@ -387,11 +404,12 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
           }),
         });
         const payload = (await res.json().catch(() => null)) as
-          | { ok?: boolean; error?: string; rows?: RowData[]; rowCount?: number; totals?: Record<string, number> }
+          | { ok?: boolean; error?: string; rows?: RowData[]; rowCount?: number; totals?: Record<string, number>; offerCurrencyName?: string | null }
           | null;
         if (!res.ok || !payload?.ok) throw new Error(payload?.error ?? 'Failed to reload');
         const rows = Array.isArray(payload.rows) ? payload.rows : [];
         setRowData(rows);
+        applyOfferCurrency(payload.offerCurrencyName);
         setRowCount(typeof payload.rowCount === 'number' ? payload.rowCount : rows.length);
         if (payload.totals) {
           const t = payload.totals;
@@ -411,7 +429,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
       }
     };
     void run();
-  }, [endpoint, fieldList, quickSearch?.value]);
+  }, [endpoint, fieldList, quickSearch?.value, applyOfferCurrency]);
 
   const HOUR_FIELD_LABELS: Record<string, string> = useMemo(() => ({
     Installation: 'Installation',
@@ -547,7 +565,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
           }),
         });
         const payload = (await res.json().catch(() => null)) as
-          | { ok?: boolean; error?: string; rows?: RowData[]; rowCount?: number; totals?: Record<string, number> }
+          | { ok?: boolean; error?: string; rows?: RowData[]; rowCount?: number; totals?: Record<string, number>; offerCurrencyName?: string | null }
           | null;
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to load pivot data (status ${res.status})`);
@@ -555,6 +573,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
         if (cancelled) return;
         const rows = Array.isArray(payload.rows) ? payload.rows : [];
         setRowData(rows);
+        applyOfferCurrency(payload.offerCurrencyName);
         setRowCount(typeof payload.rowCount === 'number' ? payload.rowCount : rows.length);
         if (payload.totals) {
           const t = payload.totals;
@@ -584,13 +603,20 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
       cancelled = true;
       lastFetchSignatureRef.current = '';
     };
-  }, [endpoint, fieldList, offerId, refreshToken, quickSearch?.value]);
+  }, [endpoint, fieldList, offerId, refreshToken, quickSearch?.value, applyOfferCurrency]);
 
   useEffect(() => {
     const api = gridApiRef.current;
     if (!api || api.isDestroyed?.()) return;
     api.setGridOption('quickFilterText', quickSearch?.value ?? '');
   }, [quickSearch?.value]);
+
+  // Re-run money value formatters when the offer currency symbol changes.
+  useEffect(() => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    api.refreshCells({ force: true });
+  }, [currencySymbol]);
 
   const defaultColDef = useMemo<ColDef<RowData>>(() => ({
     sortable: true,
@@ -713,12 +739,12 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
       <div className={panelStyles.totalsBar}>
         <div className={panelStyles.totalItem}>
           <span className={panelStyles.totalLabel}>Total List:</span>
-          <span className={panelStyles.totalValue}>{formatEuroTotal(totals.totalListPrice)}</span>
+          <span className={panelStyles.totalValue}>{formatMoneyTotal(totals.totalListPrice)}</span>
         </div>
         <div className={panelStyles.totalItem}>
           <span className={panelStyles.totalLabel}>Total Discount:</span>
           <span className={panelStyles.totalValue}>
-            {formatEuroTotal(totals.totalDiscount)}
+            {formatMoneyTotal(totals.totalDiscount)}
             {Number.isFinite(totals.discountPct) && totals.discountPct !== 0
               ? ` (${percentFormatter.format(totals.discountPct)} %)`
               : null}
@@ -726,11 +752,11 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
         </div>
         <div className={panelStyles.totalItem}>
           <span className={panelStyles.totalLabel}>Total Net:</span>
-          <span className={panelStyles.totalValue}>{formatEuroTotal(totals.totalNetPrice)}</span>
+          <span className={panelStyles.totalValue}>{formatMoneyTotal(totals.totalNetPrice)}</span>
         </div>
         <div className={panelStyles.totalItem}>
           <span className={panelStyles.totalLabel}>Total Cost:</span>
-          <span className={panelStyles.totalValue}>{formatEuroTotal(totals.totalCost)}</span>
+          <span className={panelStyles.totalValue}>{formatMoneyTotal(totals.totalCost)}</span>
         </div>
         <div className={panelStyles.totalItem}>
           <span className={panelStyles.totalLabel}>Total Margin:</span>

@@ -230,6 +230,8 @@ const buildFieldDefinitions = (
     hideEmptyOption: true,
   },
   { id: 'telmaco', label: 'Telmaco Note', section: 'info', recordKey: 'TelmacoNote', updateField: 'Comments', multiline: true },
+  { id: 'discountLabel', label: 'Discount Label', section: 'info', recordKey: 'DiscountLabel', updateField: 'DiscountLabel', fullWidth: true },
+  { id: 'additionalDiscountLabel', label: 'Add. Discount Label', section: 'info', recordKey: 'AdditionalDiscountLabel', updateField: 'AdditionalDiscountLabel', fullWidth: true },
   { id: 'finalPriceLabel', label: 'Final Price Label', section: 'info', recordKey: 'FinalPriceLabel', updateField: 'FinalPriceLabel', fullWidth: true },
 
   {
@@ -884,6 +886,8 @@ export default function OfferBasicDataClient({
             { id: 'deliveryTime', updateField: 'DeliveryTime', prev: prevDefaults.deliveryTime, next: nextDefaults.deliveryTime },
             { id: 'offerValidity', updateField: 'OfferValidity', prev: prevDefaults.offerValidity, next: nextDefaults.offerValidity },
             { id: 'closingNote', updateField: 'OfferNotesClosing', prev: prevDefaults.closingNote, next: nextDefaults.closingNote },
+            { id: 'discountLabel', updateField: 'DiscountLabel', prev: prevDefaults.discountLabel, next: nextDefaults.discountLabel },
+            { id: 'additionalDiscountLabel', updateField: 'AdditionalDiscountLabel', prev: prevDefaults.additionalDiscountLabel, next: nextDefaults.additionalDiscountLabel },
             { id: 'finalPriceLabel', updateField: 'FinalPriceLabel', prev: prevDefaults.finalPriceLabel, next: nextDefaults.finalPriceLabel },
           ];
           const changes = langFieldMap.filter((f) => {

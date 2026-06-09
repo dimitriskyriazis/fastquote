@@ -150,6 +150,9 @@ export const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "dollars",
     "usd",
     "$",
+    "pounds",
+    "gbp",
+    "£",
   ],
 
   costPrice: [

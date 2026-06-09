@@ -49,6 +49,8 @@ async function fetchProductHistoryRows(productId: number) {
       SELECT
         od.OfferID,
         o.OfferDate,
+        o.OfferDescription,
+        o.ERPProjectCode,
         c.Name AS CustomerName,
         sales.FullName AS SalesPerson,
         pp.Name AS PricingPolicyName,

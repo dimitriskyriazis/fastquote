@@ -483,7 +483,7 @@ export default function OfferDetailsClient() {
           : '';
         if (!currencyName) return '';
         const formatted = num.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
-        return currencyName === '$' ? `${currencyName} ${formatted}` : `${formatted} ${currencyName}`;
+        return currencyName === '$' || currencyName === '£' ? `${currencyName} ${formatted}` : `${formatted} ${currencyName}`;
       },
       cellStyle: redCellStyle,
       width: 180,

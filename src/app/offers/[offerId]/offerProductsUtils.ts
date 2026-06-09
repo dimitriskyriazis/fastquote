@@ -1070,7 +1070,7 @@ export const formatCurrencyValue = (value: unknown, symbol = '€') => {
   const num = coerceNumber(value);
   if (num == null || Object.is(num, 0)) return '';
   const formatted = decimalFormatter.format(num);
-  return symbol === '$' ? `${symbol} ${formatted}` : `${formatted} ${symbol}`;
+  return symbol === '$' || symbol === '£' ? `${symbol} ${formatted}` : `${formatted} ${symbol}`;
 };
 
 export const formatEuroValue = (value: unknown) => formatCurrencyValue(value, '€');
