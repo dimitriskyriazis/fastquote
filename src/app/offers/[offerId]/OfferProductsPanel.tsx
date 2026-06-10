@@ -5090,6 +5090,43 @@ const requestedColumnDefsMap = useMemo(
     
     // Check if server-side select-all is active
     const api = params.api ?? null;
+
+    // After any context-menu action runs, drop the row selection so the
+    // highlighted rows don't linger. Action targets are captured at menu-build
+    // time (and via the selection snapshot), so clearing the live selection
+    // here is safe even for async actions. Wrapping is recursive so submenu
+    // actions clear the selection too. Built-in string items (copy / paste /
+    // export) have no `action` to wrap and pass through untouched.
+    const clearMenuSelectionAfterAction = () => {
+      try { api?.deselectAll?.(); } catch { /* noop */ }
+      setGridRowDeletionContextMenuSelectionSnapshot(api, []);
+      pendingContextMenuSelectionClearRef.current = true;
+    };
+    const withSelectionClear = (
+      list: Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string>,
+    ): Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string> =>
+      list.map((entry) => {
+        if (typeof entry === 'string' || entry == null) return entry;
+        const menuItem = entry as MenuItemDef<Record<string, unknown>>;
+        const wrapped: MenuItemDef<Record<string, unknown>> = { ...menuItem };
+        if (Array.isArray(menuItem.subMenu)) {
+          wrapped.subMenu = withSelectionClear(
+            menuItem.subMenu as Array<MenuItemDef<Record<string, unknown>> | DefaultMenuItem | string>,
+          );
+        }
+        if (typeof menuItem.action === 'function') {
+          const originalAction = menuItem.action;
+          wrapped.action = ((...actionArgs: unknown[]) => {
+            try {
+              return (originalAction as (...a: unknown[]) => unknown)(...actionArgs);
+            } finally {
+              clearMenuSelectionAfterAction();
+            }
+          }) as MenuItemDef<Record<string, unknown>>['action'];
+        }
+        return wrapped;
+      });
+
     const isSelectAllActive = api && typeof api.getServerSideSelectionState === 'function'
       ? (() => {
           const state = api.getServerSideSelectionState();
@@ -5155,7 +5192,7 @@ const requestedColumnDefsMap = useMemo(
     const rowData = rowNode?.data ?? relevantNodes[0]?.data ?? fallbackAnchorRowData ?? null;
     const isEmptySpaceClick = !rowNode?.data;
     if (!rowData) {
-      return readOnly ? ['export' as unknown as DefaultMenuItem] : items;
+      return readOnly ? ['export' as unknown as DefaultMenuItem] : withSelectionClear(items);
     }
     const anchorId = normalizeOfferDetailId(
       (rowData as { OfferDetailID?: unknown }).OfferDetailID ?? null,
@@ -5196,7 +5233,7 @@ const requestedColumnDefsMap = useMemo(
         };
         emptySpaceItems.push(addStdPkgItem);
       }
-      return emptySpaceItems;
+      return withSelectionClear(emptySpaceItems);
     }
 
     // Copy (plain) + Copy with… submenu (Headers + Group Headers) + Copy Rows
@@ -6757,7 +6794,7 @@ const requestedColumnDefsMap = useMemo(
       items.splice(aiDeleteIdx >= 0 ? aiDeleteIdx : items.length, 0, aiSubmenu);
     }
 
-    return items;
+    return withSelectionClear(items);
   }, [
     fetchAllFilteredOfferDetailIds,
     fetchAllFilteredOfferProductIds,
