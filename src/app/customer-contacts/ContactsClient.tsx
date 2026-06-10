@@ -225,6 +225,16 @@ export default function ContactsClient({
   const [importanceDropdownValues, setImportanceDropdownValues] = useState(() => buildImportanceDropdownValues(importances));
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
   const [titleDropdownValues, setTitleDropdownValues] = useState(() => buildTitleDropdownValues(titles));
+  // The Title / Email Status / Importance editors read their options from refs so
+  // that refreshing lookups while a cell is being edited (refreshContactLookups()
+  // fires on cell-editing-started) does not change the columnDefs reference and
+  // close the open dropdown.
+  const titleDropdownValuesRef = useRef(titleDropdownValues);
+  const statusDropdownValuesRef = useRef(statusDropdownValues);
+  const importanceDropdownValuesRef = useRef(importanceDropdownValues);
+  useEffect(() => { titleDropdownValuesRef.current = titleDropdownValues; }, [titleDropdownValues]);
+  useEffect(() => { statusDropdownValuesRef.current = statusDropdownValues; }, [statusDropdownValues]);
+  useEffect(() => { importanceDropdownValuesRef.current = importanceDropdownValues; }, [importanceDropdownValues]);
   const importanceOptions = useMemo(() => importanceDropdownValues.filter((v) => v.length > 0), [importanceDropdownValues]);
   const contactLookupsRefreshInFlightRef = useRef(false);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -581,7 +591,7 @@ export default function ContactsClient({
         filter: "agTextColumnFilter",
         editable: true,
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: { values: titleDropdownValues },
+        cellEditorParams: () => ({ values: titleDropdownValuesRef.current }),
       },
       {
         field: "LastName",
@@ -620,7 +630,7 @@ export default function ContactsClient({
         filter: "agTextColumnFilter",
         editable: true,
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: { values: statusDropdownValues },
+        cellEditorParams: () => ({ values: statusDropdownValuesRef.current }),
       },
       {
         field: "SecondEmail",
@@ -634,7 +644,7 @@ export default function ContactsClient({
         filter: "agTextColumnFilter",
         editable: true,
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: { values: statusDropdownValues },
+        cellEditorParams: () => ({ values: statusDropdownValuesRef.current }),
       },
       {
         field: "Phone",
@@ -655,7 +665,7 @@ export default function ContactsClient({
         enableRowGroup: true,
         editable: true,
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: { values: importanceDropdownValues },
+        cellEditorParams: () => ({ values: importanceDropdownValuesRef.current }),
       },
       {
         field: "CustomerEnabled",
@@ -697,7 +707,9 @@ export default function ContactsClient({
       },
     ];
     return orderedColumns;
-  }, [enabledOptions, statusDropdownValues, importanceDropdownValues, titleDropdownValues]);
+    // The dropdown value arrays are read from refs inside the editors, so they are
+    // intentionally not deps here — keeps columnDefs stable during edits.
+  }, [enabledOptions]);
 
   const contactRowDeletion = useMemo(
     () =>

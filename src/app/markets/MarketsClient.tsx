@@ -109,6 +109,14 @@ export default function MarketsClient({ salesDivisions }: Props) {
     return Array.from(unique);
   });
   const divisionsRefreshInFlightRef = useRef(false);
+  // The SalesDivision editor reads its options from a ref so that refreshing them
+  // while a cell is being edited (refreshSalesDivisions() fires on
+  // cell-editing-started) does not change the columnDefs reference and close the
+  // open dropdown.
+  const salesDivisionOptionsRef = useRef(salesDivisionOptions);
+  useEffect(() => {
+    salesDivisionOptionsRef.current = salesDivisionOptions;
+  }, [salesDivisionOptions]);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
   const [refreshToken, setRefreshToken] = useState(0);
   const {
@@ -291,9 +299,9 @@ export default function MarketsClient({ salesDivisions }: Props) {
         enableRowGroup: true,
         editable: true,
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: {
-          values: salesDivisionOptions,
-        },
+        cellEditorParams: () => ({
+          values: salesDivisionOptionsRef.current,
+        }),
         valueSetter: (params) => {
           const next = typeof params.newValue === "string" ? params.newValue : "";
           params.data = params.data ?? {};
@@ -327,7 +335,9 @@ export default function MarketsClient({ salesDivisions }: Props) {
         },
       },
     ],
-    [enabledOptions, salesDivisionOptions],
+    // salesDivisionOptions is read from salesDivisionOptionsRef inside the editor,
+    // so it is intentionally not a dep here — keeps columnDefs stable during edits.
+    [enabledOptions],
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {

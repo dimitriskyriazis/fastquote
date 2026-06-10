@@ -116,6 +116,13 @@ export default function SuppliersClient({ countries }: Props) {
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
   const [countryOptions, setCountryOptions] = useState(() => ["", ...countries.map((c) => c.name)]);
+  // The Country editor reads its options from a ref so that refreshing them while
+  // a cell is being edited (refreshCountryOptions() fires on cell-editing-started)
+  // does not change the columnDefs reference and close the open dropdown.
+  const countryOptionsRef = useRef(countryOptions);
+  useEffect(() => {
+    countryOptionsRef.current = countryOptions;
+  }, [countryOptions]);
   const countryRefreshInFlightRef = useRef(false);
   const [refreshToken, setRefreshToken] = useState(0);
   const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
@@ -274,11 +281,11 @@ export default function SuppliersClient({ countries }: Props) {
         enableRowGroup: true,
         editable: canManage,
         cellEditor: "agRichSelectCellEditor",
-        cellEditorParams: {
-          values: countryOptions,
+        cellEditorParams: () => ({
+          values: countryOptionsRef.current,
           allowTyping: true,
           filterList: true,
-        },
+        }),
         valueSetter: (params) => {
           const next = typeof params.newValue === "string" ? params.newValue : "";
           params.data = params.data ?? {};
@@ -346,7 +353,9 @@ export default function SuppliersClient({ countries }: Props) {
         },
       },
     ],
-    [enabledOptions, countryOptions, canManage],
+    // countryOptions is read from countryOptionsRef inside the editor, so it is
+    // intentionally not a dep here — keeps columnDefs stable during edits.
+    [enabledOptions, canManage],
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {

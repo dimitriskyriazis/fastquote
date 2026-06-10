@@ -141,6 +141,24 @@ export default function UsersClient() {
     return ["", ...withIndex.map((entry) => entry.value)];
   }, [salesSeniorityOptions]);
 
+  // Editors read their option lists from refs (via a function `cellEditorParams`)
+  // rather than from `columnDefs`. This keeps `columnDefs` identity stable, so
+  // refreshing options while a cell is being edited does NOT re-apply the grid
+  // columns and destroy the open dropdown popup. The function form is evaluated
+  // each time editing starts, so dropdowns still show the freshest options.
+  const divisionSelectOptionsRef = useRef<string[]>(divisionSelectOptions);
+  const roleSelectOptionsRef = useRef<string[]>(roleSelectOptions);
+  const senioritySelectOptionsRef = useRef<string[]>(senioritySelectOptions);
+  useEffect(() => {
+    divisionSelectOptionsRef.current = divisionSelectOptions;
+  }, [divisionSelectOptions]);
+  useEffect(() => {
+    roleSelectOptionsRef.current = roleSelectOptions;
+  }, [roleSelectOptions]);
+  useEffect(() => {
+    senioritySelectOptionsRef.current = senioritySelectOptions;
+  }, [senioritySelectOptions]);
+
   const columnDefs = useMemo<ColDef[]>(
     () => [
       {
@@ -184,9 +202,9 @@ export default function UsersClient() {
         },
         editable: true,
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: {
-          values: divisionSelectOptions,
-        },
+        cellEditorParams: () => ({
+          values: divisionSelectOptionsRef.current,
+        }),
         valueSetter: (params) => {
           params.data = params.data ?? {};
           (params.data as Record<string, unknown>).SalesDivision = params.newValue ?? "";
@@ -199,9 +217,9 @@ export default function UsersClient() {
         filter: "agTextColumnFilter",
         editable: true,
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: {
-          values: senioritySelectOptions,
-        },
+        cellEditorParams: () => ({
+          values: senioritySelectOptionsRef.current,
+        }),
         valueSetter: (params) => {
           params.data = params.data ?? {};
           (params.data as Record<string, unknown>).SalesSeniority = params.newValue ?? "";
@@ -232,9 +250,9 @@ export default function UsersClient() {
         filter: "agTextColumnFilter",
         editable: true,
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: {
-          values: roleSelectOptions,
-        },
+        cellEditorParams: () => ({
+          values: roleSelectOptionsRef.current,
+        }),
         valueSetter: (params) => {
           params.data = params.data ?? {};
           (params.data as Record<string, unknown>).Role1 = params.newValue ?? "";
@@ -247,9 +265,9 @@ export default function UsersClient() {
         filter: "agTextColumnFilter",
         editable: true,
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: {
-          values: roleSelectOptions,
-        },
+        cellEditorParams: () => ({
+          values: roleSelectOptionsRef.current,
+        }),
         valueSetter: (params) => {
           params.data = params.data ?? {};
           (params.data as Record<string, unknown>).Role2 = params.newValue ?? "";
@@ -282,7 +300,9 @@ export default function UsersClient() {
         },
       },
     ],
-    [divisionSelectOptions, roleSelectOptions, senioritySelectOptions],
+    // Intentionally empty: editors read fresh options from refs, so columnDefs
+    // stays referentially stable and never resets the grid during an active edit.
+    [],
   );
 
   const handleGridReady = useCallback((api: GridApi) => {

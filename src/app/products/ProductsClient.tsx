@@ -282,6 +282,21 @@ export default function ProductsClient() {
   const categoryOptions = useMemo(() => lookups?.categories ?? [], [lookups]);
   const subCategoryOptions = useMemo(() => lookups?.subCategories ?? [], [lookups]);
   const typeOptions = useMemo(() => lookups?.types ?? [], [lookups]);
+  // Editors read lookup options from a ref so that refreshing lookups while a
+  // cell is being edited (loadLookups() fires on cell-editing-started) does not
+  // change the columnDefs reference and destroy the open dropdown popup.
+  const lookupOptionsRef = useRef({
+    category: categoryOptions,
+    subCategory: subCategoryOptions,
+    type: typeOptions,
+  });
+  useEffect(() => {
+    lookupOptionsRef.current = {
+      category: categoryOptions,
+      subCategory: subCategoryOptions,
+      type: typeOptions,
+    };
+  }, [categoryOptions, subCategoryOptions, typeOptions]);
   const columnDefs = useMemo<ColDef[]>(() => [
     {
       field: "Brand",
@@ -331,12 +346,12 @@ export default function ProductsClient() {
       filter: "agTextColumnFilter",
       editable: true,
       cellEditor: "agSelectCellEditor",
-      cellEditorParams: {
+      cellEditorParams: () => ({
         values: [
           "",
-          ...categoryOptions.map((option) => option.name).filter((name) => name.length > 0),
+          ...lookupOptionsRef.current.category.map((option) => option.name).filter((name) => name.length > 0),
         ],
-      },
+      }),
     },
     {
       field: "SubCategory",
@@ -346,9 +361,10 @@ export default function ProductsClient() {
       editable: true,
       cellEditor: "agSelectCellEditor",
       cellEditorParams: (params: { data?: Record<string, unknown> | null }) => {
+        const { category, subCategory } = lookupOptionsRef.current;
         const categoryName = typeof params.data?.Category === "string" ? params.data?.Category : null;
-        const categoryOption = resolveLookupOption(categoryOptions, categoryName);
-        const values = subCategoryOptions
+        const categoryOption = resolveLookupOption(category, categoryName);
+        const values = subCategory
           .filter((option) => (categoryOption?.id != null ? option.categoryId === categoryOption.id : true))
           .map((option) => option.name)
           .filter((name) => name.length > 0);
@@ -362,12 +378,12 @@ export default function ProductsClient() {
       filter: "agTextColumnFilter",
       editable: true,
       cellEditor: "agSelectCellEditor",
-      cellEditorParams: {
+      cellEditorParams: () => ({
         values: [
           "",
-          ...typeOptions.map((option) => option.name).filter((name) => name.length > 0),
+          ...lookupOptionsRef.current.type.map((option) => option.name).filter((name) => name.length > 0),
         ],
-      },
+      }),
     },
     {
       field: "WebLink",
@@ -407,7 +423,9 @@ export default function ProductsClient() {
         return true;
       },
     },
-  ], [categoryOptions, subCategoryOptions, typeOptions, enabledOptions]);
+    // Lookup options are read from lookupOptionsRef inside the editors, so they
+    // are intentionally NOT deps here — keeping columnDefs stable during edits.
+  ], [enabledOptions]);
 
   const productRowDeletion = useMemo(
     () =>
