@@ -7,6 +7,7 @@ import type {
   ValueGetterParams,
 } from 'ag-grid-community';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductService, isOfferProductOption, isNonPrintableComment } from '../../../lib/offerProductRows';
+import { roundPriceByMagnitude } from '../../../lib/pricing';
 import { priceListStatusClassRules } from '../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 import type { RequestedProductMatchEntry } from './products/MatchRequestedProductsModal';
@@ -1883,6 +1884,152 @@ export const buildCategoryAggregateGetter = (field: 'TotalPrice' | 'TotalNet' | 
 export const roundMoney = (value: number, places = 4) => {
   const factor = 10 ** places;
   return Math.round(value * factor) / factor;
+};
+
+// Floor — never round up. Used for margin displays so the shown margin never
+// overstates the achieved one (22.796% must read 22.79, not 22.80). The
+// epsilon absorbs float noise so an exact value like 22.8 doesn't floor to 22.79.
+export const floorTo = (value: number, places = 2) => {
+  const factor = 10 ** places;
+  return Math.floor(value * factor + 1e-7) / factor;
+};
+
+/* ── Totals-row rescale (Total Net Price / Total Margin edits) ───────── */
+
+export type NetRescaleEntry = { OfferDetailID: number; oldNet: number; quantity: number; newNet: number };
+
+export type NetRescaleOptions = {
+  // Snap each rescaled price with roundPriceByMagnitude (instead of cents)
+  // and close the residual in band steps, so prices stay "nice".
+  magnitudeRounding?: boolean;
+  // Additionally close the leftover with cent steps so the achieved total
+  // equals the target exactly. Implied when magnitudeRounding is off.
+  exactTotal?: boolean;
+};
+
+/**
+ * Pure core of the totals-row rescale: scales every entry's net price so the
+ * summed total approaches/matches `targetTotal`. Entries that share the same
+ * old net price move in lockstep (identical products keep identical prices).
+ * Mutates each entry's `newNet` and returns the achieved total in cents.
+ *
+ * Residual closing: magnitude mode nudges groups by whole band steps (coarse
+ * groups close the bulk, cheap rows are the small change); cents mode — and
+ * magnitude mode with `exactTotal` — finishes with 1-cent steps.
+ */
+export const computeNetPriceRescale = (
+  entries: NetRescaleEntry[],
+  targetTotal: number,
+  opts?: NetRescaleOptions,
+): number => {
+  const useMagnitude = opts?.magnitudeRounding === true;
+  const requireExact = opts?.exactTotal === true || !useMagnitude;
+  const recomputedTotal = entries.reduce((s, e) => s + e.oldNet * e.quantity, 0);
+  const scale = targetTotal / recomputedTotal;
+
+  type PriceGroup = { entries: NetRescaleEntry[]; newNet: number; totalQty: number };
+  const groupMap = new Map<number, PriceGroup>();
+  for (const entry of entries) {
+    let group = groupMap.get(entry.oldNet);
+    if (!group) {
+      group = {
+        entries: [],
+        newNet: useMagnitude ? roundPriceByMagnitude(entry.oldNet * scale) : roundMoney(entry.oldNet * scale, 2),
+        totalQty: 0,
+      };
+      groupMap.set(entry.oldNet, group);
+    }
+    group.entries.push(entry);
+    group.totalQty += Math.round(entry.quantity);
+    entry.newNet = group.newNet;
+  }
+  const groups = [...groupMap.values()];
+
+  const toUnits = (x: number) => Math.round(x * 100);
+  const fromUnits = (u: number) => u / 100;
+  const setGroupNet = (group: PriceGroup, unitValue: number) => {
+    group.newNet = fromUnits(unitValue);
+    for (const e of group.entries) e.newNet = group.newNet;
+  };
+  const targetUnits = toUnits(targetTotal);
+  const achievedUnits = () => groups.reduce((s, g) => s + toUnits(g.newNet) * g.totalQty, 0);
+  let diffUnits = targetUnits - achievedUnits();
+
+  if (diffUnits !== 0 && useMagnitude) {
+    // The rounding band step for a group's current price, in cents.
+    const stepUnits = (g: PriceGroup): number => {
+      const abs = Math.abs(g.newNet);
+      if (abs < 10) return 1;        // 0.01
+      if (abs < 100) return 10;      // 0.10
+      if (abs < 1000) return 100;    // 1
+      if (abs < 100000) return 1000; // 10
+      return 10000;                  // 100
+    };
+    // Pass 1: biggest movers first (band step × quantity), whole steps
+    // toward the target — coarse groups close the bulk of the gap.
+    const byCoinDesc = groups.filter((g) => g.totalQty > 0)
+      .sort((a, b) => stepUnits(b) * b.totalQty - stepUnits(a) * a.totalQty);
+    for (const g of byCoinDesc) {
+      if (diffUnits === 0) break;
+      const coin = stepUnits(g) * g.totalQty;
+      const steps = diffUnits > 0 ? Math.floor(diffUnits / coin) : Math.ceil(diffUnits / coin);
+      if (steps === 0) continue;
+      setGroupNet(g, toUnits(g.newNet) + steps * stepUnits(g));
+      // A multi-step jump can carry the price across its band boundary
+      // (99.9 + 10×0.1 = 100.9), where the old step no longer matches the
+      // new band's grid — re-snap and recompute the residual from scratch.
+      const snapped = roundPriceByMagnitude(g.newNet);
+      if (snapped !== g.newNet) setGroupNet(g, toUnits(snapped));
+      diffUnits = targetUnits - achievedUnits();
+    }
+    // Pass 2: polish with the finest movers — cheap rows are the small
+    // change. Take one step wherever it shrinks the remaining gap.
+    if (diffUnits !== 0) {
+      const byCoinAsc = groups.filter((g) => g.totalQty > 0)
+        .sort((a, b) => stepUnits(a) * a.totalQty - stepUnits(b) * b.totalQty);
+      for (const g of byCoinAsc) {
+        if (diffUnits === 0) break;
+        const dir = diffUnits > 0 ? 1 : -1;
+        const delta = dir * stepUnits(g) * g.totalQty;
+        if (Math.abs(diffUnits - delta) < Math.abs(diffUnits)) {
+          setGroupNet(g, toUnits(g.newNet) + dir * stepUnits(g));
+          diffUnits -= delta;
+        }
+      }
+    }
+  }
+  // Cent-level passes: the only rounding for cents mode; for magnitude mode
+  // with `exactTotal`, the finisher that closes the band-step leftover so the
+  // total hits the target to the cent.
+  if (diffUnits !== 0 && requireExact) {
+    // Pass 1: largest-quantity groups first, take whole steps.
+    const byQtyDesc = groups.filter((g) => g.totalQty > 0).sort((a, b) => b.totalQty - a.totalQty);
+    for (const g of byQtyDesc) {
+      if (diffUnits === 0) break;
+      const steps = diffUnits > 0 ? Math.floor(diffUnits / g.totalQty) : Math.ceil(diffUnits / g.totalQty);
+      if (steps === 0) continue;
+      setGroupNet(g, toUnits(g.newNet) + steps);
+      diffUnits -= steps * g.totalQty;
+    }
+    // Pass 2: prefer the most expensive group for the residual. Skip groups
+    // whose totalQty would overshoot (equal-price rule means a totalQty=2
+    // group moves the total by 2 cents per step, so it can't close a 1-cent
+    // gap — the guard below auto-skips to the next most expensive group).
+    if (diffUnits !== 0) {
+      const byPriceDesc = groups.filter((g) => g.totalQty > 0).sort((a, b) => b.newNet - a.newNet);
+      for (const g of byPriceDesc) {
+        if (diffUnits === 0) break;
+        const dir = diffUnits > 0 ? 1 : -1;
+        const delta = dir * g.totalQty;
+        if (Math.abs(diffUnits - delta) < Math.abs(diffUnits)) {
+          setGroupNet(g, toUnits(g.newNet) + dir);
+          diffUnits -= delta;
+        }
+      }
+    }
+  }
+
+  return achievedUnits();
 };
 
 export const OFFER_PRODUCTS_EXPORT_FIELDS = [

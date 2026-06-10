@@ -197,7 +197,7 @@ const resolveDefaultStatusId = (options: DropdownOption[]): string => {
   const byLabel = options.find((opt) => (opt.label ?? '').trim().toLowerCase() === normalizedTarget);
   if (byLabel?.value) return byLabel.value;
   const byValue = options.find((opt) => (opt.value ?? '').trim().toLowerCase() === normalizedTarget);
-  return byValue?.value ?? '';
+  return byValue?.value ?? options[0]?.value ?? '';
 };
 
 export default function OfferCreateClient({
@@ -772,7 +772,7 @@ export default function OfferCreateClient({
       { id: 'deliveryTime', label: 'Delivery Time', section: 'general', required: true },
       { id: 'introNote', label: 'Introduction Note', section: 'general', type: 'textarea' },
       { id: 'customerId', label: 'Customer', section: 'general', required: true, type: 'select', options: localCustomers },
-      { id: 'statusId', label: 'Status', section: 'general', required: true, type: 'select', options: localStatuses },
+      { id: 'statusId', label: 'Status', section: 'general', required: true, type: 'select', options: localStatuses, hideEmptyOption: true },
 
       { id: 'contactId', label: 'Contact', section: 'info', required: true, type: 'select', options: contactOptions, fullWidth: true, dependsOnCustomer: true },
       { id: 'telmacoNote', label: 'Telmaco Note', section: 'info', type: 'textarea' },

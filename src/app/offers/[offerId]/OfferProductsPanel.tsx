@@ -142,6 +142,8 @@ import {
   recalcProductTotals,
   refreshCategoryAggregates,
   roundMoney,
+  floorTo,
+  computeNetPriceRescale,
   PRICING_FIELD_LABELS,
   PRICING_EDITABLE_FIELDS,
   PROPAGATABLE_FIELD_LABELS,
@@ -8427,8 +8429,20 @@ const requestedColumnDefsMap = useMemo(
     setTotalNetInputValue('');
   }, []);
 
-  const applyTotalNetPriceScale = useCallback(async (targetTotal: number) => {
+  // `magnitudeRounding`: snap each rescaled price with roundPriceByMagnitude
+  // instead of cents, then close the residual in band steps, so row prices
+  // stay "nice" while the total lands as close to the target as the bands
+  // allow. `exactTotal` (the Total Net edit) additionally runs the cent-level
+  // residual pass afterwards, so the total hits the target exactly — a few
+  // groups may carry cent adjustments to balance the books. `marginTarget` is
+  // the typed total margin %, used only to report the achieved margin.
+  const applyTotalNetPriceScale = useCallback(async (
+    targetTotal: number,
+    opts?: { magnitudeRounding?: boolean; exactTotal?: boolean; marginTarget?: number },
+  ) => {
     if (totalNetApplying) return;
+    const useMagnitude = opts?.magnitudeRounding === true;
+    const requireExact = opts?.exactTotal === true || !useMagnitude;
     const currentTotal = totals?.totalNetPrice ?? 0;
     if (!Number.isFinite(currentTotal) || Math.abs(currentTotal) < 1e-9) {
       showToastMessage('Cannot scale from a zero total. Set at least one product net price first.', 'error');
@@ -8445,7 +8459,11 @@ const requestedColumnDefsMap = useMemo(
 
     const confirmed = await showConfirmDialog({
       title: 'Adjust all Net Unit Prices?',
-      message: `This will proportionally rescale the Net Unit Price of every product row so the offer total matches ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}). This change affects all priced product rows and cannot be undone in a single step.`,
+      message: useMagnitude && !requireExact
+        ? `This will proportionally rescale the Net Unit Price of every product row toward ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}), rounding each price to a convenient amount, so the achieved total can deviate slightly from the target. This change affects all priced product rows and cannot be undone in a single step.`
+        : useMagnitude
+          ? `This will proportionally rescale the Net Unit Price of every product row so the offer total matches exactly ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}), rounding prices to convenient amounts where possible. This change affects all priced product rows and cannot be undone in a single step.`
+          : `This will proportionally rescale the Net Unit Price of every product row so the offer total matches ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}). This change affects all priced product rows and cannot be undone in a single step.`,
       confirmLabel: 'Rescale prices',
       cancelLabel: 'Keep as-is',
       tone: 'danger',
@@ -8500,63 +8518,12 @@ const requestedColumnDefsMap = useMemo(
         showToastMessage('Unable to compute a valid target for product rows.', 'error');
         return;
       }
-      const scale = targetTotal / recomputedTotal;
-
-      // Group entries that currently share the same net price — identical products
-      // must keep identical prices after rescale, even when distributing residual.
-      type PriceGroup = { entries: Entry[]; newNet: number; totalQty: number };
-      const groupMap = new Map<number, PriceGroup>();
-      for (const entry of entries) {
-        let group = groupMap.get(entry.oldNet);
-        if (!group) {
-          group = { entries: [], newNet: roundMoney(entry.oldNet * scale, 2), totalQty: 0 };
-          groupMap.set(entry.oldNet, group);
-        }
-        group.entries.push(entry);
-        group.totalQty += Math.round(entry.quantity);
-        entry.newNet = group.newNet;
-      }
-      const groups = [...groupMap.values()];
-
-      // Close the 0.01 residual by shifting whole groups (keeps identical prices in lockstep).
-      // Each 0.01 step on a group moves the achieved total by totalQty * 0.01.
-      const toUnits = (x: number) => Math.round(x * 100);
-      const fromUnits = (u: number) => u / 100;
-      const setGroupNet = (group: PriceGroup, unitValue: number) => {
-        group.newNet = fromUnits(unitValue);
-        for (const e of group.entries) e.newNet = group.newNet;
-      };
-      const targetUnits = toUnits(targetTotal);
-      const achievedUnits = groups.reduce((s, g) => s + toUnits(g.newNet) * g.totalQty, 0);
-      let diffUnits = targetUnits - achievedUnits;
-
-      if (diffUnits !== 0) {
-        // Pass 1: largest-quantity groups first, take whole steps.
-        const byQtyDesc = groups.filter((g) => g.totalQty > 0).sort((a, b) => b.totalQty - a.totalQty);
-        for (const g of byQtyDesc) {
-          if (diffUnits === 0) break;
-          const steps = diffUnits > 0 ? Math.floor(diffUnits / g.totalQty) : Math.ceil(diffUnits / g.totalQty);
-          if (steps === 0) continue;
-          setGroupNet(g, toUnits(g.newNet) + steps);
-          diffUnits -= steps * g.totalQty;
-        }
-        // Pass 2: prefer the most expensive group for the residual. Skip groups
-        // whose totalQty would overshoot (equal-price rule means a totalQty=2
-        // group moves the total by 2 cents per step, so it can't close a 1-cent
-        // gap — the guard below auto-skips to the next most expensive group).
-        if (diffUnits !== 0) {
-          const byPriceDesc = groups.filter((g) => g.totalQty > 0).sort((a, b) => b.newNet - a.newNet);
-          for (const g of byPriceDesc) {
-            if (diffUnits === 0) break;
-            const dir = diffUnits > 0 ? 1 : -1;
-            const delta = dir * g.totalQty;
-            if (Math.abs(diffUnits - delta) < Math.abs(diffUnits)) {
-              setGroupNet(g, toUnits(g.newNet) + dir);
-              diffUnits -= delta;
-            }
-          }
-        }
-      }
+      // Pure rescale core — shared with the unit tests in
+      // offerProductsUtils.test.ts. Mutates each entry's newNet.
+      computeNetPriceRescale(entries, targetTotal, {
+        magnitudeRounding: useMagnitude,
+        exactTotal: opts?.exactTotal,
+      });
 
       const chunkSize = 200;
       for (let idx = 0; idx < entries.length; idx += chunkSize) {
@@ -8576,7 +8543,9 @@ const requestedColumnDefsMap = useMemo(
       const capturedEntries = entries.map((e) => ({ OfferDetailID: e.OfferDetailID, oldNet: e.oldNet }));
       const capturedEndpoint = resolvedEndpoint;
       pushUndo({
-        label: `Total Net Price rescaled (${entries.length} items)`,
+        label: opts?.marginTarget != null
+          ? `Total Margin rescaled (${entries.length} items)`
+          : `Total Net Price rescaled (${entries.length} items)`,
         undo: async () => {
           for (let idx = 0; idx < capturedEntries.length; idx += chunkSize) {
             const chunk = capturedEntries.slice(idx, idx + chunkSize);
@@ -8593,7 +8562,20 @@ const requestedColumnDefsMap = useMemo(
         },
       });
 
-      showToastMessage(`Total Net Price set to ${formatEuroTotal(targetTotal)} (${entries.length} items updated)`, 'success', 5500, {
+      // In magnitude mode the achieved total can differ from the target by the
+      // unclosed residual — report what was actually achieved, not the target.
+      const achievedEntriesTotal = entries.reduce((s, e) => s + e.newNet * e.quantity, 0);
+      const achievedOfferNet = currentTotal + (achievedEntriesTotal - recomputedTotal);
+      const totalCostForMargin = totals?.totalCost;
+      const achievedMargin = useMagnitude && totalCostForMargin != null && Math.abs(achievedOfferNet) > 1e-9
+        ? (1 - totalCostForMargin / achievedOfferNet) * 100
+        : null;
+      const successMessage = opts?.marginTarget != null
+        ? `Total Margin set to ${achievedMargin != null ? `${floorTo(achievedMargin, 2)}%` : '—'} (target ${opts.marginTarget}%) — ${entries.length} items updated`
+        : !requireExact
+          ? `Total Net Price set to ${formatEuroTotal(achievedOfferNet)} (target ${formatEuroTotal(targetTotal)}) — ${entries.length} items updated`
+          : `Total Net Price set to ${formatEuroTotal(targetTotal)} (${entries.length} items updated)`;
+      showToastMessage(successMessage, 'success', 5500, {
         label: 'Undo',
         onClick: () => performUndo(),
       });
@@ -8619,7 +8601,7 @@ const requestedColumnDefsMap = useMemo(
       return;
     }
     totalNetSubmitPendingRef.current = true;
-    void applyTotalNetPriceScale(parsed).finally(() => {
+    void applyTotalNetPriceScale(parsed, { magnitudeRounding: true, exactTotal: true }).finally(() => {
       totalNetSubmitPendingRef.current = false;
     });
   }, [applyTotalNetPriceScale, totalNetInputValue]);
@@ -8627,7 +8609,9 @@ const requestedColumnDefsMap = useMemo(
   const beginEditTotalMargin = useCallback(() => {
     if (totalNetApplying) return;
     const current = totals?.totalMargin;
-    const initial = current != null && Number.isFinite(current) ? String(roundMoney(current, 2)) : '';
+    // Floor to match the totals-bar display — the prefill must not show a
+    // higher margin than the bar does.
+    const initial = current != null && Number.isFinite(current) ? String(floorTo(current, 2)) : '';
     setTotalMarginInputValue(initial);
     setTotalMarginEditing(true);
   }, [totalNetApplying, totals]);
@@ -8664,7 +8648,7 @@ const requestedColumnDefsMap = useMemo(
       return;
     }
     totalMarginSubmitPendingRef.current = true;
-    void applyTotalNetPriceScale(roundMoney(targetTotalNet, 2)).finally(() => {
+    void applyTotalNetPriceScale(roundMoney(targetTotalNet, 2), { magnitudeRounding: true, marginTarget: parsed }).finally(() => {
       totalMarginSubmitPendingRef.current = false;
       setTotalMarginEditing(false);
       setTotalMarginInputValue('');
@@ -9530,7 +9514,7 @@ const requestedColumnDefsMap = useMemo(
                     }
                   }}
                 >
-                  {formatPercentTotal(totals?.totalMargin)}
+                  {formatPercentTotal(totals != null ? floorTo(totals.totalMargin, 2) : null)}
                 </span>
               )}
             </div>

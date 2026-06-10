@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeDisplayOrderingMap,
+  computeNetPriceRescale,
   findDuplicateTreeOrderings,
   getCurrentStartingItemNo,
   planStartingItemNoShift,
   planTreeOrderingEdit,
+  type NetRescaleEntry,
 } from './offerProductsUtils';
+import { roundPriceByMagnitude } from '../../../lib/pricing';
 
 type Row = Record<string, unknown>;
 
@@ -777,5 +780,138 @@ describe('findDuplicateTreeOrderings', () => {
     const dups = findDuplicateTreeOrderings(rows);
     expect(dups).toHaveLength(1);
     expect(dups[0].rows).toHaveLength(2);
+  });
+});
+
+/* ── computeNetPriceRescale ──────────────────────────────────────────── */
+
+describe('computeNetPriceRescale', () => {
+  const mkEntries = (items: Array<[oldNet: number, quantity: number]>): NetRescaleEntry[] =>
+    items.map(([oldNet, quantity], i) => ({ OfferDetailID: i + 1, oldNet, quantity, newNet: oldNet }));
+
+  // Total in integer cents from the entries' newNet — the same arithmetic the
+  // totals bar ends up doing, so "adds up" means this matches the target.
+  const sumCents = (entries: NetRescaleEntry[]) =>
+    entries.reduce((s, e) => s + Math.round(e.newNet * 100) * e.quantity, 0);
+
+  const isBandRounded = (price: number) => Math.abs(roundPriceByMagnitude(price) - price) < 1e-9;
+
+  // Deterministic PRNG so the fuzz cases are reproducible.
+  const mulberry32 = (seed: number) => () => {
+    seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  describe('cents mode (legacy exact rescale)', () => {
+    it('hits the target total exactly', () => {
+      const entries = mkEntries([[123.45, 3], [67.89, 2], [9.99, 7], [4500, 1]]);
+      const achieved = computeNetPriceRescale(entries, 6000, {});
+      expect(achieved).toBe(600000);
+      expect(sumCents(entries)).toBe(600000);
+    });
+
+    it('keeps identical old prices identical after rescale', () => {
+      const entries = mkEntries([[250, 1], [250, 3], [99.5, 2], [250, 5]]);
+      computeNetPriceRescale(entries, 3100, {});
+      const same = entries.filter((e) => e.oldNet === 250).map((e) => e.newNet);
+      expect(new Set(same).size).toBe(1);
+      expect(sumCents(entries)).toBe(310000);
+    });
+  });
+
+  describe('magnitude mode (Total Margin edit)', () => {
+    it('keeps every price band-rounded', () => {
+      const entries = mkEntries([[0.5, 40], [8.2, 10], [55, 4], [820, 2], [12500, 1], [250000, 1]]);
+      computeNetPriceRescale(entries, 320000, { magnitudeRounding: true });
+      for (const e of entries) {
+        expect(isBandRounded(e.newNet), `price ${e.newNet} not band-rounded`).toBe(true);
+      }
+    });
+
+    it('single row: price is the band-rounded scaled value, no nudge that worsens the gap', () => {
+      const entries = mkEntries([[100, 1]]);
+      const achieved = computeNetPriceRescale(entries, 646.67, { magnitudeRounding: true });
+      expect(entries[0].newNet).toBe(647); // whole-unit band
+      expect(achieved).toBe(64700);
+    });
+
+    it('lands close to the target (residual bounded by the finest band coin)', () => {
+      const entries = mkEntries([[3.17, 5], [42.6, 3], [510, 2], [7300, 1]]);
+      const target = 9876.54;
+      const achieved = computeNetPriceRescale(entries, target, { magnitudeRounding: true });
+      // Finest coin: the 3.17 group steps in cents × qty 5 = 5 cents.
+      expect(Math.abs(achieved - Math.round(target * 100))).toBeLessThanOrEqual(5);
+      for (const e of entries) {
+        expect(isBandRounded(e.newNet), `price ${e.newNet} not band-rounded`).toBe(true);
+      }
+    });
+  });
+
+  describe('magnitude + exactTotal mode (Total Net edit)', () => {
+    it('hits the target exactly while keeping most prices band-rounded', () => {
+      const entries = mkEntries([[3.17, 5], [42.6, 3], [510, 2], [7300, 1], [1, 1]]);
+      const target = 9876.54;
+      const achieved = computeNetPriceRescale(entries, target, { magnitudeRounding: true, exactTotal: true });
+      expect(achieved).toBe(987654);
+      expect(sumCents(entries)).toBe(987654);
+    });
+
+    it('single row: cent finisher restores exactness', () => {
+      const entries = mkEntries([[100, 1]]);
+      computeNetPriceRescale(entries, 646.67, { magnitudeRounding: true, exactTotal: true });
+      expect(entries[0].newNet).toBe(646.67);
+    });
+  });
+
+  describe('fuzz: random offers stay consistent (seeded, reproducible)', () => {
+    it('exact modes always add up to the cent; magnitude mode stays band-rounded and close', () => {
+      const rand = mulberry32(20260610);
+      for (let run = 0; run < 300; run++) {
+        const rowCount = 1 + Math.floor(rand() * 25);
+        const items: Array<[number, number]> = [];
+        for (let i = 0; i < rowCount; i++) {
+          // Prices across all bands: 0.05 € … ~150.000 €
+          const magnitude = 10 ** Math.floor(rand() * 6 - 1);
+          const price = Math.round(magnitude * (0.5 + rand() * 9.5) * 100) / 100;
+          const qty = 1 + Math.floor(rand() * 12);
+          items.push([price, qty]);
+        }
+        // Guarantee a qty-1 row so the cent finisher can always close the gap.
+        items.push([Math.round((1 + rand() * 99) * 100) / 100, 1]);
+        const baseTotal = items.reduce((s, [p, q]) => s + p * q, 0);
+        const target = Math.round(baseTotal * (0.5 + rand()) * 100) / 100;
+        const targetCents = Math.round(target * 100);
+
+        // cents mode: exact
+        const centsEntries = mkEntries(items);
+        computeNetPriceRescale(centsEntries, target, {});
+        expect(sumCents(centsEntries), `run ${run}: cents mode missed target`).toBe(targetCents);
+
+        // magnitude + exact: exact AND lockstep
+        const exactEntries = mkEntries(items);
+        computeNetPriceRescale(exactEntries, target, { magnitudeRounding: true, exactTotal: true });
+        expect(sumCents(exactEntries), `run ${run}: magnitude+exact missed target`).toBe(targetCents);
+        const byOldNet = new Map<number, Set<number>>();
+        for (const e of exactEntries) {
+          const set = byOldNet.get(e.oldNet) ?? new Set<number>();
+          set.add(e.newNet);
+          byOldNet.set(e.oldNet, set);
+        }
+        for (const [oldNet, prices] of byOldNet) {
+          expect(prices.size, `run ${run}: group ${oldNet} broke lockstep`).toBe(1);
+        }
+
+        // magnitude only: every price band-rounded, total within 0.5% of target
+        const magEntries = mkEntries(items);
+        const achieved = computeNetPriceRescale(magEntries, target, { magnitudeRounding: true });
+        for (const e of magEntries) {
+          expect(isBandRounded(e.newNet), `run ${run}: price ${e.newNet} not band-rounded`).toBe(true);
+        }
+        expect(Math.abs(achieved - targetCents), `run ${run}: magnitude drifted >0.5%`)
+          .toBeLessThanOrEqual(Math.max(1, Math.round(targetCents * 0.005)));
+      }
+    });
   });
 });

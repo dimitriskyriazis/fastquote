@@ -50,6 +50,7 @@ import { showToastMessage } from '../../../../lib/toast';
 import gridStyles from '../../../components/AgGridAll.module.css';
 import panelStyles from '../OfferProductsPanel.module.css';
 import { getUserNumberLocale } from '../../../../lib/localeNumber';
+import { floorTo } from '../offerProductsUtils';
 
 type RowData = Record<string, unknown>;
 
@@ -760,7 +761,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
         </div>
         <div className={panelStyles.totalItem}>
           <span className={panelStyles.totalLabel}>Total Margin:</span>
-          <span className={panelStyles.totalValue}>{formatPercentTotal(totals.totalMargin)}</span>
+          <span className={panelStyles.totalValue}>{formatPercentTotal(floorTo(totals.totalMargin, 2))}</span>
         </div>
         <div className={panelStyles.totalItem}>
           <span className={panelStyles.totalLabel}>Installation:</span>

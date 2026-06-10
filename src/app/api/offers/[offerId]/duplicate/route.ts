@@ -471,13 +471,11 @@ export async function POST(
         ? Boolean(existingOffer.IsStandardPackage)
         : false;
 
-    // Always reset status to Draft Request for both new version and copy
+    // Copies reset status to Draft Request; new versions keep the source offer's status
     let effectiveStatusId = existingOffer.StatusID;
     let effectiveERPProjectCode = existingOffer.ERPProjectCode;
     if (duplicateMode === 'copy') {
       effectiveERPProjectCode = null;
-    }
-    {
       const draftStatusRequest = pool.request();
       const draftStatusResult = await draftStatusRequest.query<{ ID: number }>(`
         SELECT TOP 1 ID FROM dbo.OfferStatus WHERE LOWER(TRIM(Name)) = 'draft request'

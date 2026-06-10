@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   roundTo,
+  roundPriceByMagnitude,
   percentageToFactor,
   deriveMarginPercent,
+  deriveWithoutListPrice,
   computeScenario,
   resolvePricing,
   type PricingInput,
@@ -31,6 +33,69 @@ describe('roundTo', () => {
   it('handles banker-style rounding edge case (0.5)', () => {
     // JavaScript Math.round rounds 0.5 up
     expect(roundTo(0.00005, 4)).toBe(0.0001);
+  });
+});
+
+/* ── roundPriceByMagnitude ───────────────────────────────────────────── */
+
+describe('roundPriceByMagnitude', () => {
+  it('rounds prices under 10 to 2 decimals', () => {
+    expect(roundPriceByMagnitude(0.123456)).toBe(0.12);
+    expect(roundPriceByMagnitude(0.897436)).toBe(0.9);
+    expect(roundPriceByMagnitude(8.1333)).toBe(8.13);
+  });
+
+  it('rounds prices under 100 to 1 decimal', () => {
+    expect(roundPriceByMagnitude(12.54)).toBe(12.5);
+    expect(roundPriceByMagnitude(20.267)).toBe(20.3);
+    expect(roundPriceByMagnitude(99.96)).toBe(100);
+  });
+
+  it('rounds prices under 1.000 to whole units', () => {
+    expect(roundPriceByMagnitude(101.43)).toBe(101);
+    expect(roundPriceByMagnitude(646.67)).toBe(647);
+    expect(roundPriceByMagnitude(999.4)).toBe(999);
+  });
+
+  it('rounds prices under 100.000 to tens', () => {
+    expect(roundPriceByMagnitude(1004.29)).toBe(1000);
+    expect(roundPriceByMagnitude(14285.71)).toBe(14290);
+    expect(roundPriceByMagnitude(99994)).toBe(99990);
+  });
+
+  it('rounds prices of 100.000 and above to hundreds', () => {
+    expect(roundPriceByMagnitude(121428.57)).toBe(121400);
+    expect(roundPriceByMagnitude(100042.86)).toBe(100000);
+  });
+
+  it('uses the absolute value to pick the band for negative prices', () => {
+    expect(roundPriceByMagnitude(-12.54)).toBe(-12.5);
+    expect(roundPriceByMagnitude(-0.123)).toBe(-0.12);
+  });
+});
+
+/* ── deriveWithoutListPrice ──────────────────────────────────────────── */
+
+describe('deriveWithoutListPrice — margin-derived sell price', () => {
+  it('applies magnitude rounding and refreshes margin when the margin was user-typed', () => {
+    const r = deriveWithoutListPrice(null, 10, 22, {
+      netUnitPrice: false,
+      netCost: false,
+      margin: true,
+    });
+    expect(r.netUnitPrice).toBe(12.8);        // 10 / 0.78 = 12.8205 → 1 decimal
+    expect(r.margin).toBeCloseTo(21.875, 3);  // refreshed from rounded NP
+    expect(r.netCost).toBe(10);
+  });
+
+  it('keeps exact 4-decimal rounding when the margin is merely held', () => {
+    const r = deriveWithoutListPrice(null, 10, 20, {
+      netUnitPrice: false,
+      netCost: true,
+      margin: false,
+    });
+    expect(r.netUnitPrice).toBe(12.5);        // exact, no commercial rounding
+    expect(r.margin).toBe(20);                // untouched
   });
 });
 
@@ -539,21 +604,60 @@ describe('resolvePricing — single-field edit cascade', () => {
       expect(r.margin).toBe(25);
     });
 
-    it('ad-hoc row: holds NetCost, recomputes NP, discounts unchanged', () => {
+    it('ad-hoc row: holds NetCost, recomputes NP with magnitude rounding, discounts unchanged', () => {
       const input: PricingInput = {
         listPrice: null,
         customerDiscount: 17,
         telmacoDiscount: null,
         netUnitPrice: null,
         netCost: 10,
-        margin: 20,
+        margin: 22,
         provided: { ...noProvided, margin: true },
       };
       const r = resolvePricing(input)!;
-      expect(r.netUnitPrice).toBe(12.5);      // 10 / 0.8
+      expect(r.netUnitPrice).toBe(12.8);      // 10 / 0.78 = 12.8205 → 1 decimal
       expect(r.netCost).toBe(10);
       expect(r.customerDiscount).toBe(17);    // unchanged
-      expect(r.margin).toBe(20);
+      expect(r.margin).toBeCloseTo(21.875, 3); // refreshed from rounded NP
+    });
+
+    it('rounds the derived sell price by magnitude and refreshes Margin to the actual value', () => {
+      // TC=485, Margin=25% → raw NP = 646.6667 → rounds to whole units = 647.
+      const input: PricingInput = {
+        listPrice: 1000,
+        customerDiscount: null,
+        telmacoDiscount: 51.5,
+        netUnitPrice: null,
+        netCost: 485,
+        margin: 25,
+        provided: { ...noProvided, margin: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(647);
+      expect(r.customerDiscount).toBeCloseTo(35.3, 3);     // 1 - 647/1000
+      expect(r.margin).toBeCloseTo(25.0386, 3);            // 1 - 485/647
+      expect(r.netCost).toBe(485);                         // held
+    });
+
+    it('applies coarser rounding bands as the derived price grows', () => {
+      const mkInput = (netCost: number): PricingInput => ({
+        listPrice: null,
+        customerDiscount: null,
+        telmacoDiscount: null,
+        netUnitPrice: null,
+        netCost,
+        margin: 30,
+        provided: { ...noProvided, margin: true },
+      });
+      // TC=4.49 → 6.4143 → 6.41 (2 decimals); TC=14.2 → 20.2857 → 20.3 (1 decimal);
+      // TC=630 → 900 (whole); TC=6300 → 9000 (tens);
+      // TC=10000 → 14285.71 → 14290 (tens); TC=85000 → 121428.57 → 121400 (hundreds).
+      expect(resolvePricing(mkInput(4.49))!.netUnitPrice).toBe(6.41);
+      expect(resolvePricing(mkInput(14.2))!.netUnitPrice).toBe(20.3);
+      expect(resolvePricing(mkInput(630))!.netUnitPrice).toBe(900);
+      expect(resolvePricing(mkInput(6300))!.netUnitPrice).toBe(9000);
+      expect(resolvePricing(mkInput(10000))!.netUnitPrice).toBe(14290);
+      expect(resolvePricing(mkInput(85000))!.netUnitPrice).toBe(121400);
     });
 
     it('returns null when margin is 100% (division by zero)', () => {

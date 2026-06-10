@@ -3,7 +3,9 @@
  *
  * Eight scenarios resolve missing pricing fields (discounts, net prices,
  * margins) from whatever combination the user has provided, given a list
- * price.  All monetary values are rounded to 4 decimal places.
+ * price.  All monetary values are rounded to 4 decimal places, except sell
+ * prices derived from a user-typed margin, which get magnitude-based
+ * commercial rounding (see roundPriceByMagnitude).
  */
 
 /* ── Types ───────────────────────────────────────────────────────────── */
@@ -57,6 +59,26 @@ export const roundTo = (value: number, places = 4): number => {
 };
 
 export const percentageToFactor = (value: number): number => value / 100;
+
+/**
+ * Magnitude-based commercial rounding for sell prices derived from a margin
+ * edit — the bigger the price, the coarser the rounding:
+ *   |price| < 10      → 2 decimals
+ *   |price| < 100     → 1 decimal
+ *   |price| < 1.000   → whole units
+ *   |price| < 100.000 → tens
+ *   otherwise         → hundreds
+ * Bands keep the rounding step at or below ~0.5% of the price, so snapping
+ * never shifts the achieved margin by more than ~¼ of a percentage point.
+ */
+export const roundPriceByMagnitude = (value: number): number => {
+  const abs = Math.abs(value);
+  if (abs < 10) return roundTo(value, 2);
+  if (abs < 100) return roundTo(value, 1);
+  if (abs < 1000) return Math.round(value);
+  const scale = abs < 100000 ? 10 : 100;
+  return Math.round(value / scale) * scale;
+};
 
 export const deriveMarginPercent = (
   netPrice: number | null,
@@ -196,11 +218,18 @@ export const deriveWithoutListPrice = (
   const hasUserInput = provided.netUnitPrice || provided.netCost || provided.margin;
   if (!hasUserInput) return { netUnitPrice: np, netCost: tc, margin: m };
 
-  // netCost + margin → netUnitPrice
+  // netCost + margin → netUnitPrice. When the margin is what the user typed,
+  // the derived sell price gets magnitude-based commercial rounding and the
+  // margin is refreshed to the actual value the rounded price yields.
   if (resolvedNp == null && resolvedTc != null && resolvedM != null) {
     const factor = 1 - percentageToFactor(resolvedM);
     if (factor > 0 && factor < 1) {
-      resolvedNp = roundTo(resolvedTc / factor);
+      if (provided.margin) {
+        resolvedNp = roundPriceByMagnitude(resolvedTc / factor);
+        resolvedM = deriveMarginPercent(resolvedNp, resolvedTc) ?? resolvedM;
+      } else {
+        resolvedNp = roundTo(resolvedTc / factor);
+      }
     }
   }
   // netUnitPrice + margin → netCost
@@ -236,7 +265,10 @@ export const deriveWithoutListPrice = (
  *   TelmacoDiscount   | Keep Margin | hold calc  calc  edit  calc  hold
  *   NetCost           | Keep Net    | hold hold  hold  calc  edit  calc
  *   NetCost           | Keep Margin | hold calc  calc  calc  edit  hold
- *   Margin            |     —       | hold calc  calc  hold  hold  edit
+ *   Margin            |     —       | hold calc  calc  hold  hold  edit*
+ *
+ * (*) A margin edit derives NP, then NP is snapped via roundPriceByMagnitude
+ * and Margin is refreshed to the actual value the rounded price yields.
  *
  * Keep Margin necessarily recomputes CD + NP: holding LP and the margin while
  * the cost moves forces the sell price (and therefore the discount) to float.
@@ -257,11 +289,15 @@ const resolveSingleFieldEdit = (input: PricingInput): ResolvedPricing | null => 
   const keepMargin = input.holdMarginOnCostChange ?? false;
 
   // Margin edit: hold NetCost, recompute NetUnitPrice, then cascade discounts.
+  // The derived sell price gets magnitude-based commercial rounding, and the
+  // stored Margin is refreshed to the actual value the rounded price yields
+  // (so the row stays internally consistent: NP × (1 − M%) = TC).
   if (p.margin) {
     if (m == null || tc == null) return null;
     const marginFactor = 1 - percentageToFactor(m);
     if (!(marginFactor > 0)) return null; // margin >= 100% or invalid
-    const newNp = roundTo(tc / marginFactor);
+    const newNp = roundPriceByMagnitude(tc / marginFactor);
+    const newM = deriveMarginPercent(newNp, tc) ?? m;
     if (hasValidLp) {
       // Hold ACD; CD = totalImpliedDiscount - ACD.
       return {
@@ -269,11 +305,11 @@ const resolveSingleFieldEdit = (input: PricingInput): ResolvedPricing | null => 
         telmacoDiscount: td,
         netUnitPrice: newNp,
         netCost: tc,
-        margin: m,
+        margin: newM,
         additionalCustomerDiscount: acd,
       };
     }
-    return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: newNp, netCost: tc, margin: m, additionalCustomerDiscount: acd };
+    return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: newNp, netCost: tc, margin: newM, additionalCustomerDiscount: acd };
   }
 
   // ListPrice edit — hold both discount percentages (CustomerDiscount and

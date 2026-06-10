@@ -203,6 +203,7 @@ const buildFieldDefinitions = (
     updateField: 'StatusID',
     valueType: 'number',
     options: statuses,
+    hideEmptyOption: true,
   },
 
   {
