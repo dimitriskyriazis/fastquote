@@ -89,6 +89,35 @@ export const deriveMarginPercent = (
   return roundTo((1 - telmacoCost / netPrice) * 100);
 };
 
+/**
+ * Markup is the cost-basis twin of Margin, expressed as a cost MULTIPLIER (a
+ * factor, e.g. 1.25 = sell at 125% of cost), NOT a percentage. Margin is
+ * profit / sell price; markup is sell price / cost. They convert exactly:
+ *   factor = NetUnitPrice / NetCost = 100 / (100 − margin)
+ *   margin = (1 − 1 / factor) · 100
+ * so a markup edit can ride the existing margin pathway after conversion.
+ * Markup is never stored — it is always derived from NetUnitPrice/NetCost
+ * (or Margin).
+ */
+export const deriveMarkupFactor = (
+  netPrice: number | null,
+  telmacoCost: number | null,
+): number | null => {
+  if (netPrice == null || telmacoCost == null) return null;
+  if (Object.is(telmacoCost, 0)) return null;
+  return roundTo(netPrice / telmacoCost);
+};
+
+export const markupFactorFromMargin = (margin: number | null): number | null => {
+  if (margin == null || !Number.isFinite(margin) || margin >= 100) return null;
+  return roundTo(100 / (100 - margin));
+};
+
+export const marginFromMarkupFactor = (factor: number | null): number | null => {
+  if (factor == null || !Number.isFinite(factor) || factor <= 0) return null;
+  return roundTo((1 - 1 / factor) * 100);
+};
+
 /* ── Scenario engine ─────────────────────────────────────────────────── */
 
 export const computeScenario = (

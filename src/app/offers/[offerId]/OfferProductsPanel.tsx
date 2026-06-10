@@ -166,8 +166,23 @@ import {
 } from './offerProductsUtils';
 
 export type { OfferProductsPanelHandle, OfferProductsTemplateExportRow } from './offerProductsPanelTypes';
+import { roundTo, marginFromMarkupFactor } from '../../../lib/pricing';
 
 const PRODUCT_PREFETCH_FIELDS = ['PartNumber', 'Description', 'BrandName', 'ModelNumber', 'ListPrice', 'CostPrice', 'PriceListName'];
+
+// Pricing fields the derived Markup column reads from. When any of these change
+// the Markup cell must be force-refreshed (it has no field of its own to track).
+const MARKUP_SOURCE_FIELDS = new Set([
+  'Margin',
+  'NetUnitPrice',
+  'NetCost',
+  'CustomerDiscount',
+  'AdditionalCustomerDiscount',
+  'TelmacoDiscount',
+  'ListPrice',
+  'NetCostOtherCurrency',
+  'CurrencyCostModifier',
+]);
 
 const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   offerId,
@@ -435,6 +450,14 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const [totalMarginEditing, setTotalMarginEditing] = useState(false);
   const [totalMarginInputValue, setTotalMarginInputValue] = useState('');
   const totalMarginSubmitPendingRef = useRef(false);
+  // Total Markup is the cost-basis twin of Total Margin, shown in the totals bar
+  // only while the (default-hidden) Markup grid column is visible.
+  const [totalMarkupEditing, setTotalMarkupEditing] = useState(false);
+  const [totalMarkupInputValue, setTotalMarkupInputValue] = useState('');
+  const totalMarkupSubmitPendingRef = useRef(false);
+  const [markupColumnVisible, setMarkupColumnVisible] = useState<boolean>(
+    () => savedHiddenMap['Markup'] === false,
+  );
   // Offer-level additional discount applied on top of the Net total. Persisted on
   // the offer (via onOfferExtraDiscountsChange) and surfaced as its own line in the
   // PDF totals. It does NOT touch any individual product row's stored price.
@@ -476,6 +499,18 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const gridWrapperRef = useRef<HTMLDivElement | null>(null);
   const shiftedAnchorIdRef = useRef<number | null>(null);
+  // Keeps markupColumnVisible in step with the grid's actual Markup column
+  // visibility (user toggles it via the column chooser / side panel; it can also
+  // be force-hidden by the customer layout). Held in a ref so the layout effect
+  // can call it without taking it as a dependency.
+  const syncMarkupColumnVisible = useCallback(() => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    const column = typeof api.getColumn === 'function' ? api.getColumn('Markup') : null;
+    setMarkupColumnVisible(column ? column.isVisible() : false);
+  }, []);
+  const syncMarkupColumnVisibleRef = useRef(syncMarkupColumnVisible);
+  syncMarkupColumnVisibleRef.current = syncMarkupColumnVisible;
   const [requestedColumnsReady, setRequestedColumnsReadyFlag] = useState(false);
   const [offerCurrencyName, setOfferCurrencyName] = useState<string | null>(null);
   const [requestedMatchQueue, setRequestedMatchQueue] = useState<RequestedProductMatchEntry[]>([]);
@@ -1359,11 +1394,16 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         colId,
         hide: !showCostAnalysis,
       }));
+      // Markup is a cost-derived, opt-in column (hidden by default). The customer
+      // ('cust') layout must never expose it, but the cost layouts must NOT force
+      // it visible — leave its visibility to the user / saved state there.
+      if (!showCostAnalysis) state.push({ colId: 'Markup', hide: true });
       api.applyColumnState({ state, applyOrder: false });
     } catch {
       /* noop */
     }
     restoreColumnWidths(api, widthSnapshot);
+    syncMarkupColumnVisibleRef.current();
 
     appliedTableLayoutRef.current = tableLayout;
   }, [captureColumnWidths, requestedColumnsReady, restoreColumnWidths, tableLayout]);
@@ -1776,6 +1816,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   forceReapplyRef.current = forceReapplyRequestedColumnsVisibility;
   const handleColumnStateRestored = useCallback(() => {
     forceReapplyRequestedColumnsVisibility();
+    syncMarkupColumnVisibleRef.current();
   }, [forceReapplyRequestedColumnsVisibility]);
 
   const saveLayout = useCallback((options?: { silent?: boolean }) => {
@@ -1913,6 +1954,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const api = gridReadyApi;
     if (!api || api.isDestroyed?.()) return undefined;
 
+    // Mirror the Markup column's current visibility into React state on mount so
+    // the totals-bar Markup entry matches whatever the saved layout restored.
+    syncMarkupColumnVisibleRef.current();
+
     const handleColumnMoved = (event: ColumnMovedEvent<Record<string, unknown>>) => {
       if (!event.finished) return;
       if (!shouldAutoSaveFromColumnEvent(event.source)) return;
@@ -1924,6 +1969,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       queueAutoSaveLayout();
     };
     const handleColumnVisible = (event: ColumnVisibleEvent<Record<string, unknown>>) => {
+      // Sync the totals-bar Markup entry regardless of source (programmatic
+      // layout/cust-view changes flip visibility without a UI event too).
+      syncMarkupColumnVisibleRef.current();
       if (!shouldAutoSaveFromColumnEvent(event.source)) return;
       queueAutoSaveLayout();
     };
@@ -2665,6 +2713,49 @@ const requestedColumnDefsMap = useMemo(
   );
 
   const productColumnDefsRef = useRef<ColDef[]>([]);
+  // Markup is a derived, opt-in column with no stored field. Editing it converts
+  // the typed markup to the equivalent Margin and pushes that through the row's
+  // Margin cell, so the entire existing Margin pipeline (validation, PATCH,
+  // resolved-row apply, undo, totals, duplicate propagation) is reused verbatim.
+  // The Markup cell itself re-derives from the updated Margin on the next refresh
+  // (see the Markup refresh at the end of handleCellEdit).
+  const handleMarkupEdit = useCallback((
+    node: GridRowNode | null | undefined,
+    newValue: unknown,
+    data: Record<string, unknown> | null | undefined,
+  ) => {
+    if (readOnly) return;
+    if (!isOfferProductCommentOrProduct(data)) {
+      showToastMessage('Pricing can only be edited on product or comment rows.', 'error');
+      return;
+    }
+    const offerDetailId = normalizeOfferDetailId((data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null);
+    if (offerDetailId == null) {
+      showToastMessage('Unable to update Markup. Missing record identifier.', 'error');
+      return;
+    }
+    const markup = coerceNumber(newValue);
+    // Markup is a cost multiplier (e.g. 1.25). Clearing the cell isn't a valid
+    // factor, so treat blank/invalid input as a no-op rather than a 0.
+    if (markup == null || !Number.isFinite(markup)) {
+      if (String(newValue ?? '').trim() === '') return;
+      showToastMessage('Please enter a valid markup (e.g. 1.25).', 'error');
+      return;
+    }
+    const marginValue = marginFromMarkupFactor(markup);
+    // factor ≤ 0.5 maps to a margin ≤ −100%, which the pricing engine rejects.
+    if (marginValue == null || Math.abs(marginValue) >= 100) {
+      showToastMessage('Markup must be greater than 0.5.', 'error');
+      return;
+    }
+    const roundedMargin = roundTo(marginValue, 4);
+    const currentMargin = coerceNumber((data as { Margin?: unknown } | undefined)?.Margin);
+    if (currentMargin != null && Object.is(currentMargin, roundedMargin)) return;
+    // Routing through the Margin cell re-enters handleCellEdit → handlePricingEdit
+    // with field 'Margin' and a non-'api' source, so the full pipeline runs.
+    try { node?.setDataValue?.('Margin', roundedMargin); } catch { /* noop */ }
+  }, [readOnly]);
+
   const productColumnDefs: ColDef[] = useMemo(() => buildProductColumnDefs({
       standardPackageMode,
       isManualMode,
@@ -2685,6 +2776,7 @@ const requestedColumnDefsMap = useMemo(
       offerCurrencySymbol: offerCurrencyName ?? '€',
       pricingPolicyName,
       readOnly,
+      onMarkupEdit: handleMarkupEdit,
     }), [
     actualNumericCellClass,
     actualNumericCellStyle,
@@ -2705,6 +2797,7 @@ const requestedColumnDefsMap = useMemo(
     offerCurrencyName,
     pricingPolicyName,
     readOnly,
+    handleMarkupEdit,
   ]);
 
   useEffect(() => {
@@ -8320,6 +8413,13 @@ const requestedColumnDefsMap = useMemo(
     } else {
       void propagateChangeToDuplicates(event, wasProgrammatic);
     }
+    // The derived Markup column has no field of its own, so AG Grid won't refresh
+    // it when an underlying pricing field changes (whether from a user edit or a
+    // realtime collaborator update, both of which land here). Force a re-render of
+    // the Markup cell for this row whenever a value it derives from moves.
+    if (MARKUP_SOURCE_FIELDS.has(event.colDef.field ?? '')) {
+      try { event.api?.refreshCells({ rowNodes: [event.node!], columns: ['Markup'], force: true }); } catch { /* noop */ }
+    }
   }, [isProgrammaticCellEdit, handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit, handleOriginEdit, handleHoursFieldEdit, handleWarrantyFieldEdit, handleTreeOrderingEdit, propagateChangeToDuplicates]);
 
   const offerCurrencySymbol = offerCurrencyName ?? '€';
@@ -8438,7 +8538,7 @@ const requestedColumnDefsMap = useMemo(
   // the typed total margin %, used only to report the achieved margin.
   const applyTotalNetPriceScale = useCallback(async (
     targetTotal: number,
-    opts?: { magnitudeRounding?: boolean; exactTotal?: boolean; marginTarget?: number },
+    opts?: { magnitudeRounding?: boolean; exactTotal?: boolean; marginTarget?: number; markupTarget?: number; skipConfirm?: boolean },
   ) => {
     if (totalNetApplying) return;
     const useMagnitude = opts?.magnitudeRounding === true;
@@ -8457,20 +8557,24 @@ const requestedColumnDefsMap = useMemo(
       return;
     }
 
-    const confirmed = await showConfirmDialog({
-      title: 'Adjust all Net Unit Prices?',
-      message: useMagnitude && !requireExact
-        ? `This will proportionally rescale the Net Unit Price of every product row toward ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}), rounding each price to a convenient amount, so the achieved total can deviate slightly from the target. This change affects all priced product rows and cannot be undone in a single step.`
-        : useMagnitude
-          ? `This will proportionally rescale the Net Unit Price of every product row so the offer total matches exactly ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}), rounding prices to convenient amounts where possible. This change affects all priced product rows and cannot be undone in a single step.`
-          : `This will proportionally rescale the Net Unit Price of every product row so the offer total matches ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}). This change affects all priced product rows and cannot be undone in a single step.`,
-      confirmLabel: 'Rescale prices',
-      cancelLabel: 'Keep as-is',
-      tone: 'danger',
-    });
-    if (!confirmed) {
-      cancelEditTotalNet();
-      return;
+    // Callers that already confirmed intent via their own dialog (e.g. the
+    // markup "apply proportionally / to all rows" choice) skip this confirm.
+    if (!opts?.skipConfirm) {
+      const confirmed = await showConfirmDialog({
+        title: 'Adjust all Net Unit Prices?',
+        message: useMagnitude && !requireExact
+          ? `This will proportionally rescale the Net Unit Price of every product row toward ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}), rounding each price to a convenient amount, so the achieved total can deviate slightly from the target. This change affects all priced product rows and cannot be undone in a single step.`
+          : useMagnitude
+            ? `This will proportionally rescale the Net Unit Price of every product row so the offer total matches exactly ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}), rounding prices to convenient amounts where possible. This change affects all priced product rows and cannot be undone in a single step.`
+            : `This will proportionally rescale the Net Unit Price of every product row so the offer total matches ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}). This change affects all priced product rows and cannot be undone in a single step.`,
+        confirmLabel: 'Rescale prices',
+        cancelLabel: 'Keep as-is',
+        tone: 'danger',
+      });
+      if (!confirmed) {
+        cancelEditTotalNet();
+        return;
+      }
     }
 
     setTotalNetApplying(true);
@@ -8543,9 +8647,11 @@ const requestedColumnDefsMap = useMemo(
       const capturedEntries = entries.map((e) => ({ OfferDetailID: e.OfferDetailID, oldNet: e.oldNet }));
       const capturedEndpoint = resolvedEndpoint;
       pushUndo({
-        label: opts?.marginTarget != null
-          ? `Total Margin rescaled (${entries.length} items)`
-          : `Total Net Price rescaled (${entries.length} items)`,
+        label: opts?.markupTarget != null
+          ? `Total Markup rescaled (${entries.length} items)`
+          : opts?.marginTarget != null
+            ? `Total Margin rescaled (${entries.length} items)`
+            : `Total Net Price rescaled (${entries.length} items)`,
         undo: async () => {
           for (let idx = 0; idx < capturedEntries.length; idx += chunkSize) {
             const chunk = capturedEntries.slice(idx, idx + chunkSize);
@@ -8570,11 +8676,16 @@ const requestedColumnDefsMap = useMemo(
       const achievedMargin = useMagnitude && totalCostForMargin != null && Math.abs(achievedOfferNet) > 1e-9
         ? (1 - totalCostForMargin / achievedOfferNet) * 100
         : null;
-      const successMessage = opts?.marginTarget != null
-        ? `Total Margin set to ${achievedMargin != null ? `${floorTo(achievedMargin, 2)}%` : '—'} (target ${opts.marginTarget}%) — ${entries.length} items updated`
-        : !requireExact
-          ? `Total Net Price set to ${formatEuroTotal(achievedOfferNet)} (target ${formatEuroTotal(targetTotal)}) — ${entries.length} items updated`
-          : `Total Net Price set to ${formatEuroTotal(targetTotal)} (${entries.length} items updated)`;
+      const achievedMarkup = useMagnitude && totalCostForMargin != null && Math.abs(totalCostForMargin) > 1e-9
+        ? achievedOfferNet / totalCostForMargin
+        : null;
+      const successMessage = opts?.markupTarget != null
+        ? `Total Markup set to ${achievedMarkup != null ? `${floorTo(achievedMarkup, 2)}` : '—'} (target ${opts.markupTarget}) — ${entries.length} items updated`
+        : opts?.marginTarget != null
+          ? `Total Margin set to ${achievedMargin != null ? `${floorTo(achievedMargin, 2)}%` : '—'} (target ${opts.marginTarget}%) — ${entries.length} items updated`
+          : !requireExact
+            ? `Total Net Price set to ${formatEuroTotal(achievedOfferNet)} (target ${formatEuroTotal(targetTotal)}) — ${entries.length} items updated`
+            : `Total Net Price set to ${formatEuroTotal(targetTotal)} (${entries.length} items updated)`;
       showToastMessage(successMessage, 'success', 5500, {
         label: 'Undo',
         onClick: () => performUndo(),
@@ -8654,6 +8765,172 @@ const requestedColumnDefsMap = useMemo(
       setTotalMarginInputValue('');
     });
   }, [applyTotalNetPriceScale, totalMarginInputValue, totals]);
+
+  // The total-markup display: cost-basis twin of total margin, as a multiplier
+  // (e.g. 1.25 = total net is 125% of total cost).
+  const totalMarkupValue = useMemo(() => {
+    if (!totals) return null;
+    const cost = totals.totalCost;
+    if (cost == null || !Number.isFinite(cost) || Math.abs(cost) < 1e-9) return null;
+    return totals.totalNetPrice / cost;
+  }, [totals]);
+
+  // "Apply to all rows": give every priced product/service row the SAME markup
+  // (i.e. the same margin). Net Unit Prices are recomputed by the server per row
+  // from each row's cost; undo restores the captured Net Unit Prices.
+  const applyMarkupToAllRows = useCallback(async (markupValue: number, marginValue: number) => {
+    if (totalNetApplying) return;
+    setTotalNetApplying(true);
+    try {
+      const fetchRes = await fetch(resolvedEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request: { allRows: true, view: 'pivot' },
+          fields: ['OfferDetailID', 'NetUnitPrice', 'NetCost', 'RowType'],
+        }),
+      });
+      const fetchPayload = (await fetchRes.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; rows?: Array<Record<string, unknown>> }
+        | null;
+      if (!fetchRes.ok || !fetchPayload?.ok) {
+        throw new Error(fetchPayload?.error ?? `Unable to load rows (status ${fetchRes.status})`);
+      }
+      const rows = Array.isArray(fetchPayload?.rows) ? fetchPayload.rows : [];
+
+      type Entry = { OfferDetailID: number; oldNet: number | null };
+      const entries: Entry[] = [];
+      for (const row of rows) {
+        const rowIsService = isOfferProductService(row);
+        if (!rowIsService && !isOfferProductProduct(row)) continue;
+        // Options are excluded (same as the proportional rescale); markup needs a
+        // cost basis, so skip rows without a real Net Cost.
+        if (isOfferProductOption(row)) continue;
+        const cost = coerceNumber((row as { NetCost?: unknown }).NetCost);
+        if (cost == null || Math.abs(cost) < 1e-9) continue;
+        const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+        if (id == null) continue;
+        entries.push({ OfferDetailID: id, oldNet: coerceNumber((row as { NetUnitPrice?: unknown }).NetUnitPrice) });
+      }
+
+      if (entries.length === 0) {
+        showToastMessage('No product rows with a cost to apply the markup to.', 'error');
+        return;
+      }
+
+      const chunkSize = 200;
+      for (let idx = 0; idx < entries.length; idx += chunkSize) {
+        const chunk = entries.slice(idx, idx + chunkSize);
+        const updates = chunk.map((e) => ({ OfferDetailID: e.OfferDetailID, Margin: marginValue }));
+        const updateRes = await fetch(resolvedEndpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates }),
+        });
+        const updatePayload = (await updateRes.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!updateRes.ok || !updatePayload?.ok) {
+          throw new Error(updatePayload?.error ?? `Apply failed (status ${updateRes.status})`);
+        }
+      }
+
+      // Undo restores the original Net Unit Prices (cost held → margin reverts too).
+      const capturedEntries = entries.filter((e) => e.oldNet != null).map((e) => ({ OfferDetailID: e.OfferDetailID, oldNet: e.oldNet as number }));
+      const capturedEndpoint = resolvedEndpoint;
+      pushUndo({
+        label: `Markup applied to all (${entries.length} items)`,
+        undo: async () => {
+          for (let idx = 0; idx < capturedEntries.length; idx += chunkSize) {
+            const chunk = capturedEntries.slice(idx, idx + chunkSize);
+            const updates = chunk.map((e) => ({ OfferDetailID: e.OfferDetailID, NetUnitPrice: e.oldNet }));
+            const undoRes = await fetch(capturedEndpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ updates }),
+            });
+            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert markup');
+          }
+          refreshOfferProductGrid(null, { purge: false });
+        },
+      });
+
+      showToastMessage(
+        `Markup set to ${floorTo(markupValue, 2)} on ${entries.length} product row${entries.length === 1 ? '' : 's'}`,
+        'success',
+        5500,
+        { label: 'Undo', onClick: () => performUndo() },
+      );
+      refreshOfferProductGrid(null, { purge: false });
+    } catch (err) {
+      console.error('Apply markup to all rows failed', err);
+      showToastMessage(`Unable to apply markup: ${err instanceof Error ? err.message : 'Please try again.'}`, 'error');
+    } finally {
+      setTotalNetApplying(false);
+    }
+  }, [performUndo, pushUndo, refreshOfferProductGrid, resolvedEndpoint, totalNetApplying]);
+
+  const beginEditTotalMarkup = useCallback(() => {
+    if (totalNetApplying) return;
+    const initial = totalMarkupValue != null && Number.isFinite(totalMarkupValue) ? String(floorTo(totalMarkupValue, 2)) : '';
+    setTotalMarkupInputValue(initial);
+    setTotalMarkupEditing(true);
+  }, [totalNetApplying, totalMarkupValue]);
+
+  const cancelEditTotalMarkup = useCallback(() => {
+    totalMarkupSubmitPendingRef.current = false;
+    setTotalMarkupEditing(false);
+    setTotalMarkupInputValue('');
+  }, []);
+
+  const submitTotalMarkupEdit = useCallback(() => {
+    if (totalMarkupSubmitPendingRef.current) return;
+    const parsed = coerceNumber(totalMarkupInputValue);
+    if (parsed == null || !Number.isFinite(parsed)) {
+      showToastMessage('Please enter a valid total markup.', 'error');
+      setTotalMarkupEditing(false);
+      setTotalMarkupInputValue('');
+      return;
+    }
+    const marginValue = marginFromMarkupFactor(parsed);
+    if (marginValue == null || Math.abs(marginValue) >= 100) {
+      showToastMessage('Markup must be greater than 0.5.', 'error');
+      return;
+    }
+    totalMarkupSubmitPendingRef.current = true;
+    void (async () => {
+      try {
+        const choice = await showMultiChoiceDialog({
+          title: 'Apply markup',
+          message: `Set the offer markup to ${floorTo(parsed, 2)}. Apply it proportionally — rescaling every Net Unit Price so the offer total markup hits the target while keeping the current spread between rows — or apply the same ${floorTo(parsed, 2)} markup to every product row?`,
+          choices: [
+            { label: 'Apply proportionally', value: 'proportional' },
+            { label: 'Apply to all rows', value: 'all' },
+            { label: 'Cancel', value: 'cancel' },
+          ],
+        });
+        if (!choice || choice === 'cancel') return;
+        if (choice === 'proportional') {
+          const currentCost = totals?.totalCost ?? 0;
+          if (!Number.isFinite(currentCost) || Math.abs(currentCost) < 1e-9) {
+            showToastMessage('Cannot derive a target from a zero total cost.', 'error');
+            return;
+          }
+          const targetTotalNet = currentCost * parsed;
+          if (!Number.isFinite(targetTotalNet)) {
+            showToastMessage('Unable to compute a valid target net price.', 'error');
+            return;
+          }
+          await applyTotalNetPriceScale(roundMoney(targetTotalNet, 2), { magnitudeRounding: true, markupTarget: parsed, skipConfirm: true });
+        } else {
+          await applyMarkupToAllRows(parsed, roundTo(marginValue, 4));
+        }
+      } finally {
+        totalMarkupSubmitPendingRef.current = false;
+        setTotalMarkupEditing(false);
+        setTotalMarkupInputValue('');
+      }
+    })();
+  }, [applyMarkupToAllRows, applyTotalNetPriceScale, totalMarkupInputValue, totals]);
 
   // Real-time updates for collaborative editing
   // showNotifications: false - only the person making the edit sees toasts from their own actions
@@ -9518,6 +9795,47 @@ const requestedColumnDefsMap = useMemo(
                 </span>
               )}
             </div>
+            {markupColumnVisible ? (
+              <div className={styles.totalItem}>
+                <span className={styles.totalLabel}>Markup:</span>
+                {totalMarkupEditing ? (
+                  <input
+                    className={styles.totalNetInput}
+                    autoFocus
+                    inputMode="decimal"
+                    value={totalMarkupInputValue}
+                    disabled={totalNetApplying}
+                    onChange={(e) => setTotalMarkupInputValue(e.target.value)}
+                    onBlur={submitTotalMarkupEdit}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        submitTotalMarkupEdit();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        cancelEditTotalMarkup();
+                      }
+                    }}
+                  />
+                ) : (
+                  <span
+                    className={readOnly ? styles.totalValue : `${styles.totalValue} ${styles.totalNetEditable}`}
+                    role={readOnly ? undefined : 'button'}
+                    tabIndex={readOnly ? undefined : 0}
+                    title={readOnly ? undefined : 'Click to set a target total markup across all product rows'}
+                    onClick={readOnly ? undefined : beginEditTotalMarkup}
+                    onKeyDown={readOnly ? undefined : (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        beginEditTotalMarkup();
+                      }
+                    }}
+                  >
+                    {totalMarkupValue != null && Number.isFinite(totalMarkupValue) ? decimalFormatter.format(floorTo(totalMarkupValue, 2)) : '—'}
+                  </span>
+                )}
+              </div>
+            ) : null}
             <div className={styles.totalItem}>
               <span className={styles.totalLabel}>Installation:</span>
               <span className={styles.totalValue}>{formatHoursTotal(totals?.totalInstallation)}</span>

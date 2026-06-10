@@ -4,6 +4,9 @@ import {
   roundPriceByMagnitude,
   percentageToFactor,
   deriveMarginPercent,
+  deriveMarkupFactor,
+  markupFactorFromMargin,
+  marginFromMarkupFactor,
   deriveWithoutListPrice,
   computeScenario,
   resolvePricing,
@@ -136,6 +139,77 @@ describe('deriveMarginPercent', () => {
 
   it('handles 100% margin (cost = 0)', () => {
     expect(deriveMarginPercent(100, 0)).toBe(100);
+  });
+});
+
+/* ── Markup (cost multiplier — the cost-basis twin of margin) ─────────── */
+
+describe('deriveMarkupFactor', () => {
+  it('calculates markup as the cost multiplier price/cost', () => {
+    // NetPrice=100, Cost=80 → Markup factor = 100/80 = 1.25
+    expect(deriveMarkupFactor(100, 80)).toBe(1.25);
+  });
+
+  it('returns null when either input is null', () => {
+    expect(deriveMarkupFactor(null, 80)).toBeNull();
+    expect(deriveMarkupFactor(100, null)).toBeNull();
+  });
+
+  it('returns null when cost is 0 (division by zero)', () => {
+    expect(deriveMarkupFactor(100, 0)).toBeNull();
+  });
+
+  it('handles a below-cost factor (< 1) when cost > price', () => {
+    // NetPrice=80, Cost=100 → factor = 0.8
+    expect(deriveMarkupFactor(80, 100)).toBe(0.8);
+  });
+});
+
+describe('markupFactorFromMargin / marginFromMarkupFactor', () => {
+  it('converts 20% margin to a 1.25 markup factor', () => {
+    expect(markupFactorFromMargin(20)).toBe(1.25);
+  });
+
+  it('converts a 1.25 markup factor to 20% margin', () => {
+    expect(marginFromMarkupFactor(1.25)).toBe(20);
+  });
+
+  it('round-trips margin → factor → margin', () => {
+    for (const margin of [-25, 0, 10, 33.33, 50, 80, 99]) {
+      const factor = markupFactorFromMargin(margin);
+      expect(factor).not.toBeNull();
+      expect(marginFromMarkupFactor(factor as number)).toBeCloseTo(margin, 2);
+    }
+  });
+
+  it('maps 0 margin to a factor of 1 and back', () => {
+    expect(markupFactorFromMargin(0)).toBe(1);
+    expect(marginFromMarkupFactor(1)).toBe(0);
+  });
+
+  it('matches deriveMarkupFactor for the same NP/NC pair', () => {
+    // NP=120, NC=80 → margin = 33.3333%, factor = 1.5
+    const margin = deriveMarginPercent(120, 80);
+    expect(markupFactorFromMargin(margin)).toBeCloseTo(deriveMarkupFactor(120, 80) as number, 4);
+    expect(markupFactorFromMargin(margin)).toBeCloseTo(1.5, 4);
+  });
+
+  it('returns null for margin at/above 100% (undefined factor)', () => {
+    expect(markupFactorFromMargin(100)).toBeNull();
+    expect(markupFactorFromMargin(120)).toBeNull();
+    expect(markupFactorFromMargin(null)).toBeNull();
+  });
+
+  it('returns null for a non-positive factor (undefined margin)', () => {
+    expect(marginFromMarkupFactor(0)).toBeNull();
+    expect(marginFromMarkupFactor(-1)).toBeNull();
+    expect(marginFromMarkupFactor(null)).toBeNull();
+  });
+
+  it('a factor of 0.5 maps to the rejected -100% margin boundary', () => {
+    // The panel rejects markup ≤ 0.5 because it yields margin ≤ -100%.
+    expect(marginFromMarkupFactor(0.5)).toBe(-100);
+    expect(marginFromMarkupFactor(0.51)).toBeGreaterThan(-100);
   });
 });
 

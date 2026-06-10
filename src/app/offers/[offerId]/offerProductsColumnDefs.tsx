@@ -10,6 +10,7 @@ import type {
   CellStyle,
   ColDef,
   ICellRendererParams,
+  IRowNode,
   ValueGetterParams,
   ValueSetterParams,
 } from 'ag-grid-community';
@@ -41,9 +42,16 @@ import {
   type RequestedDisplayFieldKey,
 } from './offerProductsUtils';
 import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductService, isNonPrintableOfferProductRow, resolveOfferProductRowType } from '../../../lib/offerProductRows';
+import { deriveMarkupFactor, markupFactorFromMargin } from '../../../lib/pricing';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 
 const otherCurrencyAmountFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+});
+
+// Markup is shown as a cost multiplier (e.g. 1,25), not a percentage.
+const markupFactorFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
   minimumFractionDigits: 2,
   maximumFractionDigits: 4,
 });
@@ -210,6 +218,14 @@ export type ProductColumnDefsDeps = {
   offerCurrencySymbol: string;
   pricingPolicyName?: string | null;
   readOnly?: boolean;
+  // Handles an inline Markup-cell edit. Markup is a derived column (no stored
+  // field): the typed value is converted to the equivalent Margin and routed
+  // through the existing Margin pipeline by the panel.
+  onMarkupEdit?: (
+    node: IRowNode<Record<string, unknown>> | null | undefined,
+    newValue: unknown,
+    data: Record<string, unknown> | null | undefined,
+  ) => void;
 };
 
 // Discount columns (CustomerDiscount, AdditionalCustomerDiscount,
@@ -272,6 +288,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
     offerCurrencySymbol,
     pricingPolicyName,
     readOnly = false,
+    onMarkupEdit,
   } = deps;
   const additionalDiscountVisibleByDefault = pricingPolicyName === 'AVC4';
 
@@ -937,6 +954,51 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
     },
     {
+      // Markup is the cost-basis twin of Margin, shown as a cost MULTIPLIER
+      // (e.g. 1,25 = sell at 125% of cost), not a percentage. It is hidden by
+      // default and never stored — the value is derived from Margin (falling
+      // back to NetUnitPrice / NetCost), and an edit is converted to the
+      // equivalent Margin and routed through the existing Margin pipeline
+      // (valueSetter → onMarkupEdit → node.setDataValue('Margin')).
+      colId: 'Markup',
+      headerName: 'Markup',
+      hide: true,
+      filter: 'agNumberColumnFilter',
+      type: 'numericColumn',
+      headerClass: 'ag-right-aligned-header',
+      editable: (params) => !readOnly && !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
+      valueGetter: (params: ValueGetterParams<Record<string, unknown>>) => {
+        const data = params.data;
+        if (!isOfferProductCommentOrProduct(data ?? null)) return null;
+        const fromMargin = markupFactorFromMargin(coerceNumber((data as { Margin?: unknown } | undefined)?.Margin));
+        if (fromMargin != null) return fromMargin;
+        return deriveMarkupFactor(
+          coerceNumber((data as { NetUnitPrice?: unknown } | undefined)?.NetUnitPrice),
+          coerceNumber((data as { NetCost?: unknown } | undefined)?.NetCost),
+        );
+      },
+      valueFormatter: (params) => {
+        const num = coerceNumber(params.value);
+        return num == null ? '' : markupFactorFormatter.format(num);
+      },
+      valueSetter: (params: ValueSetterParams<Record<string, unknown>>) => {
+        // Hand the typed markup factor to the panel, which converts it to a
+        // Margin edit. Return false so AG Grid neither stores a value nor fires
+        // its own cellValueChanged — the derived getter stays the source of truth.
+        onMarkupEdit?.(params.node, params.newValue, params.data ?? null);
+        return false;
+      },
+      cellClassRules: {
+        // A markup factor below 1 means selling below cost (negative margin).
+        'offer-products-grid__cell--negative-margin': (params) => {
+          const value = coerceNumber(params.value);
+          return value != null && value < 1;
+        },
+      },
+      cellClass: [...actualNumericCellClass, styles.redDataCell],
+      cellStyle: { ...actualNumericCellStyle, color: '#dc2626' },
+    },
+    {
       field: 'GrossProfit',
       headerName: 'Gross Profit',
       filter: 'agNumberColumnFilter',
@@ -1134,6 +1196,20 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       columnMap.delete(id);
     });
   columnMap.forEach((column) => ordered.push(column));
+
+  // A freshly-added Markup column has no entry in the user's saved order yet, so
+  // the leftover sweep above appends it at the far right. Reposition it directly
+  // after Margin so it shows up where it belongs until the user saves a layout
+  // (after which savedColumnOrder honours their chosen position).
+  if (!savedColumnOrder.includes('Markup')) {
+    const markupIdx = ordered.findIndex((column) => column.colId === 'Markup');
+    const marginIdx = ordered.findIndex((column) => column.field === 'Margin');
+    if (markupIdx !== -1 && marginIdx !== -1 && markupIdx !== marginIdx + 1) {
+      const [markupColumn] = ordered.splice(markupIdx, 1);
+      const insertAt = ordered.findIndex((column) => column.field === 'Margin') + 1;
+      ordered.splice(insertAt, 0, markupColumn);
+    }
+  }
 
   const requestedColumnIds = new Set<string>(['RequestedItemNo', ...REQUESTED_DISPLAY_FIELD_KEYS]);
   const hasSavedHidden = Object.keys(savedHiddenMap).length > 0;
