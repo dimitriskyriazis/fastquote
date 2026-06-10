@@ -3,6 +3,12 @@
 import { useRef, useState, useEffect, useCallback, type CSSProperties, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react';
 import React from 'react';
 import handleStyles from './useModalDragResize.module.css';
+import { getBodyScale } from '../../lib/bodyScale';
+
+// The modal card lives under the scaled <body> (see lib/bodyScale), so CSS px
+// (transform/width/height, offsetRef, sizeRef) render at `scale` viewport px.
+// Pointer deltas and getBoundingClientRect/window sizes are viewport px and
+// must be divided by the scale before being applied as CSS px.
 
 type Options = {
   draggable?: boolean;
@@ -74,15 +80,16 @@ export function useModalDragResize(options: Options = {}) {
   const clampOffset = useCallback(() => {
     const el = cardElRef.current;
     if (!el) return;
+    const scale = getBodyScale();
     const rect = el.getBoundingClientRect();
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     let { x, y } = offsetRef.current;
 
-    if (rect.left < VIEWPORT_MARGIN) x += VIEWPORT_MARGIN - rect.left;
-    if (rect.top < VIEWPORT_MARGIN) y += VIEWPORT_MARGIN - rect.top;
-    if (rect.right > vw - VIEWPORT_MARGIN) x -= rect.right - (vw - VIEWPORT_MARGIN);
-    if (rect.bottom > vh - VIEWPORT_MARGIN) y -= rect.bottom - (vh - VIEWPORT_MARGIN);
+    if (rect.left < VIEWPORT_MARGIN) x += (VIEWPORT_MARGIN - rect.left) / scale;
+    if (rect.top < VIEWPORT_MARGIN) y += (VIEWPORT_MARGIN - rect.top) / scale;
+    if (rect.right > vw - VIEWPORT_MARGIN) x -= (rect.right - (vw - VIEWPORT_MARGIN)) / scale;
+    if (rect.bottom > vh - VIEWPORT_MARGIN) y -= (rect.bottom - (vh - VIEWPORT_MARGIN)) / scale;
 
     offsetRef.current = { x, y };
   }, []);
@@ -107,10 +114,12 @@ export function useModalDragResize(options: Options = {}) {
 
       e.preventDefault();
 
+      const scale = getBodyScale();
+
       // Lock the current size on first drag so CSS-driven size won't shift
       if (sizeRef.current.w == null) {
         const rect = el.getBoundingClientRect();
-        sizeRef.current = { w: rect.width, h: rect.height };
+        sizeRef.current = { w: rect.width / scale, h: rect.height / scale };
         applyTransform();
       }
 
@@ -122,28 +131,29 @@ export function useModalDragResize(options: Options = {}) {
 
       // Capture rect ONCE — compute clamped positions mathematically to avoid
       // getBoundingClientRect() on every pointermove (which forces reflow).
+      // All clamp math is in viewport px; offsets convert via the body scale.
       const startRect = el.getBoundingClientRect();
-      const naturalLeft = startRect.left - startOffset.x;
-      const naturalTop = startRect.top - startOffset.y;
+      const naturalLeft = startRect.left - startOffset.x * scale;
+      const naturalTop = startRect.top - startOffset.y * scale;
       const modalW = startRect.width;
       const modalH = startRect.height;
 
       const onMove = (me: globalThis.PointerEvent) => {
-        let x = startOffset.x + (me.clientX - startX);
-        let y = startOffset.y + (me.clientY - startY);
+        let x = startOffset.x + (me.clientX - startX) / scale;
+        let y = startOffset.y + (me.clientY - startY) / scale;
 
         // Clamp so the modal stays within the viewport
         const vw = window.innerWidth;
         const vh = window.innerHeight;
-        const left = naturalLeft + x;
-        const top = naturalTop + y;
+        const left = naturalLeft + x * scale;
+        const top = naturalTop + y * scale;
         const right = left + modalW;
         const bottom = top + modalH;
 
-        if (left < VIEWPORT_MARGIN) x += VIEWPORT_MARGIN - left;
-        if (top < VIEWPORT_MARGIN) y += VIEWPORT_MARGIN - top;
-        if (right > vw - VIEWPORT_MARGIN) x -= right - (vw - VIEWPORT_MARGIN);
-        if (bottom > vh - VIEWPORT_MARGIN) y -= bottom - (vh - VIEWPORT_MARGIN);
+        if (left < VIEWPORT_MARGIN) x += (VIEWPORT_MARGIN - left) / scale;
+        if (top < VIEWPORT_MARGIN) y += (VIEWPORT_MARGIN - top) / scale;
+        if (right > vw - VIEWPORT_MARGIN) x -= (right - (vw - VIEWPORT_MARGIN)) / scale;
+        if (bottom > vh - VIEWPORT_MARGIN) y -= (bottom - (vh - VIEWPORT_MARGIN)) / scale;
 
         offsetRef.current = { x, y };
         applyTransform();
@@ -179,21 +189,23 @@ export function useModalDragResize(options: Options = {}) {
       const el = cardElRef.current;
       if (!el) return;
 
+      const scale = getBodyScale();
       const startRect = el.getBoundingClientRect();
       const startOffset = { ...offsetRef.current };
-      const startW = sizeRef.current.w ?? startRect.width;
-      const startH = sizeRef.current.h ?? startRect.height;
+      // sizeRef/min/max are CSS px; rects and window sizes are viewport px.
+      const startW = sizeRef.current.w ?? startRect.width / scale;
+      const startH = sizeRef.current.h ?? startRect.height / scale;
       const startX = e.clientX;
       const startY = e.clientY;
       const handle = e.currentTarget as HTMLElement;
       handle.setPointerCapture(e.pointerId);
 
-      const effMaxW = opts.maxWidth ?? window.innerWidth - VIEWPORT_MARGIN * 2;
-      const effMaxH = opts.maxHeight ?? window.innerHeight - VIEWPORT_MARGIN * 2;
+      const effMaxW = opts.maxWidth ?? (window.innerWidth - VIEWPORT_MARGIN * 2) / scale;
+      const effMaxH = opts.maxHeight ?? (window.innerHeight - VIEWPORT_MARGIN * 2) / scale;
 
       const onMove = (me: globalThis.PointerEvent) => {
-        const dx = me.clientX - startX;
-        const dy = me.clientY - startY;
+        const dx = (me.clientX - startX) / scale;
+        const dy = (me.clientY - startY) / scale;
         let newW = startW;
         let newH = startH;
         let newOx = startOffset.x;

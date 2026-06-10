@@ -425,7 +425,6 @@ export async function POST(req: NextRequest) {
       FROM
         dbo.Offer
         LEFT JOIN VersionTree versionTree ON versionTree.ID = dbo.Offer.ID
-        LEFT JOIN dbo.Offer rootOffer ON rootOffer.ID = COALESCE(versionTree.RootOfferID, dbo.Offer.ID)
         LEFT JOIN (
           SELECT vt.RootOfferID, COUNT(1) AS VersionCount, MAX(o.OfferVersion) AS MaxOfferVersion
           FROM VersionTree vt
@@ -500,15 +499,13 @@ export async function POST(req: NextRequest) {
     //   __groupHasMatch  – does ANY version in this group match?
     //   __latestMatches  – does the group's LATEST version match? (gates the "rescue" below)
     //   __inExpandedGroup – is this row in an explicitly expanded group?
-    // __rootDescription is projected so the outer query can keep the default version-grouped order.
     const matchColumns = `,
         CASE WHEN ${filterExpr} THEN 1 ELSE 0 END AS __matchesFilter,
         MAX(CASE WHEN ${filterExpr} THEN 1 ELSE 0 END)
           OVER (PARTITION BY ${groupExpr}) AS __groupHasMatch,
         MAX(CASE WHEN (${isLatestExpr}) AND ${filterExpr} THEN 1 ELSE 0 END)
           OVER (PARTITION BY ${groupExpr}) AS __latestMatches,
-        CASE WHEN ${expandedExpr} THEN 1 ELSE 0 END AS __inExpandedGroup,
-        COALESCE(rootOffer.Description, dbo.Offer.Description) AS __rootDescription`;
+        CASE WHEN ${expandedExpr} THEN 1 ELSE 0 END AS __inExpandedGroup`;
 
     // Visibility predicate applied by the OUTER query, after the window flags are computed:
     //   - the latest version of any group that has a match  → the collapsible anchor row
@@ -527,29 +524,17 @@ export async function POST(req: NextRequest) {
         )`;
 
     const combinedParams = [...whereParams, ...quickFilterClause.params, ...expandedParams];
-    // Outer-query ORDER BY references projected aliases (the inner query owns the FROM joins).
-    // VersionGroupId is a tiebreaker so all versions of one offer stay contiguous even when two
-    // offers share the same root Description; offerId keeps OFFSET/FETCH paging deterministic.
-    const defaultOrder = `
-      ORDER BY
-        __rootDescription,
-        VersionGroupId,
-        IsLatestVersion DESC,
-        OfferVersion DESC,
-        offerId DESC
-    `.trim();
-    // Apply the version-grouped ordering whenever the user has a sort — NOT only when a group is
-    // expanded. The visibility rule can return a rescued historical row alongside its latest
-    // anchor in the collapsed view too, and a flat per-column sort would scatter that child away
-    // from (or above) its anchor, possibly into a different scroll page. Sorting at the group
-    // level keeps each offer's versions together. With no user sort, defaultOrder already groups.
-    const hasUserSort = Array.isArray(gridRequest.sortModel) && gridRequest.sortModel.length > 0;
-    const versionSortColumns = hasUserSort
-      ? buildVersionGroupedSortColumns(gridRequest.sortModel)
-      : '';
-    const orderClause = hasUserSort
-      ? buildVersionGroupedOrder(gridRequest.sortModel)
-      : defaultOrder;
+    // Ordering always goes through the version-grouped machinery — a flat per-column sort
+    // would scatter a rescued historical row away from its anchor, possibly into a different
+    // scroll page. Each sort column is evaluated as the group's LATEST version's value, so
+    // every version of an offer shares the same key and the group stays contiguous.
+    // With no user sort, default to newest offers first (offerId DESC).
+    const effectiveSortModel: NonNullable<GridRequest['sortModel']> =
+      Array.isArray(gridRequest.sortModel) && gridRequest.sortModel.length > 0
+        ? gridRequest.sortModel
+        : [{ colId: 'offerId', sort: 'desc' }];
+    const versionSortColumns = buildVersionGroupedSortColumns(effectiveSortModel);
+    const orderClause = buildVersionGroupedOrder(effectiveSortModel);
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
     const groupingFields = resolveGroupingFields(gridRequest.rowGroupCols);
@@ -638,7 +623,7 @@ export async function POST(req: NextRequest) {
       const { __totalCount, ...rest } = row;
       void __totalCount;
       const cleaned = rest as Record<string, unknown>;
-      // Drop internal helper columns (__matchesFilter, __groupHasMatch, __sort_*, __rootDescription, …)
+      // Drop internal helper columns (__matchesFilter, __groupHasMatch, __sort_*, …)
       for (const key of Object.keys(cleaned)) {
         if (key.startsWith('__')) {
           delete cleaned[key];

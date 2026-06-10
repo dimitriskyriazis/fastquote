@@ -11,6 +11,7 @@ import type {
   MarketOption,
 } from './OfferBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
+import { getBodyScale } from '../../../lib/bodyScale';
 import { showConfirmDialog } from '../../../lib/confirm';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { useUndoStack } from '../../hooks/useUndoStack';
@@ -1529,7 +1530,9 @@ export default function OfferBasicDataClient({
       {contextMenuState ? (
         <div
           className={styles.fieldContextMenu}
-          style={{ left: contextMenuState.x, top: contextMenuState.y }}
+          // x/y are viewport px (clientX/Y); the menu is position:fixed under
+          // the scaled <body>, so divide by the body scale (see lib/bodyScale).
+          style={{ left: contextMenuState.x / getBodyScale(), top: contextMenuState.y / getBodyScale() }}
           role="menu"
           onPointerDown={(event) => event.stopPropagation()}
         >

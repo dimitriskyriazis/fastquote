@@ -692,6 +692,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
             rowData={rowData}
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
+            popupParent={typeof document !== 'undefined' ? document.body : undefined}
             rowHeight={32}
             headerHeight={38}
             rowModelType="clientSide"

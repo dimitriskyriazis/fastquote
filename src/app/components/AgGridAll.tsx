@@ -2005,9 +2005,8 @@ export default function AgGridAll({
   const dropIndicatorRef = useRef<RowDropIndicator | null>(null);
   const dropIndicatorFrameRef = useRef<number | null>(null);
   const lastDragNodeRef = useRef<IRowNode<RowData> | null>(null);
-  // Corrects the AG Grid drag ghost position when body has transform:scale().
-  // MutationObserver that corrects the drag ghost position for body scale(0.9).
-  const ghostObserverRef = useRef<MutationObserver | null>(null);
+  // Drag ghost and popup positioning under body transform:scale() is handled
+  // globally by AgGridOverlayScaleFixManager (see lib/bodyScale).
   // QUICK SEARCH - Configuration & State
   const quickSearchFilterRef = useRef("");
   const quickSearchEnabled = allowQuickSearch !== false;
@@ -4701,62 +4700,16 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     if (!useAgGridRowDrag) return;
     lastDragNodeRef.current = event.node ?? lastDragNodeRef.current;
     setDropIndicator(resolveDropIndicator(event));
-
-    // Ghost position corrector — one-time setup per drag.
-    // Root cause: AG Grid's _anchorElementToMouseMoveEvent computes
-    //   top = clientY - offsetParentBCR.top - height/2   (all viewport px)
-    // then writes the result to element.style.top (CSS layout px).  When body
-    // has transform:scale(0.9) with transform-origin:top-left, 1 CSS px = 0.9
-    // viewport px, so the ghost drifts further from the cursor the lower you drag.
-    //
-    // In AG Grid v34 the drag image structure is:
-    //   <div style="position:absolute; top:Xpx; left:Ypx">   ← outer wrapper (no class)
-    //     <div class="ag-dnd-ghost">...</div>
-    //   </div>
-    // _anchorElementToMouseMoveEvent positions the OUTER wrapper, not .ag-dnd-ghost.
-    //
-    // Fix: watch the outer wrapper with a MutationObserver (fires as a microtask,
-    // just before the browser paints) and divide top/left by the body scale factor.
-    if (!ghostObserverRef.current) {
-      const inner = document.querySelector<HTMLElement>('.ag-dnd-ghost');
-      const outer = (inner?.parentElement instanceof HTMLElement && inner.parentElement !== document.body)
-        ? inner.parentElement : null;
-      if (outer) {
-        const matrix = window.getComputedStyle(document.body).transform;
-        const scaleMatch = matrix.match(/^matrix\(([^,]+)/);
-        const scale = scaleMatch ? parseFloat(scaleMatch[1]) : 1;
-        if (scale !== 1 && scale > 0 && Number.isFinite(scale)) {
-          const correct = () => {
-            const rawTop  = parseFloat(outer.style.getPropertyValue('top'));
-            const rawLeft = parseFloat(outer.style.getPropertyValue('left'));
-            if (!Number.isNaN(rawTop))  outer.style.setProperty('top',  `${rawTop  / scale}px`);
-            if (!Number.isNaN(rawLeft)) outer.style.setProperty('left', `${rawLeft / scale}px`);
-          };
-          const observer = new MutationObserver(() => {
-            observer.disconnect();
-            correct();
-            observer.observe(outer, { attributes: true, attributeFilter: ['style'] });
-          });
-          correct(); // fix the value AG Grid just wrote for this first frame
-          observer.observe(outer, { attributes: true, attributeFilter: ['style'] });
-          ghostObserverRef.current = observer;
-        }
-      }
-    }
   }, [resolveDropIndicator, setDropIndicator, useAgGridRowDrag]);
 
   const handleRowDragEnter = useCallback((event: RowDragEnterEvent<RowData>) => {
     if (!useAgGridRowDrag) return;
     clearDropIndicator();
     lastDragNodeRef.current = event.node ?? lastDragNodeRef.current;
-    ghostObserverRef.current?.disconnect();
-    ghostObserverRef.current = null;
   }, [clearDropIndicator, useAgGridRowDrag]);
 
   const handleRowDragLeave = useCallback(() => {
     clearDropIndicator();
-    ghostObserverRef.current?.disconnect();
-    ghostObserverRef.current = null;
   }, [clearDropIndicator]);
 
   // GRID EVENT HANDLERS - Row & Cell Value Changes
@@ -4882,8 +4835,6 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     lastDragNodeRef.current = null;
     clearDropIndicator();
     clearDragGhostDom();
-    ghostObserverRef.current?.disconnect();
-    ghostObserverRef.current = null;
     if (!useAgGridRowDrag) {
       if (typeof onRowsMoved === 'function') {
         onRowsMoved(event.api);
@@ -5240,13 +5191,15 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
   }, []);
 
   // CONTEXT MENU - Keep context menus and submenus inside the viewport.
+  // Every style.left/top write below is an ABSOLUTE viewport-px target: the
+  // global overlay corrector (lib/bodyScale) divides each write by the body
+  // scale. For the same reason, never read style.left/top back here — stored
+  // values are already divided; measure with getBoundingClientRect instead.
   const postProcessPopup = useCallback((params: PostProcessPopupParams<RowData>) => {
     const popup = params.ePopup;
     if (!popup) return;
     requestAnimationFrame(() => {
       const popupRect = popup.getBoundingClientRect();
-      const currentLeft = parseFloat(popup.style.left) || 0;
-      const currentTop = parseFloat(popup.style.top) || 0;
       const MARGIN = 4;
 
       if (params.type === 'subMenu' && params.eventSource) {
@@ -5264,8 +5217,8 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
           Math.max(MARGIN, sourceRect.top),
           Math.max(MARGIN, window.innerHeight - MARGIN - popupRect.height),
         );
-        popup.style.left = `${currentLeft + (nextLeft - popupRect.left)}px`;
-        popup.style.top = `${currentTop + (nextTop - popupRect.top)}px`;
+        popup.style.left = `${nextLeft}px`;
+        popup.style.top = `${nextTop}px`;
         return;
       }
 
@@ -5274,10 +5227,10 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
           ? shellRef.current.getBoundingClientRect().bottom
           : window.innerHeight;
         if (popupRect.bottom > shellBottom - MARGIN) {
-          popup.style.top = `${Math.max(MARGIN, currentTop - (popupRect.bottom - shellBottom + MARGIN))}px`;
+          popup.style.top = `${Math.max(MARGIN, popupRect.top - (popupRect.bottom - (shellBottom - MARGIN)))}px`;
         }
         if (popupRect.right > window.innerWidth - MARGIN) {
-          popup.style.left = `${Math.max(MARGIN, currentLeft - (popupRect.right - window.innerWidth + MARGIN))}px`;
+          popup.style.left = `${Math.max(MARGIN, popupRect.left - (popupRect.right - (window.innerWidth - MARGIN)))}px`;
         }
         return;
       }
@@ -5286,17 +5239,15 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       if (params.type === 'popupCellEditor') return;
 
       // All other popups with an eventSource (select dropdowns, column menus, etc.):
-      // delta-correct both axes so the popup sits flush below the editing cell.
+      // re-anchor both axes so the popup sits flush below the editing cell.
       if (params.eventSource) {
         const editingCellEl = popup.ownerDocument?.querySelector('.ag-cell.ag-cell-editing');
         const sourceRect = (editingCellEl ?? params.eventSource).getBoundingClientRect();
-        const deltaX = sourceRect.left - popupRect.left;
-        const deltaY = sourceRect.bottom - popupRect.top;
-        if (Math.abs(deltaX) > 1) {
-          popup.style.left = `${currentLeft + deltaX}px`;
+        if (Math.abs(sourceRect.left - popupRect.left) > 1) {
+          popup.style.left = `${sourceRect.left}px`;
         }
-        if (Math.abs(deltaY) > 1) {
-          popup.style.top = `${currentTop + deltaY}px`;
+        if (Math.abs(sourceRect.bottom - popupRect.top) > 1) {
+          popup.style.top = `${sourceRect.bottom}px`;
         }
       }
     });

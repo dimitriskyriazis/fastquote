@@ -69,6 +69,7 @@ export default function ProductHistoryMetaGrid({ partNumber, modelNumber, descri
           rowData={rowData}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
+          popupParent={typeof document !== 'undefined' ? document.body : undefined}
           domLayout="autoHeight"
           headerHeight={38}
           rowHeight={32}

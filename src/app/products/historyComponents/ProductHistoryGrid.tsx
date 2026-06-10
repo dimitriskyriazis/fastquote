@@ -140,6 +140,7 @@ export default function ProductHistoryGrid({ rows }: Props) {
           rowData={rows}
           columnDefs={pricingCols}
           defaultColDef={defaultColDef}
+          popupParent={typeof document !== 'undefined' ? document.body : undefined}
           components={{ agDateInput: DdMmYyyyDateFilter }}
           localeText={{ dateFormatOoo: 'dd/mm/yyyy' }}
           domLayout="autoHeight"

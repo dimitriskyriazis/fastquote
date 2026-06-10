@@ -9,6 +9,7 @@ import { showToastMessage } from '../../../../lib/toast';
 import { showConfirmDialog, showMultiChoiceDialog } from '../../../../lib/confirm';
 import { priceListStatusClassRules } from '../../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../../lib/localeNumber';
+import { getBodyScale } from '../../../../lib/bodyScale';
 import { useFarnellSearch, isFarnellRow, type FarnellSearchRow } from '../../../hooks/useFarnellSearch';
 import { useFarnellProductResolver } from '../../../hooks/useFarnellProductResolver';
 import {
@@ -768,7 +769,9 @@ export default function AddProductsModal({
         (
           <div
             className={styles.detachMenu}
-            style={{ top: detachMenu.y, left: detachMenu.x }}
+            // detachMenu x/y are viewport px; the menu is position:fixed under
+            // the scaled <body>, so divide by the body scale (see lib/bodyScale).
+            style={{ top: detachMenu.y / getBodyScale(), left: detachMenu.x / getBodyScale() }}
             role="menu"
             onMouseDown={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}

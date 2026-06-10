@@ -1,6 +1,7 @@
 'use client';
 
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { getBodyScale } from '../../lib/bodyScale';
 
 type Position = {
   top: number;
@@ -41,7 +42,7 @@ export const useActionMenuPosition = (open: boolean): Result => {
     const rect = buttonRef.current?.getBoundingClientRect();
     const menuElement = menuRef.current;
     if (!rect || !menuElement) return;
-    const menuHeight = menuElement.offsetHeight;
+    const menuHeight = menuElement.getBoundingClientRect().height;
     if (menuHeight === 0) return;
     const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 0;
     const spaceBelow = viewportHeight - rect.bottom;
@@ -59,7 +60,7 @@ export const useActionMenuPosition = (open: boolean): Result => {
     const rect = buttonRef.current?.getBoundingClientRect();
     const menuElement = menuRef.current;
     if (!rect || !menuElement) return;
-    const menuWidth = menuElement.offsetWidth;
+    const menuWidth = menuElement.getBoundingClientRect().width;
     if (menuWidth === 0) return;
     const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 0;
     if (viewportWidth <= 0) return;
@@ -80,5 +81,13 @@ export const useActionMenuPosition = (open: boolean): Result => {
     }
   }, [open, menuPos]);
 
-  return { buttonRef, menuRef, menuPos };
+  // menuPos is computed in viewport px, but the menu is a position:fixed
+  // portal under the scaled <body> (the transform makes body its containing
+  // block), so 1 CSS px renders as `scale` viewport px — divide before use.
+  const scale = menuPos ? getBodyScale() : 1;
+  return {
+    buttonRef,
+    menuRef,
+    menuPos: menuPos ? { top: menuPos.top / scale, left: menuPos.left / scale } : null,
+  };
 };

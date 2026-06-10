@@ -1,13 +1,12 @@
 ﻿"use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import type {
   CellValueChangedEvent,
   ColDef,
   GetContextMenuItemsParams,
-  GridApi,
   IRowNode,
   MenuItemDef,
 } from 'ag-grid-community';
@@ -60,13 +59,6 @@ const EMPTY_FILTERS: GroupFilters = {
   SalesDivision: '',
   SalesMarket: '',
   ERPFWCProjectShortName: '',
-};
-
-const FILTER_TO_COLUMN: Record<keyof GroupFilters, string> = {
-  BrandName: 'BrandName',
-  SalesDivision: 'SalesDivision',
-  SalesMarket: 'SalesMarket',
-  ERPFWCProjectShortName: 'ERPFWCProjectShortName',
 };
 
 const normalizeOfferId = (value: unknown): number | null => {
@@ -140,8 +132,7 @@ const redCellStyle = { color: '#dc2626' } as const;
 
 export default function OfferDetailsClient() {
   const router = useRouter();
-  const gridApiRef = useRef<GridApi | null>(null);
-  const [groupMode, setGroupMode] = useState(false);
+  const [pivotMode, setPivotMode] = useState(false);
   const [options, setOptions] = useState<GroupOptions>({ brands: [], salesDivisions: [], markets: [], fwcProjects: [] });
   const [filters, setFilters] = useState<GroupFilters>(EMPTY_FILTERS);
   const [brandSearch, setBrandSearch] = useState('');
@@ -164,48 +155,26 @@ export default function OfferDetailsClient() {
       .catch(() => { /* silent */ });
   }, []);
 
-  const handleGridReady = useCallback((api: GridApi) => {
-    gridApiRef.current = api;
-  }, []);
-
-  // Apply filters whenever filters or mode changes (no row grouping — just flat filtered rows)
-  useEffect(() => {
-    const api = gridApiRef.current;
-    if (!api) return;
-
-    const currentModel = api.getFilterModel() as Record<string, unknown>;
-    const newModel: Record<string, unknown> = { ...currentModel };
-
-    // Remove all group-dimension filters first
-    Object.values(FILTER_TO_COLUMN).forEach(colId => delete newModel[colId]);
-
-    if (groupMode) {
-      // Re-add only selected values
-      (Object.entries(filters) as [keyof GroupFilters, string][]).forEach(([key, val]) => {
-        if (val) {
-          newModel[FILTER_TO_COLUMN[key]] = { filterType: 'text', type: 'equals', filter: val };
-        }
-      });
-    }
-
-    api.setFilterModel(newModel);
-  }, [groupMode, filters]);
-
-  const toggleGroupMode = useCallback(() => {
-    setGroupMode(prev => {
-      if (prev) setFilters(EMPTY_FILTERS); // clear on close
+  const togglePivotMode = useCallback(() => {
+    setPivotMode(prev => {
+      if (prev) {
+        // clear pre-filters on close
+        setFilters(EMPTY_FILTERS);
+        setBrandSearch('');
+      }
       return !prev;
     });
   }, []);
 
   const handleFilterChange = useCallback((key: keyof GroupFilters, value: string) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
+    // Return the same object when nothing changed so the summary effect
+    // doesn't refetch on every keystroke in the brand combobox.
+    setFilters(prev => (prev[key] === value ? prev : { ...prev, [key]: value }));
   }, []);
 
-  // ── Summary / Totals mode ──────────────────────────────────────────────────
-  const [summaryMode, setSummaryMode] = useState(false);
+  // ── Pivot summary data ─────────────────────────────────────────────────────
   const [summaryLoading, setSummaryLoading] = useState(false);
-  const [summaryData, setSummaryData] = useState<{ statuses: string[]; rows: Record<string, unknown>[] } | null>(null);
+  const [summaryData, setSummaryData] = useState<Record<string, unknown>[] | null>(null);
 
   const fetchSummary = useCallback((currentFilters: GroupFilters) => {
     setSummaryLoading(true);
@@ -216,48 +185,51 @@ export default function OfferDetailsClient() {
     if (currentFilters.ERPFWCProjectShortName) qs.set('fwc',      currentFilters.ERPFWCProjectShortName);
     void fetch(`/api/offered-products/summary${qs.toString() ? `?${qs}` : ''}`)
       .then(r => r.json())
-      .then((data: { ok?: boolean; statuses?: string[]; rows?: Record<string, unknown>[] }) => {
-        if (data.ok) setSummaryData({ statuses: data.statuses ?? [], rows: data.rows ?? [] });
+      .then((data: { ok?: boolean; rows?: Record<string, unknown>[] }) => {
+        if (data.ok) setSummaryData(data.rows ?? []);
       })
       .catch(() => { /* silent */ })
       .finally(() => setSummaryLoading(false));
   }, []);
 
-  const toggleSummaryMode = useCallback(() => {
-    setSummaryMode(prev => {
-      if (!prev) fetchSummary(filters);
-      return !prev;
-    });
-  }, [fetchSummary, filters]);
-
-  // Re-fetch summary when filters change while summary is open
+  // Fetch summary when pivot mode opens and whenever pre-filters change while open
   useEffect(() => {
-    if (summaryMode) fetchSummary(filters);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters, summaryMode]);
+    if (pivotMode) fetchSummary(filters);
+  }, [filters, pivotMode, fetchSummary]);
 
+  // Excel-style pivot. Default layout: rows Customer → Offer Description → Offer
+  // Date, columns by Status, values Sum of Qty / Sum of Total Price. All fields
+  // are draggable in the columns tool panel (rows / column labels / values), so
+  // the user can rearrange the pivot like Excel's PivotTable Fields.
   const summaryColDefs = useMemo((): ColDef[] => {
-    if (!summaryData) return [];
+    const dimension: ColDef = { enableRowGroup: true, enablePivot: true, filter: 'agSetColumnFilter' };
+    const euroFormatter = (p: { value: unknown }) =>
+      p.value == null || p.value === '' ? '' : `${formatNumber(p.value)} €`;
+    // No aggFunc on the base — only default-active values get one; the rest
+    // pick up sum when dragged into the Values area.
+    const measure: ColDef = {
+      enableValue: true,
+      type: 'numericColumn',
+      width: 160,
+      filter: 'agNumberColumnFilter',
+      valueFormatter: euroFormatter,
+    };
     return [
-      { field: 'PartNumber',         headerName: 'Part Number',         minWidth: 160, pinned: 'left' as const },
-      { field: 'ProductDescription', headerName: 'Product Description', minWidth: 220, pinned: 'left' as const },
-      { field: 'CustomerName',       headerName: 'Customer',            minWidth: 200 },
-      ...summaryData.statuses.map(s => ({
-        field: s,
-        headerName: s,
-        type: 'numericColumn' as const,
-        width: 160,
-        valueFormatter: (p: { value: unknown }) => (p.value == null || Number(p.value) === 0 ? '' : String(p.value)),
-      })),
-      {
-        field: 'GrandTotal',
-        headerName: 'Grand Total',
-        type: 'numericColumn' as const,
-        width: 130,
-        cellStyle: { fontWeight: 600 },
-      },
+      { ...dimension, field: 'CustomerName',           headerName: 'Customer',          rowGroup: true },
+      { ...dimension, field: 'OfferDescription',       headerName: 'Offer Description', rowGroup: true },
+      { ...dimension, field: 'OfferDate',              headerName: 'Offer Date',        rowGroup: true },
+      { ...dimension, field: 'OfferStatus',            headerName: 'Status',            pivot: true },
+      { ...dimension, field: 'BrandName',              headerName: 'Brand' },
+      { ...dimension, field: 'SalesDivision',          headerName: 'Sales Division' },
+      { ...dimension, field: 'SalesMarket',            headerName: 'Market' },
+      { ...dimension, field: 'ERPFWCProjectShortName', headerName: 'FWC Project' },
+      { ...measure,   field: 'Qty',         headerName: 'Total Qty', aggFunc: 'sum', width: 120, valueFormatter: undefined },
+      { ...measure,   field: 'TotalPrice',  headerName: 'Total List', aggFunc: 'sum' },
+      { ...measure,   field: 'TotalNet',    headerName: 'Total Net' },
+      { ...measure,   field: 'TotalCost',   headerName: 'Total Cost' },
+      { ...measure,   field: 'GrossProfit', headerName: 'Gross Profit' },
     ];
-  }, [summaryData]);
+  }, []);
 
   const columnDefs: ColDef[] = useMemo(() => [
     {
@@ -724,14 +696,14 @@ export default function OfferDetailsClient() {
   const pivotModeButton = (
     <button
       type="button"
-      className={`${groupMode ? styles.groupBtnActive : styles.groupBtn} page-header-button`}
-      onClick={toggleGroupMode}
+      className={`${pivotMode ? styles.groupBtnActive : styles.groupBtn} page-header-button`}
+      onClick={togglePivotMode}
     >
       Pivot Mode
     </button>
   );
 
-  const headerActions = groupMode ? (
+  const headerActions = pivotMode ? (
     <div className={styles.headerActions}>
       {/* Brand — custom combobox */}
       <div className={styles.brandCombo}>
@@ -833,14 +805,6 @@ export default function OfferDetailsClient() {
         <option value="">FWC: All</option>
         {options.fwcProjects.map(v => <option key={v} value={v}>{v}</option>)}
       </select>
-
-      <button
-        type="button"
-        className={`${summaryMode ? styles.totalsBtnActive : styles.totalsBtn} page-header-button`}
-        onClick={toggleSummaryMode}
-      >
-        {summaryLoading ? 'Loading…' : 'Totals'}
-      </button>
     </div>
   ) : null;
 
@@ -848,7 +812,7 @@ export default function OfferDetailsClient() {
     <main className={styles.page}>
       <PageHeader title="Offered Products" afterSearchActions={pivotModeButton} rightActions={headerActions}>
         <GridQuickSearchProvider>
-          <div className={`${styles.gridFrame} fq-grid-panel`} style={summaryMode ? { display: 'none' } : undefined}>
+          <div className={`${styles.gridFrame} fq-grid-panel`} style={pivotMode ? { display: 'none' } : undefined}>
             <AgGridAll
               endpoint="/api/offered-products"
               columnDefs={columnDefs}
@@ -856,20 +820,34 @@ export default function OfferDetailsClient() {
               rowSelection="multiple"
               rowMultiSelectWithClick
               rowDeselection
-              onGridReady={handleGridReady}
               onCellValueChanged={handleCellValueChanged}
               getContextMenuItems={getContextMenuItems}
             />
           </div>
-          {summaryMode && (
-            <div className={`${styles.gridFrame} fq-grid-panel`}>
-              {summaryLoading || !summaryData ? (
+          {pivotMode && (
+            <div
+              className={`${styles.gridFrame} fq-grid-panel`}
+              style={{ opacity: summaryLoading && summaryData ? 0.65 : 1, transition: 'opacity 120ms ease' }}
+            >
+              {!summaryData ? (
                 <div className={styles.loading}>Loading summary…</div>
               ) : (
                 <AgGridSummary
+                  containerClassName={styles.pivotShell}
                   columnDefs={summaryColDefs}
-                  rowData={summaryData.rows}
-                  defaultColDef={{ resizable: true, sortable: true }}
+                  rowData={summaryData}
+                  pivotMode
+                  groupDisplayType="multipleColumns"
+                  groupDefaultExpanded={1}
+                  suppressAggFuncInHeader
+                  pivotRowTotals="after"
+                  grandTotalRow="bottom"
+                  groupTotalRow={(params) => (params.node.level === 0 ? 'bottom' : undefined)}
+                  autoGroupColumnDef={{ minWidth: 170, resizable: true }}
+                  sideBar={{
+                    toolPanels: ['columns', 'filters'],
+                    defaultToolPanel: 'columns',
+                  }}
                 />
               )}
             </div>

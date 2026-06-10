@@ -43,6 +43,25 @@
   transition: background-color 140ms ease;
 }
 
+/* Re-enable the columns-panel drop zones (Row Groups / Values / Column Labels)
+   for the pivot grid — AgGridAll.module.css hides .ag-column-drop* globally. */
+.pivotShell :global(.ag-column-drop-wrapper),
+.pivotShell :global(.ag-column-drop),
+.pivotShell :global(.ag-column-drop-vertical),
+.pivotShell :global(.ag-column-drop-vertical-title-bar) {
+  display: flex !important;
+}
+
+.pivotShell :global(.ag-column-drop-cell),
+.pivotShell :global(.ag-column-drop-cell-button) {
+  display: inline-flex !important;
+}
+
+.pivotShell :global(.ag-column-drop-empty-message),
+.pivotShell :global(.ag-column-drop-vertical-empty-message) {
+  display: block !important;
+}
+
 /* ── Header actions row ── */
 .headerActions {
   display: flex;
@@ -147,31 +166,4 @@
   outline: none;
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
-}
-
-/* ── Totals button ── */
-.totalsBtn {
-  border: 1px solid rgba(15, 23, 42, 0.15);
-  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-  color: #0f172a;
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.totalsBtnActive {
-  border: 1px solid #3b82f6;
-  background: #eff6ff;
-  color: #2563eb;
-  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.12);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.totalsBtnActive:hover,
-.totalsBtnActive:focus-visible {
-  background: #dbeafe !important;
-  outline: none;
 }

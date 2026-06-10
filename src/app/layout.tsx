@@ -10,6 +10,7 @@ import PreventBackspaceNavigation from "./components/PreventBackspaceNavigation"
 import CaretVisibilityManager from "./components/CaretVisibilityManager";
 import StorageVersionManager from "./components/StorageVersionManager";
 import SpellcheckManager from "./components/SpellcheckManager";
+import AgGridOverlayScaleFixManager from "./components/AgGridOverlayScaleFixManager";
 import CommandPalette from "./components/CommandPalette";
 import ScrollToBottomButton from "./components/ScrollToBottomButton";
 
@@ -43,6 +44,7 @@ export default async function RootLayout({
         <AuditUserProvider>
           <DisableAutofill />
           <SpellcheckManager />
+          <AgGridOverlayScaleFixManager />
           <PreventBackspaceNavigation />
           <CommandPalette />
           <div className="app-shell">

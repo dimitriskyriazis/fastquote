@@ -31,7 +31,6 @@ export async function GET(req: NextRequest) {
 
     const pool = await getPool();
 
-    // 1. Fetch distinct statuses present in the (filtered) data
     const filterClauses: string[] = [baseFilter];
     if (brand)    filterClauses.push(`b.Name = @brand`);
     if (division) filterClauses.push(`sd.Name = @division`);
@@ -39,61 +38,51 @@ export async function GET(req: NextRequest) {
     if (fwc)      filterClauses.push(`fwc.ShortName = @fwc`);
     const whereClause = `WHERE ${filterClauses.join(' AND ')}`;
 
-    const statusReq = pool.request();
-    if (brand)    statusReq.input('brand',    sql.NVarChar(500), brand);
-    if (division) statusReq.input('division', sql.NVarChar(500), division);
-    if (market)   statusReq.input('market',   sql.NVarChar(500), market);
-    if (fwc)      statusReq.input('fwc',      sql.NVarChar(500), fwc);
-
-    const statusSql = `
-      SELECT DISTINCT os.Name AS StatusName
-      ${fromClause}
-      ${whereClause}
-        AND os.Name IS NOT NULL
-      ORDER BY os.Name
-    `;
-    const statusRes = await statusReq.query<{ StatusName: string }>(statusSql);
-    const statuses = (statusRes.recordset ?? []).map(r => r.StatusName);
-
-    if (statuses.length === 0) {
-      return NextResponse.json({ ok: true, statuses: [], rows: [] });
-    }
-
-    // 2. Build conditional aggregation — one CASE WHEN per status
-    const caseLines = statuses.map((s, i) =>
-      `SUM(CASE WHEN os.Name = @status_${i} THEN ISNULL(od.Quantity, 0) ELSE 0 END) AS [${s.replace(/]/g, ']]')}]`
-    ).join(',\n      ');
-
     const dataReq = pool.request();
     if (brand)    dataReq.input('brand',    sql.NVarChar(500), brand);
     if (division) dataReq.input('division', sql.NVarChar(500), division);
     if (market)   dataReq.input('market',   sql.NVarChar(500), market);
     if (fwc)      dataReq.input('fwc',      sql.NVarChar(500), fwc);
-    statuses.forEach((s, i) => dataReq.input(`status_${i}`, sql.NVarChar(500), s));
 
+    // Flat aggregated rows — the client pivots them with AG Grid. Grain includes
+    // every dimension the user can drag into rows/columns in the pivot field panel;
+    // measures are pre-summed at that grain and AG Grid re-aggregates as needed.
     const dataSql = `
       SELECT
-        ISNULL(od.PartNumber, '') AS PartNumber,
-        ISNULL(od.ProductDescription, '') AS ProductDescription,
         ISNULL(c.Name, '') AS CustomerName,
-        ${caseLines},
-        SUM(ISNULL(od.Quantity, 0)) AS GrandTotal
+        ISNULL(o.Description, '') AS OfferDescription,
+        CONVERT(varchar(10), o.OfferDate, 103) AS OfferDate,
+        ISNULL(os.Name, '(No Status)') AS OfferStatus,
+        ISNULL(b.Name, '') AS BrandName,
+        ISNULL(sd.Name, '') AS SalesDivision,
+        ISNULL(mkt.Name, '') AS SalesMarket,
+        ISNULL(LTRIM(RTRIM(fwc.ShortName)), '') AS ERPFWCProjectShortName,
+        SUM(ISNULL(od.Quantity, 0)) AS Qty,
+        SUM(ISNULL(od.TotalPrice, 0)) AS TotalPrice,
+        SUM(ISNULL(od.TotalNet, 0)) AS TotalNet,
+        SUM(ISNULL(od.TotalCost, 0)) AS TotalCost,
+        SUM(ISNULL(od.GrossProfit, 0)) AS GrossProfit
       ${fromClause}
       ${whereClause}
       GROUP BY
-        od.PartNumber,
-        od.ProductDescription,
-        c.Name
+        c.Name,
+        o.Description,
+        CONVERT(varchar(10), o.OfferDate, 103),
+        os.Name,
+        b.Name,
+        sd.Name,
+        mkt.Name,
+        fwc.ShortName
       ORDER BY
-        od.PartNumber,
-        od.ProductDescription,
-        c.Name
+        c.Name,
+        o.Description,
+        MIN(o.OfferDate)
     `;
 
     const dataRes = await dataReq.query<Record<string, unknown>>(dataSql);
     const rows = (dataRes.recordset ?? []).map(r => ({ ...r }));
 
-    return NextResponse.json({ ok: true, statuses, rows });
+    return NextResponse.json({ ok: true, rows });
   } catch (err) {
     console.error('Failed to load offered-products summary', err);
     return NextResponse.json({ ok: false, error: 'Failed to load summary' }, { status: 500 });

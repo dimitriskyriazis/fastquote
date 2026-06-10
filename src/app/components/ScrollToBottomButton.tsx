@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { getBodyScale } from "../../lib/bodyScale";
+
+// The button is position:fixed under the scaled <body> (the transform makes
+// body its containing block, and body's visual box matches the viewport), so
+// viewport-px insets must be divided by the body scale before use as CSS px.
+const toFixedInset = (viewportPx: number) => viewportPx / getBodyScale();
 
 const THRESHOLD = 200;
 // Number of distinct scroll gestures in the same direction before the button appears
@@ -116,8 +122,8 @@ export default function ScrollToBottomButton() {
         streakRef.current = 0; // reset so it takes 3 more gestures to trigger again
         const rect = anchor.panel.getBoundingClientRect();
         setPos({
-          right: Math.max(8, window.innerWidth - rect.right + 24),
-          bottom: Math.max(8, window.innerHeight - rect.bottom + 24),
+          right: toFixedInset(Math.max(8, window.innerWidth - rect.right + 24)),
+          bottom: toFixedInset(Math.max(8, window.innerHeight - rect.bottom + 24)),
         });
         anchorRef.current = anchor;
         setMode("bottom");
@@ -131,8 +137,8 @@ export default function ScrollToBottomButton() {
         streakRef.current = 0; // reset so it takes 3 more gestures to trigger again
         const rect = anchor.panel.getBoundingClientRect();
         setPos({
-          right: Math.max(8, window.innerWidth - rect.right + 24),
-          bottom: Math.max(8, window.innerHeight - rect.bottom + 24),
+          right: toFixedInset(Math.max(8, window.innerWidth - rect.right + 24)),
+          bottom: toFixedInset(Math.max(8, window.innerHeight - rect.bottom + 24)),
         });
         anchorRef.current = anchor;
         setMode("top");
