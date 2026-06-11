@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
         FROM dbo.Offer AS o
         JOIN dbo.OfferStatus AS os ON os.ID = o.StatusID
         WHERE o.Enabled = 1
-          AND os.Name NOT IN ('Order Signed', 'Rejection', 'Cancelled')
+          AND os.Name NOT IN ('Order Signed', 'Rejected', 'Cancelled')
           ${userFilter}
       `),
       addUserParam(pool.request()).query<StatusCount>(`
@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
           CAST(
             SUM(CASE WHEN os.Name IN ('Order Signed') THEN 1 ELSE 0 END) AS FLOAT
           ) / NULLIF(
-            SUM(CASE WHEN os.Name IN ('Order Signed', 'Rejection', 'Cancelled') THEN 1 ELSE 0 END), 0
+            SUM(CASE WHEN os.Name IN ('Order Signed', 'Rejected', 'Cancelled') THEN 1 ELSE 0 END), 0
           ) AS winRate
         FROM dbo.Offer AS o
         JOIN dbo.OfferStatus AS os ON os.ID = o.StatusID
