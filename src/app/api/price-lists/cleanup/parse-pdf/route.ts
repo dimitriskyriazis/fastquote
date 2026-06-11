@@ -36,7 +36,7 @@ const toCellString = (value: unknown): string => {
 export async function POST(req: NextRequest) {
   logRequest(req, "/api/price-lists/cleanup/parse-pdf");
   try {
-    const auth = await requirePermission(req, "managePriceLists");
+    const auth = await requirePermission(req, "cleanupPriceLists");
     if (!auth.ok) return auth.response;
 
     const formData = await req.formData();

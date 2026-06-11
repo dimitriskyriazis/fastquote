@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { headers, cookies } from "next/headers";
 import { resolveAuditUserId } from "../../../lib/auditTrail";
 import { fetchUserRoles } from "../../../lib/authz";
+import { roleHasPermission, type AppRole } from "../../../lib/roles";
 import PriceListCleanupClient from "./PriceListCleanupClient";
 
 export const metadata = {
@@ -11,10 +12,8 @@ export const metadata = {
 // Needs the per-request user to resolve roles.
 export const dynamic = "force-dynamic";
 
-const ALLOWED_ROLES = ["Administrator", "Developer"];
-
 export default async function PriceListCleanupPage() {
-  let roles: string[] = [];
+  let roles: AppRole[] = [];
   try {
     const [hdrs, cookieStore] = await Promise.all([headers(), cookies()]);
     const userId = resolveAuditUserId({ headers: hdrs as unknown as Headers, cookies: cookieStore });
@@ -23,8 +22,8 @@ export default async function PriceListCleanupPage() {
     console.error("Failed to resolve roles for pricelist cleanup", err);
   }
 
-  // Restricted to Administrator / Developer (deny on any resolution error).
-  if (!roles.some((role) => ALLOWED_ROLES.includes(role))) {
+  // Open to Sales Team and above (deny on any resolution error).
+  if (!roleHasPermission(roles, "cleanupPriceLists")) {
     redirect("/");
   }
 

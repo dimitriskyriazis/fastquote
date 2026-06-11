@@ -50,7 +50,7 @@ const navItems: NavItem[] = [
       {
         label: "Pricelist Cleanup",
         href: "/price-lists/cleanup",
-        requiresRoles: ["Administrator", "Developer"],
+        requiresRoles: ["Administrator", "Developer", "Back Office User", "Sales Manager", "Sales Team"],
       },
     ],
   },

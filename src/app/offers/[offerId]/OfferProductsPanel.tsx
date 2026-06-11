@@ -5627,7 +5627,8 @@ const requestedColumnDefsMap = useMemo(
       if (deleteItemIndex >= 0) {
         const existingDeleteItem = items[deleteItemIndex];
         if (existingDeleteItem && typeof existingDeleteItem === 'object') {
-          const totalSelected = Math.max(lastRowCountRef.current ?? 0, 0);
+          const deselectedCount = api ? getServerSideDeselectedRowIds(api).size : 0;
+          const totalSelected = Math.max((lastRowCountRef.current ?? 0) - deselectedCount, 0);
           const deleteCheck = checkDeletePermissionForClient(roles, Math.max(totalSelected, 1), 'offerProducts', 'editOffers', { isCreator: isOfferCreator });
           items[deleteItemIndex] = {
             ...(existingDeleteItem as MenuItemDef),

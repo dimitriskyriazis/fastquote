@@ -39,6 +39,11 @@ import {
   type CostMode,
 } from "../../../lib/priceListCleanup";
 import { groupSimilarRows } from "../../../lib/priceListSimilarity";
+import {
+  applyModelPrefixMove,
+  detectModelPrefix,
+  type ModelPrefixChoice,
+} from "../../../lib/priceListModelPrefix";
 
 // Fields the cleanup tool maps (a subset of the importer — service/legacy columns are
 // out of scope for the normalized output).
@@ -113,6 +118,9 @@ export default function PriceListCleanupClient() {
   const [aiProgress, setAiProgress] = useState<{ done: number; total: number } | null>(null);
   // Lifecycle / EOL handling: keep marker in description, move to a Status column, or drop rows.
   const [eolChoice, setEolChoice] = useState<"keep" | "annotate" | "drop">("keep");
+  // Some suppliers prepend the model number to the description ("I600-4K8 black EU"); the user
+  // chooses whether to keep it there or move it to the Model Number column.
+  const [modelPrefixChoice, setModelPrefixChoice] = useState<ModelPrefixChoice>("keep");
 
   const activeSheet = fileValidation.sheets[fileValidation.activeSheetIndex] ?? null;
   const hasPartAndPrice =
@@ -214,6 +222,31 @@ export default function PriceListCleanupClient() {
     return { rows, summary };
   }, [fileValidation.sheets, cleanOneSheet]);
 
+  // Rows whose description starts with a movable model number ("I600-4K8 black EU") — drives the
+  // keep/move prompt. Detected on the raw cleaned rows so the count doesn't change with the choice.
+  const modelPrefixInfo = useMemo(() => {
+    let count = 0;
+    let example: string | null = null;
+    for (const row of cleanedAll?.rows ?? []) {
+      const hit = detectModelPrefix(row);
+      if (hit) {
+        count += 1;
+        if (!example) example = hit.token;
+      }
+    }
+    return { count, example };
+  }, [cleanedAll]);
+
+  // The model-prefix choice applies BEFORE the AI step so moved model numbers also improve the
+  // AI's spec lookups, and before the preview/download so the Model Number column fills in.
+  const movedAll = useMemo(
+    () =>
+      cleanedAll && modelPrefixChoice === "move"
+        ? { ...cleanedAll, rows: applyModelPrefixMove(cleanedAll.rows) }
+        : cleanedAll,
+    [cleanedAll, modelPrefixChoice],
+  );
+
   // Apply AI descriptions (by part number) and the lifecycle choice. Lifecycle is detected on
   // the ORIGINAL cleaned description (before any AI rewrite removes the marker).
   const transformRows = useCallback(
@@ -223,18 +256,26 @@ export default function PriceListCleanupClient() {
         const marker = detectLifecycleMarker(row.description) ?? detectLifecycleMarker(row.warning);
         if (marker && eolChoice === "drop") continue;
         const ai = aiByPartNumber[row.partNumber];
-        const next: CleanedRow = { ...row, description: ai ?? row.description };
+        let description = ai ?? row.description;
+        // "Keep in description": the AI rewrite always strips the model number, so re-prepend the
+        // detected token. (Under "move" the rows arrive already stripped, so this never fires —
+        // the token lives in the Model Number column instead.)
+        if (ai && modelPrefixChoice === "keep") {
+          const hit = detectModelPrefix(row);
+          if (hit) description = `${hit.token} ${ai}`;
+        }
+        const next: CleanedRow = { ...row, description };
         if (marker && eolChoice === "annotate") next.status = marker.match;
         out.push(next);
       }
       return out;
     },
-    [aiByPartNumber, eolChoice],
+    [aiByPartNumber, eolChoice, modelPrefixChoice],
   );
 
   const transformedAll = useMemo(
-    () => (cleanedAll ? transformRows(cleanedAll.rows) : null),
-    [cleanedAll, transformRows],
+    () => (movedAll ? transformRows(movedAll.rows) : null),
+    [movedAll, transformRows],
   );
 
   // The active (selected) sheet cleaned on its own — drives the preview and the AI descriptions,
@@ -245,9 +286,17 @@ export default function PriceListCleanupClient() {
     [activeSheet, hasPartAndPrice, cleanOneSheet],
   );
 
+  const movedActive = useMemo(
+    () =>
+      cleanedActive && modelPrefixChoice === "move"
+        ? { ...cleanedActive, rows: applyModelPrefixMove(cleanedActive.rows) }
+        : cleanedActive,
+    [cleanedActive, modelPrefixChoice],
+  );
+
   const previewTransformed = useMemo(
-    () => (cleanedActive ? transformRows(cleanedActive.rows) : null),
-    [cleanedActive, transformRows],
+    () => (movedActive ? transformRows(movedActive.rows) : null),
+    [movedActive, transformRows],
   );
 
   const previewRows = useMemo(() => previewTransformed?.slice(0, 20) ?? null, [previewTransformed]);
@@ -287,6 +336,7 @@ export default function PriceListCleanupClient() {
       setError(null);
       setAiByPartNumber({}); // a new file invalidates any prior AI descriptions
       setEolChoice("keep");
+      setModelPrefixChoice("keep");
 
       const isPdf = nextFile.type === "application/pdf" || /\.pdf$/i.test(nextFile.name);
       if (isPdf) {
@@ -418,8 +468,8 @@ export default function PriceListCleanupClient() {
   }, []);
 
   const handleImproveDescriptions = useCallback(async () => {
-    if (!cleanedActive || aiRunning) return;
-    const rows = cleanedActive.rows;
+    if (!movedActive || aiRunning) return;
+    const rows = movedActive.rows;
     if (rows.length === 0) return;
 
     if (rows.length > AI_CONFIRM_THRESHOLD) {
@@ -502,7 +552,7 @@ export default function PriceListCleanupClient() {
       setAiRunning(false);
       setAiProgress(null);
     }
-  }, [cleanedActive, aiRunning, aiByPartNumber, brand]);
+  }, [movedActive, aiRunning, aiByPartNumber, brand]);
 
   const handleCleanAndDownload = useCallback(async () => {
     if (!file || !transformedAll || !cleanedAll) return;
@@ -888,6 +938,45 @@ export default function PriceListCleanupClient() {
                 </select>
               </label>
             </div>
+
+            {modelPrefixInfo.count > 0 ? (
+              <>
+                <div className={styles.sectionHeading}>Model numbers in descriptions</div>
+                <div className={styles.infoNote}>
+                  {modelPrefixInfo.count} description{modelPrefixInfo.count === 1 ? " starts" : "s start"} with
+                  what looks like a model number
+                  {modelPrefixInfo.example ? (
+                    <>
+                      {" "}
+                      (e.g. <strong>{modelPrefixInfo.example}</strong>)
+                    </>
+                  ) : null}
+                  . <strong>Keep</strong> leaves it at the start of the description (even after the AI
+                  rewrite); <strong>Move</strong> strips it from the description and fills the Model
+                  Number column instead.
+                  <span className={styles.toggleRow} style={{ marginTop: 6 }}>
+                    <label className={styles.radioLabel}>
+                      <input
+                        type="radio"
+                        name="modelPrefixChoice"
+                        checked={modelPrefixChoice === "keep"}
+                        onChange={() => setModelPrefixChoice("keep")}
+                      />
+                      Keep it in the description
+                    </label>
+                    <label className={styles.radioLabel}>
+                      <input
+                        type="radio"
+                        name="modelPrefixChoice"
+                        checked={modelPrefixChoice === "move"}
+                        onChange={() => setModelPrefixChoice("move")}
+                      />
+                      Move it to the Model Number column
+                    </label>
+                  </span>
+                </div>
+              </>
+            ) : null}
 
             <div className={styles.sectionHeading}>Descriptions (AI)</div>
             <div className={styles.optionsRow}>

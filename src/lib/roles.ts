@@ -11,6 +11,7 @@ export type Permission =
   | 'criticalOps'
   | 'manageUsers'
   | 'managePriceLists'
+  | 'cleanupPriceLists'
   | 'managePricingPolicies'
   | 'manageBrandsSuppliers'
   | 'viewBrandsSuppliers'
@@ -84,6 +85,14 @@ export const roleHasPermission = (roles: readonly AppRole[], permission: Permiss
     case 'managePriceLists':
     case 'managePricingPolicies':
       return roles.includes('Back Office User') || roles.includes('Sales Manager');
+    // Pricelist cleanup tool (parse/normalize uploaded price lists) — open to the
+    // sales side too, unlike full price-list management.
+    case 'cleanupPriceLists':
+      return (
+        roles.includes('Sales Team') ||
+        roles.includes('Sales Manager') ||
+        roles.includes('Back Office User')
+      );
     case 'manageMarkets':
       return roles.includes('Back Office User') || roles.includes('Sales Manager');
     // Permission ID 40: brands & suppliers management

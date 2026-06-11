@@ -228,7 +228,7 @@ const describeGroup = async (
 export async function POST(req: NextRequest) {
   logRequest(req, "/api/price-lists/cleanup/describe");
   try {
-    const auth = await requirePermission(req, "managePriceLists");
+    const auth = await requirePermission(req, "cleanupPriceLists");
     if (!auth.ok) return auth.response;
 
     const body = await req.json();

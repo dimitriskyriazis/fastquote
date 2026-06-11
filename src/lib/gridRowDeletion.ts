@@ -71,6 +71,19 @@ async function fetchAllFilteredIds(
   requestPayload?: Record<string, unknown>,
 ): Promise<number[]> {
   const deselectedIds = getServerSideDeselectedRowIds(api);
+  // toggledNodes hold grid row ids (whatever getRowId emits), which on some
+  // grids differ from row[idField] (e.g. price-list products get ProductID row
+  // ids but delete by PriceListItemID; offers/suppliers/brands rows match no
+  // getRowId key and fall back to random ids). Resolve each deselected row id
+  // to its entity id via the loaded row node and exclude both forms, so the
+  // user's deselections survive on those grids too.
+  if (deselectedIds.size > 0 && typeof api.getRowNode === 'function') {
+    for (const rowId of Array.from(deselectedIds)) {
+      const data = api.getRowNode(rowId)?.data as Record<string, unknown> | undefined;
+      const entityId = data?.[idField];
+      if (entityId != null) deselectedIds.add(String(entityId));
+    }
+  }
   const filterModel = api.getFilterModel?.() ?? {};
   const sortModel = api.getColumnState?.()
     ?.filter(col => col.sort != null)
