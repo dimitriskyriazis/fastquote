@@ -3739,6 +3739,9 @@ const requestedColumnDefsMap = useMemo(
     if (quickFilterText && quickFilterText.trim().length > 0) {
       request.quickFilterText = quickFilterText.trim();
     }
+    // Capture before any await: cleanup paths may deselectAll() while the
+    // request is in flight, which would erase the user's deselections.
+    const deselectedIds = getServerSideDeselectedRowIds(api);
 
     const response = await fetch(dataEndpoint, {
       method: 'POST',
@@ -3751,7 +3754,6 @@ const requestedColumnDefsMap = useMemo(
     if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
       throw new Error(payload?.error ?? `Failed to load all rows (status ${response.status})`);
     }
-    const deselectedIds = getServerSideDeselectedRowIds(api);
     if (deselectedIds.size === 0) return payload.rows;
     return payload.rows.filter((row) => {
       const id = (row as { OfferDetailID?: unknown }).OfferDetailID;
@@ -4219,6 +4221,9 @@ const requestedColumnDefsMap = useMemo(
     if (quickFilterText && quickFilterText.trim().length > 0) {
       request.quickFilterText = quickFilterText.trim();
     }
+    // Capture before any await: cleanup paths may deselectAll() while the
+    // request is in flight, which would erase the user's deselections.
+    const deselectedIds = getServerSideDeselectedRowIds(api);
 
     const response = await fetch(dataEndpoint, {
       method: 'POST',
@@ -4234,7 +4239,6 @@ const requestedColumnDefsMap = useMemo(
     if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
       throw new Error(payload?.error ?? `Failed to load selected rows (status ${response.status})`);
     }
-    const deselectedIds = getServerSideDeselectedRowIds(api);
     return Array.from(new Set(
       payload.rows
         .map((row) => normalizeOfferDetailId((row as { OfferDetailID?: unknown })?.OfferDetailID ?? null))
@@ -4265,6 +4269,9 @@ const requestedColumnDefsMap = useMemo(
     if (quickFilterText && quickFilterText.trim().length > 0) {
       request.quickFilterText = quickFilterText.trim();
     }
+    // Capture before any await: cleanup paths may deselectAll() while the
+    // request is in flight, which would erase the user's deselections.
+    const deselectedIds = getServerSideDeselectedRowIds(api);
 
     const response = await fetch(dataEndpoint, {
       method: 'POST',
@@ -4280,7 +4287,6 @@ const requestedColumnDefsMap = useMemo(
     if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
       throw new Error(payload?.error ?? `Failed to load selected rows (status ${response.status})`);
     }
-    const deselectedIds = getServerSideDeselectedRowIds(api);
     const filteredRows = deselectedIds.size === 0
       ? payload.rows
       : payload.rows.filter((row) => {
@@ -4322,6 +4328,9 @@ const requestedColumnDefsMap = useMemo(
     if (quickFilterText && quickFilterText.trim().length > 0) {
       request.quickFilterText = quickFilterText.trim();
     }
+    // Capture before any await: cleanup paths may deselectAll() while the
+    // request is in flight, which would erase the user's deselections.
+    const deselectedIds = getServerSideDeselectedRowIds(api);
 
     const response = await fetch(dataEndpoint, {
       method: 'POST',
@@ -4337,7 +4346,6 @@ const requestedColumnDefsMap = useMemo(
     if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
       throw new Error(payload?.error ?? `Failed to load selected rows (status ${response.status})`);
     }
-    const deselectedIds = getServerSideDeselectedRowIds(api);
     return payload.rows
       .filter((row) => {
         // Only actual product rows — skip comments, categories, services
@@ -5092,9 +5100,11 @@ const requestedColumnDefsMap = useMemo(
     const api = params.api ?? null;
 
     // After any context-menu action runs, drop the row selection so the
-    // highlighted rows don't linger. Action targets are captured at menu-build
-    // time (and via the selection snapshot), so clearing the live selection
-    // here is safe even for async actions. Wrapping is recursive so submenu
+    // highlighted rows don't linger. Async actions are cleared only once they
+    // settle: the select-all branches resolve their targets at action time from
+    // the live SSRM selection state (selectAll + toggledNodes), so deselecting
+    // while their fetch is in flight would erase the user's deselections and
+    // make the action target every row. Wrapping is recursive so submenu
     // actions clear the selection too. Built-in string items (copy / paste /
     // export) have no `action` to wrap and pass through untouched.
     const clearMenuSelectionAfterAction = () => {
@@ -5117,11 +5127,18 @@ const requestedColumnDefsMap = useMemo(
         if (typeof menuItem.action === 'function') {
           const originalAction = menuItem.action;
           wrapped.action = ((...actionArgs: unknown[]) => {
+            let result: unknown;
             try {
-              return (originalAction as (...a: unknown[]) => unknown)(...actionArgs);
-            } finally {
+              result = (originalAction as (...a: unknown[]) => unknown)(...actionArgs);
+            } catch (err) {
               clearMenuSelectionAfterAction();
+              throw err;
             }
+            if (result && typeof (result as Promise<unknown>).then === 'function') {
+              return (result as Promise<unknown>).finally(clearMenuSelectionAfterAction);
+            }
+            clearMenuSelectionAfterAction();
+            return result;
           }) as MenuItemDef<Record<string, unknown>>['action'];
         }
         return wrapped;
