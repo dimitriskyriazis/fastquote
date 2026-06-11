@@ -11,6 +11,7 @@ import type {
   ColDef,
   ICellRendererParams,
   IRowNode,
+  ValueFormatterParams,
   ValueGetterParams,
   ValueSetterParams,
 } from 'ag-grid-community';
@@ -267,6 +268,42 @@ const flagMissingListPriceDiscount = (
   return MISSING_LIST_PRICE_DISCOUNT_FLAG;
 };
 
+// A zero (or blank) quantity on a line that should contribute to the offer
+// totals is almost always a mistake — the line prices out to nothing. Flag
+// products, services and priced comments. Non-printable comments are exempt:
+// they are single cost lines whose quantity legitimately stays 0
+// (recalcProductTotals treats it as 1). Unassigned requested rows are exempt
+// because there is no actual product behind the cell yet.
+const ZERO_QTY_PRICE_FIELDS = ['ListPrice', 'NetUnitPrice', 'NetCost', 'TotalPrice', 'TotalNet'] as const;
+
+const flagZeroQuantity = (data: Record<string, unknown> | null | undefined): boolean => {
+  if (!data || isUnassignedRequestedRow(data)) return false;
+  const quantity = coerceNumber((data as { Quantity?: unknown }).Quantity) ?? 0;
+  if (quantity !== 0) return false;
+  const rowType = resolveOfferProductRowType(data);
+  if (rowType === 'product' || rowType === 'printable-service' || rowType === 'non-printable-service') {
+    return true;
+  }
+  if (rowType !== 'printable-comment') return false;
+  return ZERO_QTY_PRICE_FIELDS.some((field) => {
+    const value = coerceNumber(data[field]);
+    return value != null && value !== 0;
+  });
+};
+
+const zeroQuantityCellClassRules = {
+  'offer-products-grid__cell--negative-margin': (params: { data?: Record<string, unknown> | null }) =>
+    flagZeroQuantity(params.data ?? null),
+};
+
+// On flagged rows show an explicit 0 — a blank cell would hide what the red
+// warning is complaining about. Unflagged rows keep the zero-blank behaviour
+// (non-printable comments, unpriced comments, categories).
+const zeroWarnQuantityFormatter = (params: ValueFormatterParams<Record<string, unknown>, unknown>) => {
+  if (flagZeroQuantity(params.data ?? null)) return '0';
+  return zeroBlankNumberFormatter(params);
+};
+
 export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
   const {
     standardPackageMode,
@@ -487,7 +524,8 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
         type: 'numericColumn',
         headerClass: 'ag-right-aligned-header',
         editable: (params) => isOfferProductCommentOrProduct(params.data ?? null),
-        valueFormatter: zeroBlankNumberFormatter,
+        valueFormatter: zeroWarnQuantityFormatter,
+        cellClassRules: zeroQuantityCellClassRules,
         cellClass: actualNumericCellClass,
         cellStyle: actualNumericCellStyle,
       },
@@ -728,7 +766,8 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
       editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
-      valueFormatter: zeroBlankNumberFormatter,
+      valueFormatter: zeroWarnQuantityFormatter,
+      cellClassRules: zeroQuantityCellClassRules,
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
     },

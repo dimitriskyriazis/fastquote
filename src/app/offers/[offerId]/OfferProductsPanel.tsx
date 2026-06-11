@@ -7064,7 +7064,15 @@ const requestedColumnDefsMap = useMemo(
       } catch {
         /* noop */
       }
+      try { event.api?.refreshCells({ rowNodes: [event.node!], columns: ['Quantity'], force: true }); } catch { /* noop */ }
     };
+
+    // Optimistically re-apply cellClassRules on the edited cell so the
+    // zero-quantity warning paints/clears immediately — ag-Grid only
+    // re-evaluates cellClassRules on a forced refresh.
+    try {
+      event.api?.refreshCells({ rowNodes: [event.node!], columns: ['Quantity'], force: true });
+    } catch { /* noop */ }
 
     const oldRowTotalsSnapshot = snapshotRowTotals(event.data as Record<string, unknown>);
     const installationAtEdit = coerceNumber((event.data as { Installation?: unknown }).Installation) ?? 0;
@@ -7981,6 +7989,9 @@ const requestedColumnDefsMap = useMemo(
         if (shouldAutoSetCommentQuantity && event.node) {
           registerRealtimeCellUpdate(offerDetailId, 'Quantity', 1);
           try { event.node.setDataValue('Quantity', 1); } catch { /* noop */ }
+          // Clear a lingering zero-quantity flag on the Qty cell (cellClassRules
+          // only re-evaluate on a forced refresh).
+          try { event.api?.refreshCells({ rowNodes: [event.node], columns: ['Quantity'], force: true }); } catch { /* noop */ }
         }
         const toastKey = `${offerDetailId}:${field}:${String(normalizedNewValue)}`;
         const now = Date.now();
