@@ -271,6 +271,14 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   useEffect(() => {
     onUndoStateChange?.({ canUndo, lastLabel });
   }, [canUndo, lastLabel, onUndoStateChange]);
+  // A clipboard paste spanning multiple rows fires one cellValueChanged per cell,
+  // each saving and pushing its own undo entry asynchronously. We stamp every edit
+  // from the same synchronous paste with one shared token so useUndoStack coalesces
+  // them into a single undo step — one Ctrl+Z then reverts the whole paste instead
+  // of one network-race-determined row. The token is minted on the first paste cell
+  // and cleared on the next microtask, after AG Grid has dispatched every cell.
+  const pasteUndoTokenRef = useRef<number | null>(null);
+  const pasteUndoCounterRef = useRef(0);
   const realtimeCellUpdateRef = useRef<Map<string, number>>(new Map());
   const registerRealtimeCellUpdate = useCallback((rowId: number, field: string, value: unknown) => {
     const key = `${rowId}:${field}:${String(value)}`;
@@ -6929,6 +6937,7 @@ const requestedColumnDefsMap = useMemo(
   const handleRequestedFieldEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
     if (!isRequestedFieldKey(field)) return;
+    const pasteUndoToken = pasteUndoTokenRef.current;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
     if (shouldSkipRealtimeCellEdit(event)) return;
@@ -7008,6 +7017,7 @@ const requestedColumnDefsMap = useMemo(
         const capturedField = field;
         pushUndo({
           label: `${friendlyLabel} updated`,
+          groupToken: pasteUndoToken ?? undefined,
           undo: async () => {
             const undoRes = await fetch(resolvedEndpoint, {
               method: 'PATCH',
@@ -7038,6 +7048,7 @@ const requestedColumnDefsMap = useMemo(
 
   const handleQuantityEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Quantity') return;
+    const pasteUndoToken = pasteUndoTokenRef.current;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
     if (shouldSkipRealtimeCellEdit(event)) return;
@@ -7120,6 +7131,7 @@ const requestedColumnDefsMap = useMemo(
         const capturedDetailId = offerDetailId;
         pushUndo({
           label: 'Quantity updated',
+          groupToken: pasteUndoToken ?? undefined,
           undo: async () => {
             const undoRes = await fetch(resolvedEndpoint, {
               method: 'PATCH',
@@ -7169,6 +7181,7 @@ const requestedColumnDefsMap = useMemo(
   const handleHoursFieldEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const editedField = event.colDef.field;
     if (editedField !== 'Installation' && editedField !== 'ElInstalation' && editedField !== 'Commissioning') return;
+    const pasteUndoToken = pasteUndoTokenRef.current;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
     if (shouldSkipRealtimeCellEdit(event)) return;
@@ -7232,6 +7245,7 @@ const requestedColumnDefsMap = useMemo(
         const capturedDetailId = offerDetailId;
         pushUndo({
           label: `${editedField} updated`,
+          groupToken: pasteUndoToken ?? undefined,
           undo: async () => {
             const undoRes = await fetch(resolvedEndpoint, {
               method: 'PATCH',
@@ -7265,6 +7279,7 @@ const requestedColumnDefsMap = useMemo(
   const handleDescriptionEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const editedField = event.colDef.field;
     if (editedField !== 'Description' && editedField !== 'ProductDescription') return;
+    const pasteUndoToken = pasteUndoTokenRef.current;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
     if (shouldSkipRealtimeCellEdit(event)) return;
@@ -7320,6 +7335,7 @@ const requestedColumnDefsMap = useMemo(
         const capturedDetailId = offerDetailId;
         pushUndo({
           label: 'Description updated',
+          groupToken: pasteUndoToken ?? undefined,
           undo: async () => {
             const undoRes = await fetch(resolvedEndpoint, {
               method: 'PATCH',
@@ -7352,6 +7368,7 @@ const requestedColumnDefsMap = useMemo(
 
   const handleCommentEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Comment') return;
+    const pasteUndoToken = pasteUndoTokenRef.current;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
     if (shouldSkipRealtimeCellEdit(event)) return;
@@ -7408,6 +7425,7 @@ const requestedColumnDefsMap = useMemo(
         const capturedDetailId = offerDetailId;
         pushUndo({
           label: 'Comment updated',
+          groupToken: pasteUndoToken ?? undefined,
           undo: async () => {
             const undoRes = await fetch(resolvedEndpoint, {
               method: 'PATCH',
@@ -7438,6 +7456,7 @@ const requestedColumnDefsMap = useMemo(
 
   const handleDeliveryEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Delivery') return;
+    const pasteUndoToken = pasteUndoTokenRef.current;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
     if (shouldSkipRealtimeCellEdit(event)) return;
@@ -7484,6 +7503,7 @@ const requestedColumnDefsMap = useMemo(
         const capturedDetailId = offerDetailId;
         pushUndo({
           label: 'Delivery updated',
+          groupToken: pasteUndoToken ?? undefined,
           undo: async () => {
             const undoRes = await fetch(resolvedEndpoint, {
               method: 'PATCH',
@@ -7515,6 +7535,7 @@ const requestedColumnDefsMap = useMemo(
   const handlePartModelNumberEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
     if (field !== 'PartNumber' && field !== 'ModelNumber') return;
+    const pasteUndoToken = pasteUndoTokenRef.current;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
     if (shouldSkipRealtimeCellEdit(event)) return;
@@ -7552,6 +7573,7 @@ const requestedColumnDefsMap = useMemo(
         const capturedDetailId = offerDetailId;
         pushUndo({
           label: `${field} updated`,
+          groupToken: pasteUndoToken ?? undefined,
           undo: async () => {
             const undoRes = await fetch(resolvedEndpoint, {
               method: 'PATCH',
@@ -7813,6 +7835,7 @@ const requestedColumnDefsMap = useMemo(
   const handlePricingEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
     if (!field || !PRICING_EDITABLE_FIELDS.has(field)) return;
+    const pasteUndoToken = pasteUndoTokenRef.current;
     const label = PRICING_FIELD_LABELS[field] ?? field;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
@@ -8021,6 +8044,7 @@ const requestedColumnDefsMap = useMemo(
           const capturedField = field;
           pushUndo({
             label: `${label} updated`,
+            groupToken: pasteUndoToken ?? undefined,
             undo: async () => {
               const undoRes = await fetch(resolvedEndpoint, {
                 method: 'PATCH',
@@ -8058,6 +8082,7 @@ const requestedColumnDefsMap = useMemo(
 
   const handleOriginEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Origin') return;
+    const pasteUndoToken = pasteUndoTokenRef.current;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
     if (shouldSkipRealtimeCellEdit(event)) return;
@@ -8107,6 +8132,7 @@ const requestedColumnDefsMap = useMemo(
         const capturedProductId = productId;
         pushUndo({
           label: 'Origin updated',
+          groupToken: pasteUndoToken ?? undefined,
           undo: async () => {
             const undoRes = await fetch(`/api/products/${encodeURIComponent(String(capturedProductId))}`, {
               method: 'PATCH',
@@ -8285,6 +8311,7 @@ const requestedColumnDefsMap = useMemo(
   const handleWarrantyFieldEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const editedField = event.colDef.field;
     if (editedField !== 'Warranty' && editedField !== 'TelmacoWarranty') return;
+    const pasteUndoToken = pasteUndoTokenRef.current;
     const source = (event as { source?: string }).source;
     if (source === 'api') return;
     if (shouldSkipRealtimeCellEdit(event)) return;
@@ -8341,6 +8368,7 @@ const requestedColumnDefsMap = useMemo(
         const capturedDetailId = offerDetailId;
         pushUndo({
           label: `${editedField} updated`,
+          groupToken: pasteUndoToken ?? undefined,
           undo: async () => {
             const undoRes = await fetch(resolvedEndpoint, {
               method: 'PATCH',
@@ -8461,6 +8489,14 @@ const requestedColumnDefsMap = useMemo(
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const wasProgrammatic = isProgrammaticCellEdit(event);
+    // Open (once) a shared undo group for every cell of the current paste. All
+    // paste cellValueChanged events fire synchronously inside one task, so the
+    // microtask clears the token only after the whole paste has been dispatched.
+    if ((event as { source?: string }).source === 'paste' && pasteUndoTokenRef.current == null) {
+      pasteUndoCounterRef.current += 1;
+      pasteUndoTokenRef.current = pasteUndoCounterRef.current;
+      queueMicrotask(() => { pasteUndoTokenRef.current = null; });
+    }
     handleDescriptionEdit(event);
     handleCommentEdit(event);
     handleDeliveryEdit(event);
