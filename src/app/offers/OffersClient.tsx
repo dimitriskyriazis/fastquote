@@ -33,6 +33,12 @@ const AgGridAll = dynamic(() => import('../components/AgGridAll'), {
   ),
 });
 
+// Reused generic client-side pivot grid (AgGridReact + AllEnterpriseModule). The Offers grid
+// itself is server-side and can't pivot, so Pivot Mode renders this separate client-side grid.
+const AgGridSummary = dynamic(() => import('../offered-products/OfferedProductsSummaryGrid'), {
+  ssr: false,
+});
+
 const totalNetFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
@@ -52,6 +58,35 @@ const formatEnabledValue = (value: unknown) => {
   if (value === 1 || value === true || value === 'true') return 'Yes';
   if (value === 0 || value === false || value === 'false') return 'No';
   return value == null ? '' : String(value);
+};
+
+// Pivot-cell formatters (aggregated rows have no per-row currency, so euro measures use the
+// EUR-first app convention — see plan caveat on cross-currency totals).
+const formatNumber = (value: unknown): string => {
+  if (value == null || value === '') return '';
+  const num = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(num)) return '';
+  return totalNetFormatter.format(num);
+};
+const formatPercent = (value: unknown): string => {
+  if (value == null || value === '') return '';
+  const num = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(num)) return '';
+  return `${totalNetFormatter.format(num)} %`;
+};
+
+type MarketOption = { market: string; division: string };
+type PivotOptions = { salesDivisions: string[]; markets: MarketOption[] };
+// Pivot pre-filters: Offer-date range + Sales Division + Market + TelQuote inclusion (passed to
+// /api/offers/summary). includeTelquote 'no' (default) excludes FromTelquote=true offers.
+type PivotFilters = { from: string; to: string; division: string; market: string; includeTelquote: string };
+const EMPTY_PIVOT_FILTERS: PivotFilters = { from: '', to: '', division: '', market: '', includeTelquote: 'no' };
+
+// 'yyyy-mm-dd' (date-input value) -> 'dd/mm/yyyy' for the trigger label.
+const isoToDMY = (iso: string): string => {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return d && m && y ? `${d}/${m}/${y}` : iso;
 };
 
 const duplicateVersionMenuIcon = `
@@ -183,6 +218,100 @@ export default function OffersClient() {
   const [myOffersFilterActive, setMyOffersFilterActive] = useState(false);
   const selectedUserRef = useRef(selectedUser);
   selectedUserRef.current = selectedUser;
+
+  // ── Pivot mode ──────────────────────────────────────────────────────────────
+  // Mirrors the Offered Products "Pivot Mode": the server-side grid stays mounted (hidden) and
+  // a separate client-side pivot grid renders flat offer-header rows from /api/offers/summary.
+  const [pivotMode, setPivotMode] = useState(false);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryData, setSummaryData] = useState<Record<string, unknown>[] | null>(null);
+  const [pivotOptions, setPivotOptions] = useState<PivotOptions>({ salesDivisions: [], markets: [] });
+  const [pivotFilters, setPivotFilters] = useState<PivotFilters>(EMPTY_PIVOT_FILTERS);
+  const pivotOptionsLoadedRef = useRef(false);
+  const [showDateRange, setShowDateRange] = useState(false);
+  const dateRangeRef = useRef<HTMLDivElement | null>(null);
+
+  const togglePivotMode = useCallback(() => {
+    setPivotMode(prev => {
+      // Clear pre-filters when closing so reopening starts fresh.
+      if (prev) {
+        setPivotFilters(EMPTY_PIVOT_FILTERS);
+        setShowDateRange(false);
+      }
+      return !prev;
+    });
+  }, []);
+
+  const handlePivotFilterChange = useCallback((key: keyof PivotFilters, value: string) => {
+    // Same object when unchanged so the summary effect doesn't refetch needlessly.
+    setPivotFilters(prev => (prev[key] === value ? prev : { ...prev, [key]: value }));
+  }, []);
+
+  const fetchSummary = useCallback((filters: PivotFilters) => {
+    setSummaryLoading(true);
+    const qs = new URLSearchParams();
+    if (filters.from)     qs.set('from',     filters.from);
+    if (filters.to)       qs.set('to',       filters.to);
+    if (filters.division) qs.set('division', filters.division);
+    if (filters.market)   qs.set('market',   filters.market);
+    if (filters.includeTelquote === 'yes') qs.set('telquote', '1'); // else excluded (default)
+    void fetch(`/api/offers/summary${qs.toString() ? `?${qs}` : ''}`)
+      .then(r => r.json())
+      .then((data: { ok?: boolean; rows?: Record<string, unknown>[] }) => {
+        if (data.ok) setSummaryData(data.rows ?? []);
+      })
+      .catch(() => { /* silent */ })
+      .finally(() => setSummaryLoading(false));
+  }, []);
+
+  // Fetch (or refetch) the summary when pivot opens and whenever pre-filters change while open.
+  useEffect(() => {
+    if (pivotMode) fetchSummary(pivotFilters);
+  }, [pivotMode, pivotFilters, fetchSummary]);
+
+  // Load Division/Market dropdown options once, the first time pivot mode is opened.
+  useEffect(() => {
+    if (!pivotMode || pivotOptionsLoadedRef.current) return;
+    pivotOptionsLoadedRef.current = true;
+    void fetch('/api/offers/options')
+      .then(r => r.json())
+      .then((data: { ok?: boolean; salesDivisions?: string[]; markets?: MarketOption[] }) => {
+        if (data.ok) {
+          setPivotOptions({ salesDivisions: data.salesDivisions ?? [], markets: data.markets ?? [] });
+        }
+      })
+      .catch(() => { /* silent */ });
+  }, [pivotMode]);
+
+  // Markets narrowed to the selected division (mirrors the offered-products pre-filter bar).
+  const filteredPivotMarkets = pivotFilters.division
+    ? pivotOptions.markets.filter(m => m.division === pivotFilters.division)
+    : pivotOptions.markets;
+
+  // Close the date-range popover when clicking outside it.
+  useEffect(() => {
+    if (!showDateRange) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (dateRangeRef.current && !dateRangeRef.current.contains(e.target as Node)) {
+        setShowDateRange(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [showDateRange]);
+
+  const clearDateRange = useCallback(() => {
+    handlePivotFilterChange('from', '');
+    handlePivotFilterChange('to', '');
+  }, [handlePivotFilterChange]);
+
+  const dateRangeLabel = pivotFilters.from && pivotFilters.to
+    ? `${isoToDMY(pivotFilters.from)} – ${isoToDMY(pivotFilters.to)}`
+    : pivotFilters.from
+      ? `From ${isoToDMY(pivotFilters.from)}`
+      : pivotFilters.to
+        ? `Until ${isoToDMY(pivotFilters.to)}`
+        : 'Offer date: All';
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     if (!api) return;
@@ -676,6 +805,40 @@ export default function OffersClient() {
     void submit();
   }, []);
 
+  // Excel-style pivot field list (mirrors OfferDetailsClient.summaryColDefs, but at offer-header
+  // grain). Default layout: rows by Customer, columns by Status, values Sum of Total Net + Count
+  // of Offers. Every field is draggable in the columns tool panel (rows / column labels / values).
+  const summaryColDefs = useMemo((): ColDef[] => {
+    const dimension: ColDef = { enableRowGroup: true, enablePivot: true, filter: 'agSetColumnFilter' };
+    const euro = (p: { value: unknown }) =>
+      p.value == null || p.value === '' ? '' : `${formatNumber(p.value)} €`;
+    const measure: ColDef = { enableValue: true, type: 'numericColumn', width: 150, filter: 'agNumberColumnFilter' };
+    return [
+      // ── Dimensions: drag into Rows or Column Labels ──
+      { ...dimension, field: 'CustomerName',           headerName: 'Customer',          rowGroup: true },
+      { ...dimension, field: 'CustomerGroup',          headerName: 'Customer Group' },
+      { ...dimension, field: 'OfferStatus',            headerName: 'Status',            pivot: true },
+      { ...dimension, field: 'SalesPerson',            headerName: 'Sales Person' },
+      { ...dimension, field: 'SalesCreationPerson',    headerName: 'Sales Creation Person' },
+      { ...dimension, field: 'SalesDivision',          headerName: 'Sales Division' },
+      { ...dimension, field: 'SalesMarket',            headerName: 'Market' },
+      { ...dimension, field: 'PricingPolicyName',      headerName: 'Pricing Policy' },
+      { ...dimension, field: 'ERPFWCProjectShortName', headerName: 'FWC Project' },
+      { ...dimension, field: 'ERPProjectCode',         headerName: 'ERP Project Code' },
+      { ...dimension, field: 'Title',                  headerName: 'Title' },
+      { ...dimension, field: 'OfferContact',           headerName: 'Contact' },
+      { ...dimension, field: 'FromTelquote',           headerName: 'From TelQuote' },
+      { ...dimension, field: 'OfferID',                headerName: 'Offer ID' },
+      { ...dimension, field: 'OfferDate',              headerName: 'Offer Date' },
+      { ...dimension, field: 'CreatedOn',              headerName: 'Created On' },
+      { ...dimension, field: 'ModifiedOnAny',          headerName: 'Last Modified' },
+      // ── Measures: drag into Values ──
+      { ...measure, field: 'OfferCount',  headerName: 'Offer Count', aggFunc: 'sum', width: 130 },
+      { ...measure, field: 'TotalNet',    headerName: 'Total Net',   aggFunc: 'sum', valueFormatter: euro },
+      { ...measure, field: 'Probability', headerName: 'Probability', valueFormatter: (p) => formatPercent(p.value) },
+    ];
+  }, []);
+
   const columnDefs: ColDef[] = useMemo(() => [
     { field: 'ERPProjectCode', headerName: 'ERP Project Code', filter: 'agTextColumnFilter' },
     { field: 'ERPFWCProjectShortName', headerName: 'ERP FWC Project', filter: 'agTextColumnFilter' },
@@ -856,11 +1019,106 @@ export default function OffersClient() {
     },
   ], [OfferVersionCell]);
 
+  const pivotModeButton = (
+    <button
+      type="button"
+      className={`${pivotMode ? styles.groupBtnActive : styles.groupBtn} page-header-button`}
+      onClick={togglePivotMode}
+    >
+      Pivot Mode
+    </button>
+  );
+
+  // Pre-filter bar shown in place of the normal header buttons while pivot mode is open.
+  const pivotFilterControls = (
+    <div className={styles.headerActions}>
+      {/* Single dropdown that opens a From/To popover (like AG Grid's in-range date filter). */}
+      <div className={styles.dateRangeCombo} ref={dateRangeRef}>
+        <button
+          type="button"
+          className={`${styles.groupSelect} ${styles.dateRangeTrigger} page-header-button`}
+          onClick={() => setShowDateRange(v => !v)}
+          aria-haspopup="dialog"
+          aria-expanded={showDateRange}
+        >
+          {dateRangeLabel}
+        </button>
+        {showDateRange && (
+          <div className={styles.dateRangePanel}>
+            <label className={styles.dateRangeRow}>
+              <span>From</span>
+              <input
+                type="date"
+                value={pivotFilters.from}
+                max={pivotFilters.to || undefined}
+                onChange={e => handlePivotFilterChange('from', e.target.value)}
+                aria-label="Offer date from"
+              />
+            </label>
+            <label className={styles.dateRangeRow}>
+              <span>To</span>
+              <input
+                type="date"
+                value={pivotFilters.to}
+                min={pivotFilters.from || undefined}
+                onChange={e => handlePivotFilterChange('to', e.target.value)}
+                aria-label="Offer date to"
+              />
+            </label>
+            <div className={styles.dateRangeActions}>
+              <button type="button" onClick={clearDateRange}>Clear</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <select
+        className={`${styles.groupSelect} page-header-button`}
+        value={pivotFilters.division}
+        onChange={e => {
+          handlePivotFilterChange('division', e.target.value);
+          // Clear market when division changes (market list is division-scoped).
+          handlePivotFilterChange('market', '');
+        }}
+        aria-label="Sales Division"
+      >
+        <option value="">Division: All</option>
+        {pivotOptions.salesDivisions.map(v => <option key={v} value={v}>{v}</option>)}
+      </select>
+
+      <select
+        className={`${styles.groupSelect} page-header-button`}
+        value={pivotFilters.market}
+        onChange={e => handlePivotFilterChange('market', e.target.value)}
+        aria-label="Market"
+      >
+        <option value="">Market: All</option>
+        {filteredPivotMarkets.map(m => (
+          <option key={`${m.market}|${m.division}`} value={m.market}>
+            {m.division ? `${m.market} - ${m.division}` : m.market}
+          </option>
+        ))}
+      </select>
+
+      <select
+        className={`${styles.groupSelect} page-header-button`}
+        value={pivotFilters.includeTelquote}
+        onChange={e => handlePivotFilterChange('includeTelquote', e.target.value)}
+        aria-label="Include TelQuote offers"
+      >
+        <option value="no">TelQuote: Excluded</option>
+        <option value="yes">TelQuote: Included</option>
+      </select>
+    </div>
+  );
+
   return (
     <main className={styles.page}>
         <PageHeader
           title="Offers"
+          afterSearchActions={pivotModeButton}
           rightActions={
+            pivotMode ? pivotFilterControls : (
             <div className={styles.headerActions}>
               {selectedUser?.label ? (
                 <button
@@ -880,6 +1138,7 @@ export default function OffersClient() {
                 Create Offer
               </button>
             </div>
+            )
           }
         >
           <GridQuickSearchProvider>
@@ -889,7 +1148,10 @@ export default function OffersClient() {
                 onClear={handleClearCustomerFilter}
               />
             ) : null}
-            <div className={`${styles.gridFrame} offer-products-grid`}>
+            <div
+              className={`${styles.gridFrame} offer-products-grid`}
+              style={pivotMode ? { display: 'none' } : undefined}
+            >
               <AgGridAll
                 endpoint="/api/offers"
                 columnDefs={columnDefs}
@@ -905,6 +1167,35 @@ export default function OffersClient() {
                 rowDeselection
               />
             </div>
+            {pivotMode && (
+              <div
+                className={`${styles.gridFrame} offer-products-grid`}
+                style={{ opacity: summaryLoading && summaryData ? 0.65 : 1, transition: 'opacity 120ms ease' }}
+              >
+                {!summaryData ? (
+                  <div className={styles.loading}>Loading summary…</div>
+                ) : (
+                  <AgGridSummary
+                    containerClassName={styles.pivotShell}
+                    columnDefs={summaryColDefs}
+                    rowData={summaryData}
+                    pivotMode
+                    groupDisplayType="multipleColumns"
+                    groupHideOpenParents
+                    groupDefaultExpanded={1}
+                    suppressAggFuncInHeader
+                    pivotRowTotals="after"
+                    grandTotalRow="bottom"
+                    groupTotalRow={(params) => (params.node.level === 0 ? 'bottom' : undefined)}
+                    autoGroupColumnDef={{ minWidth: 170, resizable: true }}
+                    sideBar={{
+                      toolPanels: ['columns', 'filters'],
+                      defaultToolPanel: 'columns',
+                    }}
+                  />
+                )}
+              </div>
+            )}
           </GridQuickSearchProvider>
         </PageHeader>
         <OfferStatusHistoryModal

@@ -59,7 +59,7 @@ import { pushCellEditUndo } from '../../../lib/undoHelpers';
 import { showConfirmDialog, showMultiChoiceDialog, showEnhancePreviewDialog, type EnhancePreviewRow } from '../../../lib/confirm';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselectedRowIds, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
-import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption, isNonPrintableComment, isOfferProductService } from '../../../lib/offerProductRows';
+import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption, isNonPrintableComment, isOfferProductService, isUnlinkedOfferProductRow } from '../../../lib/offerProductRows';
 import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
 import { captureAndPinScroll } from '../../../lib/scrollPreservation';
 import MatchRequestedProductsModal, {
@@ -2357,6 +2357,13 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       ) {
         classes.push('offer-row--option-comment');
       }
+    }
+    // Light-grey any row that doesn't function as a real catalog product: a product-looking
+    // or free-text row with no catalog ProductID (e.g. imported TelQuote lines). Genuinely
+    // linked products keep the default white; categories/comments/services keep their colours.
+    if (isUnlinkedOfferProductRow(params.data)) {
+      if (rowType === 'unknown') classes.push('offer-row');
+      classes.push('offer-row--unlinked');
     }
     const shiftedId = shiftedAnchorIdRef.current;
     if (shiftedId != null) {
@@ -5280,20 +5287,32 @@ const requestedColumnDefsMap = useMemo(
       ? (api.getSelectedNodes() as Array<RowNode<Record<string, unknown>>>)
       : [];
     const hasSelection = selectedNodesForCopy.length > 0;
+    // Unlinked rows (imported / free-text lines with no catalog ProductID) cannot be copied —
+    // they have no catalog link to recreate on paste. Only catalog-linked rows are copyable.
+    const copyableSelectedCount = selectedNodesForCopy
+      .filter((node) => node.data != null && !isUnlinkedOfferProductRow(node.data))
+      .length;
+    const copyRowsDisabled = copyableSelectedCount === 0;
     const copyRowsItem: MenuItemDef = {
       name: 'Copy Rows',
       icon: copyRowsMenuIcon,
-      disabled: !hasSelection,
-      tooltip: hasSelection ? undefined : 'Select rows to copy first',
+      disabled: copyRowsDisabled,
+      tooltip: !hasSelection
+        ? 'Select rows to copy first'
+        : (copyRowsDisabled
+          ? 'Imported rows without a catalog product can’t be copied'
+          : undefined),
       action: () => {
         const selectedData = selectedNodesForCopy
           .filter((node) => node.data != null)
           .map((node) => node.data as Record<string, unknown>);
-        if (selectedData.length === 0) {
-          showToastMessage('No rows selected to copy.', 'error');
+        const skippedUnlinked = selectedData.filter((row) => isUnlinkedOfferProductRow(row)).length;
+        const copyableData = selectedData.filter((row) => !isUnlinkedOfferProductRow(row));
+        if (copyableData.length === 0) {
+          showToastMessage('Imported rows without a catalog product can’t be copied.', 'error');
           return;
         }
-        const clipboardRows = selectedData.map(mapRowToClipboardRow);
+        const clipboardRows = copyableData.map(mapRowToClipboardRow);
         clipboardRows.sort((a, b) =>
           a.treeOrdering.localeCompare(b.treeOrdering, undefined, { numeric: true }),
         );
@@ -5303,7 +5322,12 @@ const requestedColumnDefsMap = useMemo(
           rows: clipboardRows,
         };
         writeClipboard(clipboard);
-        showToastMessage(`Copied ${clipboardRows.length} row(s) to clipboard.`, 'success');
+        showToastMessage(
+          skippedUnlinked > 0
+            ? `Copied ${clipboardRows.length} row(s) to clipboard; skipped ${skippedUnlinked} imported row(s) without a catalog product.`
+            : `Copied ${clipboardRows.length} row(s) to clipboard.`,
+          'success',
+        );
       },
     };
     const copyWithSubmenu: MenuItemDef = {

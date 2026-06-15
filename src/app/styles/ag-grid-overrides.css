@@ -138,12 +138,14 @@
   background-color: rgba(0,0,0,0.04) !important;
 }
 
-/* Offer products grid: match final hover colors to avoid dark flash. */
-.offer-products-grid .ag-row-hover .ag-cell {
+/* Offer products grid: match final hover colors to avoid dark flash.
+   (:not(.offer-row--unlinked) so imported/unlinked rows keep their own grey hover instead of
+   lightening to #f5f5f5 — see the unlinked block at the end of this file.) */
+.offer-products-grid .ag-row-hover:not(.offer-row--unlinked) .ag-cell {
   background-color: #f5f5f5 !important;
 }
 
-.offer-products-grid .ag-row-hover.offer-row--product .ag-cell {
+.offer-products-grid .ag-row-hover.offer-row--product:not(.offer-row--unlinked) .ag-cell {
   background-color: #f5f5f5 !important;
 }
 
@@ -179,7 +181,7 @@
   background-color: #fed7aa !important;
 }
 
-.offer-products-grid .ag-row-hover:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category) .ag-cell {
+.offer-products-grid .ag-row-hover:not(.offer-row--product):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category):not(.offer-row--unlinked) .ag-cell {
   background-color: #f5f5f5 !important;
 }
 
@@ -498,6 +500,14 @@
 .offer-products-grid .ag-row.offer-row--printable-service      { background-color: #fef9c3 !important; }
 .offer-products-grid .ag-row.offer-row--nonprintable-service   { background-color: #ffedd5 !important; }
 .offer-products-grid .ag-row.offer-row--option                 { background-color: #e9d8fd !important; }
+/* Rows that don't work as a real catalog product (no ProductID) — e.g. imported TelQuote
+   text lines. A clearly-visible light grey (cooler tone than the neutral category grey). */
+.offer-products-grid .ag-row.offer-row--unlinked               { background-color: #e8ebef !important; }
+/* Row-level hover — only shows at the cell-border gaps (AG Grid paints the visible background on
+   the cells, not the row); the cell-level hover rule below does the real work. Both :hover and
+   .ag-row-hover variants so it fires regardless of how the grid toggles hover. */
+.offer-products-grid .ag-row.offer-row--unlinked:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover,
+.offer-products-grid .ag-row.offer-row--unlinked.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) { background-color: #ccd5df !important; }
 
 /* Selected state — match the row background to the selected cell background */
 .offer-products-grid .ag-row.offer-row--category.ag-row-selected,
@@ -653,9 +663,11 @@
   font-style: italic !important;
 }
 
-/* Hover state for product rows (only when not selected) - using :hover pseudo-class */
-.offer-products-grid .ag-row.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell,
-.offer-products-grid .ag-row-hover.offer-row--product:not(.offer-row--option):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell {
+/* Hover state for product rows (only when not selected) - using :hover pseudo-class.
+   :not(.offer-row--unlinked) so imported/unlinked product rows keep their grey hover
+   (set in the unlinked block at the end of this file) instead of lightening to #f5f5f5. */
+.offer-products-grid .ag-row.offer-row--product:not(.offer-row--option):not(.offer-row--unlinked):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell,
+.offer-products-grid .ag-row-hover.offer-row--product:not(.offer-row--option):not(.offer-row--unlinked):not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell {
   background-color: #f5f5f5 !important;
 }
 
@@ -664,6 +676,7 @@
   padding-top: 0 !important;
   padding-bottom: 0 !important;
 }
+
 
 /* Keep category-row content centered without breaking AG Grid control wrappers
    (selection checkbox / row-drag handle). */
@@ -792,4 +805,41 @@
 
 .offer-products-grid .ag-cell.offer-products-grid__cell--negative-margin.ag-cell-inline-editing input {
   color: #dc2626 !important;
+}
+
+/* === Imported / unlinked rows (no catalog ProductID): light grey on EVERY cell, resting + hover.
+   Placed last + high specificity so it beats the product (#ffffff, ~line 608), pinned, value and
+   pricelist cell rules that otherwise leave some cells white. The :not() guards leave
+   selected / range-selected / context-menu rows their normal selection highlight. */
+/* Resting: paint every cell the light grey directly (AG Grid shows the cell background, not the
+   row's). The 3× :not() lifts this to specificity 7 so it beats the product (#fff), pinned and
+   pricelist cell rules. */
+.offer-products-grid .ag-row.offer-row--unlinked:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell {
+  background-color: #e8ebef !important;
+}
+/* Hover: darker grey on every cell. Carries BOTH a ':hover' variant and a '.ag-row-hover' variant
+   (mirroring the proven category hover at ~line 693) — AG Grid does not reliably stamp
+   .ag-row-hover here, so the :hover variant is what actually fires; both land at specificity 8,
+   one above the resting rule, so the hover colour wins. This was the missing piece in every prior
+   attempt (they used .ag-row-hover only). */
+.offer-products-grid .ag-row.offer-row--unlinked:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell,
+.offer-products-grid .ag-row.offer-row--unlinked.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell {
+  background-color: #ccd5df !important;
+}
+
+/* On unlinked rows, suppress the red "negative-margin" warning highlight (the one class used for
+   zero-qty, negative margin AND negative discount) so these archive rows stay uniform grey — no
+   red background, no white/red font. The :not() padding (all always-true for an unlinked row)
+   lifts specificity past the warning rules (which reach ~0,8,0 in their selected/hover states). */
+.offer-products-grid .ag-row.offer-row--unlinked:not(.offer-row--category):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service) .ag-cell.offer-products-grid__cell--negative-margin,
+.offer-products-grid .ag-row.offer-row--unlinked:not(.offer-row--category):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service) .ag-cell.offer-products-grid__cell--negative-margin .ag-cell-value {
+  background-color: #e8ebef !important;
+  color: #181d1f !important;
+}
+.offer-products-grid .ag-row.offer-row--unlinked.ag-row-hover:not(.offer-row--category):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service) .ag-cell.offer-products-grid__cell--negative-margin,
+.offer-products-grid .ag-row.offer-row--unlinked.ag-row-hover:not(.offer-row--category):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service) .ag-cell.offer-products-grid__cell--negative-margin .ag-cell-value,
+.offer-products-grid .ag-row.offer-row--unlinked:hover:not(.offer-row--category):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service) .ag-cell.offer-products-grid__cell--negative-margin,
+.offer-products-grid .ag-row.offer-row--unlinked:hover:not(.offer-row--category):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service) .ag-cell.offer-products-grid__cell--negative-margin .ag-cell-value {
+  background-color: #ccd5df !important;
+  color: #181d1f !important;
 }

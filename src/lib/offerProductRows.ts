@@ -103,6 +103,21 @@ export const isOfferProductOption = (row: OfferProductRow): boolean => {
   return isTruthy((row as { IsOption?: unknown }).IsOption);
 };
 
+/**
+ * A row that looks like a product (or is free-text) but has no real catalog link —
+ * i.e. no positive ProductID. These render light grey ('offer-row--unlinked') and are
+ * treated as non-catalog archive rows (e.g. imported TelQuote lines). Categories,
+ * comments and services are never "unlinked".
+ */
+export const isUnlinkedOfferProductRow = (row: OfferProductRow): boolean => {
+  if (!row || typeof row !== 'object') return false;
+  const type = resolveOfferProductRowType(row);
+  if (type !== 'product' && type !== 'unknown') return false;
+  const productIdRaw = (row as { ProductID?: unknown }).ProductID;
+  const hasCatalogLink = productIdRaw != null && Number(productIdRaw) > 0;
+  return !hasCatalogLink;
+};
+
 export const describeOfferProductRowType = (type: OfferProductRowType | null | undefined) => {
   switch (type) {
     case 'category':

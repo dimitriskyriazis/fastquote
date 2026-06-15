@@ -164,3 +164,153 @@
 .gridFrame :global(.ag-theme-quartz .ag-cell) {
   transition: background-color 140ms ease;
 }
+
+/* ── Pivot mode ── */
+/* Re-enable the columns-panel drop zones (Row Groups / Values / Column Labels) for the pivot
+   grid — AgGridAll.module.css hides .ag-column-drop* globally. */
+.pivotShell :global(.ag-column-drop-wrapper),
+.pivotShell :global(.ag-column-drop),
+.pivotShell :global(.ag-column-drop-vertical),
+.pivotShell :global(.ag-column-drop-vertical-title-bar) {
+  display: flex !important;
+}
+
+.pivotShell :global(.ag-column-drop-cell),
+.pivotShell :global(.ag-column-drop-cell-button) {
+  display: inline-flex !important;
+}
+
+.pivotShell :global(.ag-column-drop-empty-message),
+.pivotShell :global(.ag-column-drop-vertical-empty-message) {
+  display: block !important;
+}
+
+/* Pivot Mode toggle button – inactive */
+.groupBtn {
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  color: #0f172a;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Pivot Mode toggle button – active */
+.groupBtnActive {
+  border: 1px solid #3b82f6;
+  background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.25);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.groupBtnActive:hover,
+.groupBtnActive:focus-visible {
+  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%) !important;
+  outline: none;
+}
+
+/* Pivot pre-filter bar: offer-date range dropdown + division/market selects */
+.groupSelect {
+  appearance: none;
+  -webkit-appearance: none;
+  /* arrow via inline SVG background */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23374151' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-color: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  color: #0f172a;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+  padding-right: 30px !important;
+  cursor: pointer;
+  /* Match page-header-button font exactly */
+  font-size: 0.8125rem;
+  font-family: inherit;
+  font-weight: 500;
+}
+
+.groupSelect:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+/* Offer-date range: a single dropdown trigger + a From/To popover panel */
+.dateRangeCombo {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.dateRangeTrigger {
+  text-align: left;
+  min-width: 160px;
+}
+
+.dateRangePanel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 200;
+  min-width: 230px;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dateRangeRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.dateRangeRow input {
+  border: 1px solid rgba(15, 23, 42, 0.2);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 0.8125rem;
+  font-family: inherit;
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.dateRangeRow input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.dateRangeActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.dateRangeActions button {
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 5px 14px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.dateRangeActions button:hover {
+  background: #eef2f7;
+}
