@@ -91,16 +91,40 @@ type ExecutionResult = {
   order: { findocId: number; finCode: string } | null;
 };
 
-type WizardStepId = 'resolve-customer' | 'check-brands' | 'match-products' | 'categorize-products' | 'prepare-summary' | 'execute';
+type WizardStepId = 'resolve-customer' | 'check-brands' | 'match-products' | 'compare-products' | 'categorize-products' | 'prepare-summary' | 'execute';
 
 const STEPS: { id: WizardStepId; label: string }[] = [
   { id: 'resolve-customer', label: 'Customer' },
   { id: 'check-brands', label: 'Brands' },
   { id: 'match-products', label: 'Products' },
+  { id: 'compare-products', label: 'Compare' },
   { id: 'categorize-products', label: 'Categories' },
   { id: 'prepare-summary', label: 'Summary' },
   { id: 'execute', label: 'Execute' },
 ];
+
+// One comparison row per order line: FastQuote offer values vs. the actual
+// SoftOne item-master (MTRL) values it was matched to. The Σχόλια the user
+// types becomes the SoftOne line comment (MTRLINES.COMMENTS) at execute time.
+type CompareRow = {
+  lineId: number;
+  productId: number;
+  fq: {
+    brand: string | null;
+    partNo: string | null;
+    model: string | null;
+    description: string | null;
+    comment: string | null;
+  };
+  s1: {
+    linked: boolean;
+    position: number | null;
+    code: string | null;
+    brand: string | null;
+    partNo: string | null;
+    description: string | null;
+  };
+};
 
 // ── Props ──────────────────────────────────────────────────────────────────────
 
@@ -164,6 +188,12 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   const [matchComplete, setMatchComplete] = useState(false);
   const [showMatchHint, setShowMatchHint] = useState(false);
   const [showCategorizeHint, setShowCategorizeHint] = useState(false);
+
+  // Step: Compare (FastQuote ↔ SoftOne). lineComments is keyed by OfferDetails.ID
+  // (one per order line) and holds the editable Σχόλια sent to SoftOne.
+  const [compareRows, setCompareRows] = useState<CompareRow[]>([]);
+  const [compareComplete, setCompareComplete] = useState(false);
+  const [lineComments, setLineComments] = useState<Map<number, string>>(new Map());
 
   // Manual Soft1 search modal (for unmatched products)
   type ErpMatch = ProductNeedsSelection['matches'][number];
@@ -394,6 +424,21 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     setMatchComplete(true);
   }, [callStep]);
 
+  const runCompareProducts = useCallback(async () => {
+    const matchResults = {
+      autoMatched: autoMatched.map(m => ({ productId: m.productId, MTRL: m.MTRL, CODE: m.CODE })),
+      userConfirmedCreate: confirmedCreates.map(productId => ({ productId })),
+      userSelected: Array.from(userSelections.entries())
+        .filter(([, match]) => match.MTRL !== CREATE_NEW_SENTINEL)
+        .map(([productId, match]) => ({ productId, MTRL: match.MTRL, CODE: match.CODE })),
+      skipped: skipped.map(s => ({ productId: s.productId })),
+    };
+    const result = await callStep('compare-products', { matchResults });
+    if (!result) return;
+    setCompareRows(result.rows ?? []);
+    setCompareComplete(true);
+  }, [callStep, autoMatched, confirmedCreates, userSelections, skipped]);
+
   const runPrepareSummary = useCallback(async () => {
     const matchResults = {
       autoMatched: autoMatched.map(m => ({ productId: m.productId, MTRL: m.MTRL, CODE: m.CODE })),
@@ -409,10 +454,11 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       resolvedCustomer,
       missingBrands,
       matchResults,
+      lineComments: Array.from(lineComments.entries()).map(([lineId, comment]) => ({ lineId, comment })),
     });
     if (!result) return;
     setSummary(result);
-  }, [callStep, resolvedCustomer, missingBrands, autoMatched, confirmedCreates, userSelections, skipped]);
+  }, [callStep, resolvedCustomer, missingBrands, autoMatched, confirmedCreates, userSelections, skipped, lineComments]);
 
   const runExecute = useCallback(async () => {
     const matchResults = {
@@ -466,10 +512,11 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       brandResolutions,
       matchResults,
       categorizationSummary,
+      lineComments: Array.from(lineComments.entries()).map(([lineId, comment]) => ({ lineId, comment })),
     });
     if (!result) return;
     setExecutionResult(result);
-  }, [callStep, resolvedCustomer, missingBrands, resolvedBrandMap, autoMatched, confirmedCreates, userSelections, skipped, categorizedProducts]);
+  }, [callStep, resolvedCustomer, missingBrands, resolvedBrandMap, autoMatched, confirmedCreates, userSelections, skipped, categorizedProducts, lineComments]);
 
   // ── Manual-search Brand normalization ────────────────────────────────────
   // When the Soft1 brand list finishes loading, normalize the Brand input to
@@ -497,6 +544,8 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       runCheckBrands();
     } else if (currentStep.id === 'match-products' && !matchComplete) {
       runMatchProducts();
+    } else if (currentStep.id === 'compare-products' && !compareComplete) {
+      runCompareProducts();
     } else if (currentStep.id === 'categorize-products' && !categorizeComplete) {
       runCategorizeProducts();
     } else if (currentStep.id === 'prepare-summary' && !summary) {
@@ -533,6 +582,9 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       case 'match-products':
         // Must be complete AND all needsSelection items must have a user selection
         return matchComplete && needsSelection.every(ns => userSelections.has(ns.productId));
+      case 'compare-products':
+        // Comparison/Σχόλια editing is optional — only gate on the data being loaded.
+        return compareComplete;
       case 'prepare-summary':
         return summary !== null;
       case 'execute':
@@ -612,9 +664,10 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     else if (currentStep.id === 'categorize-products') runCategorizeProducts();
     else if (currentStep.id === 'check-brands') runCheckBrands();
     else if (currentStep.id === 'match-products') runMatchProducts();
+    else if (currentStep.id === 'compare-products') runCompareProducts();
     else if (currentStep.id === 'prepare-summary') runPrepareSummary();
     else if (currentStep.id === 'execute') runExecute();
-  }, [currentStep, runResolveCustomer, runCategorizeProducts, runCheckBrands, runMatchProducts, runPrepareSummary, runExecute]);
+  }, [currentStep, runResolveCustomer, runCategorizeProducts, runCheckBrands, runMatchProducts, runCompareProducts, runPrepareSummary, runExecute]);
 
   // ── Confirm label ────────────────────────────────────────────────────────
 
@@ -1285,6 +1338,88 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     );
   };
 
+  const renderCompareStep = () => {
+    if (isLoading) return renderLoading('Loading the matched Soft1 items...');
+    if (!compareComplete) return null;
+
+    if (compareRows.length === 0) {
+      return <div className={styles.noProducts}>No matched products to compare.</div>;
+    }
+
+    const setComment = (lineId: number, value: string) => {
+      setLineComments(prev => {
+        const next = new Map(prev);
+        next.set(lineId, value);
+        return next;
+      });
+    };
+
+    return (
+      <>
+        <p className={styles.sectionTitle}>FastQuote ↔ Soft1 — review and set line comments</p>
+        <div className={styles.compareHint}>
+          The Soft1 columns are the real item (MTRL) values. Edit the yellow <strong>Comment</strong> to
+          set the comment on each Soft1 order line — blank means no comment. This does <strong>not</strong> change
+          the FastQuote offer comment.
+        </div>
+        <div className={styles.compareScroll}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th className={styles.compareGroupFq} colSpan={5}>Our Offer (FastQuote)</th>
+                <th className={`${styles.compareGroupS1} ${styles.compareDivider}`} colSpan={7}>Item in SoftOne</th>
+              </tr>
+              <tr>
+                <th>Brand</th>
+                <th>PartNo</th>
+                <th>Model</th>
+                <th>Description</th>
+                <th>Comment</th>
+                <th className={styles.compareDivider}>#</th>
+                <th></th>
+                <th>Code</th>
+                <th>Brand</th>
+                <th>Part No</th>
+                <th>Description</th>
+                <th>Comment</th>
+              </tr>
+            </thead>
+            <tbody>
+              {compareRows.map(row => (
+                <tr key={row.lineId}>
+                  <td>{row.fq.brand ?? '—'}</td>
+                  <td>{row.fq.partNo ?? '—'}</td>
+                  <td>{row.fq.model ?? '—'}</td>
+                  <td className={styles.compareWrap} title={row.fq.description ?? ''}>{row.fq.description ?? '—'}</td>
+                  <td className={styles.compareWrap} title={row.fq.comment ?? ''}>{row.fq.comment ?? ''}</td>
+                  <td className={styles.compareDivider}>{row.s1.position ?? ''}</td>
+                  <td>
+                    <span className={`${styles.badge} ${row.s1.linked ? styles.badgeMatched : styles.badgeNew}`}>
+                      {row.s1.linked ? 'Linked' : 'New'}
+                    </span>
+                  </td>
+                  <td>{row.s1.code ?? '—'}</td>
+                  <td>{row.s1.brand ?? '—'}</td>
+                  <td>{row.s1.partNo ?? '—'}</td>
+                  <td className={styles.compareWrap} title={row.s1.description ?? ''}>{row.s1.description ?? '—'}</td>
+                  <td>
+                    <input
+                      type="text"
+                      className={styles.scholiaInput}
+                      value={lineComments.get(row.lineId) ?? ''}
+                      placeholder="Comment…"
+                      onChange={e => setComment(row.lineId, e.target.value)}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    );
+  };
+
   const renderSummaryStep = () => {
     if (isLoading) return renderLoading('Preparing order summary...');
     if (!summary) return null;
@@ -1487,6 +1622,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       case 'categorize-products': return renderCategorizeStep();
       case 'check-brands': return renderBrandsStep();
       case 'match-products': return renderMatchProductsStep();
+      case 'compare-products': return renderCompareStep();
       case 'prepare-summary': return renderSummaryStep();
       case 'execute': return renderExecuteStep();
       default: return null;
@@ -1588,7 +1724,8 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
           return undefined;
         })()}
         cardClassName={lookupStyles.cardWide}
-        cardStyle={{ width: 'min(1500px, calc(100% - 32px))', maxWidth: '95vw', maxHeight: '85vh' }}
+        cardStyle={{ width: '99vw', maxWidth: '99vw', height: '96vh', maxHeight: '96vh' }}
+        bodyClassName={styles.wizardBody}
       >
         {stepBar}
         <div className={styles.stepContent}>

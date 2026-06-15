@@ -59,7 +59,7 @@ import { pushCellEditUndo } from '../../../lib/undoHelpers';
 import { showConfirmDialog, showMultiChoiceDialog, showEnhancePreviewDialog, type EnhancePreviewRow } from '../../../lib/confirm';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselectedRowIds, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
-import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption, isOfferProductService } from '../../../lib/offerProductRows';
+import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption, isNonPrintableComment, isOfferProductService } from '../../../lib/offerProductRows';
 import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
 import { captureAndPinScroll } from '../../../lib/scrollPreservation';
 import MatchRequestedProductsModal, {
@@ -2348,6 +2348,15 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       if (rowType === 'product' && isOfferProductOption(params.data)) {
         classes.push('offer-row--option');
       }
+      // Comment options keep their printable/non-printable row colour (the
+      // purple option marker lives on the Item No cell only, so the blue/red
+      // signal isn't lost) but their text is italicised to read as optional.
+      if (
+        (rowType === 'printable-comment' || rowType === 'non-printable-comment')
+        && isOfferProductOption(params.data)
+      ) {
+        classes.push('offer-row--option-comment');
+      }
     }
     const shiftedId = shiftedAnchorIdRef.current;
     if (shiftedId != null) {
@@ -2422,7 +2431,12 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       ? (displayOrderingMapRef.current.get(idKey) ?? formatDisplayTreeOrdering(rawValue))
       : formatDisplayTreeOrdering(rawValue);
     if (display && isOfferProductOption(rowData)) {
-      display = `${display}o`;
+      // Non-printable comments normally render a "…np" suffix; as an option
+      // they read "…no" (e.g. "1no") rather than "1npo". Everything else
+      // (products, printable comments) just gets a trailing "o" (e.g. "1o").
+      display = isNonPrintableComment(rowData) && display.endsWith('np')
+        ? `${display.slice(0, -2)}no`
+        : `${display}o`;
     }
     const rowHoldMarginRaw = (rowData as { PricingHoldMarginOnCost?: unknown } | null | undefined)?.PricingHoldMarginOnCost;
     const rowHoldMarginExplicit = rowHoldMarginRaw === true || rowHoldMarginRaw === 1 ? true
@@ -5521,8 +5535,14 @@ const requestedColumnDefsMap = useMemo(
 
     const rowHasRequestedFields = hasRequestedPseudoFields(rowData);
     const rowIsActualProduct = isOfferProductProduct(rowData);
+    // Comments and services aren't real products, so don't offer "Create New
+    // Product" for them even though they can carry requested pseudo-fields.
+    const rowIsCommentOrService = isOfferProductComment(rowData) || isOfferProductService(rowData);
+    // A row already matched to a product (assigned ProductID) is a product row
+    // even if its part/model columns are blank — never offer to create one.
+    const rowHasAssignedProduct = resolvedProductId != null;
 
-    if (rowHasRequestedFields && !rowIsActualProduct) {
+    if (rowHasRequestedFields && !rowIsActualProduct && !rowIsCommentOrService && !rowHasAssignedProduct) {
       const requestedBrand = normalizeRequestedLookupValue(
         (rowData as { RequestedBrand?: unknown }).RequestedBrand ?? null,
       );
@@ -6087,7 +6107,8 @@ const requestedColumnDefsMap = useMemo(
     // --- "Mark/Unmark Option" for product rows (supports multi-selection) ---
     const optionTargetNodes = relevantNodes.filter((n) => {
       const d = n.data;
-      if (!isOfferProductProduct(d)) return false;
+      // Products and comments (printable + non-printable) can be options.
+      if (!isOfferProductProduct(d) && !isOfferProductComment(d)) return false;
       const id = normalizeOfferDetailId((d as { OfferDetailID?: unknown })?.OfferDetailID ?? null);
       return id != null;
     });

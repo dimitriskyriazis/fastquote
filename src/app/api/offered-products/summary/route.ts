@@ -14,8 +14,11 @@ const fromClause = `
   FROM dbo.OfferDetails od
     INNER JOIN dbo.Offer o ON od.OfferID = o.ID
     INNER JOIN dbo.Customers c ON o.CustomerID = c.ID
+    LEFT JOIN dbo.CustomerGroups cg ON c.CustomerGroupID = cg.ID
     LEFT JOIN dbo.Brands b ON od.BrandID = b.ID
     LEFT JOIN dbo.OfferStatus os ON o.StatusID = os.ID
+    LEFT JOIN dbo.Currencies oc ON od.OtherCurrencyID = oc.ID
+    LEFT JOIN dbo.Products p ON od.ProductID = p.ID
     LEFT JOIN dbo.SalesDivision sd ON sd.ID = o.SalesDivisionID
     LEFT JOIN dbo.Markets mkt ON mkt.ID = o.MarketID
     LEFT JOIN dbo.FWCs fwc ON fwc.ID = o.ERPFWCProjectID
@@ -44,39 +47,54 @@ export async function GET(req: NextRequest) {
     if (market)   dataReq.input('market',   sql.NVarChar(500), market);
     if (fwc)      dataReq.input('fwc',      sql.NVarChar(500), fwc);
 
-    // Flat aggregated rows — the client pivots them with AG Grid. Grain includes
-    // every dimension the user can drag into rows/columns in the pivot field panel;
-    // measures are pre-summed at that grain and AG Grid re-aggregates as needed.
+    // One row per offer line (mirrors the main /api/offered-products grain) so
+    // every field on the main page is available in the pivot field panel. AG Grid
+    // does all the aggregation client-side — per-line measures (unit prices,
+    // margins, discounts) can't be pre-summed, so we deliberately do NOT aggregate
+    // here. Dates are emitted as dd/mm/yyyy strings so they group cleanly by day.
     const dataSql = `
       SELECT
+        od.OfferID AS OfferID,
+        o.OfferVersion AS OfferVersion,
         ISNULL(c.Name, '') AS CustomerName,
+        ISNULL(cg.Name, '') AS CustomerGroup,
         ISNULL(o.Description, '') AS OfferDescription,
-        CONVERT(varchar(10), o.OfferDate, 103) AS OfferDate,
+        ISNULL(o.Title, '') AS OfferTitle,
         ISNULL(os.Name, '(No Status)') AS OfferStatus,
-        ISNULL(b.Name, '') AS BrandName,
+        CONVERT(varchar(10), o.OfferDate, 103) AS OfferDate,
+        CONVERT(varchar(10), o.OfferDeadlineDate, 103) AS OfferDeadlineDate,
         ISNULL(sd.Name, '') AS SalesDivision,
         ISNULL(mkt.Name, '') AS SalesMarket,
         ISNULL(LTRIM(RTRIM(fwc.ShortName)), '') AS ERPFWCProjectShortName,
-        SUM(ISNULL(od.Quantity, 0)) AS Qty,
-        SUM(ISNULL(od.TotalPrice, 0)) AS TotalPrice,
-        SUM(ISNULL(od.TotalNet, 0)) AS TotalNet,
-        SUM(ISNULL(od.TotalCost, 0)) AS TotalCost,
-        SUM(ISNULL(od.GrossProfit, 0)) AS GrossProfit
+        ISNULL(o.ERPProjectCode, '') AS ERPProjectCode,
+        ISNULL(b.Name, '') AS BrandName,
+        ISNULL(od.PartNumber, '') AS PartNumber,
+        ISNULL(od.ModelNumber, '') AS ModelNumber,
+        ISNULL(od.ProductDescription, '') AS ProductDescription,
+        ISNULL(p.Origin, '') AS Origin,
+        ISNULL(od.Delivery, '') AS Delivery,
+        ISNULL(oc.Name, '') AS OtherCurrencyName,
+        od.Quantity AS Quantity,
+        od.ListPrice AS ListPrice,
+        od.CustomerDiscount AS CustomerDiscount,
+        od.NetUnitPrice AS NetUnitPrice,
+        od.TotalPrice AS TotalPrice,
+        od.TotalNet AS TotalNet,
+        od.TelmacoDiscount AS TelmacoDiscount,
+        od.NetCostOtherCurrency AS NetCostOtherCurrency,
+        od.CurrencyCostModifier AS CurrencyCostModifier,
+        od.NetCost AS NetCost,
+        od.TotalCost AS TotalCost,
+        od.Margin AS Margin,
+        od.GrossProfit AS GrossProfit,
+        od.Warranty AS Warranty,
+        od.TelmacoWarranty AS TelmacoWarranty,
+        o.Probability AS Probability,
+        CONVERT(varchar(10), od.CreatedOn, 103) AS CreatedOn,
+        CONVERT(varchar(10), od.ModifiedOn, 103) AS ModifiedOn
       ${fromClause}
       ${whereClause}
-      GROUP BY
-        c.Name,
-        o.Description,
-        CONVERT(varchar(10), o.OfferDate, 103),
-        os.Name,
-        b.Name,
-        sd.Name,
-        mkt.Name,
-        fwc.ShortName
-      ORDER BY
-        c.Name,
-        o.Description,
-        MIN(o.OfferDate)
+      ORDER BY o.ID DESC, od.ID
     `;
 
     const dataRes = await dataReq.query<Record<string, unknown>>(dataSql);

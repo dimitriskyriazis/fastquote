@@ -75,6 +75,7 @@ export async function POST(
       request.input('__isPrintable', sql.Bit, row.IsPrintable != null ? (row.IsPrintable ? 1 : 0) : 1);
       request.input('__isComment', sql.Bit, row.IsComment ? 1 : 0);
       request.input('__isCategory', sql.Bit, row.IsCategory ? 1 : 0);
+      request.input('__isOption', sql.Bit, row.IsOption ? 1 : 0);
       request.input('__enabled', sql.Bit, row.Enabled != null ? (row.Enabled ? 1 : 0) : 1);
       request.input('__description', sql.NVarChar(2000), row.ProductDescription ?? row.Description ?? null);
       request.input('__quantity', Decimal, row.Quantity ?? null);
@@ -113,7 +114,7 @@ export async function POST(
       const insertResult = await request.query<{ OfferDetailID: number; ProductDescription: string | null }>(`
         INSERT INTO dbo.OfferDetails (
           OfferID, ParentOfferDetailID, TreeOrdering, Ordering,
-          IsPrintable, IsComment, IsCategory, Enabled,
+          IsPrintable, IsComment, IsCategory, IsOption, Enabled,
           ProductDescription, Quantity,
           ListPrice, NetUnitPrice, TotalPrice, TotalNet,
           NetCost, NetCostOtherCurrency, OtherCurrencyID, CurrencyCostModifier,
@@ -128,7 +129,7 @@ export async function POST(
         OUTPUT INSERTED.ID AS OfferDetailID, INSERTED.ProductDescription AS ProductDescription
         VALUES (
           @__offerId, @__parentId, @__treeOrdering, @__ordering,
-          @__isPrintable, @__isComment, @__isCategory, @__enabled,
+          @__isPrintable, @__isComment, @__isCategory, @__isOption, @__enabled,
           @__description, @__quantity,
           @__listPrice, @__netUnitPrice, @__totalPrice, @__totalNet,
           @__netCost, @__netCostOther, @__otherCurrencyId, @__currencyCostModifier,

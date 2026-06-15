@@ -497,6 +497,7 @@
 .offer-products-grid .ag-row.offer-row--nonprintable-comment   { background-color: #fee2e2 !important; }
 .offer-products-grid .ag-row.offer-row--printable-service      { background-color: #fef9c3 !important; }
 .offer-products-grid .ag-row.offer-row--nonprintable-service   { background-color: #ffedd5 !important; }
+.offer-products-grid .ag-row.offer-row--option                 { background-color: #e9d8fd !important; }
 
 /* Selected state — match the row background to the selected cell background */
 .offer-products-grid .ag-row.offer-row--category.ag-row-selected,
@@ -514,6 +515,9 @@
 .offer-products-grid .ag-row.offer-row--nonprintable-service.ag-row-selected,
 .offer-products-grid .ag-row.offer-row--nonprintable-service.ag-row-range-selected,
 .offer-products-grid .ag-row.offer-row--nonprintable-service.ag-row--context-menu-active { background-color: #fdba74 !important; }
+.offer-products-grid .ag-row.offer-row--option.ag-row-selected,
+.offer-products-grid .ag-row.offer-row--option.ag-row-range-selected,
+.offer-products-grid .ag-row.offer-row--option.ag-row--context-menu-active               { background-color: #bca4f7 !important; }
 
 /* Hover state — match the row background to the hovered cell background */
 .offer-products-grid .ag-row.offer-row--category.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected)             { background-color: #d4d4d4 !important; }
@@ -521,6 +525,7 @@
 .offer-products-grid .ag-row.offer-row--nonprintable-comment.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected) { background-color: #fecaca !important; }
 .offer-products-grid .ag-row.offer-row--printable-service.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected)    { background-color: #fef08a !important; }
 .offer-products-grid .ag-row.offer-row--nonprintable-service.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected) { background-color: #fed7aa !important; }
+.offer-products-grid .ag-row.offer-row--option.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected)               { background-color: #d6c5fa !important; }
 
 .offer-products-grid .offer-row--printable-comment .ag-cell {
   background-color: #e0f2fe !important;
@@ -620,6 +625,32 @@
 .offer-products-grid .ag-row.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell,
 .offer-products-grid .ag-row-hover.offer-row--option:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell {
   background-color: #d6c5fa !important;
+}
+
+/* Option badge on the Item No (TreeOrdering) cell — COMMENT options only.
+   A printable/non-printable comment marked as an option keeps its blue/red row
+   while its Item No cell shows the option purple. Product options already
+   colour the whole row purple, so they get no separate badge here.
+   Each state out-specifies the per-row comment colour rules (which reach
+   (0,8,0)) so the badge stays purple on hover instead of taking the comment's
+   hover colour. */
+.offer-products-grid .ag-row.offer-row--option-comment .ag-cell.offer-products-tree-ordering-cell.offer-products-tree-ordering-cell--option {
+  background-color: #e9d8fd !important;
+}
+.offer-products-grid .ag-row.offer-row--option-comment.ag-row-selected .ag-cell.offer-products-tree-ordering-cell.offer-products-tree-ordering-cell--option,
+.offer-products-grid .ag-row.offer-row--option-comment.ag-row-range-selected .ag-cell.offer-products-tree-ordering-cell.offer-products-tree-ordering-cell--option,
+.offer-products-grid .ag-row.offer-row--option-comment.ag-row--context-menu-active .ag-cell.offer-products-tree-ordering-cell.offer-products-tree-ordering-cell--option {
+  background-color: #bca4f7 !important;
+}
+.offer-products-grid .ag-row.offer-row--option-comment:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell.offer-products-tree-ordering-cell.offer-products-tree-ordering-cell--option,
+.offer-products-grid .ag-row-hover.offer-row--option-comment:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.offer-products-tree-ordering-cell.offer-products-tree-ordering-cell--option {
+  background-color: #d6c5fa !important;
+}
+
+/* Comment rows marked as options: keep the comment colour, italicise the text
+   so it reads as optional (matches the product-option italic). */
+.offer-products-grid .offer-row--option-comment .ag-cell {
+  font-style: italic !important;
 }
 
 /* Hover state for product rows (only when not selected) - using :hover pseudo-class */

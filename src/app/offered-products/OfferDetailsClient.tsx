@@ -198,36 +198,66 @@ export default function OfferDetailsClient() {
   }, [filters, pivotMode, fetchSummary]);
 
   // Excel-style pivot. Default layout: rows Customer → Offer Description → Offer
-  // Date, columns by Status, values Sum of Qty / Sum of Total Price. All fields
-  // are draggable in the columns tool panel (rows / column labels / values), so
-  // the user can rearrange the pivot like Excel's PivotTable Fields.
+  // Date, columns by Status, values Sum of Qty / Sum of Total List. Every field
+  // from the main Offered Products grid is exposed here and is draggable in the
+  // columns tool panel (rows / column labels / values), so the user can build any
+  // pivot like Excel's PivotTable Fields.
   const summaryColDefs = useMemo((): ColDef[] => {
     const dimension: ColDef = { enableRowGroup: true, enablePivot: true, filter: 'agSetColumnFilter' };
-    const euroFormatter = (p: { value: unknown }) =>
+    const euro = (p: { value: unknown }) =>
       p.value == null || p.value === '' ? '' : `${formatNumber(p.value)} €`;
-    // No aggFunc on the base — only default-active values get one; the rest
-    // pick up sum when dragged into the Values area.
-    const measure: ColDef = {
-      enableValue: true,
-      type: 'numericColumn',
-      width: 160,
-      filter: 'agNumberColumnFilter',
-      valueFormatter: euroFormatter,
-    };
+    const num = (p: { value: unknown }) => formatNumber(p.value);
+    const pct = (p: { value: unknown }) => formatPercent(p.value);
+    // Measures are draggable into the Values area (enableValue). Only Qty and
+    // Total List carry a default aggFunc so they're active out of the box; every
+    // other measure stays available and picks up an agg function when the user
+    // drags it in (default sum — switch to avg for unit prices / percentages).
+    const measure: ColDef = { enableValue: true, type: 'numericColumn', width: 140, filter: 'agNumberColumnFilter' };
+    const euroMeasure: ColDef = { ...measure, valueFormatter: euro };
+    const numMeasure: ColDef = { ...measure, valueFormatter: num };
+    const pctMeasure: ColDef = { ...measure, valueFormatter: pct };
     return [
-      { ...dimension, field: 'CustomerName',           headerName: 'Customer',          rowGroup: true },
-      { ...dimension, field: 'OfferDescription',       headerName: 'Offer Description', rowGroup: true },
-      { ...dimension, field: 'OfferDate',              headerName: 'Offer Date',        rowGroup: true },
-      { ...dimension, field: 'OfferStatus',            headerName: 'Status',            pivot: true },
-      { ...dimension, field: 'BrandName',              headerName: 'Brand' },
+      // ── Dimensions: drag into Rows or Column Labels ──
+      { ...dimension, field: 'CustomerName',           headerName: 'Customer',           rowGroup: true },
+      { ...dimension, field: 'CustomerGroup',          headerName: 'Customer Group' },
+      { ...dimension, field: 'OfferID',                headerName: 'Offer ID' },
+      { ...dimension, field: 'OfferDescription',       headerName: 'Offer Description',  rowGroup: true },
+      { ...dimension, field: 'OfferTitle',             headerName: 'Offer Title' },
+      { ...dimension, field: 'OfferVersion',           headerName: 'Version' },
+      { ...dimension, field: 'OfferStatus',            headerName: 'Status',             pivot: true },
+      { ...dimension, field: 'OfferDate',              headerName: 'Offer Date',         rowGroup: true },
+      { ...dimension, field: 'OfferDeadlineDate',      headerName: 'Offer Due Date' },
       { ...dimension, field: 'SalesDivision',          headerName: 'Sales Division' },
       { ...dimension, field: 'SalesMarket',            headerName: 'Market' },
       { ...dimension, field: 'ERPFWCProjectShortName', headerName: 'FWC Project' },
-      { ...measure,   field: 'Qty',         headerName: 'Total Qty', aggFunc: 'sum', width: 120, valueFormatter: undefined },
-      { ...measure,   field: 'TotalPrice',  headerName: 'Total List', aggFunc: 'sum' },
-      { ...measure,   field: 'TotalNet',    headerName: 'Total Net' },
-      { ...measure,   field: 'TotalCost',   headerName: 'Total Cost' },
-      { ...measure,   field: 'GrossProfit', headerName: 'Gross Profit' },
+      { ...dimension, field: 'ERPProjectCode',         headerName: 'ERP Project Code' },
+      { ...dimension, field: 'BrandName',              headerName: 'Brand' },
+      { ...dimension, field: 'PartNumber',             headerName: 'Part Number' },
+      { ...dimension, field: 'ModelNumber',            headerName: 'Model Number' },
+      { ...dimension, field: 'ProductDescription',     headerName: 'Product Description' },
+      { ...dimension, field: 'Origin',                 headerName: 'Origin' },
+      { ...dimension, field: 'Delivery',               headerName: 'Delivery' },
+      { ...dimension, field: 'OtherCurrencyName',      headerName: 'Currency' },
+      { ...dimension, field: 'CreatedOn',              headerName: 'Created' },
+      { ...dimension, field: 'ModifiedOn',             headerName: 'Modified' },
+      // ── Measures: drag into Values ──
+      { ...measure,     field: 'Quantity',             headerName: 'Total Qty', aggFunc: 'sum', width: 120 },
+      { ...euroMeasure, field: 'ListPrice',            headerName: 'List Price' },
+      { ...euroMeasure, field: 'TotalPrice',           headerName: 'Total List', aggFunc: 'sum' },
+      { ...pctMeasure,  field: 'CustomerDiscount',     headerName: 'Cust. Discount' },
+      { ...euroMeasure, field: 'NetUnitPrice',         headerName: 'Net Unit Price' },
+      { ...euroMeasure, field: 'TotalNet',             headerName: 'Total Net' },
+      { ...numMeasure,  field: 'Warranty',             headerName: 'Warranty' },
+      { ...pctMeasure,  field: 'Probability',          headerName: 'Probability' },
+      // ── Cost / margin measures (red, like the main grid) ──
+      { ...pctMeasure,  field: 'TelmacoDiscount',      headerName: 'Telmaco Discount',       cellStyle: redCellStyle },
+      { ...euroMeasure, field: 'NetCostOtherCurrency', headerName: 'Net Cost (Other Curr.)', cellStyle: redCellStyle },
+      { ...numMeasure,  field: 'CurrencyCostModifier', headerName: 'Cost Modifier',          cellStyle: redCellStyle },
+      { ...euroMeasure, field: 'NetCost',              headerName: 'Net Cost',               cellStyle: redCellStyle },
+      { ...euroMeasure, field: 'TotalCost',            headerName: 'Total Cost',             cellStyle: redCellStyle },
+      { ...pctMeasure,  field: 'Margin',               headerName: 'Margin',                 cellStyle: redCellStyle },
+      { ...euroMeasure, field: 'GrossProfit',          headerName: 'Gross Profit',           cellStyle: redCellStyle },
+      { ...numMeasure,  field: 'TelmacoWarranty',      headerName: 'Telmaco Warranty',       cellStyle: redCellStyle },
     ];
   }, []);
 
@@ -838,6 +868,12 @@ export default function OfferDetailsClient() {
                   rowData={summaryData}
                   pivotMode
                   groupDisplayType="multipleColumns"
+                  // Flatten the row-group hierarchy: instead of a staircase where
+                  // each grouped field (Brand, Part Number, Model Number, …) sits on
+                  // its own indented row, the leaf row shows every group column on a
+                  // single line — so a product reads like one row in the normal offer
+                  // grid rather than a 6-level drill-down.
+                  groupHideOpenParents
                   groupDefaultExpanded={1}
                   suppressAggFuncInHeader
                   pivotRowTotals="after"

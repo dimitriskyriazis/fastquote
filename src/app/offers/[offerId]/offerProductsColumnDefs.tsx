@@ -42,7 +42,7 @@ import {
   DESCRIPTION_PASTE_BLOCKLIST,
   type RequestedDisplayFieldKey,
 } from './offerProductsUtils';
-import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductService, isNonPrintableOfferProductRow, resolveOfferProductRowType } from '../../../lib/offerProductRows';
+import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductService, isOfferProductOption, isNonPrintableOfferProductRow, resolveOfferProductRowType } from '../../../lib/offerProductRows';
 import { deriveMarkupFactor, markupFactorFromMargin } from '../../../lib/pricing';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 
@@ -558,6 +558,12 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       'ag-right-aligned',
     ],
     cellStyle: truncateCellStyle,
+    cellClassRules: {
+      // Purple "option" badge on the Item No cell. Works on top of any row
+      // colour, so a printable/non-printable comment marked as an option keeps
+      // its blue/red row while its Item No cell turns purple.
+      'offer-products-tree-ordering-cell--option': (params) => isOfferProductOption(params.data ?? null),
+    },
     valueGetter: ({ data }) => {
       // Always return the raw TreeOrdering — AG-Grid uses this for sorting
       // and filtering. The renderer handles the display (incl. the "np"
@@ -1064,7 +1070,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       field: 'PriceListItemWarning',
       headerName: 'Warning',
       filter: 'agTextColumnFilter',
-      width: 350,
+      width: 200,
       editable: false,
       valueGetter: ({ data }) => {
         const row = data as Record<string, unknown> | null | undefined;

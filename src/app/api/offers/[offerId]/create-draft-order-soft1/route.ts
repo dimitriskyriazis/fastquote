@@ -69,6 +69,11 @@ type CreateDraftOfferRequestBody = {
   missingBrands?: string[];
   brandResolutions?: Array<{ fastquoteName: string; erpName: string; MTRMANFCTR: number }>;
   matchResults?: MatchResultsState;
+  // Per-order-line Σχόλια authored in the Compare step. Keyed by OfferDetails.ID
+  // (the line), NOT productId — a product can appear on multiple lines. Sent to
+  // SoftOne as the line COMMENTS (MTRLINES.COMMENTS) at execute time. Independent
+  // of OfferDetails.Comment, which is left untouched.
+  lineComments?: Array<{ lineId: number; comment: string }>;
   manualSearch?: {
     partOrModel?: string | null;
     description?: string | null;
@@ -124,6 +129,7 @@ type WizardStep =
   | 'match-products'
   | 'manual-search-product'
   | 'list-brands'
+  | 'compare-products'
   | 'prepare-summary'
   | 'execute';
 
@@ -1494,6 +1500,161 @@ async function handleListBrands(
   }
 }
 
+// ── Compare step ─────────────────────────────────────────────────────────────
+// Side-by-side of each FastQuote offer line vs. the actual SoftOne item-master
+// (MTRL) values it was matched to, so the user can author the per-line Σχόλια
+// (MTRLINES.COMMENTS) that will be sent at execute time. Read-only on the ERP
+// side; the only editable value (Σχόλια) is collected on the frontend and
+// threaded forward via body.lineComments.
+
+type CompareRow = {
+  lineId: number;
+  productId: number;
+  fq: {
+    brand: string | null;
+    partNo: string | null;
+    model: string | null;
+    description: string | null;
+    comment: string | null;
+  };
+  s1: {
+    linked: boolean;
+    position: number | null;
+    code: string | null;
+    brand: string | null;
+    partNo: string | null;
+    description: string | null;
+  };
+};
+
+async function handleCompareProducts(
+  ctx: OfferContext,
+  body: CreateDraftOfferRequestBody,
+): Promise<NextResponse> {
+  const { pool, erpPool, offerId, requestId } = ctx;
+  const matchResults = body.matchResults;
+
+  // Which products will become order lines, and which MTRL each matched product
+  // maps to. autoMatched + userSelected carry a real MTRL; userConfirmedCreate
+  // are brand-new items with no MTRL master yet (shown as "(new)").
+  const matchedMtrlByProduct = new Map<number, { MTRL: number; CODE: string | null }>();
+  const toCreate = new Set<number>();
+  if (matchResults) {
+    for (const m of matchResults.autoMatched) matchedMtrlByProduct.set(m.productId, { MTRL: m.MTRL, CODE: m.CODE });
+    for (const m of matchResults.userSelected) matchedMtrlByProduct.set(m.productId, { MTRL: m.MTRL, CODE: m.CODE });
+    for (const m of matchResults.userConfirmedCreate) toCreate.add(m.productId);
+  }
+  const resolvedProductIds = new Set<number>([...matchedMtrlByProduct.keys(), ...toCreate]);
+
+  // Pull the offer lines. Keyed by OfferDetails.ID so a product appearing on
+  // multiple lines gets one comparison row (and one Σχόλια) per line. Same
+  // eligibility filter as prepare-summary/execute so Compare == the order lines.
+  const linesReq = pool.request();
+  linesReq.input('offerId', sql.Int, offerId);
+  const linesRes = await linesReq.query<{
+    LineID: number;
+    TreeOrdering: number | null;
+    ProductID: number | null;
+    Quantity: number | null;
+    NetUnitPrice: number | null;
+    Comment: string | null;
+    PartNumber: string | null;
+    ModelNumber: string | null;
+    ProductDescription: string | null;
+    BrandName: string | null;
+  }>(`
+    SELECT
+      od.ID AS LineID,
+      od.TreeOrdering,
+      od.ProductID,
+      od.Quantity,
+      od.NetUnitPrice,
+      od.Comment,
+      p.PartNumber,
+      p.ModelNumber,
+      p.Description AS ProductDescription,
+      b.Name AS BrandName
+    FROM dbo.OfferDetails od
+    INNER JOIN dbo.Products p ON od.ProductID = p.ID
+    LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
+    WHERE od.OfferID = @offerId AND od.ProductID IS NOT NULL
+  `);
+
+  const eligibleLines = (linesRes.recordset ?? [])
+    .filter(l => l.ProductID != null && resolvedProductIds.has(l.ProductID)
+      && l.Quantity != null && l.Quantity > 0
+      && l.NetUnitPrice != null && l.NetUnitPrice >= 0)
+    .sort((a, b) => (a.TreeOrdering ?? 0) - (b.TreeOrdering ?? 0));
+
+  // Read the actual SoftOne item-master (MTRL) values for every matched MTRL:
+  // CODE (Κωδικός), CODE2 (Part No), NAME (Περιγραφή) and the manufacturer NAME
+  // (Brand). These live "outside the order lines" — they're the real item.
+  const mtrlMaster = new Map<number, { code: string | null; code2: string | null; name: string | null; brand: string | null }>();
+  const mtrlIds = Array.from(new Set(
+    eligibleLines
+      .map(l => (l.ProductID != null ? matchedMtrlByProduct.get(l.ProductID)?.MTRL ?? null : null))
+      .filter((m): m is number => m != null),
+  ));
+  if (mtrlIds.length > 0) {
+    const req = erpPool.request();
+    const ph = mtrlIds.map((id, i) => { req.input(`m${i}`, sql.Int, id); return `@m${i}`; });
+    const res = await req.query<{ MTRL: number; CODE: string | null; CODE2: string | null; NAME: string | null; BRANDNAME: string | null }>(`
+      SELECT mt.MTRL, mt.CODE, mt.CODE2, mt.NAME, mf.NAME AS BRANDNAME
+      FROM dbo.MTRL mt
+      LEFT JOIN dbo.MTRMANFCTR mf ON mt.MTRMANFCTR = mf.MTRMANFCTR
+      WHERE mt.MTRL IN (${ph.join(', ')})
+    `);
+    for (const r of res.recordset ?? []) {
+      mtrlMaster.set(r.MTRL, { code: r.CODE, code2: r.CODE2, name: r.NAME, brand: r.BRANDNAME });
+    }
+  }
+
+  const SOFT1_NAME_LIMIT = 128;
+  const buildSoft1Name = (model: string | null, desc: string | null): string => {
+    const prefix = model ? `${model} - ` : '';
+    return (prefix + (desc ?? '')).slice(0, SOFT1_NAME_LIMIT) || 'Unknown';
+  };
+
+  const rows: CompareRow[] = eligibleLines.map(l => {
+    const productId = l.ProductID!;
+    const matched = matchedMtrlByProduct.get(productId);
+    const master = matched ? mtrlMaster.get(matched.MTRL) : undefined;
+    const position = l.TreeOrdering != null ? Number(l.TreeOrdering) : null;
+    const s1 = matched
+      ? {
+          linked: true,
+          position,
+          code: master?.code ?? matched.CODE,
+          brand: master?.brand ?? null,
+          partNo: master?.code2 ?? null,
+          description: master?.name ?? null,
+        }
+      : {
+          linked: false,
+          position,
+          code: '(new)',
+          brand: l.BrandName,
+          partNo: l.PartNumber,
+          description: buildSoft1Name(l.ModelNumber, l.ProductDescription),
+        };
+    return {
+      lineId: l.LineID,
+      productId,
+      fq: {
+        brand: l.BrandName,
+        partNo: l.PartNumber,
+        model: l.ModelNumber,
+        description: l.ProductDescription,
+        comment: l.Comment,
+      },
+      s1,
+    };
+  });
+
+  logger.info('wizard compare-products done', { requestId, offerId, rows: rows.length });
+  return NextResponse.json({ ok: true, step: 'compare-products', rows });
+}
+
 async function handlePrepareSummary(
   ctx: OfferContext,
   body: CreateDraftOfferRequestBody,
@@ -1541,6 +1702,7 @@ async function handlePrepareSummary(
   const linesReq = pool.request();
   linesReq.input('offerId', sql.Int, offerId);
   const linesRes = await linesReq.query<{
+    LineID: number;
     TreeOrdering: number | null;
     ProductID: number | null;
     Quantity: number | null;
@@ -1555,6 +1717,7 @@ async function handlePrepareSummary(
     ModelNumber: string | null;
   }>(`
     SELECT
+      od.ID AS LineID,
       od.TreeOrdering,
       od.ProductID,
       od.Quantity,
@@ -1572,6 +1735,15 @@ async function handlePrepareSummary(
     WHERE od.OfferID = @offerId
       AND od.ProductID IS NOT NULL
   `);
+
+  // Per-line Σχόλια authored in the Compare step (MTRLINES.COMMENTS). When the
+  // frontend sends lineComments (new flow), it is the source of truth for the
+  // line comment — blank means no comment, independent of OfferDetails.Comment.
+  // Legacy callers omit it, in which case we fall back to OfferDetails.Comment.
+  const hasLineComments = Array.isArray(body.lineComments);
+  const lineCommentMap = new Map<number, string>((body.lineComments ?? []).map(c => [c.lineId, c.comment]));
+  const resolveLineComment = (lineId: number, fallback: string | null): string | null =>
+    hasLineComments ? (lineCommentMap.get(lineId)?.trim() || null) : (fallback ?? null);
 
   const allLines = (linesRes.recordset ?? []).sort((a, b) => (a.TreeOrdering ?? 0) - (b.TreeOrdering ?? 0));
 
@@ -1623,7 +1795,7 @@ async function handlePrepareSummary(
     lineTotal: Number(line.Quantity!) * Number(line.NetUnitPrice!),
     position: line.TreeOrdering != null ? Number(line.TreeOrdering) : null,
     warrantyYears: line.Warranty != null ? Number(line.Warranty) : null,
-    comment: line.Comment ?? null,
+    comment: resolveLineComment(line.LineID, line.Comment),
   }));
 
   const totalValue = orderLines.reduce((sum, l) => sum + l.lineTotal, 0);
@@ -1848,6 +2020,7 @@ async function handleExecute(
     const linesReq = pool.request();
     linesReq.input('offerId', sql.Int, offerId);
     const linesRes = await linesReq.query<{
+      LineID: number;
       TreeOrdering: number | null;
       ProductID: number | null;
       Quantity: number | null;
@@ -1861,13 +2034,22 @@ async function handleExecute(
       PartNumber: string | null;
       BrandName: string | null;
     }>(`
-      SELECT od.TreeOrdering, od.ProductID, od.Quantity, od.NetUnitPrice, od.NetCost, od.Warranty, od.Comment,
+      SELECT od.ID AS LineID, od.TreeOrdering, od.ProductID, od.Quantity, od.NetUnitPrice, od.NetCost, od.Warranty, od.Comment,
              p.ERPID, p.ERPCode, p.Description, p.PartNumber, b.Name AS BrandName
       FROM dbo.OfferDetails od
       INNER JOIN dbo.Products p ON od.ProductID = p.ID
       LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
       WHERE od.OfferID = @offerId AND od.ProductID IS NOT NULL AND p.ERPID IS NOT NULL
     `);
+
+    // Per-line Σχόλια authored in the Compare step → MTRLINES.COMMENTS. The
+    // frontend value (blank by default) is the source of truth and is sent to
+    // SoftOne independent of OfferDetails.Comment. Legacy callers omit it, in
+    // which case OfferDetails.Comment is used (prior behavior).
+    const hasLineComments = Array.isArray(body.lineComments);
+    const lineCommentMap = new Map<number, string>((body.lineComments ?? []).map(c => [c.lineId, c.comment]));
+    const resolveLineComment = (lineId: number, fallback: string | null): string | null =>
+      hasLineComments ? (lineCommentMap.get(lineId)?.trim() || null) : (fallback ?? null);
 
     const lines = (linesRes.recordset ?? []).sort((a, b) => (a.TreeOrdering ?? 0) - (b.TreeOrdering ?? 0));
     const eligibleLines = lines.filter(
@@ -1881,7 +2063,7 @@ async function handleExecute(
       netCost: l.NetCost != null ? Number(l.NetCost) : null,
       warrantyMonths: l.Warranty != null ? Number(l.Warranty) * 12 : null,
       position: l.TreeOrdering != null ? Number(l.TreeOrdering) : null,
-      comment: l.Comment ?? null,
+      comment: resolveLineComment(l.LineID, l.Comment),
     }));
     // Pull the actual Soft1 item names (MTRL.NAME) so the email reflects what
     // we sent to the ERP — the FastQuote Description may have been truncated
@@ -1915,7 +2097,7 @@ async function handleExecute(
       cost: l.NetCost != null ? Number(l.NetCost) : null,
       costTotal: l.NetCost != null ? Number(l.NetCost) * Number(l.Quantity) : null,
       warrantyMonths: l.Warranty != null ? Number(l.Warranty) * 12 : null,
-      comment: l.Comment ?? null,
+      comment: resolveLineComment(l.LineID, l.Comment),
     }));
 
     const orderInfo = await createOrderWithLines({
@@ -2174,6 +2356,8 @@ export async function POST(
           return await handleManualSearchProduct(ctx, body);
         case 'list-brands':
           return await handleListBrands(ctx);
+        case 'compare-products':
+          return await handleCompareProducts(ctx, body);
         case 'prepare-summary':
           return await handlePrepareSummary(ctx, body);
         case 'execute':
