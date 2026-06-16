@@ -9,9 +9,12 @@ import type {
   ICellRendererParams,
   GetContextMenuItemsParams,
   GridApi,
+  GridReadyEvent,
   ColumnState,
   MenuItemDef,
   CellValueChangedEvent,
+  GetGroupIncludeTotalRowParams,
+  SideBarDef,
 } from 'ag-grid-community';
 import { GridRowDeletion } from '../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../lib/deletePermissions';
@@ -76,11 +79,11 @@ const formatPercent = (value: unknown): string => {
 };
 
 type MarketOption = { market: string; division: string };
-type PivotOptions = { salesDivisions: string[]; markets: MarketOption[] };
-// Pivot pre-filters: Offer-date range + Sales Division + Market + TelQuote inclusion (passed to
-// /api/offers/summary). includeTelquote 'no' (default) excludes FromTelquote=true offers.
-type PivotFilters = { from: string; to: string; division: string; market: string; includeTelquote: string };
-const EMPTY_PIVOT_FILTERS: PivotFilters = { from: '', to: '', division: '', market: '', includeTelquote: 'no' };
+type PivotOptions = { salesDivisions: string[]; markets: MarketOption[]; statuses: string[] };
+// Pivot pre-filters: Offer-date range + Sales Division + Market + Status + TelQuote inclusion
+// (passed to /api/offers/summary). includeTelquote 'no' (default) excludes FromTelquote=true offers.
+type PivotFilters = { from: string; to: string; division: string; market: string; status: string; includeTelquote: string };
+const EMPTY_PIVOT_FILTERS: PivotFilters = { from: '', to: '', division: '', market: '', status: '', includeTelquote: 'no' };
 
 // 'yyyy-mm-dd' (date-input value) -> 'dd/mm/yyyy' for the trigger label.
 const isoToDMY = (iso: string): string => {
@@ -203,7 +206,7 @@ export default function OffersClient() {
   const routerRef = useRef(router);
   routerRef.current = router;
   const { roles, userId, selectedUser } = useAuditUser();
-  const defaultEnabledFilterAppliedRef = useRef(false);
+  const defaultFiltersAppliedRef = useRef(false);
   const initialSalesPersonRef = useRef((searchParams.get('salesPerson') ?? '').trim());
   const initialCustomerIdRef = useRef((searchParams.get('customerId') ?? '').trim());
   const [customerFilterActive, setCustomerFilterActive] = useState(false);
@@ -225,11 +228,17 @@ export default function OffersClient() {
   const [pivotMode, setPivotMode] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryData, setSummaryData] = useState<Record<string, unknown>[] | null>(null);
-  const [pivotOptions, setPivotOptions] = useState<PivotOptions>({ salesDivisions: [], markets: [] });
+  const [pivotOptions, setPivotOptions] = useState<PivotOptions>({ salesDivisions: [], markets: [], statuses: [] });
   const [pivotFilters, setPivotFilters] = useState<PivotFilters>(EMPTY_PIVOT_FILTERS);
   const pivotOptionsLoadedRef = useRef(false);
   const [showDateRange, setShowDateRange] = useState(false);
   const dateRangeRef = useRef<HTMLDivElement | null>(null);
+  // The client-side pivot grid is mounted while pivot mode is open; we keep a handle to its API so
+  // we can preserve the user's pivot layout (rows / columns / values, widths, order) across the
+  // rowData refetch that fires whenever a pre-filter changes. Without this the arrangement reverts
+  // to the columnDefs defaults on every filter adjustment.
+  const summaryGridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
+  const pendingSummaryColStateRef = useRef<ColumnState[] | null>(null);
 
   const togglePivotMode = useCallback(() => {
     setPivotMode(prev => {
@@ -237,6 +246,10 @@ export default function OffersClient() {
       if (prev) {
         setPivotFilters(EMPTY_PIVOT_FILTERS);
         setShowDateRange(false);
+        // Drop the pivot-grid handle and any pending layout snapshot so reopening doesn't re-apply
+        // a stale column state to the freshly mounted grid.
+        summaryGridApiRef.current = null;
+        pendingSummaryColStateRef.current = null;
       }
       return !prev;
     });
@@ -254,6 +267,7 @@ export default function OffersClient() {
     if (filters.to)       qs.set('to',       filters.to);
     if (filters.division) qs.set('division', filters.division);
     if (filters.market)   qs.set('market',   filters.market);
+    if (filters.status)   qs.set('status',   filters.status);
     if (filters.includeTelquote === 'yes') qs.set('telquote', '1'); // else excluded (default)
     void fetch(`/api/offers/summary${qs.toString() ? `?${qs}` : ''}`)
       .then(r => r.json())
@@ -264,10 +278,43 @@ export default function OffersClient() {
       .finally(() => setSummaryLoading(false));
   }, []);
 
+  const handleSummaryGridReady = useCallback((event: GridReadyEvent<Record<string, unknown>>) => {
+    summaryGridApiRef.current = event.api ?? null;
+  }, []);
+
   // Fetch (or refetch) the summary when pivot opens and whenever pre-filters change while open.
   useEffect(() => {
-    if (pivotMode) fetchSummary(pivotFilters);
+    if (!pivotMode) return;
+    // Snapshot the current pivot layout before the refetch replaces rowData, so it can be restored
+    // once the new rows land (see the summaryData effect below). On the initial open the grid isn't
+    // mounted yet (api is null / destroyed) and there's no user arrangement to preserve.
+    const api = summaryGridApiRef.current;
+    if (api && !api.isDestroyed?.() && typeof api.getColumnState === 'function') {
+      const state = api.getColumnState();
+      pendingSummaryColStateRef.current = Array.isArray(state) && state.length > 0
+        ? state.map((entry) => ({ ...entry }))
+        : null;
+    }
+    fetchSummary(pivotFilters);
   }, [pivotMode, pivotFilters, fetchSummary]);
+
+  // Re-apply the snapshotted pivot layout exactly when the refetched rows land (summaryData
+  // changes) rather than on an arbitrary grid modelUpdated event — so a rearrangement the user
+  // makes via the columns tool panel during an in-flight refetch isn't consumed/clobbered by an
+  // unrelated update. Child (grid) effects commit before this parent effect, so the new rowData is
+  // already applied by the time we restore.
+  useEffect(() => {
+    const api = summaryGridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    const state = pendingSummaryColStateRef.current;
+    if (!state || state.length === 0) return;
+    pendingSummaryColStateRef.current = null;
+    try {
+      api.applyColumnState({ state, applyOrder: true });
+    } catch {
+      /* noop */
+    }
+  }, [summaryData]);
 
   // Load Division/Market dropdown options once, the first time pivot mode is opened.
   useEffect(() => {
@@ -275,9 +322,13 @@ export default function OffersClient() {
     pivotOptionsLoadedRef.current = true;
     void fetch('/api/offers/options')
       .then(r => r.json())
-      .then((data: { ok?: boolean; salesDivisions?: string[]; markets?: MarketOption[] }) => {
+      .then((data: { ok?: boolean; salesDivisions?: string[]; markets?: MarketOption[]; statuses?: string[] }) => {
         if (data.ok) {
-          setPivotOptions({ salesDivisions: data.salesDivisions ?? [], markets: data.markets ?? [] });
+          setPivotOptions({
+            salesDivisions: data.salesDivisions ?? [],
+            markets: data.markets ?? [],
+            statuses: data.statuses ?? [],
+          });
         }
       })
       .catch(() => { /* silent */ });
@@ -316,7 +367,7 @@ export default function OffersClient() {
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     if (!api) return;
     gridApiRef.current = api;
-    if (defaultEnabledFilterAppliedRef.current) return;
+    if (defaultFiltersAppliedRef.current) return;
     const salesPerson = initialSalesPersonRef.current;
     const hasSalesPersonFilter = Boolean(salesPerson);
     const customerIdParam = initialCustomerIdRef.current;
@@ -327,13 +378,22 @@ export default function OffersClient() {
     const baseModel: Record<string, unknown> = hasUrlFilter
       ? {}
       : (existingModel && typeof existingModel === 'object' ? { ...existingModel } : {});
+    // Default the list to enabled, non-TelQuote offers. Each default is applied only when the
+    // user hasn't already filtered that column (persisted/restored filters win — AgGridAll's
+    // onGridReady restores them first). Mirrors the Enabled default, but the other way around:
+    // FromTelquote defaults to 'false' (No), so imported TelQuote offers are hidden until the
+    // user clears the filter (e.g. selects Yes & No, or Yes only).
     const needsEnabledDefault = !('Enabled' in baseModel);
-    if (!needsEnabledDefault && !hasUrlFilter) {
-      defaultEnabledFilterAppliedRef.current = true;
+    const needsTelquoteDefault = !('FromTelquote' in baseModel);
+    if (!needsEnabledDefault && !needsTelquoteDefault && !hasUrlFilter) {
+      defaultFiltersAppliedRef.current = true;
       return;
     }
     if (needsEnabledDefault) {
       baseModel.Enabled = { filterType: 'set', values: ['true'] };
+    }
+    if (needsTelquoteDefault) {
+      baseModel.FromTelquote = { filterType: 'set', values: ['false'] };
     }
     if (hasSalesPersonFilter) {
       baseModel.SalesPerson = { filterType: 'text', type: 'contains', filter: salesPerson };
@@ -344,7 +404,7 @@ export default function OffersClient() {
       setCustomerFilterLabel(String(customerIdNumber));
     }
     api.setFilterModel(baseModel);
-    defaultEnabledFilterAppliedRef.current = true;
+    defaultFiltersAppliedRef.current = true;
   }, []);
 
   useEffect(() => {
@@ -850,6 +910,20 @@ export default function OffersClient() {
     ];
   }, []);
 
+  // Stable references for the pivot grid's object/function options. AG Grid's React wrapper force-
+  // updates a grid option on every new prop reference; passing fresh inline objects each render
+  // churns the grid and can disturb the user's pivot layout, so these are memoized once.
+  const summaryAutoGroupColumnDef = useMemo<ColDef>(() => ({ minWidth: 170, resizable: true }), []);
+  const summarySideBar = useMemo<SideBarDef>(
+    () => ({ toolPanels: ['columns', 'filters'], defaultToolPanel: 'columns' }),
+    [],
+  );
+  const summaryGroupTotalRow = useCallback(
+    (params: GetGroupIncludeTotalRowParams<Record<string, unknown>>) =>
+      (params.node.level === 0 ? 'bottom' : undefined),
+    [],
+  );
+
   const columnDefs: ColDef[] = useMemo(() => [
     { field: 'ERPProjectCode', headerName: 'ERP Project Code', filter: 'agTextColumnFilter' },
     { field: 'ERPFWCProjectShortName', headerName: 'ERP FWC Project', filter: 'agTextColumnFilter' },
@@ -1140,6 +1214,16 @@ export default function OffersClient() {
 
       <select
         className={`${styles.groupSelect} page-header-button`}
+        value={pivotFilters.status}
+        onChange={e => handlePivotFilterChange('status', e.target.value)}
+        aria-label="Status"
+      >
+        <option value="">Status: All</option>
+        {pivotOptions.statuses.map(s => <option key={s} value={s}>{s}</option>)}
+      </select>
+
+      <select
+        className={`${styles.groupSelect} page-header-button`}
         value={pivotFilters.includeTelquote}
         onChange={e => handlePivotFilterChange('includeTelquote', e.target.value)}
         aria-label="Include TelQuote offers"
@@ -1217,6 +1301,7 @@ export default function OffersClient() {
                     containerClassName={styles.pivotShell}
                     columnDefs={summaryColDefs}
                     rowData={summaryData}
+                    onGridReady={handleSummaryGridReady}
                     pivotMode
                     groupDisplayType="multipleColumns"
                     groupHideOpenParents
@@ -1224,12 +1309,9 @@ export default function OffersClient() {
                     suppressAggFuncInHeader
                     pivotRowTotals="after"
                     grandTotalRow="bottom"
-                    groupTotalRow={(params) => (params.node.level === 0 ? 'bottom' : undefined)}
-                    autoGroupColumnDef={{ minWidth: 170, resizable: true }}
-                    sideBar={{
-                      toolPanels: ['columns', 'filters'],
-                      defaultToolPanel: 'columns',
-                    }}
+                    groupTotalRow={summaryGroupTotalRow}
+                    autoGroupColumnDef={summaryAutoGroupColumnDef}
+                    sideBar={summarySideBar}
                   />
                 )}
               </div>

@@ -130,11 +130,12 @@ import { DdMmYyyyDateFilter } from './dateFilterDdMmYyyy';
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
 const GRID_ROW_HEIGHT = 32;
-const IGNORED_FILTER_COLS = new Set(['Enabled', 'CustomerEnabled', 'IsParent']);
+const IGNORED_FILTER_COLS = new Set(['Enabled', 'CustomerEnabled', 'IsParent', 'FromTelquote']);
 
 // Default filter state per guarded col. A guarded col is excluded from the
 // active-filter count only when it matches this default; any deviation
-// (e.g. Enabled=No, Enabled=Yes+No, IsParent=Yes only) counts as active.
+// (e.g. Enabled=No, Enabled=Yes+No, IsParent=Yes only, FromTelquote=Yes or
+// FromTelquote=Yes+No) counts as active.
 //   { values: [...] } — default is a set filter with these specific values
 //   { mustBeMissing: true } — default is no filter applied at all
 type GuardedDefault = { mustBeMissing: true } | { values: string[] };
@@ -142,6 +143,9 @@ const GUARDED_FILTER_DEFAULTS: Record<string, GuardedDefault> = {
   Enabled: { values: ['true'] },
   CustomerEnabled: { values: ['true'] },
   IsParent: { mustBeMissing: true },
+  // Offers list defaults to non-TelQuote ('No'). Only Yes, or Yes+No, counts as
+  // an active filter (mirrors the OffersClient default — see handleGridReady).
+  FromTelquote: { values: ['false'] },
 };
 
 const guardedFilterIsActive = (
@@ -1446,6 +1450,7 @@ const GUARDED_SET_FILTERS = new Map<string, string[]>([
   ['Enabled', ['true', 'false']],
   ['CustomerEnabled', ['true', 'false']],
   ['IsParent', ['true', 'false']],
+  ['FromTelquote', ['true', 'false']],
 ]);
 
 // UTILITY FUNCTIONS - Server-Side Data & Row Management

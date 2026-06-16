@@ -1,14 +1,19 @@
 ﻿"use client";
 
-import React, { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import type {
   CellValueChangedEvent,
   ColDef,
+  ColumnState,
   GetContextMenuItemsParams,
+  GetGroupIncludeTotalRowParams,
+  GridApi,
+  GridReadyEvent,
   IRowNode,
   MenuItemDef,
+  SideBarDef,
 } from 'ag-grid-community';
 import PageHeader from '../components/PageHeader';
 import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
@@ -137,6 +142,12 @@ export default function OfferDetailsClient() {
   const [filters, setFilters] = useState<GroupFilters>(EMPTY_FILTERS);
   const [brandSearch, setBrandSearch] = useState('');
   const [showBrandList, setShowBrandList] = useState(false);
+  // Handle to the client-side pivot grid so we can preserve the user's pivot layout (rows /
+  // column-labels / values, widths, order) across the rowData refetch that fires on every
+  // pre-filter change. Without this the arrangement reverts to the columnDefs defaults.
+  // See memory: pivot-grid-layout-resets-on-refetch (mirrors the Offers Pivot Mode fix).
+  const summaryGridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
+  const pendingSummaryColStateRef = useRef<ColumnState[] | null>(null);
 
   // Fetch dropdown options once
   useEffect(() => {
@@ -161,6 +172,10 @@ export default function OfferDetailsClient() {
         // clear pre-filters on close
         setFilters(EMPTY_FILTERS);
         setBrandSearch('');
+        // Drop the pivot-grid handle and any pending layout snapshot so reopening doesn't re-apply
+        // a stale column state to the freshly mounted grid.
+        summaryGridApiRef.current = null;
+        pendingSummaryColStateRef.current = null;
       }
       return !prev;
     });
@@ -192,10 +207,43 @@ export default function OfferDetailsClient() {
       .finally(() => setSummaryLoading(false));
   }, []);
 
+  const handleSummaryGridReady = useCallback((event: GridReadyEvent<Record<string, unknown>>) => {
+    summaryGridApiRef.current = event.api ?? null;
+  }, []);
+
   // Fetch summary when pivot mode opens and whenever pre-filters change while open
   useEffect(() => {
-    if (pivotMode) fetchSummary(filters);
+    if (!pivotMode) return;
+    // Snapshot the current pivot layout before the refetch replaces rowData, so it can be restored
+    // once the new rows land (see the summaryData effect below). On the initial open the grid isn't
+    // mounted yet (api is null / destroyed) and there's no user arrangement to preserve.
+    const api = summaryGridApiRef.current;
+    if (api && !api.isDestroyed?.() && typeof api.getColumnState === 'function') {
+      const state = api.getColumnState();
+      pendingSummaryColStateRef.current = Array.isArray(state) && state.length > 0
+        ? state.map((entry) => ({ ...entry }))
+        : null;
+    }
+    fetchSummary(filters);
   }, [filters, pivotMode, fetchSummary]);
+
+  // Re-apply the snapshotted pivot layout exactly when the refetched rows land (summaryData
+  // changes) rather than on an arbitrary grid modelUpdated event — so a rearrangement the user
+  // makes via the columns tool panel during an in-flight refetch isn't consumed/clobbered by an
+  // unrelated update. Child (grid) effects commit before this parent effect, so the new rowData is
+  // already applied by the time we restore.
+  useEffect(() => {
+    const api = summaryGridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    const state = pendingSummaryColStateRef.current;
+    if (!state || state.length === 0) return;
+    pendingSummaryColStateRef.current = null;
+    try {
+      api.applyColumnState({ state, applyOrder: true });
+    } catch {
+      /* noop */
+    }
+  }, [summaryData]);
 
   // Excel-style pivot. Default layout: rows Customer → Offer Description → Offer
   // Date, columns by Status, values Sum of Qty / Sum of Total List. Every field
@@ -260,6 +308,20 @@ export default function OfferDetailsClient() {
       { ...numMeasure,  field: 'TelmacoWarranty',      headerName: 'Telmaco Warranty',       cellStyle: redCellStyle },
     ];
   }, []);
+
+  // Stable references for the pivot grid's object/function options. AG Grid's React wrapper force-
+  // updates a grid option on every new prop reference; passing fresh inline objects each render
+  // churns the grid and can disturb the user's pivot layout, so these are memoized once.
+  const summaryAutoGroupColumnDef = useMemo<ColDef>(() => ({ minWidth: 170, resizable: true }), []);
+  const summarySideBar = useMemo<SideBarDef>(
+    () => ({ toolPanels: ['columns', 'filters'], defaultToolPanel: 'columns' }),
+    [],
+  );
+  const summaryGroupTotalRow = useCallback(
+    (params: GetGroupIncludeTotalRowParams<Record<string, unknown>>) =>
+      (params.node.level === 0 ? 'bottom' : undefined),
+    [],
+  );
 
   const columnDefs: ColDef[] = useMemo(() => [
     {
@@ -866,6 +928,7 @@ export default function OfferDetailsClient() {
                   containerClassName={styles.pivotShell}
                   columnDefs={summaryColDefs}
                   rowData={summaryData}
+                  onGridReady={handleSummaryGridReady}
                   pivotMode
                   groupDisplayType="multipleColumns"
                   // Flatten the row-group hierarchy: instead of a staircase where
@@ -878,12 +941,9 @@ export default function OfferDetailsClient() {
                   suppressAggFuncInHeader
                   pivotRowTotals="after"
                   grandTotalRow="bottom"
-                  groupTotalRow={(params) => (params.node.level === 0 ? 'bottom' : undefined)}
-                  autoGroupColumnDef={{ minWidth: 170, resizable: true }}
-                  sideBar={{
-                    toolPanels: ['columns', 'filters'],
-                    defaultToolPanel: 'columns',
-                  }}
+                  groupTotalRow={summaryGroupTotalRow}
+                  autoGroupColumnDef={summaryAutoGroupColumnDef}
+                  sideBar={summarySideBar}
                 />
               )}
             </div>

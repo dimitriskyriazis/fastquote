@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getPool } from '../../../../lib/sql';
 
-// Dropdown options for the Offers page "Pivot Mode" pre-filter bar (Sales Division + Market).
+// Dropdown options for the Offers page "Pivot Mode" pre-filter bar (Sales Division + Market + Status).
 // Sourced from the same population as the summary (enabled, non-standard-package offers). Markets
 // carry their division so the Market dropdown can be narrowed by the selected Sales Division.
 export async function GET() {
@@ -21,6 +21,18 @@ export async function GET() {
         LEFT JOIN dbo.SalesDivision sd ON sd.ID = o.SalesDivisionID
       WHERE ISNULL(o.IsStandardPackage, 0) = 0 AND ISNULL(o.Enabled, 0) = 1 AND mkt.Name IS NOT NULL
       ORDER BY mkt.Name;
+
+      -- Statuses present in the population, in the table's own display order (OfferStatus.Sorting).
+      SELECT st.Name AS val
+      FROM dbo.OfferStatus st
+      WHERE st.Name IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM dbo.Offer o
+          WHERE o.StatusID = st.ID
+            AND ISNULL(o.IsStandardPackage, 0) = 0
+            AND ISNULL(o.Enabled, 0) = 1
+        )
+      ORDER BY st.Sorting, st.Name;
     `;
 
     const result = await pool.request().query(optionsSql);
@@ -30,6 +42,7 @@ export async function GET() {
       ok: true,
       salesDivisions: (sets[0] ?? []).map(r => r.val),
       markets: (sets[1] ?? []).map(r => ({ market: r.market, division: r.division })),
+      statuses: (sets[2] ?? []).map(r => r.val),
     });
   } catch (err) {
     console.error('Failed to load offers options', err);

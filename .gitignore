@@ -69,4 +69,8 @@ docs/
 # script for telquote import
 telquote-import/
 
+# iis files
+iis/
+
+# security files
 .security*

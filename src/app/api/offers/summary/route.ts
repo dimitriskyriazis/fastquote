@@ -16,6 +16,7 @@ export async function GET(req: NextRequest) {
     const to       = searchParams.get('to')       ?? ''; // OfferDate <= to   (yyyy-mm-dd)
     const division = searchParams.get('division') ?? '';
     const market   = searchParams.get('market')   ?? '';
+    const status   = searchParams.get('status')   ?? ''; // OfferStatus.Name exact match
     // TelQuote-imported offers are excluded by default; telquote=1 includes them.
     const includeTelquote = searchParams.get('telquote') === '1';
 
@@ -29,6 +30,7 @@ export async function GET(req: NextRequest) {
     if (to)       { filterClauses.push('dbo.Offer.OfferDate < DATEADD(day, 1, CONVERT(date, @to))');      dataReq.input('to',       sql.NVarChar(10),  to); }
     if (division) { filterClauses.push('dbo.SalesDivision.Name = @division');                            dataReq.input('division', sql.NVarChar(500), division); }
     if (market)   { filterClauses.push('dbo.Markets.Name = @market');                                    dataReq.input('market',   sql.NVarChar(500), market); }
+    if (status)   { filterClauses.push('dbo.OfferStatus.Name = @status');                                 dataReq.input('status',   sql.NVarChar(500), status); }
     if (!includeTelquote) { filterClauses.push('ISNULL(dbo.Offer.FromTelquote, 0) = 0'); }
     const extraWhere = filterClauses.length ? `\n        AND ${filterClauses.join('\n        AND ')}` : '';
 
