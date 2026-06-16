@@ -26,10 +26,6 @@ export type OfferPdfData = {
   // When true, the PDF is branded for Telvin instead of Telmaco: Telvin logo,
   // green accent line, and Telvin's tax id. See TELVIN_BRANDING.
   isTelvin?: boolean | null;
-  // Telvin-only: a contract duration shown as a "Duration: from - to" range in
-  // the info box. ISO date strings; ignored for Telmaco offers.
-  durationFrom?: string | null;
-  durationTo?: string | null;
   customer: {
     name: string | null;
     brandName: string | null;
@@ -119,7 +115,6 @@ const LABELS = {
     taxOffice: 'ΔΟΥ',
     refNo: 'Α/Α',
     date: 'Ημερομηνία',
-    duration: 'Διάρκεια',
     responsible: 'Αρμόδιος',
     responsibleEmail: 'Email',
     colNo: 'Α/Α',
@@ -170,7 +165,6 @@ const LABELS = {
     taxOffice: 'Tax Office',
     refNo: 'Ref No',
     date: 'Date',
-    duration: 'Duration',
     responsible: 'Responsible',
     responsibleEmail: 'Email',
     colNo: 'No',
@@ -391,23 +385,6 @@ function formatDate(dateStr: string | null): string {
   const d = new Date(dateStr);
   if (Number.isNaN(d.getTime())) return dateStr;
   return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
-}
-
-// Zero-padded DD/MM/YYYY, used for the Telvin duration range (e.g. 23/07/2026).
-function formatDayMonthYear(dateStr: string | null | undefined): string {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return '';
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  return `${dd}/${mm}/${d.getFullYear()}`;
-}
-
-function formatDurationRange(from: string | null | undefined, to: string | null | undefined): string {
-  const f = formatDayMonthYear(from);
-  const t = formatDayMonthYear(to);
-  if (f && t) return `${f} - ${t}`;
-  return f || t || '';
 }
 
 function formatEuropeanNumber(n: number | null | undefined): string {
@@ -1414,11 +1391,7 @@ function buildTotalsAndTerms(
     showAdditionalDiscountSummary ||
     totalsDisplaySettings.showFinalPrice;
 
-  // Telvin offers add a contract duration range as the first commercial term.
-  const durationValue = data.isTelvin ? formatDurationRange(data.durationFrom, data.durationTo) : '';
-
   let terms = [
-    { label: L.duration, value: durationValue },
     { label: L.offerValidity, value: fixObviousTypos(str(data.terms.offerValidity)) },
     { label: L.paymentTerms, value: fixObviousTypos(str(data.terms.paymentTerms)) },
     { label: L.deliveryTime, value: fixObviousTypos(str(data.terms.deliveryTime)) },

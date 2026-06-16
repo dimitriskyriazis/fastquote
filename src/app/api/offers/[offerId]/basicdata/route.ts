@@ -83,8 +83,6 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   ExtraNetDiscount: { column: 'ExtraNetDiscount', type: 'number', sqlType: sql.Decimal, precision: 18, scale: 4 },
   ExtraNetDiscountMode: { column: 'ExtraNetDiscountMode', type: 'string', sqlType: sql.NVarChar, length: 8 },
   IsTelvin: { column: 'IsTelvin', type: 'number', sqlType: sql.Bit },
-  DurationFrom: { column: 'DurationFrom', type: 'date', sqlType: sql.DateTime2 },
-  DurationTo: { column: 'DurationTo', type: 'date', sqlType: sql.DateTime2 },
 };
 
 const normalizeValue = (value: unknown, type: FieldType): NormalizedValue => {

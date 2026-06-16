@@ -40,8 +40,6 @@ type OfferHeaderRow = {
   ExtraNetDiscount: number | null;
   ExtraNetDiscountMode: string | null;
   IsTelvin: boolean | number | null;
-  DurationFrom: Date | string | null;
-  DurationTo: Date | string | null;
   CurrencyName: string | null;
   CustomerName: string | null;
   CustomerBrandName: string | null;
@@ -156,8 +154,6 @@ export async function GET(
           o.ExtraNetDiscount,
           o.ExtraNetDiscountMode,
           o.IsTelvin,
-          o.DurationFrom,
-          o.DurationTo,
           c.Name AS CustomerName,
           c.BrandName AS CustomerBrandName,
           c.Address AS CustomerAddress,
@@ -346,9 +342,12 @@ export async function GET(
       };
     });
 
-    const toIsoDateStr = (v: Date | string | null): string | null =>
-      v instanceof Date ? v.toISOString() : typeof v === 'string' ? v : null;
-    const offerDateStr = toIsoDateStr(header.OfferDate);
+    const offerDateStr =
+      header.OfferDate instanceof Date
+        ? header.OfferDate.toISOString()
+        : typeof header.OfferDate === 'string'
+          ? header.OfferDate
+          : null;
 
     const pdfData: OfferPdfData = {
       offerId: header.ID,
@@ -397,8 +396,6 @@ export async function GET(
       extraNetDiscount: toFiniteNumberOrNull(header.ExtraNetDiscount),
       extraNetDiscountMode: header.ExtraNetDiscountMode === 'abs' ? 'abs' : 'pct',
       isTelvin: !!header.IsTelvin,
-      durationFrom: toIsoDateStr(header.DurationFrom),
-      durationTo: toIsoDateStr(header.DurationTo),
     };
 
     // ── Generate PDF ───────────────────────────────────────────────────
