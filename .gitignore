@@ -68,3 +68,5 @@ docs/
 
 # script for telquote import
 telquote-import/
+
+.security*
