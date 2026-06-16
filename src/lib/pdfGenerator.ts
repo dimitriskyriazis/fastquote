@@ -23,6 +23,13 @@ export type OfferPdfData = {
   offerDescription?: string | null;
   salesDivisionName: string | null;
   offerContact: string | null;
+  // When true, the PDF is branded for Telvin instead of Telmaco: Telvin logo,
+  // green accent line, and Telvin's tax id. See TELVIN_BRANDING.
+  isTelvin?: boolean | null;
+  // Telvin-only: a contract duration shown as a "Duration: from - to" range in
+  // the info box. ISO date strings; ignored for Telmaco offers.
+  durationFrom?: string | null;
+  durationTo?: string | null;
   customer: {
     name: string | null;
     brandName: string | null;
@@ -112,6 +119,7 @@ const LABELS = {
     taxOffice: 'ΔΟΥ',
     refNo: 'Α/Α',
     date: 'Ημερομηνία',
+    duration: 'Διάρκεια',
     responsible: 'Αρμόδιος',
     responsibleEmail: 'Email',
     colNo: 'Α/Α',
@@ -162,6 +170,7 @@ const LABELS = {
     taxOffice: 'Tax Office',
     refNo: 'Ref No',
     date: 'Date',
+    duration: 'Duration',
     responsible: 'Responsible',
     responsibleEmail: 'Email',
     colNo: 'No',
@@ -235,6 +244,42 @@ const COMPANY = {
   doyEN: 'KEFODE ATTIKIS',
 };
 
+const TELMACO_LOGO_FILE = 'telmaco.jpg';
+
+// Telvin-branded offers swap the logo, the accent line colour, the company name,
+// tax id, phone, and email, drop the website line, relabel the ref number as
+// "TLV-ID", and omit the signers' names and the responsible person's email.
+// The address and tax office stay the same as Telmaco's.
+const TELVIN_BRANDING = {
+  logoFile: 'TLVfinallogo.jpg',
+  accentColor: '#78aa66',
+  afm: '094184889',
+  nameEl: 'Telvin Α.Ε.',
+  nameEn: 'Telvin S.A.',
+  phone: '210 6831240',
+  email: 'info@telvin.gr',
+} as const;
+
+// Per-offer branding resolved once and threaded into the header/cover builders.
+type Branding = {
+  logo: string;
+  accentColor: string;
+  afm: string;
+  nameEl: string;
+  nameEn: string;
+  phone: string;
+  email: string;
+  // null hides the website line entirely (Telvin has none on the offer).
+  website: string | null;
+  // Telvin offers omit the responsible person (name + email) from the info box
+  // and the signers' names from the signature.
+  hidePeople: boolean;
+  // Logo sizing differs per brand because the two logos have different aspect
+  // ratios. coverLogoFit = cover page; compactLogoFit = small-offer header.
+  coverLogoFit: Record<PdfOrientation, [number, number]>;
+  compactLogoFit: Record<PdfOrientation, [number, number]>;
+};
+
 const PAGE_MARGINS: Record<PdfOrientation, [number, number, number, number]> = {
   // Top margin must be larger than the running header height,
   // otherwise table headers render too close to (or under) the header line.
@@ -250,6 +295,21 @@ const COVER_LOGO_FIT: Record<PdfOrientation, [number, number]> = {
 const INNER_LOGO_FIT: Record<PdfOrientation, [number, number]> = {
   portrait: [110, 34],
   landscape: [104, 30],
+};
+
+// The Telvin logo is near-square (≈596×454) rather than a wide banner like the
+// Telmaco one, so the shared boxes above scale it down by height and it renders
+// tiny. Give it taller boxes so it appears at a comparable size. (The running
+// inner-page header still uses INNER_LOGO_FIT — it lives in the page top margin
+// and a taller logo there would overlap the body.)
+const TELVIN_COVER_LOGO_FIT: Record<PdfOrientation, [number, number]> = {
+  portrait: [260, 140],
+  landscape: [240, 116],
+};
+
+const TELVIN_COMPACT_LOGO_FIT: Record<PdfOrientation, [number, number]> = {
+  portrait: [170, 80],
+  landscape: [160, 72],
 };
 
 // A4 page width in PDF points
@@ -314,7 +374,7 @@ const BASE_WIDTHS: Record<PdfOrientation, Record<PdfProductColumn, number | '*'>
   },
 };
 
-let _logoBase64: string | null = null;
+const _logoCache: Record<string, string> = {};
 let _pdfmakeReady = false;
 
 function str(v: string | null | undefined): string {
@@ -331,6 +391,23 @@ function formatDate(dateStr: string | null): string {
   const d = new Date(dateStr);
   if (Number.isNaN(d.getTime())) return dateStr;
   return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+}
+
+// Zero-padded DD/MM/YYYY, used for the Telvin duration range (e.g. 23/07/2026).
+function formatDayMonthYear(dateStr: string | null | undefined): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return '';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
+
+function formatDurationRange(from: string | null | undefined, to: string | null | undefined): string {
+  const f = formatDayMonthYear(from);
+  const t = formatDayMonthYear(to);
+  if (f && t) return `${f} - ${t}`;
+  return f || t || '';
 }
 
 function formatEuropeanNumber(n: number | null | undefined): string {
@@ -361,12 +438,46 @@ function fixObviousTypos(text: string): string {
   return text.replace(/\bWe\s+we\b/gi, 'We');
 }
 
-function getLogoBase64(): string {
-  if (_logoBase64) return _logoBase64;
-  const logoPath = path.join(process.cwd(), 'public', 'telmaco.jpg');
+function getLogoBase64(fileName: string = TELMACO_LOGO_FILE): string {
+  const cached = _logoCache[fileName];
+  if (cached) return cached;
+  const logoPath = path.join(process.cwd(), 'public', fileName);
   const buf = fs.readFileSync(logoPath);
-  _logoBase64 = `data:image/jpeg;base64,${buf.toString('base64')}`;
-  return _logoBase64;
+  // Both the Telmaco and Telvin logos are JPEGs.
+  const data = `data:image/jpeg;base64,${buf.toString('base64')}`;
+  _logoCache[fileName] = data;
+  return data;
+}
+
+function resolveBranding(data: OfferPdfData): Branding {
+  if (data.isTelvin) {
+    return {
+      logo: getLogoBase64(TELVIN_BRANDING.logoFile),
+      accentColor: TELVIN_BRANDING.accentColor,
+      afm: TELVIN_BRANDING.afm,
+      nameEl: TELVIN_BRANDING.nameEl,
+      nameEn: TELVIN_BRANDING.nameEn,
+      phone: TELVIN_BRANDING.phone,
+      email: TELVIN_BRANDING.email,
+      website: null,
+      hidePeople: true,
+      coverLogoFit: TELVIN_COVER_LOGO_FIT,
+      compactLogoFit: TELVIN_COMPACT_LOGO_FIT,
+    };
+  }
+  return {
+    logo: getLogoBase64(),
+    accentColor: COLORS.accentRed,
+    afm: COMPANY.afm,
+    nameEl: COMPANY.name,
+    nameEn: COMPANY.nameEN,
+    phone: COMPANY.phone,
+    email: COMPANY.email,
+    website: COMPANY.website,
+    hidePeople: false,
+    coverLogoFit: COVER_LOGO_FIT,
+    compactLogoFit: INNER_LOGO_FIT,
+  };
 }
 
 function ensurePdfmake() {
@@ -410,7 +521,9 @@ function getOfferMeta(data: OfferPdfData, lang: PdfLang) {
       : str(data.approvalUser.nameEN) || str(data.approvalUser.nameGR);
 
   const refParts = [String(data.offerId), str(data.salesDivisionName), str(data.salesPerson.nameCode)].filter(Boolean);
-  const refNo = refParts.join('-');
+  // Telvin offers use a simple "TLV-<offerId>" reference (e.g. TLV-7154) rather
+  // than the Telmaco division/salesperson composite.
+  const refNo = data.isTelvin ? `TLV-${data.offerId}` : refParts.join('-');
 
   const customerName = (() => {
     const name = str(data.customer.name);
@@ -473,18 +586,21 @@ function buildCompactHeader(
   L: Labels,
   lang: PdfLang,
   orientation: PdfOrientation,
-  logo: string,
+  branding: Branding,
   includeCustomer: boolean = true,
 ) {
   const meta = getOfferMeta(data, lang);
 
-  const companyName = lang === 'el' ? COMPANY.name : COMPANY.nameEN;
+  const companyName = lang === 'el' ? branding.nameEl : branding.nameEn;
   const companyAddress = lang === 'el' ? COMPANY.address : COMPANY.addressEN;
-  const companyPhone = lang === 'en' ? `+30 ${COMPANY.phone}` : COMPANY.phone;
+  const companyPhone = lang === 'en' ? `+30 ${branding.phone}` : branding.phone;
   const taxLine =
     lang === 'el'
-      ? `ΑΦΜ: ${COMPANY.afm}, ΔΟΥ: ${COMPANY.doy}`
-      : `Tax ID: ${COMPANY.afm}, Tax Office: ${COMPANY.doyEN}`;
+      ? `ΑΦΜ: ${branding.afm}, ΔΟΥ: ${COMPANY.doy}`
+      : `Tax ID: ${branding.afm}, Tax Office: ${COMPANY.doyEN}`;
+  const contactLine = branding.website
+    ? `${companyPhone} | ${branding.email} | ${branding.website}`
+    : `${companyPhone} | ${branding.email}`;
 
   const salesEmail = str(data.salesPerson.email);
   // When the customer identity is shown centered under the title (see the
@@ -500,22 +616,29 @@ function buildCompactHeader(
   const rightInfo = [
     { label: L.refNo, value: meta.refNo },
     { label: L.date, value: meta.date },
-    { label: L.responsible, value: meta.salesName || '-' },
-    ...(salesEmail ? [{ label: L.responsibleEmail, value: salesEmail }] : []),
+    ...(!branding.hidePeople ? [{ label: L.responsible, value: meta.salesName || '-' }] : []),
+    ...(salesEmail && !branding.hidePeople ? [{ label: L.responsibleEmail, value: salesEmail }] : []),
   ];
 
   const labelStyle = { fontSize: 7.3, color: COLORS.secondaryText, bold: false };
   const compactValue = { fontSize: 8.3, color: COLORS.primaryText, bold: true };
 
+  // Center the 3-line company block (~26pt) against the taller Telvin logo, then
+  // raise it ~10pt (the artwork sits high in its box). Telmaco stays top-aligned.
+  const infoTopMargin = data.isTelvin
+    ? Math.max(0, Math.round((branding.compactLogoFit[orientation][1] - 26) / 2) - 10)
+    : 0;
+
   return [
     {
       columns: [
-        { width: 'auto', image: logo, fit: INNER_LOGO_FIT[orientation] },
+        { width: 'auto', image: branding.logo, fit: branding.compactLogoFit[orientation] },
         {
           width: '*',
+          margin: [0, infoTopMargin, 0, 0],
           stack: [
             { text: `${companyName}  |  ${companyAddress}`, ...labelStyle, alignment: 'right' },
-            { text: `${companyPhone} | ${COMPANY.email} | ${COMPANY.website}`, ...labelStyle, alignment: 'right', margin: [0, 1, 0, 0] },
+            { text: contactLine, ...labelStyle, alignment: 'right', margin: [0, 1, 0, 0] },
             { text: taxLine, ...labelStyle, alignment: 'right', margin: [0, 1, 0, 0] },
           ],
         },
@@ -530,7 +653,7 @@ function buildCompactHeader(
           x2: innerContentWidth(orientation),
           y2: 0,
           lineWidth: 1,
-          lineColor: COLORS.accentRed,
+          lineColor: branding.accentColor,
         },
       ],
       margin: [0, 6, 0, 6],
@@ -596,7 +719,7 @@ function buildCompactHeader(
   ];
 }
 
-function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientation: PdfOrientation, logo: string, equipmentList: boolean = false) {
+function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientation: PdfOrientation, branding: Branding, equipmentList: boolean = false) {
   const meta = getOfferMeta(data, lang);
   const isLandscape = orientation === 'landscape';
   const coverTitle = equipmentList ? L.equipmentListTitle : (str(data.title) || L.title);
@@ -613,29 +736,39 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
   const rightInfo = [
     { label: L.refNo, value: meta.refNo },
     { label: L.date, value: meta.date },
-    { label: L.responsible, value: meta.salesName || '-' },
-    ...(salesEmail ? [{ label: L.responsibleEmail, value: salesEmail }] : []),
+    ...(!branding.hidePeople ? [{ label: L.responsible, value: meta.salesName || '-' }] : []),
+    ...(salesEmail && !branding.hidePeople ? [{ label: L.responsibleEmail, value: salesEmail }] : []),
   ];
 
-  const companyName = lang === 'el' ? COMPANY.name : COMPANY.nameEN;
+  const companyName = lang === 'el' ? branding.nameEl : branding.nameEn;
   const companyAddress = lang === 'el' ? COMPANY.address : COMPANY.addressEN;
-  const companyPhone = lang === 'en' ? `+30 ${COMPANY.phone}` : COMPANY.phone;
+  const companyPhone = lang === 'en' ? `+30 ${branding.phone}` : branding.phone;
   const taxLine =
     lang === 'el'
-      ? `ΑΦΜ: ${COMPANY.afm}, ΔΟΥ: ${COMPANY.doy}`
-      : `Tax ID: ${COMPANY.afm}, Tax Office: ${COMPANY.doyEN}`;
+      ? `ΑΦΜ: ${branding.afm}, ΔΟΥ: ${COMPANY.doy}`
+      : `Tax ID: ${branding.afm}, Tax Office: ${COMPANY.doyEN}`;
+
+  // Center the ~50pt company-info block against the tall Telvin logo, then raise
+  // it ~18pt: the Telvin artwork sits in the upper part of its image box, so a
+  // pure geometric center reads as too low. The short Telmaco banner needs none.
+  const infoTopMargin = data.isTelvin
+    ? Math.max(0, Math.round((branding.coverLogoFit[orientation][1] - 50) / 2) - 18)
+    : 0;
 
   return [
     {
       columns: [
-        { width: 'auto', image: logo, fit: COVER_LOGO_FIT[orientation] },
+        { width: 'auto', image: branding.logo, fit: branding.coverLogoFit[orientation] },
         {
           width: '*',
+          margin: [0, infoTopMargin, 0, 0],
           stack: [
             { text: companyName, style: 'secondary', alignment: 'right' },
             { text: companyAddress, style: 'secondary', alignment: 'right', margin: [0, 2, 0, 0] },
-            { text: `${companyPhone} | ${COMPANY.email}`, style: 'secondary', alignment: 'right', margin: [0, 2, 0, 0] },
-            { text: COMPANY.website, style: 'secondary', alignment: 'right', margin: [0, 2, 0, 0] },
+            { text: `${companyPhone} | ${branding.email}`, style: 'secondary', alignment: 'right', margin: [0, 2, 0, 0] },
+            ...(branding.website
+              ? [{ text: branding.website, style: 'secondary', alignment: 'right', margin: [0, 2, 0, 0] }]
+              : []),
             { text: taxLine, style: 'secondary', alignment: 'right', margin: [0, 2, 0, 0] },
           ],
         },
@@ -650,7 +783,7 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
           x2: innerContentWidth(orientation),
           y2: 0,
           lineWidth: 1.5,
-          lineColor: COLORS.accentRed,
+          lineColor: branding.accentColor,
         },
       ],
       margin: [0, 16, 0, 0],
@@ -743,7 +876,7 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
   ];
 }
 
-function buildHeaderFull(data: OfferPdfData, L: Labels, lang: PdfLang, orientation: PdfOrientation, logo: string) {
+function buildHeaderFull(data: OfferPdfData, L: Labels, lang: PdfLang, orientation: PdfOrientation, branding: Branding) {
   const meta = getOfferMeta(data, lang);
 
   return {
@@ -751,7 +884,7 @@ function buildHeaderFull(data: OfferPdfData, L: Labels, lang: PdfLang, orientati
     stack: [
       {
         columns: [
-          { width: 'auto', image: logo, fit: INNER_LOGO_FIT[orientation] },
+          { width: 'auto', image: branding.logo, fit: INNER_LOGO_FIT[orientation] },
           {
             width: '*',
             margin: [0, 10, 0, 0],
@@ -771,7 +904,7 @@ function buildHeaderFull(data: OfferPdfData, L: Labels, lang: PdfLang, orientati
             x2: innerContentWidth(orientation),
             y2: 0,
             lineWidth: 0.8,
-            lineColor: COLORS.accentRed,
+            lineColor: branding.accentColor,
           },
         ],
         margin: [0, 6, 0, 8],
@@ -1281,7 +1414,11 @@ function buildTotalsAndTerms(
     showAdditionalDiscountSummary ||
     totalsDisplaySettings.showFinalPrice;
 
+  // Telvin offers add a contract duration range as the first commercial term.
+  const durationValue = data.isTelvin ? formatDurationRange(data.durationFrom, data.durationTo) : '';
+
   let terms = [
+    { label: L.duration, value: durationValue },
     { label: L.offerValidity, value: fixObviousTypos(str(data.terms.offerValidity)) },
     { label: L.paymentTerms, value: fixObviousTypos(str(data.terms.paymentTerms)) },
     { label: L.deliveryTime, value: fixObviousTypos(str(data.terms.deliveryTime)) },
@@ -1454,7 +1591,7 @@ function buildTotalsAndTerms(
   return { totals: totalsBlocks, terms: termsBlocks };
 }
 
-function buildSignatureBlock(data: OfferPdfData, L: Labels, lang: PdfLang, orientation: PdfOrientation) {
+function buildSignatureBlock(data: OfferPdfData, L: Labels, lang: PdfLang, orientation: PdfOrientation, branding: Branding) {
   const meta = getOfferMeta(data, lang);
   const leftTitle = str(data.salesPerson.signTitle);
   const rightTitle = str(data.approvalUser.signTitle);
@@ -1463,6 +1600,39 @@ function buildSignatureBlock(data: OfferPdfData, L: Labels, lang: PdfLang, orien
     !!meta.salesName &&
     !!meta.approvalName &&
     normalizeName(meta.salesName) === normalizeName(meta.approvalName);
+
+  const companySign = lang === 'el' ? branding.nameEl : branding.nameEn;
+
+  // Telvin offers sign off with just the company name — no individual signers.
+  const signers = branding.hidePeople
+    ? []
+    : [
+        sameSigner
+          ? {
+              stack: [
+                { text: meta.salesName || meta.approvalName, style: 'body', bold: true },
+                { text: rightTitle || leftTitle, style: 'body', margin: [0, 3, 0, 0] },
+              ],
+            }
+          : {
+              columns: [
+                {
+                  width: '50%',
+                  stack: [
+                    { text: meta.salesName , style: 'body', bold: true },
+                    { text: leftTitle, style: 'body', margin: [0, 3, 0, 0] },
+                  ],
+                },
+                {
+                  width: '50%',
+                  stack: [
+                    { text: meta.approvalName , style: 'body', bold: true, alignment: 'right' },
+                    { text: rightTitle, style: 'body', alignment: 'right', margin: [0, 3, 0, 0] },
+                  ],
+                },
+              ],
+            },
+      ];
 
   return {
     stack: [
@@ -1481,32 +1651,8 @@ function buildSignatureBlock(data: OfferPdfData, L: Labels, lang: PdfLang, orien
         margin: [0, 6, 0, 10],
       },
       { text: L.regards, style: 'body', margin: [0, 18, 0, 4] },
-      { text: L.companySign, style: 'body', bold: true, margin: [0, 0, 0, 28] },
-      sameSigner
-        ? {
-            stack: [
-              { text: meta.salesName || meta.approvalName, style: 'body', bold: true },
-              { text: rightTitle || leftTitle, style: 'body', margin: [0, 3, 0, 0] },
-            ],
-          }
-        : {
-            columns: [
-              {
-                width: '50%',
-                stack: [
-                  { text: meta.salesName , style: 'body', bold: true },
-                  { text: leftTitle, style: 'body', margin: [0, 3, 0, 0] },
-                ],
-              },
-              {
-                width: '50%',
-                stack: [
-                  { text: meta.approvalName , style: 'body', bold: true, alignment: 'right' },
-                  { text: rightTitle, style: 'body', alignment: 'right', margin: [0, 3, 0, 0] },
-                ],
-              },
-            ],
-          },
+      { text: companySign, style: 'body', bold: true, margin: [0, 0, 0, 28] },
+      ...signers,
     ],
   };
 }
@@ -1533,7 +1679,7 @@ export async function generateOfferPdf(
   const trimmedSymbol = (data.currencySymbol ?? '').trim();
   currentCurrencySymbol = trimmedSymbol.length > 0 ? trimmedSymbol : '€';
 
-  const logo = getLogoBase64();
+  const branding = resolveBranding(data);
   const L = LABELS[lang];
   let cols = selectedColumns.length > 0 ? selectedColumns : DEFAULT_PDF_PRODUCT_COLUMNS;
   if (equipmentList) {
@@ -1650,10 +1796,10 @@ export async function generateOfferPdf(
     header: (currentPage: number) => {
       if (smallOffer) {
         if (currentPage <= 1) return null;
-        return buildHeaderFull(data, L, lang, orientation, logo);
+        return buildHeaderFull(data, L, lang, orientation, branding);
       }
       if (currentPage === 1) return null;
-      return buildHeaderFull(data, L, lang, orientation, logo);
+      return buildHeaderFull(data, L, lang, orientation, branding);
     },
 
     footer: (currentPage: number, pageCount: number) => ({
@@ -1665,8 +1811,8 @@ export async function generateOfferPdf(
 
     content: [
       ...(smallOffer
-        ? buildCompactHeader(data, L, lang, orientation, logo, !smallOfferShowsCustomer)
-        : buildCoverPage(data, L, lang, orientation, logo, equipmentList)),
+        ? buildCompactHeader(data, L, lang, orientation, branding, !smallOfferShowsCustomer)
+        : buildCoverPage(data, L, lang, orientation, branding, equipmentList)),
       ...smallOfferIdentity,
       ...openingNote,
       itemsTable,
@@ -1678,7 +1824,7 @@ export async function generateOfferPdf(
         stack: [
           ...totalsAndTerms.terms,
           ...notes,
-          buildSignatureBlock(data, L, lang, orientation),
+          buildSignatureBlock(data, L, lang, orientation, branding),
         ],
         unbreakable: true,
       },

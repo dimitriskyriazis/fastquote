@@ -42,7 +42,7 @@ type DeleteRequest = {
   OfferIDs?: Array<number | string | null | undefined>;
 };
 
-type OfferUpdateField = 'Probability';
+type OfferUpdateField = 'Probability' | 'IsTelvin';
 
 type OfferUpdateInput = {
   OfferID?: number | string | null;
@@ -81,6 +81,7 @@ type OfferRow = {
   OfferVersion: number | null;
   Enabled: boolean | number | null;
   FromTelquote: boolean | number | null;
+  IsTelvin: boolean | number | null;
   OfferDate: string | null;
   ModifiedOn: string | null;
   ModifiedOnAny: string | null;
@@ -154,6 +155,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferVersion: 'dbo.Offer.OfferVersion',
   Enabled: 'dbo.Offer.Enabled',
   FromTelquote: 'dbo.Offer.FromTelquote',
+  IsTelvin: 'dbo.Offer.IsTelvin',
   OfferDate: 'dbo.Offer.OfferDate',
   ModifiedOn: LATEST_MODIFIED_EXPRESSION,
   ModifiedOnAny: LATEST_MODIFIED_ANY_EXPRESSION,
@@ -397,6 +399,7 @@ export async function POST(req: NextRequest) {
         dbo.Offer.OfferVersion,
         dbo.Offer.Enabled,
         dbo.Offer.FromTelquote,
+        dbo.Offer.IsTelvin,
         dbo.Offer.OfferDate,
         dbo.Offer.Probability,
         dbo.Offer.CreatedOn AS CreatedOn,
@@ -668,44 +671,80 @@ export async function PATCH(req: NextRequest) {
     const auditChanges: FieldChange[] = [];
 
     for (const update of rawUpdates) {
-      if (!update || update.field !== 'Probability') continue;
+      if (!update) continue;
       const offerId = normalizeId(update.OfferID);
       if (offerId == null) continue;
-      const probability = normalizeProbability(update.value);
-      if (probability == null) {
-        return NextResponse.json(
-          { ok: false, error: 'Probability must be an integer value.' },
-          { status: 400 },
-        );
-      }
 
-      const request = pool.request();
-      request.input('__offerId', sql.Int, offerId);
-      request.input('__probability', sql.Int, probability);
-      if (auditUserId) {
-        request.input('__modifiedBy', sql.NVarChar(450), auditUserId);
-      }
+      if (update.field === 'Probability') {
+        const probability = normalizeProbability(update.value);
+        if (probability == null) {
+          return NextResponse.json(
+            { ok: false, error: 'Probability must be an integer value.' },
+            { status: 400 },
+          );
+        }
 
-      const result = await request.query(`
-        UPDATE dbo.Offer
-        SET
-          Probability = @__probability,
-          ModifiedOn = SYSUTCDATETIME()
-          ${auditUserId ? ', ModifiedBy = @__modifiedBy' : ''}
-        WHERE ID = @__offerId
-          AND ISNULL(IsStandardPackage, 0) = 0;
-      `);
+        const request = pool.request();
+        request.input('__offerId', sql.Int, offerId);
+        request.input('__probability', sql.Int, probability);
+        if (auditUserId) {
+          request.input('__modifiedBy', sql.NVarChar(450), auditUserId);
+        }
 
-      const affected = result.rowsAffected?.[0] ?? 0;
-      if (affected > 0) {
-        auditChanges.push({
-          targetId: offerId,
-          field: 'Probability',
-          before: null,
-          after: probability,
-        });
+        const result = await request.query(`
+          UPDATE dbo.Offer
+          SET
+            Probability = @__probability,
+            ModifiedOn = SYSUTCDATETIME()
+            ${auditUserId ? ', ModifiedBy = @__modifiedBy' : ''}
+          WHERE ID = @__offerId
+            AND ISNULL(IsStandardPackage, 0) = 0;
+        `);
+
+        const affected = result.rowsAffected?.[0] ?? 0;
+        if (affected > 0) {
+          auditChanges.push({
+            targetId: offerId,
+            field: 'Probability',
+            before: null,
+            after: probability,
+          });
+        }
+        updated += affected;
+      } else if (update.field === 'IsTelvin') {
+        // SQL BIT: accept boolean/number/'Yes'/'No' and normalize to 0/1.
+        const v = update.value;
+        const isTelvin = v === true || v === 1 || v === '1' || v === 'Yes' ? 1 : 0;
+
+        const request = pool.request();
+        request.input('__offerId', sql.Int, offerId);
+        request.input('__isTelvin', sql.Bit, isTelvin);
+        if (auditUserId) {
+          request.input('__modifiedBy', sql.NVarChar(450), auditUserId);
+        }
+
+        const result = await request.query(`
+          UPDATE dbo.Offer
+          SET
+            IsTelvin = @__isTelvin,
+            ModifiedOn = SYSUTCDATETIME()
+            ${auditUserId ? ', ModifiedBy = @__modifiedBy' : ''}
+          WHERE ID = @__offerId;
+        `);
+
+        const affected = result.rowsAffected?.[0] ?? 0;
+        if (affected > 0) {
+          auditChanges.push({
+            targetId: offerId,
+            field: 'IsTelvin',
+            before: null,
+            after: isTelvin,
+          });
+        }
+        updated += affected;
+      } else {
+        continue;
       }
-      updated += affected;
     }
 
     if (updated <= 0) {

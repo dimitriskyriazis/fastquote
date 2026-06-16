@@ -80,7 +80,10 @@ async function fetchOfferBasicRecord(offerId: number) {
         o.ProtocolNo,
         o.ServicesLocation,
         o.PricingSellAnchor,
-        o.PricingHoldMarginOnCost
+        o.PricingHoldMarginOnCost,
+        o.IsTelvin,
+        o.DurationFrom,
+        o.DurationTo
       FROM dbo.Offer AS o
       LEFT JOIN dbo.Customers AS c ON o.CustomerID = c.ID
       LEFT JOIN dbo.OfferStatus AS os ON o.StatusID = os.ID

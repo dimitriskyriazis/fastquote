@@ -57,7 +57,7 @@
 
 .sectionsGrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
   gap: 16px;
 }
 
@@ -78,6 +78,12 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* Anchor for the absolutely-positioned compact "Add Contact" button so it can
+   sit above the control without affecting the label row height. */
+.field {
+  position: relative;
 }
 
 .fieldWide {
@@ -113,6 +119,20 @@
   color: #dc2626;
   margin-left: 4px;
   font-size: 0.75rem;
+}
+
+/* Compact "Add Contact" used inside the General header row. It is taken out of
+   flow and pinned to the top-right of the cell so the label row stays the
+   height of a plain field label — keeping the Contact control aligned with its
+   neighbours in the row, with the button floating right above it. */
+.compactAddButton {
+  position: absolute;
+  top: -18px;
+  right: 0;
+  padding: 1px 9px;
+  font-size: 11px;
+  line-height: 1.2;
+  min-height: 0;
 }
 
 .fieldControl {

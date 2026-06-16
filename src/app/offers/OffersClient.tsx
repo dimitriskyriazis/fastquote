@@ -749,14 +749,12 @@ export default function OffersClient() {
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
-    if (field !== 'Probability') return;
+    if (field !== 'Probability' && field !== 'IsTelvin') return;
     if (event.newValue === event.oldValue) return;
     const offerId = normalizeOfferIdValue(
       (event.data as { offerId?: unknown } | undefined)?.offerId ?? null,
     );
     if (offerId == null) return;
-    const normalizedValue = normalizeProbability(event.newValue);
-    const label = 'Probability';
 
     const revertValue = () => {
       if (event.node) {
@@ -770,14 +768,27 @@ export default function OffersClient() {
       event.api.refreshCells({ force: true });
     };
 
-    if (normalizedValue == null) {
-      showToastMessage('Probability must be an integer value.', 'error');
-      revertValue();
-      return;
-    }
-
-    if (event.node && event.node.data) {
-      (event.node.data as Record<string, unknown>).Probability = normalizedValue;
+    let label: string;
+    let value: number;
+    if (field === 'Probability') {
+      const normalizedValue = normalizeProbability(event.newValue);
+      if (normalizedValue == null) {
+        showToastMessage('Probability must be an integer value.', 'error');
+        revertValue();
+        return;
+      }
+      if (event.node && event.node.data) {
+        (event.node.data as Record<string, unknown>).Probability = normalizedValue;
+      }
+      label = 'Probability';
+      value = normalizedValue;
+    } else {
+      // IsTelvin: Yes/No -> 1/0 bit.
+      value = event.newValue === 'Yes' || event.newValue === 1 || event.newValue === true ? 1 : 0;
+      if (event.node && event.node.data) {
+        (event.node.data as Record<string, unknown>).IsTelvin = value;
+      }
+      label = 'Telvin';
     }
 
     const submit = async () => {
@@ -786,7 +797,7 @@ export default function OffersClient() {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            updates: [{ OfferID: offerId, field, value: normalizedValue }],
+            updates: [{ OfferID: offerId, field, value }],
           }),
         });
         const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
@@ -937,6 +948,33 @@ export default function OffersClient() {
     { field: 'Title', headerName: 'Title', filter: 'agTextColumnFilter', width: 210 },
     {field: 'Comments',  headerName: 'Telmaco Note', filter: 'agTextColumnFilter'},
 { field: 'OfferContact', headerName: 'Contact', filter: 'agTextColumnFilter' },
+    {
+      field: 'IsTelvin',
+      headerName: 'Telvin',
+      width: 100,
+      filter: 'agSetColumnFilter',
+      // Editable Yes/No dropdown; the underlying value is a 0/1 SQL bit. The
+      // value getter/setter keep the cell on 'Yes'/'No' so the editor preselects
+      // the current state, while persistence stores a 0/1 (see handleCellEdit).
+      editable: true,
+      cellEditor: 'agSelectCellEditor',
+      cellEditorParams: { values: ['Yes', 'No'] },
+      valueGetter: (params) => {
+        const v = (params.data as { IsTelvin?: unknown } | undefined)?.IsTelvin;
+        return v === 1 || v === true || v === '1' || v === 'Yes' ? 'Yes' : 'No';
+      },
+      valueSetter: (params) => {
+        const next = params.newValue === 'Yes' || params.newValue === 1 || params.newValue === true ? 1 : 0;
+        params.data = (params.data ?? {}) as Record<string, unknown>;
+        (params.data as Record<string, unknown>).IsTelvin = next;
+        return true;
+      },
+      filterParams: {
+        values: ['true', 'false'],
+        valueFormatter: (params: { value?: unknown }) => formatEnabledValue(params.value),
+        comparator: (valueA: string, valueB: string) => (valueA === valueB ? 0 : valueA === 'true' ? -1 : 1),
+      },
+    },
     {
       field: 'FromTelquote',
       headerName: 'From TelQuote',

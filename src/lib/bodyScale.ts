@@ -62,17 +62,20 @@ const attachCorrector = (el: HTMLElement) => {
   // The observer fires for ANY style change (AG Grid also toggles min-width,
   // max-height, display, …). Remember the last top/left we wrote and only
   // divide values that differ, so an unrelated style write never re-divides
-  // an already-corrected position.
+  // an already-corrected position. writtenTop/Left start as NaN to mean
+  // "nothing written yet" — that case must still divide, so guard it
+  // explicitly (Math.abs(x - NaN) > 0.01 is always false, which would
+  // otherwise skip the very first correction and disable the corrector).
   let writtenTop = Number.NaN;
   let writtenLeft = Number.NaN;
   const correct = () => {
     const rawTop = parseFloat(el.style.getPropertyValue('top'));
     const rawLeft = parseFloat(el.style.getPropertyValue('left'));
-    if (!Number.isNaN(rawTop) && Math.abs(rawTop - writtenTop) > 0.01) {
+    if (!Number.isNaN(rawTop) && (Number.isNaN(writtenTop) || Math.abs(rawTop - writtenTop) > 0.01)) {
       writtenTop = rawTop / scale;
       el.style.setProperty('top', `${writtenTop}px`);
     }
-    if (!Number.isNaN(rawLeft) && Math.abs(rawLeft - writtenLeft) > 0.01) {
+    if (!Number.isNaN(rawLeft) && (Number.isNaN(writtenLeft) || Math.abs(rawLeft - writtenLeft) > 0.01)) {
       writtenLeft = rawLeft / scale;
       el.style.setProperty('left', `${writtenLeft}px`);
     }

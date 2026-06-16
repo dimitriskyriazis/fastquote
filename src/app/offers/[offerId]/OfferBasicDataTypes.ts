@@ -64,6 +64,9 @@ export type OfferBasicRecord = {
   PricingHoldMarginOnCost: boolean | null;
   ExtraNetDiscount: number | null;
   ExtraNetDiscountMode: string | null;
+  IsTelvin: boolean | null;
+  DurationFrom: Date | string | null;
+  DurationTo: Date | string | null;
 };
 
 export type OfferContactInfo = {
@@ -121,4 +124,7 @@ export type OfferBasicUpdateField =
   | 'PricingSellAnchor'
   | 'PricingHoldMarginOnCost'
   | 'ExtraNetDiscount'
-  | 'ExtraNetDiscountMode';
+  | 'ExtraNetDiscountMode'
+  | 'IsTelvin'
+  | 'DurationFrom'
+  | 'DurationTo';

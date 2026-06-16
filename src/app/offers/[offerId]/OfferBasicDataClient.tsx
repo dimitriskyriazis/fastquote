@@ -49,7 +49,7 @@ const isEurOption = (option: OfferDropdownOption): boolean => {
   return label === '€' || label === 'eur' || label.includes('eur');
 };
 
-type SectionKey = 'general' | 'info' | 'commercial' | 'code' | 'dates';
+type SectionKey = 'general' | 'info' | 'printing' | 'commercial' | 'code' | 'dates';
 
 type FieldDefinition = {
   id: string;
@@ -65,6 +65,9 @@ type FieldDefinition = {
   inputType?: string;
   valueType?: 'string' | 'number' | 'date';
   readOnly?: boolean;
+  // When true, the record value is a SQL BIT; seed the control as '0'/'1' so it
+  // pairs with a Yes/No option list and saves as a number (0/1).
+  boolean?: boolean;
   resolveValue?: (record: OfferBasicRecord) => string | null | undefined;
   readOnlyDisplayValue?: (record: OfferBasicRecord) => string | null | undefined;
   step?: number;
@@ -116,6 +119,7 @@ const splitContactName = (fullName: string | null | undefined): { firstName: str
 const SECTION_METADATA: Record<SectionKey, { title: string; gridClass: string }> = {
   general: { title: 'General', gridClass: styles.generalGrid },
   info: { title: 'Info', gridClass: styles.fieldGrid },
+  printing: { title: 'Printing', gridClass: styles.fieldGrid },
   commercial: { title: 'Commercial', gridClass: styles.fieldGrid },
   code: { title: 'Code Number', gridClass: styles.fieldGrid },
   dates: { title: 'Dates', gridClass: styles.fieldGrid },
@@ -178,7 +182,7 @@ const buildFieldDefinitions = (
   showCurrencyModifier: boolean,
 ): FieldDefinition[] => [
   { id: 'title', label: 'Title', section: 'general', recordKey: 'Title', updateField: 'Title' },
-  { id: 'offerDescription', label: 'Offer Description', labelNote: 'PRINTED ON PDF', section: 'general', recordKey: 'OfferDescription', updateField: 'OfferDescription' },
+  { id: 'offerDescription', label: 'Offer Description', section: 'printing', recordKey: 'OfferDescription', updateField: 'OfferDescription' },
   { id: 'description', label: 'Telmaco Description', section: 'general', recordKey: 'Description', updateField: 'Description', multiline: true },
   { id: 'paymentTerms', label: 'Payment Terms', section: 'general', recordKey: 'PaymentTerms', updateField: 'PaymentTerms', multiline: true },
   { id: 'install', label: 'Installation Schedule', section: 'general', recordKey: 'InstallationSchedule', updateField: 'InstallationSchedule', multiline: true },
@@ -210,17 +214,16 @@ const buildFieldDefinitions = (
   {
     id: 'contactId',
     label: 'Contact',
-    section: 'info',
+    section: 'general',
     recordKey: 'ContactID',
     updateField: 'ContactID',
     valueType: 'number',
     options: contacts,
-    fullWidth: true,
   },
   {
     id: 'offerLanguage',
     label: 'Offer Language',
-    section: 'info',
+    section: 'printing',
     recordKey: 'OfferLanguage',
     updateField: 'OfferLanguage',
     valueType: 'string',
@@ -228,13 +231,30 @@ const buildFieldDefinitions = (
       { value: 'Greek', label: 'Greek' },
       { value: 'English', label: 'English' },
     ],
-    fullWidth: true,
     hideEmptyOption: true,
   },
-  { id: 'telmaco', label: 'Telmaco Note', section: 'info', recordKey: 'TelmacoNote', updateField: 'Comments', multiline: true },
-  { id: 'discountLabel', label: 'Discount Label', section: 'info', recordKey: 'DiscountLabel', updateField: 'DiscountLabel', fullWidth: true },
-  { id: 'additionalDiscountLabel', label: 'Add. Discount Label', section: 'info', recordKey: 'AdditionalDiscountLabel', updateField: 'AdditionalDiscountLabel', fullWidth: true },
-  { id: 'finalPriceLabel', label: 'Final Price Label', section: 'info', recordKey: 'FinalPriceLabel', updateField: 'FinalPriceLabel', fullWidth: true },
+  { id: 'telmaco', label: 'Telmaco Note', section: 'general', recordKey: 'TelmacoNote', updateField: 'Comments', multiline: true },
+  { id: 'discountLabel', label: 'Discount Label', section: 'printing', recordKey: 'DiscountLabel', updateField: 'DiscountLabel' },
+  { id: 'additionalDiscountLabel', label: 'Add. Discount Label', section: 'printing', recordKey: 'AdditionalDiscountLabel', updateField: 'AdditionalDiscountLabel' },
+  { id: 'finalPriceLabel', label: 'Final Price Label', section: 'printing', recordKey: 'FinalPriceLabel', updateField: 'FinalPriceLabel' },
+  {
+    id: 'isTelvin',
+    label: 'Telvin',
+    section: 'printing',
+    recordKey: 'IsTelvin',
+    updateField: 'IsTelvin',
+    valueType: 'number',
+    boolean: true,
+    options: [
+      { value: '0', label: 'No' },
+      { value: '1', label: 'Yes' },
+    ],
+    hideEmptyOption: true,
+  },
+  // Telvin contract duration. Only shown when "Telvin" is Yes (see the
+  // fieldDefinitions memo, which hides these otherwise).
+  { id: 'durationFrom', label: 'Duration From', section: 'printing', recordKey: 'DurationFrom', updateField: 'DurationFrom', inputType: 'date', valueType: 'date' },
+  { id: 'durationTo', label: 'Duration To', section: 'printing', recordKey: 'DurationTo', updateField: 'DurationTo', inputType: 'date', valueType: 'date' },
 
   {
     id: 'pricingPolicy',
@@ -344,8 +364,8 @@ const buildFieldDefinitions = (
   },
   {
     id: 'probability',
-    label: 'Probability',
-    section: 'code',
+    label: 'Probability (%)',
+    section: 'general',
     recordKey: 'Probability',
     updateField: 'Probability',
     valueType: 'number',
@@ -356,13 +376,13 @@ const buildFieldDefinitions = (
   { id: 'customerRef', label: 'Customer Ref', section: 'code', recordKey: 'CustomerRef', updateField: 'CustomerRef' },
   { id: 'protocolNo', label: 'Protocol No', section: 'code', recordKey: 'ProtocolNo', updateField: 'ProtocolNo', valueType: 'number', inputType: 'number' },
 
-  { id: 'offerDate', label: 'Offer', section: 'dates', recordKey: 'OfferDate', updateField: 'OfferDate', inputType: 'date', valueType: 'date' },
-  { id: 'orderSigned', label: 'Order Signed', section: 'dates', recordKey: 'OrderSignedDate', updateField: 'OrderSignedDate', inputType: 'date', valueType: 'date' },
-  { id: 'possibleOrderDate', label: 'Possible Order', section: 'dates', recordKey: 'PossibleOrderDate', updateField: 'PossibleOrderDate', inputType: 'date', valueType: 'date' },
   { id: 'initialRequest', label: 'Draft Request', section: 'dates', recordKey: 'DraftRequestDate', updateField: 'DraftRequestDate', inputType: 'date', valueType: 'date' },
   { id: 'draftOffer', label: 'Draft Offer', section: 'dates', recordKey: 'DraftOfferDate', updateField: 'DraftOfferDate', inputType: 'date', valueType: 'date' },
   { id: 'officialRequest', label: 'Request', section: 'dates', recordKey: 'RequestDate', updateField: 'RequestDate', inputType: 'date', valueType: 'date' },
+  { id: 'offerDate', label: 'Offer', section: 'dates', recordKey: 'OfferDate', updateField: 'OfferDate', inputType: 'date', valueType: 'date' },
   { id: 'offerDeadline', label: 'Offer Deadline', section: 'dates', recordKey: 'OfferDeadlineDate', updateField: 'OfferDeadlineDate', inputType: 'date', valueType: 'date' },
+  { id: 'possibleOrderDate', label: 'Possible Order', section: 'dates', recordKey: 'PossibleOrderDate', updateField: 'PossibleOrderDate', inputType: 'date', valueType: 'date' },
+  { id: 'orderSigned', label: 'Order Signed', section: 'dates', recordKey: 'OrderSignedDate', updateField: 'OrderSignedDate', inputType: 'date', valueType: 'date' },
   { id: 'deliveryDue', label: 'Delivery Due', section: 'dates', recordKey: 'DeliveryDueDate', updateField: 'DeliveryDueDate', inputType: 'date', valueType: 'date' },
 ];
 
@@ -371,6 +391,10 @@ const formatInitialValue = (record: OfferBasicRecord, def: FieldDefinition) => {
   const raw = record[def.recordKey];
   if (def.inputType === 'date' || def.valueType === 'date') {
     return formatDateInputValue(raw as Date | string | null | undefined);
+  }
+  if (def.boolean) {
+    // SQL BIT surfaces as a boolean (true/false) or 0/1; a null reads as off.
+    return raw ? '1' : '0';
   }
   if (raw == null) return '';
   return typeof raw === 'string' ? raw : String(raw);
@@ -613,12 +637,16 @@ export default function OfferBasicDataClient({
     return selected !== eurCurrencyId;
   }, [eurCurrencyId, record.CurrencyID]);
 
+  // Duration fields are Telvin-only: hide them unless the live "Telvin" value is Yes.
+  const isTelvinOn = values.isTelvin === '1';
   const fieldDefinitions = useMemo(
     () =>
-      baseFieldDefinitions.map((def) =>
-        def.id === 'currencyModifier' ? { ...def, hidden: !showCurrencyModifier } : def,
-      ),
-    [baseFieldDefinitions, showCurrencyModifier],
+      baseFieldDefinitions.map((def) => {
+        if (def.id === 'currencyModifier') return { ...def, hidden: !showCurrencyModifier };
+        if (def.id === 'durationFrom' || def.id === 'durationTo') return { ...def, hidden: !isTelvinOn };
+        return def;
+      }),
+    [baseFieldDefinitions, showCurrencyModifier, isTelvinOn],
   );
   const isDirty = useMemo(() => JSON.stringify(values) !== JSON.stringify(savedValues), [values, savedValues]);
   useUnsavedChanges(isDirty);
@@ -1203,13 +1231,13 @@ export default function OfferBasicDataClient({
   }, [fetchContactsByCustomer, record.CustomerID, refreshLookups, values.customer]);
 
   const renderLookupAddButton = useCallback(
-    (field: FieldDefinition) => {
+    (field: FieldDefinition, compact = false) => {
       if (field.id !== 'contactId') return null;
       const customerReady = activeCustomerId != null;
       return (
         <button
           type="button"
-          className={lookupButtonStyles.lookupAddButton}
+          className={`${lookupButtonStyles.lookupAddButton} ${compact ? styles.compactAddButton : ''}`}
           onClick={() => setIsAddContactOpen(true)}
           disabled={!customerReady}
           title={customerReady ? 'Add a new contact for this customer' : 'Select a customer first'}
@@ -1468,8 +1496,8 @@ export default function OfferBasicDataClient({
   }, {});
 
   const generalRowLayout: string[][] = [
-    ['title', 'offerDescription', 'customer', 'deliveryTime', 'offerValidity', 'status'],
-    ['description', 'paymentTerms', 'install', 'introNote', 'closingNote', 'discountNote'],
+    ['title', 'customer', 'contactId', 'deliveryTime', 'offerValidity', 'status', 'probability'],
+    ['description', 'telmaco', 'paymentTerms', 'install', 'introNote', 'closingNote', 'discountNote'],
   ];
 
   const generalRows = generalRowLayout
@@ -1503,8 +1531,13 @@ export default function OfferBasicDataClient({
                 {row.map((field) => (
                   <div key={field.id} className={styles.field}>
                     <label className={styles.fieldLabel} htmlFor={`offer-field-${field.id}`}>
-                      {field.label}
-                      {field.labelNote ? ` (${field.labelNote})` : null}
+                      <div className={styles.lookupLabelRow}>
+                        <div className={styles.labelText}>
+                          {field.label}
+                          {field.labelNote ? ` (${field.labelNote})` : null}
+                        </div>
+                        {renderLookupAddButton(field, true)}
+                      </div>
                     </label>
                     <div
                       onContextMenu={(event) => {
@@ -1521,8 +1554,9 @@ export default function OfferBasicDataClient({
             ))}
           </div>
         </div>
+        {renderSectionCard('printing')}
         <div className={styles.sectionsGrid}>
-          {(['info', 'commercial', 'code', 'dates'] as SectionKey[]).map((sectionKey) =>
+          {(['commercial', 'code', 'dates'] as SectionKey[]).map((sectionKey) =>
             renderSectionCard(sectionKey)
           )}
         </div>

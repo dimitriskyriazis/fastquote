@@ -78,6 +78,9 @@ type ExistingOfferRecord = {
   OfferVersion: number | null;
   Enabled: number | boolean | null;
   IsStandardPackage: number | boolean | null;
+  IsTelvin: number | boolean | null;
+  DurationFrom: Date | null;
+  DurationTo: Date | null;
   CreatedBy: string | null;
   ModifiedBy: string | null;
 };
@@ -406,6 +409,9 @@ export async function POST(
         OfferVersion,
         Enabled,
         IsStandardPackage,
+        IsTelvin,
+        DurationFrom,
+        DurationTo,
         CreatedBy,
         ModifiedBy
       FROM dbo.Offer
@@ -539,6 +545,9 @@ export async function POST(
       insertRequest.input('OfferVersion', sql.Int, targetVersion);
       insertRequest.input('Enabled', sql.Bit, enabledValue);
       insertRequest.input('IsStandardPackage', sql.Bit, isStandardPackageValue);
+      insertRequest.input('IsTelvin', sql.Bit, existingOffer.IsTelvin ?? false);
+      insertRequest.input('DurationFrom', sql.DateTime2, existingOffer.DurationFrom);
+      insertRequest.input('DurationTo', sql.DateTime2, existingOffer.DurationTo);
 
       const insertSql = `
         INSERT INTO dbo.Offer (
@@ -588,6 +597,9 @@ export async function POST(
           OfferVersion,
           Enabled,
           IsStandardPackage,
+          IsTelvin,
+          DurationFrom,
+          DurationTo,
           CreatedOn,
           ModifiedOn
         )
@@ -639,6 +651,9 @@ export async function POST(
           @OfferVersion,
           @Enabled,
           @IsStandardPackage,
+          @IsTelvin,
+          @DurationFrom,
+          @DurationTo,
           SYSUTCDATETIME(),
           SYSUTCDATETIME()
         );
