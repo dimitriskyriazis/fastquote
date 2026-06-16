@@ -251,10 +251,6 @@ const buildFieldDefinitions = (
     ],
     hideEmptyOption: true,
   },
-  // Telvin contract duration. Only shown when "Telvin" is Yes (see the
-  // fieldDefinitions memo, which hides these otherwise).
-  { id: 'durationFrom', label: 'Duration From', section: 'printing', recordKey: 'DurationFrom', updateField: 'DurationFrom', inputType: 'date', valueType: 'date' },
-  { id: 'durationTo', label: 'Duration To', section: 'printing', recordKey: 'DurationTo', updateField: 'DurationTo', inputType: 'date', valueType: 'date' },
 
   {
     id: 'pricingPolicy',
@@ -637,16 +633,12 @@ export default function OfferBasicDataClient({
     return selected !== eurCurrencyId;
   }, [eurCurrencyId, record.CurrencyID]);
 
-  // Duration fields are Telvin-only: hide them unless the live "Telvin" value is Yes.
-  const isTelvinOn = values.isTelvin === '1';
   const fieldDefinitions = useMemo(
     () =>
-      baseFieldDefinitions.map((def) => {
-        if (def.id === 'currencyModifier') return { ...def, hidden: !showCurrencyModifier };
-        if (def.id === 'durationFrom' || def.id === 'durationTo') return { ...def, hidden: !isTelvinOn };
-        return def;
-      }),
-    [baseFieldDefinitions, showCurrencyModifier, isTelvinOn],
+      baseFieldDefinitions.map((def) =>
+        def.id === 'currencyModifier' ? { ...def, hidden: !showCurrencyModifier } : def,
+      ),
+    [baseFieldDefinitions, showCurrencyModifier],
   );
   const isDirty = useMemo(() => JSON.stringify(values) !== JSON.stringify(savedValues), [values, savedValues]);
   useUnsavedChanges(isDirty);
