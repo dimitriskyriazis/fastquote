@@ -111,6 +111,10 @@ export const isOfferProductOption = (row: OfferProductRow): boolean => {
  */
 export const isUnlinkedOfferProductRow = (row: OfferProductRow): boolean => {
   if (!row || typeof row !== 'object') return false;
+  // Requested rows (any Requested* field populated → __isRequestedRow=1) are part of the live
+  // request→match workflow, not imported archive lines, so they keep the normal white background
+  // even before they're matched to a catalog product.
+  if ((row as { __isRequestedRow?: unknown }).__isRequestedRow === 1) return false;
   const type = resolveOfferProductRowType(row);
   if (type !== 'product' && type !== 'unknown') return false;
   const productIdRaw = (row as { ProductID?: unknown }).ProductID;
