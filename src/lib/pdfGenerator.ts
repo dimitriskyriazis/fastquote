@@ -1576,9 +1576,19 @@ function buildSignatureBlock(data: OfferPdfData, L: Labels, lang: PdfLang, orien
 
   const companySign = lang === 'el' ? branding.nameEl : branding.nameEn;
 
-  // Telvin offers sign off with just the company name — no individual signers.
+  // Telvin offers sign off with the company name plus the approval user only
+  // (no sales person); Telmaco shows the sales person and/or approval user.
   const signers = branding.hidePeople
-    ? []
+    ? meta.approvalName
+      ? [
+          {
+            stack: [
+              { text: meta.approvalName, style: 'body', bold: true },
+              { text: rightTitle, style: 'body', margin: [0, 3, 0, 0] },
+            ],
+          },
+        ]
+      : []
     : [
         sameSigner
           ? {
