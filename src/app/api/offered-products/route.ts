@@ -31,6 +31,7 @@ type OfferDetailRow = {
   OfferDescription: string | null;
   OfferVersion: number | null;
   OfferStatus: string | null;
+  FromTelquote: boolean | number | null;
   CustomerName: string | null;
   CustomerGroup: string | null;
   SalesDivision: string | null;
@@ -78,6 +79,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferDescription: 'o.Description',
   OfferVersion: 'o.OfferVersion',
   OfferStatus: 'os.Name',
+  FromTelquote: 'o.FromTelquote',
   CustomerName: 'c.Name',
   CustomerGroup: 'cg.Name',
   SalesDivision: 'sd.Name',
@@ -245,6 +247,7 @@ const selectClause = `
     o.Description AS OfferDescription,
     o.OfferVersion,
     os.Name AS OfferStatus,
+    o.FromTelquote,
     c.Name AS CustomerName,
     cg.Name AS CustomerGroup,
     sd.Name AS SalesDivision,

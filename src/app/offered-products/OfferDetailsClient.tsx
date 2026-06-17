@@ -57,6 +57,8 @@ type GroupFilters = {
   SalesDivision: string;
   SalesMarket: string;
   ERPFWCProjectShortName: string;
+  // 'no' (default) excludes FromTelquote=true offered products; 'yes' includes them.
+  includeTelquote: string;
 };
 
 const EMPTY_FILTERS: GroupFilters = {
@@ -64,6 +66,7 @@ const EMPTY_FILTERS: GroupFilters = {
   SalesDivision: '',
   SalesMarket: '',
   ERPFWCProjectShortName: '',
+  includeTelquote: 'no',
 };
 
 const normalizeOfferId = (value: unknown): number | null => {
@@ -133,6 +136,12 @@ const formatModifiedValue = (value: unknown): string => {
   return formatDateTime(value as string | Date);
 };
 
+const formatEnabledValue = (value: unknown): string => {
+  if (value === 1 || value === true || value === 'true') return 'Yes';
+  if (value === 0 || value === false || value === 'false') return 'No';
+  return value == null ? '' : String(value);
+};
+
 const redCellStyle = { color: '#dc2626' } as const;
 
 export default function OfferDetailsClient() {
@@ -148,6 +157,9 @@ export default function OfferDetailsClient() {
   // See memory: pivot-grid-layout-resets-on-refetch (mirrors the Offers Pivot Mode fix).
   const summaryGridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const pendingSummaryColStateRef = useRef<ColumnState[] | null>(null);
+  // Main grid handle + one-shot guard for applying the default "TelQuote excluded" filter.
+  const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
+  const defaultFiltersAppliedRef = useRef(false);
 
   // Fetch dropdown options once
   useEffect(() => {
@@ -198,6 +210,7 @@ export default function OfferDetailsClient() {
     if (currentFilters.SalesDivision)          qs.set('division', currentFilters.SalesDivision);
     if (currentFilters.SalesMarket)            qs.set('market',   currentFilters.SalesMarket);
     if (currentFilters.ERPFWCProjectShortName) qs.set('fwc',      currentFilters.ERPFWCProjectShortName);
+    if (currentFilters.includeTelquote === 'yes') qs.set('telquote', '1'); // else excluded (default)
     void fetch(`/api/offered-products/summary${qs.toString() ? `?${qs}` : ''}`)
       .then(r => r.json())
       .then((data: { ok?: boolean; rows?: Record<string, unknown>[] }) => {
@@ -209,6 +222,23 @@ export default function OfferDetailsClient() {
 
   const handleSummaryGridReady = useCallback((event: GridReadyEvent<Record<string, unknown>>) => {
     summaryGridApiRef.current = event.api ?? null;
+  }, []);
+
+  // Default the main list to non-TelQuote offered products (mirrors the Offers list default —
+  // see OffersClient handleGridReady). AgGridAll restores any persisted/URL filters before this
+  // runs, so the default is applied only when the user hasn't already filtered FromTelquote.
+  const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
+    if (!api) return;
+    gridApiRef.current = api;
+    if (defaultFiltersAppliedRef.current) return;
+    defaultFiltersAppliedRef.current = true;
+    const existingModel = api.getFilterModel() as Record<string, unknown> | null;
+    if (existingModel && 'FromTelquote' in existingModel) return;
+    const baseModel: Record<string, unknown> = existingModel && typeof existingModel === 'object'
+      ? { ...existingModel }
+      : {};
+    baseModel.FromTelquote = { filterType: 'set', values: ['false'] };
+    api.setFilterModel(baseModel);
   }, []);
 
   // Fetch summary when pivot mode opens and whenever pre-filters change while open
@@ -273,6 +303,7 @@ export default function OfferDetailsClient() {
       { ...dimension, field: 'OfferTitle',             headerName: 'Offer Title' },
       { ...dimension, field: 'OfferVersion',           headerName: 'Version' },
       { ...dimension, field: 'OfferStatus',            headerName: 'Status',             pivot: true },
+      { ...dimension, field: 'FromTelquote',           headerName: 'From TelQuote' },
       { ...dimension, field: 'OfferDate',              headerName: 'Offer Date',         rowGroup: true },
       { ...dimension, field: 'OfferDeadlineDate',      headerName: 'Offer Due Date' },
       { ...dimension, field: 'SalesDivision',          headerName: 'Sales Division' },
@@ -384,6 +415,18 @@ export default function OfferDetailsClient() {
       filter: 'agTextColumnFilter',
       enableRowGroup: true,
       width: 130,
+    },
+    {
+      field: 'FromTelquote',
+      headerName: 'From TelQuote',
+      filter: 'agSetColumnFilter',
+      valueFormatter: (params) => formatEnabledValue(params.value),
+      width: 140,
+      filterParams: {
+        values: ['true', 'false'],
+        valueFormatter: (params: { value?: unknown }) => formatEnabledValue(params.value),
+        comparator: (valueA: string, valueB: string) => (valueA === valueB ? 0 : valueA === 'true' ? -1 : 1),
+      },
     },
     {
       field: 'OfferDate',
@@ -897,6 +940,16 @@ export default function OfferDetailsClient() {
         <option value="">FWC: All</option>
         {options.fwcProjects.map(v => <option key={v} value={v}>{v}</option>)}
       </select>
+
+      <select
+        className={`${styles.groupSelect} page-header-button`}
+        value={filters.includeTelquote}
+        onChange={e => handleFilterChange('includeTelquote', e.target.value)}
+        aria-label="Include TelQuote offers"
+      >
+        <option value="no">TelQuote: Excluded</option>
+        <option value="yes">TelQuote: Included</option>
+      </select>
     </div>
   ) : null;
 
@@ -912,6 +965,7 @@ export default function OfferDetailsClient() {
               rowSelection="multiple"
               rowMultiSelectWithClick
               rowDeselection
+              onGridReady={handleGridReady}
               onCellValueChanged={handleCellValueChanged}
               getContextMenuItems={getContextMenuItems}
             />

@@ -31,6 +31,8 @@ export async function GET(req: NextRequest) {
     const division = searchParams.get('division') ?? '';
     const market   = searchParams.get('market')   ?? '';
     const fwc      = searchParams.get('fwc')      ?? '';
+    // TelQuote-imported offers are excluded by default; telquote=1 includes them.
+    const includeTelquote = searchParams.get('telquote') === '1';
 
     const pool = await getPool();
 
@@ -39,6 +41,7 @@ export async function GET(req: NextRequest) {
     if (division) filterClauses.push(`sd.Name = @division`);
     if (market)   filterClauses.push(`mkt.Name = @market`);
     if (fwc)      filterClauses.push(`fwc.ShortName = @fwc`);
+    if (!includeTelquote) filterClauses.push(`ISNULL(o.FromTelquote, 0) = 0`);
     const whereClause = `WHERE ${filterClauses.join(' AND ')}`;
 
     const dataReq = pool.request();
@@ -61,6 +64,7 @@ export async function GET(req: NextRequest) {
         ISNULL(o.Description, '') AS OfferDescription,
         ISNULL(o.Title, '') AS OfferTitle,
         ISNULL(os.Name, '(No Status)') AS OfferStatus,
+        CASE WHEN ISNULL(o.FromTelquote, 0) = 1 THEN 'Yes' ELSE 'No' END AS FromTelquote,
         CONVERT(varchar(10), o.OfferDate, 103) AS OfferDate,
         CONVERT(varchar(10), o.OfferDeadlineDate, 103) AS OfferDeadlineDate,
         ISNULL(sd.Name, '') AS SalesDivision,
