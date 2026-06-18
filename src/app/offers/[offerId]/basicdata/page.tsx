@@ -7,6 +7,7 @@ import ExportPdfButton from './ExportPdfButton';
 import CreateNewVersionButton from './CreateNewVersionButton';
 import CopyOfferButton from './CopyOfferButton';
 import FillAVC4Button from './FillAVC4Button';
+import FillEPLINCButton from './FillEPLINCButton';
 import { getPool } from '../../../../lib/sql';
 import styles from '../../offersDetail.module.css';
 
@@ -75,6 +76,10 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
               className={`${styles.headerActionButton} page-header-button`}
             />
             <FillAVC4Button
+              offerId={decodedId}
+              className={`${styles.headerActionButton} page-header-button`}
+            />
+            <FillEPLINCButton
               offerId={decodedId}
               className={`${styles.headerActionButton} page-header-button`}
             />

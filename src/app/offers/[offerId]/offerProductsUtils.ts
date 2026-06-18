@@ -11,6 +11,7 @@ import { roundPriceByMagnitude } from '../../../lib/pricing';
 import { priceListStatusClassRules } from '../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 import type { RequestedProductMatchEntry } from './products/MatchRequestedProductsModal';
+import type { OfferExportRow, OfferProductsTemplateExportRow } from './offerProductsPanelTypes';
 // Item No numbering lives in a shared, server-safe module so the grid and the
 // PDF generator produce identical Item No values. Imported here (for internal
 // use) and re-exported so existing call sites keep importing from this file.
@@ -2042,6 +2043,7 @@ export const OFFER_PRODUCTS_EXPORT_FIELDS = [
   'Quantity',
   'ListPrice',
   'AdditionalCustomerDiscount',
+  'NetCost',
   'Comment',
   'Delivery',
   'IsPrintable',
@@ -2064,6 +2066,60 @@ export const normalizeNoForExport = (value: unknown): string | number => {
   }
   return trimmed;
 };
+
+// Single source of truth for turning raw offer-export rows (as returned by the
+// products API with OFFER_PRODUCTS_EXPORT_FIELDS) into the flat shape consumed
+// by ExportOfferProductsModal. Shared by every "Fill <template>" button so the
+// row set, Item-No numbering and unmatched-row skipping stay identical across
+// templates — each template just selects which of these fields it writes.
+export function buildOfferProductTemplateExportRows(
+  rows: OfferExportRow[],
+): OfferProductsTemplateExportRow[] {
+  const displayMap = computeDisplayOrderingMap(rows as unknown as Record<string, unknown>[]);
+  const included = rows.filter((row) => {
+    const rowType = resolveOfferProductRowType(row as unknown as Record<string, unknown>);
+    return rowType === 'product' || rowType === 'category' || rowType === 'printable-comment' || rowType === 'printable-service';
+  });
+
+  return included.map((row): OfferProductsTemplateExportRow => {
+    const rowType = resolveOfferProductRowType(row as unknown as Record<string, unknown>);
+    const model = (row.ModelNumber ?? '').toString().trim();
+    const description = (row.Description ?? '').toString().trim();
+    const descriptionType = [model, description].filter((part) => part.length > 0).join(' ').trim();
+    const rawQty = coerceNumber(row.Quantity);
+    const isServLot = row.ServiceType === 'ServLot';
+    const qty = isServLot ? 1 : rawQty;
+    const listPrice = coerceNumber(row.ListPrice);
+    const additionalDiscount = coerceNumber(row.AdditionalCustomerDiscount);
+    const cost = coerceNumber(row.NetCost);
+    // Blank delivery stays blank in the export (no 'unknown' placeholder).
+    const deliveryValue = row.Delivery == null ? '' : String(row.Delivery).trim();
+    const isUnmatchedProduct = rowType === 'product'
+      && !row.PartNumber?.toString().trim()
+      && !row.BrandName?.toString().trim()
+      && !model
+      && !description
+      && listPrice == null;
+    const actualKey = String(row.TreeOrdering ?? '').trim();
+    const noBase = normalizeNoForExport(displayMap.get(actualKey) ?? row.TreeOrdering);
+    const noWithOption = isOfferProductOption(row as unknown as Record<string, unknown>) && noBase !== ''
+      ? `${noBase} (Option)`
+      : noBase;
+    return {
+      no: noWithOption,
+      productReference: row.PartNumber?.toString().trim() ?? '',
+      manufacturer: (row.AVC4BrandName?.toString().trim() || row.BrandName?.toString().trim()) ?? '',
+      descriptionType,
+      qty: qty != null && !Object.is(qty, 0) ? qty : '',
+      unitPrice: listPrice ?? '',
+      additionalDiscount: additionalDiscount ?? '',
+      cost: cost ?? '',
+      delayForDelivery: deliveryValue,
+      comments: row.Comment?.toString() ?? '',
+      ...(isUnmatchedProduct ? { skipRow: true } : undefined),
+    };
+  });
+}
 
 export const recalcProductTotals = (
   event: CellValueChangedEvent<Record<string, unknown>>,

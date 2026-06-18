@@ -6,7 +6,7 @@ import {
   buildOfferProductTemplateExportRows,
   OFFER_PRODUCTS_EXPORT_FIELDS,
 } from '../offerProductsUtils';
-import { AVC4_EXPORT_TEMPLATE } from '../products/offerExportTemplates';
+import { EP_LINC_EXPORT_TEMPLATE } from '../products/offerExportTemplates';
 import type { OfferExportRow, OfferProductsTemplateExportRow } from '../offerProductsPanelTypes';
 
 const ExportOfferProductsModal = dynamic(
@@ -19,7 +19,7 @@ interface Props {
   className?: string;
 }
 
-export default function FillAVC4Button({ offerId, className }: Props) {
+export default function FillEPLINCButton({ offerId, className }: Props) {
   const [showModal, setShowModal] = useState(false);
 
   const handleRequestRows = useCallback(async (): Promise<OfferProductsTemplateExportRow[]> => {
@@ -49,13 +49,13 @@ export default function FillAVC4Button({ offerId, className }: Props) {
         className={className}
         onClick={() => setShowModal(true)}
       >
-        Fill AVC4
+        Fill EP LINC
       </button>
       {showModal && (
         <ExportOfferProductsModal
           onClose={() => setShowModal(false)}
           onRequestRows={handleRequestRows}
-          template={AVC4_EXPORT_TEMPLATE}
+          template={EP_LINC_EXPORT_TEMPLATE}
         />
       )}
     </>

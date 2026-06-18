@@ -77,6 +77,9 @@ export type OfferProductsTemplateExportRow = {
   qty: number | '';
   unitPrice: number | '';
   additionalDiscount: number | '';
+  // Net cost (FastQuote "Cost" / NetCost). Used by the EP LINC template's
+  // "Contractor unit cost" column; unused by the AVC4 template.
+  cost: number | '';
   delayForDelivery: string;
   comments: string;
   skipRow?: boolean;
@@ -92,6 +95,7 @@ export type OfferExportRow = {
   Quantity: number | null;
   ListPrice: number | null;
   AdditionalCustomerDiscount: number | null;
+  NetCost: number | null;
   Delivery: string | null;
   Comment: string | null;
   IsPrintable?: boolean | null;

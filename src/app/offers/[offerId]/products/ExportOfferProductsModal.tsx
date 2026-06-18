@@ -14,6 +14,7 @@ import styles from './AddRequestedProductsModal.module.css';
 import { useModalDragResize } from '../../../hooks/useModalDragResize';
 import { showToastMessage } from '../../../../lib/toast';
 import type { OfferProductsTemplateExportRow } from '../OfferProductsPanel';
+import type { ExportFieldKey, ExportFieldConfig, ExportTemplateConfig } from './offerExportTemplates';
 
 type XlsxModule = typeof import('xlsx');
 
@@ -22,23 +23,7 @@ const loadXlsx = () => import('xlsx');
 type Props = {
   onClose: () => void;
   onRequestRows: () => Promise<OfferProductsTemplateExportRow[]>;
-};
-
-type ExportFieldKey =
-  | 'no'
-  | 'productReference'
-  | 'manufacturer'
-  | 'descriptionType'
-  | 'qty'
-  | 'unitPrice'
-  | 'additionalDiscount'
-  | 'delayForDelivery'
-  | 'comments';
-
-type ExportFieldConfig = {
-  key: ExportFieldKey;
-  label: string;
-  keywords: string[];
+  template: ExportTemplateConfig;
 };
 
 type ColumnOption = {
@@ -55,6 +40,12 @@ type SheetMapping = {
   selection: Partial<Record<ExportFieldKey, number | null>>;
   rowCount: number;
   rawRows: unknown[][];
+  // 1-based Excel row where the sheet's main Excel Table's data begins (the row
+  // after the Table header). Populated from xl/tables when the sheet contains a
+  // Table, so writes land on real table body rows instead of, e.g., a friendly
+  // label row that sits above the Table header (which would overwrite the Table
+  // header and corrupt it). Undefined when the sheet has no Table.
+  tableDataStartRow?: number;
 };
 
 type ValidationState = {
@@ -64,17 +55,6 @@ type ValidationState = {
   activeSheetIndex: number;
   mappedColumnCount: number;
 };
-
-const EXPORT_FIELDS: ExportFieldConfig[] = [
-  { key: 'no', label: 'No', keywords: ['no', 'item no', 'item', 'tree', 'ordering'] },
-  { key: 'productReference', label: 'Product reference', keywords: ['product reference', 'part number', 'part no', 'reference', 'sku'] },
-  { key: 'manufacturer', label: 'Manufacturer', keywords: ['manufacturer', 'brand', 'maker'] },
-  { key: 'descriptionType', label: 'Description / Type', keywords: ['description / type', 'description', 'type', 'model', 'details'] },
-  { key: 'qty', label: 'Qty', keywords: ['qty', 'quantity', 'pcs', 'pieces'] },
-  { key: 'unitPrice', label: 'Unit price (RRP / Euro)', keywords: ['unit price', 'rrp', 'price', 'net unit price', 'euro'] },
-  { key: 'additionalDiscount', label: 'Extra Discount Contractor', keywords: ['extra discount contractor', 'extra discount', 'additional discount', 'contractor discount', 'acd'] },
-  { key: 'comments', label: 'Comments', keywords: ['comments', 'comment', 'notes', 'remarks'] },
-];
 
 const INITIAL_VALIDATION: ValidationState = {
   status: 'idle',
@@ -97,11 +77,10 @@ const hasCellValue = (value: unknown) => {
   return true;
 };
 
-const ALL_EXPORT_KEYWORDS: string[] = EXPORT_FIELDS.flatMap((field) =>
-  field.keywords.map((keyword) => keyword.toLowerCase()),
-);
+const collectFieldKeywords = (fields: ExportFieldConfig[]): string[] =>
+  fields.flatMap((field) => field.keywords.map((keyword) => keyword.toLowerCase()));
 
-const detectHeaderRowIndex = (rows: unknown[][]): number => {
+const detectHeaderRowIndex = (rows: unknown[][], allKeywords: string[]): number => {
   let bestIndex = 0;
   let bestScore = -1;
   for (let idx = 0; idx < rows.length; idx += 1) {
@@ -113,7 +92,7 @@ const detectHeaderRowIndex = (rows: unknown[][]): number => {
       if (!hasCellValue(row[colIdx])) continue;
       filledCells += 1;
       const normalized = normalizeHeaderText(row[colIdx]);
-      if (normalized != null && ALL_EXPORT_KEYWORDS.some((kw) => normalized.includes(kw))) {
+      if (normalized != null && allKeywords.some((kw) => normalized.includes(kw))) {
         keywordMatches += 1;
       }
     }
@@ -173,9 +152,12 @@ const buildColumns = (rows: unknown[][], headerRowIndex: number): ColumnOption[]
   return columns;
 };
 
-const buildSuggestions = (columns: ColumnOption[]): Record<ExportFieldKey, ColumnOption[]> => {
+const buildSuggestions = (
+  columns: ColumnOption[],
+  fields: ExportFieldConfig[],
+): Record<ExportFieldKey, ColumnOption[]> => {
   const suggestions = {} as Record<ExportFieldKey, ColumnOption[]>;
-  EXPORT_FIELDS.forEach((field) => {
+  fields.forEach((field) => {
     const keywords = field.keywords.map((keyword) => keyword.toLowerCase());
     suggestions[field.key] = columns.filter((column) =>
       keywords.some((keyword) => column.normalized.includes(keyword)),
@@ -186,10 +168,11 @@ const buildSuggestions = (columns: ColumnOption[]): Record<ExportFieldKey, Colum
 
 const autoSelectUniqueSuggestions = (
   suggestions: Record<ExportFieldKey, ColumnOption[]>,
+  fields: ExportFieldConfig[],
 ): Partial<Record<ExportFieldKey, number | null>> => {
   const selected: Partial<Record<ExportFieldKey, number | null>> = {};
   const usedColumns = new Set<number>();
-  EXPORT_FIELDS.forEach((field) => {
+  fields.forEach((field) => {
     const match = (suggestions[field.key] ?? []).find((option) => !usedColumns.has(option.index));
     if (!match) return;
     selected[field.key] = match.index;
@@ -210,16 +193,24 @@ const countDataRows = (rows: unknown[][], headerRowIndex: number): number => {
 };
 
 const findFirstWritableRowFromParsedRows = (sheet: SheetMapping): number => {
-  // Start writing immediately after the header row. Template rows may contain
-  // placeholders (row numbers, formulas, formatting) that should be overwritten.
+  // When the sheet has an Excel Table, its data starts on an authoritative row
+  // (Table header + 1) that may sit below the detected header row — use it so we
+  // never write onto the Table header. Otherwise start right after the header.
+  if (sheet.tableDataStartRow != null) return sheet.tableDataStartRow;
   return Math.max(sheet.headerRowIndex + 1, 0) + 1;
 };
 
-const analyzeSheet = (name: string, rows: unknown[][], fallbackIndex: number): SheetMapping => {
-  const headerRowIndex = detectHeaderRowIndex(rows);
+const analyzeSheet = (
+  name: string,
+  rows: unknown[][],
+  fallbackIndex: number,
+  fields: ExportFieldConfig[],
+  allKeywords: string[],
+): SheetMapping => {
+  const headerRowIndex = detectHeaderRowIndex(rows, allKeywords);
   const columns = buildColumns(rows, headerRowIndex);
-  const suggestions = buildSuggestions(columns);
-  const selection = autoSelectUniqueSuggestions(suggestions);
+  const suggestions = buildSuggestions(columns, fields);
+  const selection = autoSelectUniqueSuggestions(suggestions, fields);
   const rowCount = countDataRows(rows, headerRowIndex);
   return {
     name: name || `Sheet ${fallbackIndex + 1}`,
@@ -232,19 +223,28 @@ const analyzeSheet = (name: string, rows: unknown[][], fallbackIndex: number): S
   };
 };
 
-const analyzeWorkbook = (workbook: XLSXTypes.WorkBook, xlsx: XlsxModule): SheetMapping[] => {
+const analyzeWorkbook = (
+  workbook: XLSXTypes.WorkBook,
+  xlsx: XlsxModule,
+  fields: ExportFieldConfig[],
+): SheetMapping[] => {
   const sheets: SheetMapping[] = [];
+  const allKeywords = collectFieldKeywords(fields);
   for (const sheetName of workbook.SheetNames ?? []) {
     const sheet = workbook.Sheets?.[sheetName];
     if (!sheet) continue;
     const rows = xlsx.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
     if (!Array.isArray(rows)) continue;
-    sheets.push(analyzeSheet(sheetName, rows, sheets.length));
+    sheets.push(analyzeSheet(sheetName, rows, sheets.length, fields, allKeywords));
   }
   return sheets;
 };
 
-const evaluateValidation = (sheets: SheetMapping[], activeSheetIndex: number) => {
+const evaluateValidation = (
+  sheets: SheetMapping[],
+  activeSheetIndex: number,
+  fields: ExportFieldConfig[],
+) => {
   const activeSheet = sheets[activeSheetIndex];
   if (!activeSheet) {
     return {
@@ -253,7 +253,7 @@ const evaluateValidation = (sheets: SheetMapping[], activeSheetIndex: number) =>
       mappedColumnCount: 0,
     };
   }
-  const mappedColumnCount = EXPORT_FIELDS.reduce((acc, field) => (
+  const mappedColumnCount = fields.reduce((acc, field) => (
     activeSheet.selection[field.key] != null ? acc + 1 : acc
   ), 0);
   if (mappedColumnCount <= 0) {
@@ -294,7 +294,7 @@ const padExportRowsForAlignment = (
     } else {
       padded.push({
         no: n, productReference: '', manufacturer: '', descriptionType: '',
-        qty: '', unitPrice: '', additionalDiscount: '', delayForDelivery: '', comments: '', skipRow: true,
+        qty: '', unitPrice: '', additionalDiscount: '', cost: '', delayForDelivery: '', comments: '', skipRow: true,
       });
     }
   }
@@ -320,6 +320,10 @@ const resolveFieldValue = (
       return row.unitPrice === '' ? null : row.unitPrice;
     case 'additionalDiscount':
       return row.additionalDiscount === '' ? null : row.additionalDiscount / 100;
+    case 'cost':
+      return row.cost === '' ? null : row.cost;
+    case 'delayForDelivery':
+      return row.delayForDelivery;
     case 'comments':
       return row.comments;
     default:
@@ -420,6 +424,82 @@ type ZipArchiveLike = {
   file: (path: string) => { async: (type: 'string' | 'arraybuffer') => Promise<string | ArrayBuffer> } | null;
 };
 
+// Read xl/tables for every sheet and return a map of sheet name -> the 1-based
+// Excel row where that sheet's largest Table's DATA begins (Table header row + 1).
+//
+// Why this exists: keyword-based header detection can lock onto a friendly
+// label row that sits ABOVE the real Table header (templates often print
+// human-readable labels above the machine-named Table columns). Writing from
+// "detected header + 1" then lands on the Table header row and corrupts the
+// Table (which cascades #REF! through every formula referencing it). The Table's
+// own `ref` is the authoritative data-start, so we use it. Best-effort: any
+// parse failure just leaves the sheet without an override (falls back to the
+// header heuristic). Operates on the raw OOXML zip via string parsing — the
+// xlsx (SheetJS) reader the modal uses elsewhere does not expose Tables.
+const extractSheetTableDataStartRows = async (buffer: ArrayBuffer): Promise<Map<string, number>> => {
+  const result = new Map<string, number>();
+  try {
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(buffer);
+    const workbookFile = zip.file('xl/workbook.xml');
+    const workbookRelsFile = zip.file('xl/_rels/workbook.xml.rels');
+    if (!workbookFile || !workbookRelsFile) return result;
+    const workbookXml = await workbookFile.async('string') as string;
+    const workbookRelsXml = await workbookRelsFile.async('string') as string;
+
+    const ridToSheetTarget = new Map<string, string>();
+    for (const match of workbookRelsXml.matchAll(/<Relationship\b[^>]*\/>/g)) {
+      const rel = match[0];
+      const id = /Id="([^"]+)"/.exec(rel)?.[1];
+      const target = /Target="([^"]+)"/.exec(rel)?.[1];
+      const type = /Type="([^"]+)"/.exec(rel)?.[1];
+      if (id && target && type && type.endsWith('/worksheet')) ridToSheetTarget.set(id, target);
+    }
+
+    for (const match of workbookXml.matchAll(/<sheet\b[^>]*\/>/g)) {
+      const sheetTag = match[0];
+      const name = /name="([^"]+)"/.exec(sheetTag)?.[1];
+      const rid = /r:id="([^"]+)"/.exec(sheetTag)?.[1];
+      if (!name || !rid) continue;
+      const target = ridToSheetTarget.get(rid);
+      if (!target) continue;
+      const worksheetPath = target.startsWith('/') ? target.slice(1) : normalizeZipPath('xl', target);
+      const worksheetDir = worksheetPath.replace(/\/[^/]+$/, '');
+      const worksheetRelsFile = zip.file(worksheetPath.replace(/([^/]+)$/, '_rels/$1.rels'));
+      if (!worksheetRelsFile) continue;
+      const worksheetRelsXml = await worksheetRelsFile.async('string') as string;
+
+      let bestArea = -1;
+      let bestHeaderRow = -1;
+      for (const relMatch of worksheetRelsXml.matchAll(/<Relationship\b[^>]*\/>/g)) {
+        const rel = relMatch[0];
+        const type = /Type="([^"]+)"/.exec(rel)?.[1];
+        const tableTarget = /Target="([^"]+)"/.exec(rel)?.[1];
+        if (!type || !tableTarget || !type.endsWith('/table')) continue;
+        const tablePath = tableTarget.startsWith('/') ? tableTarget.slice(1) : normalizeZipPath(worksheetDir, tableTarget);
+        const tableFile = zip.file(tablePath);
+        if (!tableFile) continue;
+        const tableXml = await tableFile.async('string') as string;
+        const ref = /<table\b[^>]*\sref="([^"]+)"/.exec(tableXml)?.[1];
+        if (!ref) continue;
+        const [startCell, endCell] = ref.includes(':') ? ref.split(':', 2) : [ref, ref];
+        const start = parseCellReference(startCell);
+        const end = parseCellReference(endCell);
+        if (!start || !end) continue;
+        const area = (end.col - start.col + 1) * (end.row - start.row + 1);
+        if (area > bestArea) {
+          bestArea = area;
+          bestHeaderRow = start.row;
+        }
+      }
+      if (bestHeaderRow > 0) result.set(name, bestHeaderRow + 1);
+    }
+  } catch (error) {
+    console.warn('Could not read worksheet Tables for data-start detection', error);
+  }
+  return result;
+};
+
 const resolveWorksheetXmlPath = async (
   archive: ZipArchiveLike,
   worksheetName: string,
@@ -477,8 +557,9 @@ const patchWorksheetXmlWithAppendedRows = (
   sheetXml: string,
   mapping: SheetMapping,
   rows: OfferProductsTemplateExportRow[],
+  fields: ExportFieldConfig[],
 ): SheetXmlPatchResult => {
-  const selectedMappings = EXPORT_FIELDS
+  const selectedMappings = fields
     .map((field) => {
       const columnIndex = mapping.selection[field.key];
       return typeof columnIndex === 'number' ? { field, columnIndex } : null;
@@ -502,7 +583,9 @@ const patchWorksheetXmlWithAppendedRows = (
     throw new Error('Worksheet XML is missing sheetData.');
   }
 
-  const dataStartRow = Math.max(mapping.headerRowIndex + 2, 1);
+  // Prefer the Excel Table's authoritative first data row (Table header + 1)
+  // so we don't overwrite a Table header that sits below a friendly label row.
+  const dataStartRow = mapping.tableDataStartRow ?? Math.max(mapping.headerRowIndex + 2, 1);
   const rowElements = uniqueElements((
     Array.from(sheetDataElement.getElementsByTagNameNS(ns, 'row')) as Element[]
   ).concat(Array.from(sheetDataElement.getElementsByTagName('row')) as Element[]));
@@ -717,8 +800,9 @@ const applyRowsToSheet = (
   sheet: XLSXTypes.WorkSheet,
   mapping: SheetMapping,
   rows: OfferProductsTemplateExportRow[],
+  fields: ExportFieldConfig[],
 ) => {
-  const selectedMappings = EXPORT_FIELDS
+  const selectedMappings = fields
     .map((field) => {
       const columnIndex = mapping.selection[field.key];
       return typeof columnIndex === 'number' ? { field, columnIndex } : null;
@@ -729,7 +813,10 @@ const applyRowsToSheet = (
     throw new Error('No columns selected for export.');
   }
 
-  const dataStartRow = Math.max(mapping.headerRowIndex + 1, 0);
+  // tableDataStartRow is 1-based; convert to the 0-based row index this path uses.
+  const dataStartRow = mapping.tableDataStartRow != null
+    ? mapping.tableDataStartRow - 1
+    : Math.max(mapping.headerRowIndex + 1, 0);
   const existingRef = typeof sheet['!ref'] === 'string' && sheet['!ref'].trim().length > 0 ? sheet['!ref'] : 'A1:A1';
   const range = xlsx.utils.decode_range(existingRef);
   // Start writing at the first row after the header. Template rows may contain
@@ -834,7 +921,8 @@ const toArrayBuffer = (value: ArrayBuffer | Uint8Array): ArrayBuffer => {
   return output;
 };
 
-export default function ExportOfferProductsModal({ onClose, onRequestRows }: Props) {
+export default function ExportOfferProductsModal({ onClose, onRequestRows, template }: Props) {
+  const fields = template.fields;
   const { cardRef: setCardRef, cardStyle: dragCardStyle, headerProps: dragHeaderProps, resizeHandles } = useModalDragResize({ draggable: true, resizable: true });
   const [file, setFile] = useState<File | null>(null);
   const [validation, setValidation] = useState<ValidationState>(INITIAL_VALIDATION);
@@ -878,8 +966,15 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
   );
 
   const applySheets = useCallback((sheets: SheetMapping[]) => {
-    const defaultIndex = sheets.length > 1 ? 1 : 0;
-    const evaluated = evaluateValidation(sheets, defaultIndex);
+    // Prefer the template's named sheet (e.g. EP LINC -> "Offer_List_Supplies")
+    // when present; otherwise fall back to the second sheet (most templates put
+    // the product table there) or the only sheet.
+    const preferred = template.preferredSheetName?.trim().toLowerCase();
+    const preferredIndex = preferred
+      ? sheets.findIndex((sheet) => sheet.name.trim().toLowerCase() === preferred)
+      : -1;
+    const defaultIndex = preferredIndex >= 0 ? preferredIndex : sheets.length > 1 ? 1 : 0;
+    const evaluated = evaluateValidation(sheets, defaultIndex, fields);
     setValidation({
       status: evaluated.status,
       message: evaluated.message,
@@ -887,7 +982,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
       activeSheetIndex: defaultIndex,
       mappedColumnCount: evaluated.mappedColumnCount,
     });
-  }, []);
+  }, [fields, template.preferredSheetName]);
 
   const handleFileSelection = useCallback((nextFile: File | null) => {
     analysisRunRef.current += 1;
@@ -915,7 +1010,16 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
         try {
           const xlsx = await loadXlsx();
           const workbook = xlsx.read(buffer, { type: 'array' });
-          parsedSheets = analyzeWorkbook(workbook, xlsx);
+          parsedSheets = analyzeWorkbook(workbook, xlsx, fields);
+          // Overlay the authoritative Table data-start row per sheet (if any) so
+          // writes land on real Table body rows, not a friendly label/header row.
+          const tableStarts = await extractSheetTableDataStartRows(buffer);
+          if (tableStarts.size > 0) {
+            parsedSheets.forEach((sheet) => {
+              const start = tableStarts.get(sheet.name);
+              if (start != null) sheet.tableDataStartRow = start;
+            });
+          }
         } catch (err) {
           console.error('Failed to parse workbook', err);
           parsedSheets = [];
@@ -943,7 +1047,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
           mappedColumnCount: 0,
         });
       });
-  }, [applySheets]);
+  }, [applySheets, fields]);
 
   const handleFileChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextFile = event.target.files?.[0] ?? null;
@@ -994,7 +1098,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
   const handleSheetChange = useCallback((nextSheetIndex: number) => {
     setValidation((previous) => {
       const bounded = Math.max(0, Math.min(nextSheetIndex, previous.sheets.length - 1));
-      const evaluated = evaluateValidation(previous.sheets, bounded);
+      const evaluated = evaluateValidation(previous.sheets, bounded, fields);
       return {
         ...previous,
         activeSheetIndex: bounded,
@@ -1003,7 +1107,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
         mappedColumnCount: evaluated.mappedColumnCount,
       };
     });
-  }, []);
+  }, [fields]);
 
   const updateSelection = useCallback((fieldKey: ExportFieldKey, columnIndex: number | null) => {
     setValidation((previous) => {
@@ -1014,7 +1118,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
           [fieldKey]: columnIndex,
         };
         if (columnIndex != null) {
-          EXPORT_FIELDS.forEach((field) => {
+          fields.forEach((field) => {
             if (field.key === fieldKey) return;
             if (nextSelection[field.key] === columnIndex) {
               nextSelection[field.key] = null;
@@ -1023,7 +1127,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
         }
         return { ...sheet, selection: nextSelection };
       });
-      const evaluated = evaluateValidation(sheets, previous.activeSheetIndex);
+      const evaluated = evaluateValidation(sheets, previous.activeSheetIndex, fields);
       return {
         ...previous,
         sheets,
@@ -1032,11 +1136,11 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
         mappedColumnCount: evaluated.mappedColumnCount,
       };
     });
-  }, []);
+  }, [fields]);
 
   const selectedMappings = useMemo(() => {
     if (!activeSheet) return [];
-    return EXPORT_FIELDS
+    return fields
       .map((field) => {
         const columnIndex = activeSheet.selection[field.key];
         if (typeof columnIndex !== 'number') return null;
@@ -1045,7 +1149,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
         return { field, column };
       })
       .filter((entry): entry is { field: ExportFieldConfig; column: ColumnOption } => entry != null);
-  }, [activeSheet]);
+  }, [activeSheet, fields]);
 
   const previewStartRow = activeSheet
     ? findFirstWritableRowFromParsedRows(activeSheet)
@@ -1106,7 +1210,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
         if (!sheet) {
           throw new Error(`Worksheet "${activeSheet.name}" was not found in the selected file.`);
         }
-        writeResult = applyRowsToSheet(xlsx, sheet, activeSheet, alignedRows);
+        writeResult = applyRowsToSheet(xlsx, sheet, activeSheet, alignedRows, fields);
         // Force Excel to recalculate all formulas when the file is opened.
         if (!workbook.Workbook) workbook.Workbook = {};
         const wbProps = workbook.Workbook as Record<string, unknown>;
@@ -1128,7 +1232,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
           throw new Error(`Worksheet "${activeSheet.name}" XML was not found (${worksheetPath}).`);
         }
         const worksheetXml = await worksheetFile.async('string') as string;
-        const patchResult = patchWorksheetXmlWithAppendedRows(worksheetXml, activeSheet, alignedRows);
+        const patchResult = patchWorksheetXmlWithAppendedRows(worksheetXml, activeSheet, alignedRows, fields);
         writeResult = { startRow: patchResult.startRow, mappedColumnCount: patchResult.mappedColumnCount };
         archive.file(worksheetPath, patchResult.sheetXml);
 
@@ -1195,7 +1299,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
     } finally {
       setSubmitting(false);
     }
-  }, [activeSheet, exportRows, file, onClose, rowsError, rowsStatus, validation.status]);
+  }, [activeSheet, exportRows, fields, file, onClose, rowsError, rowsStatus, validation.status]);
 
   const handleOverlayPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     overlayPointerDownOnOverlayRef.current = event.target === event.currentTarget;
@@ -1237,15 +1341,15 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
       <div ref={setCardRef} className={styles.card} role="dialog" aria-modal="true" aria-label="Export offer products" onClick={(event) => event.stopPropagation()} style={dragCardStyle}>
         <div className={styles.header} onPointerDown={dragHeaderProps.onPointerDown} onDoubleClick={dragHeaderProps.onDoubleClick} style={dragHeaderProps.style}>
           <div className={styles.headerText}>
-            <div className={styles.title}>Export Offer Products</div>
-            <div className={styles.subtitle}>Use your own Excel template and map columns automatically.</div>
+            <div className={styles.title}>{template.title}</div>
+            <div className={styles.subtitle}>{template.subtitle}</div>
           </div>
           <div className={styles.headerActions}>
             <button type="button" className={styles.ghostButton} onClick={onClose} disabled={submitting}>
               Cancel
             </button>
             <button type="button" className={styles.primaryButton} onClick={handleExport} disabled={!canExport}>
-              {submitting ? 'Filling...' : 'Fill AVC4 Offer'}
+              {submitting ? 'Filling...' : template.submitLabel}
             </button>
           </div>
         </div>
@@ -1319,7 +1423,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows }: Pro
                   Suggested columns are pre-selected. Change any mapping manually before exporting.
                 </div>
                 <div className={styles.mappingGrid}>
-                  {EXPORT_FIELDS.map((field) => {
+                  {fields.map((field) => {
                     const selectedValue = activeSheet.selection[field.key] != null
                       ? String(activeSheet.selection[field.key])
                       : '';

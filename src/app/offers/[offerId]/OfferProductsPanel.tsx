@@ -138,7 +138,7 @@ import {
   createFarnellProduct,
   buildFarnellPricingPatch,
   OFFER_PRODUCTS_EXPORT_FIELDS,
-  normalizeNoForExport,
+  buildOfferProductTemplateExportRows,
   recalcProductTotals,
   refreshCategoryAggregates,
   roundMoney,
@@ -4390,56 +4390,10 @@ const requestedColumnDefsMap = useMemo(
       }));
   }, [dataEndpoint]);
 
-  const buildTemplateExportRows = useCallback((rows: OfferExportRow[]): OfferProductsTemplateExportRow[] => {
-    const displayMap = computeDisplayOrderingMap(rows as unknown as Record<string, unknown>[]);
-    const includedRows = rows.filter((row) => {
-      const rowType = resolveOfferProductRowType(row as unknown as Record<string, unknown>);
-      return rowType === 'product' || rowType === 'category' || rowType === 'printable-comment' || rowType === 'printable-service';
-    });
-
-    return includedRows.map((row) => {
-      const rowType = resolveOfferProductRowType(row as unknown as Record<string, unknown>);
-      const model = (row.ModelNumber ?? '').toString().trim();
-      const description = (row.Description ?? '').toString().trim();
-      const descriptionType = [model, description].filter((part) => part.length > 0).join(' ').trim();
-      const rawQty = coerceNumber(row.Quantity);
-      const isServLot = row.ServiceType === 'ServLot';
-      const qty = isServLot ? 1 : rawQty;
-      const listPrice = coerceNumber(row.ListPrice);
-      const additionalDiscount = coerceNumber(row.AdditionalCustomerDiscount);
-      const qtyForExport = qty != null && !Object.is(qty, 0) ? qty : null;
-      const deliveryRaw = row.Delivery == null ? '' : String(row.Delivery).trim();
-      const deliveryValue = deliveryRaw.length > 0 ? deliveryRaw : 'unknown';
-      const isUnmatchedProduct = rowType === 'product'
-        && !row.PartNumber?.toString().trim()
-        && !row.BrandName?.toString().trim()
-        && !model
-        && !description
-        && listPrice == null;
-      const actualKey = String(row.TreeOrdering ?? '').trim();
-      const noBase = normalizeNoForExport(displayMap.get(actualKey) ?? row.TreeOrdering);
-      const noWithOption = isOfferProductOption(row as unknown as Record<string, unknown>) && noBase !== ''
-        ? `${noBase} (Option)`
-        : noBase;
-      return {
-        no: noWithOption,
-        productReference: row.PartNumber?.toString().trim() ?? '',
-        manufacturer: (row.AVC4BrandName?.toString().trim() || row.BrandName?.toString().trim()) ?? '',
-        descriptionType,
-        qty: qtyForExport ?? '',
-        unitPrice: listPrice ?? '',
-        additionalDiscount: additionalDiscount ?? '',
-        delayForDelivery: deliveryValue,
-        comments: row.Comment?.toString() ?? '',
-        ...(isUnmatchedProduct ? { skipRow: true } : undefined),
-      };
-    });
-  }, []);
-
   const getTemplateExportRows = useCallback(async (): Promise<OfferProductsTemplateExportRow[]> => {
     const rows = await fetchExportRows();
-    return buildTemplateExportRows(rows);
-  }, [buildTemplateExportRows, fetchExportRows]);
+    return buildOfferProductTemplateExportRows(rows);
+  }, [fetchExportRows]);
 
   const getAddInsertionAnchor = useCallback((): { offerDetailId: number; parentPath: number[]; label: string; treeOrdering: string; isRequested: boolean } | null => {
     const api = gridApiRef.current;
