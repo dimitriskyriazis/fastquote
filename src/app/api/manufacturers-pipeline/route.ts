@@ -11,6 +11,7 @@ import {
 import { requirePermission } from "../../../lib/authz";
 import { KnownFilterModel } from "../../../lib/filterTypes";
 import { processFilter } from "../../../lib/filterProcessing";
+import { sqlBracketId, sqlSortDirection } from "../../../lib/sqlIdentifier";
 
 type GridRequest = {
   startRow?: number;
@@ -85,7 +86,7 @@ function buildWhereAndParams(
 
   Object.entries(typed).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = columnExpressions[col] ?? `[${col}]`;
+    const columnExpression = columnExpressions[col] ?? sqlBracketId(col);
 
     const result = processFilter(fm, {
       columnExpression,
@@ -112,8 +113,8 @@ function buildOrder(
 ) {
   if (!sortModel || sortModel.length === 0) return defaultOrder;
   const parts = sortModel.map((entry) => {
-    const expr = columnExpressions[entry.colId] ?? `[${entry.colId}]`;
-    return `${expr} ${entry.sort.toUpperCase()}`;
+    const expr = columnExpressions[entry.colId] ?? sqlBracketId(entry.colId);
+    return `${expr} ${sqlSortDirection(entry.sort)}`;
   });
   return `ORDER BY ${parts.join(", ")}`;
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import sql from "mssql";
 import type { Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
+import { sqlBracketId, sqlSortDirection } from "../../../lib/sqlIdentifier";
 import {
   buildQuickFilterClause,
   mergeWhereClauses,
@@ -69,7 +70,7 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 
   Object.entries(typed).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
+    const columnExpression = COLUMN_EXPRESSIONS[col] ?? sqlBracketId(col);
 
     const result = processFilter(fm, {
       columnExpression,
@@ -93,8 +94,8 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "";
   const parts = sortModel.map((entry) => {
-    const expr = COLUMN_EXPRESSIONS[entry.colId] ?? `[${entry.colId}]`;
-    return `${expr} ${entry.sort.toUpperCase()}`;
+    const expr = COLUMN_EXPRESSIONS[entry.colId] ?? sqlBracketId(entry.colId);
+    return `${expr} ${sqlSortDirection(entry.sort)}`;
   });
   return `ORDER BY ${parts.join(", ")}`;
 }

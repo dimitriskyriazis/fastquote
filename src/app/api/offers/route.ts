@@ -21,6 +21,7 @@ import { requirePermission } from '../../../lib/authz';
 import { checkDeletePermission } from '../../../lib/deletePermissions';
 import { KnownFilterModel } from '../../../lib/filterTypes';
 import { processFilter } from '../../../lib/filterProcessing';
+import { sqlBracketId, sqlSortDirection } from '../../../lib/sqlIdentifier';
 
 type GridRequest = {
   startRow?: number;
@@ -220,7 +221,7 @@ const resolveGroupingFields = (rowGroupCols?: GridRequest['rowGroupCols']): Grou
     if (!candidate || !ALLOWED_ROW_GROUP_FIELDS.has(candidate)) {
       return [];
     }
-    const expression = COLUMN_EXPRESSIONS[candidate] ?? `[${candidate}]`;
+    const expression = COLUMN_EXPRESSIONS[candidate] ?? sqlBracketId(candidate);
     resolved.push({ field: candidate, expression });
   }
   return resolved;
@@ -256,7 +257,7 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
 
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
+    const columnExpression = COLUMN_EXPRESSIONS[col] ?? sqlBracketId(col);
 
     // Use centralized filter processor
     const result = processFilter(fm, {
@@ -286,7 +287,7 @@ function buildVersionGroupedOrder(sortModel: GridRequest['sortModel']) {
   // OFFSET/FETCH paging deterministic. All referenced names are projected aliases.
   const parts = sortModel.map(s => {
     const alias = `__sort_${s.colId}`;
-    return `[${alias}] ${s.sort.toUpperCase()}`;
+    return `${sqlBracketId(alias)} ${sqlSortDirection(s.sort)}`;
   });
   parts.push(
     'VersionGroupId',
@@ -300,12 +301,12 @@ function buildVersionGroupedOrder(sortModel: GridRequest['sortModel']) {
 function buildVersionGroupedSortColumns(sortModel: GridRequest['sortModel']) {
   if (!sortModel || sortModel.length === 0) return '';
   const columns = sortModel.map(s => {
-    const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
+    const expression = COLUMN_EXPRESSIONS[s.colId] ?? sqlBracketId(s.colId);
     const alias = `__sort_${s.colId}`;
     return `FIRST_VALUE(${expression}) OVER (
           PARTITION BY COALESCE(versionTree.RootOfferID, dbo.Offer.ID)
           ORDER BY dbo.Offer.OfferVersion DESC
-        ) AS [${alias}]`;
+        ) AS ${sqlBracketId(alias)}`;
   });
   return ', ' + columns.join(', ');
 }
@@ -573,7 +574,7 @@ export async function POST(req: NextRequest) {
       const countSql = `
         SELECT COUNT(*) AS __groupCount
         FROM (
-          SELECT DISTINCT [${groupField}] AS GroupValue
+          SELECT DISTINCT ${sqlBracketId(groupField)} AS GroupValue
           FROM (${innerSql}) AS visible
           ${visibilityWhere}
         ) AS distinctGroups
@@ -585,7 +586,7 @@ export async function POST(req: NextRequest) {
       groupReq.input('__offset', sql.Int, offset);
       groupReq.input('__limit', sql.Int, pageSize);
       const groupSql = `
-        SELECT DISTINCT [${groupField}] AS GroupValue
+        SELECT DISTINCT ${sqlBracketId(groupField)} AS GroupValue
         FROM (${innerSql}) AS visible
         ${visibilityWhere}
         ORDER BY GroupValue

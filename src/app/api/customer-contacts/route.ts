@@ -3,6 +3,7 @@ import { logRequest } from '../../../lib/apiHelpers';
 import sql from "mssql";
 import type { ConnectionPool, Request as SqlRequest } from "mssql";
 import { getPool } from "../../../lib/sql";
+import { sqlBracketId, sqlSortDirection } from "../../../lib/sqlIdentifier";
 import {
   buildQuickFilterClause,
   mergeWhereClauses,
@@ -118,7 +119,7 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
 
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
+    const columnExpression = COLUMN_EXPRESSIONS[col] ?? sqlBracketId(col);
 
     // Use centralized filter processor
     const result = processFilter(fm, {
@@ -142,11 +143,11 @@ const IMPORTANCE_SORT_COLUMNS = new Set(["Importance"]);
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "";
   const parts = sortModel.map((s) => {
-    const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
+    const expression = COLUMN_EXPRESSIONS[s.colId] ?? sqlBracketId(s.colId);
     if (IMPORTANCE_SORT_COLUMNS.has(s.colId)) {
-      return `CASE ${expression} WHEN 'High' THEN 1 WHEN 'Med' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ${s.sort.toUpperCase()}`;
+      return `CASE ${expression} WHEN 'High' THEN 1 WHEN 'Med' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ${sqlSortDirection(s.sort)}`;
     }
-    return `${expression} ${s.sort.toUpperCase()}`;
+    return `${expression} ${sqlSortDirection(s.sort)}`;
   });
   return `ORDER BY ${parts.join(", ")}`;
 }
@@ -190,7 +191,7 @@ const resolveGroupingFields = (rowGroupCols?: GridRequest["rowGroupCols"]): Grou
     if (!candidate || !ALLOWED_ROW_GROUP_FIELDS.has(candidate)) {
       return [];
     }
-    const expression = COLUMN_EXPRESSIONS[candidate] ?? `[${candidate}]`;
+    const expression = COLUMN_EXPRESSIONS[candidate] ?? sqlBracketId(candidate);
     resolved.push({ field: candidate, expression });
   }
   return resolved;

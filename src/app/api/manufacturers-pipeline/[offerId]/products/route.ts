@@ -10,6 +10,7 @@ import {
 import { requirePermission } from "../../../../../lib/authz";
 import { KnownFilterModel } from "../../../../../lib/filterTypes";
 import { processFilter } from "../../../../../lib/filterProcessing";
+import { sqlBracketId, sqlSortDirection } from "../../../../../lib/sqlIdentifier";
 
 type GridRequest = {
   startRow?: number;
@@ -61,7 +62,7 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 
   Object.entries(filterModel as Record<string, KnownFilterModel>).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
+    const columnExpression = COLUMN_EXPRESSIONS[col] ?? sqlBracketId(col);
     const result = processFilter(fm, { columnExpression, columnId: col, paramBase: pBase });
     if (result.clause) {
       parts.push(result.clause);
@@ -78,8 +79,8 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "ORDER BY od.Ordering, od.ID";
   const parts = sortModel.map((entry) => {
-    const expr = COLUMN_EXPRESSIONS[entry.colId] ?? `[${entry.colId}]`;
-    return `${expr} ${entry.sort.toUpperCase()}`;
+    const expr = COLUMN_EXPRESSIONS[entry.colId] ?? sqlBracketId(entry.colId);
+    return `${expr} ${sqlSortDirection(entry.sort)}`;
   });
   return `ORDER BY ${parts.join(", ")}`;
 }

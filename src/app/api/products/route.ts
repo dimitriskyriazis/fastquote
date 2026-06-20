@@ -18,6 +18,7 @@ import { KnownFilterModel, TextCondition, isCompoundFilter } from "../../../lib/
 import { processFilter } from "../../../lib/filterProcessing";
 import { normalizeId } from '../../../lib/normalize';
 import { BATCH_DELETE_SIZE } from '../../../lib/constants';
+import { sqlBracketId, sqlSortDirection } from '../../../lib/sqlIdentifier';
 
 type GridRequest = {
   startRow?: number;
@@ -118,7 +119,7 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
+    const columnExpression = COLUMN_EXPRESSIONS[col] ?? sqlBracketId(col);
     const isPartNumber = col === "PartNumber";
     const isModelNumber = col === "ModelNumber";
     const isDescription = col === "Description";
@@ -244,8 +245,8 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "";
   const parts = sortModel.map((s) => {
-    const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
-    return `${expression} ${s.sort.toUpperCase()}`;
+    const expression = COLUMN_EXPRESSIONS[s.colId] ?? sqlBracketId(s.colId);
+    return `${expression} ${sqlSortDirection(s.sort)}`;
   });
   const hasProductId = sortModel.some((s) => s.colId === "ProductID");
   if (!hasProductId) {
@@ -272,7 +273,7 @@ const resolveGroupingField = (rowGroupCols?: GridRequest["rowGroupCols"]) => {
     (typeof first.colId === "string" && first.colId.length > 0 && first.colId) ??
     null;
   if (!candidate || !ALLOWED_ROW_GROUP_FIELDS.has(candidate)) return null;
-  const expression = COLUMN_EXPRESSIONS[candidate] ?? `[${candidate}]`;
+  const expression = COLUMN_EXPRESSIONS[candidate] ?? sqlBracketId(candidate);
   return { field: candidate, expression };
 };
 

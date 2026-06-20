@@ -4,6 +4,7 @@ import { logger } from '../../../../../../lib/logger';
 import { logAddAuditDetails } from '../../../../../../lib/mutationAudit';
 import sql from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
+import { sqlBracketId } from '../../../../../../lib/sqlIdentifier';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
 import {
   buildQuickFilterClause,
@@ -258,7 +259,7 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
   Object.entries(typedModel).forEach(([col, fm], idx) => {
     if (!fm) return;
     const paramBase = `${col}_${idx}`;
-    const columnExpression = columnExpressions[col] ?? `[${col}]`;
+    const columnExpression = columnExpressions[col] ?? sqlBracketId(col);
     const isPartNumber = col === 'PartNumber';
     const isModelNumber = col === 'ModelNumber';
     const isPartOrModel = isPartNumber || isModelNumber;
@@ -465,7 +466,7 @@ const buildOrderSql = (sortModel: GridRequest['sortModel'], columnExpressions: R
   const parts = sortModel
     .filter((entry): entry is { colId: string; sort: 'asc' | 'desc' } => Boolean(entry?.colId && entry?.sort))
     .map((entry) => {
-      const expression = columnExpressions[entry.colId] ?? `[${entry.colId}]`;
+      const expression = columnExpressions[entry.colId] ?? sqlBracketId(entry.colId);
       const direction = entry.sort === 'desc' ? 'DESC' : 'ASC';
       return `${expression} ${direction}`;
     });

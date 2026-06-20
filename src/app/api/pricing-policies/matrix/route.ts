@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { logRequest } from '../../../../lib/apiHelpers';
 import type { Request as SqlRequest } from "mssql";
 import { getPool, sql } from "../../../../lib/sql";
+import { sqlBracketId } from "../../../../lib/sqlIdentifier";
 import {
   buildQuickFilterClause,
   mergeWhereClauses,
@@ -106,7 +107,7 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
 
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
+    const columnExpression = COLUMN_EXPRESSIONS[col] ?? sqlBracketId(col);
 
     // Use centralized filter processor
     const result = processFilter(fm, {
