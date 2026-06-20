@@ -81,18 +81,13 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
   );
   const windowsAuthAttemptedRef = useState(() => ({ value: false }))[0];
 
-  /** Resolve current user via IIS Windows Auth: /whoami.asp → POST /api/me */
+  /** Resolve current user via IIS Windows Auth: POST /api/me reads the
+   *  IIS-injected X-Windows-User header (set by WindowsUserHeaderModule). */
   const tryResolveViaWindowsAuth = useCallback(async (): Promise<WindowsAuthResult> => {
     try {
-      const aspRes = await fetch('/whoami.asp', { credentials: 'include', cache: 'no-store' });
-      if (!aspRes.ok) return { userId: null };
-      const windowsUserName = (await aspRes.text()).trim();
-      if (!windowsUserName) return { userId: null };
-
       const meRes = await fetch('/api/me', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ windowsUserName }),
+        credentials: 'include',
         cache: 'no-store',
       });
       const me = (await meRes.json().catch(() => null)) as {
@@ -106,7 +101,7 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
         return {
           userId: null,
           accessDenied: true,
-          windowsUserName: typeof me?.windowsUserName === 'string' ? me.windowsUserName : windowsUserName,
+          windowsUserName: typeof me?.windowsUserName === 'string' ? me.windowsUserName : null,
         };
       }
       if (!meRes.ok) return { userId: null };

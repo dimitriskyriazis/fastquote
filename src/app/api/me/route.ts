@@ -6,29 +6,17 @@ import { findUserByWindowsIdentity } from '../../../lib/windowsUserLookup';
 import { buildSessionCookie, getSessionCookieSecure } from '../../../lib/session';
 import { AUDIT_USER_COOKIE_NAME } from '../../../lib/authConstants';
 
-type MeRequestBody = {
-  windowsUserName?: string;
-};
-
 /**
  * POST /api/me
  *
- * Uses the IIS-injected X-Windows-User header to resolve the app user and
- * sets the FastQuote session cookie.
+ * Resolves the app user from the IIS-injected X-Windows-User header (set by the
+ * WindowsUserHeaderModule after Windows auth and not client-forgeable) and sets the
+ * FastQuote session cookie. The request body is intentionally NOT trusted for identity.
  */
 export async function POST(request: NextRequest) {
   logRequest(request, '/api/me');
   try {
-    const headerIdentity = getWindowsIdentityFromHeaders(request.headers);
-    let windowsUserName = headerIdentity ?? '';
-
-    if (!windowsUserName) {
-      const body = (await request.json().catch(() => ({}))) as MeRequestBody;
-      const rawWindowsUserName =
-        typeof body.windowsUserName === 'string' ? body.windowsUserName.trim() : '';
-      const allowBodyOverride = process.env.ALLOW_WINDOWS_USER_BODY === 'true';
-      windowsUserName = allowBodyOverride ? rawWindowsUserName : '';
-    }
+    const windowsUserName = getWindowsIdentityFromHeaders(request.headers) ?? '';
 
     if (!windowsUserName) {
       return NextResponse.json(
