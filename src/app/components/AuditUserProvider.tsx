@@ -80,6 +80,10 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     null,
   );
   const windowsAuthAttemptedRef = useState(() => ({ value: false }))[0];
+  // Whether the initial /api/me session bootstrap has completed. We gate rendering on
+  // this so child components never fire authenticated API calls before a signed session
+  // cookie exists (which would 401).
+  const [sessionEstablished, setSessionEstablished] = useState(false);
 
   /** Resolve current user via IIS Windows Auth: POST /api/me reads the
    *  IIS-injected X-Windows-User header (set by WindowsUserHeaderModule). */
@@ -160,10 +164,7 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (windowsAuthAttemptedRef.value) return;
-    // If we already have a user id from the cookie, skip Windows auth entirely.
-    // This ensures Windows authentication is only attempted on the first visit
-    // (or after the cookie has been cleared), avoiding repeated login prompts.
-    if (userId) return;
+    windowsAuthAttemptedRef.value = true;
 
     // Dev shortcut: auto-login as a fixed user when NEXT_PUBLIC_DEV_AUTO_USER_ID is set.
     // This env var is only defined in .env.local and never in production.
@@ -171,10 +172,15 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     if (devAutoId) {
       writeCookieValue(devAutoId);
       setUserId(devAutoId);
+      setSessionEstablished(true);
       return;
     }
 
-    windowsAuthAttemptedRef.value = true;
+    // Always (re)establish the signed session via /api/me on load. The session cookie is
+    // httpOnly (JS can't read it) and outlived by the non-httpOnly fastquote-user-id
+    // cookie, so we can't tell from the client whether it's still valid — we just re-mint
+    // it. /api/me is a silent, IIS-authenticated, bodyless call. Skipping this (relying on
+    // the user-id cookie alone) left returning users with an expired session and 401s.
     void (async () => {
       const result = await tryResolveViaWindowsAuth();
       if (result.accessDenied) {
@@ -186,8 +192,9 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
         writeCookieValue(result.userId);
         setUserId(result.userId);
       }
+      setSessionEstablished(true);
     })();
-  }, [userId, tryResolveViaWindowsAuth, windowsAuthAttemptedRef]);
+  }, [tryResolveViaWindowsAuth, windowsAuthAttemptedRef]);
 
   const selectedUser = useMemo(
     () => users.find((user) => user.id === userId) ?? null,
@@ -220,6 +227,25 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     return (
       <AuditUserContext.Provider value={value}>
         <AccessDeniedPage windowsIdentity={accessDeniedWindowsIdentity} />
+      </AuditUserContext.Provider>
+    );
+  }
+
+  if (!sessionEstablished) {
+    return (
+      <AuditUserContext.Provider value={value}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100vh',
+            fontFamily: 'system-ui, sans-serif',
+            color: '#888',
+          }}
+        >
+          Signing in…
+        </div>
       </AuditUserContext.Provider>
     );
   }
