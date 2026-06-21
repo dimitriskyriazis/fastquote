@@ -16,7 +16,6 @@ import {
   QueryParam,
 } from "../../../lib/gridFilters";
 import { requirePermission } from "../../../lib/authz";
-import { sqlBracketId, sqlSortDirection } from "../../../lib/sqlIdentifier";
 import { checkDeletePermission } from "../../../lib/deletePermissions";
 import { KnownFilterModel } from "../../../lib/filterTypes";
 import { processFilter } from "../../../lib/filterProcessing";
@@ -145,7 +144,7 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 
   Object.entries(typed).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS_BY_ID[col] ?? sqlBracketId(col);
+    const columnExpression = COLUMN_EXPRESSIONS_BY_ID[col] ?? `[${col}]`;
 
     // Use centralized filter processor
     const result = processFilter(fm, {
@@ -169,8 +168,8 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "";
   const parts = sortModel.map((entry) => {
-    const expr = COLUMN_EXPRESSIONS_BY_ID[entry.colId] ?? sqlBracketId(entry.colId);
-    return `${expr} ${sqlSortDirection(entry.sort)}`;
+    const expr = COLUMN_EXPRESSIONS_BY_ID[entry.colId] ?? `[${entry.colId}]`;
+    return `${expr} ${entry.sort.toUpperCase()}`;
   });
   return `ORDER BY ${parts.join(", ")}`;
 }
@@ -458,7 +457,7 @@ export async function PATCH(req: NextRequest) {
         const columnName = update.field === 'SupplierID' ? 'ID' : update.field;
         await request.query(`
           UPDATE dbo.Suppliers
-          SET ${sqlBracketId(columnName)} = @value,
+          SET [${columnName}] = @value,
             ModifiedOn = SYSUTCDATETIME(),
             ModifiedBy = @userId
           WHERE ID = @supplierId

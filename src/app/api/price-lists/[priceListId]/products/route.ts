@@ -10,7 +10,6 @@ import { checkDeletePermission } from "../../../../../lib/deletePermissions";
 import { KnownFilterModel, TextCondition, isCompoundFilter } from "../../../../../lib/filterTypes";
 import { processFilter } from "../../../../../lib/filterProcessing";
 import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from "../../../../../lib/partModelNumber";
-import { sqlBracketId, sqlSortDirection } from "../../../../../lib/sqlIdentifier";
 
 type GridRequest = {
   startRow: number;
@@ -114,7 +113,7 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
 
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS[col] ?? sqlBracketId(col);
+    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
     const isPartNumber = col === "PartNumber";
     const isModelNumber = col === "ModelNumber";
     const isDescription = col === "Description";
@@ -242,8 +241,8 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "";
   const parts = sortModel.map((s) => {
-    const expression = COLUMN_EXPRESSIONS[s.colId] ?? sqlBracketId(s.colId);
-    return `${expression} ${sqlSortDirection(s.sort)}`;
+    const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
+    return `${expression} ${s.sort.toUpperCase()}`;
   });
   return `ORDER BY ${parts.join(", ")}`;
 }

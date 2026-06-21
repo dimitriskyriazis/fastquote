@@ -19,7 +19,6 @@ import { requirePermission } from "../../../../lib/authz";
 import { checkDeletePermission } from "../../../../lib/deletePermissions";
 import { KnownFilterModel } from "../../../../lib/filterTypes";
 import { processFilter } from "../../../../lib/filterProcessing";
-import { sqlBracketId, sqlSortDirection } from "../../../../lib/sqlIdentifier";
 
 type GridRequest = {
   startRow?: number;
@@ -163,7 +162,7 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 
   Object.entries(typed).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS_BY_ID[col] ?? sqlBracketId(col);
+    const columnExpression = COLUMN_EXPRESSIONS_BY_ID[col] ?? `[${col}]`;
 
     const result = processFilter(fm, {
       columnExpression,
@@ -186,8 +185,8 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "";
   const parts = sortModel.map((entry) => {
-    const expr = COLUMN_EXPRESSIONS_BY_ID[entry.colId] ?? sqlBracketId(entry.colId);
-    return `${expr} ${sqlSortDirection(entry.sort)}`;
+    const expr = COLUMN_EXPRESSIONS_BY_ID[entry.colId] ?? `[${entry.colId}]`;
+    return `${expr} ${entry.sort.toUpperCase()}`;
   });
   return `ORDER BY ${parts.join(", ")}`;
 }
@@ -307,7 +306,7 @@ export async function PATCH(req: NextRequest) {
       if (update.field === "IsPresent" || update.field === "UsedForFax" || update.field === "Locked") {
         request.input("value", sql.Bit, normalizeBooleanInput(update.value) ? 1 : 0);
         await request.query(`
-          UPDATE dbo.Mails SET ${sqlBracketId(update.field)} = @value WHERE ID = @mailId
+          UPDATE dbo.Mails SET [${update.field}] = @value WHERE ID = @mailId
         `);
       } else if (update.field === "Date") {
         const dateValue = update.value ? new Date(String(update.value)) : null;
@@ -316,7 +315,7 @@ export async function PATCH(req: NextRequest) {
       } else {
         request.input("value", sql.NVarChar, normalizeTextValue(update.value));
         await request.query(`
-          UPDATE dbo.Mails SET ${sqlBracketId(update.field)} = @value WHERE ID = @mailId
+          UPDATE dbo.Mails SET [${update.field}] = @value WHERE ID = @mailId
         `);
       }
     }

@@ -10,7 +10,6 @@ import {
   type FieldChange,
 } from '../../../../../lib/mutationAudit';
 import { getPool } from '../../../../../lib/sql';
-import { sqlBracketId } from '../../../../../lib/sqlIdentifier';
 import {
   buildQuickFilterClause,
   buildTextMatchPredicate,
@@ -1070,7 +1069,7 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
   Object.entries(typedModel).forEach(([col, fm], idx) => {
     if (!fm) return;
     const paramBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS[col] ?? sqlBracketId(col);
+    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
     const isPartNumber = col === 'PartNumber';
     const isModelNumber = col === 'ModelNumber';
     const isDescription = col === 'Description';
@@ -1335,7 +1334,7 @@ function buildOrder(sortModel: GridRequest['sortModel']) {
       return Array.isArray(override) ? override : [override];
     }
     const expression = COLUMN_EXPRESSIONS[colId];
-    return expression ? [expression] : [sqlBracketId(colId)];
+    return expression ? [expression] : [`[${colId}]`];
   };
 
   const parts = sortModel

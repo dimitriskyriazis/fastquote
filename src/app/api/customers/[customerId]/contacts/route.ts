@@ -14,7 +14,6 @@ import {
 import { KnownFilterModel } from "../../../../../lib/filterTypes";
 import { processFilter } from "../../../../../lib/filterProcessing";
 import { BATCH_DELETE_SIZE } from '../../../../../lib/constants';
-import { sqlBracketId, sqlSortDirection } from "../../../../../lib/sqlIdentifier";
 
 type ContactRow = {
   ContactID: number;
@@ -106,7 +105,7 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
 
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS[col] ?? sqlBracketId(col);
+    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
 
     // Use centralized filter processor
     const result = processFilter(fm, {
@@ -131,11 +130,11 @@ const IMPORTANCE_SORT_COLUMNS = new Set(["Importance"]);
 const buildOrder = (sortModel: GridRequest["sortModel"]) => {
   if (!sortModel || sortModel.length === 0) return "";
   const parts = sortModel.map((s) => {
-    const expression = COLUMN_EXPRESSIONS[s.colId] ?? sqlBracketId(s.colId);
+    const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
     if (IMPORTANCE_SORT_COLUMNS.has(s.colId)) {
-      return `CASE ${expression} WHEN 'High' THEN 1 WHEN 'Med' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ${sqlSortDirection(s.sort)}`;
+      return `CASE ${expression} WHEN 'High' THEN 1 WHEN 'Med' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ${s.sort.toUpperCase()}`;
     }
-    return `${expression} ${sqlSortDirection(s.sort)}`;
+    return `${expression} ${s.sort.toUpperCase()}`;
   });
   return `ORDER BY ${parts.join(", ")}`;
 };

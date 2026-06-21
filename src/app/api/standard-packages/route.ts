@@ -17,7 +17,6 @@ import { requirePermission } from '../../../lib/authz';
 import { checkDeletePermission } from '../../../lib/deletePermissions';
 import { KnownFilterModel } from '../../../lib/filterTypes';
 import { processFilter } from '../../../lib/filterProcessing';
-import { sqlBracketId, sqlSortDirection } from '../../../lib/sqlIdentifier';
 
 type GridRequest = {
   startRow?: number;
@@ -116,7 +115,7 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
 
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS[col] ?? sqlBracketId(col);
+    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
     const result = processFilter(fm, {
       columnExpression,
       columnId: col,
@@ -141,12 +140,12 @@ const VERSION_GROUP_EXPRESSION = 'COALESCE(versionTree.RootOfferID, dbo.Offer.ID
 function buildVersionGroupedSortColumns(sortModel: GridRequest['sortModel']) {
   if (!sortModel || sortModel.length === 0) return '';
   const columns = sortModel.map((s) => {
-    const expression = COLUMN_EXPRESSIONS[s.colId] ?? sqlBracketId(s.colId);
+    const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
     const alias = `__sort_${s.colId}`;
     return `FIRST_VALUE(${expression}) OVER (
           PARTITION BY ${VERSION_GROUP_EXPRESSION}
           ORDER BY dbo.Offer.OfferVersion DESC
-        ) AS ${sqlBracketId(alias)}`;
+        ) AS [${alias}]`;
   });
   return ', ' + columns.join(', ');
 }
@@ -156,7 +155,7 @@ function buildVersionGroupedOrder(sortModel: GridRequest['sortModel']) {
   // FIRST_VALUE-of-latest per column keeps a package's versions together; VersionGroupId breaks
   // ties between distinct groups whose latest versions share the sort value; the per-row keys
   // order versions within a group (anchor first, newest→oldest); ID keeps paging deterministic.
-  const parts = sortModel.map((s) => `${sqlBracketId(`__sort_${s.colId}`)} ${sqlSortDirection(s.sort)}`);
+  const parts = sortModel.map((s) => `[__sort_${s.colId}] ${s.sort.toUpperCase()}`);
   parts.push(
     'VersionGroupId',
     'IsLatestVersion DESC',

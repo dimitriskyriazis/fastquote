@@ -10,7 +10,6 @@ import {
 import { requirePermission } from "../../../../../../lib/authz";
 import { KnownFilterModel } from "../../../../../../lib/filterTypes";
 import { processFilter } from "../../../../../../lib/filterProcessing";
-import { sqlBracketId, sqlSortDirection } from "../../../../../../lib/sqlIdentifier";
 
 type GridRequest = {
   startRow?: number;
@@ -48,7 +47,7 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"], extraWhere
     const typed = filterModel as Record<string, KnownFilterModel>;
     Object.entries(typed).forEach(([col, fm], idx) => {
       const pBase = `${col}_${idx}`;
-      const columnExpression = COLUMN_EXPRESSIONS[col] ?? sqlBracketId(col);
+      const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
       const result = processFilter(fm, { columnExpression, columnId: col, paramBase: pBase });
       if (result.clause) {
         parts.push(result.clause);
@@ -68,11 +67,11 @@ const IMPORTANCE_SORT_COLUMNS = new Set(["Importance"]);
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "";
   const parts = sortModel.map((entry) => {
-    const expr = COLUMN_EXPRESSIONS[entry.colId] ?? sqlBracketId(entry.colId);
+    const expr = COLUMN_EXPRESSIONS[entry.colId] ?? `[${entry.colId}]`;
     if (IMPORTANCE_SORT_COLUMNS.has(entry.colId)) {
-      return `CASE ${expr} WHEN 'High' THEN 1 WHEN 'Med' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ${sqlSortDirection(entry.sort)}`;
+      return `CASE ${expr} WHEN 'High' THEN 1 WHEN 'Med' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ${entry.sort.toUpperCase()}`;
     }
-    return `${expr} ${sqlSortDirection(entry.sort)}`;
+    return `${expr} ${entry.sort.toUpperCase()}`;
   });
   return `ORDER BY ${parts.join(", ")}`;
 }

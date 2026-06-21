@@ -10,7 +10,6 @@ import {
 } from '../../../lib/gridFilters';
 import { KnownFilterModel } from '../../../lib/filterTypes';
 import { processFilter } from '../../../lib/filterProcessing';
-import { sqlBracketId, sqlSortDirection } from '../../../lib/sqlIdentifier';
 
 type GridRequest = {
   startRow?: number;
@@ -160,7 +159,7 @@ const resolveGroupingFields = (rowGroupCols?: GridRequest['rowGroupCols']): Grou
     if (!candidate || !ALLOWED_ROW_GROUP_FIELDS.has(candidate)) {
       return [];
     }
-    const expression = COLUMN_EXPRESSIONS[candidate] ?? sqlBracketId(candidate);
+    const expression = COLUMN_EXPRESSIONS[candidate] ?? `[${candidate}]`;
     resolved.push({ field: candidate, expression });
   }
   return resolved;
@@ -195,7 +194,7 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
 
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS[col] ?? sqlBracketId(col);
+    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
 
     const result = processFilter(fm, {
       columnExpression,
@@ -216,8 +215,8 @@ function buildWhereAndParams(filterModel: GridRequest['filterModel']) {
 function buildOrder(sortModel: GridRequest['sortModel']) {
   if (!sortModel || sortModel.length === 0) return '';
   const parts = sortModel.map(s => {
-    const expression = COLUMN_EXPRESSIONS[s.colId] ?? sqlBracketId(s.colId);
-    return `${expression} ${sqlSortDirection(s.sort)}`;
+    const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
+    return `${expression} ${s.sort.toUpperCase()}`;
   });
   return `ORDER BY ${parts.join(', ')}`;
 }
@@ -357,7 +356,7 @@ export async function POST(req: NextRequest) {
       const groupField = groupingFields[groupLevel].field;
       const groupSql = `
         SELECT
-          ${groupExpr} AS ${sqlBracketId(groupField)},
+          ${groupExpr} AS [${groupField}],
           COUNT(1) AS __childCount,
           SUM(od.Quantity)           AS Quantity,
           SUM(od.TotalPrice)         AS TotalPrice,
