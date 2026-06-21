@@ -4,6 +4,7 @@ import { logger } from './src/lib/loggerEdge';
 import { categoryFromRequest } from './src/lib/logCategory';
 import { applyRateLimitEdge, isWriteOperation } from './src/lib/rateLimiterEdge';
 import { SESSION_COOKIE_NAME } from './src/lib/authConstants';
+import { verifySessionCookie } from './src/lib/sessionEdge';
 
 export async function middleware(request: NextRequest) {
   const requestId = await getRequestId(request);
@@ -23,20 +24,26 @@ export async function middleware(request: NextRequest) {
     pathname === '/sitemap.xml' ||
     pathname.startsWith('/_next/');
 
-  if (
+  const needsGate =
     requireSession &&
     request.method !== 'OPTIONS' &&
     !allowUnauthedApi &&
-    !allowUnauthedPage
-  ) {
-    const sessionCookie = request.cookies.get(SESSION_COOKIE_NAME)?.value ?? '';
-    if (!sessionCookie) {
-      const response = isApi
-        ? NextResponse.json({ ok: false, error: 'Authentication required' }, { status: 401 })
-        : new NextResponse('Authentication required', { status: 401 });
-      setRequestIdHeader(response, requestId);
-      return response;
-    }
+    !allowUnauthedPage;
+
+  // Verify the session cookie's HMAC signature + expiry (not just presence). This is
+  // the only authentication gate once IIS serves the app anonymously (Windows auth is
+  // scoped to /api/me), so a forged or expired cookie must be rejected here.
+  const sessionPayload =
+    needsGate || isApi
+      ? await verifySessionCookie(request.cookies.get(SESSION_COOKIE_NAME)?.value)
+      : null;
+
+  if (needsGate && !sessionPayload) {
+    const response = isApi
+      ? NextResponse.json({ ok: false, error: 'Authentication required' }, { status: 401 })
+      : new NextResponse('Authentication required', { status: 401 });
+    setRequestIdHeader(response, requestId);
+    return response;
   }
 
   // Apply rate limiting to all API routes
@@ -54,16 +61,8 @@ export async function middleware(request: NextRequest) {
       return rateLimitResponse;
     }
 
-    // Decode session cookie to get userId for logging (no signature verification needed here)
-    let userId: string | null = null;
-    try {
-      const raw = request.cookies.get(SESSION_COOKIE_NAME)?.value ?? '';
-      const [encoded] = raw.split('.', 1);
-      if (encoded) {
-        const decoded = JSON.parse(atob(encoded.replace(/-/g, '+').replace(/_/g, '/'))) as { uid?: string };
-        userId = decoded?.uid ?? null;
-      }
-    } catch { /* ignore */ }
+    // Attribute the request to the verified session (null if unauthenticated/invalid).
+    const userId = sessionPayload?.uid ?? null;
 
     const category = categoryFromRequest(method, pathname);
 
