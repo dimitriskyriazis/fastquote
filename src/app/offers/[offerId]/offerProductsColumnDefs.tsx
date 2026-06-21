@@ -1258,26 +1258,33 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
 
   const requestedColumnIds = new Set<string>(['RequestedItemNo', ...REQUESTED_DISPLAY_FIELD_KEYS]);
   const hasSavedHidden = Object.keys(savedHiddenMap).length > 0;
-  return ordered.map((column) => {
+  return ordered.flatMap((column) => {
     const id = typeof column.colId === 'string'
       ? column.colId
       : typeof column.field === 'string'
         ? column.field
         : '';
-    if (!id) return column;
+    if (!id) return [column];
     if (requestedColumnIds.has(id)) {
+      // Outside the wReq layout, OMIT requested columns from the grid entirely
+      // instead of merely hiding them. A hidden column's runtime visibility can
+      // be transiently flipped back on by AG Grid during a collapse/expand
+      // refresh reconcile (a visible "flash"); a column that isn't in the
+      // colDefs at all can never be surfaced. They are re-added when the user
+      // switches to wReq (this builder depends on showRequestedColumns).
+      if (!showRequestedColumns) return [];
       const isVisible = id === 'RequestedItemNo'
         ? requestedItemNoVisible
         : Boolean(requestedColumnVisibility[id as RequestedDisplayFieldKey]);
-      const shouldHide = !showRequestedColumns || !isVisible;
+      const shouldHide = !isVisible;
       if (column.hide !== shouldHide) {
-        return { ...column, hide: shouldHide };
+        return [{ ...column, hide: shouldHide }];
       }
-      return column;
+      return [column];
     }
     if (hasSavedHidden && savedHiddenMap[id] != null) {
-      return { ...column, hide: savedHiddenMap[id] };
+      return [{ ...column, hide: savedHiddenMap[id] }];
     }
-    return column;
+    return [column];
   });
 }

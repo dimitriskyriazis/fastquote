@@ -1457,14 +1457,41 @@ export async function POST(
     // strict descendant (path + '.') are filtered out. Doing this server-side
     // is the only correct fix because AG Grid SSRM pins each row to its
     // absolute startRow, so client-side hiding leaves blank slots.
-    // When `collapseAll` is true, hide every descendant outright by
-    // excluding any TreeOrdering that contains a dot — only top-level
-    // rows survive.
+    // When `collapseAll` is true, the grid starts fully collapsed to top
+    // level and the user reveals one level at a time. A row survives only if
+    // it is top-level (no dot in TreeOrdering) OR its immediate parent
+    // category has been explicitly expanded (expandedCategoryPaths). The
+    // parent prefix of "1.2.3" is "1.2"; requiring it to be in the expanded
+    // set keeps nested subcategories collapsed until they are opened too.
+    // With no expanded paths this reduces to "top-level rows only".
     const collapsedClauses: string[] = [];
     const collapsedParams: { key: string; value: string | number | boolean }[] = [];
     const collapseAll = (body as { collapseAll?: unknown })?.collapseAll === true;
     if (collapseAll) {
-      collapsedClauses.push(`(NULLIF(LTRIM(RTRIM(od.TreeOrdering)), '') IS NULL OR CHARINDEX('.', LTRIM(RTRIM(od.TreeOrdering))) = 0)`);
+      const topLevelClause = `(${TREE_ORDERING_RAW_EXPRESSION} IS NULL OR CHARINDEX('.', ${TREE_ORDERING_RAW_EXPRESSION}) = 0)`;
+      const rawExpanded = (body as { expandedCategoryPaths?: unknown })?.expandedCategoryPaths;
+      const expandedInParams: string[] = [];
+      if (Array.isArray(rawExpanded)) {
+        rawExpanded.forEach((entry, idx) => {
+          if (typeof entry !== 'string') return;
+          const trimmed = entry.trim();
+          // Only accept the well-formed dotted-number form we emit client-side
+          // (e.g. "1", "1.2", "1.2.3") to keep this safe against odd inputs.
+          if (!trimmed || !/^\d+(\.\d+)*$/.test(trimmed)) return;
+          const paramKey = `__expanded_${idx}`;
+          collapsedParams.push({ key: paramKey, value: trimmed });
+          expandedInParams.push(`@${paramKey}`);
+        });
+      }
+      if (expandedInParams.length === 0) {
+        collapsedClauses.push(topLevelClause);
+      } else {
+        // Parent prefix = everything before the final dot. Correct for
+        // multi-digit segments because it's computed from the last dot,
+        // not a fixed width.
+        const parentPrefixExpr = `LEFT(${TREE_ORDERING_RAW_EXPRESSION}, LEN(${TREE_ORDERING_RAW_EXPRESSION}) - CHARINDEX('.', REVERSE(${TREE_ORDERING_RAW_EXPRESSION})))`;
+        collapsedClauses.push(`(${TREE_ORDERING_RAW_EXPRESSION} IS NULL OR CHARINDEX('.', ${TREE_ORDERING_RAW_EXPRESSION}) = 0 OR ${parentPrefixExpr} IN (${expandedInParams.join(', ')}))`);
+      }
     } else {
       const rawCollapsed = (body as { collapsedCategoryPaths?: unknown })?.collapsedCategoryPaths;
       if (Array.isArray(rawCollapsed)) {

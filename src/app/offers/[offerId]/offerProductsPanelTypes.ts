@@ -24,7 +24,6 @@ export type OfferProductsPanelProps = {
   extraBottomScrollSpace?: boolean;
   onStartingItemNoChanged?: (current: number | null) => void;
   collapseAllCategories?: boolean;
-  onCollapseAllSuppressed?: () => void;
   offerPricingHoldMarginOnCost?: boolean;
   onOfferPricingHoldMarginOnCostChange?: (next: boolean) => void;
   offerExtraNetDiscount?: number | null;

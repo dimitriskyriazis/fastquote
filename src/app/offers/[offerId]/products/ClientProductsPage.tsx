@@ -267,7 +267,8 @@ export default function ClientProductsPage({
   detachedWindowOpenRef.current = detachedWindowOpen;
   const splitLeftRef = useRef<HTMLDivElement | null>(null);
   const layoutStorageKey = useMemo(() => buildLayoutStorageKey(userId), [userId]);
-  const layoutLoadedRef = useRef<string | null>(null);
+  const layoutStorageKeyRef = useRef(layoutStorageKey);
+  layoutStorageKeyRef.current = layoutStorageKey;
   const creationCountersRef = useRef<Record<CreatableActionType, number>>({
     category: 0,
     'printable-comment': 0,
@@ -278,22 +279,28 @@ export default function ClientProductsPage({
 
   useEffect(() => {
     if (!layoutStorageKey) return;
-    layoutLoadedRef.current = layoutStorageKey;
     const persisted = readPersistedLayout(layoutStorageKey);
     if (persisted) {
       setTableLayout((current) => (current === persisted ? current : persisted));
     }
   }, [layoutStorageKey]);
 
-  useEffect(() => {
-    if (typeof window === 'undefined' || !layoutStorageKey) return;
-    if (layoutLoadedRef.current !== layoutStorageKey) return;
+  // Persist the layout ONLY on explicit user changes (via changeTableLayout),
+  // never from the load effect above. The previous save-in-effect approach
+  // raced the async layout load (userId from useAuditUser resolves after mount)
+  // and overwrote the stored value with the default 'wReq' on mount — notably
+  // under React StrictMode's double-invoked dev effects — so the user's choice
+  // never survived a refresh.
+  const changeTableLayout = useCallback((next: ProductsTableLayout) => {
+    setTableLayout(next);
+    const key = layoutStorageKeyRef.current;
+    if (typeof window === 'undefined' || !key) return;
     try {
-      window.localStorage.setItem(layoutStorageKey, tableLayout);
+      window.localStorage.setItem(key, next);
     } catch {
       /* noop */
     }
-  }, [layoutStorageKey, tableLayout]);
+  }, []);
 
   const [initialRequestedRowId, setInitialRequestedRowId] = useState<number | null>(null);
   const pageRef = useRef<HTMLElement | null>(null);
@@ -470,7 +477,7 @@ export default function ClientProductsPage({
         windowScrollY: typeof window !== 'undefined' ? window.scrollY : 0,
       };
       if (requestedId != null) {
-        setTableLayout('wReq');
+        changeTableLayout('wReq');
       }
       setShowAddServiceModal(false);
       setShowAddProductModal(true);
@@ -582,7 +589,7 @@ export default function ClientProductsPage({
     } finally {
       setPendingAction(null);
     }
-  }, [offerId, pendingAction]);
+  }, [offerId, pendingAction, changeTableLayout]);
 
   useEffect(() => {
     if (!showAddProductModal) return;
@@ -988,9 +995,9 @@ export default function ClientProductsPage({
   const handleClearNewProductId = useCallback(() => setNewProductId(null), []);
   const handleRequestedImported = useCallback((result: { inserted?: number; updated?: number; total?: number }) => {
     void result;
-    setTableLayout('wReq');
+    changeTableLayout('wReq');
     setRefreshToken((prev) => prev + 1);
-  }, []);
+  }, [changeTableLayout]);
   const showRequestedColumns = tableLayout === 'wReq';
   const splitModalOpen = showAddProductModal || showAddServiceModal;
   const headerRowTopClassName = splitModalOpen
@@ -1542,7 +1549,7 @@ export default function ClientProductsPage({
     <button
       type="button"
       className={`${toolbarStyles.button} ${toolbarStyles.buttonAddRequested} page-header-button`}
-      onClick={() => { setTableLayout('wReq'); setShowRequestedModal(true); }}
+      onClick={() => { changeTableLayout('wReq'); setShowRequestedModal(true); }}
     >
       Add Requested
     </button>
@@ -1552,7 +1559,7 @@ export default function ClientProductsPage({
     <select
       className={`${toolbarStyles.layoutSelect} page-header-button`}
       value={tableLayout}
-      onChange={(event) => setTableLayout(event.target.value as ProductsTableLayout)}
+      onChange={(event) => changeTableLayout(event.target.value as ProductsTableLayout)}
       aria-label="Table layout"
       suppressHydrationWarning
     >
@@ -1746,7 +1753,6 @@ export default function ClientProductsPage({
                 setStartingItemNoInput(String(next));
               }}
               collapseAllCategories={collapseAllCategories}
-              onCollapseAllSuppressed={() => setCollapseAllCategories(false)}
               offerPricingHoldMarginOnCost={pricingHoldMarginOnCost}
               onOfferPricingHoldMarginOnCostChange={(next) => {
                 setPricingHoldMarginOnCost(next);
